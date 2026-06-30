@@ -1380,7 +1380,7 @@ actor APIClient: ClientLogUploading {
 
     // MARK: - Private
 
-    private func get(_ path: String) async throws -> Data {
+    func get(_ path: String) async throws -> Data {
         let (data, response) = try await request("GET", path: path)
         try checkStatus(response, data: data)
         return data
@@ -1392,7 +1392,7 @@ actor APIClient: ClientLogUploading {
         return data
     }
 
-    private func post<T: Encodable>(
+    func post<T: Encodable>(
         _ path: String,
         body: T,
         encoder: JSONEncoder? = nil
@@ -1408,7 +1408,7 @@ actor APIClient: ClientLogUploading {
         return data
     }
 
-    private func request(_ method: String, path: String) async throws -> (Data, URLResponse) {
+    func request(_ method: String, path: String) async throws -> (Data, URLResponse) {
         var req = try URLRequest(url: makeURL(path: path))
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -1424,7 +1424,7 @@ actor APIClient: ClientLogUploading {
         return try await session.data(for: req)
     }
 
-    private func request<T: Encodable>(
+    func request<T: Encodable>(
         _ method: String,
         path: String,
         body: T,
@@ -1482,7 +1482,7 @@ actor APIClient: ClientLogUploading {
         return parts.joined(separator: "&")
     }
 
-    private func percentEncodePathSegment(_ segment: String) throws -> String {
+    func percentEncodePathSegment(_ segment: String) throws -> String {
         var allowed = CharacterSet.urlPathAllowed
         allowed.remove(charactersIn: "/%+?#&")
         guard let encoded = segment.addingPercentEncoding(withAllowedCharacters: allowed) else {
@@ -1612,7 +1612,7 @@ actor APIClient: ClientLogUploading {
         return url
     }
 
-    private func checkStatus(_ response: URLResponse, data: Data) throws {
+    func checkStatus(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }

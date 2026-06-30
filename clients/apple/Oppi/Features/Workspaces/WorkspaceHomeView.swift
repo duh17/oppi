@@ -82,8 +82,19 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
 /// These are intentionally not bottom-tab destinations; they are secondary
 /// management surfaces reached from the server/environment menu.
 enum WorkspaceUtilityNavTarget: Hashable {
+    case schedules
+    case agents
     case manageServers
     case appSettings
+
+    var isReleaseEnabled: Bool {
+        switch self {
+        case .schedules, .agents:
+            ReleaseFeatures.agentAndScheduleManagementEnabled
+        case .manageServers, .appSettings:
+            true
+        }
+    }
 }
 
 private struct WorkspaceCreateSheetContext: Identifiable {
@@ -412,6 +423,10 @@ struct WorkspaceHomeView: View {
             }
             ToolbarItemGroup(placement: .bottomBar) {
                 if !servers.isEmpty {
+                    if ReleaseFeatures.agentAndScheduleManagementEnabled {
+                        schedulesButton
+                        agentsButton
+                    }
                     Spacer()
                     quickSessionButton
                 }
@@ -433,11 +448,19 @@ struct WorkspaceHomeView: View {
             ServerDetailView(server: server)
         }
         .navigationDestination(for: WorkspaceUtilityNavTarget.self) { target in
-            switch target {
-            case .manageServers:
-                ServerView()
-            case .appSettings:
-                SettingsView()
+            if target.isReleaseEnabled {
+                switch target {
+                case .schedules:
+                    ScheduleManagementView()
+                case .agents:
+                    AgentManagementView()
+                case .manageServers:
+                    ServerView()
+                case .appSettings:
+                    SettingsView()
+                }
+            } else {
+                EmptyView()
             }
         }
         .sheet(item: $createSheetContext, onDismiss: handleCreateSheetDismissed) { context in
@@ -571,6 +594,20 @@ struct WorkspaceHomeView: View {
             }
             .accessibilityIdentifier("workspace.create.open")
 
+            if ReleaseFeatures.agentAndScheduleManagementEnabled {
+                Button {
+                    navigation.openWorkspaceUtility(.schedules)
+                } label: {
+                    Label("Schedules", systemImage: "clock")
+                }
+
+                Button {
+                    navigation.openWorkspaceUtility(.agents)
+                } label: {
+                    Label("Agents", systemImage: "person.crop.circle")
+                }
+            }
+
             Button {
                 navigation.openWorkspaceUtility(.manageServers)
             } label: {
@@ -590,6 +627,30 @@ struct WorkspaceHomeView: View {
         }
         .accessibilityLabel("Current server: \(current.name)")
         .accessibilityValue(serverBadgeConnectionState(for: current).title)
+    }
+
+    private var schedulesButton: some View {
+        Button {
+            navigation.openWorkspaceUtility(.schedules)
+        } label: {
+            Image(systemName: "clock")
+        }
+        .foregroundStyle(.themeFg)
+        .accessibilityLabel("Schedules")
+        .accessibilityHint("Opens schedule management")
+        .accessibilityIdentifier("workspace.schedules.open")
+    }
+
+    private var agentsButton: some View {
+        Button {
+            navigation.openWorkspaceUtility(.agents)
+        } label: {
+            Image(systemName: "person.crop.circle")
+        }
+        .foregroundStyle(.themeFg)
+        .accessibilityLabel("Agents")
+        .accessibilityHint("Opens agent management")
+        .accessibilityIdentifier("workspace.agents.open")
     }
 
     private var quickSessionButton: some View {

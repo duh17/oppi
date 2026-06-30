@@ -217,11 +217,23 @@ private struct WorkspaceUtilityDestinationView: View {
     let target: WorkspaceUtilityNavTarget
 
     var body: some View {
-        switch target {
-        case .manageServers:
-            ServerView()
-        case .appSettings:
-            SettingsView()
+        if target.isReleaseEnabled {
+            switch target {
+            case .schedules:
+                ScheduleManagementView()
+            case .agents:
+                AgentManagementView()
+            case .manageServers:
+                ServerView()
+            case .appSettings:
+                SettingsView()
+            }
+        } else {
+            WorkspaceSplitPlaceholder(
+                title: "Unavailable",
+                systemImage: "eye.slash",
+                description: "This management screen is hidden in this build."
+            )
         }
     }
 }

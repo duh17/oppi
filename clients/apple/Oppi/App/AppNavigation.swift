@@ -179,6 +179,8 @@ final class AppNavigation {
     }
 
     func openWorkspaceUtility(_ target: WorkspaceUtilityNavTarget) {
+        guard target.isReleaseEnabled else { return }
+
         selectedTab = .workspaces
         switch workspaceNavigationPresentation {
         case .stack:
@@ -355,7 +357,9 @@ final class AppNavigation {
         case .workspaceConfiguration(let target):
             path.append(target)
         case .utility(let target):
-            path.append(target)
+            if target.isReleaseEnabled {
+                path.append(target)
+            }
         case nil:
             if let workspace = splitSelectedWorkspace {
                 path.append(workspace)

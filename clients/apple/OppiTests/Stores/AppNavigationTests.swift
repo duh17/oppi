@@ -380,6 +380,52 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .all)
     }
 
+    @Test func hiddenAgentAndScheduleUtilitiesDoNotAppendToStackPath() {
+        let navigation = AppNavigation()
+        navigation.selectedTab = .settings
+        navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+
+        navigation.openWorkspaceUtility(.agents)
+        navigation.openWorkspaceUtility(.schedules)
+
+        #expect(navigation.selectedTab == .settings)
+        #expect(navigation.workspacePath.count == 1)
+    }
+
+    @Test func visibleUtilitiesStillAppendToStackPath() {
+        let navigation = AppNavigation()
+
+        navigation.openWorkspaceUtility(.manageServers)
+        navigation.openWorkspaceUtility(.appSettings)
+
+        #expect(navigation.selectedTab == .workspaces)
+        #expect(navigation.workspacePath.count == 2)
+    }
+
+    @Test func hiddenAgentAndScheduleUtilitiesDoNotReplaceSplitSelection() {
+        let navigation = AppNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceUtility(.appSettings)
+
+        navigation.openWorkspaceUtility(.agents)
+        navigation.openWorkspaceUtility(.schedules)
+
+        #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.splitDetailTarget == .utility(.appSettings))
+        #expect(navigation.splitColumnVisibility == .all)
+    }
+
+    @Test func visibleUtilitiesStillRouteInSplitPresentation() {
+        let navigation = AppNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspaceUtility(.manageServers)
+
+        #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.splitDetailTarget == .utility(.manageServers))
+        #expect(navigation.splitColumnVisibility == .all)
+    }
+
     @Test func workspaceConfigurationUsesSplitDetailSelectionInSplitPresentation() {
         let navigation = AppNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
