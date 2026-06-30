@@ -65,7 +65,7 @@ pi
 
 ## What it supports
 
-Mirror supports prompts, steering and follow-up messages, stop or abort, queue updates, model and thinking changes, tree navigation, and standard Pi extension UI flows such as select, confirm, input, editor, notify, title, status, and widgets.
+Mirror supports prompts, steering and follow-up messages, stop or abort, queue updates, model and thinking changes, tree navigation, and standard Pi extension UI flows such as select, confirm, input, editor, notify, title, status, widgets, and working-row customization.
 
 Session replacement stays terminal-owned. Use terminal Pi for `/new`, `/fork`, and session switching.
 

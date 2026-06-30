@@ -148,6 +148,7 @@ Still terminal-only:
 | --- | --- | --- |
 | `ctx.ui.select`, `ctx.ui.confirm`, `ctx.ui.input`, `ctx.ui.editor` | Native prompt; phone or terminal answer settles the request first | Terminal prompt remains available |
 | `ctx.ui.notify`, `ctx.ui.setTitle`, `ctx.ui.setStatus`, `ctx.ui.setWidget` | Native banner, status, or surface when the request is semantic | Terminal UI remains terminal-owned |
+| `ctx.ui.setWorkingMessage`, `ctx.ui.setWorkingVisible`, `ctx.ui.setWorkingIndicator` | Native working row text, visibility, and indicator state | Terminal UI remains terminal-owned |
 | Oppi AskCard multi-select | Native AskCard, with first response winning | Terminal fallback |
 | Custom terminal components, headers, footers, raw TUI layouts | Terminal-owned unless bridged as a semantic widget or future snapshot | Terminal-owned |
 
