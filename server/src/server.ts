@@ -28,6 +28,7 @@ import { normalizeRegisteredPathPattern } from "./routes/registry.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { LiveActivityBridge } from "./live-activity.js";
 import { SessionPushNotifier } from "./session-push-notifier.js";
+import { AgentScheduleRunner } from "./agent-schedule-runner.js";
 import { ServerResourceSampler } from "./server-resource-sampler.js";
 import { ServerMetricCollector } from "./server-metric-collector.js";
 import { SearchIndex } from "./search-index.js";
@@ -403,6 +404,7 @@ export class Server {
   private dictationManager: DictationManager | undefined;
   private dictationConfig: DictationConfig | undefined;
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
+  private scheduleRunner!: AgentScheduleRunner;
 
   constructor(storage: Storage, apnsConfig?: APNsConfig) {
     this.storage = storage;
@@ -608,6 +610,13 @@ export class Server {
       });
     }
 
+    this.scheduleRunner = new AgentScheduleRunner({
+      storage: this.storage,
+      sessions: this.sessions,
+      ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
+      appEvents: this.appEventStreamMux,
+    });
+
     // Create route handler (dispatch + all HTTP business logic)
     this.routes = new RouteHandler({
       storage: this.storage,
@@ -733,6 +742,7 @@ export class Server {
         this.resourceSampler.start();
         this.opsMetrics.start();
         this.startUploadGcLoop();
+        this.scheduleRunner.start();
 
         // Background: sync search index (non-blocking, fires after listen)
         if (this.searchIndex) {
@@ -767,6 +777,7 @@ export class Server {
 
   async stop(): Promise<void> {
     this.stopUploadGcLoop();
+    this.scheduleRunner.stop();
     this.opsMetrics.stop();
     this.resourceSampler.stop();
     this.stopBonjourAdvertisement();

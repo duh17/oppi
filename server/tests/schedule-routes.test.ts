@@ -157,6 +157,59 @@ describe("schedule routes", () => {
     expect(sessions[0]?.launch?.idempotencyKey).toBe(`schedule:${schedule.id}:manual:button-1`);
   });
 
+  it("records approval provenance for automatic runs created through the route", async () => {
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = "/schedules";
+
+    await dispatch({
+      method: "POST",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({
+        name: "Daily review",
+        trigger: { type: "cron", expression: "0 7 * * *", timeZone: "America/Los_Angeles" },
+        action: {
+          type: "new_session",
+          workspaceId: workspace.id,
+          prompt: "Run the daily review",
+          approvalRefs: ["approval://daily-review"],
+        },
+      }),
+      res: {} as ServerResponse,
+    });
+
+    expect(errors).toEqual([]);
+    const scheduleId = (responses[0]?.data as { schedule?: { id?: string } }).schedule?.id;
+    expect(scheduleId).toBeTruthy();
+    const run = store.createDueRun(scheduleId ?? "", "cron:1000", 1_000);
+    const claimed = store.claimReadyRuns({
+      now: 1_000,
+      ownerId: "runner",
+      leaseMs: 10_000,
+      limit: 1,
+      runIds: [run.id],
+    })[0];
+
+    await store.dispatchClaimedRun(
+      claimed?.id ?? "missing",
+      {
+        launchNewSession: vi.fn(async () => ({
+          sessionId: "sess-approved",
+          promptDispatch: "delivered",
+        })),
+        sendExistingSessionInput: vi.fn(),
+      },
+      { leaseOwner: "runner", now: 1_100 },
+    );
+
+    expect(store.listRunSummaries(scheduleId ?? "")).toEqual([
+      expect.objectContaining({
+        status: "completed",
+        sessionId: "sess-approved",
+      }),
+    ]);
+  });
+
   it("rejects malformed run history limits", async () => {
     const schedule = store.createSchedule({
       name: "Morning check",

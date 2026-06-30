@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { validateCronExpression, validateScheduleTimeZone } from "./agent-schedule-cron.js";
 import { generateId } from "./id.js";
 import { decideScheduledMutation, liveAcceptedApprovalRefAuditIds } from "./schedule-approval.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
@@ -119,10 +120,21 @@ export interface AgentScheduleClaimOptions {
   leaseMs: number;
   limit: number;
   runIds?: readonly string[];
+  kinds?: readonly AgentScheduleRunKind[];
 }
 
 export interface AgentScheduleListRunOptions {
   limit?: number;
+}
+
+export interface AgentScheduleAcceptedApprovalProvenanceInput {
+  workspaceId: string;
+  approvalRefId: string;
+  scheduleId?: string;
+  runId?: string;
+  sessionId?: string;
+  now?: number;
+  details?: Record<string, unknown>;
 }
 
 export interface NewSessionDispatchInput {
@@ -224,6 +236,41 @@ export class AgentScheduleStore {
         schedule.updatedAt,
       );
     return schedule;
+  }
+
+  recordAcceptedApprovalProvenance(input: AgentScheduleAcceptedApprovalProvenanceInput): void {
+    const workspaceId = validateKeyPart(input.workspaceId, "approval workspaceId");
+    const approvalRefId = validateKeyPart(input.approvalRefId, "approvalRefId");
+    const now = input.now ?? Date.now();
+    const eventId = generateId(12);
+    const envelope = {
+      id: eventId,
+      createdAt: now,
+      eventType: "approval_ref.accepted",
+      workspaceId,
+      ...(input.scheduleId ? { scheduleId: input.scheduleId } : {}),
+      ...(input.runId ? { runId: input.runId } : {}),
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      approvalRefId,
+      ...(input.details ? { details: input.details } : {}),
+    };
+    this.db
+      .prepare(
+        `INSERT INTO server_agent_extension_audit_events (
+           id, created_at, workspace_id, schedule_id, run_id, session_id,
+           event_type, approval_ref_id, envelope_json
+         ) VALUES (?, ?, ?, ?, ?, ?, 'approval_ref.accepted', ?, ?)`,
+      )
+      .run(
+        eventId,
+        now,
+        workspaceId,
+        input.scheduleId ?? null,
+        input.runId ?? null,
+        input.sessionId ?? null,
+        approvalRefId,
+        JSON.stringify(envelope),
+      );
   }
 
   updateSchedule(
@@ -346,17 +393,20 @@ export class AgentScheduleStore {
   claimReadyRuns(options: AgentScheduleClaimOptions): AgentScheduleRun[] {
     if (options.leaseMs <= 0 || options.limit <= 0) return [];
     const runIds = options.runIds?.filter((id) => id.trim().length > 0);
+    const kinds = options.kinds?.filter((kind) => kind.trim().length > 0);
     const idClause = runIds?.length ? ` AND id IN (${runIds.map(() => "?").join(",")})` : "";
+    const kindClause = kinds?.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
     const candidates = this.db
       .prepare(
         `SELECT * FROM agent_schedule_runs
          WHERE status IN ('pending', 'claimed', 'running')
            AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
            ${idClause}
+           ${kindClause}
          ORDER BY created_at, id
          LIMIT ?`,
       )
-      .all(options.now, ...(runIds ?? []), options.limit) as RunRow[];
+      .all(options.now, ...(runIds ?? []), ...(kinds ?? []), options.limit) as RunRow[];
 
     const claimed: AgentScheduleRun[] = [];
     for (const row of candidates) {
@@ -366,7 +416,8 @@ export class AgentScheduleStore {
            SET status = 'claimed', claimed_at = ?, lease_owner = ?, lease_expires_at = ?, updated_at = ?
            WHERE id = ?
              AND status IN ('pending', 'claimed', 'running')
-             AND (lease_expires_at IS NULL OR lease_expires_at <= ?)`,
+             AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+             ${kindClause}`,
         )
         .run(
           options.now,
@@ -375,6 +426,7 @@ export class AgentScheduleStore {
           options.now,
           row.id,
           options.now,
+          ...(kinds ?? []),
         );
       const run = this.getRun(row.id);
       if (
@@ -763,19 +815,19 @@ function validateName(name: string): string {
 }
 
 function validateTrigger(trigger: AgentScheduleTrigger): AgentScheduleTrigger {
-  if (!trigger.timeZone.trim()) throw new Error("Schedule timeZone is required");
+  const timeZone = validateScheduleTimeZone(trigger.timeZone);
   if (trigger.type === "at") {
     if (!Number.isFinite(trigger.at)) throw new Error("Schedule at trigger requires a timestamp");
-    return { type: "at", at: trigger.at, timeZone: trigger.timeZone };
+    return { type: "at", at: trigger.at, timeZone };
   }
   if (trigger.type === "every") {
     if (!Number.isFinite(trigger.intervalMs) || trigger.intervalMs <= 0) {
       throw new Error("Schedule every trigger requires a positive intervalMs");
     }
-    return { type: "every", intervalMs: trigger.intervalMs, timeZone: trigger.timeZone };
+    return { type: "every", intervalMs: trigger.intervalMs, timeZone };
   }
-  if (!trigger.expression.trim()) throw new Error("Schedule cron trigger requires an expression");
-  return { type: "cron", expression: trigger.expression, timeZone: trigger.timeZone };
+  const expression = validateCronExpression(trigger.expression);
+  return { type: "cron", expression, timeZone };
 }
 
 function validateAction(action: AgentScheduleAction): AgentScheduleAction {

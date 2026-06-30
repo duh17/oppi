@@ -553,12 +553,18 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--name", value: "<text>", summary: "schedule and launched-session name" },
       { name: "--model", value: "<model>", summary: "model override for launched sessions" },
       { name: "--worktree", value: "<id>", summary: "workspace worktree id" },
+      {
+        name: "--approval-ref",
+        value: "<ref>",
+        summary: "accepted opaque approval ref for non-interactive automatic runs",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
       "Choose exactly one trigger flag: --at, --every, or --cron.",
       "Choose exactly one target flag: --workspace or --session.",
       "Server default Agent schedules are not implemented yet.",
+      "Automatic runs fail closed unless the schedule carries an accepted approval ref.",
       "Run history is available with 'oppi schedule runs <id>'.",
       "Manual runs are idempotent when you reuse 'oppi schedule run <id> --request-id <key>'; automatic runs use their schedule slot as the idempotency key.",
     ],
