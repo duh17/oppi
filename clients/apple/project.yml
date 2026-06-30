@@ -64,7 +64,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi
         PRODUCT_NAME: Oppi
         MARKETING_VERSION: "1.1.0"
-        CURRENT_PROJECT_VERSION: 39
+        CURRENT_PROJECT_VERSION: 40
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
@@ -262,7 +262,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi.ActivityExtension
         MARKETING_VERSION: "1.1.0"
-        CURRENT_PROJECT_VERSION: 39
+        CURRENT_PROJECT_VERSION: 40
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
         GENERATE_INFOPLIST_FILE: true
@@ -313,7 +313,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi.ShareExtension
         MARKETING_VERSION: "1.1.0"
-        CURRENT_PROJECT_VERSION: 39
+        CURRENT_PROJECT_VERSION: 40
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
 
@@ -346,7 +346,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi.ControlWidget
         MARKETING_VERSION: "1.1.0"
-        CURRENT_PROJECT_VERSION: 39
+        CURRENT_PROJECT_VERSION: 40
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
         CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: "YES"
@@ -449,7 +449,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiMac
         PRODUCT_NAME: Oppi
         MARKETING_VERSION: "0.2.0"
-        CURRENT_PROJECT_VERSION: 39
+        CURRENT_PROJECT_VERSION: 40
         CODE_SIGN_IDENTITY: "Developer ID Application"
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: AZAQMY4SPZ
