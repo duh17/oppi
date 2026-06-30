@@ -1683,7 +1683,7 @@ struct ChatView: View {
             .navigationTitle("Files")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { closeChatFilePanel() }
                 }
             }
@@ -1834,7 +1834,7 @@ struct ChatView: View {
             .navigationTitle("Context")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { showContextInspector = false }
                 }
             }

@@ -560,6 +560,12 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
+                Button("Done") {
+                    dismiss()
+                }
+                .font(.subheadline.weight(.semibold))
+                .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail-done")
+
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.headline.weight(.semibold))
@@ -575,12 +581,6 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-                Button("Done") {
-                    dismiss()
-                }
-                .font(.subheadline.weight(.semibold))
-                .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail-done")
             }
             .padding(.horizontal, 18)
             .padding(.top, 18)

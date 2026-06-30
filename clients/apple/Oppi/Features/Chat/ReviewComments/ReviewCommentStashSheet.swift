@@ -45,7 +45,7 @@ struct ReviewCommentStashSheet: View {
             .navigationTitle("Staged Comments")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Done", action: onClose)
                 }
             }
