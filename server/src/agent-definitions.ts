@@ -317,7 +317,8 @@ function mergeAgentDefinition(current: AgentDefinition, patch: unknown): AgentDe
   if (!isRecord(patch)) {
     throw new Error("Agent update must be an object");
   }
-  return {
+
+  const merged = {
     ...current,
     ...patch,
     ...(isRecord(patch.resources)
@@ -326,7 +327,26 @@ function mergeAgentDefinition(current: AgentDefinition, patch: unknown): AgentDe
     ...(isRecord(patch.sessionDefaults)
       ? { sessionDefaults: { ...(current.sessionDefaults ?? {}), ...patch.sessionDefaults } }
       : {}),
-  } as AgentDefinition;
+  } as Record<string, unknown>;
+
+  removeNullValue(merged, "description");
+  removeNullValue(merged, "instructions");
+  removeNullValue(merged, "resources");
+  removeNullValue(merged, "sessionDefaults");
+  if (isRecord(merged.resources)) removeNullValues(merged.resources);
+  if (isRecord(merged.sessionDefaults)) removeNullValues(merged.sessionDefaults);
+
+  return merged as unknown as AgentDefinition;
+}
+
+function removeNullValues(record: Record<string, unknown>): void {
+  for (const key of Object.keys(record)) {
+    removeNullValue(record, key);
+  }
+}
+
+function removeNullValue(record: Record<string, unknown>, key: string): void {
+  if (record[key] === null) delete record[key];
 }
 
 function validateInstructions(value: unknown): AgentDefinition["instructions"] | undefined {
