@@ -1,6 +1,6 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -429,6 +429,65 @@ describe("SessionTraceService", () => {
       contentType: "text/plain; charset=utf-8",
       size: 19,
     });
+  });
+
+  it("opens a session-touched relative path that resolves through a workspace symlink", async () => {
+    const dataDir = tempDir("oppi-session-raw-symlink-data-");
+    const workspaceRoot = tempDir("oppi-session-raw-symlink-workspace-");
+    const outsideRoot = tempDir("oppi-session-raw-symlink-outside-");
+    const outsideSkillRoot = join(outsideRoot, "oppi-dev");
+    mkdirSync(join(workspaceRoot, ".pi", "skills"), { recursive: true });
+    mkdirSync(join(outsideSkillRoot, "scripts"), { recursive: true });
+    writeFileSync(join(outsideSkillRoot, "scripts", "oppi-workflow.sh"), "echo ok\n", "utf8");
+    symlinkSync(outsideSkillRoot, join(workspaceRoot, ".pi", "skills", "oppi-dev"), "dir");
+
+    const workspace = makeWorkspace({ hostMount: workspaceRoot });
+    const touchedPath = ".pi/skills/oppi-dev/scripts/oppi-workflow.sh";
+    const session = makeSession({
+      changeStats: {
+        mutatingToolCalls: 1,
+        filesChanged: 1,
+        changedFiles: [touchedPath],
+        addedLines: 1,
+        removedLines: 0,
+      },
+    });
+    const { service } = makeService({ dataDir, workspace });
+
+    await expect(
+      service.getSessionRawFile({ workspace, session, path: touchedPath }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      contentType: "text/plain; charset=utf-8",
+      size: 8,
+    });
+  });
+
+  it("still rejects session-touched relative paths that escape the workspace", async () => {
+    const dataDir = tempDir("oppi-session-raw-escape-data-");
+    const workspaceRoot = tempDir("oppi-session-raw-escape-workspace-");
+    const outsideRoot = tempDir("oppi-session-raw-escape-outside-");
+    const outsidePath = join(outsideRoot, "outside.txt");
+    writeFileSync(outsidePath, "outside\n", "utf8");
+
+    const escapePath = relative(workspaceRoot, outsidePath);
+    expect(escapePath.startsWith("..")).toBe(true);
+
+    const workspace = makeWorkspace({ hostMount: workspaceRoot });
+    const session = makeSession({
+      changeStats: {
+        mutatingToolCalls: 1,
+        filesChanged: 1,
+        changedFiles: [escapePath],
+        addedLines: 1,
+        removedLines: 0,
+      },
+    });
+    const { service } = makeService({ dataDir, workspace });
+
+    await expect(
+      service.getSessionRawFile({ workspace, session, path: escapePath }),
+    ).resolves.toEqual({ kind: "path-outside-workspaces" });
   });
 
   it("reports typed raw file misses for unchanged and sensitive paths", async () => {

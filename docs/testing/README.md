@@ -109,16 +109,23 @@ Use the Oppi workflow wrapper. It starts a paired E2E server, writes invite/devi
 ~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native \
   --only-testing OppiE2ETests/WebSocketLifecycleE2ETests/testNavigationKeepsWorkspaceListOnHTTPAndUsesBoundSessionStreams
 
-# Release-critical smoke group: chat round trip, workspace CRUD, focused stream binding
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group smoke
+# Preferred release gate: focused chat/composer/ask/attachment/session coverage
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group gate
 
-# Slower follow-up groups for release candidates or nightly coverage
+# Slower extended coverage batch for pre-release or nightly coverage
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group extended
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group recovery
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group history
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group quick-session
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group extension-attention
+
+# Broader/lab follow-up groups
 ~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group regression
 ~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group media --record-video=always
 ~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group screenshot
 ```
 
-`sim-test` writes E2E run artifacts under `.internal/reports/e2e-runs/<timestamp>/` by default. Set `E2E_ARTIFACT_DIR` or `E2E_DOCKER_LOG_DIR` to an absolute or repo-relative path when a release lane needs deterministic artifact collection. `OPPI_E2E_GROUP` and the release wrapper's `OPPI_RELEASE_E2E_GROUP` select the same groups; `release-smoke` maps to `smoke`, and `full-regression` keeps broad `OppiE2ETests` coverage while release wrappers may add explicit non-blocking lab skips.
+`sim-test` writes E2E run artifacts under `.internal/reports/e2e-runs/<timestamp>/` by default. Set `E2E_ARTIFACT_DIR` or `E2E_DOCKER_LOG_DIR` to an absolute or repo-relative path when a release lane needs repeatable artifact collection. `OPPI_E2E_GROUP` and the release wrapper's `OPPI_RELEASE_E2E_GROUP` select the same groups. `gate`/`release-gate`/`smoke` run `ReleaseGateE2ETests` as the preferred blocking lane. `extended` runs the gate plus recovery, history, quick-session, and extension-attention batches for deeper pre-release coverage. `all` still means the historical broad `OppiE2ETests` suite, and `full-regression` keeps broad coverage for explicit slower checks.
 
 Prerequisites:
 

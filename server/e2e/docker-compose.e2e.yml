@@ -19,6 +19,7 @@ services:
     environment:
       OPPI_DATA_DIR: /data/oppi
       PI_CODING_AGENT_DIR: /data/pi-agent
+      OPPI_LOCAL_SESSIONS_ROOT: /data/pi-agent/sessions
       # No seed — ephemeral test server
       PI_AGENT_SYNC_MODE: skip
       OPPI_PORT: ${E2E_PORT:-17760}
