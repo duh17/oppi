@@ -215,7 +215,7 @@ struct ExpandedComposerView: View {
                             expectedOwner: .expandedComposer
                         )
                     },
-                    accessibilityIdentifier: editorAccessibilityIdentifier
+                    accessibilityIdentifier: editorAccessibilityIdentifier ?? "expanded.composer.editor"
                 )
 
                 if !slashSuggestions.isEmpty {

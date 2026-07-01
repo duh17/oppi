@@ -222,6 +222,7 @@ struct QuickSessionSheet: View {
             .presentationBackground(.regularMaterial)
         }
         .accessibilityLabel(selectedWorkspace.map { "Workspace picker, current workspace \($0.name)" } ?? "Workspace picker")
+        .accessibilityIdentifier("quickSession.workspacePicker")
     }
 
     private func selectWorkspace(_ workspace: Workspace, serverId: String) {
@@ -513,6 +514,7 @@ private struct QuickSessionWorkspacePicker: View {
                                     .buttonStyle(QuickSessionWorkspacePickerRowButtonStyle())
                                     .accessibilityLabel(workspace.name)
                                     .accessibilityValue(isSelected(workspace, serverId: section.id) ? "Selected" : "")
+                                    .accessibilityIdentifier("quickSession.workspace.\(workspace.name)")
                                 }
                             }
                         }

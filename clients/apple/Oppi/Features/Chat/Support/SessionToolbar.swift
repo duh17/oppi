@@ -74,6 +74,7 @@ struct SessionToolbar: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("session.toolbar.model")
 
         Menu {
             ForEach(Self.thinkingOptions, id: \.rawValue) { level in
@@ -95,6 +96,7 @@ struct SessionToolbar: View {
                     .symbolRenderingMode(.hierarchical)
             }
         }
+        .accessibilityIdentifier("session.toolbar.thinking")
     }
 }
 

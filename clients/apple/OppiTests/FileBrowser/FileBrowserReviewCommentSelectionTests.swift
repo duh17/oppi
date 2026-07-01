@@ -214,6 +214,80 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(!HorizontalBackSwipeGesturePolicy.shouldBegin(velocity: CGPoint(x: -800, y: 80)))
     }
 
+    @Test func navigationSwipePolicyAcceptsOnlyDownDominantModalDismissalSwipes() {
+        #expect(NavigationSwipeGesturePolicy.isSwipe(
+            translation: CGSize(width: 12, height: 90),
+            direction: .down
+        ))
+        #expect(!NavigationSwipeGesturePolicy.isSwipe(
+            translation: CGSize(width: 90, height: 12),
+            direction: .down
+        ))
+        #expect(!NavigationSwipeGesturePolicy.isSwipe(
+            translation: CGSize(width: 12, height: -90),
+            direction: .down
+        ))
+        #expect(!NavigationSwipeGesturePolicy.isSwipe(
+            translation: CGSize(width: 90, height: 90),
+            direction: .down
+        ))
+    }
+
+    @Test func navigationSwipePolicyUsesVelocityToAvoidHorizontalPanStealingForModalDismissal() {
+        #expect(NavigationSwipeGesturePolicy.shouldBegin(
+            velocity: CGPoint(x: 80, y: 800),
+            direction: .down
+        ))
+        #expect(!NavigationSwipeGesturePolicy.shouldBegin(
+            velocity: CGPoint(x: 800, y: 80),
+            direction: .down
+        ))
+        #expect(!NavigationSwipeGesturePolicy.shouldBegin(
+            velocity: CGPoint(x: 80, y: -800),
+            direction: .down
+        ))
+    }
+
+    @Test func fullScreenDismissChromeMapsGestureToVisibleArrowDirection() {
+        #expect(FullScreenViewerNavigationChrome.DismissMode.modal.gestureDirection == .down)
+        #expect(FullScreenViewerNavigationChrome.DismissMode.embedded.gestureDirection == .right)
+    }
+
+    @Test func modalFullScreenCodeInstallsDownDismissPanRecognizer() {
+        let controller = FullScreenCodeViewController(
+            content: .plainText(content: "build log", filePath: "log.txt"),
+            presentationMode: .sheet
+        )
+
+        controller.loadViewIfNeeded()
+
+        #expect(rootPanGestureCount(on: controller) == 1)
+    }
+
+    @Test func embeddedFullScreenCodeInstallsRootBackPanRecognizer() {
+        let controller = FullScreenCodeViewController(
+            content: .plainText(content: "build log", filePath: "log.txt"),
+            presentationMode: .embedded(onDismiss: {})
+        )
+
+        controller.loadViewIfNeeded()
+
+        #expect(rootPanGestureCount(on: controller) == 1)
+    }
+
+    @Test func modalImageViewerInstallsDownDismissPanRecognizer() {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 12, height: 12))
+        let image = renderer.image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 12, height: 12))
+        }
+        let controller = FullScreenImageViewController(image: image)
+
+        controller.loadViewIfNeeded()
+
+        #expect(rootPanGestureCount(on: controller) == 1)
+    }
+
     @Test func filePushTransitionMovesNextFileInFromTrailingEdge() {
         #expect(FileBrowserPushTransitionSpec.spec(for: .next) == .init(insertion: .trailing, removal: .leading))
         #expect(FileBrowserPushTransitionSpec.spec(for: .previous) == .init(insertion: .leading, removal: .trailing))
@@ -308,5 +382,9 @@ struct FileBrowserReviewCommentSelectionTests {
         let button = UIButton(type: .system)
         button.addAction(commentAction, for: .touchUpInside)
         button.sendActions(for: .touchUpInside)
+    }
+
+    private func rootPanGestureCount(on controller: UIViewController) -> Int {
+        (controller.view.gestureRecognizers ?? []).filter { $0 is UIPanGestureRecognizer }.count
     }
 }

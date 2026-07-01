@@ -13,6 +13,9 @@ import UIKit
 /// - `.embedded(onDismiss:)`: embedded in a SwiftUI NavigationStack. Shows a
 ///   back button (chevron.backward) that calls the provided closure.
 /// - `.contentOnly`: embedded as pane content without internal navigation chrome.
+///
+/// Swipe behavior follows the visible chrome: modal down-chevron chrome uses a
+/// downward dismissal swipe; embedded/content-only back uses a rightward swipe.
 
 final class FullScreenCodeViewController: UIViewController {
 
@@ -176,10 +179,20 @@ final class FullScreenCodeViewController: UIViewController {
         case .contentOnly(let onBackSwipe):
             guard let onBackSwipe else { return }
             handler = HorizontalBackSwipeGestureInstaller { onBackSwipe() }
-        case .sheet, .embedded:
-            handler = HorizontalBackSwipeGestureInstaller { [weak self] in
-                self?.doneTapped()
-            }
+        case .sheet:
+            handler = HorizontalBackSwipeGestureInstaller(
+                onBack: { [weak self] in
+                    self?.doneTapped()
+                },
+                direction: FullScreenViewerNavigationChrome.DismissMode.modal.gestureDirection
+            )
+        case .embedded:
+            handler = HorizontalBackSwipeGestureInstaller(
+                onBack: { [weak self] in
+                    self?.doneTapped()
+                },
+                direction: FullScreenViewerNavigationChrome.DismissMode.embedded.gestureDirection
+            )
         }
         handler?.install(on: view)
         backSwipeDismissHandler = handler

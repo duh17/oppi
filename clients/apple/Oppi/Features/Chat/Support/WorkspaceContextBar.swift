@@ -859,7 +859,8 @@ struct WorkspaceContextBar: View {
                         fallbackScope: nil,
                         dismissFileDetail: { selectedFile = nil }
                     ),
-                    navigationFiles: displayFiles.map { $0.toReviewFile() }
+                    navigationFiles: displayFiles.map { $0.toReviewFile() },
+                    allowsHorizontalBackSwipe: false
                 )
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {

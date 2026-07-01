@@ -81,6 +81,9 @@ struct ChatView: View {
     @State private var composerTextBeforeRecording: String?
     @State private var pendingAttachments: [PendingAttachment] = []
     @State private var pendingRepoPointers: [PendingFileReference] = []
+#if DEBUG
+    @State private var hasSeededE2EChatImageAttachment = false
+#endif
     @State private var busyStreamingBehavior: StreamingBehavior = .steer
     @State private var messageQueueEditorState = MessageQueueEditorState(queue: .empty)
     @State private var isPreparingAttachments = false
@@ -445,6 +448,9 @@ struct ChatView: View {
             }
             .onAppear {
                 handleAppear()
+#if DEBUG
+                seedE2EChatImageAttachmentIfRequested()
+#endif
                 applyExtensionToolsExpandedState()
             }
             .onChange(of: chatState.extensionEditorTextUpdate?.revision) { _, _ in
@@ -1153,6 +1159,55 @@ struct ChatView: View {
             break
         }
     }
+
+#if DEBUG
+    @MainActor
+    private func seedE2EChatImageAttachmentIfRequested() {
+        guard !hasSeededE2EChatImageAttachment else { return }
+        guard let rawBase64 = ProcessInfo.processInfo.environment["OPPI_E2E_CHAT_PENDING_IMAGE_BASE64"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawBase64.isEmpty else {
+            return
+        }
+
+        hasSeededE2EChatImageAttachment = true
+        let compactBase64 = rawBase64.filter { !$0.isWhitespace }
+        guard let data = Data(base64Encoded: compactBase64, options: .ignoreUnknownCharacters),
+              let image = UIImage(data: data) else {
+            return
+        }
+
+        let configuredMimeType = ProcessInfo.processInfo.environment["OPPI_E2E_CHAT_PENDING_IMAGE_MIME_TYPE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        let mimeType = configuredMimeType.isEmpty ? "image/png" : configuredMimeType
+        let attachment = PendingAttachment(
+            id: "e2e-chat-image",
+            source: .image,
+            displayName: Self.e2eImageDisplayName(mimeType: mimeType),
+            thumbnail: image,
+            imageAttachment: ImageAttachment(data: compactBase64, mimeType: mimeType),
+            localFileData: nil,
+            localMimeType: nil
+        )
+        if !pendingAttachments.contains(where: { $0.id == attachment.id }) {
+            pendingAttachments.append(attachment)
+        }
+    }
+
+    private static func e2eImageDisplayName(mimeType: String) -> String {
+        switch mimeType.split(separator: ";", maxSplits: 1).first?.lowercased() {
+        case "image/jpeg", "image/jpg":
+            return "e2e-image.jpg"
+        case "image/gif":
+            return "e2e-image.gif"
+        case "image/webp":
+            return "e2e-image.webp"
+        default:
+            return "e2e-image.png"
+        }
+    }
+#endif
 
     @MainActor
     private func handleExtensionEditorTextUpdate() {

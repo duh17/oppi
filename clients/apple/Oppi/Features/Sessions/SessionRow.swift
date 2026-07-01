@@ -218,6 +218,7 @@ struct SessionRow: View {
                         .foregroundStyle(.themeFgDim)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .accessibilityIdentifier("session.attentionPreview.\(session.id)")
                 }
 
                 Spacer(minLength: 8)
@@ -252,6 +253,7 @@ struct SessionRow: View {
                     Image(systemName: "questionmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(pillVariant.foregroundColor)
+                        .accessibilityIdentifier("session.attentionBadge.\(session.id)")
                 }
 
                 SessionStatusPill(pillVariant)

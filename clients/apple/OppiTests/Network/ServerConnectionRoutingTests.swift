@@ -89,7 +89,7 @@ struct ServerConnectionRoutingTests {
         #expect(idleTimerUpdates.last == false)
     }
 
-    @Test func applyFetchedSessionStateUsesTerminalRecoverySideEffects() {
+    @Test func applyFetchedReadySessionStatePreservesPendingAskAndStopsRecoveryEffects() {
         let (conn, pipe) = makeTestConnection()
         var idleTimerUpdates: [Bool] = []
         conn.screenAwakeController = ScreenAwakeController(
@@ -119,7 +119,7 @@ struct ServerConnectionRoutingTests {
 
         conn.applyFetchedSessionState(makeTestSession(id: "s1", workspaceId: "w1", status: .ready))
 
-        #expect(conn.askRequestStore.pending(for: "s1") == nil)
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-1")
         #expect(conn.silenceWatchdog.lastEventTime == nil)
         #expect(!conn.screenAwakeController.isPreventingSleep)
         #expect(idleTimerUpdates.last == false)

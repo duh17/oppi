@@ -27,7 +27,7 @@ enum SessionRowPresentationBuilder {
         SessionRowPresentation(
             session: session,
             pendingAskCount: pendingAskCount,
-            attentionText: attentionText(for: pendingAsk),
+            attentionText: attentionText(for: pendingAsk) ?? attentionText(forPendingAskCount: pendingAskCount),
             lineageHint: lineageHint,
             modelSummaries: modelSummaries(for: session),
             unreadCompletionAt: unreadCompletionAt,
@@ -48,6 +48,10 @@ enum SessionRowPresentationBuilder {
         guard !trimmed.isEmpty else { return nil }
         let truncated = trimmed.count > 40 ? String(trimmed.prefix(40)) + "..." : trimmed
         return "question: \(truncated)"
+    }
+
+    static func attentionText(forPendingAskCount pendingAskCount: Int) -> String? {
+        pendingAskCount > 0 ? "question pending" : nil
     }
 
     static func modelSummaries(for session: Session) -> [SessionModelSummary] {

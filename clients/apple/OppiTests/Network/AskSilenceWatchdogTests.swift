@@ -128,7 +128,7 @@ struct AskSilenceWatchdogTests {
         #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-stash")
     }
 
-    @Test func terminalStateClearsAskAndStopsWatchdog() {
+    @Test func readyStatePreservesAskAndStopsWatchdog() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("s1")
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
@@ -139,6 +139,22 @@ struct AskSilenceWatchdogTests {
         #expect(conn.askRequestStore.pending(for: "s1") != nil)
 
         conn.applyFetchedSessionState(makeTestSession(id: "s1", status: .ready))
+
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-1")
+        #expect(conn.silenceWatchdog.lastEventTime == nil)
+    }
+
+    @Test func stoppedStateClearsAskAndStopsWatchdog() {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("s1")
+        conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
+
+        // Set up running state with ask
+        conn.handleActiveSessionUI(.agentStart, sessionId: "s1")
+        conn.handleActiveSessionUI(makeAskMessage(), sessionId: "s1")
+        #expect(conn.askRequestStore.pending(for: "s1") != nil)
+
+        conn.applyFetchedSessionState(makeTestSession(id: "s1", status: .stopped))
 
         #expect(conn.askRequestStore.pending(for: "s1") == nil)
         #expect(conn.silenceWatchdog.lastEventTime == nil)

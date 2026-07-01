@@ -45,7 +45,7 @@ struct ServerMessageEffectsTests {
         #expect(!effects.clearExtensionSurfaceSessionIds.contains("parent"))
     }
 
-    @Test func readyStateKeepsPersistentExtensionSurfaces() {
+    @Test func readyStateKeepsPendingUserInputAndPersistentExtensionSurfaces() {
         let effects = ServerMessageEffects.cleanupEffects(
             for: .state(session: makeTestSession(id: "s1", status: .ready)),
             routedSessionId: "s1",
@@ -53,20 +53,20 @@ struct ServerMessageEffectsTests {
         )
 
         #expect(effects.stopSilenceWatchdog)
-        #expect(effects.clearAskSessionIds == ["s1"])
-        #expect(effects.clearExtensionDialogSessionIds == ["s1"])
+        #expect(effects.clearAskSessionIds.isEmpty)
+        #expect(effects.clearExtensionDialogSessionIds.isEmpty)
         #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
     }
 
-    @Test func readySessionSummaryKeepsPersistentExtensionSurfaces() {
+    @Test func readySessionSummaryKeepsPendingUserInputAndPersistentExtensionSurfaces() {
         let effects = ServerMessageEffects.cleanupEffects(
             for: .sessionSummary(SessionSummary(from: makeTestSession(id: "summary-s1", status: .ready))),
             routedSessionId: "summary-s1",
             isFocusedSession: false
         )
 
-        #expect(effects.clearAskSessionIds == ["summary-s1"])
-        #expect(effects.clearExtensionDialogSessionIds == ["summary-s1"])
+        #expect(effects.clearAskSessionIds.isEmpty)
+        #expect(effects.clearExtensionDialogSessionIds.isEmpty)
         #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
     }
 

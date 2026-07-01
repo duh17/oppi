@@ -44,6 +44,51 @@ extension E2ETestCase {
         }
     }
 
+    /// Returns the E2E workspace id for the named workspace created by the harness.
+    func e2eWorkspaceId(named name: String = "e2e-workspace") throws -> String {
+        let response = try e2eLabAPIJSON(method: "GET", path: "/workspaces")
+        let workspaces = try XCTUnwrap(response["workspaces"] as? [[String: Any]], "Workspaces response missing workspaces")
+        let workspace = try XCTUnwrap(
+            workspaces.first { $0["name"] as? String == name },
+            "Workspace \(name) not found"
+        )
+        return try XCTUnwrap(workspace["id"] as? String, "Workspace \(name) missing id")
+    }
+
+    /// Returns a session snapshot from the E2E server.
+    func e2eSession(sessionId: String) throws -> [String: Any] {
+        let response = try e2eLabAPIJSON(method: "GET", path: "/sessions/\(sessionId)")
+        return try XCTUnwrap(response["session"] as? [String: Any], "Session response missing session")
+    }
+
+    /// Creates a local Pi JSONL session fixture in the E2E server's isolated Pi sessions root.
+    func createLocalPiSessionFixture(
+        directoryName: String,
+        cwd: String,
+        name: String,
+        firstMessage: String,
+        userEntryId: String? = nil
+    ) throws -> (path: String, piSessionId: String) {
+        var body: [String: Any] = [
+            "directoryName": directoryName,
+            "cwd": cwd,
+            "name": name,
+            "firstMessage": firstMessage,
+        ]
+        if let userEntryId {
+            body["userEntryId"] = userEntryId
+        }
+        let response = try e2eLabAPIJSON(
+            method: "POST",
+            path: "/e2e/ui/fixtures/local-pi-session",
+            body: body
+        )
+        return (
+            path: try XCTUnwrap(response["path"] as? String, "Local Pi fixture response missing path"),
+            piSessionId: try XCTUnwrap(response["piSessionId"] as? String, "Local Pi fixture response missing piSessionId")
+        )
+    }
+
     /// Creates a file fixture on the E2E server and returns a host mount path
     /// that can be attached to a workspace.
     func createLabWorkspaceFileFixture(
@@ -150,6 +195,81 @@ extension E2ETestCase {
         )
     }
 
+    func clearE2EHarnessResponses(sessionId: String) throws {
+        _ = try e2eLabAPIJSON(
+            method: "DELETE",
+            path: "/e2e/ui/sessions/\(sessionId)/responses"
+        )
+    }
+
+    func e2eHarnessResponses(sessionId: String) throws -> [[String: Any]] {
+        let response = try e2eLabAPIJSON(
+            method: "GET",
+            path: "/e2e/ui/sessions/\(sessionId)/responses"
+        )
+        return response["responses"] as? [[String: Any]] ?? []
+    }
+
+    func waitForE2EHarnessResponse(
+        sessionId: String,
+        requestId: String,
+        timeout: TimeInterval = 10
+    ) throws -> [String: Any] {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastError: Error?
+
+        while Date() < deadline {
+            do {
+                if let response = try e2eHarnessResponses(sessionId: sessionId)
+                    .first(where: { $0["id"] as? String == requestId }) {
+                    return response
+                }
+            } catch {
+                lastError = error
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+
+        if let lastError {
+            throw lastError
+        }
+        XCTFail("No E2E harness response recorded for \(requestId)")
+        return [:]
+    }
+
+    func settleE2EUIRequest(sessionId: String, requestId: String) throws {
+        try sendE2EHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_settled",
+            "id": requestId,
+        ])
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    }
+
+    func e2eHarnessSubscriberCount(sessionId: String) throws -> Int {
+        let response = try e2eLabAPIJSON(
+            method: "GET",
+            path: "/e2e/ui/sessions/\(sessionId)/subscribers"
+        )
+        return try XCTUnwrap(response["subscriberCount"] as? Int, "Subscriber count response missing count")
+    }
+
+    func waitForE2EHarnessSubscriberCount(
+        sessionId: String,
+        _ expectedCount: Int,
+        timeout: TimeInterval = 5
+    ) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        var latest = -1
+        while Date() < deadline {
+            latest = try e2eHarnessSubscriberCount(sessionId: sessionId)
+            if latest == expectedCount {
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertEqual(latest, expectedCount, "Unexpected E2E subscriber count for \(sessionId)")
+    }
+
     /// Calls the paired E2E server API using the harness token.
     func e2eLabAPIJSON(method: String, path: String, body: [String: Any] = [:]) throws -> [String: Any] {
         let response = try e2eLabAPIData(method: method, path: path, body: body)
@@ -245,19 +365,27 @@ extension E2ETestCase {
     }
 
     private func e2eLabSchemes() -> [String] {
-        let preferred = ProcessInfo.processInfo.environment["E2E_SCHEME"]?.lowercased()
+        if let baseURL = try? E2ELabServerContext.baseURL(),
+           let scheme = baseURL.scheme?.lowercased() {
+            return scheme == "https" ? ["https", "http"] : ["http", "https"]
+        }
+        let preferred = E2ELabServerContext.environmentValue(for: ["E2E_SCHEME", "SIMCTL_CHILD_E2E_SCHEME"])?
+            .lowercased()
         if preferred == "http" { return ["http", "https"] }
         if preferred == "https" { return ["https", "http"] }
         return ["http", "https"]
     }
 
     private func e2eLabURL(path: String, scheme: String) throws -> URL {
-        let port = ProcessInfo.processInfo.environment["E2E_PORT"] ?? "17760"
+        let baseURL = try? E2ELabServerContext.baseURL()
+        let port = baseURL?.port
+            ?? Int(E2ELabServerContext.environmentValue(for: ["E2E_PORT", "SIMCTL_CHILD_E2E_PORT"]) ?? "17760")
+            ?? 17760
         let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
         var components = URLComponents()
         components.scheme = scheme
         components.host = "127.0.0.1"
-        components.port = Int(port)
+        components.port = port
         if let queryStart = normalizedPath.firstIndex(of: "?") {
             components.path = String(normalizedPath[..<queryStart])
             components.percentEncodedQuery = String(normalizedPath[normalizedPath.index(after: queryStart)...])
@@ -272,9 +400,10 @@ extension E2ETestCase {
             return token
         }
 
-        if let token = ProcessInfo.processInfo.environment["OPPI_E2E_DEVICE_TOKEN"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !token.isEmpty {
+        if let token = E2ELabServerContext.environmentValue(for: [
+            "OPPI_E2E_DEVICE_TOKEN",
+            "SIMCTL_CHILD_OPPI_E2E_DEVICE_TOKEN",
+        ]) {
             Self.e2eDeviceTokenCache = token
             return token
         }
@@ -285,6 +414,59 @@ extension E2ETestCase {
         let resolvedToken = try XCTUnwrap(token.isEmpty ? nil : token, "E2E device token file is empty")
         Self.e2eDeviceTokenCache = resolvedToken
         return resolvedToken
+    }
+}
+
+private enum E2ELabServerContext {
+    static func baseURL() throws -> URL {
+        let inviteURLString = try inviteURLString()
+        guard let url = URL(string: inviteURLString),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let inviteValue = components.queryItems?.first(where: { $0.name == "invite" })?.value,
+              let envelopeData = Data(e2eBase64URLEncoded: inviteValue),
+              let envelope = try JSONSerialization.jsonObject(with: envelopeData) as? [String: Any],
+              let signedPayloadValue = envelope["signedPayload"] as? String,
+              let payloadData = Data(e2eBase64URLEncoded: signedPayloadValue),
+              let payload = try JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
+              let scheme = payload["scheme"] as? String,
+              let host = payload["host"] as? String,
+              let port = payload["port"] as? Int else {
+            throw E2ELabAPIError.invalidInvite
+        }
+
+        var baseComponents = URLComponents()
+        baseComponents.scheme = scheme
+        baseComponents.host = host
+        baseComponents.port = port
+        guard let baseURL = baseComponents.url else {
+            throw E2ELabAPIError.invalidInvite
+        }
+        return baseURL
+    }
+
+    static func environmentValue(for keys: [String]) -> String? {
+        for key in keys {
+            if let value = ProcessInfo.processInfo.environment[key]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func inviteURLString() throws -> String {
+        if let url = environmentValue(for: ["PI_E2E_INVITE_URL", "SIMCTL_CHILD_PI_E2E_INVITE_URL"]) {
+            return url
+        }
+
+        let path = "/tmp/oppi-e2e-invite.txt"
+        let url = try String(contentsOfFile: path, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty else {
+            throw E2ELabAPIError.invalidInvite
+        }
+        return url
     }
 }
 
@@ -330,12 +512,15 @@ private final class E2ELabHTTPResultBox: @unchecked Sendable {
 }
 
 private enum E2ELabAPIError: Error, CustomStringConvertible {
+    case invalidInvite
     case missingHTTPResponse
     case httpStatus(Int, String)
     case timeout(String)
 
     var description: String {
         switch self {
+        case .invalidInvite:
+            return "E2E invite URL did not contain a valid signed payload"
         case .missingHTTPResponse:
             return "Missing HTTP response"
         case .httpStatus(let status, let body):
@@ -343,5 +528,18 @@ private enum E2ELabAPIError: Error, CustomStringConvertible {
         case .timeout(let path):
             return "Timed out waiting for \(path)"
         }
+    }
+}
+
+private extension Data {
+    init?(e2eBase64URLEncoded value: String) {
+        var base64 = value
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let padding = (4 - base64.count % 4) % 4
+        if padding > 0 {
+            base64.append(String(repeating: "=", count: padding))
+        }
+        self.init(base64Encoded: base64)
     }
 }

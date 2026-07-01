@@ -60,27 +60,67 @@ extension View {
     }
 }
 
+/// Direction for navigation-style swipe gestures.
+///
+/// Keep the gesture direction aligned with the visible navigation glyph:
+/// `chevron.backward` uses a rightward back swipe, and `chevron.down` uses a
+/// downward dismissal swipe.
+enum NavigationSwipeGestureDirection: Equatable {
+    case right
+    case down
+}
+
+/// Shared policy for navigation and dismissal swipes.
+///
+/// We keep this policy pure and tiny so SwiftUI and UIKit hosts use the same
+/// thresholds. This avoids the earlier split where file preview swipes,
+/// full-screen viewers, and chat timeline each guessed independently and fought
+/// document scrolling.
+enum NavigationSwipeGesturePolicy {
+    static let minimumDistance: CGFloat = 72
+    static let dominanceRatio: CGFloat = 1.35
+
+    static func isSwipe(translation: CGSize, direction: NavigationSwipeGestureDirection) -> Bool {
+        switch direction {
+        case .right:
+            let primary = translation.width
+            let secondary = abs(translation.height)
+            guard primary >= minimumDistance else { return false }
+            return primary > secondary * dominanceRatio
+        case .down:
+            let primary = translation.height
+            let secondary = abs(translation.width)
+            guard primary >= minimumDistance else { return false }
+            return primary > secondary * dominanceRatio
+        }
+    }
+
+    static func shouldBegin(velocity: CGPoint, direction: NavigationSwipeGestureDirection) -> Bool {
+        switch direction {
+        case .right:
+            guard velocity.x > 0 else { return false }
+            return velocity.x > abs(velocity.y) * dominanceRatio
+        case .down:
+            guard velocity.y > 0 else { return false }
+            return velocity.y > abs(velocity.x) * dominanceRatio
+        }
+    }
+}
+
 /// Shared policy for the app-wide horizontal back gesture.
 ///
-/// Left-to-right swipes must mean exactly one thing in Oppi: leave the current
-/// surface. We keep this policy pure and tiny so SwiftUI and UIKit hosts use the
-/// same thresholds. This avoids the earlier split where file preview swipes,
-/// full-screen viewers, and chat timeline each guessed independently and fought
-/// vertical document scrolling.
+/// Left-to-right swipes mean leaving the current pushed surface. Modal viewers
+/// with down-chevron chrome must not install this horizontal recognizer.
 enum HorizontalBackSwipeGesturePolicy {
-    static let minimumHorizontalDistance: CGFloat = 72
-    static let horizontalDominanceRatio: CGFloat = 1.35
+    static let minimumHorizontalDistance = NavigationSwipeGesturePolicy.minimumDistance
+    static let horizontalDominanceRatio = NavigationSwipeGesturePolicy.dominanceRatio
 
     static func isBackSwipe(translation: CGSize) -> Bool {
-        let horizontal = translation.width
-        let vertical = abs(translation.height)
-        guard horizontal >= minimumHorizontalDistance else { return false }
-        return horizontal > vertical * horizontalDominanceRatio
+        NavigationSwipeGesturePolicy.isSwipe(translation: translation, direction: .right)
     }
 
     static func shouldBegin(velocity: CGPoint) -> Bool {
-        guard velocity.x > 0 else { return false }
-        return velocity.x > abs(velocity.y) * horizontalDominanceRatio
+        NavigationSwipeGesturePolicy.shouldBegin(velocity: velocity, direction: .right)
     }
 }
 
@@ -158,14 +198,17 @@ final class HorizontalBackSwipeActionCoordinator {
 @MainActor
 final class HorizontalBackSwipeGestureInstaller: NSObject, UIGestureRecognizerDelegate {
     private let onBack: @MainActor () -> Void
+    private let direction: NavigationSwipeGestureDirection
     private let shouldReceiveTouch: (@MainActor (UITouch) -> Bool)?
     private weak var recognizer: UIPanGestureRecognizer?
 
     init(
         onBack: @escaping @MainActor () -> Void,
+        direction: NavigationSwipeGestureDirection = .right,
         shouldReceiveTouch: (@MainActor (UITouch) -> Bool)? = nil
     ) {
         self.onBack = onBack
+        self.direction = direction
         self.shouldReceiveTouch = shouldReceiveTouch
         super.init()
     }
@@ -188,13 +231,19 @@ final class HorizontalBackSwipeGestureInstaller: NSObject, UIGestureRecognizerDe
     @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
         guard recognizer.state == .ended else { return }
         let translation = recognizer.translation(in: recognizer.view)
-        guard HorizontalBackSwipeGesturePolicy.isBackSwipe(translation: CGSize(width: translation.x, height: translation.y)) else { return }
+        guard NavigationSwipeGesturePolicy.isSwipe(
+            translation: CGSize(width: translation.x, height: translation.y),
+            direction: direction
+        ) else { return }
         onBack()
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
-        return HorizontalBackSwipeGesturePolicy.shouldBegin(velocity: pan.velocity(in: pan.view))
+        return NavigationSwipeGesturePolicy.shouldBegin(
+            velocity: pan.velocity(in: pan.view),
+            direction: direction
+        )
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
@@ -230,6 +279,15 @@ enum FullScreenViewerNavigationChrome {
                 return String(localized: "Done")
             case .embedded:
                 return String(localized: "Back")
+            }
+        }
+
+        var gestureDirection: NavigationSwipeGestureDirection {
+            switch self {
+            case .modal:
+                return .down
+            case .embedded:
+                return .right
             }
         }
     }
