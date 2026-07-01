@@ -1,5 +1,5 @@
 import { homedir, tmpdir } from "node:os";
-import { extname, join, resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 
 import {
@@ -90,6 +90,11 @@ export type SessionOverallDiffResult =
 type CurrentFileTextResult =
   | { kind: "ok"; text: string }
   | Exclude<SessionOverallDiffResult, { kind: "ok" | "trace-not-found" | "mutations-not-found" }>;
+
+type ResolvedTouchedFilePath = {
+  realPath: string;
+  requestedAbsolutePath: string;
+};
 
 export interface SessionChangesResult {
   workspaceId: string;
@@ -389,17 +394,25 @@ export class SessionTraceService {
       return { kind: "sensitive-path" };
     }
 
-    const resolvedPath = await this.resolveTouchedFilePath(params.workspace, reqPath);
-    if (!resolvedPath) {
+    const resolvedFile = await this.resolveTouchedFilePath(params.workspace, reqPath);
+    if (!resolvedFile) {
       return { kind: "file-not-found" };
     }
+    const resolvedPath = resolvedFile.realPath;
 
     const readableWorkspaceRoots = await this.resolveReadableWorkspaceRoots(params.workspace);
     if (readableWorkspaceRoots.length === 0) {
       return { kind: "workspace-root-not-found" };
     }
 
-    if (!readableWorkspaceRoots.some((root) => isPathWithinRoot(resolvedPath, root))) {
+    const isUnderReadableWorkspaceRoot = readableWorkspaceRoots.some((root) =>
+      isPathWithinRoot(resolvedPath, root),
+    );
+    const isWorkspaceRoutedTouchedPath = readableWorkspaceRoots.some((root) =>
+      isPathWithinRoot(resolvedFile.requestedAbsolutePath, root),
+    );
+
+    if (!isUnderReadableWorkspaceRoot && !isWorkspaceRoutedTouchedPath) {
       const sessionCreatedFiles = params.session.changeStats?._sessionCreatedFiles ?? [];
       const isSessionCreatedTempFile =
         sessionCreatedFiles.includes(reqPath) &&
@@ -513,19 +526,28 @@ export class SessionTraceService {
   private async resolveTouchedFilePath(
     workspace: Workspace,
     reqPath: string,
-  ): Promise<string | null> {
+  ): Promise<ResolvedTouchedFilePath | null> {
     let absolutePath: string;
     if (reqPath.startsWith("/")) {
-      absolutePath = reqPath;
+      absolutePath = resolve(reqPath);
     } else if (reqPath.startsWith("~")) {
-      absolutePath = reqPath.replace(/^~(?=\/|$)/, homedir());
+      absolutePath = resolve(reqPath.replace(/^~(?=\/|$)/, homedir()));
     } else {
       const workspaceRoot = resolveSdkSessionCwd(workspace);
-      absolutePath = join(workspaceRoot, reqPath);
+      let workspaceRouteRoot = workspaceRoot;
+      try {
+        workspaceRouteRoot = await realpath(workspaceRoot);
+      } catch {
+        // Keep the configured root; the later realpath call reports missing files.
+      }
+      absolutePath = resolve(workspaceRouteRoot, reqPath);
     }
 
     try {
-      return await realpath(absolutePath);
+      return {
+        realPath: await realpath(absolutePath),
+        requestedAbsolutePath: absolutePath,
+      };
     } catch {
       return null;
     }

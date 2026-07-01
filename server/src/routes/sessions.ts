@@ -370,6 +370,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
           model: requestedModel,
           worktreeId: worktreeSelection.worktreeId,
         });
+        ctx.searchIndex?.indexSession(result.session.id);
         ctx.appEvents?.emitSessionImported(result.session);
         helpers.json(res, { session: result.session }, result.created ? 201 : 200);
       } catch (error: unknown) {

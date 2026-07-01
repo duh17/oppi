@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -14,6 +15,7 @@ import {
   buildExtensionUIRequestMessage,
   normalizeExtensionUIWidgetNativeSurface,
 } from "../extension-ui-contract.js";
+import { discoverLocalSessions, getPiSessionsRoot } from "../local-sessions.js";
 import { hasToolMediaDetails } from "../session-agent-event-media.js";
 import { materializeToolMediaDetails } from "../session-attachments.js";
 import type { AskQuestion, ServerMessage } from "../types.js";
@@ -57,9 +59,34 @@ export function createE2EUIHarnessRoutes(
       return true;
     }
 
+    const localPiSessionFixtureMatch = path.match(/^\/e2e\/ui\/fixtures\/local-pi-session$/);
+    if (localPiSessionFixtureMatch) {
+      if (method !== "POST") {
+        helpers.error(res, 405, "Method not allowed");
+        return true;
+      }
+      await handleLocalPiSessionFixture(ctx, helpers, req, res);
+      return true;
+    }
+
     const responseMatch = path.match(/^\/e2e\/ui\/sessions\/([^/]+)\/responses$/);
     if (responseMatch) {
       handleHarnessResponses(helpers, decodeURIComponent(responseMatch[1]), method, res);
+      return true;
+    }
+
+    const subscriberMatch = path.match(/^\/e2e\/ui\/sessions\/([^/]+)\/subscribers$/);
+    if (subscriberMatch) {
+      if (method !== "GET") {
+        helpers.error(res, 405, "Method not allowed");
+        return true;
+      }
+      const sessionId = decodeURIComponent(subscriberMatch[1]);
+      helpers.json(res, {
+        ok: true,
+        sessionId,
+        subscriberCount: ctx.sessions.getSubscriberCount(sessionId),
+      });
       return true;
     }
 
@@ -171,6 +198,97 @@ async function handleGitWorktreeFixture(
   });
 }
 
+async function handleLocalPiSessionFixture(
+  ctx: RouteContext,
+  helpers: RouteHelpers,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = await helpers.parseBody<Record<string, unknown>>(req, {
+    maxBytes: MAX_E2E_FIXTURE_BODY_BYTES,
+  });
+  const directoryName = safePathSegment(stringField(body.directoryName));
+  const cwd = stringField(body.cwd)?.trim();
+  const sessionId = safePathSegment(stringField(body.sessionId) ?? `e2e-${randomUUID()}`);
+  const rawFilename = stringField(body.filename) ?? `${sessionId}.jsonl`;
+  const filename = safePathSegment(
+    rawFilename.endsWith(".jsonl") ? rawFilename : `${rawFilename}.jsonl`,
+  );
+
+  if (!directoryName || !cwd || !sessionId || !filename) {
+    helpers.error(
+      res,
+      400,
+      "Fixture requires directoryName, cwd, and safe optional sessionId/filename",
+    );
+    return;
+  }
+
+  const infoEntryId = safePathSegment(stringField(body.infoEntryId) ?? randomTraceEntryId());
+  const modelEntryId = safePathSegment(stringField(body.modelEntryId) ?? randomTraceEntryId());
+  const userEntryId = safePathSegment(stringField(body.userEntryId) ?? randomTraceEntryId());
+  const assistantEntryId = safePathSegment(
+    stringField(body.assistantEntryId) ?? randomTraceEntryId(),
+  );
+  if (!infoEntryId || !modelEntryId || !userEntryId || !assistantEntryId) {
+    helpers.error(res, 400, "Fixture trace entry ids are invalid");
+    return;
+  }
+
+  const name = stringField(body.name)?.trim() || "E2E Local Pi Session";
+  const firstMessage =
+    stringField(body.firstMessage)?.trim() || `Imported local Pi fixture ${sessionId}`;
+  const assistantMessage =
+    stringField(body.assistantMessage)?.trim() || "Imported local session fixture.";
+  const model = stringField(body.model)?.trim() || "omlx/e2e-local-model";
+  const slashIndex = model.indexOf("/");
+  const provider = slashIndex > 0 ? model.slice(0, slashIndex) : "omlx";
+  const modelId = slashIndex > 0 ? model.slice(slashIndex + 1) : model;
+  const timestamp = new Date().toISOString();
+  const root = getPiSessionsRoot();
+  const sessionDir = join(root, directoryName);
+  const filePath = join(sessionDir, filename);
+  const lines = [
+    { type: "session", id: sessionId, cwd, timestamp, version: 3 },
+    { type: "session_info", id: infoEntryId, parentId: null, timestamp, name },
+    {
+      type: "model_change",
+      id: modelEntryId,
+      parentId: infoEntryId,
+      timestamp,
+      provider,
+      modelId,
+    },
+    {
+      type: "message",
+      id: userEntryId,
+      parentId: modelEntryId,
+      timestamp,
+      message: { role: "user", content: firstMessage },
+    },
+    {
+      type: "message",
+      id: assistantEntryId,
+      parentId: userEntryId,
+      timestamp,
+      message: { role: "assistant", content: assistantMessage },
+    },
+  ];
+
+  await mkdir(sessionDir, { recursive: true, mode: 0o700 });
+  await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, {
+    mode: 0o600,
+  });
+
+  await discoverLocalSessions(undefined, { dataDir: ctx.storage.getDataDir() });
+
+  helpers.json(res, { ok: true, path: realpathSync(filePath), piSessionId: sessionId, cwd, name });
+}
+
+function randomTraceEntryId(): string {
+  return randomUUID().replace(/-/g, "").slice(0, 8);
+}
+
 function runFixtureGit(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
     cwd,
@@ -250,11 +368,13 @@ async function handleHarnessMessage(
 
   message = materializeHarnessToolMedia(ctx, sessionId, message);
 
+  let subscriberCount: number;
   if (message.type === "extension_ui_request") {
     recordSyntheticE2EUIRequest(sessionId, message.id);
+    subscriberCount = ctx.sessions.injectExtensionUIRequest(sessionId, message);
+  } else {
+    subscriberCount = ctx.sessions.broadcastSessionMessage(sessionId, message);
   }
-
-  const subscriberCount = ctx.sessions.broadcastSessionMessage(sessionId, message);
   helpers.json(res, { ok: true, subscriberCount, message });
 }
 

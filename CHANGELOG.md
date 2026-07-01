@@ -40,6 +40,20 @@ Example:
 
 No unreleased public changes yet.
 
+## [0.43.1] - 2026-06-30
+
+### Notes
+
+- Server-only npm patch; no Apple client version or protocol changes.
+
+### Changed
+
+- **Server:** Updated bundled Pi support to `0.80.3`.
+
+### Fixed
+
+- **Server:** Fixed session file previews for touched files that resolve through workspace symlinks while keeping outside-workspace paths blocked.
+
 ## [0.43.0] - 2026-06-30
 
 ### Notes
@@ -207,7 +221,8 @@ No unreleased public changes yet.
 
 - Last public GitHub release before adopting this changelog. See the GitHub release and commit history for details.
 
-[Unreleased]: https://github.com/duh17/oppi/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/duh17/oppi/compare/v0.43.1...HEAD
+[0.43.1]: https://github.com/duh17/oppi/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/duh17/oppi/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/duh17/oppi/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/duh17/oppi/compare/v0.4.0...v0.41.0

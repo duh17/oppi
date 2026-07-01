@@ -37,6 +37,7 @@ import { createLogger } from "./logger.js";
 import {
   buildPendingExtensionUIRequestMessages,
   cancelPendingAskRequest,
+  handleExtensionUIRequest,
   respondToExtensionUIRequest,
   type ExtensionUIResponse,
 } from "./extension-ui-state.js";
@@ -473,6 +474,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.active.has(this.sessionKey(sessionId));
   }
 
+  /** Number of bound session-stream subscribers for the active session. */
+  getSubscriberCount(sessionId: string): number {
+    return this.active.get(this.sessionKey(sessionId))?.subscribers.size ?? 0;
+  }
+
   /** Set of session IDs currently held in memory (genuinely running). */
   getActiveSessionIds(): Set<string> {
     const ids = new Set<string>();
@@ -489,6 +495,23 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /** Return replayable extension UI notifications and pending dialogs for stream re-subscribe. */
   getPendingUIRequestMessages(sessionId: string): ServerMessage[] {
     return buildPendingExtensionUIRequestMessages(this.active.get(this.sessionKey(sessionId)));
+  }
+
+  /** Inject a synthetic extension UI request into runtime state, then broadcast it. */
+  injectExtensionUIRequest(
+    sessionId: string,
+    message: Extract<ServerMessage, { type: "extension_ui_request" }>,
+  ): number {
+    const key = this.sessionKey(sessionId);
+    const active = this.active.get(key);
+    if (!active) {
+      return 0;
+    }
+
+    handleExtensionUIRequest(active, message, {
+      broadcast: (broadcastMessage) => this.broadcast(key, broadcastMessage),
+    });
+    return active.subscribers.size;
   }
 
   /** Cancel a pending ask request. */

@@ -26,7 +26,8 @@ import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import type { LocalSession, Session } from "./types.js";
 
 /** Fixed root of pi agent sessions. */
-const PI_SESSIONS_ROOT = join(homedir(), ".pi", "agent", "sessions");
+const PI_SESSIONS_ROOT =
+  process.env.OPPI_LOCAL_SESSIONS_ROOT?.trim() || join(homedir(), ".pi", "agent", "sessions");
 
 /**
  * Return the canonical pi sessions root, resolving symlinks.
