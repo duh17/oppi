@@ -582,15 +582,30 @@ final class ChatSessionManager {
                     }
                 }
 
-                // Seed seq tracking from the server's current position.
-                // History reload runs independently — no catch-up interaction.
+                // Fill a durable-event gap before treating the first visible stream as current
+                // when there is no cached timeline to reconcile from. Cache-backed re-entry uses
+                // the fresh trace reload path; empty-cache relaunches need the server ring for
+                // events emitted while the app had no bound-session subscriber.
                 if let currentSeq = inboundMeta?.currentSeq {
-                    connection.sessionStreamCoordinator.seedLastSeenSeq(
-                        sessionId: sessionId,
-                        value: currentSeq
-                    )
-                    persistLastSeenSeq(currentSeq)
-                    log.warning("First connect: seeded seq=\(currentSeq) for \(self.sessionId)")
+                    let canFetchCatchUp = _loadCatchUpForTesting != nil || connection.apiClient != nil
+                    let trackedSeq = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
+                    let hasCachedTimeline = (latestTraceSignature?.eventCount ?? 0) > 0
+                    if canFetchCatchUp, !hasCachedTimeline, currentSeq != trackedSeq {
+                        let outcome = await performCatchUpIfNeeded(
+                            currentSeq: currentSeq,
+                            generation: generation,
+                            connection: connection,
+                            sessionStore: sessionStore
+                        )
+                        log.warning("First connect seq=\(currentSeq) catchUp=\(String(describing: outcome), privacy: .public) for \(self.sessionId)")
+                    } else {
+                        connection.sessionStreamCoordinator.seedLastSeenSeq(
+                            sessionId: sessionId,
+                            value: currentSeq
+                        )
+                        persistLastSeenSeq(currentSeq)
+                        log.warning("First connect: seeded seq=\(currentSeq) for \(self.sessionId)")
+                    }
                 }
 
                 // Request freshest server session state only once the stream is connected.

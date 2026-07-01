@@ -149,9 +149,9 @@ enum ServerMessageEffects {
             if isFocusedSession && subjectSessionId == sessionId {
                 effects.stopSilenceWatchdog = true
             }
-            effects.clearAskSessionIds.insert(subjectSessionId)
-            effects.clearExtensionDialogSessionIds.insert(subjectSessionId)
             if session.status != .ready {
+                effects.clearAskSessionIds.insert(subjectSessionId)
+                effects.clearExtensionDialogSessionIds.insert(subjectSessionId)
                 effects.clearExtensionSurfaceSessionIds.insert(subjectSessionId)
             }
 
@@ -160,9 +160,9 @@ enum ServerMessageEffects {
             if isFocusedSession && subjectSessionId == sessionId {
                 effects.stopSilenceWatchdog = true
             }
-            effects.clearAskSessionIds.insert(subjectSessionId)
-            effects.clearExtensionDialogSessionIds.insert(subjectSessionId)
             if summary.status != .ready {
+                effects.clearAskSessionIds.insert(subjectSessionId)
+                effects.clearExtensionDialogSessionIds.insert(subjectSessionId)
                 effects.clearExtensionSurfaceSessionIds.insert(subjectSessionId)
             }
 

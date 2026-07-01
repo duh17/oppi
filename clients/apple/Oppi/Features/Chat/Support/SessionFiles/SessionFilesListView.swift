@@ -1,5 +1,16 @@
 import SwiftUI
 
+enum SessionFileOpenMode: Equatable {
+    case review
+    case sessionTouched
+}
+
+enum SessionFileOpenRouting {
+    static func mode(path _: String, gitFile: GitFileStatus?) -> SessionFileOpenMode {
+        gitFile == nil ? .sessionTouched : .review
+    }
+}
+
 /// Displays the list of files touched (written/edited) by a session.
 ///
 /// Each row shows the file icon, filename, and parent path.
@@ -8,7 +19,7 @@ import SwiftUI
 ///
 /// Tapping a row navigates to the appropriate detail view:
 /// - In-workspace files with git changes → diff + current view
-/// - All other files → content view with HTML preview support
+/// - Other touched files → session raw content view, so ignored or symlinked paths remain openable
 struct SessionFilesListView: View {
     let sessionId: String
     let workspaceId: String?
@@ -102,9 +113,8 @@ struct SessionFilesListView: View {
         let groups = displayDirectoryGroups
         let orderedPaths = groups.flatMap { $0.files.map(\.path) }
         let reviewNavigationFiles = reviewNavigationFiles(for: orderedPaths)
-        let sessionTouchedNavigationContext = navigationContext(for: orderedPaths.filter(isAbsolutePath))
-        let workspaceFileNavigationContext = navigationContext(for: orderedPaths.filter { path in
-            !isAbsolutePath(path) && gitFilesByPath[path] == nil
+        let sessionTouchedNavigationContext = navigationContext(for: orderedPaths.filter { path in
+            SessionFileOpenRouting.mode(path: path, gitFile: gitFilesByPath[path]) == .sessionTouched
         })
 
         Group {
@@ -129,8 +139,7 @@ struct SessionFilesListView: View {
                                         path: file.path,
                                         matchPositions: file.matchPositions,
                                         reviewNavigationFiles: reviewNavigationFiles,
-                                        sessionTouchedNavigationContext: sessionTouchedNavigationContext,
-                                        workspaceFileNavigationContext: workspaceFileNavigationContext
+                                        sessionTouchedNavigationContext: sessionTouchedNavigationContext
                                     )
                                     .listRowBackground(Color.themeBgDark)
                                     .listRowSeparatorTint(Color.themeComment.opacity(0.15))
@@ -201,8 +210,7 @@ struct SessionFilesListView: View {
         path: String,
         matchPositions: [Int] = [],
         reviewNavigationFiles: [WorkspaceReviewFile],
-        sessionTouchedNavigationContext: FileBrowserNavigationContext,
-        workspaceFileNavigationContext: FileBrowserNavigationContext
+        sessionTouchedNavigationContext: FileBrowserNavigationContext
     ) -> some View {
         let icon = FileIcon.forPath(path)
         let fileName = path.lastPathComponentForDisplay
@@ -211,7 +219,9 @@ struct SessionFilesListView: View {
         let (filePositions, parentPositions) = Self.splitPositions(matchPositions, in: path)
 
         Group {
-            if let workspaceId, let gitFile {
+            if let workspaceId, let gitFile,
+               SessionFileOpenRouting.mode(path: path, gitFile: gitFile) == .review
+            {
                 // Git-changed file → push to diff/review detail (needs tabs + actions)
                 NavigationLink {
                     WorkspaceReviewFileDetailView(
@@ -230,24 +240,13 @@ struct SessionFilesListView: View {
                 }
             } else if let workspaceId {
                 NavigationLink {
-                    Group {
-                        if isAbsolutePath(path) {
-                            SessionTouchedFileContentView(
-                                workspaceId: workspaceId,
-                                sessionId: sessionId,
-                                filePath: path,
-                                fileName: path.lastPathComponentForDisplay,
-                                navigationContext: sessionTouchedNavigationContext
-                            )
-                        } else {
-                            FileBrowserContentView(
-                                workspaceId: workspaceId,
-                                filePath: path,
-                                fileName: path.lastPathComponentForDisplay,
-                                navigationContext: workspaceFileNavigationContext
-                            )
-                        }
-                    }
+                    SessionTouchedFileContentView(
+                        workspaceId: workspaceId,
+                        sessionId: sessionId,
+                        filePath: path,
+                        fileName: path.lastPathComponentForDisplay,
+                        navigationContext: sessionTouchedNavigationContext
+                    )
                     .environment(\.reviewCommentSelectionScope, makeFileDetailReviewCommentScope())
                 } label: {
                     fileRowContent(
@@ -440,12 +439,6 @@ struct SessionFilesListView: View {
             }
         }
         return result
-    }
-
-    // MARK: - Helpers
-
-    private func isAbsolutePath(_ path: String) -> Bool {
-        path.hasPrefix("/") || path.hasPrefix("~")
     }
 }
 

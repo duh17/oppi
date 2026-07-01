@@ -257,6 +257,7 @@ struct WorkspaceStoppedSessionsSection: View {
             } label: {
                 LocalSessionRow(session: local)
             }
+            .accessibilityIdentifier("localSession.nav.\(local.piSessionId)")
             .listRowBackground(Color.themeBg)
             .disabled(isImportingLocal)
         }

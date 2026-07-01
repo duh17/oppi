@@ -45,6 +45,7 @@ struct WorkspaceReviewFileDetailView: View {
     let file: WorkspaceReviewFile
     var reviewCommentSelectionScopeOverride: ReviewCommentSelectionScope? = nil
     var navigationFiles: [WorkspaceReviewFile] = []
+    var allowsHorizontalBackSwipe = true
 
     @Environment(\.apiClient) private var apiClient
     @Environment(\.dismiss) private var dismiss
@@ -121,9 +122,9 @@ struct WorkspaceReviewFileDetailView: View {
                 content(diff: diff)
             }
         }
-        .environment(\.horizontalBackSwipeAction, { dismiss() })
+        .environment(\.horizontalBackSwipeAction, horizontalBackSwipeAction)
         .filePushTransition(id: currentFile.path, direction: fileTransitionDirection)
-        .horizontalBackSwipeGesture(isEnabled: parentOwnsBackSwipe) { dismiss() }
+        .horizontalBackSwipeGesture(isEnabled: allowsHorizontalBackSwipe && parentOwnsBackSwipe) { dismiss() }
         .overlay(alignment: .bottom) {
             reviewNavigatorControls
                 .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
@@ -227,6 +228,11 @@ struct WorkspaceReviewFileDetailView: View {
         .disabled(toolbarState.promptTemplatesDisabled)
         .accessibilityLabel(toolbarState.promptTemplatesAccessibilityLabel)
         .accessibilityIdentifier("review-file.prompt-templates")
+    }
+
+    private var horizontalBackSwipeAction: (@MainActor @Sendable () -> Void)? {
+        guard allowsHorizontalBackSwipe else { return nil }
+        return { dismiss() }
     }
 
     private var parentOwnsBackSwipe: Bool {

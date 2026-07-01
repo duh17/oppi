@@ -143,6 +143,7 @@ struct WorkspaceDetailView: View {
     @State private var workspaceRefreshGeneration = 0
     @State private var hasPresentedWorkspaceOnce = false
     @State private var hasAutoCreatedE2ESession = false
+    @State private var hasAutoOpenedE2ESession = false
     @State private var workspaceLoad: WorkspaceLoadMeasurement?
 
     private struct WorkspaceLoadMeasurement {
@@ -412,6 +413,7 @@ struct WorkspaceDetailView: View {
                             sessionRow(for: session)
                         }
                         .accessibilityIdentifier("session.nav.\(session.id)")
+                        .accessibilityValue(sessionRowAccessibilityValue(for: session))
                         .buttonStyle(.plain)
                         .listRowBackground(Color.themeBg)
                         .swipeActions(edge: .trailing) {
@@ -436,6 +438,7 @@ struct WorkspaceDetailView: View {
                             sessionRow(for: session)
                         }
                         .accessibilityIdentifier("session.nav.\(session.id)")
+                        .accessibilityValue(sessionRowAccessibilityValue(for: session))
                         .buttonStyle(.plain)
                         .listRowBackground(Color.themeBg)
                         .swipeActions(edge: .trailing) {
@@ -592,6 +595,7 @@ struct WorkspaceDetailView: View {
             refreshGitStatusContextBar()
 
             await refreshWorkspaceData()
+            autoOpenE2ESessionIfRequested()
             await autoCreateE2ESessionIfRequested()
         }
         .task(id: workspaceRefreshPollingTaskId) {
@@ -653,6 +657,10 @@ struct WorkspaceDetailView: View {
             unreadCompletionAt: sessionStore.unreadCompletionDate(for: session.id),
             searchSnippet: searchStore.snippetsBySessionId[session.id]
         )
+    }
+
+    private func sessionRowAccessibilityValue(for session: Session) -> String {
+        pendingAskCount(for: session.id) > 0 ? "Question pending" : ""
     }
 
     private func pendingAskCount(for sessionId: String) -> Int {
@@ -854,6 +862,21 @@ struct WorkspaceDetailView: View {
         workspaceLoad = nil
     }
 
+    private func autoOpenE2ESessionIfRequested() {
+        guard !hasAutoOpenedE2ESession,
+              let sessionId = ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_SESSION_ID"],
+              !sessionId.isEmpty,
+              workspace.name == ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"]
+        else { return }
+
+        hasAutoOpenedE2ESession = true
+        if let session = workspaceSessions.first(where: { $0.id == sessionId }) {
+            openSession(session)
+        } else {
+            routeToSession(sessionId)
+        }
+    }
+
     /// Create a new session in this workspace.
     ///
     /// Sandbox VM errors (QEMU unavailable, VM start failure) return as
@@ -861,6 +884,7 @@ struct WorkspaceDetailView: View {
     /// error alert — no special handling needed.
     private func autoCreateE2ESessionIfRequested() async {
         guard !hasAutoCreatedE2ESession,
+              (ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_SESSION_ID"] ?? "").isEmpty,
               ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_CREATE_SESSION"] == "1",
               workspace.name == ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"]
         else { return }
@@ -948,13 +972,24 @@ struct WorkspaceDetailView: View {
             return
         }
 
+        let workspaceTarget = WorkspaceNavTarget(serverId: currentServerId, workspace: currentWorkspace)
+        let sessionTarget = WorkspaceSessionNavTarget(
+            serverId: currentServerId,
+            sessionId: sessionId,
+            workspaceId: currentWorkspace.id
+        )
+
+        if navigation.workspaceNavigationPresentation == .stack {
+            var path = NavigationPath()
+            path.append(workspaceTarget)
+            path.append(sessionTarget)
+            navigation.workspacePath = path
+            return
+        }
+
         navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
-                serverId: currentServerId,
-                sessionId: sessionId,
-                workspaceId: currentWorkspace.id
-            ),
-            workspace: WorkspaceNavTarget(serverId: currentServerId, workspace: currentWorkspace)
+            sessionTarget,
+            workspace: workspaceTarget
         )
     }
 

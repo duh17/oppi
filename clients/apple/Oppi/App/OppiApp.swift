@@ -172,6 +172,11 @@ struct OppiApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+#if DEBUG
+        if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil {
+            UIView.setAnimationsEnabled(false)
+        }
+#endif
         FeatureEducationTips.configure()
     }
 

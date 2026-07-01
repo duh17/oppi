@@ -9,7 +9,7 @@ final class FullScreenImageViewController: UIViewController {
     private let palette: ThemePalette
     private let scrollView = UIScrollView()
     private let imageView: UIImageView
-    private var backSwipeDismissHandler: HorizontalBackSwipeGestureInstaller?
+    private var swipeDismissHandler: HorizontalBackSwipeGestureInstaller?
     private var savedFeedbackLabel: UILabel?
 
     init(image: UIImage) {
@@ -27,7 +27,7 @@ final class FullScreenImageViewController: UIViewController {
         view.backgroundColor = UIColor(palette.bgDark)
 
         setupNavigationChrome()
-        setupBackSwipeDismiss()
+        setupSwipeDismiss()
         setupScrollView()
         setupImageView()
         setupConstraints()
@@ -50,12 +50,15 @@ final class FullScreenImageViewController: UIViewController {
         // bar items as floating glass pills. See FullScreenViewerChrome.
     }
 
-    private func setupBackSwipeDismiss() {
-        let handler = HorizontalBackSwipeGestureInstaller { [weak self] in
-            self?.dismiss(animated: true)
-        }
+    private func setupSwipeDismiss() {
+        let handler = HorizontalBackSwipeGestureInstaller(
+            onBack: { [weak self] in
+                self?.dismiss(animated: true)
+            },
+            direction: FullScreenViewerNavigationChrome.DismissMode.modal.gestureDirection
+        )
         handler.install(on: view)
-        backSwipeDismissHandler = handler
+        swipeDismissHandler = handler
     }
 
     private func setupScrollView() {

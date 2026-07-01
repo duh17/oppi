@@ -619,7 +619,7 @@ struct AskRequestTests {
         }
     }
 
-    @Test @MainActor func inactiveTerminalStateClearsPendingAskForInactiveSession() {
+    @Test @MainActor func inactiveReadyStatePreservesPendingAskForInactiveSession() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("active")
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .busy))
@@ -638,6 +638,33 @@ struct AskRequestTests {
             seq: 1,
             currentSeq: nil,
             message: .state(session: makeTestSession(id: "s2", status: .ready))
+        ))
+
+        #expect(conn.askRequestStore.pending(for: "s2")?.id == "ask-state")
+
+        conn.focusSession("s2")
+        #expect(conn.askRequestStore.pending(for: "s2")?.id == "ask-state")
+    }
+
+    @Test @MainActor func inactiveStoppedStateClearsPendingAskForInactiveSession() {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("active")
+        conn.sessionStore.upsert(makeTestSession(id: "s2", status: .busy))
+
+        let ask = AskRequest(
+            id: "ask-state",
+            sessionId: "s2",
+            questions: [AskQuestion(id: "q1", question: "Q", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+        conn.askRequestStore.set(ask, for: "s2")
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "s2",
+            seq: 1,
+            currentSeq: nil,
+            message: .state(session: makeTestSession(id: "s2", status: .stopped))
         ))
 
         #expect(conn.askRequestStore.pending(for: "s2") == nil)

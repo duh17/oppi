@@ -160,6 +160,7 @@ struct ModelPickerSheet: View {
             .listRowBackground(
                 isCurrent ? Color.themeBlue.opacity(0.12) : Color.themeBg
             )
+            .accessibilityIdentifier("model.picker.row.\(fullId(model))")
     }
 
     private func isCurrentModel(_ model: ModelInfo) -> Bool {

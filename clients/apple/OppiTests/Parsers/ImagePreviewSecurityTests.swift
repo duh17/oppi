@@ -72,6 +72,21 @@ struct ImagePreviewSecurityTests {
     }
 
     @MainActor
+    @Test("fullscreen data image preview installs down-swipe dismissal on modal chrome")
+    func fullscreenDataImagePreviewInstallsDownSwipeDismissalOnModalChrome() {
+        let controller = FullScreenImageDataPreviewViewController(
+            data: Self.svgData,
+            mimeType: "image/svg+xml",
+            title: "Preview"
+        )
+
+        controller.loadViewIfNeeded()
+
+        let rootPanCount = (controller.view.gestureRecognizers ?? []).filter { $0 is UIPanGestureRecognizer }.count
+        #expect(rootPanCount == 1)
+    }
+
+    @MainActor
     @Test("fullscreen SVG preview supports pinch zoom")
     func fullscreenSVGPreviewSupportsPinchZoom() throws {
         let controller = FullScreenImageDataPreviewViewController(

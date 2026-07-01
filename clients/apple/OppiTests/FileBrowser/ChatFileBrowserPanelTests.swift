@@ -52,6 +52,28 @@ struct ChatFileBrowserPanelTests {
         #expect(tallHeight == 460)
     }
 
+    @Test func changedFileRoutingOpensNonGitRelativePathsThroughSessionRawEndpoint() {
+        #expect(
+            SessionFileOpenRouting.mode(
+                path: ".pi/skills/oppi-dev/scripts/oppi-workflow.sh",
+                gitFile: nil
+            ) == .sessionTouched
+        )
+    }
+
+    @Test func changedFileRoutingKeepsGitFilesOnReviewDetail() {
+        let gitFile = GitFileStatus(
+            status: " M",
+            path: "clients/apple/Oppi/Features/Chat/ChatView.swift",
+            addedLines: 3,
+            removedLines: 1
+        )
+
+        #expect(
+            SessionFileOpenRouting.mode(path: gitFile.path, gitFile: gitFile) == .review
+        )
+    }
+
     private struct DefaultsFixture {
         let suiteName: String
         let defaults: UserDefaults
