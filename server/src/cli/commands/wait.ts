@@ -1,8 +1,8 @@
-/* eslint-disable no-console, local/structured-log-format */
+/* eslint-disable no-console */
 import * as c from "../../ansi.js";
 import type { Storage } from "../../storage.js";
 import { localApiRequest, type LocalApiHostResolvers } from "../local-api-client.js";
-import { writeJsonEnvelope } from "../output.js";
+import { codeValue, printDetails, writeJsonEnvelope } from "../output.js";
 import { apiStatus } from "../resources.js";
 
 type WaitSession = {
@@ -46,10 +46,10 @@ export async function cmdWait(
         if (jsonOutput) {
           writeJsonEnvelope({ ok: true, data: { session, matchedStatus: expectedStatus } });
         } else {
-          console.log(c.green("  ✓ Wait condition met"));
-          console.log(`  Session: ${c.cyan(session.id)}`);
-          console.log(`  Status:  ${session.status ?? "unknown"}`);
-          console.log("");
+          printDetails("✓ Wait condition met", [
+            ["Session", codeValue(session.id)],
+            ["Status", session.status ?? "unknown"],
+          ]);
         }
         return;
       }

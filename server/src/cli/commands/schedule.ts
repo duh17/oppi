@@ -1,4 +1,4 @@
-/* eslint-disable no-console, local/structured-log-format */
+/* eslint-disable no-console */
 import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
@@ -8,7 +8,14 @@ import {
   type LocalApiHostResolvers,
   type LocalApiRequestOptions,
 } from "../local-api-client.js";
-import { writeJsonEnvelope } from "../output.js";
+import {
+  codeValue,
+  nonEmptyDetails,
+  printDetails,
+  printList,
+  printNextCommands,
+  writeJsonEnvelope,
+} from "../output.js";
 import { apiStatus, resolveWorkspaceIdForCli } from "../resources.js";
 
 function parseDurationMs(value: string): number {
@@ -173,18 +180,18 @@ export async function cmdSchedule(
       if (flags.session) params.set("sessionId", flags.session);
       const result = await call<Record<string, unknown>>(`/schedules${querySuffix(params)}`);
       output(result, () => {
-        const schedules = Array.isArray(result.schedules) ? result.schedules : [];
-        console.log(c.bold(`  Schedules (${schedules.length})`));
-        for (const schedule of schedules as Array<{
-          id?: string;
-          name?: string;
-          status?: string;
-        }>) {
-          console.log(
-            `  ${c.cyan(schedule.id ?? "?")}  ${schedule.status ?? "?"}  ${schedule.name ?? "(unnamed)"}`,
-          );
-        }
-        console.log("");
+        const schedules = Array.isArray(result.schedules)
+          ? (result.schedules as Array<{ id?: string; name?: string; status?: string }>)
+          : [];
+        printList(
+          `Schedules (${schedules.length})`,
+          schedules.map((schedule) => ({
+            id: schedule.id ?? "?",
+            status: schedule.status ?? "?",
+            title: schedule.name ?? "(unnamed)",
+          })),
+          { empty: "No schedules configured." },
+        );
       });
       return;
     }
@@ -197,11 +204,11 @@ export async function cmdSchedule(
         const schedule = result.schedule as
           | { id?: string; name?: string; status?: string }
           | undefined;
-        console.log(c.green("  Schedule"));
-        console.log(`  ID:     ${c.cyan(schedule?.id ?? id)}`);
-        console.log(`  Name:   ${schedule?.name ?? "(unnamed)"}`);
-        console.log(`  Status: ${schedule?.status ?? "?"}`);
-        console.log("");
+        printDetails("Schedule", [
+          ["ID", codeValue(schedule?.id ?? id)],
+          ["Name", schedule?.name ?? "(unnamed)"],
+          ["Status", schedule?.status ?? "?"],
+        ]);
       });
       return;
     }
@@ -222,13 +229,11 @@ export async function cmdSchedule(
       const result = await call<Record<string, unknown>>("/schedules", { method: "POST", body });
       output(result, () => {
         const schedule = result.schedule as { id?: string } | undefined;
-        console.log(c.green("  ✓ Schedule created"));
-        console.log(`  Schedule: ${c.cyan(schedule?.id ?? "?")}`);
-        console.log("");
-        console.log(c.bold("  Next commands:"));
-        console.log(`    ${c.dim(`oppi schedule run ${schedule?.id ?? "<id>"}`)}`);
-        console.log(`    ${c.dim(`oppi schedule runs ${schedule?.id ?? "<id>"}`)}`);
-        console.log("");
+        printDetails("✓ Schedule created", [["Schedule", codeValue(schedule?.id ?? "?")]]);
+        printNextCommands([
+          `oppi schedule run ${schedule?.id ?? "<id>"}`,
+          `oppi schedule runs ${schedule?.id ?? "<id>"}`,
+        ]);
       });
       return;
     }
@@ -247,10 +252,10 @@ export async function cmdSchedule(
         const schedule = result.schedule as
           | { id?: string; name?: string; status?: string }
           | undefined;
-        console.log(c.green("  ✓ Schedule updated"));
-        console.log(`  Schedule: ${c.cyan(schedule?.id ?? id)}`);
-        console.log(`  Status:   ${schedule?.status ?? "?"}`);
-        console.log("");
+        printDetails("✓ Schedule updated", [
+          ["Schedule", codeValue(schedule?.id ?? id)],
+          ["Status", schedule?.status ?? "?"],
+        ]);
       });
       return;
     }
@@ -265,12 +270,18 @@ export async function cmdSchedule(
           `/schedules/${encodeURIComponent(id)}/runs${querySuffix(params)}`,
         );
         output(result, () => {
-          const runs = Array.isArray(result.runs) ? result.runs : [];
-          console.log(c.bold(`  Runs for ${id} (${runs.length})`));
-          for (const run of runs as Array<{ id?: string; status?: string; sessionId?: string }>) {
-            console.log(`  ${c.cyan(run.id ?? "?")}  ${run.status ?? "?"}  ${run.sessionId ?? ""}`);
-          }
-          console.log("");
+          const runs = Array.isArray(result.runs)
+            ? (result.runs as Array<{ id?: string; status?: string; sessionId?: string }>)
+            : [];
+          printList(
+            `Runs for ${id} (${runs.length})`,
+            runs.map((run) => ({
+              id: run.id ?? "?",
+              status: run.status ?? "?",
+              title: run.sessionId ? `session ${run.sessionId}` : "(no session)",
+            })),
+            { empty: "No runs returned." },
+          );
         });
         return;
       }
@@ -280,13 +291,15 @@ export async function cmdSchedule(
         { method: "POST", body: mode === "run" ? { requestId } : undefined },
       );
       output(result, () => {
-        console.log(c.green(`  ✓ schedule ${mode}`));
-        if ((result.run as { id?: string; sessionId?: string } | undefined)?.id) {
-          const run = result.run as { id?: string; sessionId?: string };
-          console.log(`  Run:     ${c.cyan(run.id ?? "?")}`);
-          if (run.sessionId) console.log(`  Session: ${c.cyan(run.sessionId)}`);
-        }
-        console.log("");
+        const run = result.run as { id?: string; sessionId?: string } | undefined;
+        printDetails(
+          `✓ Schedule ${mode}`,
+          nonEmptyDetails([
+            ["Schedule", codeValue(id)],
+            ["Run", run?.id ? codeValue(run.id) : ""],
+            ["Session", run?.sessionId ? codeValue(run.sessionId) : ""],
+          ]),
+        );
       });
       return;
     }

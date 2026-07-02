@@ -590,6 +590,49 @@ describe("oppi local API commands", () => {
           });
           return;
         }
+        if (method === "GET" && url.pathname === "/sessions/recent") {
+          json({
+            sessions: [
+              {
+                id: "sess-recent",
+                workspaceId: "ws-1",
+                worktreeId: "main",
+                status: "stopped",
+                name: "Recent Demo",
+              },
+            ],
+            serverNow: 2,
+          });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/workspaces/ws-1/sessions") {
+          json({
+            workspaceId: "ws-1",
+            sinceMs: Number(url.searchParams.get("sinceMs")),
+            untilMs: Number(url.searchParams.get("untilMs")),
+            serverNow: 2,
+            active: [],
+            stopped: [
+              {
+                id: "sess-1",
+                workspaceId: "ws-1",
+                worktreeId: "main",
+                status: "stopped",
+                name: "Demo",
+              },
+              {
+                id: "/tmp/tui.jsonl",
+                source: "tui",
+                workspaceId: "ws-1",
+                status: "stopped",
+                name: "Terminal Demo",
+                path: "/tmp/tui.jsonl",
+                piSessionId: "pi-1",
+              },
+            ],
+          });
+          return;
+        }
         if (method === "GET" && url.pathname === "/sessions") {
           json({
             sessions: [
@@ -769,8 +812,12 @@ describe("oppi local API commands", () => {
         },
         { args: ["agent", "archive", "agent-1", "--json"], expected: ["DELETE /agents/agent-1"] },
         {
+          args: ["session", "list", "--json"],
+          expected: ["GET /sessions/recent?recentDays=3"],
+        },
+        {
           args: ["session", "list", "--workspace", "ws-1", "--json"],
-          expected: ["GET /sessions?workspaceId=ws-1"],
+          expected: ["GET /workspaces/ws-1/sessions?status=active%2Cstopped&sinceMs=*"],
         },
         { args: ["session", "get", "sess-1", "--json"], expected: ["GET /sessions/sess-1"] },
         {
@@ -841,9 +888,35 @@ describe("oppi local API commands", () => {
         expect(JSON.parse(stdout), testCase.args.join(" ")).toMatchObject({ ok: true });
         const seen = requests.slice(before).map((request) => `${request.method} ${request.path}`);
         for (const expected of testCase.expected) {
-          expect(seen, testCase.args.join(" ")).toContain(expected);
+          if (expected.endsWith("*")) {
+            expect(
+              seen.some((request) => request.startsWith(expected.slice(0, -1))),
+              testCase.args.join(" "),
+            ).toBe(true);
+          } else {
+            expect(seen, testCase.args.join(" ")).toContain(expected);
+          }
         }
       }
+
+      const workspaceHuman = await runAsync(["workspace", "list"], { OPPI_DATA_DIR: cliDir });
+      expect(workspaceHuman.exitCode).toBe(0);
+      expect(workspaceHuman.stdout).toContain("Workspaces (1)");
+      expect(workspaceHuman.stdout).toContain("ws-1");
+      expect(workspaceHuman.stdout).toContain("Oppi");
+      expect(workspaceHuman.stdout).not.toContain("| ID");
+      expect(workspaceHuman.stdout).not.toMatch(/\x1b\[[0-9;]*m/);
+
+      const sessionsHuman = await runAsync(["session", "list", "--workspace", "ws-1"], {
+        OPPI_DATA_DIR: cliDir,
+      });
+      expect(sessionsHuman.exitCode).toBe(0);
+      expect(sessionsHuman.stdout).toContain("Sessions (2)");
+      expect(sessionsHuman.stdout).toContain("Terminal Demo");
+      expect(sessionsHuman.stdout).not.toContain("source tui");
+      expect(sessionsHuman.stdout).not.toContain("source oppi");
+      expect(sessionsHuman.stdout).not.toContain("| ID");
+      expect(sessionsHuman.stdout).not.toMatch(/\x1b\[[0-9;]*m/);
 
       const agentCreateRequest = requests.find(
         (request) => request.method === "POST" && request.path === "/agents",
