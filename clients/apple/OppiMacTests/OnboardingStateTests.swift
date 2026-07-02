@@ -10,8 +10,8 @@ struct OnboardingStateTests {
 
     @Test("advance moves through each step in order",
           arguments: zip(
-            [OnboardingState.Step.prerequisites, .permissions, .serverInit, .pairing],
-            [OnboardingState.Step.permissions, .serverInit, .pairing, .done]
+            [OnboardingState.Step.prerequisites, .permissions, .serverInit],
+            [OnboardingState.Step.permissions, .serverInit, .done]
           ))
     func advanceStep(from current: OnboardingState.Step, expected next: OnboardingState.Step) {
         let state = OnboardingState()
@@ -37,8 +37,8 @@ struct OnboardingStateTests {
 
     @Test("goBack returns to previous step",
           arguments: zip(
-            [OnboardingState.Step.permissions, .serverInit, .pairing, .done],
-            [OnboardingState.Step.prerequisites, .permissions, .serverInit, .pairing]
+            [OnboardingState.Step.permissions, .serverInit, .done],
+            [OnboardingState.Step.prerequisites, .permissions, .serverInit]
           ))
     func goBackStep(from current: OnboardingState.Step, expected previous: OnboardingState.Step) {
         let state = OnboardingState()
@@ -109,8 +109,7 @@ struct OnboardingStateTests {
           arguments: [
             (OnboardingState.Step.prerequisites, OnboardingState.Step.permissions),
             (.permissions, .serverInit),
-            (.serverInit, .pairing),
-            (.pairing, .done),
+            (.serverInit, .done),
           ])
     func stepOrdering(earlier: OnboardingState.Step, later: OnboardingState.Step) {
         #expect(earlier < later)

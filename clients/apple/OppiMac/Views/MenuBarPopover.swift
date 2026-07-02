@@ -56,10 +56,10 @@ struct MenuBarPopover: View {
 
                 serverControls
 
-                Button("Pair New Device...") {
+                Button("Pair Device...") {
                     NotificationCenter.default.post(
                         name: .navigateToTab,
-                        object: SidebarTab.pair
+                        object: MacSidebarSection.pairDevices
                     )
                     NSApp.activate(ignoringOtherApps: true)
                     openWindow(id: "main")

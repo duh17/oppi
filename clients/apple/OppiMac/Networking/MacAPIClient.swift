@@ -27,7 +27,7 @@ final class MacAPIClient: Sendable {
         config.timeoutIntervalForResource = timeoutIntervalForResource
 
         // Accept self-signed certs from the local server.
-        let delegate = SelfSignedTrustDelegate()
+        let delegate = LocalServerTrustDelegate()
         self.session = URLSession(
             configuration: config,
             delegate: delegate,
@@ -261,33 +261,5 @@ struct RuntimeUpdateResult: Decodable {
         let name: String
         let from: String
         let to: String
-    }
-}
-
-// MARK: - Self-signed TLS trust
-
-/// URLSession delegate that accepts self-signed certificates from the local server.
-///
-/// The Mac app manages the server process and knows the server uses self-signed TLS.
-/// In production, this should pin the specific certificate fingerprint.
-private final class SelfSignedTrustDelegate: NSObject, URLSessionDelegate, Sendable {
-
-    func urlSession(
-        _ session: URLSession,
-        didReceive challenge: URLAuthenticationChallenge
-    ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust else {
-            return (.performDefaultHandling, nil)
-        }
-
-        // Accept any certificate from localhost / 127.0.0.1.
-        // For remote servers, we'd pin the certificate fingerprint.
-        let host = challenge.protectionSpace.host
-        if host == "localhost" || host == "127.0.0.1" || host.hasSuffix(".local") {
-            return (.useCredential, URLCredential(trust: serverTrust))
-        }
-
-        return (.performDefaultHandling, nil)
     }
 }
