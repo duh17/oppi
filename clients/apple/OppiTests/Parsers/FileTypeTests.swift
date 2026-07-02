@@ -240,6 +240,7 @@ struct FileTypeTests {
         #expect(ft == .binary)
         #expect(ft.previewCategory == .binary)
         #expect(FileType.detect(from: "bundle.zip") == .binary)
+        #expect(FileType.detect(from: "blob.bin") == .binary)
         #expect(FileType.detect(from: "disk.dmg") == .binary)
         #expect(FileType.detect(from: "assets.car") == .binary)
         #expect(FileType.detect(from: "view.nib") == .binary)

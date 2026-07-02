@@ -1,7 +1,7 @@
 // MARK: - Syntax Keyword Sets
 
 /// Keyword sets for each supported language. Referenced by `SyntaxLanguage.keywords`
-/// and the shell scanner in `SyntaxHighlighter`.
+/// and the shared scanner in `SyntaxTokenScanner`.
 
 let swiftKeywords: Set<String> = [
     "import", "func", "let", "var", "if", "else", "guard", "return",
