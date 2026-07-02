@@ -3,7 +3,8 @@ import SwiftUI
 /// Multi-step onboarding wizard for first-run setup.
 ///
 /// Guides the user through: prerequisites check -> TCC permissions ->
-/// server initialization -> iPhone pairing.
+/// local server initialization. Pairing iPhone/iPad companions is optional from
+/// the main window.
 struct OnboardingWindow: View {
 
     let onboardingState: OnboardingState
@@ -42,16 +43,11 @@ struct OnboardingWindow: View {
                     ServerInitView(
                         processManager: processManager,
                         healthMonitor: healthMonitor,
-                        onContinue: { onboardingState.advance() },
-                        onBack: { onboardingState.goBack() }
-                    )
-
-                case .pairing:
-                    PairingView(
-                        onDone: {
+                        onContinue: {
                             onboardingState.completeOnboarding()
                             onComplete()
-                        }
+                        },
+                        onBack: { onboardingState.goBack() }
                     )
 
                 case .done:

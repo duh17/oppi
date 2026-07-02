@@ -5,7 +5,10 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac"
 
 /// State machine for the first-run onboarding wizard.
 ///
-/// Steps: prerequisites -> permissions -> serverInit -> pairing -> done.
+/// Steps: prerequisites -> permissions -> serverInit -> done.
+///
+/// Pairing an iPhone or iPad is optional companion setup. The Mac app can run
+/// or attach to the local server without any paired mobile device.
 /// Persists completion so the wizard only runs once.
 @MainActor @Observable
 final class OnboardingState {
@@ -16,7 +19,6 @@ final class OnboardingState {
         case prerequisites
         case permissions
         case serverInit
-        case pairing
         case done
 
         static func < (lhs: Step, rhs: Step) -> Bool {
@@ -28,7 +30,6 @@ final class OnboardingState {
             case .prerequisites: "Prerequisites"
             case .permissions: "Permissions"
             case .serverInit: "Server Setup"
-            case .pairing: "Pair iPhone"
             case .done: "Done"
             }
         }
@@ -60,7 +61,11 @@ final class OnboardingState {
         }
         let next = Step.allCases[nextIndex]
         logger.info("Onboarding: \(self.currentStep.title) -> \(next.title)")
-        currentStep = next
+        if next == .done {
+            completeOnboarding()
+        } else {
+            currentStep = next
+        }
     }
 
     /// Go back one step. No-op if at the first step.
