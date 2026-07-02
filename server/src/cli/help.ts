@@ -78,6 +78,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "version", summary: "print the installed package version" },
     ],
     notes: [
+      "Default output is terminal-friendly for humans and agents; use '--json' for strict machine parsing.",
       "Use '<noun> help' or '<command> --help' for flags and deeper examples.",
       "Use '--json' with help for an agent-readable description of the same topic.",
     ],
@@ -704,7 +705,8 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["session", "list"],
     title: "List sessions",
-    summary: "List sessions, optionally filtered by workspace, worktree, status, or limit.",
+    summary:
+      "List app-style session rows, optionally filtered by workspace, worktree, status, or limit.",
     usage: "oppi session list [--workspace <workspace>] [--worktree <worktree>] [--json]",
     flags: [
       { name: "--workspace", value: "<workspace>", summary: "workspace id or unique name" },
@@ -716,6 +718,10 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       { name: "--limit", value: "<count>", summary: "maximum sessions to return" },
       { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "Without --workspace, this uses the same recent cross-workspace projection as the app home view.",
+      "With --workspace, this uses the workspace session-list projection and includes importable local Pi TUI sessions.",
     ],
     examples: [{ command: "oppi session list --workspace ws_123 --json" }],
   },

@@ -1,4 +1,4 @@
-/* eslint-disable no-console, local/structured-log-format */
+/* eslint-disable no-console */
 import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
@@ -8,7 +8,13 @@ import {
   type LocalApiHostResolvers,
   type LocalApiRequestOptions,
 } from "../local-api-client.js";
-import { writeJsonEnvelope } from "../output.js";
+import {
+  codeValue,
+  printDetails,
+  printList,
+  printNextCommands,
+  writeJsonEnvelope,
+} from "../output.js";
 import { apiStatus } from "../resources.js";
 
 type AgentRow = {
@@ -42,14 +48,17 @@ export async function cmdAgent(
     if (mode === "list") {
       const result = await call<Record<string, unknown>>("/agents");
       output(result, () => {
-        const agents = Array.isArray(result.agents) ? result.agents : [];
-        console.log(c.bold(`  Agents (${agents.length})`));
-        for (const agent of agents as AgentRow[]) {
-          console.log(
-            `  ${c.cyan(agent.id ?? "?")}  ${agent.status ?? "?"}  v${agent.version ?? "?"}  ${agent.name ?? "(unnamed)"}`,
-          );
-        }
-        console.log("");
+        const agents = Array.isArray(result.agents) ? (result.agents as AgentRow[]) : [];
+        printList(
+          `Agents (${agents.length})`,
+          agents.map((agent) => ({
+            id: agent.id ?? "?",
+            status: agent.status ?? "?",
+            title: agent.name ?? "(unnamed)",
+            meta: [agent.version !== undefined ? `v${agent.version}` : "?"],
+          })),
+          { empty: "No saved Agents configured." },
+        );
       });
       return;
     }
@@ -62,12 +71,12 @@ export async function cmdAgent(
       );
       output(result, () => {
         const agent = result.agent as AgentRow | undefined;
-        console.log(c.green("  Agent"));
-        console.log(`  ID:      ${c.cyan(agent?.id ?? reference)}`);
-        console.log(`  Name:    ${agent?.name ?? "(unnamed)"}`);
-        console.log(`  Status:  ${agent?.status ?? "unknown"}`);
-        console.log(`  Version: ${agent?.version ?? "?"}`);
-        console.log("");
+        printDetails("Agent", [
+          ["ID", codeValue(agent?.id ?? reference)],
+          ["Name", agent?.name ?? "(unnamed)"],
+          ["Status", agent?.status ?? "unknown"],
+          ["Version", agent?.version !== undefined ? `v${agent.version}` : "?"],
+        ]);
       });
       return;
     }
@@ -82,15 +91,13 @@ export async function cmdAgent(
       });
       output(result, () => {
         const agent = result.agent as AgentRow | undefined;
-        console.log(c.green("  ✓ Agent created"));
-        console.log(`  Agent: ${c.cyan(agent?.id ?? "?")}`);
-        console.log(`  Name:  ${agent?.name ?? definition.name}`);
-        console.log("");
-        console.log(c.bold("  Next commands:"));
-        console.log(
-          `    ${c.dim(`oppi session create --agent ${agent?.id ?? "<agent>"} --workspace <workspace> --prompt "..."`)}`,
-        );
-        console.log("");
+        printDetails("✓ Agent created", [
+          ["Agent", codeValue(agent?.id ?? "?")],
+          ["Name", agent?.name ?? definition.name],
+        ]);
+        printNextCommands([
+          `oppi session create --agent ${agent?.id ?? "<agent>"} --workspace <workspace> --prompt "..."`,
+        ]);
       });
       return;
     }
@@ -108,10 +115,10 @@ export async function cmdAgent(
       );
       output(result, () => {
         const agent = result.agent as AgentRow | undefined;
-        console.log(c.green("  ✓ Agent updated"));
-        console.log(`  Agent:  ${c.cyan(agent?.id ?? reference)}`);
-        console.log(`  Version: ${agent?.version ?? "?"}`);
-        console.log("");
+        printDetails("✓ Agent updated", [
+          ["Agent", codeValue(agent?.id ?? reference)],
+          ["Version", agent?.version !== undefined ? `v${agent.version}` : "?"],
+        ]);
       });
       return;
     }
@@ -127,9 +134,7 @@ export async function cmdAgent(
       );
       output(result, () => {
         const agent = result.agent as AgentRow | undefined;
-        console.log(c.green("  ✓ Agent archived"));
-        console.log(`  Agent: ${c.cyan(agent?.id ?? reference)}`);
-        console.log("");
+        printDetails("✓ Agent archived", [["Agent", codeValue(agent?.id ?? reference)]]);
       });
       return;
     }

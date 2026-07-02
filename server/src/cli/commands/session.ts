@@ -1,4 +1,4 @@
-/* eslint-disable no-console, local/structured-log-format */
+/* eslint-disable no-console */
 import * as c from "../../ansi.js";
 import type { Storage } from "../../storage.js";
 import type { Session } from "../../types.js";
@@ -7,7 +7,14 @@ import {
   type LocalApiHostResolvers,
   type LocalApiRequestOptions,
 } from "../local-api-client.js";
-import { writeJsonEnvelope } from "../output.js";
+import {
+  codeValue,
+  nonEmptyDetails,
+  printDetails,
+  printList,
+  printNextCommands,
+  writeJsonEnvelope,
+} from "../output.js";
 import { apiStatus, resolveWorkspaceIdForCli } from "../resources.js";
 
 type SessionTraceEvent = {
@@ -16,6 +23,31 @@ type SessionTraceEvent = {
   message?: unknown;
   [key: string]: unknown;
 };
+
+type SessionListRow = Partial<Session> & {
+  source?: "tui" | string;
+  pendingAskCount?: number;
+  lastModified?: number;
+  path?: string;
+  piSessionId?: string;
+};
+
+type WorkspaceSessionCollectionResponse = {
+  workspaceId: string;
+  sinceMs?: number;
+  untilMs?: number;
+  serverNow?: number;
+  active?: SessionListRow[];
+  stopped?: SessionListRow[];
+};
+
+type SessionListResponse = {
+  sessions?: SessionListRow[];
+  serverNow?: number;
+};
+
+const DEFAULT_SESSION_LIST_RECENT_DAYS = 3;
+const DAY_MS = 86_400_000;
 
 export async function cmdSession(
   storage: Storage,
@@ -38,26 +70,23 @@ export async function cmdSession(
 
   try {
     if (mode === "list") {
-      const params = new URLSearchParams();
-      if (flags.workspace) {
-        const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace, hostResolvers);
-        params.set("workspaceId", workspaceId);
-      }
-      if (flags.worktree) params.set("worktreeId", flags.worktree);
-      if (flags.status) params.set("status", flags.status);
-      if (flags.limit) params.set("limit", flags.limit);
-      if (flags.agent) params.set("agentId", flags.agent);
-
-      const result = await call<Record<string, unknown>>(`/sessions${querySuffix(params)}`);
-      output(result, () => {
+      const result = await listSessions(storage, flags, call, hostResolvers);
+      output(result as Record<string, unknown>, () => {
         const sessions = Array.isArray(result.sessions) ? result.sessions : [];
-        console.log(c.bold(`  Sessions (${sessions.length})`));
-        for (const session of sessions as Array<Partial<Session>>) {
-          console.log(
-            `  ${c.cyan(session.id ?? "?")}  ${session.status ?? "?"}  ${session.name ?? "(unnamed)"}`,
-          );
-        }
-        console.log("");
+        printList(
+          `Sessions (${sessions.length})`,
+          sessions.map((session) => {
+            const path = clipListCell(session.path ?? session.piSessionFile ?? "", 56);
+            return {
+              id: session.id ?? "?",
+              status: session.status ?? "?",
+              title: clipListCell(session.name ?? session.firstMessage ?? "(unnamed)", 88),
+              meta: [sessionWorkspaceMeta(session), `worktree ${session.worktreeId ?? "main"}`],
+              details: path ? [`path ${path}`] : [],
+            };
+          }),
+          { empty: "No sessions found." },
+        );
       });
       return;
     }
@@ -67,12 +96,17 @@ export async function cmdSession(
       const result = await call<Record<string, unknown>>(`/sessions/${encodeURIComponent(id)}`);
       output(result, () => {
         const session = result.session as Partial<Session> | undefined;
-        console.log(c.green("  Session"));
-        console.log(`  ID:        ${c.cyan(session?.id ?? id)}`);
-        console.log(`  Status:    ${session?.status ?? "unknown"}`);
-        if (session?.workspaceId) console.log(`  Workspace: ${c.cyan(session.workspaceId)}`);
-        if (session?.worktreeId) console.log(`  Worktree:  ${session.worktreeId}`);
-        console.log("");
+        printDetails(
+          "Session",
+          nonEmptyDetails([
+            ["ID", codeValue(session?.id ?? id)],
+            ["Status", session?.status ?? "unknown"],
+            ["Name", session?.name ?? ""],
+            ["Workspace", session?.workspaceName ?? session?.workspaceId ?? ""],
+            ["Worktree", session?.worktreeId ?? ""],
+            ["Model", session?.model ?? ""],
+          ]),
+        );
       });
       return;
     }
@@ -91,9 +125,7 @@ export async function cmdSession(
         { method: "POST", body: { type: "prompt", message: text } },
       );
       output(result, () => {
-        console.log(c.green("  ✓ Message sent"));
-        console.log(`  Session: ${c.cyan(id)}`);
-        console.log("");
+        printDetails("✓ Message sent", [["Session", codeValue(id)]]);
       });
       return;
     }
@@ -108,13 +140,14 @@ export async function cmdSession(
       );
       output(result, () => {
         const trace = Array.isArray(result.trace) ? (result.trace as SessionTraceEvent[]) : [];
-        console.log(
-          c.bold(`  ${mode === "read" ? "Messages" : "Trace"} for ${id} (${trace.length})`),
+        printList(
+          `${mode === "read" ? "Messages" : "Trace"} for ${id} (${trace.length})`,
+          trace.map((event) => ({
+            status: event.type ?? "event",
+            title: eventText(event) || "(empty)",
+          })),
+          { empty: "No trace events returned." },
         );
-        for (const event of trace) {
-          console.log(`  ${c.cyan(event.type ?? "event")}  ${eventText(event)}`.trimEnd());
-        }
-        console.log("");
       });
       return;
     }
@@ -127,12 +160,17 @@ export async function cmdSession(
         `/sessions/${encodeURIComponent(id)}/events${querySuffix(params)}`,
       );
       output(result, () => {
-        const events = Array.isArray(result.events) ? result.events : [];
-        console.log(c.bold(`  Events for ${id} (${events.length})`));
-        for (const event of events as Array<{ seq?: number; type?: string }>) {
-          console.log(`  ${String(event.seq ?? "?").padStart(4)}  ${event.type ?? "event"}`);
-        }
-        console.log("");
+        const events = Array.isArray(result.events)
+          ? (result.events as Array<{ seq?: number; type?: string }>)
+          : [];
+        printList(
+          `Events for ${id} (${events.length})`,
+          events.map((event) => ({
+            id: event.seq ?? "?",
+            title: event.type ?? "event",
+          })),
+          { empty: "No events returned." },
+        );
       });
       return;
     }
@@ -146,9 +184,7 @@ export async function cmdSession(
         },
       );
       output(result, () => {
-        console.log(c.green("  ✓ Session stopped"));
-        console.log(`  Session: ${c.cyan(id)}`);
-        console.log("");
+        printDetails("✓ Session stopped", [["Session", codeValue(id)]]);
       });
       return;
     }
@@ -234,15 +270,15 @@ async function createSession(
     return;
   }
 
-  console.log(c.green("  ✓ Session created"));
-  console.log(`  Workspace: ${c.cyan(workspaceId)}`);
-  console.log(`  Session:   ${c.cyan(result.session.id)}`);
-  console.log("");
-  console.log(c.bold("  Next commands:"));
-  console.log(`    ${c.dim(`oppi session read ${result.session.id}`)}`);
-  console.log(`    ${c.dim(`oppi session events ${result.session.id}`)}`);
-  console.log(`    ${c.dim(`oppi session send ${result.session.id} --text "..."`)}`);
-  console.log("");
+  printDetails("✓ Session created", [
+    ["Workspace", codeValue(workspaceId)],
+    ["Session", codeValue(result.session.id)],
+  ]);
+  printNextCommands([
+    `oppi session read ${result.session.id}`,
+    `oppi session events ${result.session.id}`,
+    `oppi session send ${result.session.id} --text "..."`,
+  ]);
 }
 
 function requirePositional(positional: string[], message: string): string {
@@ -254,6 +290,154 @@ function requirePositional(positional: string[], message: string): string {
 function querySuffix(params: URLSearchParams): string {
   const query = params.toString();
   return query ? `?${query}` : "";
+}
+
+function sessionWorkspaceMeta(session: SessionListRow): string {
+  const workspace = session.workspaceName ?? session.workspaceId;
+  return workspace ? `workspace ${workspace}` : "";
+}
+
+function clipListCell(value: unknown, maxLength: number): string {
+  const text = typeof value === "string" ? value.trim() : String(value ?? "");
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
+
+function normalizeStatusFilter(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((status) => status.trim())
+    .filter(Boolean);
+}
+
+function isWorkspaceListStatusFilter(statuses: string[]): boolean {
+  return statuses.every((status) => status === "active" || status === "stopped");
+}
+
+function sessionMatchesStatus(session: SessionListRow, statuses: string[]): boolean {
+  if (statuses.length === 0) return true;
+  return statuses.some((status) => {
+    if (status === "active") return session.status !== "stopped";
+    if (status === "stopped") return session.status === "stopped";
+    return session.status === status;
+  });
+}
+
+function parsePositiveLimit(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const limit = Number.parseInt(raw, 10);
+  if (!Number.isFinite(limit) || limit < 1) {
+    throw new Error("--limit must be a positive integer");
+  }
+  return limit;
+}
+
+function activeWorkspaceRows(rows: SessionListRow[]): SessionListRow[] {
+  return rows.filter((session) => session.status !== "stopped");
+}
+
+function stoppedWorkspaceRows(rows: SessionListRow[]): SessionListRow[] {
+  return rows.filter((session) => session.status === "stopped");
+}
+
+function applySessionListClientFilters(
+  sessions: SessionListRow[],
+  flags: Record<string, string>,
+): SessionListRow[] {
+  const statuses = normalizeStatusFilter(flags.status);
+  const limit = parsePositiveLimit(flags.limit);
+  let filtered = sessions.filter((session) => sessionMatchesStatus(session, statuses));
+  if (flags.worktree) {
+    filtered = filtered.filter((session) => (session.worktreeId ?? "main") === flags.worktree);
+  }
+  if (limit !== undefined) {
+    filtered = filtered.slice(0, limit);
+  }
+  return filtered;
+}
+
+async function listWorkspaceSessionsLikeApp(
+  workspaceId: string,
+  flags: Record<string, string>,
+  call: SessionListApiCall,
+): Promise<SessionListResponse & WorkspaceSessionCollectionResponse> {
+  const statuses = normalizeStatusFilter(flags.status);
+  const workspaceStatuses = statuses.length > 0 ? statuses : ["active", "stopped"];
+  const nowMs = Date.now();
+  const params = new URLSearchParams();
+  params.set("status", workspaceStatuses.join(","));
+  if (workspaceStatuses.includes("stopped")) {
+    params.set("sinceMs", String(nowMs - DEFAULT_SESSION_LIST_RECENT_DAYS * DAY_MS));
+    params.set("untilMs", String(nowMs + 1));
+  }
+  if (flags.worktree) params.set("worktreeId", flags.worktree);
+
+  const response = await call<WorkspaceSessionCollectionResponse>(
+    `/workspaces/${encodeURIComponent(workspaceId)}/sessions${querySuffix(params)}`,
+  );
+  const sessions = applySessionListClientFilters(
+    [...(response.active ?? []), ...(response.stopped ?? [])],
+    flags,
+  );
+
+  return {
+    ...response,
+    sessions,
+    active: activeWorkspaceRows(sessions),
+    stopped: stoppedWorkspaceRows(sessions),
+  };
+}
+
+async function listRecentSessionsLikeApp(
+  flags: Record<string, string>,
+  call: SessionListApiCall,
+): Promise<SessionListResponse> {
+  const params = new URLSearchParams();
+  params.set("recentDays", String(DEFAULT_SESSION_LIST_RECENT_DAYS));
+  const response = await call<SessionListResponse>(`/sessions/recent${querySuffix(params)}`);
+  return {
+    ...response,
+    sessions: applySessionListClientFilters(response.sessions ?? [], flags),
+  };
+}
+
+async function listGenericSessions(
+  flags: Record<string, string>,
+  call: SessionListApiCall,
+  workspaceId?: string,
+): Promise<SessionListResponse> {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set("workspaceId", workspaceId);
+  if (flags.worktree) params.set("worktreeId", flags.worktree);
+  if (flags.status) params.set("status", flags.status);
+  if (flags.limit) params.set("limit", flags.limit);
+  if (flags.agent) params.set("agentId", flags.agent);
+  return call<SessionListResponse>(`/sessions${querySuffix(params)}`);
+}
+
+async function listSessions(
+  storage: Storage,
+  flags: Record<string, string>,
+  call: SessionListApiCall,
+  hostResolvers: LocalApiHostResolvers,
+): Promise<SessionListResponse> {
+  const statuses = normalizeStatusFilter(flags.status);
+
+  if (flags.workspace) {
+    const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace, hostResolvers);
+    if (!flags.agent && isWorkspaceListStatusFilter(statuses)) {
+      return listWorkspaceSessionsLikeApp(workspaceId, flags, call);
+    }
+    return listGenericSessions(flags, call, workspaceId);
+  }
+
+  if (!flags.agent) {
+    return listRecentSessionsLikeApp(flags, call);
+  }
+
+  return listGenericSessions(flags, call);
 }
 
 function savedAgentReference(agent: string | undefined): string | undefined {

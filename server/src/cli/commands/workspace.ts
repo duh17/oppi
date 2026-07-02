@@ -1,8 +1,14 @@
-/* eslint-disable no-console, local/structured-log-format */
+/* eslint-disable no-console */
 import * as c from "../../ansi.js";
 import type { Storage } from "../../storage.js";
 import type { LocalApiHostResolvers } from "../local-api-client.js";
-import { writeJsonEnvelope } from "../output.js";
+import {
+  codeValue,
+  nonEmptyDetails,
+  printDetails,
+  printList,
+  writeJsonEnvelope,
+} from "../output.js";
 import { apiStatus, listWorkspacesForCli, resolveWorkspaceForCli } from "../resources.js";
 
 export async function cmdWorkspace(
@@ -24,11 +30,15 @@ export async function cmdWorkspace(
     if (mode === "list") {
       const workspaces = await listWorkspacesForCli(storage, hostResolvers);
       output({ workspaces }, () => {
-        console.log(c.bold(`  Workspaces (${workspaces.length})`));
-        for (const workspace of workspaces) {
-          console.log(`  ${c.cyan(workspace.id)}  ${workspace.name ?? "(unnamed)"}`);
-        }
-        console.log("");
+        printList(
+          `Workspaces (${workspaces.length})`,
+          workspaces.map((workspace) => ({
+            id: workspace.id,
+            title: workspace.name ?? "(unnamed)",
+            details: [typeof workspace.hostMount === "string" ? workspace.hostMount : ""],
+          })),
+          { empty: "No workspaces configured." },
+        );
       });
       return;
     }
@@ -38,13 +48,14 @@ export async function cmdWorkspace(
       if (!reference) throw new Error("workspace id or name is required");
       const workspace = await resolveWorkspaceForCli(storage, reference, hostResolvers);
       output({ workspace }, () => {
-        console.log(c.green("  Workspace"));
-        console.log(`  ID:   ${c.cyan(workspace.id)}`);
-        console.log(`  Name: ${workspace.name ?? "(unnamed)"}`);
-        if (typeof workspace.hostMount === "string") {
-          console.log(`  Path: ${c.dim(workspace.hostMount)}`);
-        }
-        console.log("");
+        printDetails(
+          "Workspace",
+          nonEmptyDetails([
+            ["ID", codeValue(workspace.id)],
+            ["Name", workspace.name ?? "(unnamed)"],
+            ["Path", typeof workspace.hostMount === "string" ? codeValue(workspace.hostMount) : ""],
+          ]),
+        );
       });
       return;
     }

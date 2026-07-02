@@ -1,8 +1,14 @@
-/* eslint-disable no-console, local/structured-log-format */
+/* eslint-disable no-console */
 import * as c from "../../ansi.js";
 import type { Storage } from "../../storage.js";
 import type { LocalApiHostResolvers } from "../local-api-client.js";
-import { writeJsonEnvelope } from "../output.js";
+import {
+  codeValue,
+  nonEmptyDetails,
+  printDetails,
+  printList,
+  writeJsonEnvelope,
+} from "../output.js";
 import { apiStatus, listWorktreesForCli, type CliWorktree } from "../resources.js";
 
 export async function cmdWorktree(
@@ -31,13 +37,15 @@ export async function cmdWorktree(
     const result = await listWorktreesForCli(storage, workspace, hostResolvers);
     if (mode === "list") {
       output(result, () => {
-        console.log(c.bold(`  Worktrees for ${result.workspaceId} (${result.worktrees.length})`));
-        for (const worktree of result.worktrees) {
-          console.log(
-            `  ${c.cyan(worktree.id)}  ${worktree.name ?? "(unnamed)"}  ${c.dim(worktree.path ?? "")}`,
-          );
-        }
-        console.log("");
+        printList(
+          `Worktrees for ${result.workspaceId} (${result.worktrees.length})`,
+          result.worktrees.map((worktree) => ({
+            id: worktree.id,
+            title: worktree.name ?? "(unnamed)",
+            details: [worktree.path ?? ""],
+          })),
+          { empty: "No worktrees discovered for this workspace." },
+        );
       });
       return;
     }
@@ -48,12 +56,15 @@ export async function cmdWorktree(
     if (!worktree) throw new Error(`Worktree not found: ${reference}`);
 
     output({ workspaceId: result.workspaceId, worktree }, () => {
-      console.log(c.green("  Worktree"));
-      console.log(`  Workspace: ${c.cyan(result.workspaceId)}`);
-      console.log(`  ID:        ${c.cyan(worktree.id)}`);
-      console.log(`  Name:      ${worktree.name ?? "(unnamed)"}`);
-      if (worktree.path) console.log(`  Path:      ${c.dim(worktree.path)}`);
-      console.log("");
+      printDetails(
+        "Worktree",
+        nonEmptyDetails([
+          ["Workspace", codeValue(result.workspaceId)],
+          ["ID", codeValue(worktree.id)],
+          ["Name", worktree.name ?? "(unnamed)"],
+          ["Path", worktree.path ? codeValue(worktree.path) : ""],
+        ]),
+      );
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
