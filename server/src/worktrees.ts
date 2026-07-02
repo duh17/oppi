@@ -200,6 +200,23 @@ export function resolveWorkspaceWorktree(
   return listWorkspaceWorktrees(workspace).find((worktree) => worktree.id === requestedId);
 }
 
+export function resolveWorkspaceWorktreeForPath(
+  workspace: Workspace,
+  path: string | undefined,
+): WorkspaceWorktree | undefined {
+  const requestedPath = path?.trim();
+  if (!requestedPath) return undefined;
+
+  let best: WorkspaceWorktree | undefined;
+  for (const worktree of listWorkspaceWorktrees(workspace)) {
+    if (!isPathWithin(worktree.path, requestedPath)) continue;
+    if (!best || safeRealpath(worktree.path).length > safeRealpath(best.path).length) {
+      best = worktree;
+    }
+  }
+  return best;
+}
+
 export function normalizeSessionWorktreeId(
   workspace: Workspace,
   requestedWorktreeId: string | undefined,

@@ -67,6 +67,7 @@ import {
   type RuntimeSessionStateScaffold,
 } from "./session-runtime-state.js";
 import type { Storage } from "./storage.js";
+import { resolveWorkspaceWorktreeForPath } from "./worktrees.js";
 import type {
   ChatAttachmentRef,
   MessageQueueDraftItem,
@@ -380,6 +381,15 @@ function mergePiSessionFile(session: Session, file: string | undefined): void {
   );
   files.add(canonical);
   session.piSessionFiles = [...files];
+}
+
+function syncSessionWorktreeFromCwd(
+  session: Session,
+  workspace: Workspace,
+  cwd: string | undefined,
+): void {
+  const worktree = resolveWorkspaceWorktreeForPath(workspace, cwd);
+  if (worktree) session.worktreeId = worktree.id;
 }
 
 function sessionActivityProjectionFingerprint(session: Session): string {
@@ -1629,6 +1639,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     if (model) session.model = model;
     if (state.thinkingLevel?.trim()) session.thinkingLevel = state.thinkingLevel.trim();
     if (piSessionId) session.piSessionId = piSessionId;
+    syncSessionWorktreeFromCwd(session, workspace, state.cwd);
     mergePiSessionFile(session, piSessionFile);
     if (!session.firstMessage) {
       session.firstMessage = firstUserMessageFromSessionFile(

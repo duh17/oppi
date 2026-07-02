@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +10,7 @@ import { WebSocket } from "ws";
 
 import { PiTuiMirrorRuntime } from "../src/pi-tui-mirror-runtime.js";
 import { SessionRuntimes } from "../src/runtime-router.js";
+import { listWorkspaceWorktrees } from "../src/worktrees.js";
 import { BoundSessionStreamMux, type StreamContext } from "../src/stream.js";
 import type { SessionManager } from "../src/sessions.js";
 import type { Storage } from "../src/storage.js";
@@ -260,7 +263,53 @@ async function drain(): Promise<void> {
   await Promise.resolve();
 }
 
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function createManagedWorktreeFixture(root: string): { worktreeId: string; worktreePath: string } {
+  git(root, ["init", "--initial-branch=main"]);
+  git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+  git(root, ["config", "user.name", "Oppi Test"]);
+  writeFileSync(join(root, "README.md"), "main checkout\n");
+  git(root, ["add", "README.md"]);
+  git(root, ["commit", "-m", "initial"]);
+  git(root, ["branch", "feature/mirror-worktree"]);
+
+  const worktreePath = join(root, ".pi", "worktrees", "mirror-feature");
+  mkdirSync(join(root, ".pi", "worktrees"), { recursive: true });
+  git(root, ["worktree", "add", worktreePath, "feature/mirror-worktree"]);
+
+  const workspace: Workspace = { id: "w1", name: "Workspace", hostMount: root };
+  const worktree = listWorkspaceWorktrees(workspace).find((candidate) => !candidate.isMain);
+  if (!worktree) throw new Error("Expected managed worktree fixture");
+  return { worktreeId: worktree.id, worktreePath };
+}
+
 describe("PiTuiMirrorRuntime resilience", () => {
+  it("tags mirrored sessions with the workspace worktree inferred from terminal cwd", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-runtime-worktree-"));
+    try {
+      const fixture = createManagedWorktreeFixture(root);
+      const cwd = join(fixture.worktreePath, "nested");
+      mkdirSync(cwd, { recursive: true });
+      const { mirror, sessions } = makeHarness(root);
+
+      const connected = connectBridge(mirror, {
+        bridgeId: "bridge-worktree",
+        cwd,
+        piSessionId: "pi-worktree",
+        sessionFile: join(cwd, "session.jsonl"),
+        sessionName: "Worktree terminal session",
+      });
+
+      expect(sessions.get(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
+      expect(mirror.getActiveSession(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("prevents SDK split-brain and command misrouting across stale attach and bridge reuse", async () => {
     const root = await mkdtemp(join(tmpdir(), "oppi-mirror-runtime-resilience-"));
     try {
