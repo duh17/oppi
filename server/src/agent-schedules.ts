@@ -23,6 +23,7 @@ export type AgentScheduleAction =
       type: "new_session";
       workspaceId: string;
       prompt: string;
+      agentId?: string;
       model?: string;
       worktreeId?: string;
       name?: string;
@@ -72,6 +73,7 @@ export interface AgentScheduleActionSummary {
   type: AgentScheduleAction["type"];
   workspaceId: string;
   sessionId?: string;
+  agentId?: string;
   promptChars: number;
 }
 
@@ -804,6 +806,7 @@ function actionSummary(action: AgentScheduleAction): AgentScheduleActionSummary 
     type: action.type,
     workspaceId: action.workspaceId,
     ...(action.type === "existing_session" ? { sessionId: action.sessionId } : {}),
+    ...(action.type === "new_session" && action.agentId ? { agentId: action.agentId } : {}),
     promptChars: action.prompt.length,
   };
 }
@@ -831,15 +834,23 @@ function validateTrigger(trigger: AgentScheduleTrigger): AgentScheduleTrigger {
 }
 
 function validateAction(action: AgentScheduleAction): AgentScheduleAction {
-  if (!action.workspaceId.trim()) throw new Error("Schedule action workspaceId is required");
+  const workspaceId = action.workspaceId.trim();
+  if (!workspaceId) throw new Error("Schedule action workspaceId is required");
   if (!action.prompt.trim()) throw new Error("Schedule action prompt is required");
   if (action.approvalRefs !== undefined && !Array.isArray(action.approvalRefs)) {
     throw new Error("Schedule approvalRefs must be an array");
   }
-  if (action.type === "existing_session" && !action.sessionId.trim()) {
+  if (action.type === "new_session") {
+    const agentId = action.agentId?.trim();
+    const next: AgentScheduleAction = { ...action, workspaceId };
+    if (agentId) next.agentId = agentId;
+    else delete next.agentId;
+    return next;
+  }
+  if (!action.sessionId.trim()) {
     throw new Error("Existing-session schedule action sessionId is required");
   }
-  return action;
+  return { ...action, workspaceId, sessionId: action.sessionId.trim() };
 }
 
 function validateKeyPart(value: string, label: string): string {

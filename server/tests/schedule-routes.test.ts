@@ -34,6 +34,16 @@ describe("schedule routes", () => {
   let dataDir: string;
   let store: AgentScheduleStore;
   let sessions: Session[];
+  let agents: Map<
+    string,
+    {
+      id: string;
+      name: string;
+      status: "active" | "archived";
+      version: number;
+      definition: { name: string; sessionDefaults?: { model?: string } };
+    }
+  >;
   let responses: Array<{ data: unknown; status: number }>;
   let errors: Array<{ status: number; message: string }>;
   let startSession: ReturnType<typeof vi.fn>;
@@ -47,6 +57,18 @@ describe("schedule routes", () => {
     dataDir = mkdtempSync(join(tmpdir(), "oppi-schedule-routes-"));
     store = new AgentScheduleStore(dataDir);
     sessions = [];
+    agents = new Map([
+      [
+        "agent-1",
+        {
+          id: "agent-1",
+          name: "Reviewer",
+          status: "active",
+          version: 3,
+          definition: { name: "Reviewer", sessionDefaults: { model: "agent-model" } },
+        },
+      ],
+    ]);
     responses = [];
     errors = [];
     startSession = vi.fn(async (sessionId: string) => makeSession({ id: sessionId }));
@@ -54,6 +76,13 @@ describe("schedule routes", () => {
 
     const storage = {
       getAgentScheduleStore: () => store,
+      getAgentDefinitionStore: () => ({
+        resolveAgent: vi.fn(
+          (agentId: string) =>
+            agents.get(agentId) ??
+            Array.from(agents.values()).find((agent) => agent.name === agentId),
+        ),
+      }),
       getWorkspace: vi.fn((workspaceId: string) =>
         workspaceId === workspace.id ? workspace : undefined,
       ),
@@ -155,6 +184,142 @@ describe("schedule routes", () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.id).toBe(firstRun?.sessionId);
     expect(sessions[0]?.launch?.idempotencyKey).toBe(`schedule:${schedule.id}:manual:button-1`);
+  });
+
+  it("canonicalizes saved-Agent schedule targets by Agent name", async () => {
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = "/schedules";
+
+    await dispatch({
+      method: "POST",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({
+        name: "Reviewer by name",
+        trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+        action: {
+          type: "new_session",
+          workspaceId: workspace.id,
+          agentId: "Reviewer",
+          prompt: "Review the branch",
+        },
+      }),
+      res: {} as ServerResponse,
+    });
+
+    expect(errors).toEqual([]);
+    const scheduleId = (responses[0]?.data as { schedule?: { id?: string } }).schedule?.id;
+    expect(scheduleId).toBeTruthy();
+    expect(store.getSchedule(scheduleId ?? "")?.action).toMatchObject({ agentId: "agent-1" });
+    expect(responses[0]).toMatchObject({
+      data: { schedule: { action: { agentId: "agent-1" } } },
+    });
+  });
+
+  it("runs a saved-Agent schedule with the stored Agent definition", async () => {
+    const schedule = store.createSchedule({
+      name: "Reviewer check",
+      trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+      action: {
+        type: "new_session",
+        workspaceId: workspace.id,
+        agentId: "agent-1",
+        prompt: "Review the branch",
+      },
+    });
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = `/schedules/${schedule.id}/run`;
+
+    await dispatch({
+      method: "POST",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({ requestId: "button-agent" }),
+      res: {} as ServerResponse,
+    });
+
+    expect(errors).toEqual([]);
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(sendPrompt).toHaveBeenCalledWith(expect.any(String), "Review the branch", {});
+    expect(sessions[0]).toMatchObject({
+      model: "agent-model",
+      launch: {
+        source: "schedule",
+        agentId: "agent-1",
+        agentVersion: 3,
+      },
+    });
+  });
+
+  it("rejects schedules for unknown saved Agents", async () => {
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = "/schedules";
+
+    await dispatch({
+      method: "POST",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({
+        name: "Missing Agent",
+        trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+        action: {
+          type: "new_session",
+          workspaceId: workspace.id,
+          agentId: "missing-agent",
+          prompt: "Run the check",
+        },
+      }),
+      res: {} as ServerResponse,
+    });
+
+    expect(responses).toEqual([]);
+    expect(errors).toEqual([{ status: 400, message: "Agent not found" }]);
+  });
+
+  it("filters schedule summaries by saved Agent", async () => {
+    const matching = store.createSchedule({
+      name: "Reviewer check",
+      trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+      action: {
+        type: "new_session",
+        workspaceId: workspace.id,
+        agentId: "agent-1",
+        prompt: "Review the branch",
+      },
+    });
+    store.createSchedule({
+      name: "Plain check",
+      trigger: { type: "at", at: 2_000, timeZone: "UTC" },
+      action: {
+        type: "new_session",
+        workspaceId: workspace.id,
+        prompt: "Run the branch",
+      },
+    });
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = "/schedules";
+
+    await dispatch({
+      method: "GET",
+      path,
+      url: new URL(`https://localhost${path}?agentId=agent-1`),
+      req: requestBody({}),
+      res: {} as ServerResponse,
+    });
+
+    expect(errors).toEqual([]);
+    expect(responses).toEqual([
+      expect.objectContaining({
+        data: {
+          schedules: [
+            expect.objectContaining({
+              id: matching.id,
+              action: expect.objectContaining({ agentId: "agent-1" }),
+            }),
+          ],
+        },
+      }),
+    ]);
   });
 
   it("records approval provenance for automatic runs created through the route", async () => {

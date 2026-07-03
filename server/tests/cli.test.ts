@@ -193,6 +193,7 @@ describe("oppi help", () => {
     expect(text).toContain("--every <duration>");
     expect(text).toContain("--cron <expr>");
     expect(text).toContain("--approval-ref <ref>");
+    expect(text).toContain("--agent <agent>");
     expect(text).toContain("Automatic runs fail closed");
     expect(text).toContain("Run history");
     expect(text).toContain("idempotent");
@@ -224,7 +225,16 @@ describe("oppi help", () => {
       "read",
       "events",
       "trace",
+      "search",
       "stop",
+      "resume",
+      "fork",
+      "delete",
+      "changes",
+      "diff",
+      "tool-output",
+      "trace-page",
+      "trace-outline",
     ]) {
       expect(text).toContain(implemented);
     }
@@ -273,7 +283,10 @@ describe("oppi help", () => {
       { args: ["token", "help"], expected: ["Usage: oppi token rotate", "Existing clients"] },
       { args: ["config", "help"], expected: ["Usage: oppi config", "Subcommands"] },
       { args: ["server", "help"], expected: ["Usage: oppi server", "LaunchAgent"] },
-      { args: ["workspace", "help"], expected: ["Usage: oppi workspace", "list", "get"] },
+      {
+        args: ["workspace", "help"],
+        expected: ["Usage: oppi workspace", "list", "get", "create", "update", "delete"],
+      },
       { args: ["worktree", "help"], expected: ["Usage: oppi worktree", "--workspace <workspace>"] },
       { args: ["wait", "help"], expected: ["Usage: oppi wait", "session"] },
       { args: ["version", "--help"], expected: ["Usage: oppi version", "package version"] },
@@ -310,7 +323,7 @@ describe("oppi help", () => {
       },
       {
         args: ["schedule", "list", "--help"],
-        expected: ["Usage: oppi schedule list", "--json"],
+        expected: ["Usage: oppi schedule list", "--agent <agent>", "--json"],
       },
       {
         args: ["schedule", "get", "--help"],
@@ -349,6 +362,18 @@ describe("oppi help", () => {
         expected: ["Usage: oppi workspace get <workspace>", "workspace id or unique name"],
       },
       {
+        args: ["workspace", "create", "--help"],
+        expected: ["Usage: oppi workspace create", "--host-mount <path>", "--definition <file>"],
+      },
+      {
+        args: ["workspace", "update", "--help"],
+        expected: ["Usage: oppi workspace update <workspace>", "--default-model <model>"],
+      },
+      {
+        args: ["workspace", "delete", "--help"],
+        expected: ["Usage: oppi workspace delete <workspace>", "--json"],
+      },
+      {
         args: ["worktree", "list", "--help"],
         expected: ["Usage: oppi worktree list", "--workspace <workspace>"],
       },
@@ -383,6 +408,42 @@ describe("oppi help", () => {
       {
         args: ["session", "stop", "--help"],
         expected: ["Usage: oppi session stop <id>", "--json"],
+      },
+      {
+        args: ["session", "search", "--help"],
+        expected: ["Usage: oppi session search", "--query <text>", "--limit <count>"],
+      },
+      {
+        args: ["session", "resume", "--help"],
+        expected: ["Usage: oppi session resume <id>", "--json"],
+      },
+      {
+        args: ["session", "fork", "--help"],
+        expected: ["Usage: oppi session fork <id>", "--entry <entry-id>"],
+      },
+      {
+        args: ["session", "delete", "--help"],
+        expected: ["Usage: oppi session delete <id>", "--json"],
+      },
+      {
+        args: ["session", "changes", "--help"],
+        expected: ["Usage: oppi session changes <id>", "changed by a session"],
+      },
+      {
+        args: ["session", "diff", "--help"],
+        expected: ["Usage: oppi session diff <id>", "--path <path>"],
+      },
+      {
+        args: ["session", "tool-output", "--help"],
+        expected: ["Usage: oppi session tool-output <id>", "tool call id"],
+      },
+      {
+        args: ["session", "trace-page", "--help"],
+        expected: ["Usage: oppi session trace-page <id>", "--target-events <count>"],
+      },
+      {
+        args: ["session", "trace-outline", "--help"],
+        expected: ["Usage: oppi session trace-outline <id>", "compact trace outline"],
       },
       {
         args: ["agent", "list", "--help"],
@@ -583,6 +644,32 @@ describe("oppi local API commands", () => {
           json({ workspace: { id: "ws-1", name: "Oppi", hostMount: "/tmp/oppi" } });
           return;
         }
+        if (method === "POST" && url.pathname === "/workspaces") {
+          json({
+            workspace: {
+              id: "ws-created",
+              name: body?.name ?? "Created",
+              hostMount: body?.hostMount,
+              defaultModel: body?.defaultModel,
+            },
+          });
+          return;
+        }
+        if (method === "PUT" && url.pathname === "/workspaces/ws-1") {
+          json({
+            workspace: {
+              id: "ws-1",
+              name: body?.name ?? "Oppi",
+              hostMount: body?.hostMount ?? "/tmp/oppi",
+              defaultModel: body?.defaultModel,
+            },
+          });
+          return;
+        }
+        if (method === "DELETE" && url.pathname === "/workspaces/ws-1") {
+          json({ ok: true });
+          return;
+        }
         if (method === "GET" && url.pathname === "/workspaces/ws-1/worktrees") {
           json({
             workspaceId: "ws-1",
@@ -645,6 +732,14 @@ describe("oppi local API commands", () => {
               },
             ],
             serverNow: 2,
+          });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/sessions/search") {
+          json({
+            query: url.searchParams.get("q"),
+            totalResults: 1,
+            results: [{ sessionId: "sess-1", text: "matched test output", score: 0.9 }],
           });
           return;
         }
@@ -742,6 +837,60 @@ describe("oppi local API commands", () => {
           json({ ok: true, session: { id: "sess-1", status: "stopped" } });
           return;
         }
+        if (method === "POST" && url.pathname === "/workspaces/ws-1/sessions/sess-1/resume") {
+          json({ session: { id: "sess-1", workspaceId: "ws-1", status: "ready" } });
+          return;
+        }
+        if (method === "POST" && url.pathname === "/workspaces/ws-1/sessions/sess-1/fork") {
+          json({
+            session: { id: "sess-fork", workspaceId: "ws-1", status: "ready", name: body?.name },
+          });
+          return;
+        }
+        if (method === "DELETE" && url.pathname === "/workspaces/ws-1/sessions/sess-1") {
+          json({ ok: true, deleted: true });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/workspaces/ws-1/sessions/sess-1/changes") {
+          json({ files: [{ path: "server/src/cli.ts", status: "modified" }] });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/workspaces/ws-1/sessions/sess-1/diff") {
+          json({ path: url.searchParams.get("path"), hunks: [] });
+          return;
+        }
+        if (
+          method === "GET" &&
+          url.pathname === "/workspaces/ws-1/sessions/sess-1/tool-output/tool-1"
+        ) {
+          json({ toolCallId: "tool-1", output: "hello" });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/workspaces/ws-1/sessions/sess-1/trace-page") {
+          json({ entries: [], metrics: {} });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/workspaces/ws-1/sessions/sess-1/trace-outline") {
+          json({ outline: [], metrics: {} });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/schedules") {
+          json({
+            schedules: [
+              {
+                id: "sch-1",
+                status: "active",
+                name: "Daily",
+                action: {
+                  type: "new_session",
+                  workspaceId: "ws-1",
+                  agentId: url.searchParams.get("agentId"),
+                },
+              },
+            ],
+          });
+          return;
+        }
         if (method === "POST" && url.pathname === "/schedules") {
           json({ schedule: { id: "sch-created", status: "active", name: body?.name } });
           return;
@@ -763,9 +912,16 @@ describe("oppi local API commands", () => {
     if (!address || typeof address === "string") throw new Error("Failed to start API fixture");
     const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-app-control-"));
     const definitionPath = join(cliDir, "schedule.json");
+    const workspaceDefinitionPath = join(cliDir, "workspace.json");
+    const workspaceUpdatePath = join(cliDir, "workspace-update.json");
     const agentDefinitionPath = join(cliDir, "agent.json");
     const agentUpdatePath = join(cliDir, "agent-update.json");
     writeFileSync(definitionPath, JSON.stringify({ name: "Updated" }));
+    writeFileSync(
+      workspaceDefinitionPath,
+      JSON.stringify({ description: "Created from JSON", defaultModel: "workspace-model" }),
+    );
+    writeFileSync(workspaceUpdatePath, JSON.stringify({ defaultModel: "updated-model" }));
     writeFileSync(
       agentDefinitionPath,
       JSON.stringify({ description: "Reviews diffs", sessionDefaults: { model: "agent-model" } }),
@@ -784,6 +940,37 @@ describe("oppi local API commands", () => {
       const cases: Array<{ args: string[]; expected: string[] }> = [
         { args: ["workspace", "list", "--json"], expected: ["GET /workspaces"] },
         { args: ["workspace", "get", "ws-1", "--json"], expected: ["GET /workspaces/ws-1"] },
+        {
+          args: [
+            "workspace",
+            "create",
+            "--name",
+            "Created",
+            "--host-mount",
+            "/tmp/created",
+            "--definition",
+            workspaceDefinitionPath,
+            "--json",
+          ],
+          expected: ["POST /workspaces"],
+        },
+        {
+          args: [
+            "workspace",
+            "update",
+            "ws-1",
+            "--name",
+            "Updated Oppi",
+            "--definition",
+            workspaceUpdatePath,
+            "--json",
+          ],
+          expected: ["GET /workspaces/ws-1", "PUT /workspaces/ws-1"],
+        },
+        {
+          args: ["workspace", "delete", "ws-1", "--json"],
+          expected: ["GET /workspaces/ws-1", "DELETE /workspaces/ws-1"],
+        },
         {
           args: ["worktree", "list", "--workspace", "ws-1", "--json"],
           expected: ["GET /workspaces/ws-1/worktrees"],
@@ -838,6 +1025,51 @@ describe("oppi local API commands", () => {
         },
         { args: ["session", "stop", "sess-1", "--json"], expected: ["POST /sessions/sess-1/stop"] },
         {
+          args: ["session", "search", "test output", "--limit", "5", "--json"],
+          expected: ["GET /sessions/search?q=test+output&limit=5"],
+        },
+        {
+          args: ["session", "resume", "sess-1", "--json"],
+          expected: ["GET /sessions/sess-1", "POST /workspaces/ws-1/sessions/sess-1/resume"],
+        },
+        {
+          args: ["session", "fork", "sess-1", "--entry", "entry-1", "--name", "Fork", "--json"],
+          expected: ["GET /sessions/sess-1", "POST /workspaces/ws-1/sessions/sess-1/fork"],
+        },
+        {
+          args: ["session", "delete", "sess-1", "--json"],
+          expected: ["GET /sessions/sess-1", "DELETE /workspaces/ws-1/sessions/sess-1"],
+        },
+        {
+          args: ["session", "changes", "sess-1", "--json"],
+          expected: ["GET /sessions/sess-1", "GET /workspaces/ws-1/sessions/sess-1/changes"],
+        },
+        {
+          args: ["session", "diff", "sess-1", "--path", "server/src/cli.ts", "--json"],
+          expected: [
+            "GET /sessions/sess-1",
+            "GET /workspaces/ws-1/sessions/sess-1/diff?path=server%2Fsrc%2Fcli.ts",
+          ],
+        },
+        {
+          args: ["session", "tool-output", "sess-1", "tool-1", "--json"],
+          expected: [
+            "GET /sessions/sess-1",
+            "GET /workspaces/ws-1/sessions/sess-1/tool-output/tool-1",
+          ],
+        },
+        {
+          args: ["session", "trace-page", "sess-1", "--target-events", "80", "--json"],
+          expected: [
+            "GET /sessions/sess-1",
+            "GET /workspaces/ws-1/sessions/sess-1/trace-page?targetEvents=80",
+          ],
+        },
+        {
+          args: ["session", "trace-outline", "sess-1", "--json"],
+          expected: ["GET /sessions/sess-1", "GET /workspaces/ws-1/sessions/sess-1/trace-outline"],
+        },
+        {
           args: [
             "session",
             "create",
@@ -870,6 +1102,26 @@ describe("oppi local API commands", () => {
             "--json",
           ],
           expected: ["GET /workspaces/ws-1", "POST /schedules"],
+        },
+        {
+          args: [
+            "schedule",
+            "create",
+            "--workspace",
+            "ws-1",
+            "--agent",
+            "agent-1",
+            "--prompt",
+            "agent daily check",
+            "--every",
+            "1d",
+            "--json",
+          ],
+          expected: ["GET /workspaces/ws-1", "POST /schedules"],
+        },
+        {
+          args: ["schedule", "list", "--agent", "agent-1", "--json"],
+          expected: ["GET /schedules?agentId=agent-1"],
         },
         {
           args: ["schedule", "update", "sch-1", "--definition", definitionPath, "--json"],
@@ -918,6 +1170,28 @@ describe("oppi local API commands", () => {
       expect(sessionsHuman.stdout).not.toContain("| ID");
       expect(sessionsHuman.stdout).not.toMatch(/\x1b\[[0-9;]*m/);
 
+      const workspaceCreateRequest = requests.find(
+        (request) => request.method === "POST" && request.path === "/workspaces",
+      );
+      expect(workspaceCreateRequest?.body).toMatchObject({
+        name: "Created",
+        description: "Created from JSON",
+        hostMount: "/tmp/created",
+        defaultModel: "workspace-model",
+      });
+      const workspaceUpdateRequest = requests.find(
+        (request) => request.method === "PUT" && request.path === "/workspaces/ws-1",
+      );
+      expect(workspaceUpdateRequest?.body).toMatchObject({
+        name: "Updated Oppi",
+        defaultModel: "updated-model",
+      });
+      const forkRequest = requests.find(
+        (request) =>
+          request.method === "POST" && request.path === "/workspaces/ws-1/sessions/sess-1/fork",
+      );
+      expect(forkRequest?.body).toEqual({ entryId: "entry-1", name: "Fork" });
+
       const agentCreateRequest = requests.find(
         (request) => request.method === "POST" && request.path === "/agents",
       );
@@ -938,10 +1212,10 @@ describe("oppi local API commands", () => {
         (request) => request.method === "POST" && request.path === "/sessions/sess-1/command",
       );
       expect(sendRequest?.body).toMatchObject({ type: "prompt", message: "hello" });
-      const scheduleCreateRequest = requests.find(
+      const scheduleCreateRequests = requests.filter(
         (request) => request.method === "POST" && request.path === "/schedules",
       );
-      expect(scheduleCreateRequest?.body).toMatchObject({
+      expect(scheduleCreateRequests[0]?.body).toMatchObject({
         name: expect.any(String),
         trigger: { type: "cron", expression: "0 7 * * *", timeZone: "America/Los_Angeles" },
         action: {
@@ -949,6 +1223,15 @@ describe("oppi local API commands", () => {
           workspaceId: "ws-1",
           prompt: "daily check",
           approvalRefs: [expect.objectContaining({ id: "approval://daily-check" })],
+        },
+      });
+      expect(scheduleCreateRequests[1]?.body).toMatchObject({
+        trigger: { type: "every", intervalMs: 86_400_000 },
+        action: {
+          type: "new_session",
+          workspaceId: "ws-1",
+          agentId: "agent-1",
+          prompt: "agent daily check",
         },
       });
       const updateRequest = requests.find(

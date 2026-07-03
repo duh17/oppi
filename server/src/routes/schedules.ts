@@ -38,9 +38,9 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       try {
         const schedules = getSchedules();
         const body = await helpers.parseBody<CreateAgentScheduleRequest>(req);
-        validateScheduleTargets(body);
+        const normalizedBody = normalizeScheduleRequestTargets(body);
         const now = Date.now();
-        const schedule = schedules.createSchedule(body, now);
+        const schedule = schedules.createSchedule(normalizedBody, now);
         recordAcceptedApprovalProvenance(schedule, now);
         helpers.json(res, { schedule: schedules.getScheduleSummary(schedule.id) }, 201);
       } catch (error) {
@@ -76,15 +76,12 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         const schedule = resolveScheduleSummary(scheduleId, res);
         if (!schedule) return true;
         const body = await helpers.parseBody<Partial<CreateAgentScheduleRequest>>(req);
-        if (body.action || body.trigger || body.name) {
-          validateScheduleTargets({
-            name: body.name ?? "schedule",
-            trigger: body.trigger ?? { type: "at", at: Date.now(), timeZone: "UTC" },
-            action: body.action ?? schedules.getSchedule(schedule.id)?.action,
-          });
-        }
+        const normalizedBody: Partial<CreateAgentScheduleRequest> = {
+          ...body,
+          ...(body.action ? { action: normalizeScheduleActionTarget(body.action) } : {}),
+        };
         const now = Date.now();
-        const updated = schedules.updateSchedule(schedule.id, body, now);
+        const updated = schedules.updateSchedule(schedule.id, normalizedBody, now);
         if (!updated) {
           helpers.error(res, 404, "Schedule not found");
           return true;
@@ -246,9 +243,15 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const workspaceId = url.searchParams.get("workspaceId")?.trim();
     const sessionId = url.searchParams.get("sessionId")?.trim();
     const status = url.searchParams.get("status")?.trim();
+    const agentReference = url.searchParams.get("agentId")?.trim();
+    const resolvedAgentId = agentReference
+      ? ctx.storage.getAgentDefinitionStore().resolveAgent(agentReference)?.id
+      : undefined;
+    if (agentReference && !resolvedAgentId) return [];
     return schedules.filter((schedule) => {
       if (workspaceId && schedule.action.workspaceId !== workspaceId) return false;
       if (sessionId && schedule.action.sessionId !== sessionId) return false;
+      if (resolvedAgentId && schedule.action.agentId !== resolvedAgentId) return false;
       if (status && schedule.status !== status) return false;
       return true;
     });
@@ -293,18 +296,29 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     return parsed;
   }
 
-  function validateScheduleTargets(request: Partial<CreateAgentScheduleRequest>): void {
-    const action = request.action;
-    if (!action) return;
+  function normalizeScheduleRequestTargets(
+    request: CreateAgentScheduleRequest,
+  ): CreateAgentScheduleRequest {
+    return { ...request, action: normalizeScheduleActionTarget(request.action) };
+  }
+
+  function normalizeScheduleActionTarget(
+    action: CreateAgentScheduleRequest["action"],
+  ): CreateAgentScheduleRequest["action"] {
     const workspace = ctx.storage.getWorkspace(action.workspaceId);
     if (!workspace) throw new Error("Workspace not found");
-    if (action.type === "existing_session") {
-      const session = ctx.storage.getSession(action.sessionId);
-      if (!session) throw new Error("Session not found");
-      if (session.workspaceId !== action.workspaceId) {
-        throw new Error("Session does not belong to schedule workspace");
-      }
+    if (action.type === "new_session") {
+      if (!action.agentId) return action;
+      const agent = ctx.storage.getAgentDefinitionStore().resolveAgent(action.agentId);
+      if (!agent || agent.status === "archived") throw new Error("Agent not found");
+      return { ...action, agentId: agent.id };
     }
+    const session = ctx.storage.getSession(action.sessionId);
+    if (!session) throw new Error("Session not found");
+    if (session.workspaceId !== action.workspaceId) {
+      throw new Error("Session does not belong to schedule workspace");
+    }
+    return action;
   }
 
   function summarizeRun(scheduleId: string, run: AgentScheduleRun): unknown {

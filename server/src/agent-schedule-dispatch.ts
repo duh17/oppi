@@ -1,4 +1,4 @@
-import { AgentLaunchService } from "./agent-launch-service.js";
+import { AgentLaunchService, type AgentDefinition } from "./agent-launch-service.js";
 import type {
   AgentScheduleDispatchHooks,
   ExistingSessionDispatchInput,
@@ -15,6 +15,7 @@ export interface AgentScheduleDispatchDeps {
     | "createSession"
     | "findSessionByLaunchIdempotencyKey"
     | "getAgentScheduleStore"
+    | "getAgentDefinitionStore"
     | "getSession"
     | "getWorkspace"
     | "listSessions"
@@ -59,13 +60,11 @@ async function launchNewSession(
     sessions: deps.sessions,
     ensureSessionContextWindow: deps.ensureSessionContextWindow,
   });
+  const scheduledAgent = resolveScheduledAgent(deps, input);
   const result = await launchService.launch({
-    agent: {
-      name: input.action.name?.trim() || `Schedule ${input.schedule.id}`,
-      sessionDefaults: {
-        ...(input.action.model ? { model: input.action.model } : {}),
-      },
-    },
+    agent: scheduledAgent.agent,
+    ...(scheduledAgent.agentId ? { agentId: scheduledAgent.agentId } : {}),
+    ...(scheduledAgent.agentVersion ? { agentVersion: scheduledAgent.agentVersion } : {}),
     target: {
       workspace,
       ...(input.action.worktreeId ? { worktreeId: input.action.worktreeId } : {}),
@@ -93,6 +92,36 @@ async function launchNewSession(
     sessionId: result.session.id,
     promptDispatch: result.promptDispatch,
     existing: result.kind === "existing",
+  };
+}
+
+function resolveScheduledAgent(
+  deps: AgentScheduleDispatchDeps,
+  input: NewSessionDispatchInput,
+): { agent: AgentDefinition; agentId?: string; agentVersion?: number } {
+  if (!input.action.agentId) {
+    return {
+      agent: {
+        name: input.action.name?.trim() || `Schedule ${input.schedule.id}`,
+        sessionDefaults: {
+          ...(input.action.model ? { model: input.action.model } : {}),
+        },
+      },
+    };
+  }
+
+  const agent = deps.storage.getAgentDefinitionStore().resolveAgent(input.action.agentId);
+  if (!agent || agent.status === "archived") throw new Error("Agent not found");
+  return {
+    agent: {
+      ...agent.definition,
+      sessionDefaults: {
+        ...(agent.definition.sessionDefaults ?? {}),
+        ...(input.action.model ? { model: input.action.model } : {}),
+      },
+    },
+    agentId: agent.id,
+    agentVersion: agent.version,
   };
 }
 

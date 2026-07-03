@@ -64,10 +64,12 @@ async function newSessionAction(
   if (!workspaceRef) throw new Error("--workspace or --session is required");
   const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef, hostResolvers);
   const approvalRefs = approvalRefsFromFlags(flags);
+  const agentId = savedAgentReference(flags.agent);
   return {
     type: "new_session",
     workspaceId,
     prompt,
+    ...(agentId ? { agentId } : {}),
     ...(flags.model ? { model: flags.model } : {}),
     ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
     ...(flags.name ? { name: flags.name } : {}),
@@ -137,17 +139,12 @@ function approvalRefsFromFlags(
   }));
 }
 
-function validateAgentFlag(agent: string | undefined): void {
-  if (!agent) return;
-  const normalized = agent.trim();
-  if (!normalized || normalized === "default" || normalized === "workspace_default") return;
-  throwSavedAgentError();
-}
-
-function throwSavedAgentError(): never {
-  throw new Error(
-    "Saved Agent definitions are not implemented; omit --agent to use workspace defaults",
-  );
+function savedAgentReference(agent: string | undefined): string | undefined {
+  const normalized = agent?.trim();
+  if (!normalized || normalized === "default" || normalized === "workspace_default") {
+    return undefined;
+  }
+  return normalized;
 }
 
 export async function cmdSchedule(
@@ -171,13 +168,14 @@ export async function cmdSchedule(
 
   try {
     if (mode === "list") {
-      if (flags.agent) throwSavedAgentError();
       const params = new URLSearchParams();
       if (flags.workspace) {
         const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace, hostResolvers);
         params.set("workspaceId", workspaceId);
       }
       if (flags.session) params.set("sessionId", flags.session);
+      const agentId = savedAgentReference(flags.agent);
+      if (agentId) params.set("agentId", agentId);
       const result = await call<Record<string, unknown>>(`/schedules${querySuffix(params)}`);
       output(result, () => {
         const schedules = Array.isArray(result.schedules)
@@ -214,7 +212,6 @@ export async function cmdSchedule(
     }
 
     if (mode === "create") {
-      if (flags.agent) validateAgentFlag(flags.agent);
       if (flags["server-default-agent"] === "true") {
         throw new Error("Server default Agent schedules are not implemented yet");
       }
@@ -222,6 +219,9 @@ export async function cmdSchedule(
       if (!prompt?.trim()) throw new Error("--prompt is required");
       const name = flags.name || `Schedule ${new Date().toISOString()}`;
       const trigger = scheduleTriggerFromFlags(flags);
+      if (flags.session && savedAgentReference(flags.agent)) {
+        throw new Error("--agent can only be used with new-session schedules");
+      }
       const action = flags.session
         ? await existingSessionAction(storage, flags.session, prompt, flags, hostResolvers)
         : await newSessionAction(storage, flags, prompt, hostResolvers);
