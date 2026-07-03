@@ -189,7 +189,161 @@ export async function cmdSession(
       return;
     }
 
-    throw new Error("Usage: oppi session list|get|create|send|read|events|trace|stop");
+    if (mode === "search") {
+      const query = flags.query?.trim() || positional.join(" ").trim();
+      if (!query) throw new Error("--query or search text is required");
+      const params = new URLSearchParams();
+      params.set("q", query);
+      if (flags.limit) params.set("limit", flags.limit);
+      if (flags.workspace) {
+        const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace, hostResolvers);
+        params.set("workspaceId", workspaceId);
+      }
+      const result = await call<Record<string, unknown>>(`/sessions/search${querySuffix(params)}`);
+      output(result, () => {
+        const results = Array.isArray(result.results)
+          ? (result.results as Array<{ sessionId?: string; text?: string; score?: number }>)
+          : [];
+        printList(
+          `Search results (${results.length})`,
+          results.map((searchResult) => ({
+            id: searchResult.sessionId ?? "?",
+            status: searchResult.score !== undefined ? String(searchResult.score) : "",
+            title: clipListCell(searchResult.text ?? "(match)", 88),
+          })),
+          { empty: "No matching sessions." },
+        );
+      });
+      return;
+    }
+
+    if (mode === "delete") {
+      const id = requirePositional(positional, "session id is required");
+      const workspaceId = await resolveSessionWorkspaceId(id, call);
+      const result = await call<Record<string, unknown>>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      );
+      output(result, () => {
+        printDetails("✓ Session deleted", [["Session", codeValue(id)]]);
+      });
+      return;
+    }
+
+    if (mode === "resume") {
+      const id = requirePositional(positional, "session id is required");
+      const workspaceId = await resolveSessionWorkspaceId(id, call);
+      const result = await call<Record<string, unknown>>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/resume`,
+        { method: "POST" },
+      );
+      output(result, () => {
+        printDetails("✓ Session resumed", [["Session", codeValue(id)]]);
+      });
+      return;
+    }
+
+    if (mode === "fork") {
+      const id = requirePositional(positional, "session id is required");
+      const entryId = flags.entry?.trim() || flags["entry-id"]?.trim();
+      if (!entryId) throw new Error("--entry is required");
+      const workspaceId = await resolveSessionWorkspaceId(id, call);
+      const result = await call<Record<string, unknown>>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/fork`,
+        {
+          method: "POST",
+          body: { entryId, ...(flags.name ? { name: flags.name } : {}) },
+        },
+      );
+      output(result, () => {
+        const session = result.session as Partial<Session> | undefined;
+        printDetails("✓ Session forked", [
+          ["Source", codeValue(id)],
+          ["Fork", codeValue(session?.id ?? "?")],
+        ]);
+      });
+      return;
+    }
+
+    if (mode === "changes") {
+      const id = requirePositional(positional, "session id is required");
+      const workspaceId = await resolveSessionWorkspaceId(id, call);
+      const result = await call<Record<string, unknown>>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/changes`,
+      );
+      output(result, () => {
+        const files = Array.isArray(result.files)
+          ? (result.files as Array<{ path?: string; status?: string }>)
+          : [];
+        printList(
+          `Changed files for ${id} (${files.length})`,
+          files.map((file) => ({ status: file.status ?? "", title: file.path ?? "(unknown)" })),
+          { empty: "No changed files returned." },
+        );
+      });
+      return;
+    }
+
+    if (mode === "diff") {
+      const id = requirePositional(positional, "session id is required");
+      const path = flags.path?.trim();
+      if (!path) throw new Error("--path is required");
+      const workspaceId = await resolveSessionWorkspaceId(id, call);
+      const params = new URLSearchParams();
+      params.set("path", path);
+      const result = await call<Record<string, unknown>>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/diff${querySuffix(params)}`,
+      );
+      output(result, () => {
+        printDetails("Session diff", [
+          ["Session", codeValue(id)],
+          ["Path", codeValue(path)],
+        ]);
+      });
+      return;
+    }
+
+    if (mode === "tool-output") {
+      const id = requirePositional(positional, "session id is required");
+      const toolCallId = positional[1]?.trim() || flags.tool?.trim() || flags["tool-call"]?.trim();
+      if (!toolCallId) throw new Error("tool call id is required");
+      const workspaceId = await resolveSessionWorkspaceId(id, call);
+      const result = await call<Record<string, unknown>>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/tool-output/${encodeURIComponent(toolCallId)}`,
+      );
+      output(result, () => {
+        printDetails("Tool output", [
+          ["Session", codeValue(id)],
+          ["Tool", codeValue(toolCallId)],
+        ]);
+      });
+      return;
+    }
+
+    if (mode === "trace-page" || mode === "trace-outline") {
+      const id = requirePositional(positional, "session id is required");
+      const workspaceId = await resolveSessionWorkspaceId(id, call);
+      const params = new URLSearchParams();
+      if (mode === "trace-page") {
+        if (flags.cursor) params.set("cursor", flags.cursor);
+        if (flags["around-entry"]) params.set("aroundEntryId", flags["around-entry"]);
+        if (flags["target-events"]) params.set("targetEvents", flags["target-events"]);
+        if (flags["preview-bytes"]) params.set("previewBytes", flags["preview-bytes"]);
+      }
+      const result = await call<Record<string, unknown>>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/${mode}${querySuffix(params)}`,
+      );
+      output(result, () => {
+        printDetails(mode === "trace-page" ? "Trace page" : "Trace outline", [
+          ["Session", codeValue(id)],
+        ]);
+      });
+      return;
+    }
+
+    throw new Error(
+      "Usage: oppi session list|get|create|send|read|events|trace|search|stop|resume|fork|delete|changes|diff|tool-output|trace-page|trace-outline",
+    );
   } catch (err: unknown) {
     const status = apiStatus(err);
     const message = err instanceof Error ? err.message : String(err);
@@ -304,6 +458,13 @@ function clipListCell(value: unknown, maxLength: number): string {
 }
 
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
+
+async function resolveSessionWorkspaceId(id: string, call: SessionListApiCall): Promise<string> {
+  const result = await call<{ session?: Partial<Session> }>(`/sessions/${encodeURIComponent(id)}`);
+  const workspaceId = result.session?.workspaceId?.trim();
+  if (!workspaceId) throw new Error("Session has no workspaceId");
+  return workspaceId;
+}
 
 function normalizeStatusFilter(raw: string | undefined): string[] {
   return (raw ?? "")

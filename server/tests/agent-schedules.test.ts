@@ -201,6 +201,40 @@ describe("agent schedule durable core", () => {
     ]);
   });
 
+  it("summarizes saved-Agent new-session schedules without prompt bodies", () => {
+    const schedule = createSchedule({
+      action: {
+        type: "new_session",
+        workspaceId: "ws-1",
+        agentId: "agent-1",
+        prompt: "secret saved Agent prompt",
+      },
+    });
+    const run = store.createManualRun(schedule.id, "history-agent");
+
+    expect(store.getScheduleSummary(schedule.id)).toEqual(
+      expect.objectContaining({
+        action: {
+          type: "new_session",
+          workspaceId: "ws-1",
+          agentId: "agent-1",
+          promptChars: 25,
+        },
+      }),
+    );
+    expect(store.listRunSummaries(schedule.id)).toEqual([
+      expect.objectContaining({
+        id: run.id,
+        action: {
+          type: "new_session",
+          workspaceId: "ws-1",
+          agentId: "agent-1",
+          promptChars: 25,
+        },
+      }),
+    ]);
+  });
+
   it("limits run summaries in the store query", () => {
     const schedule = createSchedule();
     const first = store.createManualRun(schedule.id, "history-1", 1);
