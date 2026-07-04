@@ -1,3 +1,4 @@
+import CryptoKit
 import SwiftUI
 import Testing
 import UIKit
@@ -181,6 +182,77 @@ struct ToolExpandedSurfaceHostTests {
         )
         let expectedHeight = 320.0 * (220.0 / 80.0)
         #expect(abs(fitted.height - expectedHeight) < 2)
+    }
+
+    @Test func readMediaAttachmentRejectsIncompleteBytesAndDoesNotCacheThem() async throws {
+        let imageData = try #require(makeTallReadToolTestImage().jpegData(compressionQuality: 0.85))
+        let truncatedData = Data(imageData.prefix(max(2, imageData.count / 3)))
+        let attachmentID = "att-incomplete-image-\(UUID().uuidString)"
+        let attachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: attachmentID,
+            mimeType: "image/jpeg",
+            fileName: "incomplete.jpg",
+            sizeBytes: imageData.count,
+            sha256: sha256Hex(imageData),
+            width: 80,
+            height: 220
+        )
+
+        let firstCounter = FetchCounter()
+        let firstPreview = NativeExpandedInlineImageView(maxPixelSize: 1_600)
+        let firstContainer = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 900))
+        firstPreview.translatesAutoresizingMaskIntoConstraints = false
+        firstContainer.addSubview(firstPreview)
+        NSLayoutConstraint.activate([
+            firstPreview.leadingAnchor.constraint(equalTo: firstContainer.leadingAnchor),
+            firstPreview.trailingAnchor.constraint(equalTo: firstContainer.trailingAnchor),
+            firstPreview.topAnchor.constraint(equalTo: firstContainer.topAnchor),
+        ])
+        firstPreview.apply(
+            attachment: attachment,
+            fetcher: { attachmentId in
+                #expect(attachmentId == attachmentID)
+                await firstCounter.increment()
+                return truncatedData
+            }
+        )
+
+        let firstFetchAttempted = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await firstCounter.count == 1
+        }
+        #expect(firstFetchAttempted)
+        try await Task.sleep(for: .milliseconds(120))
+        firstContainer.setNeedsLayout()
+        firstContainer.layoutIfNeeded()
+        #expect(readMediaContentImageView(in: firstPreview) == nil)
+
+        let secondCounter = FetchCounter()
+        let secondPreview = NativeExpandedInlineImageView(maxPixelSize: 1_600)
+        let secondContainer = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 900))
+        secondPreview.translatesAutoresizingMaskIntoConstraints = false
+        secondContainer.addSubview(secondPreview)
+        NSLayoutConstraint.activate([
+            secondPreview.leadingAnchor.constraint(equalTo: secondContainer.leadingAnchor),
+            secondPreview.trailingAnchor.constraint(equalTo: secondContainer.trailingAnchor),
+            secondPreview.topAnchor.constraint(equalTo: secondContainer.topAnchor),
+        ])
+        secondPreview.apply(
+            attachment: attachment,
+            fetcher: { attachmentId in
+                #expect(attachmentId == attachmentID)
+                await secondCounter.increment()
+                return imageData
+            }
+        )
+
+        let decoded = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            secondContainer.setNeedsLayout()
+            secondContainer.layoutIfNeeded()
+            return readMediaContentImageView(in: secondPreview) != nil
+        }
+        #expect(decoded)
+        #expect(await secondCounter.count == 1)
     }
 
     @Test func readMediaAttachmentImageFetchSurvivesPreviewRecreation() async throws {
@@ -727,6 +799,12 @@ struct ToolExpandedSurfaceHostTests {
         }
     }
 
+    private func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
     private struct ReadMediaSnapshotResult {
         let rowSize: CGSize
         let imageFrame: CGRect
@@ -1050,6 +1128,14 @@ struct ToolExpandedSurfaceHostTests {
             if let match = firstToolSubview(ofType: type, in: subview) { return match }
         }
         return nil
+    }
+
+    private actor FetchCounter {
+        private(set) var count = 0
+
+        func increment() {
+            count += 1
+        }
     }
 
     private actor AttachmentFetchGate {

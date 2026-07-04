@@ -1883,6 +1883,8 @@ struct ToolPresentationBuilderTests {
                     "id": .string("att-image-1"),
                     "mimeType": .string("image/png"),
                     "fileName": .string("icon.png"),
+                    "sizeBytes": .number(1234),
+                    "sha256": .string("abc123"),
                     "width": .number(80),
                     "height": .number(220),
                 ])
@@ -1909,6 +1911,8 @@ struct ToolPresentationBuilderTests {
         #expect(output.isEmpty)
         #expect(filePath == "icon.png")
         #expect(attachments.first?.id == "att-image-1")
+        #expect(attachments.first?.sizeBytes == 1234)
+        #expect(attachments.first?.sha256 == "abc123")
         #expect(attachments.first?.height == 220)
     }
 

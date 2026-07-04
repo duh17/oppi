@@ -13,8 +13,29 @@ enum ToolPresentationBuilder {
         let mimeType: String
         let fileName: String?
         let sizeBytes: Int?
+        let sha256: String?
         let width: Int?
         let height: Int?
+
+        init(
+            kind: String,
+            id: String,
+            mimeType: String,
+            fileName: String?,
+            sizeBytes: Int?,
+            sha256: String? = nil,
+            width: Int?,
+            height: Int?
+        ) {
+            self.kind = kind
+            self.id = id
+            self.mimeType = mimeType
+            self.fileName = fileName
+            self.sizeBytes = sizeBytes
+            self.sha256 = sha256
+            self.width = width
+            self.height = height
+        }
     }
 
     // MARK: - Dependencies
