@@ -7,6 +7,7 @@ import {
   type AgentDefinitionStore,
   type StoredAgentDefinition,
 } from "../agent-definitions.js";
+import { isDefaultAgentId } from "../default-agent.js";
 import { safeErrorMessage } from "../log-utils.js";
 import type { ChatAttachmentRef, Session } from "../types.js";
 import { normalizeSessionWorktreeId } from "../worktrees.js";
@@ -76,6 +77,14 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     if (method === "DELETE") {
       const agent = resolveAgent(reference, res);
       if (!agent) return true;
+      if (isDefaultAgentId(agent.id)) {
+        helpers.error(
+          res,
+          400,
+          "Default Agent identity cannot be archived; reset customization instead",
+        );
+        return true;
+      }
       const archived = agentStore().archiveAgent(agent.id);
       if (!archived) {
         helpers.error(res, 404, "Agent not found");
@@ -86,6 +95,23 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     }
 
     return false;
+  }
+
+  async function handleAgentCustomization(
+    reference: string,
+    method: string,
+    res: ServerResponse,
+  ): Promise<boolean> {
+    if (method !== "DELETE") return false;
+    const agent = resolveAgent(reference, res);
+    if (!agent) return true;
+    if (!isDefaultAgentId(agent.id)) {
+      helpers.error(res, 404, "Default Agent customization not found");
+      return true;
+    }
+    const reset = agentStore().resetDefaultAgent();
+    helpers.json(res, { agent: serializeAgent(reset) });
+    return true;
   }
 
   async function handleAgentSession(
@@ -202,6 +228,11 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
   return async ({ method, path, url, req, res }) => {
     if (path === "/agents") {
       return handleAgentCollection(method, url, req, res);
+    }
+
+    const customizationMatch = path.match(/^\/agents\/([^/]+)\/customization$/);
+    if (customizationMatch?.[1]) {
+      return handleAgentCustomization(decodeURIComponent(customizationMatch[1]), method, res);
     }
 
     const sessionMatch = path.match(/^\/agents\/([^/]+)\/sessions$/);

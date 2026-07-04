@@ -14,6 +14,7 @@ import {
 } from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import type { AgentDefinition } from "../src/agent-launch-service.js";
+import { DEFAULT_AGENT_DEFINITION, DEFAULT_AGENT_ID } from "../src/default-agent.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
 
 afterEach(() => {
@@ -356,6 +357,48 @@ describe("SdkBackend host extensions", () => {
 });
 
 describe("SdkBackend saved Agent definitions", () => {
+  it("registers only the Oppi command tool for the Default Agent runtime", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-default-agent-runtime-"));
+    mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".pi", "extensions", "extra.ts"),
+      `export default function(pi) { pi.registerTool({ name: "extra_tool", label: "Extra", description: "Should not load", parameters: { type: "object", properties: {}, additionalProperties: false }, async execute() { return { content: [{ type: "text", text: "extra" }], details: {} }; } }); }`,
+    );
+
+    const backend = await SdkBackend.create({
+      session: makeSession({
+        launch: { status: "launching", requestedAt: 1, agentId: DEFAULT_AGENT_ID },
+      }),
+      workspace: {
+        id: "w1",
+        name: "Default Agent Runtime Test",
+        runtime: "host",
+        hostMount: cwd,
+      } as Workspace,
+      agentDefinition: DEFAULT_AGENT_DEFINITION,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      const resourceLoader = (
+        backend as unknown as {
+          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
+        }
+      ).runtime.services.resourceLoader;
+      const extensions = resourceLoader.getExtensions().extensions;
+
+      expect(
+        extensions.some((ext) => ext.path.startsWith("<inline:") && ext.tools.has("oppi")),
+      ).toBe(true);
+      expect(extensions.some((ext) => ext.tools.has("extra_tool"))).toBe(false);
+      expect(backend.session.getActiveToolNames()).toEqual(["oppi"]);
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("injects saved Agent instructions, virtual context files, and tool defaults into the runtime", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-definition-runtime-"));
     const agentDefinition: AgentDefinition = {

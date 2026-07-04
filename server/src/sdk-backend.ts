@@ -36,6 +36,8 @@ import {
 import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { AgentDefinition } from "./agent-launch-service.js";
+import { isDefaultAgentId } from "./default-agent.js";
+import { createDefaultAgentExtensionFactory } from "./default-agent-tool.js";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -404,6 +406,7 @@ export class SdkBackend {
     syncSessionIdentityFromManager(session, initialSessionManager);
 
     const agentDefinition = config.agentDefinition;
+    const isDefaultAgentSession = isDefaultAgentId(session.launch?.agentId ?? "");
     const createRuntimeFactory: CreateAgentSessionRuntimeFactory = async ({
       cwd,
       agentDir: runtimeAgentDir,
@@ -446,8 +449,16 @@ export class SdkBackend {
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
         settingsManager,
-        additionalSkillPaths: config.skillPaths ?? [],
+        additionalSkillPaths: isDefaultAgentSession ? [] : (config.skillPaths ?? []),
         appendSystemPrompt: baseAppendSystemPrompt,
+        ...(isDefaultAgentSession
+          ? {
+              noExtensions: true,
+              noSkills: true,
+              noPromptTemplates: true,
+              extensionFactories: [createDefaultAgentExtensionFactory({ dataDir: config.dataDir })],
+            }
+          : {}),
         ...(agentDefinition?.resources?.noContextFiles ? { noContextFiles: true } : {}),
         ...(agentDefinition?.instructions?.mode === "replace"
           ? { systemPromptOverride: () => agentDefinition.instructions?.text }

@@ -1,4 +1,6 @@
 /* eslint-disable no-console, local/structured-log-format */
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import * as c from "../ansi.js";
 
 export type CliJsonEnvelope =
@@ -15,8 +17,26 @@ export type TerminalListItem = {
   details?: unknown[];
 };
 
+type CliOutputCapture = { chunks: string[] };
+
+const cliOutputCapture = new AsyncLocalStorage<CliOutputCapture>();
+
+export async function captureCliOutput<T>(
+  fn: () => Promise<T>,
+): Promise<{ stdout: string; result: T }> {
+  const capture: CliOutputCapture = { chunks: [] };
+  const result = await cliOutputCapture.run(capture, fn);
+  return { stdout: capture.chunks.join(""), result };
+}
+
 export function writeJsonEnvelope(envelope: CliJsonEnvelope): void {
-  process.stdout.write(JSON.stringify(envelope, null, 2) + "\n");
+  const output = JSON.stringify(envelope, null, 2) + "\n";
+  const capture = cliOutputCapture.getStore();
+  if (capture) {
+    capture.chunks.push(output);
+    return;
+  }
+  process.stdout.write(output);
 }
 
 export function codeValue(value: unknown, fallback = "—"): string {
