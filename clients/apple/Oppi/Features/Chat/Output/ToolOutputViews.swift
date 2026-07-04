@@ -137,6 +137,7 @@ extension ToolPresentationBuilder {
         let fileName: String?
         let path: String?
         let sizeBytes: Int?
+        let sha256: String?
         let width: Int?
         let height: Int?
     }
@@ -310,6 +311,7 @@ extension ToolPresentationBuilder {
             fileName: image["fileName"]?.stringValue,
             path: image["path"]?.stringValue,
             sizeBytes: image["sizeBytes"]?.numberValue.map(Int.init),
+            sha256: image["sha256"]?.stringValue,
             width: image["width"]?.numberValue.map(Int.init),
             height: image["height"]?.numberValue.map(Int.init)
         )
@@ -337,6 +339,7 @@ extension ToolPresentationBuilder {
                 mimeType: mimeType,
                 fileName: media["fileName"]?.stringValue,
                 sizeBytes: media["sizeBytes"]?.numberValue.map(Int.init),
+                sha256: media["sha256"]?.stringValue,
                 width: media["width"]?.numberValue.map(Int.init),
                 height: media["height"]?.numberValue.map(Int.init)
             )
@@ -415,6 +418,7 @@ extension ToolPresentationBuilder {
                 mimeType: MediaMimeType.safeImageMimeType(image.mimeType),
                 fileName: image.fileName,
                 sizeBytes: image.sizeBytes,
+                sha256: image.sha256,
                 width: image.width,
                 height: image.height
             )

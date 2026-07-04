@@ -108,4 +108,13 @@ struct MediaMimeTypeTests {
         #expect(ratio != nil)
         #expect(abs((ratio ?? 0) - (720.0 / 420.0)) < 0.0001)
     }
+
+    @Test func rejectsTruncatedJPEGPrefixesAsIncompleteImageData() {
+        let completeJPEG = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0xFF, 0xD9])
+        let truncatedJPEG = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])
+
+        #expect(MediaMimeType.isCompleteImageData(completeJPEG, mimeType: "image/jpeg"))
+        #expect(!MediaMimeType.isCompleteImageData(truncatedJPEG, mimeType: "image/jpeg"))
+        #expect(!MediaMimeType.isCompleteImageData(truncatedJPEG, mimeType: nil))
+    }
 }

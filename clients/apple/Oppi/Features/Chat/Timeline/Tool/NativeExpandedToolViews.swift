@@ -62,6 +62,8 @@ final class NativeExpandedReadMediaView: UIView {
         for attachment in attachments {
             hasher.combine(attachment.id)
             hasher.combine(attachment.mimeType)
+            hasher.combine(attachment.sizeBytes)
+            hasher.combine(attachment.sha256)
             hasher.combine(attachment.width)
             hasher.combine(attachment.height)
         }
@@ -876,6 +878,7 @@ private enum ToolImageAttachmentDataCache {
             attachment.mimeType,
             attachment.fileName ?? "",
             attachment.sizeBytes.map(String.init) ?? "",
+            attachment.sha256 ?? "",
         ].joined(separator: "|")
     }
 
@@ -946,6 +949,11 @@ final class NativeExpandedInlineImageView: UIView {
         screenHeight: UIScreen.main.bounds.height
     ).placeholderHeight
 
+    private enum AttachmentDataValidationError: Error {
+        case sizeMismatch(expected: Int, actual: Int)
+        case checksumMismatch(expected: String, actual: String)
+    }
+
     private let imageView = UIImageView()
     private let placeholder = UIActivityIndicatorView(style: .medium)
     private let overflowLabel = UILabel()
@@ -994,6 +1002,33 @@ final class NativeExpandedInlineImageView: UIView {
 
     private let animatedImageView = AnimatedImageWebContainerView()
 
+    private static func validateAttachmentData(
+        _ data: Data,
+        attachment: ToolPresentationBuilder.ToolMediaAttachment
+    ) throws {
+        if let expectedSize = attachment.sizeBytes, expectedSize >= 0, data.count != expectedSize {
+            throw AttachmentDataValidationError.sizeMismatch(expected: expectedSize, actual: data.count)
+        }
+
+        let expectedHash = attachment.sha256?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let sha256HexCharacters = CharacterSet(charactersIn: "0123456789abcdef")
+        if let expectedHash,
+           expectedHash.count == 64,
+           expectedHash.unicodeScalars.allSatisfy({ sha256HexCharacters.contains($0) }) {
+            let actualHash = SHA256.hash(data: data)
+                .map { String(format: "%02x", $0) }
+                .joined()
+            guard actualHash == expectedHash else {
+                throw AttachmentDataValidationError.checksumMismatch(
+                    expected: expectedHash,
+                    actual: actualHash
+                )
+            }
+        }
+    }
+
     func apply(base64: String, mimeType: String?) {
         let key = ImageDecodeCache.decodeKey(for: base64, maxPixelSize: maxPixelSize)
         guard key != decodedKey else { return }
@@ -1017,7 +1052,7 @@ final class NativeExpandedInlineImageView: UIView {
         attachment: ToolPresentationBuilder.ToolMediaAttachment,
         fetcher: ((String) async throws -> Data)?
     ) {
-        let key = "attachment:\(attachment.id):\(attachment.mimeType):\(attachment.width ?? 0)x\(attachment.height ?? 0):fetcher=\(fetcher != nil)"
+        let key = "attachment:\(attachment.id):\(attachment.mimeType):\(attachment.sizeBytes ?? 0):\(attachment.sha256 ?? ""):\(attachment.width ?? 0)x\(attachment.height ?? 0):fetcher=\(fetcher != nil)"
         guard key != decodedKey else { return }
         decodedKey = key
 
@@ -1042,12 +1077,16 @@ final class NativeExpandedInlineImageView: UIView {
         decodeTask = Task { [weak self] in
             do {
                 let data = try await ToolImageAttachmentDataCache.data(for: attachmentCacheKey) {
-                    try await fetcher(attachment.id)
+                    let fetchedData = try await fetcher(attachment.id)
+                    try Self.validateAttachmentData(fetchedData, attachment: attachment)
+                    return fetchedData
                 }
+                try Self.validateAttachmentData(data, attachment: attachment)
                 await self?.applyFetchedImageData(data, mimeType: attachment.mimeType, key: key, maxPixelSize: maxPixelSize)
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self, self.decodedKey == key else { return }
+                    self.decodedKey = nil
                     self.applyDecodedImage(nil)
                 }
             }
@@ -1103,6 +1142,14 @@ final class NativeExpandedInlineImageView: UIView {
         maxPixelSize: CGFloat
     ) async {
         let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
+        guard MediaMimeType.isCompleteImageData(data, mimeType: info.normalizedMimeType ?? mimeType) else {
+            await MainActor.run { [weak self] in
+                guard let self, self.decodedKey == key else { return }
+                self.decodedKey = nil
+                self.applyDecodedImage(nil)
+            }
+            return
+        }
         if info.prefersWebRenderer {
             let normalizedMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/gif")
             let dataURLString = "data:\(normalizedMimeType);base64,\(data.base64EncodedString())"

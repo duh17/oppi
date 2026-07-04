@@ -1208,7 +1208,16 @@ actor APIClient: ClientLogUploading {
     /// stored in the Oppi data directory rather than the workspace checkout.
     func fetchSessionAttachment(workspaceId: String, sessionId: String, attachmentId: String) async throws -> Data {
         let url = try makeURL(pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "attachments", attachmentId])
-        return try await get(url: url)
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+        req.httpMethod = "GET"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        logger.debug("GET \(url.path)")
+
+        let (data, response) = try await session.data(for: req)
+        try checkStatus(response, data: data)
+        try checkCompleteSessionAttachmentResponse(response, data: data)
+        return data
     }
 
     /// Fetch a file from the session's working directory.
@@ -1623,6 +1632,26 @@ actor APIClient: ClientLogUploading {
                 throw APIError.server(status: http.statusCode, message: parsed.error)
             }
             throw APIError.server(status: http.statusCode, message: body)
+        }
+    }
+
+    private func checkCompleteSessionAttachmentResponse(_ response: URLResponse, data: Data) throws {
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        guard http.statusCode != 206 else {
+            throw APIError.server(status: http.statusCode, message: "Attachment response was partial")
+        }
+        guard let contentLengthValue = http.value(forHTTPHeaderField: "Content-Length"),
+              let expectedBytes = Int(contentLengthValue),
+              expectedBytes >= 0 else {
+            return
+        }
+        guard data.count == expectedBytes else {
+            throw APIError.server(
+                status: http.statusCode,
+                message: "Attachment download was incomplete (\(data.count)/\(expectedBytes) bytes)"
+            )
         }
     }
 

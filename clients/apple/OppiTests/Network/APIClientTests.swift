@@ -1027,6 +1027,43 @@ struct APIClientTests {
         #expect(source.sourceFileExtension == "wav")
     }
 
+    @Test func fetchSessionAttachmentBypassesCacheAndRejectsShortBody() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        var sawRequest = false
+        MockURLProtocol.handler = { request in
+            sawRequest = true
+            #expect(request.cachePolicy == .reloadIgnoringLocalCacheData)
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
+            #expect(request.value(forHTTPHeaderField: "Cache-Control") == "no-cache")
+            #expect(request.url?.path == "/workspaces/w1/sessions/s1/attachments/att-image")
+
+            let data = Data([0xFF, 0xD8, 0xFF])
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Length": "4", "Content-Type": "image/jpeg"]
+            )!
+            return (data, response)
+        }
+
+        do {
+            _ = try await client.fetchSessionAttachment(
+                workspaceId: "w1",
+                sessionId: "s1",
+                attachmentId: "att-image"
+            )
+            Issue.record("Expected short attachment body to throw")
+        } catch APIError.server(let status, let message) {
+            #expect(status == 200)
+            #expect(message.contains("incomplete"))
+        }
+
+        #expect(sawRequest)
+    }
+
     @Test func authenticatedMediaResponseValidatorAcceptsMatchingPartialContent() {
         let range = AuthenticatedMediaRequestedRange(start: 1_024, end: 2_047)
         let error = AuthenticatedMediaResponseValidator.errorMessage(

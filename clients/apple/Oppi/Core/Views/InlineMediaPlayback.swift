@@ -184,6 +184,73 @@ enum MediaMimeType {
         return content.range(of: "</svg>", options: .caseInsensitive) != nil
     }
 
+    /// Reject image byte prefixes that ImageIO can partially decode by filling
+    /// missing JPEG scanlines with gray. Unknown formats are left to ImageIO.
+    static func isCompleteImageData(_ data: Data, mimeType: String?) -> Bool {
+        guard !data.isEmpty else { return false }
+
+        switch normalized(mimeType) {
+        case "image/jpeg", "image/jpg":
+            return !hasPrefix(data, [0xFF, 0xD8]) || hasSuffix(data, [0xFF, 0xD9])
+        case "image/png":
+            return !hasPrefix(data, pngSignature) || hasSuffix(data, pngIENDTrailer)
+        case "image/gif":
+            return !isGIFData(data) || hasSuffix(data, [0x3B])
+        case "image/webp":
+            return !isRIFFWebPData(data) || hasCompleteRIFFLength(data)
+        case "image/svg+xml":
+            return !isSVGData(data) || isCompleteSVGData(data)
+        default:
+            if hasPrefix(data, [0xFF, 0xD8]) {
+                return hasSuffix(data, [0xFF, 0xD9])
+            }
+            if hasPrefix(data, pngSignature) {
+                return hasSuffix(data, pngIENDTrailer)
+            }
+            if isGIFData(data) {
+                return hasSuffix(data, [0x3B])
+            }
+            if isRIFFWebPData(data) {
+                return hasCompleteRIFFLength(data)
+            }
+            if isSVGData(data) {
+                return isCompleteSVGData(data)
+            }
+            return true
+        }
+    }
+
+    private static let pngSignature: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+    private static let pngIENDTrailer: [UInt8] = [0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82]
+
+    private static func hasPrefix(_ data: Data, _ bytes: [UInt8]) -> Bool {
+        data.count >= bytes.count && Array(data.prefix(bytes.count)) == bytes
+    }
+
+    private static func hasSuffix(_ data: Data, _ bytes: [UInt8]) -> Bool {
+        data.count >= bytes.count && Array(data.suffix(bytes.count)) == bytes
+    }
+
+    private static func isGIFData(_ data: Data) -> Bool {
+        hasPrefix(data, Array("GIF87a".utf8)) || hasPrefix(data, Array("GIF89a".utf8))
+    }
+
+    private static func isRIFFWebPData(_ data: Data) -> Bool {
+        data.count >= 12
+            && hasPrefix(data, Array("RIFF".utf8))
+            && Array(data.dropFirst(8).prefix(4)) == Array("WEBP".utf8)
+    }
+
+    private static func hasCompleteRIFFLength(_ data: Data) -> Bool {
+        guard data.count >= 12 else { return false }
+        let header = Array(data.prefix(8))
+        let declaredSize = Int(header[4])
+            | (Int(header[5]) << 8)
+            | (Int(header[6]) << 16)
+            | (Int(header[7]) << 24)
+        return declaredSize >= 4 && data.count >= declaredSize + 8
+    }
+
     /// Extract the SVG aspect ratio from the root `viewBox` when present,
     /// otherwise fall back to root `width` / `height` attributes.
     static func extractSVGViewBoxAspectRatio(_ data: Data) -> CGFloat? {
