@@ -4,6 +4,16 @@ import { join, resolve } from "node:path";
 import { generateId } from "./id.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import type { AgentDefinition, ThinkingLevel } from "./agent-launch-service.js";
+import {
+  DEFAULT_AGENT_DEFAULT_NAME,
+  DEFAULT_AGENT_ID,
+  DEFAULT_AGENT_DEFINITION,
+  applyDefaultAgentSafetyDefaults,
+  assertDefaultAgentCustomizationPatch,
+  isDefaultAgentId,
+  isDefaultAgentReference,
+  isDefaultAgentReservedName,
+} from "./default-agent.js";
 
 export type AgentDefinitionStatus = "active" | "archived";
 
@@ -88,6 +98,7 @@ export class AgentDefinitionStore {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
+    this.ensureDefaultAgent();
   }
 
   close(): void {
@@ -96,6 +107,9 @@ export class AgentDefinitionStore {
 
   createAgent(input: unknown, now = Date.now()): StoredAgentDefinition {
     const definition = validateAgentDefinition(input);
+    if (isDefaultAgentReservedName(definition.name)) {
+      throw new Error(`${DEFAULT_AGENT_DEFAULT_NAME} is reserved for the default Agent identity`);
+    }
     const agent: StoredAgentDefinition = {
       id: generateId(8),
       name: definition.name,
@@ -133,7 +147,18 @@ export class AgentDefinitionStore {
   ): StoredAgentDefinition | undefined {
     const current = this.getAgent(agentId);
     if (!current || current.status === "archived") return undefined;
-    const nextDefinition = validateAgentDefinition(mergeAgentDefinition(current.definition, patch));
+    if (!isDefaultAgentId(current.id) && wouldUseDefaultAgentReservedName(patch)) {
+      throw new Error(`${DEFAULT_AGENT_DEFAULT_NAME} is reserved for the default Agent identity`);
+    }
+    if (isDefaultAgentId(current.id)) {
+      assertDefaultAgentCustomizationPatch(patch);
+    }
+    const mergedDefinition = validateAgentDefinition(
+      mergeAgentDefinition(current.definition, patch),
+    );
+    const nextDefinition = isDefaultAgentId(current.id)
+      ? applyDefaultAgentSafetyDefaults(mergedDefinition)
+      : mergedDefinition;
     const nextVersion = current.version + 1;
     this.db.transaction(() => {
       this.db
@@ -150,7 +175,7 @@ export class AgentDefinitionStore {
 
   archiveAgent(agentId: string, now = Date.now()): StoredAgentDefinition | undefined {
     const current = this.getAgent(agentId);
-    if (!current) return undefined;
+    if (!current || isDefaultAgentId(current.id)) return undefined;
     this.db
       .prepare(
         `UPDATE agent_definitions
@@ -168,6 +193,33 @@ export class AgentDefinitionStore {
     return row ? agentFromRow(row) : undefined;
   }
 
+  resetDefaultAgent(now = Date.now()): StoredAgentDefinition {
+    const current = this.getAgent(DEFAULT_AGENT_ID);
+    if (!current) {
+      this.ensureDefaultAgent(now);
+      return this.getAgent(DEFAULT_AGENT_ID) as StoredAgentDefinition;
+    }
+
+    const nextVersion = current.version + 1;
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE agent_definitions
+           SET name = ?, status = 'active', version = ?, definition_json = ?, updated_at = ?, archived_at = NULL
+           WHERE id = ?`,
+        )
+        .run(
+          DEFAULT_AGENT_DEFINITION.name,
+          nextVersion,
+          JSON.stringify(DEFAULT_AGENT_DEFINITION),
+          now,
+          DEFAULT_AGENT_ID,
+        );
+      this.insertAgentVersion(DEFAULT_AGENT_ID, nextVersion, DEFAULT_AGENT_DEFINITION, now);
+    })();
+    return this.getAgent(DEFAULT_AGENT_ID) as StoredAgentDefinition;
+  }
+
   getAgentVersion(agentId: string, version: number): StoredAgentDefinitionVersion | undefined {
     if (!Number.isInteger(version) || version < 1) return undefined;
     const row = this.db
@@ -179,6 +231,9 @@ export class AgentDefinitionStore {
   resolveAgent(reference: string): StoredAgentDefinition | undefined {
     const trimmed = reference.trim();
     if (!trimmed) return undefined;
+    if (isDefaultAgentReference(trimmed)) {
+      return this.getAgent(DEFAULT_AGENT_ID);
+    }
     const direct = this.getAgent(trimmed);
     if (direct) return direct;
     const rows = this.db
@@ -235,6 +290,38 @@ export class AgentDefinitionStore {
       INSERT OR IGNORE INTO agent_definition_versions (id, version, definition_json, created_at)
         SELECT id, version, definition_json, updated_at FROM agent_definitions;
     `);
+  }
+
+  private ensureDefaultAgent(now = Date.now()): void {
+    const existing = this.getAgent(DEFAULT_AGENT_ID);
+    if (!existing) {
+      this.db.transaction(() => {
+        this.db
+          .prepare(
+            `INSERT INTO agent_definitions
+             (id, name, status, version, definition_json, created_at, updated_at, archived_at)
+             VALUES (?, ?, 'active', 1, ?, ?, ?, NULL)`,
+          )
+          .run(
+            DEFAULT_AGENT_ID,
+            DEFAULT_AGENT_DEFINITION.name,
+            JSON.stringify(DEFAULT_AGENT_DEFINITION),
+            now,
+            now,
+          );
+        this.insertAgentVersion(DEFAULT_AGENT_ID, 1, DEFAULT_AGENT_DEFINITION, now);
+      })();
+      return;
+    }
+
+    const safeDefinition = applyDefaultAgentSafetyDefaults(existing.definition);
+    this.db
+      .prepare(
+        `UPDATE agent_definitions
+         SET name = ?, status = 'active', definition_json = ?, updated_at = ?, archived_at = NULL
+         WHERE id = ?`,
+      )
+      .run(safeDefinition.name, JSON.stringify(safeDefinition), existing.updatedAt, existing.id);
   }
 
   private insertAgentVersion(
@@ -337,6 +424,12 @@ function mergeAgentDefinition(current: AgentDefinition, patch: unknown): AgentDe
   if (isRecord(merged.sessionDefaults)) removeNullValues(merged.sessionDefaults);
 
   return merged as unknown as AgentDefinition;
+}
+
+function wouldUseDefaultAgentReservedName(patch: unknown): boolean {
+  return (
+    isRecord(patch) && typeof patch.name === "string" && isDefaultAgentReservedName(patch.name)
+  );
 }
 
 function removeNullValues(record: Record<string, unknown>): void {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { AgentDefinitionStore } from "../src/agent-definitions.js";
+import { DEFAULT_AGENT_ID } from "../src/default-agent.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
 import { RouteHandler } from "../src/routes/index.js";
@@ -49,9 +50,16 @@ describe("agent routes", () => {
         listRes as never,
       );
       expect(listRes.statusCode).toBe(200);
-      expect(JSON.parse(listRes.body).agents).toEqual([
-        expect.objectContaining({ id: agent.id, name: "Reviewer", status: "active" }),
-      ]);
+      expect(JSON.parse(listRes.body).agents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: DEFAULT_AGENT_ID,
+            name: "Default Agent",
+            status: "active",
+          }),
+          expect.objectContaining({ id: agent.id, name: "Reviewer", status: "active" }),
+        ]),
+      );
 
       const launchRes = makeResponse();
       await routes.dispatch(
@@ -108,9 +116,16 @@ describe("agent routes", () => {
         req: {} as never,
         res: listRes as never,
       });
-      expect(JSON.parse(listRes.body).agents).toEqual([
-        expect.objectContaining({ id: created.id, name: "Reviewer", status: "active" }),
-      ]);
+      expect(JSON.parse(listRes.body).agents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: DEFAULT_AGENT_ID,
+            name: "Default Agent",
+            status: "active",
+          }),
+          expect.objectContaining({ id: created.id, name: "Reviewer", status: "active" }),
+        ]),
+      );
 
       const getRes = makeResponse();
       await dispatch({
@@ -176,6 +191,133 @@ describe("agent routes", () => {
         id: created.id,
         status: "archived",
       });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("seeds an overwriteable default Agent identity and can reset customization", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-routes-"));
+    try {
+      const store = new AgentDefinitionStore(dataDir);
+      const ctx = {
+        storage: {
+          getAgentDefinitionStore: () => store,
+        },
+      } as unknown as RouteContext;
+      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
+
+      const getRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/agents/default",
+        url: new URL("http://localhost/agents/default"),
+        req: {} as never,
+        res: getRes as never,
+      });
+      expect(getRes.statusCode).toBe(200);
+      expect(JSON.parse(getRes.body).agent).toMatchObject({
+        id: DEFAULT_AGENT_ID,
+        name: "Default Agent",
+        status: "active",
+        definition: {
+          name: "Default Agent",
+          description: expect.stringContaining("Manage Oppi"),
+          resources: { noContextFiles: true },
+          sessionDefaults: { noTools: "builtin", tools: ["oppi"] },
+        },
+      });
+
+      const updateRes = makeResponse();
+      await dispatch({
+        method: "PATCH",
+        path: "/agents/default",
+        url: new URL("http://localhost/agents/default"),
+        req: makeRequest({
+          name: "Home Agent",
+          description: "Coordinates Oppi from the app home screen",
+          instructions: { mode: "append", text: "Prefer short status summaries." },
+          sessionDefaults: { model: "openai-codex/gpt-5.5", thinkingLevel: "high" },
+        }) as never,
+        res: updateRes as never,
+      });
+      expect(updateRes.statusCode).toBe(200);
+      const updated = JSON.parse(updateRes.body).agent;
+      expect(updated).toMatchObject({
+        id: DEFAULT_AGENT_ID,
+        name: "Home Agent",
+        version: 2,
+        definition: {
+          name: "Home Agent",
+          description: "Coordinates Oppi from the app home screen",
+          instructions: { mode: "append", text: "Prefer short status summaries." },
+          resources: { noContextFiles: true },
+          sessionDefaults: {
+            model: "openai-codex/gpt-5.5",
+            thinkingLevel: "high",
+            noTools: "builtin",
+            tools: ["oppi"],
+          },
+        },
+      });
+
+      const rejectRes = makeResponse();
+      await dispatch({
+        method: "PATCH",
+        path: "/agents/default",
+        url: new URL("http://localhost/agents/default"),
+        req: makeRequest({ sessionDefaults: { tools: ["bash"] } }) as never,
+        res: rejectRes as never,
+      });
+      expect(rejectRes.statusCode).toBe(400);
+      expect(JSON.parse(rejectRes.body).error).toContain("sessionDefaults.tools");
+
+      const resetRes = makeResponse();
+      await dispatch({
+        method: "DELETE",
+        path: "/agents/default/customization",
+        url: new URL("http://localhost/agents/default/customization"),
+        req: {} as never,
+        res: resetRes as never,
+      });
+      expect(resetRes.statusCode).toBe(200);
+      expect(JSON.parse(resetRes.body).agent).toMatchObject({
+        id: DEFAULT_AGENT_ID,
+        name: "Default Agent",
+        version: 3,
+        definition: {
+          name: "Default Agent",
+          resources: { noContextFiles: true },
+          sessionDefaults: { noTools: "builtin", tools: ["oppi"] },
+        },
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not archive the reserved default Agent identity", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-archive-routes-"));
+    try {
+      const store = new AgentDefinitionStore(dataDir);
+      const ctx = {
+        storage: {
+          getAgentDefinitionStore: () => store,
+        },
+      } as unknown as RouteContext;
+      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
+
+      const res = makeResponse();
+      await dispatch({
+        method: "DELETE",
+        path: "/agents/default",
+        url: new URL("http://localhost/agents/default"),
+        req: {} as never,
+        res: res as never,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toContain("cannot be archived");
+      expect(store.getAgent(DEFAULT_AGENT_ID)).toMatchObject({ status: "active" });
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
@@ -320,6 +462,43 @@ describe("agent routes", () => {
       expect(res.statusCode).toBe(400);
       expect(JSON.parse(res.body).error).toContain("thinkingLevel");
       expect(createSession).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects public Agent definitions that use reserved default identity names", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-reserved-name-routes-"));
+    try {
+      const store = new AgentDefinitionStore(dataDir);
+      const ctx = {
+        storage: {
+          getAgentDefinitionStore: () => store,
+        },
+      } as unknown as RouteContext;
+      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
+
+      const defaultNameRes = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: "/agents",
+        url: new URL("http://localhost/agents"),
+        req: makeRequest({ name: "Default Agent" }) as never,
+        res: defaultNameRes as unknown as ServerResponse,
+      });
+      expect(defaultNameRes.statusCode).toBe(400);
+      expect(JSON.parse(defaultNameRes.body).error).toContain("reserved");
+
+      const aliasRes = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: "/agents",
+        url: new URL("http://localhost/agents"),
+        req: makeRequest({ name: "default" }) as never,
+        res: aliasRes as unknown as ServerResponse,
+      });
+      expect(aliasRes.statusCode).toBe(400);
+      expect(JSON.parse(aliasRes.body).error).toContain("reserved");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
