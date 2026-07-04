@@ -200,11 +200,14 @@ struct ChatActionHandlerRecoveryTests {
         await reconnectTask?.value
     }
 
-    @Test func stoppedSessionDuringRecoveryTellsUserToResume() async {
+    @Test func stoppedSessionDuringRecoveryTellsUserToResumeWhenResumeFails() async {
         let sessionId = "recover-stopped"
         let handler = ChatActionHandler()
         handler._reconnectRecoveryTimeoutForTesting = .milliseconds(500)
         handler._reconnectRecoveryPollIntervalForTesting = .milliseconds(25)
+        handler._resumeStoppedSessionForTesting = { _ in
+            throw WebSocketError.notConnected
+        }
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
@@ -276,11 +279,126 @@ struct ChatActionHandlerRecoveryTests {
             await reconnectTask.value
         }
     }
+
+    @Test func stoppedSessionDuringRecoveryResumesAndRetriesPrompt() async {
+        let sessionId = "recover-stopped-resume"
+        let handler = ChatActionHandler()
+        handler._reconnectRecoveryTimeoutForTesting = .milliseconds(700)
+        handler._reconnectRecoveryPollIntervalForTesting = .milliseconds(25)
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let pipe = TestEventPipeline(sessionId: sessionId, connection: connection)
+        connection._turnSendRetryDelayForTesting = .milliseconds(1)
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+
+        let sessionManager = ChatSessionManager(sessionId: sessionId)
+        sessionManager._loadHistoryForTesting = { _, _ in nil }
+
+        let streams = RecoveryScriptedStreamFactory()
+        sessionManager._streamSessionForTesting = { _ in streams.makeStream() }
+
+        let initialConnectTask = Task { @MainActor in
+            await sessionManager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        connection.wsClient?._setStatusForTesting(.connected)
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .ready)))
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { sessionManager.entryState == .streaming }
+        })
+
+        var promptAttempts = 0
+        connection._sendMessageForTesting = { message in
+            guard case .prompt(_, _, _, let requestId, let clientTurnId) = message,
+                  let requestId,
+                  let clientTurnId else {
+                return
+            }
+
+            promptAttempts += 1
+            if promptAttempts <= 2 {
+                throw WebSocketError.notConnected
+            }
+
+            pipe.handle(
+                .turnAck(
+                    command: "prompt",
+                    clientTurnId: clientTurnId,
+                    stage: .dispatched,
+                    requestId: requestId,
+                    duplicate: false
+                ),
+                sessionId: sessionId
+            )
+        }
+
+        var resumeAttempts = 0
+        handler._resumeStoppedSessionForTesting = { id in
+            resumeAttempts += 1
+            return makeTestSession(id: id, status: .ready)
+        }
+
+        var restoredText: String?
+        var reconnectCalls = 0
+        var reconnectTask: Task<Void, Never>?
+
+        _ = handler.sendPrompt(
+            text: "resume and send",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: sessionManager.reducer,
+            sessionId: sessionId,
+            sessionStore: sessionStore,
+            sessionManager: sessionManager,
+            onAsyncFailure: { text, _ in
+                restoredText = text
+            },
+            onNeedsReconnect: {
+                reconnectCalls += 1
+                connection.wsClient?._setStatusForTesting(.reconnecting(attempt: reconnectCalls))
+                streams.finish(index: max(0, streams.createdCount - 1))
+                sessionManager.reconnect()
+                reconnectTask = Task { @MainActor in
+                    await sessionManager.connect(connection: connection, sessionStore: sessionStore)
+                }
+                Task { @MainActor in
+                    _ = await streams.waitForCreated(reconnectCalls + 1)
+                    if reconnectCalls == 1 {
+                        sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
+                    } else {
+                        connection.wsClient?._setStatusForTesting(.connected)
+                        streams.yield(index: streams.createdCount - 1, message: .connected(session: makeTestSession(id: sessionId, status: .ready)))
+                    }
+                }
+            }
+        )
+
+        #expect(await waitForTestCondition(timeoutMs: 900) {
+            await MainActor.run { !handler.isSending }
+        })
+
+        #expect(promptAttempts == 3)
+        #expect(resumeAttempts == 1)
+        #expect(restoredText == nil)
+        #expect(handler.reconnectFailureMessage == nil)
+
+        streams.finish(index: streams.createdCount - 1)
+        await initialConnectTask.value
+        if let reconnectTask {
+            await reconnectTask.value
+        }
+    }
 }
 
 @MainActor
 private final class RecoveryScriptedStreamFactory {
     private var continuations: [AsyncStream<ServerMessage>.Continuation] = []
+
+    var createdCount: Int { continuations.count }
 
     func makeStream() -> AsyncStream<ServerMessage> {
         AsyncStream { continuation in
