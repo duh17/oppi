@@ -48,6 +48,9 @@ final class ChatActionHandler {
     /// Test seam: override force-stop transport.
     var _sendStopSessionForTesting: ((ServerConnection) async throws -> Void)?
 
+    /// Test seam: override stopped-session recovery resume transport.
+    var _resumeStoppedSessionForTesting: ((String) async throws -> Session)?
+
     private var autoTitleTasksBySessionId: [String: Task<Void, Never>] = [:]
     private var autoTitleAttemptedSessionIds: Set<String> = []
 
@@ -752,6 +755,7 @@ final class ChatActionHandler {
         let startedAt = ContinuousClock.now
         var lastRecoveryError: Error?
         var didRequestReconnect = false
+        var didAttemptStoppedResume = false
 
         func requestReconnectIfNeeded() {
             didRequestReconnect = true
@@ -773,6 +777,19 @@ final class ChatActionHandler {
             )
 
             if Self.didSessionStop(sessionStore: sessionStore, sessionId: sessionId) {
+                if !didAttemptStoppedResume {
+                    didAttemptStoppedResume = true
+                    if await resumeStoppedSessionDuringRecovery(
+                        connection: connection,
+                        sessionStore: sessionStore,
+                        sessionId: sessionId
+                    ) {
+                        requestReconnectIfNeeded()
+                        try? await Task.sleep(for: pollInterval)
+                        continue
+                    }
+                }
+
                 let message = "Couldn't restore live session — it ended while reconnecting. Tap Resume to continue."
                 completeRecoveredPromptFailure(
                     message: message,
@@ -855,6 +872,35 @@ final class ChatActionHandler {
             sessionId: sessionId,
             onAsyncFailure: onAsyncFailure
         )
+    }
+
+    private func resumeStoppedSessionDuringRecovery(
+        connection: ServerConnection,
+        sessionStore: SessionStore?,
+        sessionId: String
+    ) async -> Bool {
+        do {
+            let updated: Session
+            if let resumeStoppedSessionForTesting = _resumeStoppedSessionForTesting {
+                updated = try await resumeStoppedSessionForTesting(sessionId)
+            } else {
+                guard let api = connection.apiClient,
+                      let workspaceId = sessionStore?.workspaceId(for: sessionId),
+                      !workspaceId.isEmpty else {
+                    return false
+                }
+                updated = try await api.resumeWorkspaceSession(
+                    workspaceId: workspaceId,
+                    sessionId: sessionId
+                )
+            }
+
+            sessionStore?.upsert(updated)
+            return updated.status != .stopped
+        } catch {
+            log.warning("Stopped-session recovery resume failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return false
+        }
     }
 
     private func completeRecoveredPromptFailure(
