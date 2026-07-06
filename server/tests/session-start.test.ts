@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { DEFAULT_AGENT_ID } from "../src/default-agent.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionStartCoordinator, type SessionStartCoordinatorDeps } from "../src/session-start.js";
 import type { Storage } from "../src/storage.js";
@@ -139,6 +140,46 @@ describe("SessionStartCoordinator status persistence", () => {
     expect(createSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         agentDefinition: expect.objectContaining({ name: "Reviewer v1" }),
+      }),
+    );
+  });
+
+  it("applies Default Agent safety defaults to recorded Agent versions", async () => {
+    const session = makeSession({
+      status: "ready",
+      launch: {
+        status: "accepted",
+        source: "agent",
+        agentId: DEFAULT_AGENT_ID,
+        agentVersion: 2,
+        requestedAt: 1,
+      },
+    });
+    const deps = makeDeps(session);
+    const getAgentVersion = vi.fn(() => ({
+      id: DEFAULT_AGENT_ID,
+      version: 2,
+      definition: {
+        name: "oppi-default-agent",
+        resources: { noContextFiles: true, extensionIds: ["oppi"] },
+        sessionDefaults: { excludeTools: ["write", "bash"] },
+      },
+      createdAt: 1,
+    }));
+    const getAgent = vi.fn();
+    Object.assign(deps.storage, {
+      getAgentDefinitionStore: () => ({ getAgentVersion, getAgent }),
+    });
+    const createSpy = vi.spyOn(SdkBackend, "create").mockResolvedValue({} as SdkBackend);
+
+    await new SessionStartCoordinator(deps).startSessionInner("key", session.id, makeWorkspace());
+
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentDefinition: expect.objectContaining({
+          resources: { noContextFiles: true },
+          sessionDefaults: { noTools: "builtin", tools: ["oppi"] },
+        }),
       }),
     );
   });
