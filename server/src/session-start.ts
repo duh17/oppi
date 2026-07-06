@@ -1,4 +1,5 @@
 import type { AgentDefinition } from "./agent-launch-service.js";
+import { applyDefaultAgentSafetyDefaults, isDefaultAgentId } from "./default-agent.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
 import {
@@ -100,11 +101,14 @@ export class SessionStartCoordinator {
     if (!agentId) return undefined;
     const store = this.deps.storage.getAgentDefinitionStore();
     const agentVersion = session.launch?.agentVersion;
+    let definition: AgentDefinition | undefined;
     if (agentVersion !== undefined) {
-      const versioned = store.getAgentVersion(agentId, agentVersion);
-      if (versioned) return versioned.definition;
+      definition = store.getAgentVersion(agentId, agentVersion)?.definition;
     }
-    return store.getAgent(agentId)?.definition;
+    definition = definition ?? store.getAgent(agentId)?.definition;
+    return definition && isDefaultAgentId(agentId)
+      ? applyDefaultAgentSafetyDefaults(definition)
+      : definition;
   }
 
   buildWorkspaceIdentity(session: Session, workspace?: Workspace): WorkspaceSessionIdentity {
