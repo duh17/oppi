@@ -37,7 +37,7 @@ export interface OppiToolCommandResult {
 
 const READ_ACTIONS: Record<string, Set<string>> = {
   workspace: new Set(["list", "get"]),
-  worktree: new Set(["list", "get"]),
+  worktree: new Set(["list", "get", "status", "preview"]),
   agent: new Set(["list", "get"]),
   session: new Set(["list", "get", "read", "events", "trace"]),
   schedule: new Set(["list", "get", "runs"]),
@@ -45,6 +45,7 @@ const READ_ACTIONS: Record<string, Set<string>> = {
 
 const APPROVED_WRITE_ACTIONS: Record<string, Set<string>> = {
   session: new Set(["create"]),
+  worktree: new Set(["create", "open", "remove"]),
 };
 
 const MAX_TOOL_OUTPUT_CHARS = 50_000;
@@ -57,13 +58,13 @@ export function createDefaultAgentExtensionFactory(options: {
       name: "oppi",
       label: "Oppi",
       description:
-        "Run an allowlisted Oppi CLI command as JSON. Read commands are immediate; session creation requires explicit user approval.",
+        "Run an allowlisted Oppi CLI command as JSON. Read commands are immediate; session and worktree writes require explicit user approval.",
       promptSnippet:
         "Run allowlisted Oppi CLI commands as JSON for workspaces, worktrees, Agents, sessions, schedules, and status.",
       promptGuidelines: [
         "Use oppi for Oppi app state instead of shell or filesystem tools.",
         "Use oppi read commands before asking the user about discoverable workspace, Agent, session, schedule, or worktree state.",
-        "Use oppi session create only after the user has asked to start work in a workspace; the tool will request explicit approval before creating the session.",
+        "Use oppi session create or worktree lifecycle commands only after the user asks for them; the tool will request explicit approval before mutating Oppi state.",
       ],
       parameters: Type.Object({
         args: Type.Array(Type.String(), {

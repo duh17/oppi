@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,8 +8,30 @@ import { describe, expect, it, vi } from "vitest";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
-import type { Session } from "../src/types.js";
+import type { Session, Workspace } from "../src/types.js";
+import { createWorkspaceWorktree } from "../src/worktrees.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function makeGitWorkspace(root: string): Workspace {
+  git(root, ["init", "--initial-branch=main"]);
+  git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+  git(root, ["config", "user.name", "Oppi Test"]);
+  writeFileSync(join(root, "README.md"), "main checkout\n");
+  git(root, ["add", "README.md"]);
+  git(root, ["commit", "-m", "initial"]);
+  return {
+    id: "ws-1",
+    name: "Test",
+    hostMount: root,
+    systemPromptMode: "append",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
 
 describe("sessions module", () => {
   it("handles GET workspace sessions in isolation", async () => {
@@ -237,6 +260,70 @@ describe("sessions module", () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as { active: Array<{ id: string }> };
     expect(body.active.map((session) => session.id)).toEqual(["active-1"]);
+  });
+
+  it("creates sessions in data-dir managed worktrees", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-session-route-worktree-root-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-route-worktree-data-"));
+    try {
+      const workspace = makeGitWorkspace(root);
+      const worktree = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/session-route-worktree" },
+        { dataDir },
+      );
+      const session: Session = {
+        id: "created-1",
+        workspaceId: workspace.id,
+        status: "ready",
+        createdAt: 1,
+        lastActivity: 1,
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+      };
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+          createSession: vi.fn(() => session),
+          saveSession: vi.fn((updated: Session) => Object.assign(session, updated)),
+          listSessions: vi.fn(() => []),
+          findSessionByLaunchIdempotencyKey: vi.fn(() => undefined),
+          claimSessionLaunchRecovery: vi.fn(() => undefined),
+        },
+        sessions: {
+          startSession: vi.fn(async () => session),
+          sendPrompt: vi.fn(async () => undefined),
+        },
+        sessionRuntimes: {
+          getActiveSessionIds: vi.fn(() => new Set()),
+          getActiveSession: vi.fn(() => undefined),
+          getPendingUIRequestMessages: vi.fn(() => []),
+        },
+        ensureSessionContextWindow: vi.fn((s: unknown) => s),
+      } as unknown as RouteContext;
+
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "POST",
+        path: "/workspaces/ws-1/sessions",
+        url: new URL("http://localhost/workspaces/ws-1/sessions"),
+        req: makeRequest({ name: "Worktree session", worktreeId: worktree.id }) as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(201);
+      expect(ctx.storage.createSession).toHaveBeenCalledOnce();
+      expect(session.worktreeId).toBe(worktree.id);
+      expect(JSON.parse(res.body).session.worktreeId).toBe(worktree.id);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("returns 404 for workspace sessions in nonexistent workspace", async () => {

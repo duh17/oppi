@@ -394,13 +394,20 @@ export class SessionTraceService {
       return { kind: "sensitive-path" };
     }
 
-    const resolvedFile = await this.resolveTouchedFilePath(params.workspace, reqPath);
+    const resolvedFile = await this.resolveTouchedFilePath(
+      params.workspace,
+      params.session,
+      reqPath,
+    );
     if (!resolvedFile) {
       return { kind: "file-not-found" };
     }
     const resolvedPath = resolvedFile.realPath;
 
-    const readableWorkspaceRoots = await this.resolveReadableWorkspaceRoots(params.workspace);
+    const readableWorkspaceRoots = await this.resolveReadableWorkspaceRoots(
+      params.workspace,
+      params.session,
+    );
     if (readableWorkspaceRoots.length === 0) {
       return { kind: "workspace-root-not-found" };
     }
@@ -517,7 +524,9 @@ export class SessionTraceService {
       : undefined;
 
     if (workspace?.hostMount) {
-      const resolved = resolveSdkSessionCwd(workspace);
+      const resolved = resolveSdkSessionCwd(workspace, session, {
+        dataDir: this.deps.storage.getDataDir(),
+      });
       return (await pathExists(resolved)) ? resolved : null;
     }
     return homedir();
@@ -525,6 +534,7 @@ export class SessionTraceService {
 
   private async resolveTouchedFilePath(
     workspace: Workspace,
+    session: Session,
     reqPath: string,
   ): Promise<ResolvedTouchedFilePath | null> {
     let absolutePath: string;
@@ -533,7 +543,9 @@ export class SessionTraceService {
     } else if (reqPath.startsWith("~")) {
       absolutePath = resolve(reqPath.replace(/^~(?=\/|$)/, homedir()));
     } else {
-      const workspaceRoot = resolveSdkSessionCwd(workspace);
+      const workspaceRoot = resolveSdkSessionCwd(workspace, session, {
+        dataDir: this.deps.storage.getDataDir(),
+      });
       let workspaceRouteRoot = workspaceRoot;
       try {
         workspaceRouteRoot = await realpath(workspaceRoot);
@@ -553,7 +565,10 @@ export class SessionTraceService {
     }
   }
 
-  private async resolveReadableWorkspaceRoots(currentWorkspace: Workspace): Promise<string[]> {
+  private async resolveReadableWorkspaceRoots(
+    currentWorkspace: Workspace,
+    currentSession?: Pick<Session, "worktreeId">,
+  ): Promise<string[]> {
     const roots: string[] = [];
     const workspaces = [
       currentWorkspace,
@@ -564,7 +579,13 @@ export class SessionTraceService {
 
     for (const workspace of workspaces) {
       try {
-        addUniquePath(roots, await realpath(resolveSdkSessionCwd(workspace)));
+        const session = workspace.id === currentWorkspace.id ? currentSession : undefined;
+        addUniquePath(
+          roots,
+          await realpath(
+            resolveSdkSessionCwd(workspace, session, { dataDir: this.deps.storage.getDataDir() }),
+          ),
+        );
       } catch {
         continue;
       }

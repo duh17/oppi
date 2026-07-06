@@ -1,12 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { listWorkspaceWorktrees, resolveWorkspaceWorktree } from "../src/worktrees.js";
-import type { Workspace } from "../src/types.js";
+import { resolveSdkSessionCwd } from "../src/sdk-backend.js";
+import {
+  createWorkspaceWorktree,
+  hasManagedWorkspaceWorktreeDirectory,
+  listWorkspaceWorktrees,
+  managedWorktreesRoot,
+  previewWorkspaceWorktree,
+  removeWorkspaceWorktree,
+  resolveWorkspaceWorktree,
+} from "../src/worktrees.js";
+import type { CreateWorkspaceWorktreeRequest, Workspace } from "../src/types.js";
 
 const roots: string[] = [];
 
@@ -101,5 +110,217 @@ describe("workspace worktrees", () => {
 
     expect(worktrees.find((worktree) => worktree.isMain)?.sessionCount).toBe(2);
     expect(worktrees.find((worktree) => worktree.id === linked.id)?.sessionCount).toBe(3);
+  });
+
+  it("creates Oppi-managed worktrees under the data dir", () => {
+    const { root, workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-data-dir-"));
+    roots.push(dataDir);
+
+    const created = createWorkspaceWorktree(
+      workspace,
+      { branch: "feature/data-dir-root" },
+      { dataDir },
+    );
+
+    expect(created.id).toMatch(/^wt_feature-data-dir-root-/);
+    expect(created.path.startsWith(realpathSync(managedWorktreesRoot(dataDir, workspace.id)))).toBe(
+      true,
+    );
+    expect(created.path.startsWith(join(root, ".pi", "worktrees"))).toBe(false);
+    expect(created.branch).toBe("feature/data-dir-root");
+    expect(created.managedByOppi).toBe(true);
+
+    const listed = listWorkspaceWorktrees(workspace, { dataDir });
+    expect(listed.find((worktree) => worktree.id === created.id)).toMatchObject({
+      path: created.path,
+      managedByOppi: true,
+    });
+  });
+
+  it("treats an unreadable managed worktree root as occupied", () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-unreadable-root-"));
+    roots.push(dataDir);
+    const managedRoot = managedWorktreesRoot(dataDir, workspace.id);
+    mkdirSync(dirname(managedRoot), { recursive: true });
+    writeFileSync(managedRoot, "not a directory");
+
+    expect(hasManagedWorkspaceWorktreeDirectory(dataDir, workspace.id)).toBe(true);
+  });
+
+  it("resolves SDK session cwd for data-dir managed worktrees", () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-sdk-cwd-"));
+    roots.push(dataDir);
+    const created = createWorkspaceWorktree(workspace, { branch: "feature/sdk-cwd" }, { dataDir });
+
+    expect(resolveSdkSessionCwd(workspace, { worktreeId: created.id }, { dataDir })).toBe(
+      created.path,
+    );
+  });
+
+  it("rejects history-dependent branch shorthand when creating worktrees", () => {
+    const { root, workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-branch-shorthand-"));
+    roots.push(dataDir);
+    git(root, ["branch", "feature/previous-checkout"]);
+    git(root, ["checkout", "feature/previous-checkout"]);
+    git(root, ["checkout", "main"]);
+
+    expect(() => createWorkspaceWorktree(workspace, { branch: "@{-1}" }, { dataDir })).toThrow(
+      "Invalid branch name",
+    );
+  });
+
+  it("rejects malformed optional worktree create fields", () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-create-shape-"));
+    roots.push(dataDir);
+
+    expect(() =>
+      createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/bad-base", base: 123 } as unknown as CreateWorkspaceWorktreeRequest,
+        { dataDir },
+      ),
+    ).toThrow("base must be a string");
+    expect(() =>
+      createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/bad-path", path: [] } as unknown as CreateWorkspaceWorktreeRequest,
+        { dataDir },
+      ),
+    ).toThrow("path must be a string");
+  });
+
+  it("previews worktree integration without modifying either checkout", () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-preview-"));
+    roots.push(dataDir);
+    const created = createWorkspaceWorktree(workspace, { branch: "feature/preview" }, { dataDir });
+    writeFileSync(join(created.path, "preview.txt"), "preview change\n");
+    git(created.path, ["add", "preview.txt"]);
+    git(created.path, ["commit", "-m", "preview change"]);
+
+    const preview = previewWorkspaceWorktree(
+      workspace,
+      created.id,
+      { into: "main", mode: "ff-only" },
+      { dataDir },
+    );
+
+    expect(preview).toMatchObject({
+      mode: "ff-only",
+      alreadyMerged: false,
+      fastForwardPossible: true,
+      commitCount: 1,
+      conflictCheck: "clean",
+    });
+    expect(preview.changedFiles).toContainEqual({ status: "A", path: "preview.txt" });
+    expect(preview.commits[0]?.subject).toBe("preview change");
+  });
+
+  it("fails preview when changed files cannot be computed", () => {
+    const { root, workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-preview-failure-"));
+    roots.push(dataDir);
+
+    git(root, ["checkout", "--orphan", "unrelated-history"]);
+    git(root, ["rm", "-rf", "."]);
+    writeFileSync(join(root, "unrelated.txt"), "unrelated history\n");
+    git(root, ["add", "unrelated.txt"]);
+    git(root, ["commit", "-m", "unrelated history"]);
+    git(root, ["checkout", "main"]);
+    const created = createWorkspaceWorktree(
+      workspace,
+      { branch: "unrelated-history" },
+      { dataDir },
+    );
+
+    expect(() =>
+      previewWorkspaceWorktree(workspace, created.id, { into: "main" }, { dataDir }),
+    ).toThrow("Unable to compute changed files");
+  });
+
+  it("rejects managed worktree create paths outside the data dir root", () => {
+    const { root, workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-outside-"));
+    roots.push(dataDir);
+
+    expect(() =>
+      createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/outside", path: join(root, "outside-worktree") },
+        { dataDir },
+      ),
+    ).toThrow("data-dir worktrees root");
+  });
+
+  it("rejects custom managed worktree paths that collide with reserved ids", () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-reserved-id-"));
+    roots.push(dataDir);
+
+    const managedRoot = managedWorktreesRoot(dataDir, workspace.id);
+    mkdirSync(managedRoot, { recursive: true });
+
+    expect(() =>
+      createWorkspaceWorktree(
+        workspace,
+        {
+          branch: "feature/reserved-main",
+          path: join(realpathSync(managedRoot), "main"),
+        },
+        { dataDir },
+      ),
+    ).toThrow("reserved worktree id");
+  });
+
+  it("removes only Oppi-managed data-dir worktrees", () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-remove-"));
+    roots.push(dataDir);
+    const projectLinked = listWorkspaceWorktrees(workspace).find((candidate) => !candidate.isMain)!;
+    const created = createWorkspaceWorktree(
+      workspace,
+      { branch: "feature/remove-me" },
+      { dataDir },
+    );
+
+    expect(() =>
+      removeWorkspaceWorktree(workspace, {
+        dataDir,
+        worktreeId: projectLinked.id,
+        force: true,
+      }),
+    ).toThrow("Only Oppi-managed data-dir worktrees can be removed");
+
+    const removed = removeWorkspaceWorktree(workspace, {
+      dataDir,
+      worktreeId: created.id,
+    });
+
+    expect(removed.id).toBe(created.id);
+    expect(existsSync(created.path)).toBe(false);
+    expect(
+      listWorkspaceWorktrees(workspace, { dataDir }).some((worktree) => worktree.id === created.id),
+    ).toBe(false);
+  });
+
+  it("refuses to remove managed worktrees with active sessions", () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-active-"));
+    roots.push(dataDir);
+    const created = createWorkspaceWorktree(workspace, { branch: "feature/active" }, { dataDir });
+
+    expect(() =>
+      removeWorkspaceWorktree(workspace, {
+        dataDir,
+        worktreeId: created.id,
+        force: true,
+        activeSessionCount: 1,
+      }),
+    ).toThrow("Cannot remove a worktree with active sessions");
   });
 });

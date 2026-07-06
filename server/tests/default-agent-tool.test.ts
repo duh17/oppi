@@ -54,6 +54,8 @@ describe("Default Agent Oppi tool command policy", () => {
       ["workspace", "list"],
       ["workspace", "get", "oppi"],
       ["worktree", "list", "--workspace", "oppi"],
+      ["worktree", "status", "wt_feature", "--workspace", "oppi"],
+      ["worktree", "preview", "wt_feature", "--workspace", "oppi", "--into", "main"],
       ["agent", "get", "default"],
       ["session", "read", "sess-1", "--tail", "10"],
       ["schedule", "runs", "sch-1"],
@@ -65,17 +67,18 @@ describe("Default Agent Oppi tool command policy", () => {
     }
   });
 
-  it("requires approval for creating a workspace session", () => {
-    expect(
-      classifyOppiToolCommand([
-        "session",
-        "create",
-        "--workspace",
-        "oppi",
-        "--prompt",
-        "Review this",
-      ]),
-    ).toMatchObject({ ok: true, kind: "approved-write", command: "session", action: "create" });
+  it("requires approval for creating sessions and managing worktrees", () => {
+    for (const args of [
+      ["session", "create", "--workspace", "oppi", "--prompt", "Review this"],
+      ["worktree", "create", "--workspace", "oppi", "--branch", "feature/review"],
+      ["worktree", "open", "--workspace", "oppi", "--branch", "feature/review"],
+      ["worktree", "remove", "wt_feature-review-12345678", "--workspace", "oppi"],
+    ]) {
+      expect(classifyOppiToolCommand(args), args.join(" ")).toMatchObject({
+        ok: true,
+        kind: "approved-write",
+      });
+    }
   });
 
   it("blocks mutating app commands that are not part of the first Default Agent slice", () => {

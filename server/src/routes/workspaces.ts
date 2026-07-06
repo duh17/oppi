@@ -22,7 +22,16 @@ import { appendOppiSystemPromptHint, buildOppiSystemPromptAppend } from "../oppi
 import { resolveInitialChatModel } from "../session-model-selection.js";
 import { isPiTuiTaskRecordSession } from "../pi-tui-session-classification.js";
 import { hostMountValidationError } from "../host.js";
-import { listWorkspaceWorktrees, resolveWorkspaceWorktree } from "../worktrees.js";
+import {
+  createWorkspaceWorktree,
+  hasManagedWorkspaceWorktreeDirectory,
+  listWorkspaceWorktrees,
+  openWorkspaceWorktree,
+  previewWorkspaceWorktree,
+  removeWorkspaceWorktree,
+  resolveWorkspaceWorktree,
+  WorkspaceWorktreeError,
+} from "../worktrees.js";
 import type {
   CreateWorkspaceRequest,
   CreateWorkspaceQuickActionSessionRequest,
@@ -34,6 +43,9 @@ import type {
   WorkspaceQuickActionsResponse,
   WorkspaceQuickActionSelectionResponse,
   WorkspaceQuickActionSessionResponse,
+  CreateWorkspaceWorktreeRequest,
+  OpenWorkspaceWorktreeRequest,
+  PreviewWorkspaceWorktreeRequest,
 } from "../types.js";
 import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
 import { buildWorkspaceReviewFilesResponse } from "../workspace-review.js";
@@ -254,6 +266,24 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   function handleDeleteWorkspace(wsId: string, res: ServerResponse): void {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (workspace) {
+      const dataDir = ctx.storage.getDataDir();
+      const hasManagedWorktrees =
+        hasManagedWorkspaceWorktreeDirectory(dataDir, wsId) ||
+        listWorkspaceWorktrees(workspace, {
+          dataDir,
+        }).some((worktree) => worktree.managedByOppi === true);
+      if (hasManagedWorktrees) {
+        helpers.error(
+          res,
+          409,
+          "Workspace has Oppi-managed worktrees; remove them before deleting the workspace",
+        );
+        return;
+      }
+    }
+
     ctx.storage.deleteWorkspace(wsId);
     helpers.json(res, { ok: true });
   }
@@ -279,6 +309,19 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     };
   }
 
+  function isObjectBody(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+
+  function rejectNonObjectBody(
+    value: unknown,
+    res: ServerResponse,
+  ): value is Record<string, unknown> {
+    if (isObjectBody(value)) return true;
+    helpers.error(res, 400, "Request body must be an object");
+    return false;
+  }
+
   function handleListWorkspaceWorktrees(wsId: string, res: ServerResponse): void {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
@@ -289,9 +332,157 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     helpers.json(res, {
       workspaceId: wsId,
       worktrees: listWorkspaceWorktrees(workspace, {
+        dataDir: ctx.storage.getDataDir(),
         sessionCountsByWorktreeId: workspaceWorktreeSessionCounts(wsId),
       }),
     });
+  }
+
+  function handleWorktreeLifecycleError(error: unknown, res: ServerResponse): void {
+    if (error instanceof WorkspaceWorktreeError) {
+      helpers.error(res, error.statusCode, error.message);
+      return;
+    }
+
+    const message = error instanceof Error ? error.message : "Workspace worktree operation failed";
+    helpers.error(res, 500, message);
+  }
+
+  async function handleCreateWorkspaceWorktree(
+    wsId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const body = await helpers.parseBody<unknown>(req);
+    if (!rejectNonObjectBody(body, res)) return;
+    try {
+      const worktree = createWorkspaceWorktree(workspace, body as CreateWorkspaceWorktreeRequest, {
+        dataDir: ctx.storage.getDataDir(),
+      });
+      helpers.json(res, { workspaceId: wsId, worktree }, 201);
+    } catch (error) {
+      handleWorktreeLifecycleError(error, res);
+    }
+  }
+
+  async function handleOpenWorkspaceWorktree(
+    wsId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const body = await helpers.parseBody<unknown>(req);
+    if (!rejectNonObjectBody(body, res)) return;
+    try {
+      const worktree = openWorkspaceWorktree(workspace, body as OpenWorkspaceWorktreeRequest, {
+        dataDir: ctx.storage.getDataDir(),
+      });
+      helpers.json(res, { workspaceId: wsId, worktree });
+    } catch (error) {
+      handleWorktreeLifecycleError(error, res);
+    }
+  }
+
+  async function handleGetWorkspaceWorktreeStatus(
+    wsId: string,
+    worktreeId: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const worktree = resolveWorkspaceWorktree(workspace, worktreeId, {
+      dataDir: ctx.storage.getDataDir(),
+    });
+    if (!worktree) {
+      helpers.error(res, 404, "Worktree not found");
+      return;
+    }
+
+    const sessionCounts = workspaceWorktreeSessionCounts(wsId);
+    const activeSessionCounts = workspaceWorktreeActiveSessionCounts(wsId);
+    const status = await getGitStatus(worktree.path);
+    helpers.json(res, {
+      workspaceId: wsId,
+      worktree: {
+        ...worktree,
+        sessionCount: sessionCounts.get(worktree.id) ?? 0,
+        activeSessionCount: activeSessionCounts.get(worktree.id) ?? 0,
+      },
+      status,
+    });
+  }
+
+  async function handlePreviewWorkspaceWorktree(
+    wsId: string,
+    worktreeId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const body = await helpers.parseBody<unknown>(req);
+    if (!rejectNonObjectBody(body, res)) return;
+    try {
+      const preview = previewWorkspaceWorktree(
+        workspace,
+        worktreeId,
+        body as PreviewWorkspaceWorktreeRequest,
+        {
+          dataDir: ctx.storage.getDataDir(),
+        },
+      );
+      helpers.json(res, { workspaceId: wsId, preview });
+    } catch (error) {
+      handleWorktreeLifecycleError(error, res);
+    }
+  }
+
+  function handleRemoveWorkspaceWorktree(
+    wsId: string,
+    worktreeId: string,
+    url: URL,
+    res: ServerResponse,
+  ): void {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const normalizedWorktreeId = worktreeId.trim();
+    const sessionCounts = workspaceWorktreeSessionCounts(wsId);
+    const activeSessionCounts = workspaceWorktreeActiveSessionCounts(wsId);
+    try {
+      const worktree = removeWorkspaceWorktree(workspace, {
+        dataDir: ctx.storage.getDataDir(),
+        worktreeId: normalizedWorktreeId,
+        force: url.searchParams.get("force") === "true",
+        sessionCount: sessionCounts.get(normalizedWorktreeId) ?? 0,
+        activeSessionCount: activeSessionCounts.get(normalizedWorktreeId) ?? 0,
+      });
+      helpers.json(res, { ok: true, workspaceId: wsId, worktree });
+    } catch (error) {
+      handleWorktreeLifecycleError(error, res);
+    }
   }
 
   function workspaceWorktreeSessionCounts(workspaceId: string): Map<string, number> {
@@ -319,6 +510,62 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return counts;
   }
 
+  function workspaceWorktreeActiveSessionCounts(workspaceId: string): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const sessionId of ctx.sessionRuntimes.getActiveSessionIds()) {
+      const session = ctx.sessionRuntimes.getActiveSession(sessionId);
+      if (!session || session.workspaceId !== workspaceId) continue;
+      if (isPiTuiTaskRecordSession(session)) continue;
+      const worktreeId = session.worktreeId?.trim() || "main";
+      counts.set(worktreeId, (counts.get(worktreeId) ?? 0) + 1);
+    }
+    return counts;
+  }
+
+  function selectedSessionFromQuery(
+    workspaceId: string,
+    url: URL,
+    res: ServerResponse,
+  ): { ok: true; selectedSession?: Session } | { ok: false } {
+    const selectedSessionId = url.searchParams.get("selectedSessionId")?.trim();
+    if (!selectedSessionId) return { ok: true };
+
+    const selectedSession = ctx.storage.getSession(selectedSessionId);
+    if (!selectedSession || selectedSession.workspaceId !== workspaceId) {
+      helpers.error(res, 404, "Session not found");
+      return { ok: false };
+    }
+    return { ok: true, selectedSession };
+  }
+
+  function workspaceCheckoutFromQuery(
+    workspace: Workspace,
+    workspaceId: string,
+    url: URL,
+    res: ServerResponse,
+  ): { path?: string; selectedSession?: Session } | undefined {
+    const selected = selectedSessionFromQuery(workspaceId, url, res);
+    if (!selected.ok) return undefined;
+
+    const worktreeId =
+      url.searchParams.get("worktreeId")?.trim() ||
+      selected.selectedSession?.worktreeId?.trim() ||
+      undefined;
+    if (!worktreeId) {
+      return { path: workspace.hostMount, selectedSession: selected.selectedSession };
+    }
+
+    const worktree = resolveWorkspaceWorktree(workspace, worktreeId, {
+      dataDir: ctx.storage.getDataDir(),
+    });
+    if (!worktree) {
+      helpers.error(res, 404, "Worktree not found");
+      return undefined;
+    }
+
+    return { path: worktree.path, selectedSession: selected.selectedSession };
+  }
+
   async function handleGetWorkspaceGitStatus(
     wsId: string,
     url: URL,
@@ -330,36 +577,40 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const worktreeId = url.searchParams.get("worktreeId")?.trim() || undefined;
-    const statusPath = worktreeId
-      ? resolveWorkspaceWorktree(workspace, worktreeId)?.path
-      : workspace.hostMount;
+    const checkout = workspaceCheckoutFromQuery(workspace, wsId, url, res);
+    if (!checkout) return;
 
-    if (!statusPath) {
+    if (!checkout.path) {
       helpers.json(res, emptyGitStatus());
       return;
     }
 
-    const status = await getGitStatus(statusPath);
+    const status = await getGitStatus(checkout.path);
     helpers.json(res, status);
   }
 
-  async function handleGetWorkspaceGitChanges(wsId: string, res: ServerResponse): Promise<void> {
+  async function handleGetWorkspaceGitChanges(
+    wsId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
       helpers.error(res, 404, "Workspace not found");
       return;
     }
 
-    const gitStatus = workspace.hostMount
-      ? await getGitStatus(workspace.hostMount)
-      : emptyGitStatus();
+    const checkout = workspaceCheckoutFromQuery(workspace, wsId, url, res);
+    if (!checkout) return;
+
+    const gitStatus = checkout.path ? await getGitStatus(checkout.path) : emptyGitStatus();
     helpers.json(
       res,
       buildWorkspaceReviewFilesResponse({
         workspaceId: wsId,
         gitStatus,
-        workspaceRoot: workspace.hostMount,
+        selectedSession: checkout.selectedSession,
+        workspaceRoot: checkout.path,
       }),
     );
   }
@@ -467,7 +718,10 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    if (!workspace.hostMount) {
+    const checkout = workspaceCheckoutFromQuery(workspace, wsId, url, res);
+    if (!checkout) return;
+
+    if (!checkout.path) {
       helpers.error(res, 404, "Workspace review unavailable");
       return;
     }
@@ -475,7 +729,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     try {
       const diff = await buildWorkspaceReviewDiff({
         workspaceId: wsId,
-        workspaceRoot: workspace.hostMount,
+        workspaceRoot: checkout.path,
         path: url.searchParams.get("path") ?? "",
       });
       helpers.compressedJson(req, res, diff);
@@ -503,7 +757,14 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return null;
     }
 
-    const body = await helpers.parseBody<CreateWorkspaceQuickActionSessionRequest>(req);
+    const rawBody = await helpers.parseBody<unknown>(req);
+    if (!rejectNonObjectBody(rawBody, res)) return null;
+    const body = rawBody as unknown as CreateWorkspaceQuickActionSessionRequest;
+
+    if (body.selectedSessionId !== undefined && typeof body.selectedSessionId !== "string") {
+      helpers.error(res, 400, "selectedSessionId must be a string");
+      return null;
+    }
     const selectedSessionId = body.selectedSessionId?.trim();
     const selectedSession = selectedSessionId
       ? ctx.storage.getSession(selectedSessionId)
@@ -514,12 +775,25 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return null;
     }
 
+    if (body.promptTemplateName !== undefined && typeof body.promptTemplateName !== "string") {
+      helpers.error(res, 400, "promptTemplateName must be a string");
+      return null;
+    }
     const promptTemplateName = body.promptTemplateName?.trim();
     if (!promptTemplateName) {
       helpers.error(res, 400, "promptTemplateName required");
       return null;
     }
     body.promptTemplateName = promptTemplateName;
+
+    if (body.worktreeId !== undefined) {
+      const worktreeId = typeof body.worktreeId === "string" ? body.worktreeId.trim() : "";
+      if (!worktreeId) {
+        helpers.error(res, 400, "worktreeId must not be empty");
+        return null;
+      }
+      body.worktreeId = worktreeId;
+    }
 
     if (body.commitSha !== undefined) {
       const commitSha = typeof body.commitSha === "string" ? body.commitSha.trim() : "";
@@ -533,19 +807,35 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return { workspace, body, selectedSession };
   }
 
-  async function handleGetWorkspaceQuickActions(wsId: string, res: ServerResponse): Promise<void> {
+  async function handleGetWorkspaceQuickActions(
+    wsId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
       helpers.error(res, 404, "Workspace not found");
       return;
     }
 
+    const selected = selectedSessionFromQuery(wsId, url, res);
+    if (!selected.ok) return;
+
     try {
       const response: WorkspaceQuickActionsResponse = {
-        actions: await loadWorkspaceQuickActionOptions(workspace),
+        actions: await loadWorkspaceQuickActionOptions(workspace, {
+          selectedSession: selected.selectedSession,
+          dataDir: ctx.storage.getDataDir(),
+          worktreeId: url.searchParams.get("worktreeId")?.trim() || undefined,
+        }),
       };
       helpers.json(res, response);
     } catch (error) {
+      if (error instanceof WorkspaceQuickActionSessionError) {
+        helpers.error(res, error.status, error.message);
+        return;
+      }
+
       const message = error instanceof Error ? error.message : "Failed to load quick actions";
       helpers.error(res, 500, message);
     }
@@ -567,8 +857,10 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         workspace: parsed.workspace,
         paths: Array.isArray(parsed.body.paths) ? parsed.body.paths : [],
         selectedSession: parsed.selectedSession,
+        worktreeId: parsed.body.worktreeId,
         commitSha: parsed.body.commitSha,
         promptTemplateName: parsed.body.promptTemplateName,
+        dataDir: ctx.storage.getDataDir(),
       });
       const response: WorkspaceQuickActionSelectionResponse = {
         promptTemplateName: selection.promptTemplateName,
@@ -625,8 +917,10 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       workspace,
       paths: Array.isArray(body.paths) ? body.paths : [],
       selectedSession,
+      worktreeId: body.worktreeId,
       commitSha: body.commitSha,
       promptTemplateName: body.promptTemplateName,
+      dataDir: ctx.storage.getDataDir(),
     });
 
     const modelSelection = resolveInitialChatModel({
@@ -636,8 +930,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const session = ctx.storage.createSession(launch.sessionName, modelSelection.model);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
-    if (selectedSession?.worktreeId) {
-      session.worktreeId = selectedSession.worktreeId;
+    const quickActionWorktreeId = body.worktreeId?.trim() || selectedSession?.worktreeId?.trim();
+    if (quickActionWorktreeId && quickActionWorktreeId !== "main") {
+      session.worktreeId = quickActionWorktreeId;
     }
     ctx.storage.saveSession(session);
 
@@ -707,6 +1002,50 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       handleListWorkspaceWorktrees(wsWorktreesMatch[1], res);
       return true;
     }
+    if (wsWorktreesMatch && method === "POST") {
+      await handleCreateWorkspaceWorktree(wsWorktreesMatch[1], req, res);
+      return true;
+    }
+
+    const wsWorktreesOpenMatch = path.match(/^\/workspaces\/([^/]+)\/worktrees\/open$/);
+    if (wsWorktreesOpenMatch && method === "POST") {
+      await handleOpenWorkspaceWorktree(wsWorktreesOpenMatch[1], req, res);
+      return true;
+    }
+
+    const wsWorktreeStatusMatch = path.match(/^\/workspaces\/([^/]+)\/worktrees\/([^/]+)\/status$/);
+    if (wsWorktreeStatusMatch && method === "GET") {
+      await handleGetWorkspaceWorktreeStatus(
+        wsWorktreeStatusMatch[1],
+        decodeURIComponent(wsWorktreeStatusMatch[2]),
+        res,
+      );
+      return true;
+    }
+
+    const wsWorktreePreviewMatch = path.match(
+      /^\/workspaces\/([^/]+)\/worktrees\/([^/]+)\/preview$/,
+    );
+    if (wsWorktreePreviewMatch && method === "POST") {
+      await handlePreviewWorkspaceWorktree(
+        wsWorktreePreviewMatch[1],
+        decodeURIComponent(wsWorktreePreviewMatch[2]),
+        req,
+        res,
+      );
+      return true;
+    }
+
+    const wsWorktreeMatch = path.match(/^\/workspaces\/([^/]+)\/worktrees\/([^/]+)$/);
+    if (wsWorktreeMatch && method === "DELETE") {
+      handleRemoveWorkspaceWorktree(
+        wsWorktreeMatch[1],
+        decodeURIComponent(wsWorktreeMatch[2]),
+        url,
+        res,
+      );
+      return true;
+    }
 
     const wsGitStatusResourceMatch = path.match(/^\/workspaces\/([^/]+)\/git\/status$/);
     if (wsGitStatusResourceMatch && method === "GET") {
@@ -716,7 +1055,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const wsGitChangesMatch = path.match(/^\/workspaces\/([^/]+)\/git\/changes$/);
     if (wsGitChangesMatch && method === "GET") {
-      await handleGetWorkspaceGitChanges(wsGitChangesMatch[1], res);
+      await handleGetWorkspaceGitChanges(wsGitChangesMatch[1], url, res);
       return true;
     }
 
@@ -756,7 +1095,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const wsQuickActionsMatch = path.match(/^\/workspaces\/([^/]+)\/quick-actions$/);
     if (wsQuickActionsMatch && method === "GET") {
-      await handleGetWorkspaceQuickActions(wsQuickActionsMatch[1], res);
+      await handleGetWorkspaceQuickActions(wsQuickActionsMatch[1], url, res);
       return true;
     }
 

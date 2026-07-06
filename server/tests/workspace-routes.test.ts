@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,7 +9,13 @@ import { getPiSessionsRoot } from "../src/local-sessions.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
-import type { Session, Workspace } from "../src/types.js";
+import type {
+  Session,
+  Workspace,
+  WorkspaceReviewDiffResponse,
+  WorkspaceReviewFilesResponse,
+} from "../src/types.js";
+import { createWorkspaceWorktree } from "../src/worktrees.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 function git(cwd: string, args: string[]): string {
@@ -152,6 +158,7 @@ describe("workspaces module", () => {
 
   it("includes session counts in GET /workspaces/:id/worktrees", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-counts-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-data-"));
     try {
       git(root, ["init", "--initial-branch=main"]);
       git(root, ["config", "user.email", "oppi-test@example.invalid"]);
@@ -178,6 +185,7 @@ describe("workspaces module", () => {
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
           listAllWorkspaceSessionSnapshots: vi.fn(() => [stored, taskRecord]),
         },
         sessionRuntimes: {
@@ -209,6 +217,383 @@ describe("workspaces module", () => {
       expect(body.worktrees.find((worktree) => worktree.id === "main")?.sessionCount).toBe(2);
     } finally {
       rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("creates data-dir worktrees through POST /workspaces/:id/worktrees", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-create-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-create-data-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "POST",
+        path: "/workspaces/ws-1/worktrees",
+        url: new URL("http://localhost/workspaces/ws-1/worktrees"),
+        req: makeRequest({ branch: "feature/route-create" }) as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body) as { worktree: { path: string; managedByOppi?: boolean } };
+      expect(body.worktree.path.startsWith(realpathSync(join(dataDir, "worktrees", "ws-1")))).toBe(
+        true,
+      );
+      expect(body.worktree.managedByOppi).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks workspace deletion while Oppi-managed worktrees exist", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-worktree-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-worktree-data-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const worktree = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/delete-block" },
+        { dataDir },
+      );
+      const deleteWorkspace = vi.fn();
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+          deleteWorkspace,
+        },
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "DELETE",
+        path: "/workspaces/ws-1",
+        url: new URL("http://localhost/workspaces/ws-1"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "Workspace has Oppi-managed worktrees; remove them before deleting the workspace",
+      });
+      expect(deleteWorkspace).not.toHaveBeenCalled();
+      expect(existsSync(worktree.path)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks workspace deletion when a managed worktree directory is stale or undiscoverable", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-stale-worktree-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-stale-worktree-data-"));
+    try {
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      mkdirSync(join(dataDir, "worktrees", "ws-1", "wt_stale"), { recursive: true });
+      const deleteWorkspace = vi.fn();
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+          deleteWorkspace,
+        },
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "DELETE",
+        path: "/workspaces/ws-1",
+        url: new URL("http://localhost/workspaces/ws-1"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "Workspace has Oppi-managed worktrees; remove them before deleting the workspace",
+      });
+      expect(deleteWorkspace).not.toHaveBeenCalled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 404 for unknown worktree-scoped git status", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-bad-status-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-bad-status-data-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+        },
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/git/status",
+        url: new URL("http://localhost/workspaces/ws-1/git/status?worktreeId=missing"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.body)).toEqual({ error: "Worktree not found" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("routes review changes and diffs through the selected session worktree", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-review-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-review-data-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "review.swift"), "let value = original\n", "utf8");
+      git(root, ["add", "review.swift"]);
+      git(root, ["commit", "-m", "initial"]);
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const worktree = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/review" },
+        { dataDir },
+      );
+      writeFileSync(join(root, "review.swift"), "let value = main\n", "utf8");
+      writeFileSync(join(worktree.path, "review.swift"), "let value = worktree\n", "utf8");
+      const selectedSession = makeRouteSession("session-worktree", {
+        worktreeId: worktree.id,
+        changeStats: {
+          mutatingToolCalls: 1,
+          filesChanged: 1,
+          changedFiles: ["review.swift"],
+          addedLines: 1,
+          removedLines: 1,
+        },
+      });
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+          getSession: vi.fn((sessionId: string) =>
+            sessionId === selectedSession.id ? selectedSession : undefined,
+          ),
+        },
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const changesRes = makeResponse();
+
+      await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/git/changes",
+        url: new URL(
+          "http://localhost/workspaces/ws-1/git/changes?selectedSessionId=session-worktree",
+        ),
+        req: {} as never,
+        res: changesRes as never,
+      });
+
+      expect(changesRes.statusCode).toBe(200);
+      const changes = JSON.parse(changesRes.body) as WorkspaceReviewFilesResponse;
+      expect(changes.branch).toBe("feature/review");
+      expect(changes.selectedSessionId).toBe("session-worktree");
+      expect(changes.files).toEqual([
+        expect.objectContaining({ path: "review.swift", selectedSessionTouched: true }),
+      ]);
+
+      const diffRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/git/diff",
+        url: new URL(
+          "http://localhost/workspaces/ws-1/git/diff?selectedSessionId=session-worktree&path=review.swift",
+        ),
+        req: {} as never,
+        res: diffRes as never,
+      });
+
+      expect(diffRes.statusCode).toBe(200);
+      const diff = JSON.parse(diffRes.body) as WorkspaceReviewDiffResponse;
+      expect(diff.currentText).toBe("let value = worktree\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses canonical worktree ids for remove session guards", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-remove-guard-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-remove-guard-data-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const worktree = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/remove-guard" },
+        { dataDir },
+      );
+      const activeSession = makeRouteSession("active-worktree", { worktreeId: worktree.id });
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+          listAllWorkspaceSessionSnapshots: vi.fn(() => []),
+        },
+        sessionRuntimes: {
+          getActiveSessionIds: vi.fn(() => new Set(["active-worktree"])),
+          getActiveSession: vi.fn(() => activeSession),
+        },
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+      const encodedId = encodeURIComponent(` ${worktree.id} `);
+
+      const handled = await dispatch({
+        method: "DELETE",
+        path: `/workspaces/ws-1/worktrees/${encodedId}`,
+        url: new URL(`http://localhost/workspaces/ws-1/worktrees/${encodedId}?force=true`),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "Cannot remove a worktree with active sessions",
+      });
+      expect(existsSync(worktree.path)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed worktree lifecycle bodies with 400", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-bad-body-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-bad-body-data-"));
+    try {
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "POST",
+        path: "/workspaces/ws-1/worktrees",
+        url: new URL("http://localhost/workspaces/ws-1/worktrees"),
+        req: makeRequest(null) as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error: "Request body must be an object" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
     }
   });
 

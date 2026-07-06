@@ -5,6 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { parseByteRangeHeader } from "../src/http-range.js";
+import { createRouteHelpers } from "../src/routes/http.js";
+import { createWorkspaceFileRoutes } from "../src/routes/workspace-files.js";
+import type { RouteContext } from "../src/routes/types.js";
+import { createWorkspaceWorktree } from "../src/worktrees.js";
+import type { Workspace } from "../src/types.js";
+import { makeResponse } from "./harness/route-test-helpers.js";
+
 import {
   ALLOWED_EXTENSIONS,
   SEARCH_IGNORE_DIRS,
@@ -551,6 +558,65 @@ describe("getFileIndex", () => {
   test("skips files in ignored directories when walking", async () => {
     const result = await getFileIndex(tmpRoot);
     expect(result.paths).not.toContain("node_modules/dep/index.js");
+  });
+});
+
+// MARK: - workspace file routes
+
+describe("workspace file routes", () => {
+  test("lists data-dir worktree contents when worktreeId is supplied", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-ws-route-worktree-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-ws-route-worktree-data-"));
+
+    try {
+      execSync("git init -b main", { cwd: root, stdio: "ignore" });
+      execSync("git config user.email test@test.com", { cwd: root, stdio: "ignore" });
+      execSync("git config user.name Test", { cwd: root, stdio: "ignore" });
+      writeFileSync(join(root, "main-only.txt"), "main\n");
+      writeFileSync(join(root, "shared.txt"), "main shared\n");
+      execSync("git add -A && git commit -m init", { cwd: root, stdio: "ignore" });
+
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Workspace",
+        hostMount: root,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const worktree = createWorkspaceWorktree(workspace, { branch: "feature/files" }, { dataDir });
+      rmSync(join(worktree.path, "main-only.txt"), { force: true });
+      writeFileSync(join(worktree.path, "worktree-only.txt"), "worktree\n");
+      writeFileSync(join(worktree.path, "shared.txt"), "worktree shared\n");
+
+      const dispatch = createWorkspaceFileRoutes(
+        {
+          storage: {
+            getWorkspace: (workspaceId: string) => (workspaceId === "ws-1" ? workspace : undefined),
+            getDataDir: () => dataDir,
+          },
+        } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/contents",
+        url: new URL(`http://localhost/workspaces/ws-1/contents?worktreeId=${worktree.id}`),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { entries: Array<{ name: string }> };
+      const names = body.entries.map((entry) => entry.name);
+      expect(names).toContain("worktree-only.txt");
+      expect(names).not.toContain("main-only.txt");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });
 

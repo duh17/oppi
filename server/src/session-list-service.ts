@@ -295,7 +295,9 @@ export class SessionListService {
       dataDir: this.deps.storage.getDataDir(),
     });
     const hostMount = worktreeId
-      ? resolveWorkspaceWorktree(workspace, worktreeId)?.path
+      ? resolveWorkspaceWorktree(workspace, worktreeId, {
+          dataDir: this.deps.storage.getDataDir(),
+        })?.path
       : workspace.hostMount;
     if (!hostMount) {
       return { ...snapshot, sessions: [] };

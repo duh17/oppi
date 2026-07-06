@@ -18,7 +18,13 @@ import {
 } from "../file-serving-policy.js";
 import { parseByteRangeHeader } from "../http-range.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
-import type { DirectoryListingResponse, FileEntry, FileIndexResponse } from "../types.js";
+import type {
+  DirectoryListingResponse,
+  FileEntry,
+  FileIndexResponse,
+  Workspace,
+} from "../types.js";
+import { resolveWorkspaceWorktree } from "../worktrees.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export {
@@ -229,9 +235,31 @@ export function createWorkspaceFileRoutes(
   ctx: RouteContext,
   helpers: RouteHelpers,
 ): RouteDispatcher {
+  function resolveWorkspaceRootForFileRequest(
+    workspace: Workspace,
+    url: URL,
+    res: ServerResponse,
+  ): string | null {
+    const worktreeId = url.searchParams.get("worktreeId")?.trim();
+    if (!worktreeId) {
+      return resolveSdkSessionCwd(workspace);
+    }
+
+    const worktree = resolveWorkspaceWorktree(workspace, worktreeId, {
+      dataDir: ctx.storage.getDataDir(),
+    });
+    if (!worktree) {
+      helpers.error(res, 404, "Worktree not found");
+      return null;
+    }
+
+    return worktree.path;
+  }
+
   async function handleBrowseFile(
     wsId: string,
     requestedPath: string,
+    url: URL,
     req: IncomingMessage,
     res: ServerResponse,
     method: string,
@@ -247,7 +275,8 @@ export function createWorkspaceFileRoutes(
       return;
     }
 
-    const workspaceRoot = resolveSdkSessionCwd(workspace);
+    const workspaceRoot = resolveWorkspaceRootForFileRequest(workspace, url, res);
+    if (!workspaceRoot) return;
     const realFile = await resolveWorkspaceFilePath(workspaceRoot, requestedPath);
     if (!realFile) {
       helpers.error(res, 404, "File not found");
@@ -330,6 +359,7 @@ export function createWorkspaceFileRoutes(
   async function handleListDirectory(
     wsId: string,
     requestedPath: string,
+    url: URL,
     res: ServerResponse,
   ): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
@@ -338,7 +368,8 @@ export function createWorkspaceFileRoutes(
       return;
     }
 
-    const workspaceRoot = resolveSdkSessionCwd(workspace);
+    const workspaceRoot = resolveWorkspaceRootForFileRequest(workspace, url, res);
+    if (!workspaceRoot) return;
     // Strip trailing slash for path resolution
     const dirPath = requestedPath.endsWith("/") ? requestedPath.slice(0, -1) : requestedPath;
     const result = await listDirectoryEntries(workspaceRoot, dirPath);
@@ -356,32 +387,34 @@ export function createWorkspaceFileRoutes(
     helpers.json(res, response);
   }
 
-  async function handleFileIndex(wsId: string, res: ServerResponse): Promise<void> {
+  async function handleFileIndex(wsId: string, url: URL, res: ServerResponse): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
       helpers.error(res, 404, "Workspace not found");
       return;
     }
 
-    const workspaceRoot = resolveSdkSessionCwd(workspace);
+    const workspaceRoot = resolveWorkspaceRootForFileRequest(workspace, url, res);
+    if (!workspaceRoot) return;
+
     const response = await getFileIndex(workspaceRoot);
     helpers.json(res, response);
   }
 
-  return async ({ method, path, req, res }) => {
+  return async ({ method, path, url, req, res }) => {
     const normalizedMethod = method.toUpperCase();
 
     // GET /workspaces/:id/paths — flat path list for client-side fuzzy search.
     const pathsMatch = path.match(/^\/workspaces\/([^/]+)\/paths$/);
     if (pathsMatch && normalizedMethod === "GET") {
-      await handleFileIndex(pathsMatch[1], res);
+      await handleFileIndex(pathsMatch[1], url, res);
       return true;
     }
 
     // GET /workspaces/:id/contents[/path] — directory contents for file browser.
     const contentsRootMatch = path.match(/^\/workspaces\/([^/]+)\/contents$/);
     if (contentsRootMatch && normalizedMethod === "GET") {
-      await handleListDirectory(contentsRootMatch[1], "", res);
+      await handleListDirectory(contentsRootMatch[1], "", url, res);
       return true;
     }
 
@@ -393,7 +426,7 @@ export function createWorkspaceFileRoutes(
         return true;
       }
 
-      await handleListDirectory(contentsMatch[1], requestedPath, res);
+      await handleListDirectory(contentsMatch[1], requestedPath, url, res);
       return true;
     }
 
@@ -406,7 +439,7 @@ export function createWorkspaceFileRoutes(
         return true;
       }
 
-      await handleBrowseFile(rawMatch[1], requestedPath, req, res, normalizedMethod);
+      await handleBrowseFile(rawMatch[1], requestedPath, url, req, res, normalizedMethod);
       return true;
     }
 

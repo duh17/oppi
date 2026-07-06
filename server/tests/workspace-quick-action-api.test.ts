@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
-import { listWorkspaceWorktrees } from "../src/worktrees.js";
+import { createWorkspaceWorktree, listWorkspaceWorktrees } from "../src/worktrees.js";
 import type {
   Session,
   Workspace,
@@ -95,6 +95,7 @@ function makeQuickActionContext(
     storage: {
       getWorkspace: (workspaceId: string) =>
         workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
+      getDataDir: () => repoDir,
       getSession: () => undefined,
       createSession: vi.fn(),
     },
@@ -285,6 +286,75 @@ describe("GET /workspaces/:wid/quick-actions", () => {
     }
   });
 
+  it("loads quick actions from the selected session worktree", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-actions-worktree-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-actions-worktree-data-"));
+
+    try {
+      initRepo(repoDir);
+      writeFileSync(join(repoDir, "README.md"), "main checkout\n", "utf8");
+      gitIn(repoDir, "add README.md");
+      gitIn(repoDir, 'commit -m "initial commit"');
+
+      mkdirSync(join(repoDir, ".pi", "prompts"), { recursive: true });
+      writeFileSync(join(repoDir, ".pi", "prompts", "main-only.md"), "Main: $ARGUMENTS\n", "utf8");
+
+      const workspace = makeWorkspace(repoDir);
+      const worktree = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/worktree-quick-actions" },
+        { dataDir },
+      );
+      mkdirSync(join(worktree.path, ".pi", "prompts"), { recursive: true });
+      writeFileSync(
+        join(worktree.path, ".pi", "prompts", "worktree-only.md"),
+        "Worktree: $ARGUMENTS\n",
+        "utf8",
+      );
+      const sourceSession: Session = {
+        ...makeSession("source-session", "w1"),
+        worktreeId: worktree.id,
+      };
+
+      const routes = new RouteHandler(
+        makeQuickActionContext(repoDir, {
+          storage: {
+            getWorkspace: (workspaceId: string) => (workspaceId === "w1" ? workspace : undefined),
+            getDataDir: () => dataDir,
+            getSession: (sessionId: string) =>
+              sessionId === sourceSession.id ? sourceSession : undefined,
+            createSession: vi.fn(),
+          },
+        }),
+      );
+      const res = makeResponse();
+
+      await routes.dispatch(
+        "GET",
+        "/workspaces/w1/quick-actions",
+        new URL("http://localhost/workspaces/w1/quick-actions?selectedSessionId=source-session"),
+        {} as never,
+        res as never,
+      );
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as WorkspaceQuickActionsResponse;
+      expect(body.actions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "prompt:worktree-only",
+            commandName: "worktree-only",
+            sourceScope: "project",
+          }),
+        ]),
+      );
+      expect(body.actions.some((action) => action.id === "prompt:main-only")).toBe(false);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not expose the legacy prompt-templates endpoint", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-actions-legacy-"));
 
@@ -463,6 +533,7 @@ describe("workspace prompt-template quick actions", () => {
       const ctx = makeQuickActionContext(repoDir, {
         storage: {
           getWorkspace: (workspaceId: string) => (workspaceId === "w1" ? workspace : undefined),
+          getDataDir: () => repoDir,
           getSession: () => undefined,
           createSession,
           saveSession: (session: Session) => {
@@ -509,6 +580,93 @@ describe("workspace prompt-template quick actions", () => {
     }
   });
 
+  it("uses an explicit worktree id for prompt-template quick actions", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-explicit-worktree-quick-action-"));
+    const dataDir = mkdtempSync(
+      join(tmpdir(), "oppi-workspace-explicit-worktree-quick-action-data-"),
+    );
+
+    try {
+      initRepo(repoDir);
+
+      writeFileSync(join(repoDir, "review.swift"), "let value = oldName\n", "utf8");
+      gitIn(repoDir, "add review.swift");
+      gitIn(repoDir, 'commit -m "initial commit"');
+
+      mkdirSync(join(repoDir, ".pi", "prompts"), { recursive: true });
+      writeFileSync(
+        join(repoDir, ".pi", "prompts", "grill-me.md"),
+        "Inspect the main checkout selection:\n\n$ARGUMENTS\n",
+        "utf8",
+      );
+
+      const workspace = { ...makeWorkspace(repoDir), defaultModel: "ds4/deepseek-v4-flash" };
+      const worktree = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/explicit" },
+        { dataDir },
+      );
+      mkdirSync(join(worktree.path, ".pi", "prompts"), { recursive: true });
+      writeFileSync(
+        join(worktree.path, ".pi", "prompts", "grill-me.md"),
+        "Inspect the explicit worktree selection:\n\n$ARGUMENTS\n",
+        "utf8",
+      );
+      writeFileSync(join(worktree.path, "review.swift"), "let value = explicitWorktree\n", "utf8");
+
+      const createdSession = makeSession("new-session", "w1");
+      let savedSession: Session | undefined;
+      const startSession = vi.fn(async () => createdSession);
+      const getActiveSession = vi.fn(() => savedSession ?? createdSession);
+      const createSession = vi.fn(() => createdSession);
+
+      const routes = new RouteHandler(
+        makeQuickActionContext(repoDir, {
+          storage: {
+            getWorkspace: (workspaceId: string) => (workspaceId === "w1" ? workspace : undefined),
+            getDataDir: () => dataDir,
+            getSession: () => undefined,
+            createSession,
+            saveSession: (session: Session) => {
+              savedSession = session;
+            },
+            deleteSession: vi.fn(),
+          },
+          sessions: {
+            setPendingExtensionFactories: vi.fn(),
+            startSession,
+            getActiveSession,
+            stopSession: vi.fn(async () => undefined),
+          },
+        }),
+      );
+      const res = makeResponse();
+
+      await routes.dispatch(
+        "POST",
+        "/workspaces/w1/quick-actions/session",
+        new URL("http://localhost/workspaces/w1/quick-actions/session"),
+        makeRequest({
+          paths: ["review.swift"],
+          worktreeId: worktree.id,
+          promptTemplateName: "grill-me",
+        }) as never,
+        res as never,
+      );
+
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body) as WorkspaceQuickActionSessionResponse;
+
+      expect(body.visiblePrompt).toBe("Inspect the explicit worktree selection:\n\nreview.swift");
+      expect(body.filePaths).toEqual(["review.swift"]);
+      expect(savedSession?.worktreeId).toBe(worktree.id);
+      expect(body.session.worktreeId).toBe(worktree.id);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses the selected session worktree for prompt-template quick actions", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-worktree-quick-action-"));
 
@@ -525,7 +683,7 @@ describe("workspace prompt-template quick actions", () => {
       mkdirSync(join(repoDir, ".pi", "prompts"), { recursive: true });
       writeFileSync(
         join(repoDir, ".pi", "prompts", "grill-me.md"),
-        "Inspect the worktree selection:\n\n$ARGUMENTS\n",
+        "Inspect the main checkout selection:\n\n$ARGUMENTS\n",
         "utf8",
       );
 
@@ -533,6 +691,14 @@ describe("workspace prompt-template quick actions", () => {
       const worktree = listWorkspaceWorktrees(workspace).find((candidate) => !candidate.isMain);
       expect(worktree).toBeDefined();
 
+      mkdirSync(join(repoDir, ".pi", "worktrees", "repo-feature", ".pi", "prompts"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(repoDir, ".pi", "worktrees", "repo-feature", ".pi", "prompts", "grill-me.md"),
+        "Inspect the worktree selection:\n\n$ARGUMENTS\n",
+        "utf8",
+      );
       writeFileSync(
         join(repoDir, ".pi", "worktrees", "repo-feature", "review.swift"),
         "let value = worktreeName\n",
@@ -553,6 +719,7 @@ describe("workspace prompt-template quick actions", () => {
         makeQuickActionContext(repoDir, {
           storage: {
             getWorkspace: (workspaceId: string) => (workspaceId === "w1" ? workspace : undefined),
+            getDataDir: () => repoDir,
             getSession: (sessionId: string) =>
               sessionId === sourceSession.id ? sourceSession : undefined,
             createSession,
@@ -590,6 +757,50 @@ describe("workspace prompt-template quick actions", () => {
       expect(body.filePaths).toEqual(["review.swift"]);
       expect(savedSession?.worktreeId).toBe(worktree!.id);
       expect(body.session.worktreeId).toBe(worktree!.id);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 400 when quick-action request body is not an object", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-action-bad-body-"));
+
+    try {
+      const routes = new RouteHandler(makeQuickActionContext(repoDir));
+      const res = makeResponse();
+
+      await routes.dispatch(
+        "POST",
+        "/workspaces/w1/quick-actions/selection",
+        new URL("http://localhost/workspaces/w1/quick-actions/selection"),
+        makeRequest(null) as never,
+        res as never,
+      );
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error: "Request body must be an object" });
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 400 when quick-action promptTemplateName is not a string", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-quick-action-bad-template-"));
+
+    try {
+      const routes = new RouteHandler(makeQuickActionContext(repoDir));
+      const res = makeResponse();
+
+      await routes.dispatch(
+        "POST",
+        "/workspaces/w1/quick-actions/session",
+        new URL("http://localhost/workspaces/w1/quick-actions/session"),
+        makeRequest({ paths: ["review.swift"], promptTemplateName: 123 }) as never,
+        res as never,
+      );
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error: "promptTemplateName must be a string" });
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }

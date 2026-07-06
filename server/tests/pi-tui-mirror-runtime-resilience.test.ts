@@ -10,7 +10,7 @@ import { WebSocket } from "ws";
 
 import { PiTuiMirrorRuntime } from "../src/pi-tui-mirror-runtime.js";
 import { SessionRuntimes } from "../src/runtime-router.js";
-import { listWorkspaceWorktrees } from "../src/worktrees.js";
+import { createWorkspaceWorktree, listWorkspaceWorktrees } from "../src/worktrees.js";
 import { BoundSessionStreamMux, type StreamContext } from "../src/stream.js";
 import type { SessionManager } from "../src/sessions.js";
 import type { Storage } from "../src/storage.js";
@@ -214,6 +214,7 @@ function connectBridge(
     piSessionId: string;
     sessionFile: string;
     sessionName: string;
+    workspaceId?: string | null;
   },
 ): { ws: FakeBridgeWebSocket; sessionId: string } {
   const ws = new FakeBridgeWebSocket();
@@ -222,7 +223,7 @@ function connectBridge(
     type: "hello",
     protocolVersion: 1,
     bridgeId: options.bridgeId,
-    workspaceId: "w1",
+    ...(options.workspaceId === null ? {} : { workspaceId: options.workspaceId ?? "w1" }),
     cwd: options.cwd,
     state: {
       piSessionId: options.piSessionId,
@@ -305,6 +306,104 @@ describe("PiTuiMirrorRuntime resilience", () => {
 
       expect(sessions.get(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
       expect(mirror.getActiveSession(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("infers the workspace from data-dir worktree terminal cwd", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-runtime-infer-data-worktree-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+
+      const dataDir = join(root, ".oppi-test-data");
+      const workspace: Workspace = { id: "w1", name: "Workspace", hostMount: root };
+      const worktree = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/infer-data-worktree" },
+        { dataDir },
+      );
+      const { mirror, sessions } = makeHarness(root);
+
+      const connected = connectBridge(mirror, {
+        bridgeId: "bridge-infer-data-worktree",
+        cwd: worktree.path,
+        piSessionId: "pi-infer-data-worktree",
+        sessionFile: join(worktree.path, "session.jsonl"),
+        sessionName: "Inferred data worktree terminal session",
+        workspaceId: null,
+      });
+
+      expect(sessions.get(connected.sessionId)).toMatchObject({
+        workspaceId: "w1",
+        worktreeId: worktree.id,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes mirrored workspace attachments relative to data-dir worktrees", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-runtime-data-worktree-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+
+      const dataDir = join(root, ".oppi-test-data");
+      const workspace: Workspace = { id: "w1", name: "Workspace", hostMount: root };
+      const worktree = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/mirror-attachment" },
+        { dataDir },
+      );
+      writeFileSync(join(worktree.path, "only-in-worktree.txt"), "worktree attachment\n");
+      const { mirror, runtimes, sessions } = makeHarness(root);
+
+      const connected = connectBridge(mirror, {
+        bridgeId: "bridge-data-worktree",
+        cwd: worktree.path,
+        piSessionId: "pi-data-worktree",
+        sessionFile: join(worktree.path, "session.jsonl"),
+        sessionName: "Data worktree terminal session",
+      });
+
+      expect(sessions.get(connected.sessionId)?.worktreeId).toBe(worktree.id);
+      const pendingPrompt = runtimes.sendPrompt(connected.sessionId, "review attachment", {
+        clientTurnId: "turn-attachment",
+        requestId: "req-attachment",
+        timestamp: Date.now(),
+        attachments: [
+          {
+            type: "attachment",
+            id: "att-1",
+            source: "workspace",
+            name: "only-in-worktree.txt",
+            mimeType: "text/plain",
+            sizeBytes: 20,
+            workspacePath: "only-in-worktree.txt",
+          },
+        ],
+      });
+
+      const command = await waitForLatestCommand(connected.ws);
+      expect(commandMessage(command)).toContain("Attached files:");
+      expect(commandMessage(command)).toContain(".pi/attachments");
+      connected.ws.receive({
+        type: "command_result",
+        id: String(command.id),
+        success: true,
+        state: { isIdle: true },
+      });
+      await expect(pendingPrompt).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

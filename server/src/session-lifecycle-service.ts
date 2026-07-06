@@ -673,7 +673,9 @@ export class SessionLifecycleService {
       : undefined;
     if (!workspace?.hostMount) return false;
 
-    const workRoot = resolveSdkSessionCwd(workspace);
+    const workRoot = resolveSdkSessionCwd(workspace, session, {
+      dataDir: this.deps.storage.getDataDir(),
+    });
     if (!(await pathExists(workRoot))) return false;
 
     const workRootReal = await realpath(workRoot);
