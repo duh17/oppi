@@ -320,6 +320,7 @@ struct ChatView: View {
                     isLoading: gitStatusStore.isLoading,
                     workspaceId: session?.workspaceId,
                     sessionId: sessionId,
+                    worktreeId: session?.worktreeId,
                     onReviewInCurrentSession: { prompt, files in
                         stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)
                     },

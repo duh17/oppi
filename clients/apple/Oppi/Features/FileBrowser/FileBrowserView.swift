@@ -11,7 +11,15 @@ import SwiftUI
 struct FileBrowserNavTarget: Hashable {
     let serverId: String
     let workspaceId: String
+    let worktreeId: String?
     let path: String
+
+    init(serverId: String, workspaceId: String, worktreeId: String? = nil, path: String) {
+        self.serverId = serverId
+        self.workspaceId = workspaceId
+        self.worktreeId = worktreeId
+        self.path = path
+    }
 
     /// Number of directory levels deep from the file browser root.
     /// Root ("" or "/") is depth 0, "src/" is 1, "src/components/" is 2, etc.
@@ -139,6 +147,7 @@ private enum FileBrowserAdaptiveLayout: Equatable {
 struct FileBrowserView: View {
     let serverId: String?
     let workspaceId: String
+    let worktreeId: String?
     let initialPath: String
     let layoutMode: FileBrowserLayoutMode
     let contentChromeMode: FileBrowserContentChromeMode
@@ -146,12 +155,14 @@ struct FileBrowserView: View {
     init(
         serverId: String? = nil,
         workspaceId: String,
+        worktreeId: String? = nil,
         initialPath: String,
         layoutMode: FileBrowserLayoutMode = .adaptive,
         contentChromeMode: FileBrowserContentChromeMode = .pushed
     ) {
         self.serverId = serverId
         self.workspaceId = workspaceId
+        self.worktreeId = worktreeId
         self.initialPath = initialPath
         self.layoutMode = layoutMode
         self.contentChromeMode = contentChromeMode
@@ -210,12 +221,12 @@ struct FileBrowserView: View {
 
     /// Current depth for breadcrumb pop calculations.
     private var currentDepth: Int {
-        FileBrowserNavTarget(serverId: serverId ?? "", workspaceId: workspaceId, path: currentDirectoryPath).depth
+        FileBrowserNavTarget(serverId: serverId ?? "", workspaceId: workspaceId, worktreeId: worktreeId, path: currentDirectoryPath).depth
     }
 
     /// Breadcrumb segments for the current path.
     private var breadcrumbSegments: [(label: String, depth: Int)] {
-        FileBrowserNavTarget(serverId: serverId ?? "", workspaceId: workspaceId, path: currentDirectoryPath).breadcrumbSegments
+        FileBrowserNavTarget(serverId: serverId ?? "", workspaceId: workspaceId, worktreeId: worktreeId, path: currentDirectoryPath).breadcrumbSegments
     }
 
     var body: some View {
@@ -272,10 +283,10 @@ struct FileBrowserView: View {
             await loadDirectory(path: currentDirectoryPath)
             if let api = apiClient {
                 fileIndexStore.invalidate()
-                fileIndexStore.ensureLoaded(workspaceId: workspaceId, apiClient: api)
+                fileIndexStore.ensureLoaded(workspaceId: workspaceId, worktreeId: worktreeId, apiClient: api)
             }
         }
-        .task(id: currentDirectoryPath) { await loadDirectory(path: currentDirectoryPath) }
+        .task(id: "\(worktreeId ?? ""):\(currentDirectoryPath)") { await loadDirectory(path: currentDirectoryPath) }
         .task { ensureFileIndex() }
     }
 
@@ -367,6 +378,7 @@ struct FileBrowserView: View {
         if let activeSelection = selectedFile {
             FileBrowserContentView(
                 workspaceId: workspaceId,
+                worktreeId: worktreeId,
                 filePath: activeSelection.path,
                 fileName: activeSelection.name,
                 fileSize: activeSelection.size,
@@ -835,13 +847,14 @@ struct FileBrowserView: View {
                 }
                 .buttonStyle(.plain)
             } else if let serverId {
-                NavigationLink(value: FileBrowserNavTarget(serverId: serverId, workspaceId: workspaceId, path: dirPath)) {
+                NavigationLink(value: FileBrowserNavTarget(serverId: serverId, workspaceId: workspaceId, worktreeId: worktreeId, path: dirPath)) {
                     compactListRowContent { label }
                 }
             } else {
                 NavigationLink {
                     FileBrowserView(
                         workspaceId: workspaceId,
+                        worktreeId: worktreeId,
                         initialPath: dirPath,
                         layoutMode: layoutMode,
                         contentChromeMode: contentChromeMode
@@ -897,6 +910,7 @@ struct FileBrowserView: View {
             NavigationLink {
                 FileBrowserContentView(
                     workspaceId: workspaceId,
+                    worktreeId: worktreeId,
                     filePath: path,
                     fileName: name,
                     fileSize: size,
@@ -924,6 +938,7 @@ struct FileBrowserView: View {
         return .workspaceFile(
             serverId: serverId,
             workspaceId: workspaceId,
+            worktreeId: worktreeId,
             path: path,
             fileName: name,
             navigationContext: navigationContext
@@ -980,7 +995,7 @@ struct FileBrowserView: View {
             listing = nil
             return
         }
-        let target = FileBrowserNavTarget(serverId: serverId, workspaceId: workspaceId, path: path)
+        let target = FileBrowserNavTarget(serverId: serverId, workspaceId: workspaceId, worktreeId: worktreeId, path: path)
         switch navigation.workspaceNavigationPresentation {
         case .stack:
             navigation.workspacePath.append(target)
@@ -1063,7 +1078,7 @@ struct FileBrowserView: View {
             return
         }
         do {
-            let response = try await api.listWorkspaceDirectory(workspaceId: workspaceId, path: path)
+            let response = try await api.listWorkspaceDirectory(workspaceId: workspaceId, path: path, worktreeId: worktreeId)
             guard path == currentDirectoryPath else { return }
             listing = response
             error = nil
@@ -1090,7 +1105,7 @@ struct FileBrowserView: View {
 
     private func ensureFileIndex() {
         guard let api = apiClient else { return }
-        fileIndexStore.ensureLoaded(workspaceId: workspaceId, apiClient: api)
+        fileIndexStore.ensureLoaded(workspaceId: workspaceId, worktreeId: worktreeId, apiClient: api)
     }
 
     private func performLocalSearch(query: String) {

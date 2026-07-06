@@ -1,7 +1,13 @@
 import Foundation
 
 protocol WorkspaceFileIndexFetching: Sendable {
-    func fetchFileIndex(workspaceId: String) async throws -> FileIndexResponse
+    func fetchFileIndex(workspaceId: String, worktreeId: String?) async throws -> FileIndexResponse
+}
+
+extension WorkspaceFileIndexFetching {
+    func fetchFileIndex(workspaceId: String) async throws -> FileIndexResponse {
+        try await fetchFileIndex(workspaceId: workspaceId, worktreeId: nil)
+    }
 }
 
 struct FileIndexStoreEnvironment: Sendable {
@@ -45,6 +51,9 @@ final class FileIndexStore {
     /// The workspace ID this store is tracking.
     private(set) var workspaceId: String?
 
+    /// The optional worktree ID this store is tracking.
+    private(set) var worktreeId: String?
+
     private var loadTask: Task<Void, Never>?
     private var dirty = false
 
@@ -56,16 +65,22 @@ final class FileIndexStore {
 
     /// Ensure the file index is loaded for a workspace.
     /// No-op if already cached and clean. Re-fetches if dirty or different workspace.
-    func ensureLoaded(workspaceId: String, apiClient: any WorkspaceFileIndexFetching) {
-        if self.workspaceId == workspaceId, paths != nil, !dirty {
+    func ensureLoaded(
+        workspaceId: String,
+        worktreeId: String? = nil,
+        apiClient: any WorkspaceFileIndexFetching
+    ) {
+        let normalizedWorktreeId = normalizeWorktreeId(worktreeId)
+        if self.workspaceId == workspaceId, self.worktreeId == normalizedWorktreeId, paths != nil, !dirty {
             return
         }
 
-        if self.workspaceId != workspaceId {
+        if self.workspaceId != workspaceId || self.worktreeId != normalizedWorktreeId {
             paths = nil
         }
         self.workspaceId = workspaceId
-        load(workspaceId: workspaceId, apiClient: apiClient)
+        self.worktreeId = normalizedWorktreeId
+        load(workspaceId: workspaceId, worktreeId: normalizedWorktreeId, apiClient: apiClient)
     }
 
     /// Mark the index as dirty. Next `ensureLoaded` call will re-fetch.
@@ -92,16 +107,21 @@ final class FileIndexStore {
 
     // MARK: - Internals
 
-    private func load(workspaceId: String, apiClient: any WorkspaceFileIndexFetching) {
+    private func load(
+        workspaceId: String,
+        worktreeId: String?,
+        apiClient: any WorkspaceFileIndexFetching
+    ) {
         loadTask?.cancel()
         dirty = false
+        let key = cacheKey(workspaceId: workspaceId, worktreeId: worktreeId)
 
         // Show disk-cached index immediately while fetching fresh
         if paths == nil {
             Task { [weak self] in
                 guard let self else { return }
-                if let cached = await self.environment.loadCachedFileIndex(workspaceId) {
-                    if self.workspaceId == workspaceId, self.paths == nil {
+                if let cached = await self.environment.loadCachedFileIndex(key) {
+                    if self.workspaceId == workspaceId, self.worktreeId == worktreeId, self.paths == nil {
                         self.paths = cached
                         self.isLoading = false
                         self.environment.logDebug("File index loaded from cache: \(cached.count) paths")
@@ -114,15 +134,26 @@ final class FileIndexStore {
 
         loadTask = Task { [weak self] in
             do {
-                let response = try await apiClient.fetchFileIndex(workspaceId: workspaceId)
-                guard let self, !Task.isCancelled, self.workspaceId == workspaceId else { return }
+                let response = try await apiClient.fetchFileIndex(
+                    workspaceId: workspaceId,
+                    worktreeId: worktreeId
+                )
+                guard let self,
+                      !Task.isCancelled,
+                      self.workspaceId == workspaceId,
+                      self.worktreeId == worktreeId
+                else { return }
                 self.paths = response.paths
                 self.isLoading = false
                 // Persist to disk for next app launch.
-                await self.environment.cacheFileIndex(response.paths, workspaceId)
+                await self.environment.cacheFileIndex(response.paths, key)
                 self.environment.logDebug("File index loaded: \(response.paths.count) paths for workspace \(workspaceId)")
             } catch {
-                guard let self, !Task.isCancelled, self.workspaceId == workspaceId else { return }
+                guard let self,
+                      !Task.isCancelled,
+                      self.workspaceId == workspaceId,
+                      self.worktreeId == worktreeId
+                else { return }
                 if self.paths == nil {
                     self.paths = []
                 }
@@ -130,5 +161,15 @@ final class FileIndexStore {
                 self.environment.logWarning("Failed to load file index: \(error.localizedDescription)")
             }
         }
+    }
+
+    private func normalizeWorktreeId(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func cacheKey(workspaceId: String, worktreeId: String?) -> String {
+        guard let worktreeId else { return workspaceId }
+        return "\(workspaceId):\(worktreeId)"
     }
 }

@@ -5,13 +5,15 @@ import Testing
 private actor FileIndexFetcherStub: WorkspaceFileIndexFetching {
     private let response: FileIndexResponse
     private(set) var requestedWorkspaceIds: [String] = []
+    private(set) var requestedWorktreeIds: [String?] = []
 
     init(paths: [String]) {
         response = FileIndexResponse(paths: paths, truncated: false)
     }
 
-    func fetchFileIndex(workspaceId: String) async throws -> FileIndexResponse {
+    func fetchFileIndex(workspaceId: String, worktreeId: String?) async throws -> FileIndexResponse {
         requestedWorkspaceIds.append(workspaceId)
+        requestedWorktreeIds.append(worktreeId)
         return response
     }
 }
@@ -54,6 +56,27 @@ struct FileIndexStoreTests {
         #expect(await fetcher.requestedWorkspaceIds == ["ws-1"])
         #expect(cache.values.map(\.workspaceId) == ["ws-1"])
         #expect(cache.values.first?.paths == ["Sources/App.swift", "README.md"])
+    }
+
+    @Test func ensureLoadedPassesWorktreeIdAndCachesSeparately() async {
+        let fetcher = FileIndexFetcherStub(paths: ["Worktree.swift"])
+        let cache = FileIndexCacheRecorder()
+        let store = FileIndexStore(environment: FileIndexStoreEnvironment(
+            cacheFileIndex: { paths, workspaceId in
+                cache.append(paths: paths, workspaceId: workspaceId)
+            }
+        ))
+
+        store.ensureLoaded(workspaceId: "ws-1", worktreeId: "wt-feature", apiClient: fetcher)
+
+        let loaded = await waitForMainActorCondition {
+            store.paths == ["Worktree.swift"]
+        }
+
+        #expect(loaded)
+        #expect(await fetcher.requestedWorkspaceIds == ["ws-1"])
+        #expect(await fetcher.requestedWorktreeIds == ["wt-feature"])
+        #expect(cache.values.map(\.workspaceId) == ["ws-1:wt-feature"])
     }
 
     @Test func cachedPathsDisplayBeforeNetworkFetchCompletes() async {

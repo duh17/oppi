@@ -982,6 +982,37 @@ struct APIClientTests {
         #expect(step == 3)
     }
 
+    @Test func workspaceFileEndpointsAppendWorktreeQueryWhenProvided() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        var step = 0
+
+        MockURLProtocol.handler = { request in
+            step += 1
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            switch step {
+            case 1:
+                #expect(components?.percentEncodedPath == "/workspaces/w1/contents/src/")
+            case 2:
+                #expect(components?.percentEncodedPath == "/workspaces/w1/raw/src%2Fmain.swift")
+            case 3:
+                #expect(components?.percentEncodedPath == "/workspaces/w1/paths")
+            default:
+                Issue.record("Unexpected request count: \(step)")
+            }
+            #expect(components?.queryItems?.first(where: { $0.name == "worktreeId" })?.value == "wt_feature")
+            if step == 3 {
+                return self.mockResponse(json: "{\"paths\":[],\"truncated\":false}")
+            }
+            return self.mockResponse(json: "{\"path\":\"/\",\"entries\":[],\"truncated\":false}")
+        }
+
+        _ = try await client.listWorkspaceDirectory(workspaceId: "w1", path: "src/", worktreeId: "wt_feature")
+        _ = try await client.browseWorkspaceFile(workspaceId: "w1", path: "src/main.swift", worktreeId: "wt_feature")
+        _ = try await client.fetchFileIndex(workspaceId: "w1", worktreeId: "wt_feature")
+        #expect(step == 3)
+    }
+
     @Test func workspaceMediaSourceUsesEncodedPathSegmentsAndBearerAuth() async throws {
         let client = makeClient()
         let source = try await client.makeWorkspaceMediaSource(

@@ -37,9 +37,11 @@ struct WorkspaceReviewAPITests {
             let url = try #require(request.url)
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
             let path = components?.queryItems?.first(where: { $0.name == "path" })?.value
+            let selectedSessionId = components?.queryItems?.first(where: { $0.name == "selectedSessionId" })?.value
 
             #expect(url.path == "/workspaces/w1/git/diff")
             #expect(path == "Sources/App.swift")
+            #expect(selectedSessionId == "s1")
 
             return self.mockResponse(json: """
             {
@@ -77,7 +79,11 @@ struct WorkspaceReviewAPITests {
             """)
         }
 
-        let response = try await client.getWorkspaceReviewDiff(workspaceId: "w1", path: "Sources/App.swift")
+        let response = try await client.getWorkspaceReviewDiff(
+            workspaceId: "w1",
+            path: "Sources/App.swift",
+            selectedSessionId: "s1"
+        )
         #expect(response.workspaceId == "w1")
         #expect(response.path == "Sources/App.swift")
         #expect(response.addedLines == 1)
@@ -94,7 +100,11 @@ struct WorkspaceReviewAPITests {
 
         WorkspaceReviewMockURLProtocol.handler = { request in
             #expect(request.httpMethod == "GET")
+            let components = URLComponents(url: try #require(request.url), resolvingAgainstBaseURL: false)
+            let selectedSessionId = components?.queryItems?.first(where: { $0.name == "selectedSessionId" })?.value
+
             #expect(request.url?.path == "/workspaces/w1/quick-actions")
+            #expect(selectedSessionId == "s1")
 
             return self.mockResponse(json: """
             {
@@ -114,11 +124,48 @@ struct WorkspaceReviewAPITests {
             """)
         }
 
-        let response = try await client.getWorkspaceQuickActions(workspaceId: "w1")
+        let response = try await client.getWorkspaceQuickActions(workspaceId: "w1", selectedSessionId: "s1")
         #expect(response.actions.count == 1)
         #expect(response.actions[0].id == "prompt:grill-me")
         #expect(response.actions[0].source == .prompt)
         #expect(response.actions[0].promptTemplateName == "grill-me")
+    }
+
+    @Test func prepareWorkspaceQuickActionSelectionPostsWorktreeId() async throws {
+        let client = makeClient()
+        defer { WorkspaceReviewMockURLProtocol.handler = nil }
+
+        WorkspaceReviewMockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/workspaces/w1/quick-actions/selection")
+
+            let body = self.requestBodyData(request)
+            let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+            #expect(json?["selectedSessionId"] as? String == nil)
+            #expect(json?["worktreeId"] as? String == "wt_feature")
+            #expect(json?["promptTemplateName"] as? String == "commit-template")
+            #expect(json?["paths"] as? [String] == ["Sources/App.swift"])
+
+            return self.mockResponse(json: """
+            {
+              "promptTemplateName": "commit-template",
+              "selectedPathCount": 1,
+              "visiblePrompt": "Prepare a commit.",
+              "filePaths": ["Sources/App.swift"]
+            }
+            """)
+        }
+
+        let response = try await client.prepareWorkspaceQuickActionSelection(
+            workspaceId: "w1",
+            paths: ["Sources/App.swift"],
+            worktreeId: "wt_feature",
+            promptTemplateName: "commit-template"
+        )
+        #expect(response.promptTemplateName == "commit-template")
+        #expect(response.selectedPathCount == 1)
+        #expect(response.visiblePrompt == "Prepare a commit.")
+        #expect(response.filePaths == ["Sources/App.swift"])
     }
 
     @Test func createWorkspaceQuickActionSessionPostsTemplateSelectionWithoutFixedAction() async throws {
@@ -133,6 +180,7 @@ struct WorkspaceReviewAPITests {
             let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
             #expect(json?["action"] == nil)
             #expect(json?["selectedSessionId"] as? String == "s1")
+            #expect(json?["worktreeId"] as? String == "wt_feature")
             #expect(json?["promptTemplateName"] as? String == "commit-template")
             #expect(json?["paths"] as? [String] == ["Sources/App.swift", "README.md"])
 
@@ -162,6 +210,7 @@ struct WorkspaceReviewAPITests {
             workspaceId: "w1",
             paths: ["Sources/App.swift", "README.md"],
             selectedSessionId: "s1",
+            worktreeId: "wt_feature",
             promptTemplateName: "commit-template"
         )
         #expect(response.promptTemplateName == "commit-template")
