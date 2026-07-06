@@ -188,6 +188,20 @@ struct ToolCallFormattingTests {
         #expect(result == "some summary")
     }
 
+    @Test func breadcrumbDisplayPathKeepsFileNameAndLineRange() {
+        let result = ToolCallFormatting.breadcrumbDisplayPath(
+            "clients/apple/Oppi/Features/Chat/ScheduleEditView.swift:10-29"
+        )
+        #expect(result == "c/a/O/F/C/ScheduleEditView.swift:10-29")
+    }
+
+    @Test func fileNameDisplayPathKeepsLineRange() {
+        let result = ToolCallFormatting.fileNameDisplayPath(
+            "clients/apple/Oppi/Features/Chat/ScheduleEditView.swift:10-29"
+        )
+        #expect(result == "ScheduleEditView.swift:10-29")
+    }
+
     @Test func compactReadDisplayTitleShowsSkillName() {
         let args: [String: JSONValue] = [
             "path": .string("/Users/dev/.pi/agent/skills/oppi-dev/SKILL.md"),

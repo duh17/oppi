@@ -10,21 +10,96 @@ enum ToolTimelineRowDisplayState {
         if let segmentTitle = configuration.segmentAttributedTitle {
             titleLabel.attributedText = segmentTitle
         } else {
-            titleLabel.attributedText = ToolRowTextRenderer.styledTitle(
-                title: configuration.title,
-                toolNamePrefix: configuration.toolNamePrefix,
-                toolNameColor: configuration.toolNameColor
-            )
+            applyStyledTitle(configuration.title, configuration: configuration, titleLabel: titleLabel)
         }
 
-        let prefix = configuration.toolNamePrefix ?? ""
-        let isFileTool = ToolCallFormatting.isReadTool(prefix)
-            || ToolCallFormatting.isWriteTool(prefix)
-            || ToolCallFormatting.isEditTool(prefix)
-        let shouldWrapExpandedPath = configuration.isExpanded && isFileTool
+        let shouldWrapExpandedPath = configuration.isExpanded && isFileTool(configuration)
 
         titleLabel.lineBreakMode = shouldWrapExpandedPath ? .byCharWrapping : configuration.titleLineBreakMode
         titleLabel.numberOfLines = shouldWrapExpandedPath ? 0 : 1
+    }
+
+    @discardableResult
+    static func updateCollapsedFileTitleForCurrentWidth(
+        configuration: ToolTimelineRowConfiguration,
+        titleLabel: UILabel,
+        availableWidth: CGFloat
+    ) -> Bool {
+        guard shouldUseResponsiveCollapsedFileTitle(configuration),
+              availableWidth.isFinite,
+              availableWidth > 1 else {
+            return false
+        }
+
+        let title = collapsedFileTitle(
+            fullTitle: configuration.title,
+            configuration: configuration,
+            availableWidth: availableWidth
+        )
+        let currentTitle = titleLabel.attributedText?.string ?? titleLabel.text ?? ""
+        guard currentTitle != title else { return false }
+
+        applyStyledTitle(title, configuration: configuration, titleLabel: titleLabel)
+        titleLabel.lineBreakMode = configuration.titleLineBreakMode
+        titleLabel.numberOfLines = 1
+        return true
+    }
+
+    private static func shouldUseResponsiveCollapsedFileTitle(_ configuration: ToolTimelineRowConfiguration) -> Bool {
+        !configuration.isExpanded
+            && configuration.segmentAttributedTitle == nil
+            && isFileTool(configuration)
+    }
+
+    private static func isFileTool(_ configuration: ToolTimelineRowConfiguration) -> Bool {
+        let prefix = configuration.toolNamePrefix ?? ""
+        return ToolCallFormatting.isReadTool(prefix)
+            || ToolCallFormatting.isWriteTool(prefix)
+            || ToolCallFormatting.isEditTool(prefix)
+    }
+
+    private static func collapsedFileTitle(
+        fullTitle: String,
+        configuration: ToolTimelineRowConfiguration,
+        availableWidth: CGFloat
+    ) -> String {
+        if title(fullTitle, fitsWithin: availableWidth, configuration: configuration) {
+            return fullTitle
+        }
+
+        let breadcrumbTitle = ToolCallFormatting.breadcrumbDisplayPath(fullTitle)
+        if breadcrumbTitle != fullTitle,
+           title(breadcrumbTitle, fitsWithin: availableWidth, configuration: configuration) {
+            return breadcrumbTitle
+        }
+
+        let fileNameTitle = ToolCallFormatting.fileNameDisplayPath(fullTitle)
+        return fileNameTitle.isEmpty ? fullTitle : fileNameTitle
+    }
+
+    private static func title(
+        _ title: String,
+        fitsWithin availableWidth: CGFloat,
+        configuration: ToolTimelineRowConfiguration
+    ) -> Bool {
+        let attributedTitle = ToolRowTextRenderer.styledTitle(
+            title: title,
+            toolNamePrefix: configuration.toolNamePrefix,
+            toolNameColor: configuration.toolNameColor
+        )
+        return ceil(attributedTitle.size().width) <= floor(availableWidth) + 0.5
+    }
+
+    private static func applyStyledTitle(
+        _ title: String,
+        configuration: ToolTimelineRowConfiguration,
+        titleLabel: UILabel
+    ) {
+        titleLabel.attributedText = ToolRowTextRenderer.styledTitle(
+            title: title,
+            toolNamePrefix: configuration.toolNamePrefix,
+            toolNameColor: configuration.toolNameColor
+        )
     }
 
     static func applyLanguageBadge(

@@ -67,6 +67,66 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func collapsedFileToolTitleUsesBreadcrumbWhenFullPathDoesNotFit() throws {
+        let path = "clients/apple/Oppi/Sources/ScheduleEditView.swift"
+        let config = makeTimelineToolConfiguration(
+            title: path,
+            toolNamePrefix: "edit",
+            isExpanded: false
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let labels = timelineAllLabels(in: view)
+        let titleLabel = try #require(labels.first {
+            timelineRenderedText(of: $0).contains("ScheduleEditView.swift")
+        })
+
+        #expect(timelineRenderedText(of: titleLabel) == "c/a/O/S/ScheduleEditView.swift")
+    }
+
+    @MainActor
+    @Test func collapsedFileToolTitleFallsBackToFileNameOnNarrowRows() throws {
+        let path = "clients/apple/Oppi/Features/Chat/Support/Schedules/ScheduleEditView.swift"
+        let config = makeTimelineToolConfiguration(
+            title: path,
+            toolNamePrefix: "write",
+            isExpanded: false
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedTimelineSize(for: view, width: 260)
+
+        let labels = timelineAllLabels(in: view)
+        let titleLabel = try #require(labels.first {
+            timelineRenderedText(of: $0).contains("ScheduleEditView.swift")
+        })
+
+        #expect(timelineRenderedText(of: titleLabel) == "ScheduleEditView.swift")
+    }
+
+    @MainActor
+    @Test func collapsedFileToolTitleKeepsFullPathWhenItFits() throws {
+        let path = "clients/apple/Oppi/Sources/ScheduleEditView.swift"
+        let config = makeTimelineToolConfiguration(
+            title: path,
+            toolNamePrefix: "read",
+            isExpanded: false
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedTimelineSize(for: view, width: 760)
+
+        let labels = timelineAllLabels(in: view)
+        let titleLabel = try #require(labels.first {
+            timelineRenderedText(of: $0).contains("ScheduleEditView.swift")
+        })
+
+        #expect(timelineRenderedText(of: titleLabel) == path)
+    }
+
+    @MainActor
     @Test func expandedFileToolTitleCanWrapToShowFullPath() throws {
         let longPath = "clients/apple/Oppi/Features/Chat/Support/WorkspaceReviewFileDetailView.swift"
         let config = makeTimelineToolConfiguration(

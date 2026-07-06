@@ -158,6 +158,54 @@ enum ToolCallFormatting {
         return ":\(start)\(end.map { "-\($0)" } ?? "")"
     }
 
+    /// Collapse directory components to initials while keeping the final file name intact.
+    static func breadcrumbDisplayPath(_ displayPath: String) -> String {
+        let split = splitLineRangeSuffix(displayPath)
+        let path = split.path.replacingOccurrences(of: "\\", with: "/")
+        let components = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard components.count > 1,
+              let fileName = components.last,
+              !fileName.isEmpty else {
+            return displayPath
+        }
+
+        let directoryCrumbs = components.dropLast().enumerated().compactMap { index, component -> String? in
+            if component.isEmpty {
+                return index == 0 ? "" : nil
+            }
+            if component == "~" || component == "." || component == ".." {
+                return component
+            }
+            guard let first = component.first else { return nil }
+            return String(first)
+        }
+        let directory = directoryCrumbs.joined(separator: "/")
+        guard !directory.isEmpty else { return fileName + split.suffix }
+        return directory + "/" + fileName + split.suffix
+    }
+
+    /// Return the final file name, preserving any read line range suffix.
+    static func fileNameDisplayPath(_ displayPath: String) -> String {
+        let split = splitLineRangeSuffix(displayPath)
+        let path = split.path.replacingOccurrences(of: "\\", with: "/")
+        let components = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard let fileName = components.last,
+              !fileName.isEmpty else {
+            return displayPath
+        }
+        return fileName + split.suffix
+    }
+
+    private static func splitLineRangeSuffix(_ displayPath: String) -> (path: String, suffix: String) {
+        guard let range = displayPath.range(of: #":\d+(?:-\d+)?$"#, options: .regularExpression) else {
+            return (displayPath, "")
+        }
+        return (
+            String(displayPath[..<range.lowerBound]),
+            String(displayPath[range.lowerBound...])
+        )
+    }
+
     private static func normalizedDisplayPath(_ rawPath: String) -> String {
         var normalized = shortenedPath(rawPath).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return rawPath }

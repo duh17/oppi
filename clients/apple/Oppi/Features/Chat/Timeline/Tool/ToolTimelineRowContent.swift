@@ -342,6 +342,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if ToolTimelineRowDisplayState.updateCollapsedFileTitleForCurrentWidth(
+            configuration: currentConfiguration,
+            titleLabel: titleLabel,
+            availableWidth: collapsedTitleAvailableWidth()
+        ) {
+            super.layoutSubviews()
+        }
         bashToolRowView.updateOutputLabelWidthIfNeeded()
         updateExpandedLabelWidthIfNeeded()
         updateExpandedMarkdownWidthIfNeeded()
@@ -365,6 +372,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             )
         }
         bashToolRowView.flushDeferredScrollToBottom()
+    }
+
+    private func collapsedTitleAvailableWidth() -> CGFloat {
+        let rightLimit = trailingStack.isHidden
+            ? borderView.bounds.width - 14
+            : trailingStack.frame.minX - 6
+        return max(0, rightLimit - titleLabel.frame.minX)
     }
 
     private func updateViewportHeightsIfNeeded() {
