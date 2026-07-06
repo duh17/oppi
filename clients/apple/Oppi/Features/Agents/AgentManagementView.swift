@@ -156,6 +156,7 @@ private struct AgentDetailView: View {
     @State private var error: String?
     @State private var isShowingEditor = false
     @State private var isShowingLaunch = false
+    @State private var isShowingSchedule = false
     @State private var isArchiving = false
 
     var body: some View {
@@ -210,8 +211,20 @@ private struct AgentDetailView: View {
                     .disabled(workspaceStore.workspaces.isEmpty)
                     .accessibilityIdentifier("agents.detail.launch")
 
+                    Button {
+                        isShowingSchedule = true
+                    } label: {
+                        Label("Schedule Recurring Run", systemImage: "calendar.badge.clock")
+                    }
+                    .disabled(workspaceStore.workspaces.isEmpty)
+                    .accessibilityIdentifier("agents.detail.schedule")
+
                     if workspaceStore.workspaces.isEmpty {
-                        Text("Create or sync a workspace before launching this Agent.")
+                        Text("Create or sync a workspace before launching or scheduling this Agent.")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                    } else {
+                        Text("Schedules can run this Agent with a recurring briefing prompt, selected workspace, and repeat time.")
                             .font(.caption)
                             .foregroundStyle(.themeComment)
                     }
@@ -260,6 +273,18 @@ private struct AgentDetailView: View {
                 NavigationStack {
                     AgentLaunchSheet(agent: agent) { session in
                         connection.sessionStore.upsert(session)
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $isShowingSchedule) {
+            if let agent {
+                NavigationStack {
+                    ScheduleEditView(
+                        schedule: nil,
+                        prefill: ScheduleEditPrefill(agentId: agent.id, agentName: agent.name)
+                    ) {
+                        await loadAgent()
                     }
                 }
             }

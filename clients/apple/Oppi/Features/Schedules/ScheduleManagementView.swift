@@ -120,7 +120,7 @@ private struct ScheduleSummaryRow: View {
                     .foregroundStyle(.themeComment)
                     .lineLimit(1)
 
-                Text("\(schedule.action.type.displayName) · \(schedule.action.promptChars) characters")
+                Text(actionSummary)
                     .font(.caption2)
                     .foregroundStyle(.themeComment)
                     .lineLimit(1)
@@ -133,6 +133,11 @@ private struct ScheduleSummaryRow: View {
                 .foregroundStyle(.themeComment)
         }
         .padding(.vertical, 4)
+    }
+
+    private var actionSummary: String {
+        let target = schedule.action.agentId == nil ? schedule.action.type.displayName : "Saved Agent"
+        return "\(target) · \(schedule.action.promptChars) characters"
     }
 
     private var statusTone: StatusPillTone {
@@ -284,9 +289,10 @@ private struct ScheduleDetailView: View {
     @ViewBuilder
     private func actionDetail(_ action: AgentScheduleAction) -> some View {
         switch action {
-        case .newSession(let workspaceId, let prompt, let model, let worktreeId, let name, _):
+        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name, _):
             detailRow("Type", "New session")
             detailRow("Workspace", workspaceName(workspaceId))
+            if let agentId, !agentId.isEmpty { detailRow("Agent", agentId) }
             if let worktreeId, !worktreeId.isEmpty { detailRow("Worktree", worktreeId) }
             if let name, !name.isEmpty { detailRow("Session name", name) }
             if let model, !model.isEmpty { detailRow("Model", model) }
@@ -476,34 +482,55 @@ private extension AgentScheduleRunSummary {
     }
 }
 
-private struct ScheduleEditView: View {
+struct ScheduleEditPrefill: Sendable, Equatable {
+    var agentId: String?
+    var agentName: String?
+}
+
+struct ScheduleEditView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(\.dismiss) private var dismiss
 
     let schedule: AgentSchedule?
+    let prefill: ScheduleEditPrefill?
     let onSaved: () async -> Void
 
     @State private var name = ""
-    @State private var triggerKind: ScheduleTriggerKind = .at
+    @State private var recurrence: ScheduleRecurrencePreset = .weekly
+    @State private var weeklyDay: ScheduleWeekday = .saturday
+    @State private var repeatTime = ScheduleEditView.defaultRepeatTime()
     @State private var atDate = Date().addingTimeInterval(3_600)
     @State private var intervalValue = "1"
     @State private var intervalUnit: ScheduleIntervalUnit = .hour
-    @State private var cronExpression = "0 9 * * *"
+    @State private var cronExpression = "0 8 * * 6"
     @State private var timeZone = TimeZone.current.identifier
 
+    @State private var agents: [AgentDefinitionSummary] = []
     @State private var actionKind: AgentScheduleActionKind = .newSession
     @State private var selectedWorkspaceId = ""
     @State private var selectedSessionId = ""
+    @State private var selectedAgentId = ""
     @State private var prompt = ""
     @State private var model = ""
     @State private var worktreeId = ""
     @State private var sessionName = ""
     @State private var streamingBehavior: ExistingSessionStreamingBehavior = .followUp
 
+    @State private var didPopulate = false
     @State private var isSaving = false
     @State private var error: String?
+
+    init(
+        schedule: AgentSchedule?,
+        prefill: ScheduleEditPrefill? = nil,
+        onSaved: @escaping () async -> Void
+    ) {
+        self.schedule = schedule
+        self.prefill = prefill
+        self.onSaved = onSaved
+    }
 
     private var workspaces: [Workspace] { workspaceStore.workspaces }
 
@@ -523,23 +550,43 @@ private struct ScheduleEditView: View {
 
     var body: some View {
         Form {
-            Section("Details") {
-                TextField("Name", text: $name)
+            Section {
+                TextField("Title", text: $name)
+                    .font(.title3.weight(.semibold))
                     .accessibilityIdentifier("schedule.edit.name")
             }
 
-            Section("When") {
-                Picker("Type", selection: $triggerKind) {
-                    ForEach(ScheduleTriggerKind.allCases, id: \.self) { kind in
-                        Text(kind.displayName).tag(kind)
+            Section {
+                TextEditor(text: $prompt)
+                    .frame(minHeight: 220)
+                    .accessibilityIdentifier("schedule.edit.prompt")
+            } header: {
+                Text("Agent instructions")
+            } footer: {
+                Text("Write the recurring task as the Agent should receive it. Include data-source limits, safety constraints, and how incomplete data should be qualified.")
+            }
+
+            Section {
+                Picker("Repeat", selection: $recurrence) {
+                    ForEach(ScheduleRecurrencePreset.allCases, id: \.self) { preset in
+                        Text(preset.displayName).tag(preset)
                     }
                 }
-                .pickerStyle(.segmented)
 
-                switch triggerKind {
-                case .at:
+                switch recurrence {
+                case .once:
                     DatePicker("Date", selection: $atDate, displayedComponents: [.date, .hourAndMinute])
-                case .every:
+                case .daily:
+                    DatePicker("Time", selection: $repeatTime, displayedComponents: [.hourAndMinute])
+                case .weekly:
+                    Picker("Day", selection: $weeklyDay) {
+                        ForEach(ScheduleWeekday.allCases, id: \.self) { day in
+                            Text(day.displayName).tag(day)
+                        }
+                    }
+                    DatePicker("Time", selection: $repeatTime, displayedComponents: [.hourAndMinute])
+                    LabeledContent("End repeat", value: "Never")
+                case .interval:
                     HStack {
                         TextField("Interval", text: $intervalValue)
                             .keyboardType(.numberPad)
@@ -560,9 +607,13 @@ private struct ScheduleEditView: View {
                 TextField("Time zone", text: $timeZone)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+            } header: {
+                Text("Schedule")
+            } footer: {
+                Text("Daily and weekly repeats are saved as cron schedules. Use Pause or Archive to stop future runs.")
             }
 
-            Section("Action") {
+            Section {
                 Picker("Target", selection: $actionKind) {
                     Text("New Session").tag(AgentScheduleActionKind.newSession)
                     Text("Existing Session").tag(AgentScheduleActionKind.existingSession)
@@ -590,25 +641,32 @@ private struct ScheduleEditView: View {
                         }
                     }
                 } else {
+                    Picker("Agent", selection: $selectedAgentId) {
+                        Text("None").tag("")
+                        if let prefillAgentOption {
+                            Text(prefillAgentOption.name).tag(prefillAgentOption.id)
+                        }
+                        ForEach(visibleAgents) { agent in
+                            Text(agent.name).tag(agent.id)
+                        }
+                    }
                     TextField("Session name", text: $sessionName)
-                    TextField("Model", text: $model)
+                    TextField("Model override", text: $model)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     TextField("Worktree ID (optional)", text: $worktreeId)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
-            }
-
-            Section("Prompt") {
-                TextEditor(text: $prompt)
-                    .frame(minHeight: 180)
-                    .accessibilityIdentifier("schedule.edit.prompt")
+            } header: {
+                Text("Target")
+            } footer: {
+                Text("A saved Agent supplies reusable instructions and defaults. The prompt above is still sent as the scheduled task.")
             }
 
             if schedule == nil {
                 Section("Approval") {
-                    Text("Creating automatic schedules from iOS requires an accepted approval ref. Use `oppi schedule create --approval-ref …` for now.")
+                    Text("Creating automatic schedules from iOS still needs an accepted extension approval ref. Existing schedules can be edited here; new automatic schedules should be created with `oppi schedule create --approval-ref …` until the native approval flow lands.")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
                 }
@@ -637,7 +695,27 @@ private struct ScheduleEditView: View {
                 .accessibilityIdentifier("schedule.edit.save")
             }
         }
-        .onAppear(perform: populate)
+        .onAppear(perform: populateOnce)
+        .task { await loadAgentsForPicker() }
+    }
+
+    private var prefillAgentOption: AgentDefinitionSummary? {
+        guard let agentId = prefill?.agentId, !agentId.isEmpty else { return nil }
+        return AgentDefinitionSummary(
+            id: agentId,
+            name: prefill?.agentName?.nilIfBlank ?? agentId,
+            description: nil,
+            status: .active,
+            version: 1,
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0),
+            archivedAt: nil
+        )
+    }
+
+    private var visibleAgents: [AgentDefinitionSummary] {
+        guard let prefillAgentId = prefillAgentOption?.id else { return agents }
+        return agents.filter { $0.id != prefillAgentId }
     }
 
     @MainActor
@@ -669,34 +747,47 @@ private struct ScheduleEditView: View {
         }
     }
 
+    @MainActor
+    private func loadAgentsForPicker() async {
+        guard let apiClient else { return }
+        do {
+            agents = try await apiClient.listAgents()
+        } catch {
+            // The schedule can still be edited with an already stored Agent id.
+        }
+    }
+
+    private func populateOnce() {
+        guard !didPopulate else { return }
+        didPopulate = true
+        populate()
+    }
+
     private func populate() {
         guard let schedule else {
-            name = "Scheduled check"
+            if let agentName = prefill?.agentName?.nilIfBlank {
+                name = "Schedule \(agentName)"
+            } else {
+                name = "Weekly briefing"
+            }
             selectedWorkspaceId = workspaces.first?.id ?? ""
             selectedSessionId = sessionsForSelectedWorkspace.first?.id ?? ""
+            selectedAgentId = prefill?.agentId ?? ""
+            recurrence = .weekly
+            weeklyDay = .saturday
+            repeatTime = Self.defaultRepeatTime()
             return
         }
 
         name = schedule.name
         timeZone = schedule.trigger.timeZone
-        switch schedule.trigger {
-        case .at(let date, _):
-            triggerKind = .at
-            atDate = date
-        case .every(let intervalMs, _):
-            triggerKind = .every
-            let resolved = ScheduleIntervalUnit.valueAndUnit(for: intervalMs)
-            intervalValue = String(resolved.value)
-            intervalUnit = resolved.unit
-        case .cron(let expression, _):
-            triggerKind = .cron
-            cronExpression = expression
-        }
+        populateRecurrence(from: schedule.trigger)
 
         switch schedule.action {
-        case .newSession(let workspaceId, let prompt, let model, let worktreeId, let name, _):
+        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name, _):
             actionKind = .newSession
             selectedWorkspaceId = workspaceId
+            selectedAgentId = agentId ?? ""
             self.prompt = prompt
             self.model = model ?? ""
             self.worktreeId = worktreeId ?? ""
@@ -710,12 +801,43 @@ private struct ScheduleEditView: View {
         }
     }
 
+    private func populateRecurrence(from trigger: AgentScheduleTrigger) {
+        switch trigger {
+        case .at(let date, _):
+            recurrence = .once
+            atDate = date
+        case .every(let intervalMs, _):
+            recurrence = .interval
+            let resolved = ScheduleIntervalUnit.valueAndUnit(for: intervalMs)
+            intervalValue = String(resolved.value)
+            intervalUnit = resolved.unit
+        case .cron(let expression, _):
+            cronExpression = expression
+            if let daily = Self.dailyCronTime(expression) {
+                recurrence = .daily
+                repeatTime = Self.dateForTime(hour: daily.hour, minute: daily.minute)
+            } else if let weekly = Self.weeklyCronTime(expression) {
+                recurrence = .weekly
+                repeatTime = Self.dateForTime(hour: weekly.hour, minute: weekly.minute)
+                weeklyDay = weekly.day
+            } else {
+                recurrence = .cron
+            }
+        }
+    }
+
     private func buildTrigger() throws -> AgentScheduleTrigger {
         let cleanTimeZone = timeZone.nilIfBlank ?? TimeZone.current.identifier
-        switch triggerKind {
-        case .at:
+        switch recurrence {
+        case .once:
             return .at(atDate, timeZone: cleanTimeZone)
-        case .every:
+        case .daily:
+            let time = Self.hourMinute(from: repeatTime)
+            return .cron(expression: "\(time.minute) \(time.hour) * * *", timeZone: cleanTimeZone)
+        case .weekly:
+            let time = Self.hourMinute(from: repeatTime)
+            return .cron(expression: "\(time.minute) \(time.hour) * * \(weeklyDay.cronValue)", timeZone: cleanTimeZone)
+        case .interval:
             guard let value = Int64(intervalValue.trimmingCharacters(in: .whitespacesAndNewlines)), value > 0 else {
                 throw ScheduleEditError.invalidInterval
             }
@@ -735,6 +857,7 @@ private struct ScheduleEditView: View {
             return .newSession(
                 workspaceId: selectedWorkspaceId,
                 prompt: cleanPrompt,
+                agentId: selectedAgentId.nilIfBlank,
                 model: model.nilIfBlank,
                 worktreeId: worktreeId.nilIfBlank,
                 name: sessionName.nilIfBlank,
@@ -750,21 +873,112 @@ private struct ScheduleEditView: View {
             )
         }
     }
+
+    private static func defaultRepeatTime() -> Date {
+        dateForTime(hour: 8, minute: 0)
+    }
+
+    private static func dateForTime(hour: Int, minute: Int) -> Date {
+        var components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        components.hour = hour
+        components.minute = minute
+        return Calendar.current.date(from: components) ?? Date()
+    }
+
+    private static func hourMinute(from date: Date) -> (hour: Int, minute: Int) {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (components.hour ?? 0, components.minute ?? 0)
+    }
+
+    private static func dailyCronTime(_ expression: String) -> (hour: Int, minute: Int)? {
+        let fields = normalizedCronFields(expression)
+        guard fields.count == 5,
+              fields[2] == "*",
+              fields[3] == "*",
+              fields[4] == "*" else { return nil }
+        return cronHourMinute(fields)
+    }
+
+    private static func weeklyCronTime(_ expression: String) -> (day: ScheduleWeekday, hour: Int, minute: Int)? {
+        let fields = normalizedCronFields(expression)
+        guard fields.count == 5,
+              fields[2] == "*",
+              fields[3] == "*",
+              let dayValue = Int(fields[4]),
+              let day = ScheduleWeekday(cronValue: dayValue),
+              let time = cronHourMinute(fields) else { return nil }
+        return (day, time.hour, time.minute)
+    }
+
+    private static func normalizedCronFields(_ expression: String) -> [String] {
+        let fields = expression.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        return fields.count == 6 ? Array(fields.dropFirst()) : fields
+    }
+
+    private static func cronHourMinute(_ fields: [String]) -> (hour: Int, minute: Int)? {
+        guard fields.count >= 2,
+              let minute = Int(fields[0]),
+              let hour = Int(fields[1]),
+              (0...59).contains(minute),
+              (0...23).contains(hour) else { return nil }
+        return (hour, minute)
+    }
 }
 
-private enum ScheduleTriggerKind: CaseIterable {
-    case at
-    case every
+private enum ScheduleRecurrencePreset: CaseIterable {
+    case once
+    case daily
+    case weekly
+    case interval
     case cron
 
     var displayName: String {
         switch self {
-        case .at:
-            return "At"
-        case .every:
-            return "Every"
+        case .once:
+            return "Once"
+        case .daily:
+            return "Daily"
+        case .weekly:
+            return "Weekly"
+        case .interval:
+            return "Every interval"
         case .cron:
             return "Cron"
+        }
+    }
+}
+
+private enum ScheduleWeekday: Int, CaseIterable {
+    case sunday = 0
+    case monday = 1
+    case tuesday = 2
+    case wednesday = 3
+    case thursday = 4
+    case friday = 5
+    case saturday = 6
+
+    init?(cronValue: Int) {
+        self.init(rawValue: cronValue == 7 ? 0 : cronValue)
+    }
+
+    var cronValue: Int { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .sunday:
+            return "Sundays"
+        case .monday:
+            return "Mondays"
+        case .tuesday:
+            return "Tuesdays"
+        case .wednesday:
+            return "Wednesdays"
+        case .thursday:
+            return "Thursdays"
+        case .friday:
+            return "Fridays"
+        case .saturday:
+            return "Saturdays"
         }
     }
 }
