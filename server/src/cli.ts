@@ -3,15 +3,7 @@
 /**
  * oppi CLI
  *
- * Commands:
- *   init            Interactive first-time setup
- *   serve           Start the server
- *   pair [name]     Pair iOS client with server owner token
- *   status          Show server status
- *   doctor          Run security + environment diagnostics
- *   update          Update server dependencies
- *   token           Rotate owner bearer token
- *   config          Show/get/set/validate server config
+ * Command definitions and user-facing usage live in server/src/cli/help.ts.
  */
 
 import * as c from "./ansi.js";
