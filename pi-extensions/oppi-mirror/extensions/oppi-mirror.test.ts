@@ -234,6 +234,7 @@ function withInteractiveTerminal(run: () => Promise<void>): Promise<void> {
 afterEach(() => {
   wsMock.instances.length = 0;
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 describe("oppi mirror extension UI replay", () => {
@@ -297,7 +298,9 @@ describe("oppi mirror extension UI replay", () => {
       ctx.ui.setWorkingIndicator({ frames: ["●"], intervalMs: 120 });
       ctx.ui.setWorkingVisible(true);
 
-      expect(terminalSetWorkingMessage).toHaveBeenCalledWith("Tracing the logic");
+      expect(terminalSetWorkingMessage).toHaveBeenCalledWith(
+        "Tracing the logic",
+      );
       expect(sentExtensionUIRequests(socket)).toEqual([
         expect.objectContaining({
           method: "setWorkingMessage",
@@ -312,6 +315,84 @@ describe("oppi mirror extension UI replay", () => {
           workingVisible: true,
         }),
       ]);
+    });
+  });
+
+  it("replays pending blocking dialogs after bridge reconnect", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.useFakeTimers();
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      ctx.ui.confirm = vi.fn(
+        async (
+          _title: string,
+          _message?: string,
+          opts?: { signal?: AbortSignal },
+        ) =>
+          new Promise<boolean>((resolve) => {
+            opts?.signal?.addEventListener("abort", () => resolve(false), {
+              once: true,
+            });
+          }),
+      );
+
+      await startSession(pi, ctx);
+      const firstSocket = await startMirror(pi, ctx);
+      firstSocket.sent.length = 0;
+
+      const confirmPromise = ctx.ui.confirm("Install app?", "Approve install");
+      await Promise.resolve();
+      const firstRequest = sentExtensionUIRequests(firstSocket).find(
+        (request) => request.method === "confirm",
+      );
+      expect(firstRequest).toEqual(
+        expect.objectContaining({
+          method: "confirm",
+          title: "Install app?",
+          message: "Approve install",
+        }),
+      );
+
+      firstSocket.close();
+      await vi.advanceTimersByTimeAsync(2_000);
+      const secondSocket = wsMock.instances.at(-1);
+      if (!secondSocket || secondSocket === firstSocket) {
+        throw new Error("Expected reconnect websocket");
+      }
+      secondSocket.open();
+      secondSocket.receive(
+        JSON.stringify({
+          type: "hello_ack",
+          sessionId: "s1",
+          workspaceId: "w1",
+        }),
+      );
+      await Promise.resolve();
+
+      expect(sentExtensionUIRequests(secondSocket)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: firstRequest?.id,
+            method: "confirm",
+            title: "Install app?",
+            message: "Approve install",
+          }),
+        ]),
+      );
+
+      secondSocket.receive(
+        JSON.stringify({
+          type: "extension_ui_response",
+          id: firstRequest?.id,
+          confirmed: true,
+        }),
+      );
+
+      await expect(confirmPromise).resolves.toBe(true);
     });
   });
 

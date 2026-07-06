@@ -2291,6 +2291,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     string,
     PendingMirrorUIResponse<unknown>
   >();
+  const pendingUIRequestPayloads = new Map<string, Record<string, unknown>>();
+  const pendingUISettledIds = new Set<string>();
   const terminalDialogQueue = createMirrorTerminalDialogQueue();
   const toolArgsByCallId = new Map<string, Record<string, unknown>>();
   const proxiedUIContexts = new WeakSet<object>();
@@ -2355,6 +2357,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     connectionSerial += 1;
     clearTimers();
     pendingUIResponses.clear();
+    pendingUIRequestPayloads.clear();
+    pendingUISettledIds.clear();
     persistentExtensionUIRequests.clear();
     latestCtx = null;
     connectedSessionId = null;
@@ -2586,7 +2590,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     if (payload.method === "setWorkingMessage") return "working:message";
     if (payload.method === "setWorkingVisible") return "working:visible";
     if (payload.method === "setWorkingIndicator") return "working:indicator";
-    if (payload.method === "setHiddenThinkingLabel") return "thinking:hidden-label";
+    if (payload.method === "setHiddenThinkingLabel")
+      return "thinking:hidden-label";
     if (payload.method === "setToolsExpanded") return "tools:expanded";
     return undefined;
   }
@@ -2672,7 +2677,22 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     }
   }
 
+  function replayPendingExtensionUIRequests(): void {
+    for (const id of pendingUISettledIds) {
+      send({ type: "extension_ui_request_settled", id });
+    }
+    pendingUISettledIds.clear();
+
+    for (const payload of pendingUIRequestPayloads.values()) {
+      sendUIRequest(payload);
+    }
+  }
+
   function sendUISettled(id: string): void {
+    if (ws?.readyState !== WebSocket.OPEN) {
+      pendingUISettledIds.add(id);
+      return;
+    }
     send({ type: "extension_ui_request_settled", id });
   }
 
@@ -2713,13 +2733,15 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       },
     );
 
-    sendUIRequest({
+    const requestPayload = {
       id,
       method,
       ...request,
       timeout: opts?.timeout,
       timeoutAt: opts?.timeout ? Date.now() + opts.timeout : undefined,
-    });
+    };
+    pendingUIRequestPayloads.set(id, requestPayload);
+    sendUIRequest(requestPayload);
 
     const terminalPromise = terminalDialogQueue
       .run(() => terminalCall(terminalOpts), {
@@ -2738,6 +2760,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
       winner = await Promise.race([phonePromise, terminalPromise]);
     } finally {
       pendingUIResponses.delete(id);
+      pendingUIRequestPayloads.delete(id);
       sendUISettled(id);
     }
 
@@ -3285,6 +3308,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     connectionSerial += 1;
     clearTimers();
     pendingUIResponses.clear();
+    pendingUIRequestPayloads.clear();
+    pendingUISettledIds.clear();
     const socket = ws;
     ws = null;
     if (
@@ -3563,7 +3588,6 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         manualStop,
       });
       clearTimers();
-      pendingUIResponses.clear();
       ws = null;
       if (!manualStop) {
         const delayMs = Math.max(
@@ -3608,6 +3632,8 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     connectionSerial += 1;
     clearTimers();
     pendingUIResponses.clear();
+    pendingUIRequestPayloads.clear();
+    pendingUISettledIds.clear();
     const socket = ws;
     const stateCtx = ctx ?? latestCtx;
     if (socket?.readyState === WebSocket.OPEN) {
@@ -3669,6 +3695,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         });
         setIndicatorMode("live");
         replayPersistentExtensionUIRequests();
+        replayPendingExtensionUIRequests();
         return;
 
       case "command":
