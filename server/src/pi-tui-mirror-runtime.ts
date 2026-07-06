@@ -34,6 +34,7 @@ import {
   type RuntimeCommandExecutionContext,
 } from "./runtime-command-coordinator.js";
 import type { SessionBackendEvent } from "./pi-events.js";
+import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import {
   isPiTuiMirrorRemoteCommand,
   piTuiMirrorUnsupportedRemoteCommandReason,
@@ -387,8 +388,9 @@ function syncSessionWorktreeFromCwd(
   session: Session,
   workspace: Workspace,
   cwd: string | undefined,
+  dataDir: string,
 ): void {
-  const worktree = resolveWorkspaceWorktreeForPath(workspace, cwd);
+  const worktree = resolveWorkspaceWorktreeForPath(workspace, cwd, { dataDir });
   if (worktree) session.worktreeId = worktree.id;
 }
 
@@ -781,7 +783,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     if (!session.workspaceId) return null;
     const workspace = this.storage.getWorkspace(session.workspaceId);
     if (!workspace?.hostMount) return null;
-    return normalizePath(workspace.hostMount);
+    return normalizePath(
+      resolveSdkSessionCwd(workspace, session, { dataDir: this.storage.getDataDir() }),
+    );
   }
 
   async sendPrompt(
@@ -1464,7 +1468,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         if (!workspace.hostMount) {
           throw new Error(`Oppi workspace ${workspace.id} has no hostMount for pi-tui`);
         }
-        if (!pathContains(workspace.hostMount, cwd)) {
+        if (
+          !pathContains(workspace.hostMount, cwd) &&
+          !resolveWorkspaceWorktreeForPath(workspace, cwd, { dataDir: this.storage.getDataDir() })
+        ) {
           throw new Error(`Terminal cwd is outside Oppi workspace hostMount: ${cwd}`);
         }
         return workspace;
@@ -1477,11 +1484,17 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
     const candidates = this.storage
       .listWorkspaces()
-      .filter((workspace) => workspace.hostMount && pathContains(workspace.hostMount, cwd))
-      .sort(
-        (a, b) => normalizePath(b.hostMount ?? "").length - normalizePath(a.hostMount ?? "").length,
-      );
-    const workspace = candidates[0];
+      .flatMap((workspace) => {
+        if (!workspace.hostMount) return [];
+        const worktree = resolveWorkspaceWorktreeForPath(workspace, cwd, {
+          dataDir: this.storage.getDataDir(),
+        });
+        if (!pathContains(workspace.hostMount, cwd) && !worktree) return [];
+        return [{ workspace, matchPath: worktree?.path ?? workspace.hostMount }];
+      })
+      .sort((a, b) => normalizePath(b.matchPath).length - normalizePath(a.matchPath).length);
+    const match = candidates[0];
+    const workspace = match?.workspace;
     if (!workspace) {
       const suggestion = mirrorWorkspaceSuggestionForCwd(cwd);
       if (hello.createWorkspace === true) {
@@ -1499,10 +1512,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       );
     }
 
-    const matchLength = normalizePath(workspace.hostMount ?? "").length;
+    const matchLength = normalizePath(match.matchPath).length;
     if (
       candidates.length > 1 &&
-      normalizePath(candidates[1]?.hostMount ?? "").length === matchLength
+      normalizePath(candidates[1]?.matchPath ?? "").length === matchLength
     ) {
       throw new Error(`Ambiguous Oppi workspace match for terminal cwd: ${cwd}`);
     }
@@ -1639,7 +1652,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     if (model) session.model = model;
     if (state.thinkingLevel?.trim()) session.thinkingLevel = state.thinkingLevel.trim();
     if (piSessionId) session.piSessionId = piSessionId;
-    syncSessionWorktreeFromCwd(session, workspace, state.cwd);
+    syncSessionWorktreeFromCwd(session, workspace, state.cwd, this.storage.getDataDir());
     mergePiSessionFile(session, piSessionFile);
     if (!session.firstMessage) {
       session.firstMessage = firstUserMessageFromSessionFile(

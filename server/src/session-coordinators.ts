@@ -181,7 +181,7 @@ export function createSessionCoordinatorBundle(
     if (!workspace?.hostMount) {
       return null;
     }
-    return resolveSdkSessionCwd(workspace);
+    return resolveSdkSessionCwd(workspace, session, { dataDir: deps.storage.getDataDir() });
   };
 
   const uploadStoreConfig = resolveUploadStoreConfig(deps.config);

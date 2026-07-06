@@ -350,6 +350,7 @@ describe("agent routes", () => {
           getWorkspace: vi.fn((workspaceId: string) =>
             workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
           ),
+          getDataDir: vi.fn(() => dataDir),
           createSession: vi.fn((name?: string, model?: string) => {
             const session = makeSession({ id: `sess-${sessions.length + 1}`, name, model });
             sessions.push(structuredClone(session));
@@ -435,6 +436,7 @@ describe("agent routes", () => {
           getWorkspace: vi.fn((workspaceId: string) =>
             workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
           ),
+          getDataDir: vi.fn(() => dataDir),
           createSession,
           saveSession: vi.fn(),
           listSessions: vi.fn(() => []),

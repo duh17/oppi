@@ -130,9 +130,10 @@ export function resolveSandboxGuestCwd(workspace: Workspace): string {
 export function resolveSdkSessionCwd(
   workspace?: Workspace,
   session?: Pick<Session, "worktreeId">,
+  options: { dataDir?: string } = {},
 ): string {
   if (workspace?.runtime !== "sandbox" && workspace && session?.worktreeId) {
-    const worktreePath = resolveWorkspaceSessionCwd(workspace, session.worktreeId);
+    const worktreePath = resolveWorkspaceSessionCwd(workspace, session.worktreeId, options);
     if (worktreePath) return worktreePath;
   }
 
@@ -155,11 +156,12 @@ export function resolveSdkSessionCwd(
 export function resolveSdkSessionDisplayCwd(
   workspace?: Workspace,
   session?: Pick<Session, "worktreeId">,
+  options: { dataDir?: string } = {},
 ): string {
   if (workspace?.runtime === "sandbox") {
     return resolveSandboxGuestCwd(workspace);
   }
-  return resolveSdkSessionCwd(workspace, session);
+  return resolveSdkSessionCwd(workspace, session, options);
 }
 
 type AgentContextFile = { path: string; content: string };
@@ -389,8 +391,8 @@ export class SdkBackend {
   static async create(config: SdkBackendConfig): Promise<SdkBackend> {
     const createStartMs = Date.now();
     const { session, workspace, onEvent, onEnd: _onEnd } = config;
-    const initialHostCwd = resolveSdkSessionCwd(workspace, session);
-    const initialCwd = resolveSdkSessionDisplayCwd(workspace, session);
+    const initialHostCwd = resolveSdkSessionCwd(workspace, session, { dataDir: config.dataDir });
+    const initialCwd = resolveSdkSessionDisplayCwd(workspace, session, { dataDir: config.dataDir });
     const sandboxMode = workspace?.runtime === "sandbox";
     const runtimeAssertCwd = sandboxMode ? initialHostCwd : initialCwd;
     const hostMountError = hostMountValidationError(workspace?.hostMount);

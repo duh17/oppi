@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -6,6 +7,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SessionTraceService, type SessionTraceServiceDeps } from "../src/session-trace-service.js";
 import type { Session, Workspace } from "../src/types.js";
+import { createWorkspaceWorktree } from "../src/worktrees.js";
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function initGitRepo(root: string): void {
+  git(root, ["init", "--initial-branch=main"]);
+  git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+  git(root, ["config", "user.name", "Oppi Test"]);
+  writeFileSync(join(root, "README.md"), "main checkout\n");
+  git(root, ["add", "README.md"]);
+  git(root, ["commit", "-m", "initial"]);
+}
 
 function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
@@ -428,6 +443,39 @@ describe("SessionTraceService", () => {
       kind: "ok",
       contentType: "text/plain; charset=utf-8",
       size: 19,
+    });
+  });
+
+  it("resolves raw session file reads through data-dir worktrees", async () => {
+    const dataDir = tempDir("oppi-session-raw-worktree-data-");
+    const workspaceRoot = tempDir("oppi-session-raw-worktree-workspace-");
+    initGitRepo(workspaceRoot);
+    const workspace = makeWorkspace({ hostMount: workspaceRoot });
+    const worktree = createWorkspaceWorktree(
+      workspace,
+      { branch: "feature/raw-worktree" },
+      { dataDir },
+    );
+    mkdirSync(join(worktree.path, "notes"), { recursive: true });
+    writeFileSync(join(worktree.path, "notes", "hello.txt"), "hello from worktree\n", "utf8");
+    const session = makeSession({
+      worktreeId: worktree.id,
+      changeStats: {
+        mutatingToolCalls: 1,
+        filesChanged: 1,
+        changedFiles: ["notes/hello.txt"],
+        addedLines: 1,
+        removedLines: 0,
+      },
+    });
+    const { service } = makeService({ dataDir, workspace });
+
+    await expect(
+      service.getSessionRawFile({ workspace, session, path: "notes/hello.txt" }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      contentType: "text/plain; charset=utf-8",
+      size: 20,
     });
   });
 

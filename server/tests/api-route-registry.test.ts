@@ -81,6 +81,9 @@ const sessionOperationIds = [
   "listWorkspaceQuickActions",
   "prepareWorkspaceQuickActionSelection",
   "createWorkspaceQuickActionSession",
+  "listWorkspaceWorktrees",
+  "getWorkspaceWorktreeStatus",
+  "previewWorkspaceWorktree",
 ];
 
 const settingsOperationIds = [
@@ -93,6 +96,9 @@ const settingsOperationIds = [
   "createWorkspace",
   "updateWorkspace",
   "deleteWorkspace",
+  "createWorkspaceWorktree",
+  "openWorkspaceWorktree",
+  "removeWorkspaceWorktree",
   "listProviderAuthStatus",
   "startProviderAuthFlow",
   "getProviderAuthFlow",
@@ -167,6 +173,18 @@ describe("api route registry", () => {
     expect(normalizeRegisteredPathPattern("/agents/reviewer")).toBe("/agents/:agentId");
     expect(normalizeRegisteredPathPattern("/agents/reviewer/sessions")).toBe(
       "/agents/:agentId/sessions",
+    );
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/worktrees/open")).toBe(
+      "/workspaces/:workspaceId/worktrees/open",
+    );
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/worktrees/wt_feature/status")).toBe(
+      "/workspaces/:workspaceId/worktrees/:worktreeId/status",
+    );
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/worktrees/wt_feature/preview")).toBe(
+      "/workspaces/:workspaceId/worktrees/:worktreeId/preview",
+    );
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/worktrees/wt_feature")).toBe(
+      "/workspaces/:workspaceId/worktrees/:worktreeId",
     );
     expect(normalizeRegisteredPathPattern("/workspaces/ws-1/git/status")).toBe(
       "/workspaces/:workspaceId/git/status",

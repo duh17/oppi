@@ -80,6 +80,7 @@ function makeContext(
       getWorkspace: (workspaceId: string) => workspaces.find((item) => item.id === workspaceId),
       getSession: (sessionId: string) => (sessionId === session.id ? session : undefined),
       listWorkspaces: () => workspaces,
+      getDataDir: () => tmpdir(),
     },
   } as unknown as RouteContext;
 }

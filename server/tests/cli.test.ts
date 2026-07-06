@@ -382,6 +382,26 @@ describe("oppi help", () => {
         expected: ["Usage: oppi worktree get <worktree>", "main"],
       },
       {
+        args: ["worktree", "create", "--help"],
+        expected: ["Usage: oppi worktree create", "--branch <branch>", "OPPI_DATA_DIR"],
+      },
+      {
+        args: ["worktree", "open", "--help"],
+        expected: ["Usage: oppi worktree open", "--branch <branch>", "--path <path>"],
+      },
+      {
+        args: ["worktree", "status", "--help"],
+        expected: ["Usage: oppi worktree status <worktree>", "git status"],
+      },
+      {
+        args: ["worktree", "preview", "--help"],
+        expected: ["Usage: oppi worktree preview <worktree>", "--into <branch>", "read-only"],
+      },
+      {
+        args: ["worktree", "remove", "--help"],
+        expected: ["Usage: oppi worktree remove <worktree>", "--force", "active sessions"],
+      },
+      {
         args: ["session", "list", "--help"],
         expected: ["Usage: oppi session list", "--workspace <workspace>", "--json"],
       },
@@ -674,6 +694,87 @@ describe("oppi local API commands", () => {
           json({
             workspaceId: "ws-1",
             worktrees: [{ id: "main", name: "main", path: "/tmp/oppi" }],
+          });
+          return;
+        }
+        if (method === "POST" && url.pathname === "/workspaces/ws-1/worktrees") {
+          json({
+            workspaceId: "ws-1",
+            worktree: {
+              id: "wt_feature-cli-12345678",
+              name: body?.branch ?? "feature/cli",
+              branch: body?.branch ?? "feature/cli",
+              path: "/tmp/oppi-data/worktrees/ws-1/wt_feature-cli-12345678",
+              managedByOppi: true,
+            },
+          });
+          return;
+        }
+        if (method === "POST" && url.pathname === "/workspaces/ws-1/worktrees/open") {
+          json({
+            workspaceId: "ws-1",
+            worktree: {
+              id: "wt_feature-cli-12345678",
+              name: body?.branch ?? "feature/cli",
+              branch: body?.branch ?? "feature/cli",
+              path: "/tmp/oppi-data/worktrees/ws-1/wt_feature-cli-12345678",
+              managedByOppi: true,
+            },
+          });
+          return;
+        }
+        if (
+          method === "GET" &&
+          url.pathname === "/workspaces/ws-1/worktrees/wt_feature-cli-12345678/status"
+        ) {
+          json({
+            workspaceId: "ws-1",
+            worktree: {
+              id: "wt_feature-cli-12345678",
+              name: "feature/cli",
+              branch: "feature/cli",
+              path: "/tmp/oppi-data/worktrees/ws-1/wt_feature-cli-12345678",
+              managedByOppi: true,
+            },
+            status: { isGitRepo: true, branch: "feature/cli", dirtyCount: 0, untrackedCount: 0 },
+          });
+          return;
+        }
+        if (
+          method === "POST" &&
+          url.pathname === "/workspaces/ws-1/worktrees/wt_feature-cli-12345678/preview"
+        ) {
+          json({
+            workspaceId: "ws-1",
+            preview: {
+              worktree: { id: "wt_feature-cli-12345678", name: "feature/cli" },
+              target: { ref: body?.into ?? "main", headSha: "target-sha" },
+              source: { branch: "feature/cli", headSha: "source-sha" },
+              mode: body?.mode ?? "merge",
+              commitCount: 1,
+              commits: [{ sha: "abc123", subject: "change" }],
+              changedFiles: [{ status: "M", path: "README.md" }],
+              alreadyMerged: false,
+              fastForwardPossible: true,
+              conflictCheck: "clean",
+            },
+          });
+          return;
+        }
+        if (
+          method === "DELETE" &&
+          url.pathname === "/workspaces/ws-1/worktrees/wt_feature-cli-12345678"
+        ) {
+          json({
+            ok: true,
+            workspaceId: "ws-1",
+            worktree: {
+              id: "wt_feature-cli-12345678",
+              name: "feature/cli",
+              branch: "feature/cli",
+              path: "/tmp/oppi-data/worktrees/ws-1/wt_feature-cli-12345678",
+              managedByOppi: true,
+            },
           });
           return;
         }
@@ -979,6 +1080,55 @@ describe("oppi local API commands", () => {
           args: ["worktree", "get", "main", "--workspace", "ws-1", "--json"],
           expected: ["GET /workspaces/ws-1/worktrees"],
         },
+        {
+          args: [
+            "worktree",
+            "create",
+            "--workspace",
+            "ws-1",
+            "--branch",
+            "feature/cli",
+            "--base",
+            "main",
+            "--json",
+          ],
+          expected: ["POST /workspaces/ws-1/worktrees"],
+        },
+        {
+          args: ["worktree", "open", "--workspace", "ws-1", "--branch", "feature/cli", "--json"],
+          expected: ["POST /workspaces/ws-1/worktrees/open"],
+        },
+        {
+          args: ["worktree", "status", "wt_feature-cli-12345678", "--workspace", "ws-1", "--json"],
+          expected: ["GET /workspaces/ws-1/worktrees/wt_feature-cli-12345678/status"],
+        },
+        {
+          args: [
+            "worktree",
+            "preview",
+            "wt_feature-cli-12345678",
+            "--workspace",
+            "ws-1",
+            "--into",
+            "main",
+            "--mode",
+            "ff-only",
+            "--json",
+          ],
+          expected: ["POST /workspaces/ws-1/worktrees/wt_feature-cli-12345678/preview"],
+        },
+        {
+          args: [
+            "worktree",
+            "remove",
+            "wt_feature-cli-12345678",
+            "--workspace",
+            "ws-1",
+            "--force",
+            "--json",
+          ],
+          expected: ["DELETE /workspaces/ws-1/worktrees/wt_feature-cli-12345678?force=true"],
+        },
         { args: ["agent", "list", "--json"], expected: ["GET /agents"] },
         { args: ["agent", "get", "agent-1", "--json"], expected: ["GET /agents/agent-1"] },
         {
@@ -1191,6 +1341,21 @@ describe("oppi local API commands", () => {
           request.method === "POST" && request.path === "/workspaces/ws-1/sessions/sess-1/fork",
       );
       expect(forkRequest?.body).toEqual({ entryId: "entry-1", name: "Fork" });
+      const worktreeCreateRequest = requests.find(
+        (request) => request.method === "POST" && request.path === "/workspaces/ws-1/worktrees",
+      );
+      expect(worktreeCreateRequest?.body).toEqual({ branch: "feature/cli", base: "main" });
+      const worktreeOpenRequest = requests.find(
+        (request) =>
+          request.method === "POST" && request.path === "/workspaces/ws-1/worktrees/open",
+      );
+      expect(worktreeOpenRequest?.body).toEqual({ branch: "feature/cli" });
+      const worktreePreviewRequest = requests.find(
+        (request) =>
+          request.method === "POST" &&
+          request.path === "/workspaces/ws-1/worktrees/wt_feature-cli-12345678/preview",
+      );
+      expect(worktreePreviewRequest?.body).toEqual({ into: "main", mode: "ff-only" });
 
       const agentCreateRequest = requests.find(
         (request) => request.method === "POST" && request.path === "/agents",

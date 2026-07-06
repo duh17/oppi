@@ -145,7 +145,9 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         helpers.error(res, 404, "Workspace not found");
         return true;
       }
-      const worktreeSelection = normalizeSessionWorktreeId(workspace, body.target.worktreeId);
+      const worktreeSelection = normalizeSessionWorktreeId(workspace, body.target.worktreeId, {
+        dataDir: ctx.storage.getDataDir(),
+      });
       if (worktreeSelection.error) {
         helpers.error(res, 400, worktreeSelection.error);
         return true;

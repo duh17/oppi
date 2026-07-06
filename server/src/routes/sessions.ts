@@ -218,6 +218,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const worktreeSelection = normalizeSessionWorktreeId(
       workspace,
       url.searchParams.get("worktreeId") ?? undefined,
+      { dataDir: ctx.storage.getDataDir() },
     );
     if (worktreeSelection.error) {
       helpers.error(res, 400, worktreeSelection.error);
@@ -268,6 +269,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const worktreeSelection = normalizeSessionWorktreeId(
       workspace,
       url.searchParams.get("worktreeId") ?? undefined,
+      { dataDir: ctx.storage.getDataDir() },
     );
     if (worktreeSelection.error) {
       helpers.error(res, 400, worktreeSelection.error);
@@ -350,7 +352,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
     const requestedModel = body.model;
-    const worktreeSelection = normalizeSessionWorktreeId(workspace, body.worktreeId);
+    const worktreeSelection = normalizeSessionWorktreeId(workspace, body.worktreeId, {
+      dataDir: ctx.storage.getDataDir(),
+    });
     if (worktreeSelection.error) {
       helpers.error(res, 400, worktreeSelection.error);
       return;
@@ -359,7 +363,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     // ── Local session import: validate path confinement + CWD alignment ──
     if (body.piSessionFile) {
       try {
-        const selectedWorktree = resolveWorkspaceWorktree(workspace, worktreeSelection.worktreeId);
+        const selectedWorktree = resolveWorkspaceWorktree(workspace, worktreeSelection.worktreeId, {
+          dataDir: ctx.storage.getDataDir(),
+        });
         const importWorkspace = selectedWorktree
           ? { ...workspace, hostMount: selectedWorktree.path }
           : workspace;

@@ -11,6 +11,8 @@ export type CliWorktree = {
   id: string;
   name?: string;
   path?: string;
+  branch?: string | null;
+  managedByOppi?: boolean;
   [key: string]: unknown;
 };
 
@@ -80,6 +82,107 @@ export async function listWorktreesForCli(
     workspaceId: result.workspaceId ?? workspaceId,
     worktrees: Array.isArray(result.worktrees) ? result.worktrees : [],
   };
+}
+
+export async function createWorktreeForCli(
+  storage: Storage,
+  workspaceReference: string,
+  body: { branch: string; base?: string; path?: string },
+  hostResolvers: LocalApiHostResolvers = {},
+): Promise<{ workspaceId: string; worktree: CliWorktree }> {
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference, hostResolvers);
+  const result = await localApiRequest<{ workspaceId?: string; worktree?: CliWorktree }>(
+    storage,
+    `/workspaces/${encodeURIComponent(workspaceId)}/worktrees`,
+    { method: "POST", body },
+    hostResolvers,
+  );
+  return requireWorktreeResult(result, workspaceId);
+}
+
+export async function openWorktreeForCli(
+  storage: Storage,
+  workspaceReference: string,
+  body: { branch?: string; path?: string },
+  hostResolvers: LocalApiHostResolvers = {},
+): Promise<{ workspaceId: string; worktree: CliWorktree }> {
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference, hostResolvers);
+  const result = await localApiRequest<{ workspaceId?: string; worktree?: CliWorktree }>(
+    storage,
+    `/workspaces/${encodeURIComponent(workspaceId)}/worktrees/open`,
+    { method: "POST", body },
+    hostResolvers,
+  );
+  return requireWorktreeResult(result, workspaceId);
+}
+
+export async function getWorktreeStatusForCli(
+  storage: Storage,
+  workspaceReference: string,
+  worktreeId: string,
+  hostResolvers: LocalApiHostResolvers = {},
+): Promise<{ workspaceId: string; worktree: CliWorktree; status: unknown }> {
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference, hostResolvers);
+  const result = await localApiRequest<{
+    workspaceId?: string;
+    worktree?: CliWorktree;
+    status?: unknown;
+  }>(
+    storage,
+    `/workspaces/${encodeURIComponent(workspaceId)}/worktrees/${encodeURIComponent(worktreeId)}/status`,
+    undefined,
+    hostResolvers,
+  );
+  if (!result.worktree?.id) throw new Error("Local API did not return a worktree");
+  return {
+    workspaceId: result.workspaceId ?? workspaceId,
+    worktree: result.worktree,
+    status: result.status,
+  };
+}
+
+export async function previewWorktreeForCli(
+  storage: Storage,
+  workspaceReference: string,
+  worktreeId: string,
+  body: { into: string; mode?: string },
+  hostResolvers: LocalApiHostResolvers = {},
+): Promise<{ workspaceId: string; preview: unknown }> {
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference, hostResolvers);
+  const result = await localApiRequest<{ workspaceId?: string; preview?: unknown }>(
+    storage,
+    `/workspaces/${encodeURIComponent(workspaceId)}/worktrees/${encodeURIComponent(worktreeId)}/preview`,
+    { method: "POST", body },
+    hostResolvers,
+  );
+  if (!result.preview) throw new Error("Local API did not return a worktree preview");
+  return { workspaceId: result.workspaceId ?? workspaceId, preview: result.preview };
+}
+
+export async function removeWorktreeForCli(
+  storage: Storage,
+  workspaceReference: string,
+  worktreeId: string,
+  force: boolean,
+  hostResolvers: LocalApiHostResolvers = {},
+): Promise<{ workspaceId: string; worktree: CliWorktree }> {
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference, hostResolvers);
+  const suffix = force ? "?force=true" : "";
+  const result = await localApiRequest<{ workspaceId?: string; worktree?: CliWorktree }>(
+    storage,
+    `/workspaces/${encodeURIComponent(workspaceId)}/worktrees/${encodeURIComponent(worktreeId)}${suffix}`,
+    { method: "DELETE" },
+    hostResolvers,
+  );
+  return requireWorktreeResult(result, workspaceId);
+}
+
+function requireWorktreeResult(
+  result: { workspaceId?: string; worktree?: CliWorktree },
+  workspaceId: string,
+): { workspaceId: string; worktree: CliWorktree } {
+  if (!result.worktree?.id) throw new Error("Local API did not return a worktree");
+  return { workspaceId: result.workspaceId ?? workspaceId, worktree: result.worktree };
 }
 
 export function apiStatus(error: unknown): number | undefined {

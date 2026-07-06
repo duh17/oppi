@@ -442,7 +442,9 @@ export class SessionEventProcessor {
     if (!workspace?.hostMount) return;
     if (workspace.gitStatusEnabled === false) return;
 
-    const worktreePath = resolveWorkspaceWorktree(workspace, worktreeId)?.path;
+    const worktreePath = resolveWorkspaceWorktree(workspace, worktreeId, {
+      dataDir: this.deps.storage.getDataDir(),
+    })?.path;
     if (!worktreePath) return;
 
     void getGitStatus(worktreePath)

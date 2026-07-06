@@ -68,7 +68,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "server", summary: "install, restart, stop, or inspect the launchd service" },
       { name: "config", summary: "show, get, set, or validate server config" },
       { name: "workspace", summary: "list, inspect, create, update, and delete workspaces" },
-      { name: "worktree", summary: "list and inspect discovered workspace worktrees" },
+      { name: "worktree", summary: "list, create, open, and remove workspace worktrees" },
       {
         name: "session",
         summary: "list, launch, inspect, message, resume, fork, and stop sessions",
@@ -475,14 +475,19 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["worktree"],
     title: "Worktrees",
-    summary: "List and inspect discovered git worktrees for a workspace.",
+    summary: "List, create, open, and remove workspace git worktrees.",
     usage: "oppi worktree <subcommand> --workspace <workspace> [flags]",
     subcommands: [
-      { name: "list", summary: "list discovered worktrees for a workspace" },
+      { name: "list", summary: "list discovered and Oppi-managed worktrees" },
       {
         name: "get <worktree>",
         summary: "show one worktree by id or name; main is the default checkout",
       },
+      { name: "create", summary: "create an Oppi-managed worktree under OPPI_DATA_DIR" },
+      { name: "open", summary: "resolve an existing worktree by branch or path" },
+      { name: "status <worktree>", summary: "show worktree metadata and git status" },
+      { name: "preview <worktree>", summary: "preview integration into a target branch" },
+      { name: "remove <worktree>", summary: "remove an Oppi-managed worktree" },
     ],
     flags: [
       {
@@ -494,11 +499,17 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
-      "Worktrees are discovered from the workspace checkout; managed worktree lifecycle commands are not implemented yet.",
+      "New worktrees are created under OPPI_DATA_DIR/worktrees/<workspaceId>/.",
+      "Project-local .pi/worktrees entries remain discoverable, but remove only touches Oppi-managed data-dir worktrees.",
     ],
     examples: [
       { command: "oppi worktree list --workspace ws_123" },
-      { command: "oppi worktree get main --workspace ws_123 --json" },
+      { command: "oppi worktree create --workspace ws_123 --branch feature/foo --json" },
+      {
+        command:
+          "oppi worktree preview wt_feature-foo-abc12345 --workspace ws_123 --into main --json",
+      },
+      { command: "oppi worktree remove wt_feature-foo-abc12345 --workspace ws_123 --json" },
     ],
   },
   {
@@ -535,6 +546,130 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     examples: [{ command: "oppi worktree get main --workspace ws_123 --json" }],
+  },
+  {
+    path: ["worktree", "create"],
+    title: "Create worktree",
+    summary: "Create an Oppi-managed git worktree under OPPI_DATA_DIR.",
+    usage: "oppi worktree create --workspace <workspace> --branch <branch> [--base <ref>] [--json]",
+    flags: [
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "workspace id or unique name",
+        required: true,
+      },
+      {
+        name: "--branch",
+        value: "<branch>",
+        summary: "branch to create or check out",
+        required: true,
+      },
+      { name: "--base", value: "<ref>", summary: "base ref for a new branch; defaults to HEAD" },
+      {
+        name: "--path",
+        value: "<path>",
+        summary: "optional direct child path under OPPI_DATA_DIR/worktrees/<workspaceId>",
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "If the branch already exists, Oppi checks out that branch in a new worktree.",
+      "Custom paths are rejected unless they stay inside the Oppi-managed data-dir root.",
+    ],
+    examples: [
+      { command: "oppi worktree create --workspace ws_123 --branch feature/foo --json" },
+      { command: "oppi worktree create --workspace oppi --branch fix/crash --base main" },
+    ],
+  },
+  {
+    path: ["worktree", "open"],
+    title: "Open worktree",
+    summary: "Resolve an existing worktree by branch or path.",
+    usage:
+      "oppi worktree open --workspace <workspace> (--branch <branch> | --path <path>) [--json]",
+    flags: [
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "workspace id or unique name",
+        required: true,
+      },
+      { name: "--branch", value: "<branch>", summary: "existing branch name" },
+      { name: "--path", value: "<path>", summary: "existing worktree path" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi worktree open --workspace ws_123 --branch feature/foo --json" }],
+  },
+  {
+    path: ["worktree", "status"],
+    title: "Worktree status",
+    summary: "Show worktree metadata and git status without changing files.",
+    usage: "oppi worktree status <worktree> --workspace <workspace> [--json]",
+    arguments: [{ name: "<worktree>", summary: "worktree id" }],
+    flags: [
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "workspace id or unique name",
+        required: true,
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi worktree status wt_feature-foo-abc12345 --workspace ws_123" }],
+  },
+  {
+    path: ["worktree", "preview"],
+    title: "Preview worktree integration",
+    summary: "Preview commits, changed files, fast-forward status, and conflicts before merging.",
+    usage:
+      "oppi worktree preview <worktree> --workspace <workspace> --into <branch> [--mode <mode>] [--json]",
+    arguments: [{ name: "<worktree>", summary: "source worktree id" }],
+    flags: [
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "workspace id or unique name",
+        required: true,
+      },
+      { name: "--into", value: "<branch>", summary: "target branch or ref", required: true },
+      {
+        name: "--mode",
+        value: "<merge|squash|ff-only>",
+        summary: "intended completion mode; defaults to merge",
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "Preview is read-only and is the command agents should run before asking to complete or remove a worktree.",
+    ],
+    examples: [
+      {
+        command:
+          "oppi worktree preview wt_feature-foo-abc12345 --workspace ws_123 --into main --json",
+      },
+    ],
+  },
+  {
+    path: ["worktree", "remove"],
+    title: "Remove worktree",
+    summary: "Remove an Oppi-managed data-dir worktree.",
+    usage: "oppi worktree remove <worktree> --workspace <workspace> [--force] [--json]",
+    arguments: [{ name: "<worktree>", summary: "Oppi-managed worktree id" }],
+    flags: [
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "workspace id or unique name",
+        required: true,
+      },
+      { name: "--force", summary: "allow removing dirty worktrees or stopped-session history" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "Remove refuses the main checkout, project-local .pi/worktrees entries, and worktrees with active sessions.",
+    ],
+    examples: [{ command: "oppi worktree remove wt_feature-foo-abc12345 --workspace ws_123" }],
   },
   {
     path: ["wait"],
