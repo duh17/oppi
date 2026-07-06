@@ -596,16 +596,37 @@ actor APIClient: ClientLogUploading {
     /// Fetch a review diff for a single workspace file.
     func getWorkspaceReviewDiff(
         workspaceId: String,
-        path: String
+        path: String,
+        selectedSessionId: String? = nil,
+        worktreeId: String? = nil
     ) async throws -> WorkspaceReviewDiffResponse {
-        let encodedPath = try encodeQueryPath(path)
-        let route = "/workspaces/\(workspaceId)/git/diff?path=\(encodedPath)"
+        var queryItems = [URLQueryItem(name: "path", value: path)]
+        if let selectedSessionId, !selectedSessionId.isEmpty {
+            queryItems.append(URLQueryItem(name: "selectedSessionId", value: selectedSessionId))
+        }
+        if let worktreeId, !worktreeId.isEmpty {
+            queryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
+        }
+        let query = try makePercentEncodedQuery(queryItems) ?? ""
+        let route = "/workspaces/\(workspaceId)/git/diff?\(query)"
         let data = try await get(route)
         return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
     }
 
-    func getWorkspaceQuickActions(workspaceId: String) async throws -> WorkspaceQuickActionsResponse {
-        let data = try await get("/workspaces/\(workspaceId)/quick-actions")
+    func getWorkspaceQuickActions(
+        workspaceId: String,
+        selectedSessionId: String? = nil,
+        worktreeId: String? = nil
+    ) async throws -> WorkspaceQuickActionsResponse {
+        var queryItems: [URLQueryItem] = []
+        if let selectedSessionId, !selectedSessionId.isEmpty {
+            queryItems.append(URLQueryItem(name: "selectedSessionId", value: selectedSessionId))
+        }
+        if let worktreeId, !worktreeId.isEmpty {
+            queryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
+        }
+        let query = try makePercentEncodedQuery(queryItems).map { "?\($0)" } ?? ""
+        let data = try await get("/workspaces/\(workspaceId)/quick-actions\(query)")
         return try JSONDecoder().decode(WorkspaceQuickActionsResponse.self, from: data)
     }
 
@@ -613,12 +634,14 @@ actor APIClient: ClientLogUploading {
         workspaceId: String,
         paths: [String],
         selectedSessionId: String? = nil,
+        worktreeId: String? = nil,
         commitSha: String? = nil,
         promptTemplateName: String
     ) async throws -> WorkspaceQuickActionSelectionResponse {
         struct Body: Encodable {
             let paths: [String]
             let selectedSessionId: String?
+            let worktreeId: String?
             let commitSha: String?
             let promptTemplateName: String
         }
@@ -628,6 +651,7 @@ actor APIClient: ClientLogUploading {
             body: Body(
                 paths: paths,
                 selectedSessionId: selectedSessionId,
+                worktreeId: worktreeId,
                 commitSha: commitSha,
                 promptTemplateName: promptTemplateName
             )
@@ -640,12 +664,14 @@ actor APIClient: ClientLogUploading {
         workspaceId: String,
         paths: [String],
         selectedSessionId: String? = nil,
+        worktreeId: String? = nil,
         commitSha: String? = nil,
         promptTemplateName: String
     ) async throws -> WorkspaceQuickActionSessionResponse {
         struct Body: Encodable {
             let paths: [String]
             let selectedSessionId: String?
+            let worktreeId: String?
             let commitSha: String?
             let promptTemplateName: String
         }
@@ -655,6 +681,7 @@ actor APIClient: ClientLogUploading {
             body: Body(
                 paths: paths,
                 selectedSessionId: selectedSessionId,
+                worktreeId: worktreeId,
                 commitSha: commitSha,
                 promptTemplateName: promptTemplateName
             )
@@ -1243,8 +1270,14 @@ actor APIClient: ClientLogUploading {
     ///
     /// Used by `MarkdownImageView` to load images referenced in markdown with relative paths.
     /// Returns raw `Data` so the caller can decode as `UIImage`.
-    func fetchWorkspaceFile(workspaceID: String, path: String) async throws -> Data {
-        return try await get(url: makeWorkspaceRawURL(workspaceId: workspaceID, path: path))
+    func fetchWorkspaceFile(workspaceID: String, path: String, worktreeId: String? = nil) async throws -> Data {
+        return try await get(
+            url: makeWorkspaceRawURL(
+                workspaceId: workspaceID,
+                path: path,
+                queryItems: workspaceWorktreeQueryItems(worktreeId)
+            )
+        )
     }
 
     // MARK: - Workspace File Browser
@@ -1253,11 +1286,16 @@ actor APIClient: ClientLogUploading {
     ///
     /// Pass an empty string or "/" for the workspace root. Subdirectory paths
     /// should include a trailing slash (e.g. "src/").
-    func listWorkspaceDirectory(workspaceId: String, path: String = "") async throws -> DirectoryListingResponse {
+    func listWorkspaceDirectory(
+        workspaceId: String,
+        path: String = "",
+        worktreeId: String? = nil
+    ) async throws -> DirectoryListingResponse {
         let data = try await get(
             url: makeWorkspaceContentsURL(
                 workspaceId: workspaceId,
                 path: path,
+                queryItems: workspaceWorktreeQueryItems(worktreeId),
                 directory: true
             )
         )
@@ -1268,16 +1306,27 @@ actor APIClient: ClientLogUploading {
     ///
     /// Returns all workspace-relative file paths in a single response.
     /// The client caches this and filters locally for instant search feedback.
-    func fetchFileIndex(workspaceId: String) async throws -> FileIndexResponse {
-        let data = try await get("/workspaces/\(workspaceId)/paths")
+    func fetchFileIndex(workspaceId: String, worktreeId: String? = nil) async throws -> FileIndexResponse {
+        let data = try await get(
+            url: makeURL(
+                pathSegments: ["workspaces", workspaceId, "paths"],
+                queryItems: workspaceWorktreeQueryItems(worktreeId)
+            )
+        )
         return try JSONDecoder().decode(FileIndexResponse.self, from: data)
     }
 
     /// Fetch a workspace file in browse mode (text/code files, not just images).
     ///
     /// Returns raw file content as `Data`. For text files, decode to String with UTF-8.
-    func browseWorkspaceFile(workspaceId: String, path: String) async throws -> Data {
-        return try await get(url: makeWorkspaceRawURL(workspaceId: workspaceId, path: path))
+    func browseWorkspaceFile(workspaceId: String, path: String, worktreeId: String? = nil) async throws -> Data {
+        return try await get(
+            url: makeWorkspaceRawURL(
+                workspaceId: workspaceId,
+                path: path,
+                queryItems: workspaceWorktreeQueryItems(worktreeId)
+            )
+        )
     }
 
     /// Build a bearer-authenticated media source for AVPlayer resource loading.
@@ -1288,11 +1337,16 @@ actor APIClient: ClientLogUploading {
     func makeWorkspaceMediaSource(
         workspaceId: String,
         path: String,
+        worktreeId: String? = nil,
         contentTypeHint: String? = nil,
         sourceFileExtension: String? = nil
     ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
-            url: try makeWorkspaceRawURL(workspaceId: workspaceId, path: path),
+            url: try makeWorkspaceRawURL(
+                workspaceId: workspaceId,
+                path: path,
+                queryItems: workspaceWorktreeQueryItems(worktreeId)
+            ),
             authorizationHeaderValue: "Bearer \(token)",
             tlsCertFingerprint: tlsCertFingerprint,
             contentTypeHint: contentTypeHint,
@@ -1498,6 +1552,12 @@ actor APIClient: ClientLogUploading {
             throw APIError.server(status: 400, message: "Invalid file path")
         }
         return encoded
+    }
+
+    private func workspaceWorktreeQueryItems(_ worktreeId: String?) -> [URLQueryItem] {
+        let trimmed = worktreeId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return [] }
+        return [URLQueryItem(name: "worktreeId", value: trimmed)]
     }
 
     private func makeWorkspaceContentsURL(

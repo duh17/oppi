@@ -525,6 +525,7 @@ struct WorkspaceDetailView: View {
                     gitStatus: gitStatus,
                     isLoading: false,
                     workspaceId: workspace.id,
+                    worktreeId: selectedWorktreeId,
                     showCleanWorkspace: true,
                     collapseToken: contextBarCollapseToken,
                     onExpandedChanged: { contextBarExpanded = $0 }
@@ -703,7 +704,12 @@ struct WorkspaceDetailView: View {
     @ViewBuilder
     private var workspaceFilesToolbarItem: some View {
         if let currentServerId {
-            let target = FileBrowserNavTarget(serverId: currentServerId, workspaceId: workspace.id, path: "")
+            let target = FileBrowserNavTarget(
+                serverId: currentServerId,
+                workspaceId: workspace.id,
+                worktreeId: selectedWorktreeId,
+                path: ""
+            )
 
             switch navigation.workspaceNavigationPresentation {
             case .stack:

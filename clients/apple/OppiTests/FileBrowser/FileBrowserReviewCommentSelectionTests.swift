@@ -314,6 +314,17 @@ struct FileBrowserReviewCommentSelectionTests {
         ))
     }
 
+    @Test func fileBrowserFileTargetPreservesWorktreeId() {
+        let target = WorkspaceLinkedFileNavTarget.workspaceFile(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            worktreeId: "wt-feature",
+            path: "notes/daily.md"
+        )
+
+        #expect(target.worktreeId == "wt-feature")
+    }
+
     @Test func codeBodyNoCommentMenuWhenRouterNil() throws {
         let codeBody = NativeFullScreenCodeBody(
             content: "let answer = 42",

@@ -43,6 +43,7 @@ struct WorkspaceReviewFileDetailView: View {
     let workspaceId: String
     let selectedSessionId: String?
     let file: WorkspaceReviewFile
+    var worktreeId: String? = nil
     var reviewCommentSelectionScopeOverride: ReviewCommentSelectionScope? = nil
     var navigationFiles: [WorkspaceReviewFile] = []
     var allowsHorizontalBackSwipe = true
@@ -90,6 +91,14 @@ struct WorkspaceReviewFileDetailView: View {
         }
     }
 
+    private var diffTaskID: String {
+        [workspaceId, selectedSessionId ?? "", worktreeId ?? "", currentFile.path].joined(separator: "|")
+    }
+
+    private var quickActionTaskID: String {
+        [workspaceId, selectedSessionId ?? "", worktreeId ?? ""].joined(separator: "|")
+    }
+
     private enum DetailTab: CaseIterable, Identifiable {
         case diff
         case current
@@ -131,7 +140,7 @@ struct WorkspaceReviewFileDetailView: View {
         }
         .navigationTitle(currentFile.path.lastPathComponentForDisplay)
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: workspaceId + "|" + (selectedSessionId ?? "") + "|" + currentFile.path) {
+        .task(id: diffTaskID) {
             await loadDiff(for: currentFile)
         }
         .onChange(of: file.path) { _, _ in
@@ -139,7 +148,7 @@ struct WorkspaceReviewFileDetailView: View {
             diff = nil
             error = nil
         }
-        .task(id: workspaceId) {
+        .task(id: quickActionTaskID) {
             await loadQuickActionsIfNeeded()
         }
         .navigationDestination(item: $navigateToQuickAction) { dest in
@@ -374,6 +383,7 @@ struct WorkspaceReviewFileDetailView: View {
                 workspaceId: workspaceId,
                 paths: [currentFile.path],
                 selectedSessionId: selectedSessionId,
+                worktreeId: worktreeId,
                 promptTemplateName: option.promptTemplateName
             )
             sessionStore.upsert(response.session)
@@ -443,7 +453,11 @@ struct WorkspaceReviewFileDetailView: View {
         defer { isLoadingQuickActions = false }
 
         do {
-            quickActionOptions = try await api.getWorkspaceQuickActions(workspaceId: workspaceId).actions
+            quickActionOptions = try await api.getWorkspaceQuickActions(
+                workspaceId: workspaceId,
+                selectedSessionId: selectedSessionId,
+                worktreeId: worktreeId
+            ).actions
         } catch {
             quickActionOptions = []
         }
@@ -492,7 +506,12 @@ struct WorkspaceReviewFileDetailView: View {
             }
         }
 
-        return try await api.getWorkspaceReviewDiff(workspaceId: workspaceId, path: file.path)
+        return try await api.getWorkspaceReviewDiff(
+            workspaceId: workspaceId,
+            path: file.path,
+            selectedSessionId: selectedSessionId,
+            worktreeId: worktreeId
+        )
     }
 
     static func shouldFallbackToWorkspaceDiff(

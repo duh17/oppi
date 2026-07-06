@@ -40,17 +40,20 @@ enum WorkspaceLinkedFileKind: Hashable {
 struct WorkspaceLinkedFileNavTarget: Hashable {
     let serverId: String
     let workspaceId: String
+    let worktreeId: String?
     let kind: WorkspaceLinkedFileKind
     let navigationContext: FileBrowserNavigationContext?
 
     init(
         serverId: String,
         workspaceId: String,
+        worktreeId: String? = nil,
         kind: WorkspaceLinkedFileKind,
         navigationContext: FileBrowserNavigationContext? = nil
     ) {
         self.serverId = serverId
         self.workspaceId = workspaceId
+        self.worktreeId = worktreeId
         self.kind = kind
         self.navigationContext = navigationContext
     }
@@ -58,6 +61,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
     static func workspaceFile(
         serverId: String,
         workspaceId: String,
+        worktreeId: String? = nil,
         path: String,
         fileName: String? = nil,
         navigationContext: FileBrowserNavigationContext? = nil
@@ -72,6 +76,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         return WorkspaceLinkedFileNavTarget(
             serverId: serverId,
             workspaceId: workspaceId,
+            worktreeId: worktreeId,
             kind: .workspaceFile(path: path, fileName: resolvedFileName),
             navigationContext: navigationContext
         )
@@ -211,6 +216,7 @@ struct WorkspaceFileBrowserDestinationView: View {
                 FileBrowserView(
                     serverId: targetServerId,
                     workspaceId: target.workspaceId,
+                    worktreeId: target.worktreeId,
                     initialPath: target.path
                 )
                 .withServerScopedEnvironment(connection)
@@ -248,6 +254,7 @@ struct WorkspaceLinkedFileDestinationView: View {
                 case .workspaceFile(let path, let fileName):
                     FileBrowserContentView(
                         workspaceId: target.workspaceId,
+                        worktreeId: target.worktreeId,
                         filePath: path,
                         fileName: fileName,
                         navigationContext: target.navigationContext

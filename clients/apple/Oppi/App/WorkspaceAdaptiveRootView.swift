@@ -159,8 +159,13 @@ private struct WorkspaceSplitFileBrowserDestinationView: View {
     var body: some View {
         Group {
             if let connection = resolvedConnection {
-                FileBrowserView(serverId: targetServerId, workspaceId: target.workspaceId, initialPath: target.path)
-                    .withServerScopedEnvironment(connection)
+                FileBrowserView(
+                    serverId: targetServerId,
+                    workspaceId: target.workspaceId,
+                    worktreeId: target.worktreeId,
+                    initialPath: target.path
+                )
+                .withServerScopedEnvironment(connection)
             } else {
                 ProgressView("Connecting…")
             }

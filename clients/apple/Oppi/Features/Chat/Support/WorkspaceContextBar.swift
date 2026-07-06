@@ -161,6 +161,7 @@ struct WorkspaceContextBar: View {
     let appliesOuterHorizontalPadding: Bool
     let workspaceId: String?
     let sessionId: String?
+    let worktreeId: String?
     let showCleanWorkspace: Bool
     var onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)?
     var fileDetailReviewCommentScope: ReviewCommentSelectionScope?
@@ -182,7 +183,7 @@ struct WorkspaceContextBar: View {
     @State private var launchError: String?
     @State private var navigateToQuickAction: QuickActionSessionNavDestination?
     @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
-    @State private var quickActionOptionsWorkspaceId: String?
+    @State private var quickActionOptionsContextKey: String?
     @State private var isLoadingQuickActions = false
 
     // Commit pagination state
@@ -200,6 +201,7 @@ struct WorkspaceContextBar: View {
         appliesOuterHorizontalPadding: Bool = true,
         workspaceId: String? = nil,
         sessionId: String? = nil,
+        worktreeId: String? = nil,
         showCleanWorkspace: Bool = false,
         initialExpanded: Bool = false,
         onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)? = nil,
@@ -212,6 +214,7 @@ struct WorkspaceContextBar: View {
         self.appliesOuterHorizontalPadding = appliesOuterHorizontalPadding
         self.workspaceId = workspaceId
         self.sessionId = sessionId
+        self.worktreeId = worktreeId
         self.showCleanWorkspace = showCleanWorkspace
         _isExpanded = State(initialValue: initialExpanded)
         self.onReviewInCurrentSession = onReviewInCurrentSession
@@ -398,6 +401,16 @@ struct WorkspaceContextBar: View {
                     Task { await loadQuickActionsIfNeeded() }
                 }
                 .onChange(of: workspaceId) { _, _ in
+                    resetQuickActionCache()
+                    guard isSelecting else { return }
+                    Task { await loadQuickActionsIfNeeded() }
+                }
+                .onChange(of: sessionId) { _, _ in
+                    resetQuickActionCache()
+                    guard isSelecting else { return }
+                    Task { await loadQuickActionsIfNeeded() }
+                }
+                .onChange(of: worktreeId) { _, _ in
                     resetQuickActionCache()
                     guard isSelecting else { return }
                     Task { await loadQuickActionsIfNeeded() }
@@ -854,6 +867,7 @@ struct WorkspaceContextBar: View {
                     workspaceId: workspaceId,
                     selectedSessionId: sessionId,
                     file: file.toReviewFile(),
+                    worktreeId: worktreeId,
                     reviewCommentSelectionScopeOverride: Self.makeFileDetailReviewCommentScope(
                         parentScope: fileDetailReviewCommentScope,
                         fallbackScope: nil,
@@ -963,26 +977,37 @@ struct WorkspaceContextBar: View {
 
     private func resetQuickActionCache() {
         quickActionOptions = []
-        quickActionOptionsWorkspaceId = nil
+        quickActionOptionsContextKey = nil
         isLoadingQuickActions = false
     }
 
     private func loadQuickActionsIfNeeded() async {
         guard isSelecting else { return }
         guard let workspaceId, let api = apiClient else { return }
-        guard quickActionOptionsWorkspaceId != workspaceId else { return }
+        let selectedSessionId = sessionId
+        let selectedWorktreeId = worktreeId
+        let cacheKey = "\(workspaceId)|\(selectedSessionId ?? "")|\(selectedWorktreeId ?? "")"
+        guard quickActionOptionsContextKey != cacheKey else { return }
         guard !isLoadingQuickActions else { return }
 
         isLoadingQuickActions = true
         defer { isLoadingQuickActions = false }
 
         do {
-            let actions = try await api.getWorkspaceQuickActions(workspaceId: workspaceId).actions
-            guard self.workspaceId == workspaceId else { return }
+            let actions = try await api.getWorkspaceQuickActions(
+                workspaceId: workspaceId,
+                selectedSessionId: selectedSessionId,
+                worktreeId: selectedWorktreeId
+            ).actions
+            guard self.workspaceId == workspaceId,
+                  self.sessionId == selectedSessionId,
+                  self.worktreeId == selectedWorktreeId else { return }
             quickActionOptions = actions
-            quickActionOptionsWorkspaceId = workspaceId
+            quickActionOptionsContextKey = cacheKey
         } catch {
-            guard self.workspaceId == workspaceId else { return }
+            guard self.workspaceId == workspaceId,
+                  self.sessionId == selectedSessionId,
+                  self.worktreeId == selectedWorktreeId else { return }
             quickActionOptions = []
         }
     }
@@ -1007,6 +1032,7 @@ struct WorkspaceContextBar: View {
                 workspaceId: workspaceId,
                 paths: paths,
                 selectedSessionId: sessionId,
+                worktreeId: worktreeId,
                 promptTemplateName: option.promptTemplateName
             )
             selectedPaths.removeAll()
@@ -1043,6 +1069,7 @@ struct WorkspaceContextBar: View {
                 workspaceId: workspaceId,
                 paths: paths,
                 selectedSessionId: sessionId,
+                worktreeId: worktreeId,
                 promptTemplateName: option.promptTemplateName
             )
             sessionStore.upsert(response.session)

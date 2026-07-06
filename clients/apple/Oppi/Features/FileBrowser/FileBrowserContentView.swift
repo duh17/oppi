@@ -40,6 +40,7 @@ enum FileBrowserContentRenderingPolicy {
 /// On cellular networks, an additional data warning is displayed.
 struct FileBrowserContentView: View {
     let workspaceId: String
+    var worktreeId: String? = nil
     let filePath: String
     let fileName: String
     /// Known file size from directory listing. Nil when opened from search results.
@@ -333,6 +334,7 @@ struct FileBrowserContentView: View {
                 let source = try await api.makeWorkspaceMediaSource(
                     workspaceId: workspaceId,
                     path: requestedPath,
+                    worktreeId: worktreeId,
                     contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: requestedExtension),
                     sourceFileExtension: requestedExtension
                 )
@@ -342,13 +344,14 @@ struct FileBrowserContentView: View {
                 let source = try await api.makeWorkspaceMediaSource(
                     workspaceId: workspaceId,
                     path: requestedPath,
+                    worktreeId: worktreeId,
                     contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: requestedExtension),
                     sourceFileExtension: requestedExtension
                 )
                 guard isCurrentFile(requestedPath) else { return }
                 content = .audio(source)
             case .image, .pdf, .text, .binary:
-                let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: requestedPath)
+                let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: requestedPath, worktreeId: worktreeId)
                 guard isCurrentFile(requestedPath) else { return }
                 switch requestedCategory {
                 case .image: content = .image(data)
@@ -389,10 +392,11 @@ struct FileBrowserContentView: View {
             workspaceContext: .init(
                 workspaceID: workspaceId,
                 serverBaseURL: api.baseURL,
-                fetchWorkspaceFile: { [workspaceId] wsID, filePath in
+                fetchWorkspaceFile: { [workspaceId, worktreeId] wsID, filePath in
                     try await api.browseWorkspaceFile(
                         workspaceId: wsID.isEmpty ? workspaceId : wsID,
-                        path: filePath
+                        path: filePath,
+                        worktreeId: worktreeId
                     )
                 }
             )
