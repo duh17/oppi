@@ -353,6 +353,7 @@ enum AgentScheduleAction: Sendable, Equatable {
     case newSession(
         workspaceId: String,
         prompt: String,
+        agentId: String?,
         model: String?,
         worktreeId: String?,
         name: String?,
@@ -368,7 +369,7 @@ enum AgentScheduleAction: Sendable, Equatable {
 
     var workspaceId: String {
         switch self {
-        case .newSession(let workspaceId, _, _, _, _, _),
+        case .newSession(let workspaceId, _, _, _, _, _, _),
              .existingSession(let workspaceId, _, _, _, _):
             return workspaceId
         }
@@ -376,7 +377,7 @@ enum AgentScheduleAction: Sendable, Equatable {
 
     var prompt: String {
         switch self {
-        case .newSession(_, let prompt, _, _, _, _),
+        case .newSession(_, let prompt, _, _, _, _, _),
              .existingSession(_, _, let prompt, _, _):
             return prompt
         }
@@ -384,7 +385,7 @@ enum AgentScheduleAction: Sendable, Equatable {
 
     var approvalRefs: [JSONValue]? {
         switch self {
-        case .newSession(_, _, _, _, _, let approvalRefs),
+        case .newSession(_, _, _, _, _, _, let approvalRefs),
              .existingSession(_, _, _, _, let approvalRefs):
             return approvalRefs
         }
@@ -416,7 +417,7 @@ enum AgentScheduleActionKind: String, Codable, Sendable, Equatable {
 
 extension AgentScheduleAction: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, workspaceId, sessionId, prompt, model, worktreeId, name, streamingBehavior, approvalRefs
+        case type, workspaceId, sessionId, prompt, agentId, model, worktreeId, name, streamingBehavior, approvalRefs
     }
 
     init(from decoder: Decoder) throws {
@@ -427,6 +428,7 @@ extension AgentScheduleAction: Codable {
             self = .newSession(
                 workspaceId: try c.decode(String.self, forKey: .workspaceId),
                 prompt: try c.decode(String.self, forKey: .prompt),
+                agentId: try c.decodeIfPresent(String.self, forKey: .agentId),
                 model: try c.decodeIfPresent(String.self, forKey: .model),
                 worktreeId: try c.decodeIfPresent(String.self, forKey: .worktreeId),
                 name: try c.decodeIfPresent(String.self, forKey: .name),
@@ -446,10 +448,11 @@ extension AgentScheduleAction: Codable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .newSession(let workspaceId, let prompt, let model, let worktreeId, let name, let approvalRefs):
+        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name, let approvalRefs):
             try c.encode(AgentScheduleActionKind.newSession, forKey: .type)
             try c.encode(workspaceId, forKey: .workspaceId)
             try c.encode(prompt, forKey: .prompt)
+            try c.encodeIfPresent(agentId, forKey: .agentId)
             try c.encodeIfPresent(model, forKey: .model)
             try c.encodeIfPresent(worktreeId, forKey: .worktreeId)
             try c.encodeIfPresent(name, forKey: .name)
@@ -469,6 +472,7 @@ struct AgentScheduleActionSummary: Codable, Sendable, Equatable {
     var type: AgentScheduleActionKind
     var workspaceId: String
     var sessionId: String?
+    var agentId: String?
     var promptChars: Int
 }
 

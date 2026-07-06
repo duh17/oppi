@@ -110,7 +110,7 @@ struct AgentScheduleAPIClientTests {
             #expect(request.httpMethod == "GET")
             #expect(request.url?.path == "/schedules/sch-1")
             return mockResponse(json: """
-            {"schedule":{"id":"sch-1","name":"Daily QA","status":"active","trigger":{"type":"cron","expression":"0 9 * * *","timeZone":"America/Los_Angeles"},"action":{"type":"new_session","workspaceId":"ws-1","prompt":"Run QA","model":"openai/gpt-5.5","worktreeId":"wt-1","name":"QA run"},"createdAt":1000,"updatedAt":2000}}
+            {"schedule":{"id":"sch-1","name":"Daily QA","status":"active","trigger":{"type":"cron","expression":"0 9 * * *","timeZone":"America/Los_Angeles"},"action":{"type":"new_session","workspaceId":"ws-1","prompt":"Run QA","agentId":"agent-1","model":"openai/gpt-5.5","worktreeId":"wt-1","name":"QA run"},"createdAt":1000,"updatedAt":2000}}
             """)
         }
 
@@ -118,12 +118,13 @@ struct AgentScheduleAPIClientTests {
 
         #expect(schedule.name == "Daily QA")
         #expect(schedule.trigger.displaySummary.contains("0 9 * * *"))
-        guard case .newSession(let workspaceId, let prompt, let model, let worktreeId, let name, _) = schedule.action else {
+        guard case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name, _) = schedule.action else {
             Issue.record("Expected new-session action")
             return
         }
         #expect(workspaceId == "ws-1")
         #expect(prompt == "Run QA")
+        #expect(agentId == "agent-1")
         #expect(model == "openai/gpt-5.5")
         #expect(worktreeId == "wt-1")
         #expect(name == "QA run")
