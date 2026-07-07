@@ -4,12 +4,13 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { Storage } from "./storage.js";
-import { parseCliArgs, type ParsedCliArgs } from "./cli/args.js";
+import { isHelpFlag, parseCliArgs, type ParsedCliArgs } from "./cli/args.js";
 import { cmdAgent } from "./cli/commands/agent.js";
 import { cmdSchedule } from "./cli/commands/schedule.js";
 import { cmdSession } from "./cli/commands/session.js";
 import { cmdWorkspace } from "./cli/commands/workspace.js";
 import { cmdWorktree } from "./cli/commands/worktree.js";
+import { helpTopicToJson, resolveHelpTopic } from "./cli/help.js";
 import { captureCliOutput, type CliJsonEnvelope } from "./cli/output.js";
 import type { LocalApiHostResolvers } from "./cli/local-api-client.js";
 import { tlsSchemeForConfig } from "./tls.js";
@@ -39,13 +40,37 @@ const READ_ACTIONS: Record<string, Set<string>> = {
   workspace: new Set(["list", "get"]),
   worktree: new Set(["list", "get", "status", "preview"]),
   agent: new Set(["list", "get"]),
-  session: new Set(["list", "get", "read", "events", "trace"]),
+  session: new Set([
+    "list",
+    "get",
+    "read",
+    "events",
+    "trace",
+    "search",
+    "inspect",
+    "changes",
+    "diff",
+    "tool-output",
+    "trace-page",
+    "trace-outline",
+  ]),
   schedule: new Set(["list", "get", "runs"]),
 };
 
-const APPROVED_WRITE_ACTIONS: Record<string, Set<string>> = {
-  session: new Set(["create"]),
+const WRITE_ACTIONS: Record<string, Set<string>> = {
+  workspace: new Set(["create", "update"]),
+  agent: new Set(["create", "update"]),
+  session: new Set(["create", "send", "stop", "resume", "fork"]),
   worktree: new Set(["create", "open", "remove"]),
+  schedule: new Set(["create", "update", "run", "pause", "resume"]),
+};
+
+const DESTRUCTIVE_ACTIONS: Record<string, Set<string>> = {
+  workspace: new Set(["delete", "remove"]),
+  worktree: new Set(["remove"]),
+  agent: new Set(["archive"]),
+  session: new Set(["delete"]),
+  schedule: new Set(["archive"]),
 };
 
 const MAX_TOOL_OUTPUT_CHARS = 50_000;
@@ -58,13 +83,14 @@ export function createDefaultAgentExtensionFactory(options: {
       name: "oppi",
       label: "Oppi",
       description:
-        "Run an allowlisted Oppi CLI command as JSON. Read commands are immediate; session and worktree writes require explicit user approval.",
+        "Run an allowlisted Oppi CLI command as JSON. Read commands are immediate; commands that create or modify Oppi state require explicit user approval.",
       promptSnippet:
         "Run allowlisted Oppi CLI commands as JSON for workspaces, worktrees, Agents, sessions, schedules, and status.",
       promptGuidelines: [
         "Use oppi for Oppi app state instead of shell or filesystem tools.",
         "Use oppi read commands before asking the user about discoverable workspace, Agent, session, schedule, or worktree state.",
-        "Use oppi session create or worktree lifecycle commands only after the user asks for them; the tool will request explicit approval before mutating Oppi state.",
+        "Use oppi session search and oppi session inspect for past Oppi session history instead of local JSONL-reading tools.",
+        "Use oppi commands that create or modify Oppi state only after the user asks for them; they will request explicit approval.",
       ],
       parameters: Type.Object({
         args: Type.Array(Type.String(), {
@@ -112,6 +138,7 @@ export function createDefaultAgentExtensionFactory(options: {
         const result = await runOppiToolCommand({
           dataDir: options.dataDir,
           args: classification.args,
+          cwd: typeof ctx.cwd === "string" ? ctx.cwd : undefined,
         });
         if (!result.ok) {
           throw new Error(
@@ -132,6 +159,21 @@ export function createDefaultAgentExtensionFactory(options: {
   };
 }
 
+function isHelpRequest(parsed: ParsedCliArgs): boolean {
+  return parsed.command === "help" || isHelpFlag(parsed.flags) || parsed.positional[0] === "help";
+}
+
+function helpPathFor(parsed: ParsedCliArgs): string[] {
+  if (parsed.command === "help") return parsed.positional.filter((part) => part !== "help");
+  if (parsed.positional[0] === "help") return [parsed.command, ...parsed.positional.slice(1)];
+  return [parsed.command, ...parsed.positional.filter((part) => part !== "help")];
+}
+
+function isDestructiveCommand(parsed: ParsedCliArgs): boolean {
+  const action = parsed.positional[0] || "list";
+  return DESTRUCTIVE_ACTIONS[parsed.command]?.has(action) === true;
+}
+
 export function classifyOppiToolCommand(rawArgs: string[]): OppiToolCommandClassification {
   const args = normalizeOppiArgs(rawArgs);
   if (args.length === 0) {
@@ -139,6 +181,17 @@ export function classifyOppiToolCommand(rawArgs: string[]): OppiToolCommandClass
   }
 
   const parsed = parseCliArgs(args);
+  if (isHelpRequest(parsed)) {
+    return {
+      ok: true,
+      kind: "read",
+      command: parsed.command,
+      action: parsed.positional[0],
+      args,
+      summary: "Read Oppi command help.",
+    };
+  }
+
   if (parsed.command === "status") {
     return {
       ok: true,
@@ -161,7 +214,18 @@ export function classifyOppiToolCommand(rawArgs: string[]): OppiToolCommandClass
     };
   }
 
-  if (APPROVED_WRITE_ACTIONS[parsed.command]?.has(action)) {
+  if (isDestructiveCommand(parsed)) {
+    return {
+      ok: true,
+      kind: "approved-write",
+      command: parsed.command,
+      action,
+      args,
+      summary: `Run destructive Oppi command ${parsed.command} ${action}.`,
+    };
+  }
+
+  if (WRITE_ACTIONS[parsed.command]?.has(action)) {
     return {
       ok: true,
       kind: "approved-write",
@@ -181,6 +245,7 @@ export function classifyOppiToolCommand(rawArgs: string[]): OppiToolCommandClass
 export async function runOppiToolCommand(options: {
   dataDir?: string;
   args: string[];
+  cwd?: string;
 }): Promise<OppiToolCommandResult> {
   const classification = classifyOppiToolCommand(options.args);
   if (!classification.ok) {
@@ -191,13 +256,17 @@ export async function runOppiToolCommand(options: {
   const args = ensureJsonFlag(classification.args);
   const parsed = parseCliArgs(args);
 
+  if (isHelpRequest(parsed)) {
+    return successResult(buildHelpEnvelope(parsed));
+  }
+
   if (parsed.command === "status") {
     return successResult(buildStatusEnvelope(storage));
   }
 
   const hostResolvers = buildLocalApiHostResolvers();
   const output = await captureCliJsonOutput(async () => {
-    await dispatchJsonCliCommand(storage, parsed, hostResolvers);
+    await dispatchJsonCliCommand(storage, parsed, hostResolvers, options.cwd);
   });
 
   const parsedOutput = parseCliJsonOutput(output.stdout, output.exitCode);
@@ -212,6 +281,7 @@ async function dispatchJsonCliCommand(
   storage: Storage,
   parsed: ParsedCliArgs,
   hostResolvers: LocalApiHostResolvers,
+  cwd?: string,
 ): Promise<void> {
   switch (parsed.command) {
     case "workspace":
@@ -248,6 +318,7 @@ async function dispatchJsonCliCommand(
         parsed.positional.slice(1),
         parsed.flags,
         hostResolvers,
+        cwd,
       );
       return;
     case "schedule":
@@ -306,6 +377,13 @@ function successResult(envelope: CliJsonEnvelope): OppiToolCommandResult {
 
 function failureResult(message: string, exitCode: number, stdout = ""): OppiToolCommandResult {
   return { ok: false, exitCode, stdout, error: { message } };
+}
+
+function buildHelpEnvelope(parsed: ParsedCliArgs): CliJsonEnvelope {
+  const path = helpPathFor(parsed);
+  const topic = resolveHelpTopic(path);
+  if (!topic) throw new Error(`No help topic for ${path.join(" ") || "help"}`);
+  return { ok: true, data: { help: helpTopicToJson(topic) } };
 }
 
 function buildStatusEnvelope(storage: Storage): CliJsonEnvelope {
