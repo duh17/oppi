@@ -29,6 +29,12 @@ export interface SearchResult {
   title: string;
   snippet: string;
   rank: number;
+  updatedAtMs?: number;
+}
+
+export interface SearchFilters {
+  sinceMs?: number;
+  untilMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +189,11 @@ function parseReindexDebounceMs(): number {
   return parsed;
 }
 
+function finiteTimestampOrNull(value: number | undefined): number | null {
+  if (value === undefined || !Number.isFinite(value)) return null;
+  return Math.floor(value);
+}
+
 // ---------------------------------------------------------------------------
 // SearchIndex
 // ---------------------------------------------------------------------------
@@ -197,7 +208,7 @@ export class SearchIndex {
   private stmtUpsert!: SqliteStatement;
   private stmtUpsertMeta!: SqliteStatement;
   private stmtSearch!: SqliteStatement;
-  private stmtSearchWorkspace!: SqliteStatement;
+  private stmtRecent!: SqliteStatement;
   private stmtDelete!: SqliteStatement;
   private stmtDeleteMeta!: SqliteStatement;
   private stmtGetMeta!: SqliteStatement;
@@ -304,9 +315,9 @@ export class SearchIndex {
       "SELECT workspace_id, title, user_messages, assistant_messages, tool_names FROM session_fts WHERE session_id = ?",
     );
 
-    // Search across all workspaces.
-    // Column weights: title=10, user_messages=5, assistant_messages=1, tool_names=2.
-    // Add a small age penalty so newer sessions rank higher when text relevance is similar.
+    // Query search. Column weights: title=10, user_messages=5, assistant_messages=1,
+    // tool_names=2. Add a small age penalty so newer sessions rank higher when
+    // text relevance is similar. Optional filters constrain workspace and trace mtime.
     this.stmtSearch = this.db.prepare(`
       SELECT
         session_fts.session_id AS sessionId,
@@ -321,34 +332,32 @@ export class SearchIndex {
         (
           bm25(session_fts, 0.0, 0.0, 10.0, 5.0, 1.0, 2.0) +
           (((CAST(strftime('%s', 'now') AS REAL) * 1000) - COALESCE(m.jsonl_mtime_ms, 0)) / 86400000.0) * 0.02
-        ) as rank
+        ) as rank,
+        m.jsonl_mtime_ms AS updatedAtMs
       FROM session_fts
       JOIN fts_meta m ON m.session_id = session_fts.session_id
       WHERE session_fts MATCH ?
+        AND (? IS NULL OR session_fts.workspace_id = ?)
+        AND (? IS NULL OR m.jsonl_mtime_ms >= ?)
+        AND (? IS NULL OR m.jsonl_mtime_ms <= ?)
       ORDER BY rank ASC, m.jsonl_mtime_ms DESC
       LIMIT ?
     `);
 
-    // Search within a specific workspace.
-    this.stmtSearchWorkspace = this.db.prepare(`
+    this.stmtRecent = this.db.prepare(`
       SELECT
         session_fts.session_id AS sessionId,
         session_fts.workspace_id AS workspaceId,
         session_fts.title AS title,
-        COALESCE(
-          NULLIF(snippet(session_fts, 3, '<b>', '</b>', '...', 40), ''),
-          NULLIF(snippet(session_fts, 4, '<b>', '</b>', '...', 40), ''),
-          NULLIF(snippet(session_fts, 5, '<b>', '</b>', '...', 40), ''),
-          snippet(session_fts, 2, '<b>', '</b>', '...', 40)
-        ) as snippet,
-        (
-          bm25(session_fts, 0.0, 0.0, 10.0, 5.0, 1.0, 2.0) +
-          (((CAST(strftime('%s', 'now') AS REAL) * 1000) - COALESCE(m.jsonl_mtime_ms, 0)) / 86400000.0) * 0.02
-        ) as rank
+        session_fts.title AS snippet,
+        0.0 AS rank,
+        m.jsonl_mtime_ms AS updatedAtMs
       FROM session_fts
       JOIN fts_meta m ON m.session_id = session_fts.session_id
-      WHERE session_fts MATCH ? AND session_fts.workspace_id = ?
-      ORDER BY rank ASC, m.jsonl_mtime_ms DESC
+      WHERE (? IS NULL OR session_fts.workspace_id = ?)
+        AND (? IS NULL OR m.jsonl_mtime_ms >= ?)
+        AND (? IS NULL OR m.jsonl_mtime_ms <= ?)
+      ORDER BY m.jsonl_mtime_ms DESC
       LIMIT ?
     `);
   }
@@ -357,17 +366,42 @@ export class SearchIndex {
   // Search
   // -------------------------------------------------------------------------
 
-  search(query: string, workspaceId?: string, limit = 20): SearchResult[] {
+  search(
+    query: string,
+    workspaceId?: string,
+    limit = 20,
+    filters: SearchFilters = {},
+  ): SearchResult[] {
     const ftsQuery = sanitizeFtsQuery(query);
-    if (!ftsQuery) return [];
-
     const cap = Math.min(Math.max(limit, 1), 100);
+    const workspaceFilter = workspaceId?.trim() || null;
+    const sinceMs = finiteTimestampOrNull(filters.sinceMs);
+    const untilMs = finiteTimestampOrNull(filters.untilMs);
+
+    if (!ftsQuery) {
+      if (sinceMs === null && untilMs === null) return [];
+      return this.stmtRecent.all(
+        workspaceFilter,
+        workspaceFilter,
+        sinceMs,
+        sinceMs,
+        untilMs,
+        untilMs,
+        cap,
+      ) as SearchResult[];
+    }
 
     try {
-      if (workspaceId) {
-        return this.stmtSearchWorkspace.all(ftsQuery, workspaceId, cap) as SearchResult[];
-      }
-      return this.stmtSearch.all(ftsQuery, cap) as SearchResult[];
+      return this.stmtSearch.all(
+        ftsQuery,
+        workspaceFilter,
+        workspaceFilter,
+        sinceMs,
+        sinceMs,
+        untilMs,
+        untilMs,
+        cap,
+      ) as SearchResult[];
     } catch (err) {
       // FTS5 query syntax errors — return empty rather than crash
       log.error("search_index.query.failed", {

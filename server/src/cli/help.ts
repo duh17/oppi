@@ -910,6 +910,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "events <id>", summary: "read live catch-up events" },
       { name: "trace <id>", summary: "show raw trace entries" },
       { name: "search <query>", summary: "search session content" },
+      { name: "inspect <id>", summary: "inspect selected turns from a session trace" },
       { name: "stop <id>", summary: "stop a session" },
       { name: "resume <id>", summary: "resume a stopped session" },
       { name: "fork <id>", summary: "fork a session from a trace entry" },
@@ -1023,15 +1024,60 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["session", "search"],
     title: "Search sessions",
     summary: "Search indexed session content.",
-    usage: "oppi session search <query> [--workspace <workspace>] [--limit <count>] [--json]",
-    arguments: [{ name: "<query>", summary: "search query text; --query is also accepted" }],
+    usage:
+      "oppi session search [query] [--workspace <workspace>|--all] [--since <time>] [--until <time>] [--limit <count>] [--json]",
+    arguments: [{ name: "[query]", summary: "search query text; --query is also accepted" }],
     flags: [
       { name: "--query", value: "<text>", summary: "search query text" },
-      { name: "--workspace", value: "<workspace>", summary: "filter by workspace id or name" },
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "filter by workspace id or name; defaults to cwd inference",
+      },
+      { name: "--all", summary: "search across all workspaces instead of inferring from cwd" },
+      {
+        name: "--since",
+        value: "<time>",
+        summary: "filter to sessions updated at or after this time",
+      },
+      {
+        name: "--until",
+        value: "<time>",
+        summary: "filter to sessions updated at or before this time",
+      },
       { name: "--limit", value: "<count>", summary: "maximum results to return" },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi session search tests --workspace ws_123 --json" }],
+    notes: [
+      "Without --workspace or --all, the CLI infers the workspace from the current directory.",
+      "With a query, results sort by weighted full-text relevance with a small recency boost.",
+      "With --since/--until and no query, results sort by updated_at descending.",
+    ],
+    examples: [
+      { command: "oppi session search tests --workspace ws_123 --since 2026-07-01 --json" },
+    ],
+  },
+  {
+    path: ["session", "inspect"],
+    title: "Inspect session",
+    summary: "Inspect selected turns from the canonical Oppi session trace API.",
+    usage:
+      "oppi session inspect <id> [--turns <spec>] [--view overview|messages|summary|tools] [--json]",
+    arguments: [{ name: "<id>", summary: "session id" }],
+    flags: [
+      {
+        name: "--turns",
+        value: "<spec>",
+        summary: "all, one turn, a range, or comma-separated turns",
+      },
+      { name: "--view", value: "<view>", summary: "overview, messages, summary, or tools" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "This command reads through the Oppi server and does not accept direct JSONL paths.",
+      "Use 'oppi session search' first, then inspect the returned session id.",
+    ],
+    examples: [{ command: "oppi session inspect sess_123 --turns 3-7 --view messages --json" }],
   },
   {
     path: ["session", "resume"],

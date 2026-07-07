@@ -66,6 +66,7 @@ async function runAsync(
   args: string[],
   env?: Record<string, string>,
   timeoutMs = 15_000,
+  cwd?: string,
 ): Promise<{ stdout: string; exitCode: number }> {
   return await new Promise((resolveRun) => {
     execFile(
@@ -75,6 +76,7 @@ async function runAsync(
         encoding: "utf-8",
         env: { ...process.env, OPPI_DATA_DIR: dataDir, ...env },
         timeout: timeoutMs,
+        ...(cwd ? { cwd } : {}),
       },
       (error, stdout) => {
         const exitCode =
@@ -226,6 +228,7 @@ describe("oppi help", () => {
       "events",
       "trace",
       "search",
+      "inspect",
       "stop",
       "resume",
       "fork",
@@ -434,6 +437,14 @@ describe("oppi help", () => {
         expected: ["Usage: oppi session search", "--query <text>", "--limit <count>"],
       },
       {
+        args: ["session", "inspect", "--help"],
+        expected: [
+          "Usage: oppi session inspect <id>",
+          "--turns <spec>",
+          "canonical Oppi session trace API",
+        ],
+      },
+      {
         args: ["session", "resume", "--help"],
         expected: ["Usage: oppi session resume <id>", "--json"],
       },
@@ -634,6 +645,8 @@ describe("oppi wait", () => {
 
 describe("oppi local API commands", () => {
   it("implements the spec-backed app-control CLI over local API routes", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-cli-workspace-"));
+    const worktreeRoot = mkdtempSync(join(tmpdir(), "oppi-cli-worktree-"));
     const requests: Array<{ method: string; path: string; body?: unknown }> = [];
     const api = createHttpServer((req, res) => {
       void (async () => {
@@ -654,14 +667,14 @@ describe("oppi local API commands", () => {
 
         if (method === "GET" && url.pathname === "/workspaces") {
           json({
-            workspaces: [{ id: "ws-1", name: "Oppi", hostMount: "/tmp/oppi" }],
+            workspaces: [{ id: "ws-1", name: "Oppi", hostMount: workspaceRoot }],
             summaries: [],
             serverNow: 1,
           });
           return;
         }
         if (method === "GET" && url.pathname === "/workspaces/ws-1") {
-          json({ workspace: { id: "ws-1", name: "Oppi", hostMount: "/tmp/oppi" } });
+          json({ workspace: { id: "ws-1", name: "Oppi", hostMount: workspaceRoot } });
           return;
         }
         if (method === "POST" && url.pathname === "/workspaces") {
@@ -693,7 +706,10 @@ describe("oppi local API commands", () => {
         if (method === "GET" && url.pathname === "/workspaces/ws-1/worktrees") {
           json({
             workspaceId: "ws-1",
-            worktrees: [{ id: "main", name: "main", path: "/tmp/oppi" }],
+            worktrees: [
+              { id: "main", name: "main", path: workspaceRoot },
+              { id: "wt-feature", name: "feature", path: worktreeRoot },
+            ],
           });
           return;
         }
@@ -840,7 +856,7 @@ describe("oppi local API commands", () => {
           json({
             query: url.searchParams.get("q"),
             totalResults: 1,
-            results: [{ sessionId: "sess-1", text: "matched test output", score: 0.9 }],
+            results: [{ sessionId: "sess-1", snippet: "matched test output", rank: 0.9 }],
           });
           return;
         }
@@ -923,10 +939,51 @@ describe("oppi local API commands", () => {
           });
           return;
         }
+        if (method === "GET" && url.pathname === "/sessions/sess-malformed/trace") {
+          json({ session: { id: "sess-malformed", workspaceId: "ws-1", status: "stopped" } });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/sessions/sess-leading/trace") {
+          json({
+            session: { id: "sess-leading", workspaceId: "ws-1", status: "stopped" },
+            trace: [
+              { type: "system", text: "Model: test-model" },
+              { type: "compaction", text: "summary before prompt" },
+              { type: "user", text: "first prompt" },
+              { type: "assistant", text: "first answer" },
+            ],
+          });
+          return;
+        }
         if (method === "GET" && url.pathname === "/sessions/sess-1/trace") {
+          const fullTrace = [
+            { type: "user", text: "hello" },
+            { type: "assistant", text: "trace" },
+            { type: "toolCall", tool: "bash", args: { command: "false" } },
+            { type: "toolResult", toolName: "bash", output: "failed", isError: true },
+            { type: "system", text: "Model: test-model" },
+          ];
+          const include = url.searchParams.get("include")?.split(",") ?? [];
+          const trace =
+            include.length === 0
+              ? fullTrace
+              : fullTrace.filter((event) => {
+                  if (include.includes("messages") && ["user", "assistant"].includes(event.type)) {
+                    return true;
+                  }
+                  if (include.includes("thinking") && event.type === "thinking") return true;
+                  if (
+                    include.includes("tools") &&
+                    ["toolCall", "toolResult"].includes(event.type)
+                  ) {
+                    return true;
+                  }
+                  if (include.includes("system") && event.type === "system") return true;
+                  return false;
+                });
           json({
             session: { id: "sess-1", workspaceId: "ws-1", status: "stopped" },
-            trace: [{ type: "assistant", text: "trace" }],
+            trace,
           });
           return;
         }
@@ -1175,8 +1232,30 @@ describe("oppi local API commands", () => {
         },
         { args: ["session", "stop", "sess-1", "--json"], expected: ["POST /sessions/sess-1/stop"] },
         {
-          args: ["session", "search", "test output", "--limit", "5", "--json"],
-          expected: ["GET /sessions/search?q=test+output&limit=5"],
+          args: [
+            "session",
+            "search",
+            "test output",
+            "--all",
+            "--limit",
+            "5",
+            "--since",
+            "2026-01-01",
+            "--until",
+            "2026-01-31",
+            "--json",
+          ],
+          expected: [
+            "GET /sessions/search?q=test+output&limit=5&since=2026-01-01&until=2026-01-31",
+          ],
+        },
+        {
+          args: ["session", "search", "--all", "--since", "2026-01-01", "--limit", "5", "--json"],
+          expected: ["GET /sessions/search?limit=5&since=2026-01-01"],
+        },
+        {
+          args: ["session", "inspect", "sess-1", "--turns", "all", "--view", "messages", "--json"],
+          expected: ["GET /sessions/sess-1/trace"],
         },
         {
           args: ["session", "resume", "sess-1", "--json"],
@@ -1301,6 +1380,102 @@ describe("oppi local API commands", () => {
         }
       }
 
+      const beforeInferredSearch = requests.length;
+      const inferredSearch = await runAsync(
+        ["session", "search", "test output", "--limit", "5", "--json"],
+        { OPPI_DATA_DIR: cliDir },
+        15_000,
+        workspaceRoot,
+      );
+      expect(inferredSearch.exitCode).toBe(0);
+      expect(JSON.parse(inferredSearch.stdout)).toMatchObject({ ok: true });
+      const inferredSeen = requests
+        .slice(beforeInferredSearch)
+        .map((request) => `${request.method} ${request.path}`);
+      expect(inferredSeen).toContain("GET /workspaces");
+      expect(inferredSeen).toContain("GET /sessions/search?q=test+output&limit=5&workspaceId=ws-1");
+
+      const beforeWorktreeInferredSearch = requests.length;
+      const worktreeInferredSearch = await runAsync(
+        ["session", "search", "test output", "--limit", "5", "--json"],
+        { OPPI_DATA_DIR: cliDir },
+        15_000,
+        worktreeRoot,
+      );
+      expect(worktreeInferredSearch.exitCode).toBe(0);
+      expect(JSON.parse(worktreeInferredSearch.stdout)).toMatchObject({ ok: true });
+      const worktreeInferredSeen = requests
+        .slice(beforeWorktreeInferredSearch)
+        .map((request) => `${request.method} ${request.path}`);
+      expect(worktreeInferredSeen).toContain("GET /workspaces/ws-1/worktrees");
+      expect(worktreeInferredSeen).toContain(
+        "GET /sessions/search?q=test+output&limit=5&workspaceId=ws-1",
+      );
+
+      const unscopedSearch = await runAsync(["session", "search", "test output", "--json"], {
+        OPPI_DATA_DIR: cliDir,
+      });
+      expect(unscopedSearch.exitCode).toBe(1);
+      expect(JSON.parse(unscopedSearch.stdout)).toMatchObject({
+        ok: false,
+        error: { message: "Could not infer workspace from cwd; pass --workspace or --all" },
+      });
+
+      const inspectJson = await runAsync(
+        ["session", "inspect", "sess-1", "--view", "messages", "--json"],
+        { OPPI_DATA_DIR: cliDir },
+      );
+      expect(inspectJson.exitCode).toBe(0);
+      const inspectEnvelope = JSON.parse(inspectJson.stdout) as {
+        data?: {
+          summary?: { counts?: { toolCalls?: number; toolErrors?: number } };
+          text?: string;
+        };
+      };
+      expect(inspectEnvelope.data?.summary?.counts?.toolCalls).toBe(1);
+      expect(inspectEnvelope.data?.summary?.counts?.toolErrors).toBe(1);
+      expect(inspectEnvelope.data?.text).toContain("assistant: trace");
+      expect(inspectEnvelope.data?.text).not.toContain("failed");
+
+      const leadingInspectJson = await runAsync(
+        ["session", "inspect", "sess-leading", "--turns", "1", "--view", "messages", "--json"],
+        { OPPI_DATA_DIR: cliDir },
+      );
+      expect(leadingInspectJson.exitCode).toBe(0);
+      const leadingInspectEnvelope = JSON.parse(leadingInspectJson.stdout) as {
+        data?: {
+          selected_turns?: number[];
+          summary?: { counts?: { turns?: number } };
+          text?: string;
+        };
+      };
+      expect(leadingInspectEnvelope.data?.selected_turns).toEqual([1]);
+      expect(leadingInspectEnvelope.data?.summary?.counts?.turns).toBe(1);
+      expect(leadingInspectEnvelope.data?.text).toContain("summary: summary before prompt");
+      expect(leadingInspectEnvelope.data?.text).toContain("system: Model: test-model");
+      expect(leadingInspectEnvelope.data?.text).toContain("user: first prompt");
+
+      for (const turns of ["1abc", "1-2x", "0", "2", "1-2", "2-1", "1,,1"]) {
+        const invalidInspectTurns = await runAsync(
+          ["session", "inspect", "sess-1", "--turns", turns, "--json"],
+          { OPPI_DATA_DIR: cliDir },
+        );
+        expect(invalidInspectTurns.exitCode, turns).toBe(1);
+        expect(JSON.parse(invalidInspectTurns.stdout), turns).toMatchObject({
+          ok: false,
+          error: { message: "--turns must be all, a number, a range, or a comma-separated list" },
+        });
+      }
+
+      const malformedInspect = await runAsync(["session", "inspect", "sess-malformed", "--json"], {
+        OPPI_DATA_DIR: cliDir,
+      });
+      expect(malformedInspect.exitCode).toBe(1);
+      expect(JSON.parse(malformedInspect.stdout)).toMatchObject({
+        ok: false,
+        error: { message: "Local API did not return a trace array" },
+      });
+
       const workspaceHuman = await runAsync(["workspace", "list"], { OPPI_DATA_DIR: cliDir });
       expect(workspaceHuman.exitCode).toBe(0);
       expect(workspaceHuman.stdout).toContain("Workspaces (1)");
@@ -1408,6 +1583,8 @@ describe("oppi local API commands", () => {
         api.close((error) => (error ? rejectClose(error) : resolveClose())),
       );
       rmSync(cliDir, { recursive: true, force: true });
+      rmSync(workspaceRoot, { recursive: true, force: true });
+      rmSync(worktreeRoot, { recursive: true, force: true });
     }
   }, 45_000);
 

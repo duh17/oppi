@@ -1137,6 +1137,12 @@ describe("error handling", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.results).toEqual([]);
+    expect(body.sort).toBe("relevance_then_recency");
+  });
+
+  it("GET /sessions/search rejects invalid date filters", async () => {
+    const res = await get("/sessions/search?q=test&since=not-a-date");
+    expect(res.status).toBe(400);
   });
 
   it("returns 404 for nonexistent workspace", async () => {

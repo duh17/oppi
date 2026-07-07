@@ -129,7 +129,8 @@ oppi workspace delete        remove a workspace from the catalog
 oppi agent list              list saved Agent definitions
 oppi agent create            create a saved Agent from flags or JSON
 oppi session create --agent  launch a saved Agent in a workspace
-oppi session search          search indexed session content
+oppi session search          search indexed session content (cwd workspace by default)
+oppi session inspect         inspect selected turns from a session trace
 oppi session resume          resume a stopped workspace session
 oppi session fork            fork a session from a trace entry
 oppi session delete          delete a workspace session

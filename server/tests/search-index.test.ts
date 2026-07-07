@@ -430,6 +430,59 @@ describe("SearchIndex indexes transcript content only", () => {
     }
   });
 
+  it("filters by trace mtime and lists date ranges newest first without a query", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-"));
+    cleanupPaths.add(dataDir);
+
+    const oldPath = join(dataDir, "old.jsonl");
+    const newPath = join(dataDir, "new.jsonl");
+    writeJsonl(oldPath, "date filter token", "old answer");
+    writeJsonl(newPath, "date filter token", "new answer");
+
+    const oldTime = new Date("2026-01-01T12:00:00Z");
+    const newTime = new Date("2026-01-03T12:00:00Z");
+    utimesSync(oldPath, oldTime, oldTime);
+    utimesSync(newPath, newTime, newTime);
+
+    const oldSession = makeSession({ id: "sess-old-date", piSessionFile: oldPath });
+    const newSession = makeSession({ id: "sess-new-date", piSessionFile: newPath });
+    const sessions = new Map([
+      [oldSession.id, oldSession],
+      [newSession.id, newSession],
+    ]);
+
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      index.sync([oldSession, newSession]);
+
+      const queried = index.search("date filter token", "ws-1", 10, {
+        sinceMs: Date.parse("2026-01-02T00:00:00Z"),
+      });
+      expect(queried.map((result) => result.sessionId)).toEqual(["sess-new-date"]);
+
+      const recent = index.search("", "ws-1", 10, {
+        sinceMs: Date.parse("2026-01-01T00:00:00Z"),
+        untilMs: Date.parse("2026-01-04T00:00:00Z"),
+      });
+      expect(recent.map((result) => result.sessionId)).toEqual(["sess-new-date", "sess-old-date"]);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("propagates no-query date listing database errors", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-"));
+    cleanupPaths.add(dataDir);
+
+    const index = new SearchIndex(dataDir, () => undefined);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+    index.close();
+
+    expect(() => index.search("", undefined, 10, { sinceMs: 0 })).toThrow();
+  });
+
   it("boosts newer sessions for equal-relevance query matches", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-index-"));
     cleanupPaths.add(dataDir);

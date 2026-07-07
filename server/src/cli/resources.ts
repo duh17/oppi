@@ -1,3 +1,7 @@
+import { existsSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve, sep } from "node:path";
+
 import type { Storage } from "../storage.js";
 import { localApiRequest, type LocalApiHostResolvers } from "./local-api-client.js";
 
@@ -64,6 +68,27 @@ export async function resolveWorkspaceIdForCli(
   hostResolvers: LocalApiHostResolvers = {},
 ): Promise<string> {
   return (await resolveWorkspaceForCli(storage, reference, hostResolvers)).id;
+}
+
+export async function inferWorkspaceIdFromCwdForCli(
+  storage: Storage,
+  cwd = process.cwd(),
+  hostResolvers: LocalApiHostResolvers = {},
+): Promise<string | undefined> {
+  const currentPath = normalizeWorkspacePath(cwd);
+  const workspaces = await listWorkspacesForCli(storage, hostResolvers);
+  const workspaceMatches = listWorkspacePathMatches(workspaces, currentPath);
+  const worktreeMatches = await listWorkspaceWorktreePathMatches(
+    storage,
+    workspaces,
+    currentPath,
+    hostResolvers,
+  );
+  return inferredWorkspaceIdFromPathMatches(
+    [...workspaceMatches, ...worktreeMatches].sort(
+      (left, right) => right.root.length - left.root.length,
+    ),
+  );
 }
 
 export async function listWorktreesForCli(
@@ -183,6 +208,77 @@ function requireWorktreeResult(
 ): { workspaceId: string; worktree: CliWorktree } {
   if (!result.worktree?.id) throw new Error("Local API did not return a worktree");
   return { workspaceId: result.workspaceId ?? workspaceId, worktree: result.worktree };
+}
+
+type WorkspacePathMatch = { workspace: CliWorkspace; root: string };
+
+function inferredWorkspaceIdFromPathMatches(matches: WorkspacePathMatch[]): string | undefined {
+  const uniqueMatches = dedupeWorkspacePathMatches(matches);
+  if (uniqueMatches.length === 0) return undefined;
+  if (
+    uniqueMatches.length > 1 &&
+    uniqueMatches[0]?.root.length === uniqueMatches[1]?.root.length &&
+    uniqueMatches[0]?.workspace.id !== uniqueMatches[1]?.workspace.id
+  ) {
+    throw new Error("Workspace inference is ambiguous; pass --workspace or --all");
+  }
+  return uniqueMatches[0]?.workspace.id;
+}
+
+function dedupeWorkspacePathMatches(matches: WorkspacePathMatch[]): WorkspacePathMatch[] {
+  const seen = new Set<string>();
+  return matches.filter((match) => {
+    const key = `${match.workspace.id}\0${match.root}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function listWorkspaceWorktreePathMatches(
+  storage: Storage,
+  workspaces: CliWorkspace[],
+  currentPath: string,
+  hostResolvers: LocalApiHostResolvers,
+): Promise<WorkspacePathMatch[]> {
+  const matches: WorkspacePathMatch[] = [];
+  for (const workspace of workspaces) {
+    const result = await localApiRequest<{ worktrees?: CliWorktree[] }>(
+      storage,
+      `/workspaces/${encodeURIComponent(workspace.id)}/worktrees`,
+      undefined,
+      hostResolvers,
+    );
+    for (const worktree of result.worktrees ?? []) {
+      if (!worktree.path) continue;
+      const root = normalizeWorkspacePath(worktree.path);
+      if (isPathWithin(root, currentPath)) matches.push({ workspace, root });
+    }
+  }
+  return matches.sort((left, right) => right.root.length - left.root.length);
+}
+
+function listWorkspacePathMatches(
+  workspaces: CliWorkspace[],
+  currentPath: string,
+): WorkspacePathMatch[] {
+  return workspaces
+    .flatMap((workspace) => {
+      const hostMount = typeof workspace.hostMount === "string" ? workspace.hostMount : undefined;
+      if (!hostMount) return [];
+      const root = normalizeWorkspacePath(hostMount);
+      return isPathWithin(root, currentPath) ? [{ workspace, root }] : [];
+    })
+    .sort((left, right) => right.root.length - left.root.length);
+}
+
+function normalizeWorkspacePath(path: string): string {
+  const expanded = path.startsWith(`~${sep}`) ? resolve(homedir(), path.slice(2)) : resolve(path);
+  return existsSync(expanded) ? realpathSync(expanded) : expanded;
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
 }
 
 export function apiStatus(error: unknown): number | undefined {
