@@ -61,16 +61,31 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const query = url.searchParams.get("q")?.trim();
-    if (!query) {
-      helpers.json(res, { results: [], query: "", totalResults: 0 });
+    const query = url.searchParams.get("q")?.trim() ?? "";
+    const timeRange = sessionSearchTimeRange(url);
+    if (timeRange.error) {
+      helpers.error(res, 400, timeRange.error);
+      return;
+    }
+
+    if (!query && timeRange.sinceMs === undefined && timeRange.untilMs === undefined) {
+      helpers.json(res, {
+        results: [],
+        query: "",
+        totalResults: 0,
+        sort: "relevance_then_recency",
+      });
       return;
     }
 
     const workspaceId = url.searchParams.get("workspaceId") ?? undefined;
     const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 100);
+    const sort = query ? "relevance_then_recency" : "updated_at_desc";
 
-    const results = ctx.searchIndex.search(query, workspaceId, limit);
+    const results = ctx.searchIndex.search(query, workspaceId, limit, {
+      sinceMs: timeRange.sinceMs,
+      untilMs: timeRange.untilMs,
+    });
 
     // Attach full session objects for display
     const enriched = results.map((r) => {
@@ -85,7 +100,71 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       results: enriched,
       query,
       totalResults: enriched.length,
+      sort,
+      ...(timeRange.sinceMs !== undefined ? { sinceMs: timeRange.sinceMs } : {}),
+      ...(timeRange.untilMs !== undefined ? { untilMs: timeRange.untilMs } : {}),
     });
+  }
+
+  function sessionSearchTimeRange(url: URL): {
+    sinceMs?: number;
+    untilMs?: number;
+    error?: string;
+  } {
+    const sinceRaw = url.searchParams.get("since") ?? url.searchParams.get("sinceMs") ?? undefined;
+    const untilRaw = url.searchParams.get("until") ?? url.searchParams.get("untilMs") ?? undefined;
+    const sinceMs = parseSessionSearchTimeBound(sinceRaw, false);
+    const untilMs = parseSessionSearchTimeBound(untilRaw, true);
+    if (sinceMs.error) return { error: sinceMs.error };
+    if (untilMs.error) return { error: untilMs.error };
+    if (
+      sinceMs.value !== undefined &&
+      untilMs.value !== undefined &&
+      sinceMs.value > untilMs.value
+    ) {
+      return { error: "since must be before or equal to until" };
+    }
+    return {
+      ...(sinceMs.value !== undefined ? { sinceMs: sinceMs.value } : {}),
+      ...(untilMs.value !== undefined ? { untilMs: untilMs.value } : {}),
+    };
+  }
+
+  function parseSessionSearchTimeBound(
+    raw: string | undefined,
+    isEnd: boolean,
+  ): { value?: number; error?: string } {
+    const trimmed = raw?.trim();
+    if (!trimmed) return {};
+    const numeric = Number.parseInt(trimmed, 10);
+    if (/^\d+$/.test(trimmed) && Number.isFinite(numeric)) {
+      return { value: numeric };
+    }
+
+    const dateOnly = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnly) {
+      const year = Number.parseInt(dateOnly[1] ?? "", 10);
+      const monthIndex = Number.parseInt(dateOnly[2] ?? "", 10) - 1;
+      const day = Number.parseInt(dateOnly[3] ?? "", 10);
+      const date = new Date(year, monthIndex, day, 0, 0, 0, 0);
+      if (
+        Number.isNaN(date.getTime()) ||
+        date.getFullYear() !== year ||
+        date.getMonth() !== monthIndex ||
+        date.getDate() !== day
+      ) {
+        return { error: `invalid session search date: ${trimmed}` };
+      }
+      if (!isEnd) return { value: date.getTime() };
+      date.setDate(date.getDate() + 1);
+      return { value: date.getTime() - 1 };
+    }
+
+    const ms = Date.parse(trimmed);
+    if (Number.isNaN(ms)) {
+      return { error: `invalid session search timestamp: ${trimmed}` };
+    }
+    return { value: ms };
   }
 
   function pendingAskSnapshots(workspaceId: string): Array<Record<string, unknown>> {

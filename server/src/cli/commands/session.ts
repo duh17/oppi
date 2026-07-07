@@ -15,13 +15,37 @@ import {
   printNextCommands,
   writeJsonEnvelope,
 } from "../output.js";
-import { apiStatus, resolveWorkspaceIdForCli } from "../resources.js";
+import {
+  apiStatus,
+  inferWorkspaceIdFromCwdForCli,
+  resolveWorkspaceIdForCli,
+} from "../resources.js";
 
 type SessionTraceEvent = {
+  id?: string;
   type?: string;
   text?: string;
   message?: unknown;
+  thinking?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  output?: string;
+  toolName?: string;
+  isError?: boolean;
   [key: string]: unknown;
+};
+
+type SessionInspectView = "overview" | "messages" | "summary" | "tools";
+
+type SessionInspectTurn = {
+  turn: number;
+  userTexts: string[];
+  assistantTexts: string[];
+  thinkingTexts: string[];
+  systemTexts: string[];
+  summaryTexts: string[];
+  toolCalls: Array<{ id?: string; tool?: string; args?: Record<string, unknown> }>;
+  toolResults: Array<{ toolName?: string; output?: string; isError?: boolean }>;
 };
 
 type SessionListRow = Partial<Session> & {
@@ -55,6 +79,7 @@ export async function cmdSession(
   positional: string[],
   flags: Record<string, string>,
   hostResolvers: LocalApiHostResolvers = {},
+  cwd = process.cwd(),
 ): Promise<void> {
   const mode = action || "list";
   const jsonOutput = flags.json === "true";
@@ -191,28 +216,61 @@ export async function cmdSession(
 
     if (mode === "search") {
       const query = flags.query?.trim() || positional.join(" ").trim();
-      if (!query) throw new Error("--query or search text is required");
+      const hasTimeFilter = !!flags.since || !!flags.until;
+      if (!query && !hasTimeFilter)
+        throw new Error("--query, search text, or a date filter is required");
       const params = new URLSearchParams();
-      params.set("q", query);
+      if (query) params.set("q", query);
       if (flags.limit) params.set("limit", flags.limit);
+      if (flags.since) params.set("since", flags.since);
+      if (flags.until) params.set("until", flags.until);
+      if (flags.workspace && flags.all === "true") {
+        throw new Error("--workspace and --all cannot be used together");
+      }
       if (flags.workspace) {
         const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace, hostResolvers);
+        params.set("workspaceId", workspaceId);
+      } else if (flags.all !== "true") {
+        const workspaceId = await inferWorkspaceIdFromCwdForCli(storage, cwd, hostResolvers);
+        if (!workspaceId)
+          throw new Error("Could not infer workspace from cwd; pass --workspace or --all");
         params.set("workspaceId", workspaceId);
       }
       const result = await call<Record<string, unknown>>(`/sessions/search${querySuffix(params)}`);
       output(result, () => {
         const results = Array.isArray(result.results)
-          ? (result.results as Array<{ sessionId?: string; text?: string; score?: number }>)
+          ? (result.results as Array<{
+              sessionId?: string;
+              snippet?: string;
+              text?: string;
+              title?: string;
+              rank?: number;
+              score?: number;
+              session?: Partial<Session>;
+            }>)
           : [];
         printList(
           `Search results (${results.length})`,
           results.map((searchResult) => ({
             id: searchResult.sessionId ?? "?",
             status: searchResult.score !== undefined ? String(searchResult.score) : "",
-            title: clipListCell(searchResult.text ?? "(match)", 88),
+            title: clipListCell(
+              searchResult.snippet ?? searchResult.text ?? searchResult.title ?? "(match)",
+              88,
+            ),
+            meta: [searchResult.session?.name ?? ""],
           })),
           { empty: "No matching sessions." },
         );
+      });
+      return;
+    }
+
+    if (mode === "inspect") {
+      const id = requirePositional(positional, "session id is required");
+      const result = await inspectSession(id, positional.slice(1), flags, call);
+      output(result as unknown as Record<string, unknown>, () => {
+        console.log(result.text || "(empty)");
       });
       return;
     }
@@ -342,7 +400,7 @@ export async function cmdSession(
     }
 
     throw new Error(
-      "Usage: oppi session list|get|create|send|read|events|trace|search|stop|resume|fork|delete|changes|diff|tool-output|trace-page|trace-outline",
+      "Usage: oppi session list|get|create|send|read|events|trace|search|inspect|stop|resume|fork|delete|changes|diff|tool-output|trace-page|trace-outline",
     );
   } catch (err: unknown) {
     const status = apiStatus(err);
@@ -599,6 +657,309 @@ async function listSessions(
   }
 
   return listGenericSessions(flags, call);
+}
+
+type SessionInspectResult = {
+  session?: Partial<Session>;
+  turns: string;
+  selectedTurns: number[];
+  selected_turns: number[];
+  view: SessionInspectView;
+  summary: Record<string, unknown>;
+  text: string;
+};
+
+async function inspectSession(
+  id: string,
+  positional: string[],
+  flags: Record<string, string>,
+  call: SessionListApiCall,
+): Promise<SessionInspectResult> {
+  const turnsSpec = flags.turns?.trim() || positional[0]?.trim() || "all";
+  const view = inspectView(flags.view);
+
+  const result = await call<{ session?: Partial<Session>; trace?: SessionTraceEvent[] }>(
+    `/sessions/${encodeURIComponent(id)}/trace`,
+  );
+  if (!Array.isArray(result.trace)) throw new Error("Local API did not return a trace array");
+  const trace = result.trace;
+  const turns = buildInspectTurns(trace);
+  const selectedTurns = parseInspectTurnSelector(turnsSpec, turns.length);
+  const selectedSet = new Set(selectedTurns);
+  const summary = inspectSummary(result.session, trace, turns);
+  const text = renderInspectView(view, turns, selectedSet, summary);
+
+  return {
+    session: result.session,
+    turns: turnsSpec,
+    selectedTurns,
+    selected_turns: selectedTurns,
+    view,
+    summary,
+    text,
+  };
+}
+
+function inspectView(raw: string | undefined): SessionInspectView {
+  const view = raw?.trim() || "messages";
+  if (view === "overview" || view === "messages" || view === "summary" || view === "tools") {
+    return view;
+  }
+  throw new Error("--view must be one of overview, messages, summary, or tools");
+}
+
+function buildInspectTurns(trace: SessionTraceEvent[]): SessionInspectTurn[] {
+  const turns: SessionInspectTurn[] = [];
+  let current: SessionInspectTurn | undefined;
+  // Pi TUI treats leading model/thinking/compaction entries as context metadata,
+  // not as standalone user/assistant turns.
+  const pendingLeadingSummaryTexts: string[] = [];
+  const pendingLeadingSystemTexts: string[] = [];
+
+  const attachPendingLeadingText = (turn: SessionInspectTurn): void => {
+    if (pendingLeadingSummaryTexts.length > 0) {
+      turn.summaryTexts.push(...pendingLeadingSummaryTexts);
+      pendingLeadingSummaryTexts.length = 0;
+    }
+    if (pendingLeadingSystemTexts.length > 0) {
+      turn.systemTexts.push(...pendingLeadingSystemTexts);
+      pendingLeadingSystemTexts.length = 0;
+    }
+  };
+
+  const ensureTurn = (): SessionInspectTurn => {
+    if (!current) {
+      current = emptyInspectTurn(turns.length + 1);
+      attachPendingLeadingText(current);
+      turns.push(current);
+    }
+    return current;
+  };
+
+  for (const event of trace) {
+    const type = event.type ?? "";
+    if (type === "user") {
+      current = emptyInspectTurn(turns.length + 1);
+      attachPendingLeadingText(current);
+      const text = eventText(event).trim();
+      if (text) current.userTexts.push(text);
+      turns.push(current);
+      continue;
+    }
+
+    if (!current && (type === "system" || type === "compaction")) {
+      const text = eventText(event).trim();
+      if (text && type === "system") pendingLeadingSystemTexts.push(text);
+      if (text && type === "compaction") pendingLeadingSummaryTexts.push(text);
+      continue;
+    }
+
+    const turn = ensureTurn();
+    if (type === "assistant") {
+      const text = eventText(event).trim();
+      if (text) turn.assistantTexts.push(text);
+    } else if (type === "thinking") {
+      const text = typeof event.thinking === "string" ? event.thinking.trim() : "";
+      if (text) turn.thinkingTexts.push(text);
+    } else if (type === "system") {
+      const text = eventText(event).trim();
+      if (text) turn.systemTexts.push(text);
+    } else if (type === "compaction") {
+      const text = eventText(event).trim();
+      if (text) turn.summaryTexts.push(text);
+    } else if (type === "toolCall") {
+      turn.toolCalls.push({
+        ...(typeof event.id === "string" ? { id: event.id } : {}),
+        ...(typeof event.tool === "string" ? { tool: event.tool } : {}),
+        ...(event.args ? { args: event.args } : {}),
+      });
+    } else if (type === "toolResult") {
+      turn.toolResults.push({
+        ...(typeof event.toolName === "string" ? { toolName: event.toolName } : {}),
+        ...(typeof event.output === "string" ? { output: event.output } : {}),
+        ...(typeof event.isError === "boolean" ? { isError: event.isError } : {}),
+      });
+    }
+  }
+
+  if (!current && (pendingLeadingSummaryTexts.length > 0 || pendingLeadingSystemTexts.length > 0)) {
+    current = emptyInspectTurn(turns.length + 1);
+    attachPendingLeadingText(current);
+    turns.push(current);
+  }
+
+  return turns;
+}
+
+function emptyInspectTurn(turn: number): SessionInspectTurn {
+  return {
+    turn,
+    userTexts: [],
+    assistantTexts: [],
+    thinkingTexts: [],
+    systemTexts: [],
+    summaryTexts: [],
+    toolCalls: [],
+    toolResults: [],
+  };
+}
+
+function parseInspectTurnSelector(spec: string, maxTurn: number): number[] {
+  const trimmed = spec.trim().toLowerCase();
+  if (!trimmed || trimmed === "all") {
+    return Array.from({ length: maxTurn }, (_, index) => index + 1);
+  }
+
+  const selected = new Set<number>();
+  const invalid = (): never => {
+    throw new Error("--turns must be all, a number, a range, or a comma-separated list");
+  };
+  const requireInRange = (turn: number): void => {
+    if (!Number.isSafeInteger(turn) || turn < 1 || turn > maxTurn) invalid();
+  };
+
+  for (const part of trimmed.split(",")) {
+    const token = part.trim();
+    if (!token) invalid();
+
+    const range = token.match(/^(\d+)-(\d+)$/);
+    if (range) {
+      const start = Number.parseInt(range[1] ?? "", 10);
+      const end = Number.parseInt(range[2] ?? "", 10);
+      requireInRange(start);
+      requireInRange(end);
+      if (start > end) invalid();
+      for (let turn = start; turn <= end; turn++) selected.add(turn);
+      continue;
+    }
+
+    if (token.includes("-") || !/^\d+$/.test(token)) invalid();
+    const turn = Number.parseInt(token, 10);
+    requireInRange(turn);
+    selected.add(turn);
+  }
+
+  if (selected.size === 0) invalid();
+  return [...selected].sort((a, b) => a - b);
+}
+
+function inspectSummary(
+  session: Partial<Session> | undefined,
+  trace: SessionTraceEvent[],
+  turns: SessionInspectTurn[],
+): Record<string, unknown> {
+  const assistantMessages = turns.reduce((sum, turn) => sum + turn.assistantTexts.length, 0);
+  const userMessages = turns.reduce((sum, turn) => sum + turn.userTexts.length, 0);
+  const thinkingMessages = turns.reduce((sum, turn) => sum + turn.thinkingTexts.length, 0);
+  const toolCalls = turns.reduce((sum, turn) => sum + turn.toolCalls.length, 0);
+  const toolResults = turns.reduce((sum, turn) => sum + turn.toolResults.length, 0);
+  const toolErrors = turns.reduce(
+    (sum, turn) => sum + turn.toolResults.filter((result) => result.isError === true).length,
+    0,
+  );
+
+  return {
+    source: "oppi",
+    sessionId: session?.id,
+    sessionName: session?.name,
+    workspaceId: session?.workspaceId,
+    worktreeId: session?.worktreeId,
+    status: session?.status,
+    model: session?.model,
+    counts: {
+      traceEvents: trace.length,
+      turns: turns.length,
+      userMessages,
+      assistantMessages,
+      thinkingMessages,
+      toolCalls,
+      toolResults,
+      toolErrors,
+    },
+  };
+}
+
+function renderInspectView(
+  view: SessionInspectView,
+  turns: SessionInspectTurn[],
+  selectedSet: Set<number>,
+  summary: Record<string, unknown>,
+): string {
+  if (view === "overview") return renderInspectOverview(summary);
+  if (view === "summary") return JSON.stringify(summary, null, 2);
+  if (view === "tools") return renderInspectTools(turns, selectedSet);
+  return renderInspectMessages(turns, selectedSet);
+}
+
+function renderInspectOverview(summary: Record<string, unknown>): string {
+  const counts = isRecord(summary.counts) ? summary.counts : {};
+  return [
+    `source: ${summary.source ?? "unknown"}`,
+    `session: ${summary.sessionId ?? "unknown"}`,
+    `name: ${summary.sessionName ?? "(none)"}`,
+    `workspace: ${summary.workspaceId ?? "(unknown)"}`,
+    `worktree: ${summary.worktreeId ?? "(unknown)"}`,
+    `status: ${summary.status ?? "unknown"}`,
+    `model: ${summary.model ?? "(unknown)"}`,
+    `turns: ${counts.turns ?? 0}`,
+    `trace_events: ${counts.traceEvents ?? 0}`,
+    `assistant_messages: ${counts.assistantMessages ?? 0}`,
+    `tool_calls: ${counts.toolCalls ?? 0}`,
+    `tool_errors: ${counts.toolErrors ?? 0}`,
+  ].join("\n");
+}
+
+function renderInspectMessages(turns: SessionInspectTurn[], selectedSet: Set<number>): string {
+  const lines: string[] = [];
+  for (const turn of turns) {
+    if (!selectedSet.has(turn.turn)) continue;
+    lines.push(`Turn ${turn.turn}`);
+    for (const text of turn.summaryTexts) lines.push(`  summary: ${text}`);
+    for (const text of turn.systemTexts) lines.push(`  system: ${text}`);
+    for (const text of turn.userTexts) lines.push(`  user: ${text}`);
+    for (const text of turn.assistantTexts) lines.push(`  assistant: ${text}`);
+    for (const text of turn.thinkingTexts) lines.push(`  thinking: ${text}`);
+    if (
+      turn.summaryTexts.length === 0 &&
+      turn.systemTexts.length === 0 &&
+      turn.userTexts.length === 0 &&
+      turn.assistantTexts.length === 0 &&
+      turn.thinkingTexts.length === 0
+    ) {
+      lines.push("  (no text)");
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd();
+}
+
+function renderInspectTools(turns: SessionInspectTurn[], selectedSet: Set<number>): string {
+  const lines: string[] = [];
+  for (const turn of turns) {
+    if (!selectedSet.has(turn.turn)) continue;
+    lines.push(`Turn ${turn.turn}`);
+    if (turn.toolCalls.length === 0 && turn.toolResults.length === 0) {
+      lines.push("  (no tool calls)");
+      lines.push("");
+      continue;
+    }
+    for (const call of turn.toolCalls) {
+      const args = call.args ? ` ${JSON.stringify(call.args)}` : "";
+      lines.push(`  call: ${call.tool ?? "unknown"}${args}`);
+    }
+    for (const result of turn.toolResults) {
+      const status = result.isError === true ? "error" : "ok";
+      lines.push(
+        `  result: ${result.toolName ?? "unknown"} [${status}] ${clipListCell(result.output ?? "", 220)}`,
+      );
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function savedAgentReference(agent: string | undefined): string | undefined {
