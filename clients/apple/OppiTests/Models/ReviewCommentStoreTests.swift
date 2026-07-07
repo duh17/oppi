@@ -31,6 +31,45 @@ struct ReviewCommentStoreTests {
         #expect(otherSessionStore.stagedComments.isEmpty)
     }
 
+    @Test func updateBodyTrimsAndPersistsDraftChanges() throws {
+        let defaults = try makeDefaults()
+        let store = ReviewCommentStore(defaults: defaults, keyPrefix: "test.reviewComments")
+        store.load(workspaceId: "workspace-1", sessionId: "session-1")
+        let saved = try store.create(
+            workspaceId: "workspace-1",
+            sessionId: "session-1",
+            body: "Original note.",
+            reference: reference(path: "Sources/App.swift", selectedText: nil)
+        )
+
+        let updated = try store.updateBody(commentId: saved.id, body: "\n  Sharpen this recommendation.  \n")
+
+        #expect(updated.body == "Sharpen this recommendation.")
+        #expect(updated.updatedAt >= saved.updatedAt)
+
+        let reloadedStore = ReviewCommentStore(defaults: defaults, keyPrefix: "test.reviewComments")
+        reloadedStore.load(workspaceId: "workspace-1", sessionId: "session-1")
+        #expect(reloadedStore.stagedComments.first?.id == saved.id)
+        #expect(reloadedStore.stagedComments.first?.body == "Sharpen this recommendation.")
+    }
+
+    @Test func updateBodyRejectsEmptyDraftChanges() throws {
+        let defaults = try makeDefaults()
+        let store = ReviewCommentStore(defaults: defaults, keyPrefix: "test.reviewComments")
+        store.load(workspaceId: "workspace-1", sessionId: "session-1")
+        let saved = try store.create(
+            workspaceId: "workspace-1",
+            sessionId: "session-1",
+            body: "Keep this.",
+            reference: reference(path: "Sources/App.swift", selectedText: nil)
+        )
+
+        #expect(throws: ReviewCommentStoreError.emptyBody) {
+            try store.updateBody(commentId: saved.id, body: "   \n")
+        }
+        #expect(store.stagedComments.first?.body == "Keep this.")
+    }
+
     @Test func appendReviewBlockIncludesLocalDraftContextForAgentSubmission() throws {
         let defaults = try makeDefaults()
         let store = ReviewCommentStore(defaults: defaults, keyPrefix: "test.reviewComments")

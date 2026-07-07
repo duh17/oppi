@@ -1096,6 +1096,14 @@ struct ChatView: View {
         return true
     }
 
+    private func editReviewComment(_ comment: ReviewComment, body: String) -> Bool {
+        if let error = reviewComments.update(comment, body: body) {
+            connection.extensionToast = error
+            return false
+        }
+        return true
+    }
+
     private func deleteReviewComment(_ comment: ReviewComment) {
         reviewComments.delete(comment)
     }
@@ -1750,6 +1758,9 @@ struct ChatView: View {
         ReviewCommentStashSheet(
             comments: reviewComments.stagedComments,
             focusedCommentId: focusedReviewCommentId,
+            onEdit: { comment, body in
+                editReviewComment(comment, body: body)
+            },
             onDelete: { comment in
                 deleteReviewComment(comment)
             },
