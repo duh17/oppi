@@ -44,6 +44,15 @@ final class ChatReviewCommentsController {
         }
     }
 
+    func update(_ comment: ReviewComment, body: String) -> String? {
+        do {
+            _ = try store.updateBody(commentId: comment.id, body: body)
+            return nil
+        } catch {
+            return "Failed to update review comment: \(error.localizedDescription)"
+        }
+    }
+
     func delete(_ comment: ReviewComment) {
         store.delete(commentId: comment.id)
     }

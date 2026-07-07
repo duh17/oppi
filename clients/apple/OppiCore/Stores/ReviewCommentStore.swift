@@ -1,13 +1,16 @@
 import Foundation
 import Observation
 
-enum ReviewCommentStoreError: LocalizedError {
+enum ReviewCommentStoreError: LocalizedError, Equatable {
     case emptyBody
+    case commentNotFound
 
     var errorDescription: String? {
         switch self {
         case .emptyBody:
             return "Review comment body is required."
+        case .commentNotFound:
+            return "Review comment was not found."
         }
     }
 }
@@ -85,6 +88,26 @@ final class ReviewCommentStore {
             lastError = nil
         }
         return comment
+    }
+
+    @discardableResult
+    func updateBody(commentId: String, body: String) throws -> ReviewComment {
+        let normalizedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedBody.isEmpty else {
+            throw ReviewCommentStoreError.emptyBody
+        }
+        guard let index = comments.firstIndex(where: { $0.id == commentId }) else {
+            throw ReviewCommentStoreError.commentNotFound
+        }
+
+        var updated = comments[index]
+        updated.body = normalizedBody
+        updated.updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
+        comments[index] = updated
+        if persist() {
+            lastError = nil
+        }
+        return updated
     }
 
     func delete(commentId: String) {
