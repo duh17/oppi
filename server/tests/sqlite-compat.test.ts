@@ -26,4 +26,15 @@ describe("openDatabase", () => {
       db.close();
     }
   });
+
+  it("sets a busy timeout on every connection", () => {
+    const db = openDatabase(join(root, "state.db"));
+    try {
+      const row = db.prepare("PRAGMA busy_timeout").get() as { timeout?: unknown } | undefined;
+
+      expect(row?.timeout).toBe(5000);
+    } finally {
+      db.close();
+    }
+  });
 });
