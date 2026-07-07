@@ -26,6 +26,7 @@ export interface SqliteStatement {
 }
 
 const isBun = typeof (globalThis as Record<string, unknown>).Bun !== "undefined";
+const BUSY_TIMEOUT_MS = 5000;
 
 /**
  * Open a SQLite database file using the best available built-in driver.
@@ -48,6 +49,7 @@ function openBunDatabase(path: string): SqliteDatabase {
     Database: new (path: string) => BunSqliteDb;
   };
   const db = new Database(path);
+  configureDatabase(db);
 
   return {
     exec: (sql: string) => db.exec(sql),
@@ -85,6 +87,7 @@ function openNodeSqliteDatabase(path: string): SqliteDatabase {
     DatabaseSync: new (path: string) => NodeSqliteDb;
   };
   const db = new DatabaseSync(path);
+  configureDatabase(db);
 
   return {
     exec: (sql: string) => db.exec(sql),
@@ -112,4 +115,8 @@ interface NodeSqliteDb {
   exec(sql: string): void;
   prepare(sql: string): SqliteStatement;
   close(): void;
+}
+
+function configureDatabase(db: Pick<SqliteDatabase, "exec">): void {
+  db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
 }

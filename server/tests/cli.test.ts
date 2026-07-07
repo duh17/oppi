@@ -1588,6 +1588,52 @@ describe("oppi local API commands", () => {
     }
   }, 45_000);
 
+  it("keeps concurrent read-only local API CLI calls from failing on SQLite locks", async () => {
+    const api = createHttpServer((req, res) => {
+      if (req.method === "GET" && req.url === "/workspaces") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ workspaces: [], summaries: [], serverNow: 1 }));
+        return;
+      }
+
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: `${req.method ?? "GET"} ${req.url ?? "/"} not handled` }));
+    });
+    await new Promise<void>((resolveListen) => api.listen(0, "127.0.0.1", resolveListen));
+    const address = api.address();
+    if (!address || typeof address === "string") throw new Error("Failed to start API fixture");
+    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-concurrent-read-"));
+
+    try {
+      expect(run(["init", "--yes", "--data-dir", cliDir]).exitCode).toBe(0);
+      expect(
+        run(["config", "set", "tls", '{"mode":"disabled"}'], { OPPI_DATA_DIR: cliDir }).exitCode,
+      ).toBe(0);
+      expect(
+        run(["config", "set", "port", String(address.port)], { OPPI_DATA_DIR: cliDir }).exitCode,
+      ).toBe(0);
+
+      const results = await Promise.all(
+        Array.from({ length: 10 }, () =>
+          runAsync(["workspace", "list", "--json"], { OPPI_DATA_DIR: cliDir }),
+        ),
+      );
+      const failures = results
+        .map((result, index) => ({ index, ...result }))
+        .filter((result) => result.exitCode !== 0);
+
+      expect(failures).toEqual([]);
+      for (const result of results) {
+        expect(JSON.parse(result.stdout)).toMatchObject({ ok: true });
+      }
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) =>
+        api.close((error) => (error ? rejectClose(error) : resolveClose())),
+      );
+      rmSync(cliDir, { recursive: true, force: true });
+    }
+  });
+
   it("schedule list --json fails fast on malformed successful API JSON", async () => {
     const api = createHttpServer((_req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
