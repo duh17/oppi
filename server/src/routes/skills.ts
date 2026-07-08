@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
+  CONFIG_DIR_NAME,
   DefaultPackageManager,
   SettingsManager,
   getAgentDir,
@@ -37,6 +38,7 @@ interface SkillRouteInfo {
 }
 
 type PiResourceType = "skills" | "extensions";
+type PiResourceScope = "user" | "project";
 
 function resolveResourceCwd(cwd: string | undefined): string {
   const raw = cwd?.trim();
@@ -217,9 +219,27 @@ function stripPatternPrefix(pattern: string): string {
     : pattern;
 }
 
+function projectSettingsBaseDir(cwd: string): string {
+  return join(cwd, CONFIG_DIR_NAME);
+}
+
+function settingsBaseDir(scope: PiResourceScope, cwd: string, agentDir: string): string {
+  return scope === "project" ? projectSettingsBaseDir(cwd) : agentDir;
+}
+
 function topLevelBaseDir(resource: ResolvedResource, cwd: string, agentDir: string): string {
   if (resource.metadata.baseDir) return resource.metadata.baseDir;
-  return resource.metadata.scope === "project" ? join(cwd, ".pi") : agentDir;
+  return resource.metadata.scope === "project" ? projectSettingsBaseDir(cwd) : agentDir;
+}
+
+function topLevelSettingsBaseDir(
+  targetScope: PiResourceScope,
+  resource: ResolvedResource,
+  cwd: string,
+  agentDir: string,
+): string {
+  if (targetScope === "project") return projectSettingsBaseDir(cwd);
+  return resource.metadata.baseDir ?? agentDir;
 }
 
 function resourcePattern(resource: ResolvedResource, cwd: string, agentDir: string): string {
@@ -230,30 +250,102 @@ function resourcePattern(resource: ResolvedResource, cwd: string, agentDir: stri
   return toPosixPath(relative(baseDir, resource.path));
 }
 
-function writeResourceSettings(
+function packageSourceForSettingsScope(
+  resource: ResolvedResource,
+  targetScope: PiResourceScope,
+  cwd: string,
+  agentDir: string,
+): string {
+  if (targetScope === resource.metadata.scope) {
+    return resource.metadata.source;
+  }
+
+  const packageRoot = resource.metadata.baseDir;
+  if (
+    !packageRoot ||
+    (resource.metadata.scope !== "user" && resource.metadata.scope !== "project")
+  ) {
+    return resource.metadata.source;
+  }
+
+  const sourceBaseDir = settingsBaseDir(resource.metadata.scope, cwd, agentDir);
+  const resolvedSource = resolveSettingsPath(resource.metadata.source, sourceBaseDir);
+  return resolvedSource === resolve(packageRoot).replace(/\/+$/, "")
+    ? packageRoot
+    : resource.metadata.source;
+}
+
+function topLevelResourcePattern(
+  resource: ResolvedResource,
+  targetScope: PiResourceScope,
+  cwd: string,
+  agentDir: string,
+): string {
+  return toPosixPath(
+    relative(topLevelSettingsBaseDir(targetScope, resource, cwd, agentDir), resource.path),
+  );
+}
+
+function expandSettingsPathPattern(pattern: string): string {
+  return pattern === "~" || pattern.startsWith("~/")
+    ? pattern.replace(/^~(?=\/|$)/, homedir())
+    : pattern;
+}
+
+function resolveSettingsPath(path: string, baseDir: string): string {
+  const expanded = expandSettingsPathPattern(path);
+  return resolve(isAbsolute(expanded) ? expanded : join(baseDir, expanded)).replace(/\/+$/, "");
+}
+
+function resolveSettingsEntryPath(entry: string, baseDir: string): string {
+  return resolveSettingsPath(stripPatternPrefix(entry), baseDir);
+}
+
+function settingsEntryMatchesResource(
+  resourceType: PiResourceType,
+  entry: string,
+  resource: ResolvedResource,
+  baseDir: string,
+): boolean {
+  const entryPath = resolveSettingsEntryPath(entry, baseDir);
+  const resourcePath = resolve(resource.path).replace(/\/+$/, "");
+  if (entryPath === resourcePath) return true;
+
+  if (resourceType === "skills") {
+    return basename(resourcePath) === "SKILL.md" && dirname(resourcePath) === entryPath;
+  }
+
+  return (
+    (basename(resourcePath) === "index.ts" || basename(resourcePath) === "index.js") &&
+    dirname(resourcePath) === entryPath
+  );
+}
+
+function writeTopLevelResourceSettings(
   settingsManager: SettingsManager,
   resource: ResolvedResource,
   resourceType: PiResourceType,
   cwd: string,
   agentDir: string,
   enabled: boolean,
+  targetScope: PiResourceScope,
+  keepResourceEntry: boolean,
 ): void {
-  const scope = resource.metadata.scope;
-  if (scope !== "user" && scope !== "project") {
-    throw new Error("Temporary resources cannot be edited from Oppi");
-  }
-
   const settings =
-    scope === "project"
+    targetScope === "project"
       ? settingsManager.getProjectSettings()
       : settingsManager.getGlobalSettings();
-  const pattern = resourcePattern(resource, cwd, agentDir);
+  const baseDir = topLevelSettingsBaseDir(targetScope, resource, cwd, agentDir);
+  const pattern = topLevelResourcePattern(resource, targetScope, cwd, agentDir);
   const updated = ([...(settings[resourceType] ?? [])] as string[]).filter(
-    (entry) => stripPatternPrefix(entry) !== pattern,
+    (entry) => !settingsEntryMatchesResource(resourceType, entry, resource, baseDir),
   );
+  if (keepResourceEntry) {
+    updated.push(pattern);
+  }
   updated.push(`${enabled ? "+" : "-"}${pattern}`);
 
-  if (scope === "project") {
+  if (targetScope === "project") {
     if (resourceType === "extensions") {
       settingsManager.setProjectExtensionPaths(updated);
     } else {
@@ -266,6 +358,37 @@ function writeResourceSettings(
   }
 }
 
+function writeResourceSettings(
+  settingsManager: SettingsManager,
+  resource: ResolvedResource,
+  resourceType: PiResourceType,
+  cwd: string,
+  agentDir: string,
+  enabled: boolean,
+  targetScope: PiResourceScope = resource.metadata.scope as PiResourceScope,
+): void {
+  if (targetScope !== "user" && targetScope !== "project") {
+    throw new Error("Temporary resources cannot be edited from Oppi");
+  }
+
+  // Pi force-enable/disable patterns apply only to resources already present in
+  // that settings scope. When a workspace overrides a user/global resource, add
+  // the resource path to project settings before the +/- override so project
+  // precedence can shadow the global auto-discovered entry.
+  const keepResourceEntry =
+    targetScope !== resource.metadata.scope || resource.metadata.source === "local";
+  writeTopLevelResourceSettings(
+    settingsManager,
+    resource,
+    resourceType,
+    cwd,
+    agentDir,
+    enabled,
+    targetScope,
+    keepResourceEntry,
+  );
+}
+
 function writePackageResourceSettings(
   settingsManager: SettingsManager,
   resource: ResolvedResource,
@@ -273,24 +396,29 @@ function writePackageResourceSettings(
   cwd: string,
   agentDir: string,
   enabled: boolean,
+  targetScope: PiResourceScope = resource.metadata.scope as PiResourceScope,
 ): void {
-  const scope = resource.metadata.scope;
-  if (scope !== "user" && scope !== "project") {
+  if (targetScope !== "user" && targetScope !== "project") {
     throw new Error("Temporary resources cannot be edited from Oppi");
   }
 
   const settings =
-    scope === "project"
+    targetScope === "project"
       ? settingsManager.getProjectSettings()
       : settingsManager.getGlobalSettings();
   const packages = [...(settings.packages ?? [])] as PackageSource[];
-  const packageIndex = packages.findIndex((pkg) => {
+  const packageSource = packageSourceForSettingsScope(resource, targetScope, cwd, agentDir);
+  let packageIndex = packages.findIndex((pkg) => {
     const source = typeof pkg === "string" ? pkg : pkg.source;
-    return source === resource.metadata.source;
+    return source === packageSource;
   });
 
   if (packageIndex < 0) {
-    throw new Error(`Package source not found in ${scope} settings`);
+    if (targetScope === resource.metadata.scope) {
+      throw new Error(`Package source not found in ${targetScope} settings`);
+    }
+    packages.push({ source: packageSource });
+    packageIndex = packages.length - 1;
   }
 
   let pkg = packages[packageIndex];
@@ -312,7 +440,7 @@ function writePackageResourceSettings(
     packages[packageIndex] = pkg.source;
   }
 
-  if (scope === "project") {
+  if (targetScope === "project") {
     settingsManager.setProjectPackages(packages);
   } else {
     settingsManager.setPackages(packages);
@@ -353,6 +481,7 @@ async function setPiResourceEnabled(options: {
   type: PiResourceType;
   path: string;
   enabled: boolean;
+  preferProjectScope?: boolean;
 }): Promise<void> {
   const { agentDir, settingsManager, resolved } = await resolvePiResources(options.cwd);
   const resources = resolved[options.type];
@@ -364,6 +493,11 @@ async function setPiResourceEnabled(options: {
     throw new Error("Pi resource not found for cwd");
   }
 
+  const targetScope = options.preferProjectScope ? "project" : resource.metadata.scope;
+  if (targetScope !== "user" && targetScope !== "project") {
+    throw new Error("Temporary resources cannot be edited from Oppi");
+  }
+
   if (resource.metadata.origin === "package") {
     writePackageResourceSettings(
       settingsManager,
@@ -372,6 +506,7 @@ async function setPiResourceEnabled(options: {
       options.cwd,
       agentDir,
       options.enabled,
+      targetScope,
     );
     return;
   }
@@ -383,6 +518,7 @@ async function setPiResourceEnabled(options: {
     options.cwd,
     agentDir,
     options.enabled,
+    targetScope,
   );
 }
 
@@ -403,7 +539,9 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
 
   async function handleListExtensions(url: URL, res: ServerResponse): Promise<void> {
     const cwd = url.searchParams.get("cwd") ?? undefined;
-    const piExtensions = (await listConfiguredHostExtensionResources({ cwd }))
+    const piExtensions = (
+      await listConfiguredHostExtensionResources({ cwd, agentDir: getAgentDir() })
+    )
       .filter((ext) => !DEPRECATED_EXTENSION_NAMES.has(ext.name))
       .map((ext) => ({
         ...ext,
@@ -526,11 +664,13 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     }
 
     try {
+      const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
       await setPiResourceEnabled({
-        cwd: resolveResourceCwd(typeof body.cwd === "string" ? body.cwd : undefined),
+        cwd: resolveResourceCwd(cwd),
         type,
         path: body.path,
         enabled: body.enabled,
+        preferProjectScope: cwd?.trim().length ? true : false,
       });
       helpers.json(res, { ok: true });
     } catch (err: unknown) {
