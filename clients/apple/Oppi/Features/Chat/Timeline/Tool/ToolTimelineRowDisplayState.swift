@@ -3,6 +3,10 @@ import UIKit
 
 @MainActor
 enum ToolTimelineRowDisplayState {
+    // Keep full paths only when there is spare room. Near-fit paths often lose
+    // the start of the filename after edit stats or language badges appear.
+    private static let fullPathComfortPadding: CGFloat = 18
+
     static func applyTitle(
         configuration: ToolTimelineRowConfiguration,
         titleLabel: UILabel
@@ -63,7 +67,8 @@ enum ToolTimelineRowDisplayState {
         configuration: ToolTimelineRowConfiguration,
         availableWidth: CGFloat
     ) -> String {
-        if title(fullTitle, fitsWithin: availableWidth, configuration: configuration) {
+        let fullPathAvailableWidth = max(0, availableWidth - fullPathComfortPadding)
+        if title(fullTitle, fitsWithin: fullPathAvailableWidth, configuration: configuration) {
             return fullTitle
         }
 

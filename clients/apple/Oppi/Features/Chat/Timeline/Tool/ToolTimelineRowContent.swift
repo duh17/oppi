@@ -375,10 +375,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func collapsedTitleAvailableWidth() -> CGFloat {
-        let rightLimit = trailingStack.isHidden
-            ? borderView.bounds.width - 14
-            : trailingStack.frame.minX - 6
-        return max(0, rightLimit - titleLabel.frame.minX)
+        let containerWidth = max(borderView.bounds.width, bounds.width)
+        let titleMinX = titleLabel.frame.minX
+        let rightLimit: CGFloat
+        if trailingStack.isHidden {
+            rightLimit = containerWidth - 14
+        } else {
+            let fittingWidth = trailingStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
+            let trailingWidth = max(trailingStack.bounds.width, fittingWidth)
+            rightLimit = containerWidth - 8 - trailingWidth - 6
+        }
+        return max(0, rightLimit - titleMinX)
     }
 
     private func updateViewportHeightsIfNeeded() {
@@ -1341,6 +1348,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
         if !audioPlaybackButton.isHidden {
             trailingStack.isHidden = false
+        }
+
+        if ToolTimelineRowDisplayState.updateCollapsedFileTitleForCurrentWidth(
+            configuration: configuration,
+            titleLabel: titleLabel,
+            availableWidth: collapsedTitleAvailableWidth()
+        ) {
+            setNeedsLayout()
         }
 
         return ToolTimelineRowDisplayState.applyPreview(
