@@ -216,9 +216,6 @@ private struct ReviewCommentEditorView: View {
         .navigationTitle("Edit Comment")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel", action: onCancel)
-            }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save", action: save)
                     .disabled(saveDisabled)
