@@ -87,6 +87,30 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func collapsedEditFileToolTitleAccountsForStatsAndLanguageBadgeWidth() throws {
+        let path = "server/src/cli/local-api-client.ts"
+        let config = makeTimelineToolConfiguration(
+            title: path,
+            languageBadge: "typescript",
+            titleLineBreakMode: .byTruncatingMiddle,
+            toolNamePrefix: "edit",
+            editAdded: 10,
+            editRemoved: 4,
+            isExpanded: false
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let labels = timelineAllLabels(in: view)
+        let titleLabel = try #require(labels.first {
+            timelineRenderedText(of: $0).contains("local-api-client.ts")
+        })
+
+        #expect(timelineRenderedText(of: titleLabel) == "s/s/c/local-api-client.ts")
+    }
+
+    @MainActor
     @Test func collapsedFileToolTitleFallsBackToFileNameOnNarrowRows() throws {
         let path = "clients/apple/Oppi/Features/Chat/Support/Schedules/ScheduleEditView.swift"
         let config = makeTimelineToolConfiguration(
