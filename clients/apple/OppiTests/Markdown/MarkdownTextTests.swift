@@ -1050,6 +1050,35 @@ struct FlatSegmentImageResolutionTests {
     }
 }
 
+// MARK: - Session file full-screen content
+
+@Suite("Session file full-screen content")
+struct SessionFileFullScreenContentBuilderTests {
+    @Test func outsideWorkspaceMarkdownKeepsSessionFileContext() throws {
+        let serverBaseURL = try #require(URL(string: "https://server.example.com"))
+        let content = SessionFileFullScreenContentBuilder.content(
+            text: "![Generated chart](/tmp/chart.png)",
+            filePath: "/tmp/session-report.md",
+            workspaceID: "workspace-1",
+            serverBaseURL: serverBaseURL,
+            workspaceHostMount: "/Users/example/workspace/oppi",
+            fetchSessionFileData: { _ in Data([1]) },
+            sessionID: "session-1"
+        )
+
+        guard case .markdown(_, let filePath, let workspaceContext) = content else {
+            Issue.record("Expected markdown full-screen content")
+            return
+        }
+
+        #expect(filePath == "/tmp/session-report.md")
+        let context = try #require(workspaceContext)
+        #expect(context.workspaceID == "workspace-1")
+        #expect(context.sessionID == "session-1")
+        #expect(context.fetchSessionFile != nil)
+    }
+}
+
 // MARK: - Table cell inline content (links in table cells)
 
 @Suite("Table cell inline content")

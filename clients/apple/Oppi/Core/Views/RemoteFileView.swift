@@ -5,6 +5,42 @@ import UIKit
 // periphery:ignore
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "RemoteFileView")
 
+enum SessionFileFullScreenContentBuilder {
+    static func content(
+        text: String,
+        filePath: String,
+        workspaceID: String?,
+        serverBaseURL: URL?,
+        workspaceHostMount: String?,
+        fetchSessionFileData: ((String) async throws -> Data)?,
+        sessionID: String
+    ) -> FullScreenCodeContent {
+        let displayPath = filePath.workspaceRelativePath(hostMount: workspaceHostMount) ?? filePath
+
+        guard let workspaceID,
+              let serverBaseURL,
+              let fetchSessionFileData else {
+            return .fromText(text, filePath: filePath)
+        }
+
+        return .fromText(
+            text,
+            filePath: displayPath,
+            workspaceContext: .init(
+                workspaceID: workspaceID,
+                serverBaseURL: serverBaseURL,
+                fetchWorkspaceFile: { _, path in
+                    try await fetchSessionFileData(path)
+                },
+                sessionID: sessionID,
+                fetchSessionFile: { _, _, path in
+                    try await fetchSessionFileData(path)
+                }
+            )
+        )
+    }
+}
+
 /// Fetches and displays a file from the session's working directory.
 ///
 /// Triggered when the user taps a file path in a tool call header.
@@ -79,23 +115,14 @@ struct RemoteFileView: View {
     }
 
     private func fullScreenContent(text: String) -> FullScreenCodeContent {
-        guard let resolvedWorkspaceId,
-              let serverBaseURL = loadedServerBaseURL,
-              let fetchSessionFileData,
-              let sourcePath = path.workspaceRelativePath(hostMount: currentWorkspaceHostMount) else {
-            return .fromText(text, filePath: path)
-        }
-
-        return .fromText(
-            text,
-            filePath: sourcePath,
-            workspaceContext: .init(
-                workspaceID: resolvedWorkspaceId,
-                serverBaseURL: serverBaseURL,
-                fetchWorkspaceFile: { _, filePath in
-                    try await fetchSessionFileData(filePath)
-                }
-            )
+        SessionFileFullScreenContentBuilder.content(
+            text: text,
+            filePath: path,
+            workspaceID: resolvedWorkspaceId,
+            serverBaseURL: loadedServerBaseURL,
+            workspaceHostMount: currentWorkspaceHostMount,
+            fetchSessionFileData: fetchSessionFileData,
+            sessionID: sessionId
         )
     }
 

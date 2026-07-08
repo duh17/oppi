@@ -54,23 +54,14 @@ struct SessionTouchedFileContentView: View {
     }
 
     private func fullScreenContent(text: String) -> FullScreenCodeContent {
-        let activePath = currentFilePath
-        guard let serverBaseURL = loadedServerBaseURL,
-              let fetchSessionFileData,
-              let sourcePath = activePath.workspaceRelativePath(hostMount: currentWorkspaceHostMount) else {
-            return .fromText(text, filePath: activePath)
-        }
-
-        return .fromText(
-            text,
-            filePath: sourcePath,
-            workspaceContext: .init(
-                workspaceID: workspaceId,
-                serverBaseURL: serverBaseURL,
-                fetchWorkspaceFile: { _, path in
-                    try await fetchSessionFileData(path)
-                }
-            )
+        SessionFileFullScreenContentBuilder.content(
+            text: text,
+            filePath: currentFilePath,
+            workspaceID: workspaceId,
+            serverBaseURL: loadedServerBaseURL,
+            workspaceHostMount: currentWorkspaceHostMount,
+            fetchSessionFileData: fetchSessionFileData,
+            sessionID: sessionId
         )
     }
 
