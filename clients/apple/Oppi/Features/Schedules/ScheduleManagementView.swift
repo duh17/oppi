@@ -289,7 +289,7 @@ private struct ScheduleDetailView: View {
     @ViewBuilder
     private func actionDetail(_ action: AgentScheduleAction) -> some View {
         switch action {
-        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name, _):
+        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name):
             detailRow("Type", "New session")
             detailRow("Workspace", workspaceName(workspaceId))
             if let agentId, !agentId.isEmpty { detailRow("Agent", agentId) }
@@ -297,7 +297,7 @@ private struct ScheduleDetailView: View {
             if let name, !name.isEmpty { detailRow("Session name", name) }
             if let model, !model.isEmpty { detailRow("Model", model) }
             promptPreview(prompt)
-        case .existingSession(let workspaceId, let sessionId, let prompt, let streamingBehavior, _):
+        case .existingSession(let workspaceId, let sessionId, let prompt, let streamingBehavior):
             detailRow("Type", "Existing session")
             detailRow("Workspace", workspaceName(workspaceId))
             detailRow("Session", sessionTitle(sessionId))
@@ -664,14 +664,6 @@ struct ScheduleEditView: View {
                 Text("A saved Agent supplies reusable instructions and defaults. The prompt above is still sent as the scheduled task.")
             }
 
-            if schedule == nil {
-                Section("Approval") {
-                    Text("Creating automatic schedules from iOS still needs an accepted extension approval ref. Existing schedules can be edited here; new automatic schedules should be created with `oppi schedule create --approval-ref …` until the native approval flow lands.")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                }
-            }
-
             if let error {
                 Section {
                     Text(error)
@@ -729,17 +721,23 @@ struct ScheduleEditView: View {
         defer { isSaving = false }
 
         do {
-            guard let schedule else {
-                throw ScheduleEditError.approvalRequired
-            }
             let trigger = try buildTrigger()
             let action = buildAction()
-            _ = try await apiClient.updateAgentSchedule(
-                scheduleId: schedule.id,
-                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                trigger: trigger,
-                action: action
-            )
+            let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let schedule {
+                _ = try await apiClient.updateAgentSchedule(
+                    scheduleId: schedule.id,
+                    name: cleanName,
+                    trigger: trigger,
+                    action: action
+                )
+            } else {
+                _ = try await apiClient.createAgentSchedule(
+                    name: cleanName,
+                    trigger: trigger,
+                    action: action
+                )
+            }
             await onSaved()
             dismiss()
         } catch {
@@ -784,7 +782,7 @@ struct ScheduleEditView: View {
         populateRecurrence(from: schedule.trigger)
 
         switch schedule.action {
-        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name, _):
+        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name):
             actionKind = .newSession
             selectedWorkspaceId = workspaceId
             selectedAgentId = agentId ?? ""
@@ -792,7 +790,7 @@ struct ScheduleEditView: View {
             self.model = model ?? ""
             self.worktreeId = worktreeId ?? ""
             sessionName = name ?? ""
-        case .existingSession(let workspaceId, let sessionId, let prompt, let streamingBehavior, _):
+        case .existingSession(let workspaceId, let sessionId, let prompt, let streamingBehavior):
             actionKind = .existingSession
             selectedWorkspaceId = workspaceId
             selectedSessionId = sessionId
@@ -851,7 +849,6 @@ struct ScheduleEditView: View {
 
     private func buildAction() -> AgentScheduleAction {
         let cleanPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let approvalRefs = schedule?.action.approvalRefs
         switch actionKind {
         case .newSession:
             return .newSession(
@@ -860,16 +857,14 @@ struct ScheduleEditView: View {
                 agentId: selectedAgentId.nilIfBlank,
                 model: model.nilIfBlank,
                 worktreeId: worktreeId.nilIfBlank,
-                name: sessionName.nilIfBlank,
-                approvalRefs: approvalRefs
+                name: sessionName.nilIfBlank
             )
         case .existingSession:
             return .existingSession(
                 workspaceId: selectedWorkspaceId,
                 sessionId: selectedSessionId,
                 prompt: cleanPrompt,
-                streamingBehavior: streamingBehavior,
-                approvalRefs: approvalRefs
+                streamingBehavior: streamingBehavior
             )
         }
     }
@@ -1022,14 +1017,11 @@ private enum ScheduleIntervalUnit: CaseIterable {
 }
 
 private enum ScheduleEditError: LocalizedError {
-    case approvalRequired
     case invalidInterval
     case intervalTooLarge
 
     var errorDescription: String? {
         switch self {
-        case .approvalRequired:
-            return "Creating automatic schedules from iOS requires an accepted approval ref. Use the Oppi CLI with --approval-ref for now."
         case .invalidInterval:
             return "Interval must be a positive number."
         case .intervalTooLarge:

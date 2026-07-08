@@ -194,9 +194,9 @@ describe("oppi help", () => {
     expect(text).toContain("--at <iso>");
     expect(text).toContain("--every <duration>");
     expect(text).toContain("--cron <expr>");
-    expect(text).toContain("--approval-ref <ref>");
     expect(text).toContain("--agent <agent>");
-    expect(text).toContain("Automatic runs fail closed");
+    expect(text).not.toContain("--approval-ref");
+    expect(text).not.toContain("Automatic runs fail closed");
     expect(text).toContain("Run history");
     expect(text).toContain("idempotent");
   });
@@ -1326,8 +1326,6 @@ describe("oppi local API commands", () => {
             "0 7 * * *",
             "--tz",
             "America/Los_Angeles",
-            "--approval-ref",
-            "approval://daily-check",
             "--json",
           ],
           expected: ["GET /workspaces/ws-1", "POST /schedules"],
@@ -1562,7 +1560,6 @@ describe("oppi local API commands", () => {
           type: "new_session",
           workspaceId: "ws-1",
           prompt: "daily check",
-          approvalRefs: [expect.objectContaining({ id: "approval://daily-check" })],
         },
       });
       expect(scheduleCreateRequests[1]?.body).toMatchObject({

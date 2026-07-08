@@ -118,7 +118,7 @@ struct AgentScheduleAPIClientTests {
 
         #expect(schedule.name == "Daily QA")
         #expect(schedule.trigger.displaySummary.contains("0 9 * * *"))
-        guard case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name, _) = schedule.action else {
+        guard case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name) = schedule.action else {
             Issue.record("Expected new-session action")
             return
         }
@@ -140,7 +140,7 @@ struct AgentScheduleAPIClientTests {
             let body = try JSONDecoder().decode([String: String].self, from: requestBodyData(request))
             #expect(body["requestId"]?.hasPrefix("ios-manual-") == true)
             return mockResponse(status: 201, json: """
-            {"run":{"id":"run-1","scheduleId":"sch-1","kind":"manual","slotKey":"manual:ios","idempotencyKey":"schedule:sch-1:manual:ios","status":"completed","action":{"type":"new_session","workspaceId":"ws-1","promptChars":6},"approvalRefCount":0,"createdAt":1000,"updatedAt":2000,"sessionId":"sess-1","promptDispatch":"delivered"}}
+            {"run":{"id":"run-1","scheduleId":"sch-1","kind":"manual","slotKey":"manual:ios","idempotencyKey":"schedule:sch-1:manual:ios","status":"completed","action":{"type":"new_session","workspaceId":"ws-1","promptChars":6},"createdAt":1000,"updatedAt":2000,"sessionId":"sess-1","promptDispatch":"delivered"}}
             """)
         }
 

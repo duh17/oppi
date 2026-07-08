@@ -3,9 +3,7 @@ import { join, resolve } from "node:path";
 
 import { validateCronExpression, validateScheduleTimeZone } from "./agent-schedule-cron.js";
 import { generateId } from "./id.js";
-import { decideScheduledMutation, liveAcceptedApprovalRefAuditIds } from "./schedule-approval.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
-import type { ScheduleApprovalRef } from "./types/schedules.js";
 
 export type AgentScheduleStatus = "active" | "paused" | "archived";
 export type AgentScheduleRunStatus = "pending" | "claimed" | "running" | "completed" | "failed";
@@ -16,8 +14,6 @@ export type AgentScheduleTrigger =
   | { type: "every"; intervalMs: number; timeZone: string }
   | { type: "cron"; expression: string; timeZone: string };
 
-export type ApprovalRefs = readonly ScheduleApprovalRef[];
-
 export type AgentScheduleAction =
   | {
       type: "new_session";
@@ -27,7 +23,6 @@ export type AgentScheduleAction =
       model?: string;
       worktreeId?: string;
       name?: string;
-      approvalRefs?: ApprovalRefs;
     }
   | {
       type: "existing_session";
@@ -35,7 +30,6 @@ export type AgentScheduleAction =
       sessionId: string;
       prompt: string;
       streamingBehavior?: "steer" | "followUp";
-      approvalRefs?: ApprovalRefs;
     };
 
 export interface AgentSchedule {
@@ -57,7 +51,6 @@ export interface AgentScheduleRun {
   idempotencyKey: string;
   status: AgentScheduleRunStatus;
   actionSnapshot: AgentScheduleAction;
-  approvalRefs: ApprovalRefs;
   createdAt: number;
   updatedAt: number;
   claimedAt?: number;
@@ -83,7 +76,6 @@ export interface AgentScheduleSummary {
   status: AgentScheduleStatus;
   trigger: AgentScheduleTrigger;
   action: AgentScheduleActionSummary;
-  approvalRefCount: number;
   createdAt: number;
   updatedAt: number;
   archivedAt?: number;
@@ -97,7 +89,6 @@ export interface AgentScheduleRunSummary {
   idempotencyKey: string;
   status: AgentScheduleRunStatus;
   action: AgentScheduleActionSummary;
-  approvalRefCount: number;
   createdAt: number;
   updatedAt: number;
   claimedAt?: number;
@@ -127,16 +118,6 @@ export interface AgentScheduleClaimOptions {
 
 export interface AgentScheduleListRunOptions {
   limit?: number;
-}
-
-export interface AgentScheduleAcceptedApprovalProvenanceInput {
-  workspaceId: string;
-  approvalRefId: string;
-  scheduleId?: string;
-  runId?: string;
-  sessionId?: string;
-  now?: number;
-  details?: Record<string, unknown>;
 }
 
 export interface NewSessionDispatchInput {
@@ -182,7 +163,6 @@ interface RunRow {
   idempotency_key: string;
   status: AgentScheduleRunStatus;
   action_snapshot_json: string;
-  approval_refs_json: string;
   created_at: number;
   updated_at: number;
   claimed_at: number | null;
@@ -196,6 +176,7 @@ interface RunRow {
 
 export class AgentScheduleStore {
   private readonly db: SqliteDatabase;
+  private readonly runTableHasRemovedApprovalRefsColumn: boolean;
 
   constructor(dataDir: string, dbPath?: string) {
     if (!existsSync(dataDir)) {
@@ -207,6 +188,7 @@ export class AgentScheduleStore {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
+    this.runTableHasRemovedApprovalRefsColumn = this.hasRunTableColumn("approval_refs_json");
   }
 
   close(): void {
@@ -238,41 +220,6 @@ export class AgentScheduleStore {
         schedule.updatedAt,
       );
     return schedule;
-  }
-
-  recordAcceptedApprovalProvenance(input: AgentScheduleAcceptedApprovalProvenanceInput): void {
-    const workspaceId = validateKeyPart(input.workspaceId, "approval workspaceId");
-    const approvalRefId = validateKeyPart(input.approvalRefId, "approvalRefId");
-    const now = input.now ?? Date.now();
-    const eventId = generateId(12);
-    const envelope = {
-      id: eventId,
-      createdAt: now,
-      eventType: "approval_ref.accepted",
-      workspaceId,
-      ...(input.scheduleId ? { scheduleId: input.scheduleId } : {}),
-      ...(input.runId ? { runId: input.runId } : {}),
-      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-      approvalRefId,
-      ...(input.details ? { details: input.details } : {}),
-    };
-    this.db
-      .prepare(
-        `INSERT INTO server_agent_extension_audit_events (
-           id, created_at, workspace_id, schedule_id, run_id, session_id,
-           event_type, approval_ref_id, envelope_json
-         ) VALUES (?, ?, ?, ?, ?, ?, 'approval_ref.accepted', ?, ?)`,
-      )
-      .run(
-        eventId,
-        now,
-        workspaceId,
-        input.scheduleId ?? null,
-        input.runId ?? null,
-        input.sessionId ?? null,
-        approvalRefId,
-        JSON.stringify(envelope),
-      );
   }
 
   updateSchedule(
@@ -459,40 +406,6 @@ export class AgentScheduleStore {
     const schedule = this.getSchedule(run.scheduleId);
     if (!schedule) throw new Error(`Schedule not found: ${run.scheduleId}`);
 
-    const approvalDecision = decideScheduledMutation({
-      origin: run.kind === "manual" ? "interactive" : "scheduled",
-      approvalRefs: run.approvalRefs,
-      nowMs: now,
-    });
-    if (!approvalDecision.allowed) {
-      const error =
-        approvalDecision.reason === "expired_approval_ref"
-          ? `approval_required_noninteractive:${approvalDecision.reason}:${approvalDecision.approvalRefId}`
-          : `approval_required_noninteractive:${approvalDecision.reason}`;
-      this.failClaimedRunBeforeStart(run, options.leaseOwner, now, error, { approvalDecision });
-      throw new Error(error);
-    }
-    if (run.kind !== "manual") {
-      const approvalRefIds = liveAcceptedApprovalRefAuditIds(run.approvalRefs, now);
-      const hasAcceptedProvenance = this.hasAcceptedApprovalProvenance(
-        run,
-        schedule,
-        approvalRefIds,
-      );
-      if (!hasAcceptedProvenance) {
-        const error = "approval_required_noninteractive:missing_accepted_approval_provenance";
-        this.failClaimedRunBeforeStart(run, options.leaseOwner, now, error, {
-          approvalDecision,
-          approvalProvenance: {
-            allowed: false,
-            reason: "missing_accepted_audit_event",
-            approvalRefIds,
-          },
-        });
-        throw new Error(error);
-      }
-    }
-
     const started = this.db
       .prepare(
         `UPDATE agent_schedule_runs
@@ -559,25 +472,44 @@ export class AgentScheduleStore {
     const schedule = this.getSchedule(input.scheduleId);
     if (!schedule) throw new Error(`Schedule not found: ${input.scheduleId}`);
     if (schedule.status === "archived") throw new Error(`Schedule archived: ${input.scheduleId}`);
-    const approvalRefs = schedule.action.approvalRefs ?? [];
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO agent_schedule_runs (
-           id, schedule_id, kind, slot_key, idempotency_key, status,
-           action_snapshot_json, approval_refs_json, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
-      )
-      .run(
-        generateId(8),
-        schedule.id,
-        input.kind,
-        input.slotKey,
-        input.idempotencyKey,
-        JSON.stringify(schedule.action),
-        JSON.stringify(approvalRefs),
-        input.now,
-        input.now,
-      );
+    if (this.runTableHasRemovedApprovalRefsColumn) {
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO agent_schedule_runs (
+             id, schedule_id, kind, slot_key, idempotency_key, status,
+             action_snapshot_json, approval_refs_json, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+        )
+        .run(
+          generateId(8),
+          schedule.id,
+          input.kind,
+          input.slotKey,
+          input.idempotencyKey,
+          JSON.stringify(schedule.action),
+          JSON.stringify([]),
+          input.now,
+          input.now,
+        );
+    } else {
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO agent_schedule_runs (
+             id, schedule_id, kind, slot_key, idempotency_key, status,
+             action_snapshot_json, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        )
+        .run(
+          generateId(8),
+          schedule.id,
+          input.kind,
+          input.slotKey,
+          input.idempotencyKey,
+          JSON.stringify(schedule.action),
+          input.now,
+          input.now,
+        );
+    }
 
     const row = this.db
       .prepare("SELECT * FROM agent_schedule_runs WHERE idempotency_key = ?")
@@ -601,45 +533,6 @@ export class AgentScheduleStore {
     return this.getSchedule(scheduleId);
   }
 
-  private failClaimedRunBeforeStart(
-    run: AgentScheduleRun,
-    leaseOwner: string,
-    now: number,
-    error: string,
-    result: unknown,
-  ): void {
-    this.db
-      .prepare(
-        `UPDATE agent_schedule_runs
-         SET status = 'failed', completed_at = ?, updated_at = ?, error = ?, result_json = ?
-         WHERE id = ? AND status = 'claimed' AND lease_owner = ?`,
-      )
-      .run(now, now, error, JSON.stringify(result), run.id, leaseOwner);
-  }
-
-  private hasAcceptedApprovalProvenance(
-    run: AgentScheduleRun,
-    schedule: AgentSchedule,
-    approvalRefIds: readonly string[],
-  ): boolean {
-    if (approvalRefIds.length === 0) return false;
-    const placeholders = approvalRefIds.map(() => "?").join(",");
-    const row = this.db
-      .prepare(
-        `SELECT id
-         FROM server_agent_extension_audit_events
-         WHERE event_type = 'approval_ref.accepted'
-           AND approval_ref_id IN (${placeholders})
-           AND workspace_id = ?
-           AND (schedule_id = ? OR run_id = ?)
-         LIMIT 1`,
-      )
-      .get(...approvalRefIds, run.actionSnapshot.workspaceId, schedule.id, run.id) as
-      | { id: string }
-      | undefined;
-    return row !== undefined;
-  }
-
   private ensureSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agent_schedules (
@@ -661,7 +554,6 @@ export class AgentScheduleStore {
         idempotency_key TEXT NOT NULL,
         status TEXT NOT NULL,
         action_snapshot_json TEXT NOT NULL,
-        approval_refs_json TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         claimed_at INTEGER,
@@ -681,38 +573,14 @@ export class AgentScheduleStore {
         ON agent_schedule_runs(status, lease_expires_at, created_at);
       CREATE INDEX IF NOT EXISTS agent_schedule_runs_schedule_idx
         ON agent_schedule_runs(schedule_id, created_at);
-
-      CREATE TABLE IF NOT EXISTS server_agent_extension_audit_events (
-        id TEXT PRIMARY KEY,
-        created_at INTEGER NOT NULL,
-        workspace_id TEXT,
-        schedule_id TEXT,
-        run_id TEXT,
-        session_id TEXT,
-        event_type TEXT NOT NULL,
-        approval_ref_id TEXT,
-        extension_scope_id TEXT,
-        extension_display_name TEXT,
-        display_json TEXT,
-        provenance_json TEXT,
-        envelope_json TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS server_agent_extension_audit_events_schedule_idx
-        ON server_agent_extension_audit_events (schedule_id, created_at ASC, id ASC);
-
-      CREATE INDEX IF NOT EXISTS server_agent_extension_audit_events_run_idx
-        ON server_agent_extension_audit_events (run_id, created_at ASC, id ASC);
-
-      CREATE INDEX IF NOT EXISTS server_agent_extension_audit_events_approval_ref_idx
-        ON server_agent_extension_audit_events (
-          approval_ref_id,
-          event_type,
-          workspace_id,
-          schedule_id,
-          run_id
-        );
     `);
+  }
+
+  private hasRunTableColumn(columnName: string): boolean {
+    const rows = this.db.prepare("PRAGMA table_info(agent_schedule_runs)").all() as Array<{
+      name?: string;
+    }>;
+    return rows.some((row) => row.name === columnName);
   }
 }
 
@@ -722,7 +590,7 @@ function scheduleFromRow(row: ScheduleRow): AgentSchedule {
     name: row.name,
     status: row.status,
     trigger: parseJson<AgentScheduleTrigger>(row.trigger_json),
-    action: parseJson<AgentScheduleAction>(row.action_json),
+    action: dropRemovedActionFields(parseJson<AgentScheduleAction>(row.action_json)),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.archived_at === null ? {} : { archivedAt: row.archived_at }),
@@ -737,8 +605,9 @@ function runFromRow(row: RunRow): AgentScheduleRun {
     slotKey: row.slot_key,
     idempotencyKey: row.idempotency_key,
     status: row.status,
-    actionSnapshot: parseJson<AgentScheduleAction>(row.action_snapshot_json),
-    approvalRefs: parseJson<ApprovalRefs>(row.approval_refs_json),
+    actionSnapshot: dropRemovedActionFields(
+      parseJson<AgentScheduleAction>(row.action_snapshot_json),
+    ),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.claimed_at === null ? {} : { claimedAt: row.claimed_at }),
@@ -758,7 +627,6 @@ function scheduleSummary(schedule: AgentSchedule): AgentScheduleSummary {
     status: schedule.status,
     trigger: schedule.trigger,
     action: actionSummary(schedule.action),
-    approvalRefCount: schedule.action.approvalRefs?.length ?? 0,
     createdAt: schedule.createdAt,
     updatedAt: schedule.updatedAt,
     ...(schedule.archivedAt === undefined ? {} : { archivedAt: schedule.archivedAt }),
@@ -774,7 +642,6 @@ function runSummary(run: AgentScheduleRun): AgentScheduleRunSummary {
     idempotencyKey: run.idempotencyKey,
     status: run.status,
     action: actionSummary(run.actionSnapshot),
-    approvalRefCount: run.approvalRefs.length,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     ...(run.claimedAt === undefined ? {} : { claimedAt: run.claimedAt }),
@@ -834,23 +701,27 @@ function validateTrigger(trigger: AgentScheduleTrigger): AgentScheduleTrigger {
 }
 
 function validateAction(action: AgentScheduleAction): AgentScheduleAction {
-  const workspaceId = action.workspaceId.trim();
+  const cleanAction = dropRemovedActionFields(action);
+  const workspaceId = cleanAction.workspaceId.trim();
   if (!workspaceId) throw new Error("Schedule action workspaceId is required");
-  if (!action.prompt.trim()) throw new Error("Schedule action prompt is required");
-  if (action.approvalRefs !== undefined && !Array.isArray(action.approvalRefs)) {
-    throw new Error("Schedule approvalRefs must be an array");
-  }
-  if (action.type === "new_session") {
-    const agentId = action.agentId?.trim();
-    const next: AgentScheduleAction = { ...action, workspaceId };
+  if (!cleanAction.prompt.trim()) throw new Error("Schedule action prompt is required");
+  if (cleanAction.type === "new_session") {
+    const agentId = cleanAction.agentId?.trim();
+    const next: AgentScheduleAction = { ...cleanAction, workspaceId };
     if (agentId) next.agentId = agentId;
     else delete next.agentId;
     return next;
   }
-  if (!action.sessionId.trim()) {
+  if (!cleanAction.sessionId.trim()) {
     throw new Error("Existing-session schedule action sessionId is required");
   }
-  return { ...action, workspaceId, sessionId: action.sessionId.trim() };
+  return { ...cleanAction, workspaceId, sessionId: cleanAction.sessionId.trim() };
+}
+
+function dropRemovedActionFields(action: AgentScheduleAction): AgentScheduleAction {
+  const actionRecord = { ...(action as AgentScheduleAction & { approvalRefs?: unknown }) };
+  delete actionRecord.approvalRefs;
+  return actionRecord;
 }
 
 function validateKeyPart(value: string, label: string): string {

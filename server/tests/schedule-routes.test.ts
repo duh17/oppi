@@ -322,7 +322,7 @@ describe("schedule routes", () => {
     ]);
   });
 
-  it("records approval provenance for automatic runs created through the route", async () => {
+  it("creates schedules whose due runs dispatch automatically", async () => {
     const dispatch = createScheduleRoutes(ctx, helpers);
     const path = "/schedules";
 
@@ -337,7 +337,6 @@ describe("schedule routes", () => {
           type: "new_session",
           workspaceId: workspace.id,
           prompt: "Run the daily review",
-          approvalRefs: ["approval://daily-review"],
         },
       }),
       res: {} as ServerResponse,
@@ -359,7 +358,7 @@ describe("schedule routes", () => {
       claimed?.id ?? "missing",
       {
         launchNewSession: vi.fn(async () => ({
-          sessionId: "sess-approved",
+          sessionId: "sess-scheduled",
           promptDispatch: "delivered",
         })),
         sendExistingSessionInput: vi.fn(),
@@ -370,7 +369,7 @@ describe("schedule routes", () => {
     expect(store.listRunSummaries(scheduleId ?? "")).toEqual([
       expect.objectContaining({
         status: "completed",
-        sessionId: "sess-approved",
+        sessionId: "sess-scheduled",
       }),
     ]);
   });

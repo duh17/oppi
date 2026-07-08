@@ -660,28 +660,6 @@ export class SessionSqliteStore {
         completed_at INTEGER NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS server_agent_extension_audit_events (
-        id TEXT PRIMARY KEY,
-        created_at INTEGER NOT NULL,
-        workspace_id TEXT,
-        schedule_id TEXT,
-        run_id TEXT,
-        session_id TEXT,
-        event_type TEXT NOT NULL,
-        approval_ref_id TEXT,
-        extension_scope_id TEXT,
-        extension_display_name TEXT,
-        display_json TEXT,
-        provenance_json TEXT,
-        envelope_json TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS server_agent_extension_audit_events_schedule_idx
-        ON server_agent_extension_audit_events (schedule_id, created_at ASC, id ASC);
-
-      CREATE INDEX IF NOT EXISTS server_agent_extension_audit_events_run_idx
-        ON server_agent_extension_audit_events (run_id, created_at ASC, id ASC);
-
       INSERT OR REPLACE INTO session_state_schema (key, value)
       VALUES ('version', '${SCHEMA_VERSION}');
     `);
