@@ -2,9 +2,9 @@
 import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
-import type { Storage } from "../../storage.js";
 import {
   localApiRequest,
+  type LocalApiConnection,
   type LocalApiHostResolvers,
   type LocalApiRequestOptions,
 } from "../local-api-client.js";
@@ -26,7 +26,7 @@ type AgentRow = {
 };
 
 export async function cmdAgent(
-  storage: Storage,
+  storage: LocalApiConnection,
   action: string | undefined,
   positional: string[],
   flags: Record<string, string>,

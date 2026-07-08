@@ -1,9 +1,9 @@
 /* eslint-disable no-console */
 import * as c from "../../ansi.js";
-import type { Storage } from "../../storage.js";
 import type { Session } from "../../types.js";
 import {
   localApiRequest,
+  type LocalApiConnection,
   type LocalApiHostResolvers,
   type LocalApiRequestOptions,
 } from "../local-api-client.js";
@@ -74,7 +74,7 @@ const DEFAULT_SESSION_LIST_RECENT_DAYS = 3;
 const DAY_MS = 86_400_000;
 
 export async function cmdSession(
-  storage: Storage,
+  storage: LocalApiConnection,
   action: string | undefined,
   positional: string[],
   flags: Record<string, string>,
@@ -416,7 +416,7 @@ export async function cmdSession(
 }
 
 async function createSession(
-  storage: Storage,
+  storage: LocalApiConnection,
   flags: Record<string, string>,
   jsonOutput: boolean,
   hostResolvers: LocalApiHostResolvers,
@@ -637,7 +637,7 @@ async function listGenericSessions(
 }
 
 async function listSessions(
-  storage: Storage,
+  storage: LocalApiConnection,
   flags: Record<string, string>,
   call: SessionListApiCall,
   hostResolvers: LocalApiHostResolvers,

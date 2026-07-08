@@ -1,7 +1,10 @@
 /* eslint-disable no-console */
 import * as c from "../../ansi.js";
-import type { Storage } from "../../storage.js";
-import { localApiRequest, type LocalApiHostResolvers } from "../local-api-client.js";
+import {
+  localApiRequest,
+  type LocalApiConnection,
+  type LocalApiHostResolvers,
+} from "../local-api-client.js";
 import { codeValue, printDetails, writeJsonEnvelope } from "../output.js";
 import { apiStatus } from "../resources.js";
 
@@ -12,7 +15,7 @@ type WaitSession = {
 };
 
 export async function cmdWait(
-  storage: Storage,
+  storage: LocalApiConnection,
   target: string | undefined,
   positional: string[],
   flags: Record<string, string>,

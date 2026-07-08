@@ -14,6 +14,16 @@ const SERVER_TYPES_CONTRACT_FILE = "server/src/types.ts";
 const SERVER_TYPES_CONTRACT_BARREL_PREFIX = "./types/";
 const SERVER_SESSION_FACADE_FILE = "server/src/sessions.ts";
 const SERVER_MIRROR_SESSION_RESUME_FILE = "server/src/mirror-session-resume.ts";
+const SERVER_CLI_APP_STATE_API_FIRST_FILES = new Set([
+  "server/src/default-agent-tool.ts",
+  "server/src/cli/local-api-client.ts",
+  "server/src/cli/resources.ts",
+]);
+const SERVER_CLI_APP_STATE_API_FIRST_PREFIXES = ["server/src/cli/commands/"];
+const SERVER_CLI_APP_STATE_DB_IMPORT_TARGETS = new Set([
+  "server/src/storage.ts",
+  "server/src/sqlite-compat.ts",
+]);
 
 const SERVER_ROUTE_TO_ROUTE_ALLOWED_IMPORTERS = new Set(["server/src/routes/index.ts"]);
 const SERVER_ROUTE_TO_ROUTE_ALLOWED_TARGETS = new Set([
@@ -258,6 +268,20 @@ function isServerRouteFile(filePath) {
   return filePath.startsWith("server/src/routes/") && filePath.endsWith(".ts");
 }
 
+function isServerCliAppStateApiFirstFile(filePath) {
+  return (
+    SERVER_CLI_APP_STATE_API_FIRST_FILES.has(filePath) ||
+    SERVER_CLI_APP_STATE_API_FIRST_PREFIXES.some((prefix) => filePath.startsWith(prefix))
+  );
+}
+
+function isServerCliAppStateDbImportTarget(filePath) {
+  return (
+    SERVER_CLI_APP_STATE_DB_IMPORT_TARGETS.has(filePath) ||
+    filePath.startsWith("server/src/storage/")
+  );
+}
+
 function sortArchitectureViolations(violations) {
   return [...violations].sort((a, b) => {
     const aFile = a.file ?? a.importer ?? "";
@@ -396,6 +420,22 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
       const target = resolveRelativeModule(repoRoot, importer, entry.specifier);
       if (target === null) {
         continue;
+      }
+
+      if (isServerCliAppStateApiFirstFile(importer) && isServerCliAppStateDbImportTarget(target)) {
+        violations.push(
+          makeServerViolation({
+            rule: "cli-app-state-api-first",
+            importer,
+            target,
+            line: entry.line,
+            column: entry.column,
+            reason:
+              "CLI app-state commands must get Oppi state through the local HTTP API, not direct or transitive SQLite storage imports.",
+            remediation:
+              "Use the thin CLI connection config reader for local token/TLS settings and call local API helpers for app state.",
+          }),
+        );
       }
 
       if (

@@ -2,8 +2,11 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
 
-import type { Storage } from "../storage.js";
-import { localApiRequest, type LocalApiHostResolvers } from "./local-api-client.js";
+import {
+  localApiRequest,
+  type LocalApiConnection,
+  type LocalApiHostResolvers,
+} from "./local-api-client.js";
 
 export type CliWorkspace = {
   id: string;
@@ -21,7 +24,7 @@ export type CliWorktree = {
 };
 
 export async function listWorkspacesForCli(
-  storage: Storage,
+  storage: LocalApiConnection,
   hostResolvers: LocalApiHostResolvers = {},
 ): Promise<CliWorkspace[]> {
   const result = await localApiRequest<{ workspaces?: CliWorkspace[] }>(
@@ -34,7 +37,7 @@ export async function listWorkspacesForCli(
 }
 
 export async function resolveWorkspaceForCli(
-  storage: Storage,
+  storage: LocalApiConnection,
   reference: string,
   hostResolvers: LocalApiHostResolvers = {},
 ): Promise<CliWorkspace> {
@@ -63,7 +66,7 @@ export async function resolveWorkspaceForCli(
 }
 
 export async function resolveWorkspaceIdForCli(
-  storage: Storage,
+  storage: LocalApiConnection,
   reference: string,
   hostResolvers: LocalApiHostResolvers = {},
 ): Promise<string> {
@@ -71,7 +74,7 @@ export async function resolveWorkspaceIdForCli(
 }
 
 export async function inferWorkspaceIdFromCwdForCli(
-  storage: Storage,
+  storage: LocalApiConnection,
   cwd = process.cwd(),
   hostResolvers: LocalApiHostResolvers = {},
 ): Promise<string | undefined> {
@@ -92,7 +95,7 @@ export async function inferWorkspaceIdFromCwdForCli(
 }
 
 export async function listWorktreesForCli(
-  storage: Storage,
+  storage: LocalApiConnection,
   workspaceReference: string,
   hostResolvers: LocalApiHostResolvers = {},
 ): Promise<{ workspaceId: string; worktrees: CliWorktree[] }> {
@@ -110,7 +113,7 @@ export async function listWorktreesForCli(
 }
 
 export async function createWorktreeForCli(
-  storage: Storage,
+  storage: LocalApiConnection,
   workspaceReference: string,
   body: { branch: string; base?: string; path?: string },
   hostResolvers: LocalApiHostResolvers = {},
@@ -126,7 +129,7 @@ export async function createWorktreeForCli(
 }
 
 export async function openWorktreeForCli(
-  storage: Storage,
+  storage: LocalApiConnection,
   workspaceReference: string,
   body: { branch?: string; path?: string },
   hostResolvers: LocalApiHostResolvers = {},
@@ -142,7 +145,7 @@ export async function openWorktreeForCli(
 }
 
 export async function getWorktreeStatusForCli(
-  storage: Storage,
+  storage: LocalApiConnection,
   workspaceReference: string,
   worktreeId: string,
   hostResolvers: LocalApiHostResolvers = {},
@@ -167,7 +170,7 @@ export async function getWorktreeStatusForCli(
 }
 
 export async function previewWorktreeForCli(
-  storage: Storage,
+  storage: LocalApiConnection,
   workspaceReference: string,
   worktreeId: string,
   body: { into: string; mode?: string },
@@ -185,7 +188,7 @@ export async function previewWorktreeForCli(
 }
 
 export async function removeWorktreeForCli(
-  storage: Storage,
+  storage: LocalApiConnection,
   workspaceReference: string,
   worktreeId: string,
   force: boolean,
@@ -236,7 +239,7 @@ function dedupeWorkspacePathMatches(matches: WorkspacePathMatch[]): WorkspacePat
 }
 
 async function listWorkspaceWorktreePathMatches(
-  storage: Storage,
+  storage: LocalApiConnection,
   workspaces: CliWorkspace[],
   currentPath: string,
   hostResolvers: LocalApiHostResolvers,

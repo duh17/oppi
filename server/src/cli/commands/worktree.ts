@@ -1,7 +1,6 @@
 /* eslint-disable no-console */
 import * as c from "../../ansi.js";
-import type { Storage } from "../../storage.js";
-import type { LocalApiHostResolvers } from "../local-api-client.js";
+import type { LocalApiConnection, LocalApiHostResolvers } from "../local-api-client.js";
 import {
   codeValue,
   nonEmptyDetails,
@@ -21,7 +20,7 @@ import {
 } from "../resources.js";
 
 export async function cmdWorktree(
-  storage: Storage,
+  storage: LocalApiConnection,
   action: string | undefined,
   positional: string[],
   flags: Record<string, string>,

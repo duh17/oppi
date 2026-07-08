@@ -2,9 +2,9 @@
 import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
-import type { Storage } from "../../storage.js";
 import {
   localApiRequest,
+  type LocalApiConnection,
   type LocalApiHostResolvers,
   type LocalApiRequestOptions,
 } from "../local-api-client.js";
@@ -55,7 +55,7 @@ function scheduleTriggerFromFlags(flags: Record<string, string>): Record<string,
 }
 
 async function newSessionAction(
-  storage: Storage,
+  storage: LocalApiConnection,
   flags: Record<string, string>,
   prompt: string,
   hostResolvers: LocalApiHostResolvers,
@@ -76,7 +76,7 @@ async function newSessionAction(
 }
 
 async function existingSessionAction(
-  storage: Storage,
+  storage: LocalApiConnection,
   sessionId: string,
   prompt: string,
   flags: Record<string, string>,
@@ -121,7 +121,7 @@ function savedAgentReference(agent: string | undefined): string | undefined {
 }
 
 export async function cmdSchedule(
-  storage: Storage,
+  storage: LocalApiConnection,
   action: string | undefined,
   positional: string[],
   flags: Record<string, string>,
