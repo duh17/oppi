@@ -2,14 +2,12 @@ import type { ServerResponse } from "node:http";
 
 import { createAgentScheduleDispatchHooks } from "../agent-schedule-dispatch.js";
 import type {
-  AgentSchedule,
   AgentScheduleRun,
   AgentScheduleStore,
   AgentScheduleSummary,
   CreateAgentScheduleRequest,
 } from "../agent-schedules.js";
 import { safeErrorMessage } from "../log-utils.js";
-import { liveAcceptedApprovalRefAuditIds } from "../schedule-approval.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const MANUAL_RUN_LEASE_MS = 10 * 60_000;
@@ -41,7 +39,6 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         const normalizedBody = normalizeScheduleRequestTargets(body);
         const now = Date.now();
         const schedule = schedules.createSchedule(normalizedBody, now);
-        recordAcceptedApprovalProvenance(schedule, now);
         helpers.json(res, { schedule: schedules.getScheduleSummary(schedule.id) }, 201);
       } catch (error) {
         helpers.error(res, 400, safeErrorMessage(error));
@@ -85,9 +82,6 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         if (!updated) {
           helpers.error(res, 404, "Schedule not found");
           return true;
-        }
-        if (body.action?.approvalRefs !== undefined) {
-          recordAcceptedApprovalProvenance(updated, now);
         }
         helpers.json(res, { schedule: schedules.getScheduleSummary(updated.id) });
       } catch (error) {
@@ -222,19 +216,6 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
 
     return false;
   };
-
-  function recordAcceptedApprovalProvenance(schedule: AgentSchedule, now: number): void {
-    const approvalRefIds = liveAcceptedApprovalRefAuditIds(schedule.action.approvalRefs, now);
-    for (const approvalRefId of approvalRefIds) {
-      getSchedules().recordAcceptedApprovalProvenance({
-        workspaceId: schedule.action.workspaceId,
-        scheduleId: schedule.id,
-        approvalRefId,
-        now,
-        details: { source: "schedule_route" },
-      });
-    }
-  }
 
   function filterScheduleSummaries(
     schedules: AgentScheduleSummary[],

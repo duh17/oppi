@@ -116,7 +116,7 @@ graph TD
 | `session-trace-service.ts`                      | trace source precedence, tool output lookup, overall diffs, changed-file summaries, and raw changed-file read policy | streaming bytes to HTTP responses          |
 | `pi-model-auth-service.ts`                      | Pi model/auth compatibility calls for title generation and token pricing                                             | session lifecycle or route behavior        |
 | `agent-launch-service.ts`                       | idempotent saved-Agent and schedule launches into managed sessions                                                   | HTTP response mapping                      |
-| `agent-schedules.ts` + `agent-schedule-runner.ts` | durable schedule definitions, due-run materialization, lease claiming, dispatch, run history, and approval provenance | Apple UI routing                           |
+| `agent-schedules.ts` + `agent-schedule-runner.ts` | durable schedule definitions, due-run materialization, lease claiming, dispatch, and run history | Apple UI routing                           |
 | `app-event-stream.ts`                           | global app-event WebSocket, app-event allowlist, row and extension UI mapping, workspace invalidation mapping        | focused timeline replay or command routing |
 | `stream.ts` + `ws-message-handler.ts`           | focused session and audio WebSocket framing, fan-out, client-message routing                                         | workspace list data flow                   |
 | `runtime-router.ts`                             | runtime ownership dispatch through `SessionRuntimes`                                                                 | shared Pi event projection semantics       |
@@ -134,7 +134,7 @@ graph TD
 - `routes/workspaces.ts` — workspace catalog, CRUD, Git status, worktrees, quick actions, review comments.
 - `routes/sessions.ts` — session HTTP boundary for workspace lists, create/import, resume, stop, fork, delete, traces, catch-up, tool output, session files, and diffs. Lifecycle, list, and trace/file policy is delegated to application services.
 - `routes/agents.ts` — saved Agent definitions and saved-Agent session launches.
-- `routes/schedules.ts` — schedule CRUD, manual runs, run history, pause/resume/archive, and route-owned approval provenance.
+- `routes/schedules.ts` — schedule CRUD, manual runs, run history, and pause/resume/archive.
 - `routes/uploads.ts` — chat attachment upload records and content.
 - `routes/workspace-files.ts` — workspace path, directory, and raw-file routes.
 - `routes/themes.ts`, `routes/skills.ts`, `routes/provider-auth.ts`, `routes/telemetry.ts`, and E2E harness routes.
@@ -179,7 +179,7 @@ A stopped, disconnected mirror session with a canonical session file can be prom
 
 Saved Agent routes persist reusable definitions. Launch-time inputs such as workspace, worktree, prompt, model override, and session name flow through `AgentLaunchService`, which owns idempotency, launch recovery, and prompt dispatch into managed sessions.
 
-Schedules persist a trigger plus an action. `AgentScheduleRunner` scans active schedules, materializes due slots, claims due runs with a lease, and dispatches approved automatic runs through the same launch hooks used by manual schedule runs. Automatic runs fail closed unless the schedule action carries a live accepted approval reference; the schedule store records approval provenance in the extension-audit table.
+Schedules persist a trigger plus an action. `AgentScheduleRunner` scans active schedules, materializes due slots, claims due runs with a lease, and dispatches automatic runs through the same launch hooks used by manual schedule runs. Pause or archive a schedule to stop future automatic runs.
 
 ## Terminal mirror runtime
 

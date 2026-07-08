@@ -356,38 +356,28 @@ enum AgentScheduleAction: Sendable, Equatable {
         agentId: String?,
         model: String?,
         worktreeId: String?,
-        name: String?,
-        approvalRefs: [JSONValue]?
+        name: String?
     )
     case existingSession(
         workspaceId: String,
         sessionId: String,
         prompt: String,
-        streamingBehavior: ExistingSessionStreamingBehavior?,
-        approvalRefs: [JSONValue]?
+        streamingBehavior: ExistingSessionStreamingBehavior?
     )
 
     var workspaceId: String {
         switch self {
-        case .newSession(let workspaceId, _, _, _, _, _, _),
-             .existingSession(let workspaceId, _, _, _, _):
+        case .newSession(let workspaceId, _, _, _, _, _),
+             .existingSession(let workspaceId, _, _, _):
             return workspaceId
         }
     }
 
     var prompt: String {
         switch self {
-        case .newSession(_, let prompt, _, _, _, _, _),
-             .existingSession(_, _, let prompt, _, _):
+        case .newSession(_, let prompt, _, _, _, _),
+             .existingSession(_, _, let prompt, _):
             return prompt
-        }
-    }
-
-    var approvalRefs: [JSONValue]? {
-        switch self {
-        case .newSession(_, _, _, _, _, _, let approvalRefs),
-             .existingSession(_, _, _, _, let approvalRefs):
-            return approvalRefs
         }
     }
 
@@ -417,7 +407,7 @@ enum AgentScheduleActionKind: String, Codable, Sendable, Equatable {
 
 extension AgentScheduleAction: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, workspaceId, sessionId, prompt, agentId, model, worktreeId, name, streamingBehavior, approvalRefs
+        case type, workspaceId, sessionId, prompt, agentId, model, worktreeId, name, streamingBehavior
     }
 
     init(from decoder: Decoder) throws {
@@ -431,16 +421,14 @@ extension AgentScheduleAction: Codable {
                 agentId: try c.decodeIfPresent(String.self, forKey: .agentId),
                 model: try c.decodeIfPresent(String.self, forKey: .model),
                 worktreeId: try c.decodeIfPresent(String.self, forKey: .worktreeId),
-                name: try c.decodeIfPresent(String.self, forKey: .name),
-                approvalRefs: try c.decodeIfPresent([JSONValue].self, forKey: .approvalRefs)
+                name: try c.decodeIfPresent(String.self, forKey: .name)
             )
         case .existingSession:
             self = .existingSession(
                 workspaceId: try c.decode(String.self, forKey: .workspaceId),
                 sessionId: try c.decode(String.self, forKey: .sessionId),
                 prompt: try c.decode(String.self, forKey: .prompt),
-                streamingBehavior: try c.decodeIfPresent(ExistingSessionStreamingBehavior.self, forKey: .streamingBehavior),
-                approvalRefs: try c.decodeIfPresent([JSONValue].self, forKey: .approvalRefs)
+                streamingBehavior: try c.decodeIfPresent(ExistingSessionStreamingBehavior.self, forKey: .streamingBehavior)
             )
         }
     }
@@ -448,7 +436,7 @@ extension AgentScheduleAction: Codable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name, let approvalRefs):
+        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name):
             try c.encode(AgentScheduleActionKind.newSession, forKey: .type)
             try c.encode(workspaceId, forKey: .workspaceId)
             try c.encode(prompt, forKey: .prompt)
@@ -456,14 +444,12 @@ extension AgentScheduleAction: Codable {
             try c.encodeIfPresent(model, forKey: .model)
             try c.encodeIfPresent(worktreeId, forKey: .worktreeId)
             try c.encodeIfPresent(name, forKey: .name)
-            try c.encodeIfPresent(approvalRefs, forKey: .approvalRefs)
-        case .existingSession(let workspaceId, let sessionId, let prompt, let streamingBehavior, let approvalRefs):
+        case .existingSession(let workspaceId, let sessionId, let prompt, let streamingBehavior):
             try c.encode(AgentScheduleActionKind.existingSession, forKey: .type)
             try c.encode(workspaceId, forKey: .workspaceId)
             try c.encode(sessionId, forKey: .sessionId)
             try c.encode(prompt, forKey: .prompt)
             try c.encodeIfPresent(streamingBehavior, forKey: .streamingBehavior)
-            try c.encodeIfPresent(approvalRefs, forKey: .approvalRefs)
         }
     }
 }
@@ -482,7 +468,6 @@ struct AgentScheduleSummary: Identifiable, Sendable, Equatable {
     var status: AgentScheduleStatus
     var trigger: AgentScheduleTrigger
     var action: AgentScheduleActionSummary
-    var approvalRefCount: Int
     var createdAt: Date
     var updatedAt: Date
     var archivedAt: Date?
@@ -501,7 +486,7 @@ struct AgentSchedule: Identifiable, Sendable, Equatable {
 
 extension AgentScheduleSummary: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, name, status, trigger, action, approvalRefCount, createdAt, updatedAt, archivedAt
+        case id, name, status, trigger, action, createdAt, updatedAt, archivedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -511,7 +496,6 @@ extension AgentScheduleSummary: Codable {
         status = try c.decode(AgentScheduleStatus.self, forKey: .status)
         trigger = try c.decode(AgentScheduleTrigger.self, forKey: .trigger)
         action = try c.decode(AgentScheduleActionSummary.self, forKey: .action)
-        approvalRefCount = try c.decodeIfPresent(Int.self, forKey: .approvalRefCount) ?? 0
         createdAt = try c.decodeUnixMilliseconds(forKey: .createdAt)
         updatedAt = try c.decodeUnixMilliseconds(forKey: .updatedAt)
         archivedAt = try c.decodeUnixMillisecondsIfPresent(forKey: .archivedAt)
@@ -524,7 +508,6 @@ extension AgentScheduleSummary: Codable {
         try c.encode(status, forKey: .status)
         try c.encode(trigger, forKey: .trigger)
         try c.encode(action, forKey: .action)
-        try c.encode(approvalRefCount, forKey: .approvalRefCount)
         try c.encodeUnixMilliseconds(createdAt, forKey: .createdAt)
         try c.encodeUnixMilliseconds(updatedAt, forKey: .updatedAt)
         try c.encodeUnixMillisecondsIfPresent(archivedAt, forKey: .archivedAt)
@@ -581,7 +564,6 @@ struct AgentScheduleRunSummary: Identifiable, Sendable, Equatable {
     var idempotencyKey: String
     var status: AgentScheduleRunStatus
     var action: AgentScheduleActionSummary
-    var approvalRefCount: Int
     var createdAt: Date
     var updatedAt: Date
     var claimedAt: Date?
@@ -596,7 +578,7 @@ struct AgentScheduleRunSummary: Identifiable, Sendable, Equatable {
 
 extension AgentScheduleRunSummary: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, scheduleId, kind, slotKey, idempotencyKey, status, action, approvalRefCount
+        case id, scheduleId, kind, slotKey, idempotencyKey, status, action
         case createdAt, updatedAt, claimedAt, leaseOwner, leaseExpiresAt, startedAt, completedAt
         case sessionId, promptDispatch, error
     }
@@ -610,7 +592,6 @@ extension AgentScheduleRunSummary: Codable {
         idempotencyKey = try c.decode(String.self, forKey: .idempotencyKey)
         status = try c.decode(AgentScheduleRunStatus.self, forKey: .status)
         action = try c.decode(AgentScheduleActionSummary.self, forKey: .action)
-        approvalRefCount = try c.decodeIfPresent(Int.self, forKey: .approvalRefCount) ?? 0
         createdAt = try c.decodeUnixMilliseconds(forKey: .createdAt)
         updatedAt = try c.decodeUnixMilliseconds(forKey: .updatedAt)
         claimedAt = try c.decodeUnixMillisecondsIfPresent(forKey: .claimedAt)
@@ -632,7 +613,6 @@ extension AgentScheduleRunSummary: Codable {
         try c.encode(idempotencyKey, forKey: .idempotencyKey)
         try c.encode(status, forKey: .status)
         try c.encode(action, forKey: .action)
-        try c.encode(approvalRefCount, forKey: .approvalRefCount)
         try c.encodeUnixMilliseconds(createdAt, forKey: .createdAt)
         try c.encodeUnixMilliseconds(updatedAt, forKey: .updatedAt)
         try c.encodeUnixMillisecondsIfPresent(claimedAt, forKey: .claimedAt)

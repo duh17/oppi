@@ -70,34 +70,12 @@ describe("agent schedule runner", () => {
     };
   }
 
-  function recordAcceptedApprovalEvent(input: {
-    approvalRefId: string;
-    scheduleId: string;
-    workspaceId?: string;
-  }): void {
-    Reflect.get(store, "db")
-      .prepare(
-        `INSERT INTO server_agent_extension_audit_events (
-           id, created_at, workspace_id, schedule_id, event_type, approval_ref_id, envelope_json
-         ) VALUES (?, ?, ?, ?, 'approval_ref.accepted', ?, ?)`,
-      )
-      .run(
-        `audit:${input.approvalRefId}:${input.scheduleId}`,
-        1,
-        input.workspaceId ?? "ws-1",
-        input.scheduleId,
-        input.approvalRefId,
-        JSON.stringify({ eventType: "approval_ref.accepted", approvalRefId: input.approvalRefId }),
-      );
-  }
-
   function action(prompt = "Run the checks"): AgentScheduleAction {
     return {
       type: "new_session",
       workspaceId: workspace.id,
       prompt,
       name: "Scheduled check",
-      approvalRefs: ["approval://schedule"],
     };
   }
 
@@ -110,7 +88,6 @@ describe("agent schedule runner", () => {
       },
       500,
     );
-    recordAcceptedApprovalEvent({ approvalRefId: "approval://schedule", scheduleId: schedule.id });
     const runner = new AgentScheduleRunner({
       storage: storage(),
       sessions: { startSession, sendPrompt },
@@ -143,7 +120,6 @@ describe("agent schedule runner", () => {
       },
       500,
     );
-    recordAcceptedApprovalEvent({ approvalRefId: "approval://schedule", scheduleId: schedule.id });
     store.createManualRun(schedule.id, "human-button", 1_000);
     const runner = new AgentScheduleRunner({
       storage: storage(),

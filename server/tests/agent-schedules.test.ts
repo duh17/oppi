@@ -29,7 +29,6 @@ describe("agent schedule durable core", () => {
       workspaceId: "ws-1",
       prompt: "Run the checks",
       model: "openai-codex/gpt-5.5",
-      approvalRefs: [{ ref: "approval://local/one", label: "Local approval" }],
     };
 
     return store.createSchedule({
@@ -38,31 +37,6 @@ describe("agent schedule durable core", () => {
       action,
       ...overrides,
     });
-  }
-
-  function recordAcceptedApprovalEvent(input: {
-    approvalRefId: string;
-    scheduleId?: string;
-    runId?: string;
-    workspaceId?: string;
-    createdAt?: number;
-  }): void {
-    const createdAt = input.createdAt ?? 1;
-    Reflect.get(store, "db")
-      .prepare(
-        `INSERT INTO server_agent_extension_audit_events (
-           id, created_at, workspace_id, schedule_id, run_id, event_type, approval_ref_id, envelope_json
-         ) VALUES (?, ?, ?, ?, ?, 'approval_ref.accepted', ?, ?)`,
-      )
-      .run(
-        `audit:${createdAt}:${input.approvalRefId}:${input.scheduleId ?? ""}:${input.runId ?? ""}`,
-        createdAt,
-        input.workspaceId ?? "ws-1",
-        input.scheduleId ?? null,
-        input.runId ?? null,
-        input.approvalRefId,
-        JSON.stringify({ eventType: "approval_ref.accepted", approvalRefId: input.approvalRefId }),
-      );
   }
 
   it("creates schedules with at, every, and cron trigger shapes and concrete time zones", () => {
@@ -101,6 +75,27 @@ describe("agent schedule durable core", () => {
         trigger: { type: "cron", expression: "0 9 * * *", timeZone: "Mars/Phobos" },
       }),
     ).toThrow("Schedule timeZone is invalid: Mars/Phobos");
+  });
+
+  it("drops removed approval fields from schedule actions", () => {
+    const schedule = createSchedule({
+      action: {
+        type: "new_session",
+        workspaceId: "ws-1",
+        prompt: "Run automatically",
+        approvalRefs: ["obsolete"],
+      } as AgentScheduleAction & { approvalRefs: string[] },
+    });
+    const run = store.createDueRun(schedule.id, "at:1000");
+
+    const runColumns = Reflect.get(store, "db")
+      .prepare("PRAGMA table_info(agent_schedule_runs)")
+      .all() as Array<{ name?: string }>;
+
+    expect(schedule.action).not.toHaveProperty("approvalRefs");
+    expect(store.getSchedule(schedule.id)?.action).not.toHaveProperty("approvalRefs");
+    expect(run.actionSnapshot).not.toHaveProperty("approvalRefs");
+    expect(runColumns.map((column) => column.name)).not.toContain("approval_refs_json");
   });
 
   it("manual run creates one run with a request id idempotency key", () => {
@@ -145,7 +140,7 @@ describe("agent schedule durable core", () => {
     ]);
   });
 
-  it("stores frozen action snapshots and opaque approval refs on runs", () => {
+  it("stores frozen action snapshots on runs", () => {
     const schedule = createSchedule();
     const run = store.createManualRun(schedule.id, "snap-1");
 
@@ -155,9 +150,6 @@ describe("agent schedule durable core", () => {
 
     const reloaded = store.getRun(run.id);
     expect(reloaded?.actionSnapshot).toEqual(schedule.action);
-    expect(reloaded?.approvalRefs).toEqual([
-      { ref: "approval://local/one", label: "Local approval" },
-    ]);
   });
 
   it("list, get, and runs expose redacted summaries for history", () => {
@@ -168,7 +160,6 @@ describe("agent schedule durable core", () => {
         sessionId: "sess-1",
         prompt: "secret prompt body",
         streamingBehavior: "followUp",
-        approvalRefs: [{ token: "opaque" }],
       },
     });
     const run = store.createManualRun(schedule.id, "history-1");
@@ -186,7 +177,7 @@ describe("agent schedule durable core", () => {
       }),
     ]);
     expect(store.getScheduleSummary(schedule.id)).toEqual(
-      expect.objectContaining({ trigger: schedule.trigger, approvalRefCount: 1 }),
+      expect.objectContaining({ trigger: schedule.trigger }),
     );
     expect(store.listRunSummaries(schedule.id)).toEqual([
       expect.objectContaining({
@@ -255,7 +246,6 @@ describe("agent schedule durable core", () => {
         workspaceId: "ws-1",
         sessionId: "sess-1",
         prompt: "Continue",
-        approvalRefs: ["opaque"],
       },
     });
     const newRun = store.claimReadyRuns({
@@ -308,87 +298,10 @@ describe("agent schedule durable core", () => {
     expect(store.getRun(existingRun.id)?.status).toBe("completed");
   });
 
-  it("fails closed for due runs without an accepted extension approval ref", async () => {
+  it("dispatches due runs for active schedules", async () => {
     const schedule = createSchedule({
-      action: { type: "new_session", workspaceId: "ws-1", prompt: "Run without approval" },
+      action: { type: "new_session", workspaceId: "ws-1", prompt: "Run automatically" },
     });
-    const run = store.claimReadyRuns({
-      now: 1_000,
-      ownerId: "worker",
-      leaseMs: 10_000,
-      limit: 1,
-      runIds: [store.createDueRun(schedule.id, "at:1000").id],
-    })[0];
-    const launch = vi.fn(async () => ({ sessionId: "should-not-run" }));
-
-    await expect(
-      store.dispatchClaimedRun(
-        run.id,
-        {
-          launchNewSession: launch,
-          sendExistingSessionInput: async () => {
-            throw new Error("unexpected existing-session hook");
-          },
-        },
-        { leaseOwner: "worker", now: 1_000 },
-      ),
-    ).rejects.toThrow("approval_required_noninteractive");
-
-    expect(launch).not.toHaveBeenCalled();
-    expect(store.getRun(run.id)).toMatchObject({
-      status: "failed",
-      error: "approval_required_noninteractive:missing_accepted_approval_ref",
-    });
-  });
-
-  it("rejects scheduled approval refs without matching accepted audit provenance", async () => {
-    const schedule = createSchedule({
-      action: {
-        type: "new_session",
-        workspaceId: "ws-1",
-        prompt: "Run with forged approval",
-        approvalRefs: ["approval://forged"],
-      },
-    });
-    const run = store.claimReadyRuns({
-      now: 1_000,
-      ownerId: "worker",
-      leaseMs: 10_000,
-      limit: 1,
-      runIds: [store.createDueRun(schedule.id, "at:1000").id],
-    })[0];
-    const launch = vi.fn(async () => ({ sessionId: "should-not-run" }));
-
-    await expect(
-      store.dispatchClaimedRun(
-        run.id,
-        {
-          launchNewSession: launch,
-          sendExistingSessionInput: async () => {
-            throw new Error("unexpected existing-session hook");
-          },
-        },
-        { leaseOwner: "worker", now: 1_000 },
-      ),
-    ).rejects.toThrow("approval_required_noninteractive:missing_accepted_approval_provenance");
-
-    expect(launch).not.toHaveBeenCalled();
-    expect(store.getRun(run.id)).toMatchObject({
-      status: "failed",
-      error: "approval_required_noninteractive:missing_accepted_approval_provenance",
-    });
-  });
-
-  it("dispatches scheduled runs with matching accepted audit provenance", async () => {
-    const schedule = createSchedule({
-      action: {
-        type: "new_session",
-        workspaceId: "ws-1",
-        prompt: "Run with accepted approval",
-        approvalRefs: ["approval://accepted"],
-      },
-    });
-    recordAcceptedApprovalEvent({ approvalRefId: "approval://accepted", scheduleId: schedule.id });
     const run = store.claimReadyRuns({
       now: 1_000,
       ownerId: "worker",
@@ -413,55 +326,13 @@ describe("agent schedule durable core", () => {
     expect(store.getRun(run.id)).toMatchObject({ status: "completed" });
   });
 
-  it("rejects scheduled approval provenance from another schedule", async () => {
-    const other = createSchedule({ name: "Other schedule" });
-    const schedule = createSchedule({
-      name: "Target schedule",
-      action: {
-        type: "new_session",
-        workspaceId: "ws-1",
-        prompt: "Run with mismatched approval",
-        approvalRefs: ["approval://shared"],
-      },
-    });
-    recordAcceptedApprovalEvent({ approvalRefId: "approval://shared", scheduleId: other.id });
-    const run = store.claimReadyRuns({
-      now: 1_000,
-      ownerId: "worker",
-      leaseMs: 10_000,
-      limit: 1,
-      runIds: [store.createDueRun(schedule.id, "at:1000").id],
-    })[0];
-    const launch = vi.fn(async () => ({ sessionId: "should-not-run" }));
-
-    await expect(
-      store.dispatchClaimedRun(
-        run.id,
-        {
-          launchNewSession: launch,
-          sendExistingSessionInput: async () => {
-            throw new Error("unexpected existing-session hook");
-          },
-        },
-        { leaseOwner: "worker", now: 1_000 },
-      ),
-    ).rejects.toThrow("approval_required_noninteractive:missing_accepted_approval_provenance");
-
-    expect(launch).not.toHaveBeenCalled();
-  });
-
   it("prevents stale lease owners from dispatching reclaimed runs", async () => {
     const schedule = createSchedule({
       action: {
         type: "new_session",
         workspaceId: "ws-1",
         prompt: "Run once",
-        approvalRefs: ["approval://schedule/run"],
       },
-    });
-    recordAcceptedApprovalEvent({
-      approvalRefId: "approval://schedule/run",
-      scheduleId: schedule.id,
     });
     const runId = store.createDueRun(schedule.id, "at:1000").id;
     const firstClaim = store.claimReadyRuns({
@@ -514,12 +385,7 @@ describe("agent schedule durable core", () => {
         type: "new_session",
         workspaceId: "ws-1",
         prompt: "Run once",
-        approvalRefs: ["approval://schedule/run"],
       },
-    });
-    recordAcceptedApprovalEvent({
-      approvalRefId: "approval://schedule/run",
-      scheduleId: schedule.id,
     });
     const runId = store.createDueRun(schedule.id, "at:1000").id;
     const firstClaim = store.claimReadyRuns({
@@ -566,7 +432,6 @@ describe("agent schedule durable core", () => {
         type: "new_session",
         workspaceId: "ws-1",
         prompt: "Recover me",
-        approvalRefs: ["approval://schedule/run"],
       },
     });
     const run = store.claimReadyRuns({

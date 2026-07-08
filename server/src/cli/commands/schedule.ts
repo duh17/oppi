@@ -63,7 +63,6 @@ async function newSessionAction(
   const workspaceRef = flags.workspace?.trim();
   if (!workspaceRef) throw new Error("--workspace or --session is required");
   const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef, hostResolvers);
-  const approvalRefs = approvalRefsFromFlags(flags);
   const agentId = savedAgentReference(flags.agent);
   return {
     type: "new_session",
@@ -73,7 +72,6 @@ async function newSessionAction(
     ...(flags.model ? { model: flags.model } : {}),
     ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
     ...(flags.name ? { name: flags.name } : {}),
-    ...(approvalRefs ? { approvalRefs } : {}),
   };
 }
 
@@ -93,13 +91,11 @@ async function existingSessionAction(
   const workspaceId = result.session?.workspaceId;
   if (!workspaceId)
     throw new Error("Session has no workspaceId; cannot create existing-session schedule");
-  const approvalRefs = approvalRefsFromFlags(flags);
   return {
     type: "existing_session",
     workspaceId,
     sessionId,
     prompt,
-    ...(approvalRefs ? { approvalRefs } : {}),
   };
 }
 
@@ -114,29 +110,6 @@ function parseJsonFile(path: string): Record<string, unknown> {
 function querySuffix(params: URLSearchParams): string {
   const query = params.toString();
   return query ? `?${query}` : "";
-}
-
-function approvalRefsFromFlags(
-  flags: Record<string, string>,
-): Record<string, unknown>[] | undefined {
-  const raw = flags["approval-ref"]?.trim();
-  if (!raw) return undefined;
-  const refs = raw
-    .split(",")
-    .map((ref) => ref.trim())
-    .filter((ref) => ref.length > 0);
-  if (refs.length === 0) return undefined;
-  const now = Date.now();
-  return refs.map((ref) => ({
-    id: ref,
-    ref,
-    status: "accepted",
-    acceptedAt: now,
-    provenance: {
-      extensionDisplayName: "Oppi CLI",
-      recordedAt: now,
-    },
-  }));
 }
 
 function savedAgentReference(agent: string | undefined): string | undefined {
