@@ -288,6 +288,32 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
+  it("flags direct DB/storage imports in CLI app-state API clients", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-cli-api-first-"));
+
+    try {
+      write(
+        join(repoRoot, "server/src/cli/commands/workspace.ts"),
+        'import type { Storage } from "../../storage.js";\nexport type WorkspaceStorage = Storage;\n',
+      );
+      write(join(repoRoot, "server/src/storage.ts"), "export class Storage {}\n");
+
+      const violations = findServerLayerViolations(repoRoot);
+
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "cli-app-state-api-first",
+            file: "server/src/cli/commands/workspace.ts",
+            target: "server/src/storage.ts",
+          }),
+        ]),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("flags mirror resume imports outside lifecycle/open policy modules", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-mirror-resume-"));
 

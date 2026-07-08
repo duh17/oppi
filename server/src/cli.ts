@@ -45,6 +45,7 @@ import { cmdSession } from "./cli/commands/session.js";
 import { cmdWait } from "./cli/commands/wait.js";
 import { cmdWorkspace } from "./cli/commands/workspace.js";
 import { cmdWorktree } from "./cli/commands/worktree.js";
+import { createCliConnectionConfig, type CliConnectionConfig } from "./cli/connection-config.js";
 import { helpTopicToJson, renderHelpTopic, resolveHelpTopic } from "./cli/help.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
@@ -360,7 +361,7 @@ async function cmdPair(
   }
 }
 
-function cmdStatus(storage: Storage): void {
+function cmdStatus(storage: CliConnectionConfig): void {
   printHeader();
 
   const config = storage.getConfig();
@@ -406,9 +407,7 @@ function cmdStatus(storage: Storage): void {
     console.log(c.dim("  Not paired"));
     console.log(c.dim("  Run 'oppi pair'"));
   } else {
-    const sessions = storage.listSessions();
     console.log(`  Status:   ${c.green("Paired")}`);
-    console.log(`  Sessions: ${sessions.length}`);
   }
   console.log("");
 }
@@ -418,7 +417,7 @@ function isLoopbackHost(host: string): boolean {
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
-function cmdDoctor(storage: Storage): void {
+function cmdDoctor(storage: CliConnectionConfig): void {
   printHeader();
 
   type CheckLevel = "pass" | "warn" | "fail";
@@ -1495,7 +1494,8 @@ async function main(): Promise<void> {
     console.log(`${info.name} ${info.version}`);
     return;
   }
-  const storage = new Storage(process.env.OPPI_DATA_DIR || undefined);
+  const dataDir = process.env.OPPI_DATA_DIR || undefined;
+  const connection = createCliConnectionConfig(dataDir);
   const localApiHostResolvers = {
     tailscaleHostname: getTailscaleHostname,
     tailscaleIp: getTailscaleIp,
@@ -1504,12 +1504,12 @@ async function main(): Promise<void> {
   switch (command) {
     case "serve":
     case "start":
-      await cmdServe(storage, flags.host);
+      await cmdServe(new Storage(dataDir), flags.host);
       break;
 
     case "pair":
       await cmdPair(
-        storage,
+        new Storage(dataDir),
         positional[0],
         flags.host,
         flags["show-token"] === "true",
@@ -1518,43 +1518,67 @@ async function main(): Promise<void> {
       break;
 
     case "status":
-      cmdStatus(storage);
+      cmdStatus(connection);
       break;
 
     case "doctor":
-      cmdDoctor(storage);
+      cmdDoctor(connection);
       break;
 
     case "token":
-      cmdToken(storage, positional[0]);
+      cmdToken(new Storage(dataDir), positional[0]);
       break;
 
     case "config":
-      cmdConfig(storage, positional[0], positional.slice(1), flags);
+      cmdConfig(new Storage(dataDir), positional[0], positional.slice(1), flags);
       break;
 
     case "agent":
-      await cmdAgent(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      await cmdAgent(connection, positional[0], positional.slice(1), flags, localApiHostResolvers);
       break;
 
     case "workspace":
-      await cmdWorkspace(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      await cmdWorkspace(
+        connection,
+        positional[0],
+        positional.slice(1),
+        flags,
+        localApiHostResolvers,
+      );
       break;
 
     case "worktree":
-      await cmdWorktree(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      await cmdWorktree(
+        connection,
+        positional[0],
+        positional.slice(1),
+        flags,
+        localApiHostResolvers,
+      );
       break;
 
     case "session":
-      await cmdSession(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      await cmdSession(
+        connection,
+        positional[0],
+        positional.slice(1),
+        flags,
+        localApiHostResolvers,
+      );
       break;
 
     case "schedule":
-      await cmdSchedule(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      await cmdSchedule(
+        connection,
+        positional[0],
+        positional.slice(1),
+        flags,
+        localApiHostResolvers,
+      );
       break;
 
     case "wait":
-      await cmdWait(storage, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      await cmdWait(connection, positional[0], positional.slice(1), flags, localApiHostResolvers);
       break;
 
     default:

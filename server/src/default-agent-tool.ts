@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { Storage } from "./storage.js";
 import { isHelpFlag, parseCliArgs, type ParsedCliArgs } from "./cli/args.js";
+import { createCliConnectionConfig } from "./cli/connection-config.js";
 import { cmdAgent } from "./cli/commands/agent.js";
 import { cmdSchedule } from "./cli/commands/schedule.js";
 import { cmdSession } from "./cli/commands/session.js";
@@ -12,7 +12,7 @@ import { cmdWorkspace } from "./cli/commands/workspace.js";
 import { cmdWorktree } from "./cli/commands/worktree.js";
 import { helpTopicToJson, resolveHelpTopic } from "./cli/help.js";
 import { captureCliOutput, type CliJsonEnvelope } from "./cli/output.js";
-import type { LocalApiHostResolvers } from "./cli/local-api-client.js";
+import type { LocalApiConnection, LocalApiHostResolvers } from "./cli/local-api-client.js";
 import { tlsSchemeForConfig } from "./tls.js";
 
 export type OppiToolCommandKind = "read" | "approved-write";
@@ -252,7 +252,7 @@ export async function runOppiToolCommand(options: {
     return failureResult(classification.reason, 1);
   }
 
-  const storage = new Storage(options.dataDir);
+  const connection = createCliConnectionConfig(options.dataDir);
   const args = ensureJsonFlag(classification.args);
   const parsed = parseCliArgs(args);
 
@@ -261,12 +261,12 @@ export async function runOppiToolCommand(options: {
   }
 
   if (parsed.command === "status") {
-    return successResult(buildStatusEnvelope(storage));
+    return successResult(buildStatusEnvelope(connection));
   }
 
   const hostResolvers = buildLocalApiHostResolvers();
   const output = await captureCliJsonOutput(async () => {
-    await dispatchJsonCliCommand(storage, parsed, hostResolvers, options.cwd);
+    await dispatchJsonCliCommand(connection, parsed, hostResolvers, options.cwd);
   });
 
   const parsedOutput = parseCliJsonOutput(output.stdout, output.exitCode);
@@ -278,7 +278,7 @@ export async function runOppiToolCommand(options: {
 }
 
 async function dispatchJsonCliCommand(
-  storage: Storage,
+  storage: LocalApiConnection,
   parsed: ParsedCliArgs,
   hostResolvers: LocalApiHostResolvers,
   cwd?: string,
@@ -386,15 +386,13 @@ function buildHelpEnvelope(parsed: ParsedCliArgs): CliJsonEnvelope {
   return { ok: true, data: { help: helpTopicToJson(topic) } };
 }
 
-function buildStatusEnvelope(storage: Storage): CliJsonEnvelope {
+function buildStatusEnvelope(storage: LocalApiConnection): CliJsonEnvelope {
   const config = storage.getConfig();
-  const sessions = storage.listSessions();
   return {
     ok: true,
     data: {
       status: {
-        paired: storage.isPaired(),
-        sessionCount: sessions.length,
+        paired: !!storage.getToken(),
         dataDir: storage.getDataDir(),
         server: {
           host: config.host,

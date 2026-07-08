@@ -2,9 +2,9 @@
 import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
-import type { Storage } from "../../storage.js";
 import {
   localApiRequest,
+  type LocalApiConnection,
   type LocalApiHostResolvers,
   type LocalApiRequestOptions,
 } from "../local-api-client.js";
@@ -19,7 +19,7 @@ import {
 import { apiStatus, listWorkspacesForCli, resolveWorkspaceForCli } from "../resources.js";
 
 export async function cmdWorkspace(
-  storage: Storage,
+  storage: LocalApiConnection,
   action: string | undefined,
   positional: string[],
   flags: Record<string, string>,

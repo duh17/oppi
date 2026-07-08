@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 
-import type { Storage } from "../storage.js";
 import { resolveTlsConfig, tlsSchemeForConfig } from "../tls.js";
+import type { ServerConfig } from "../types.js";
 
 export type LocalApiHostResolvers = {
   tailscaleHostname?: () => string | null;
@@ -15,8 +15,14 @@ export type LocalApiRequestOptions = {
   body?: Record<string, unknown>;
 };
 
+export interface LocalApiConnection {
+  getConfig(): ServerConfig;
+  getToken(): string | undefined;
+  getDataDir(): string;
+}
+
 export async function localApiRequest<T>(
-  storage: Storage,
+  storage: LocalApiConnection,
   path: string,
   options: LocalApiRequestOptions = {},
   hostResolvers: LocalApiHostResolvers = {},
@@ -83,7 +89,10 @@ export async function localApiRequest<T>(
   return payload as T;
 }
 
-function localApiBaseUrl(storage: Storage, hostResolvers: LocalApiHostResolvers): string {
+function localApiBaseUrl(
+  storage: LocalApiConnection,
+  hostResolvers: LocalApiHostResolvers,
+): string {
   const config = storage.getConfig();
   const wildcardHost = config.host === "0.0.0.0" || config.host === "::";
   const host = wildcardHost
@@ -94,7 +103,7 @@ function localApiBaseUrl(storage: Storage, hostResolvers: LocalApiHostResolvers)
   return `${tlsSchemeForConfig(config)}://${host}:${config.port}`;
 }
 
-function localApiTlsOptions(storage: Storage): { ca?: Buffer } {
+function localApiTlsOptions(storage: LocalApiConnection): { ca?: Buffer } {
   const resolved = resolveTlsConfig(storage.getConfig(), storage.getDataDir());
   if (resolved.enabled && resolved.caPath && existsSync(resolved.caPath)) {
     return { ca: readFileSync(resolved.caPath) };
