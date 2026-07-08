@@ -180,7 +180,7 @@ oppi server stop             # stop background server
 
 Saved Agents store reusable Agent definitions. Launch inputs such as workspace, worktree, prompt, and session name stay on `oppi session create`, so the same Agent definition can run in different workspaces.
 
-Schedules store a trigger plus an action. `oppi schedule create` accepts `--at`, `--every`, or `--cron`; actions can start a new session in a workspace or send input to an existing session. The background schedule runner materializes due runs and records run history. Automatic runs require accepted approval references; pass `--approval-ref <ref>` when creating a non-interactive schedule that is allowed to run automatically.
+Schedules store a trigger plus an action. `oppi schedule create` accepts `--at`, `--every`, or `--cron`; actions can start a new session in a workspace or send input to an existing session. The background schedule runner materializes due runs, dispatches active schedules, and records run history. Pause or archive a schedule to stop future automatic runs.
 
 ### Install and update modes
 
