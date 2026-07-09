@@ -29,17 +29,20 @@ enum ToolTimelineRowDisplayState {
         titleLabel: UILabel,
         availableWidth: CGFloat
     ) -> Bool {
-        guard shouldUseResponsiveCollapsedFileTitle(configuration),
-              availableWidth.isFinite,
-              availableWidth > 1 else {
+        guard shouldUseResponsiveCollapsedFileTitle(configuration) else {
             return false
         }
 
-        let title = collapsedFileTitle(
-            fullTitle: configuration.title,
-            configuration: configuration,
-            availableWidth: availableWidth
-        )
+        let title: String
+        if availableWidth.isFinite, availableWidth > 1 {
+            title = collapsedFileTitle(
+                fullTitle: configuration.title,
+                configuration: configuration,
+                availableWidth: availableWidth
+            )
+        } else {
+            title = conservativeCollapsedFileTitle(fullTitle: configuration.title)
+        }
         let currentTitle = titleLabel.attributedText?.string ?? titleLabel.text ?? ""
         guard currentTitle != title else { return false }
 
@@ -60,6 +63,16 @@ enum ToolTimelineRowDisplayState {
         return ToolCallFormatting.isReadTool(prefix)
             || ToolCallFormatting.isWriteTool(prefix)
             || ToolCallFormatting.isEditTool(prefix)
+    }
+
+    private static func conservativeCollapsedFileTitle(fullTitle: String) -> String {
+        let breadcrumbTitle = ToolCallFormatting.breadcrumbDisplayPath(fullTitle)
+        if breadcrumbTitle != fullTitle {
+            return breadcrumbTitle
+        }
+
+        let fileNameTitle = ToolCallFormatting.fileNameDisplayPath(fullTitle)
+        return fileNameTitle.isEmpty ? fullTitle : fileNameTitle
     }
 
     private static func collapsedFileTitle(
