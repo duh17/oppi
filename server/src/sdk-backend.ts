@@ -423,6 +423,8 @@ export class SdkBackend {
         agentDefinition,
         sandboxMode ? sessionCwd : undefined,
       );
+      const savedAgentSkillPaths = agentDefinition?.resources?.skillPaths ?? [];
+      const additionalSkillPaths = [...(config.skillPaths ?? []), ...savedAgentSkillPaths];
       const authStorage = AuthStorage.create(join(runtimeAgentDir, "auth.json"));
       const modelRegistry = ModelRegistry.create(authStorage, join(runtimeAgentDir, "models.json"));
       const settingsManager = SettingsManager.create(hostCwd, runtimeAgentDir);
@@ -451,7 +453,6 @@ export class SdkBackend {
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
         settingsManager,
-        additionalSkillPaths: isDefaultAgentSession ? [] : (config.skillPaths ?? []),
         appendSystemPrompt: baseAppendSystemPrompt,
         ...(isDefaultAgentSession
           ? {
@@ -460,7 +461,7 @@ export class SdkBackend {
               noPromptTemplates: true,
               extensionFactories: [createDefaultAgentExtensionFactory({ dataDir: config.dataDir })],
             }
-          : {}),
+          : { additionalSkillPaths }),
         ...(agentDefinition?.resources?.noContextFiles ? { noContextFiles: true } : {}),
         ...(agentDefinition?.instructions?.mode === "replace"
           ? { systemPromptOverride: () => agentDefinition.instructions?.text }

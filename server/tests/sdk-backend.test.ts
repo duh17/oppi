@@ -399,14 +399,27 @@ describe("SdkBackend saved Agent definitions", () => {
     }
   });
 
-  it("injects saved Agent instructions, virtual context files, and tool defaults into the runtime", async () => {
+  it("injects saved Agent instructions, virtual context files, skill paths, and tool defaults into the runtime", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-definition-runtime-"));
+    const skillDir = join(cwd, "agent-skills", "agent-review");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: agent-review",
+        "description: Review saved Agent skill path loading.",
+        "---",
+        "Review saved Agent skill path loading.",
+      ].join("\n"),
+    );
     const agentDefinition: AgentDefinition = {
       name: "Runtime Agent",
       instructions: { mode: "append", text: "Always answer with OPPI_AGENT_RUNTIME_OK." },
       resources: {
         agentsFiles: [{ path: "AGENTS.saved.md", content: "Saved context code: CTX-42" }],
         noContextFiles: true,
+        skillPaths: ["agent-skills"],
       },
       sessionDefaults: {
         noTools: "all",
@@ -439,6 +452,9 @@ describe("SdkBackend saved Agent definitions", () => {
       expect(resourceLoader.getAgentsFiles().agentsFiles).toEqual([
         { path: "AGENTS.saved.md", content: "Saved context code: CTX-42" },
       ]);
+      expect(resourceLoader.getSkills().skills.map((skill) => skill.name)).toContain(
+        "agent-review",
+      );
       expect(backend.session.getActiveToolNames()).toEqual([]);
     } finally {
       await backend.dispose();

@@ -46,20 +46,20 @@ struct AgentResourceFile: Codable, Sendable, Equatable, Identifiable {
 struct AgentResources: Codable, Sendable, Equatable {
     var agentsFiles: [AgentResourceFile]?
     var noContextFiles: Bool?
-    var skillIds: [String]?
+    var skillPaths: [String]?
     var promptTemplateIds: [String]?
     var extensionIds: [String]?
 
     init(
         agentsFiles: [AgentResourceFile]? = nil,
         noContextFiles: Bool? = nil,
-        skillIds: [String]? = nil,
+        skillPaths: [String]? = nil,
         promptTemplateIds: [String]? = nil,
         extensionIds: [String]? = nil
     ) {
         self.agentsFiles = agentsFiles
         self.noContextFiles = noContextFiles
-        self.skillIds = skillIds
+        self.skillPaths = skillPaths
         self.promptTemplateIds = promptTemplateIds
         self.extensionIds = extensionIds
     }
@@ -67,7 +67,7 @@ struct AgentResources: Codable, Sendable, Equatable {
     var isEmpty: Bool {
         (agentsFiles?.isEmpty ?? true)
             && noContextFiles != true
-            && (skillIds?.isEmpty ?? true)
+            && (skillPaths?.isEmpty ?? true)
             && (promptTemplateIds?.isEmpty ?? true)
             && (extensionIds?.isEmpty ?? true)
     }

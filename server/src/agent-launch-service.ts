@@ -15,7 +15,7 @@ export interface AgentDefinition {
   resources?: {
     agentsFiles?: Array<{ path: string; content: string }>;
     noContextFiles?: boolean;
-    skillIds?: string[];
+    skillPaths?: string[];
     promptTemplateIds?: string[];
     extensionIds?: string[];
   };
