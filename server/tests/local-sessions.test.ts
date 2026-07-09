@@ -12,6 +12,8 @@ import {
   validateLocalSessionPath,
   validateCwdAlignment,
   getPiSessionsRoot,
+  listCatalogedLocalSessions,
+  deleteCatalogedLocalSessionPaths,
 } from "../src/local-sessions.js";
 import { openDatabase } from "../src/sqlite-compat.js";
 
@@ -418,5 +420,88 @@ describe("discoverLocalSessions", () => {
 
     const after = await discoverLocalSessions();
     expect(after.find((s) => s.piSessionId === "uuid-del")).toBeUndefined();
+  });
+
+  it("prunes deleted sqlite catalog rows during catalog refresh", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-tui-session-catalog-refresh-prune-"));
+    try {
+      const filePath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-sqlite-refresh-del.jsonl");
+      writeFileSync(
+        filePath,
+        makeSessionJsonl({ id: "uuid-sqlite-refresh-del", name: "Delete me" }),
+      );
+
+      const first = await discoverLocalSessions(undefined, { dataDir });
+      expect(first.find((s) => s.piSessionId === "uuid-sqlite-refresh-del")?.name).toBe(
+        "Delete me",
+      );
+
+      rmSync(filePath);
+      const second = await discoverLocalSessions(undefined, { dataDir });
+      expect(second.find((s) => s.piSessionId === "uuid-sqlite-refresh-del")).toBeUndefined();
+
+      const db = openDatabase(join(dataDir, "session-state.db"));
+      try {
+        const row = db
+          .prepare("SELECT path FROM tui_session_files WHERE pi_session_id = ?")
+          .get("uuid-sqlite-refresh-del");
+        expect(row).toBeUndefined();
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not prune sqlite catalog rows during invalidation", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-tui-session-catalog-invalidate-"));
+    try {
+      const filePath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-sqlite-inv-keep.jsonl");
+      writeFileSync(filePath, makeSessionJsonl({ id: "uuid-sqlite-inv-keep", name: "Keep me" }));
+
+      await discoverLocalSessions(undefined, { dataDir });
+      rmSync(filePath);
+      invalidateLocalSessionsCache({ dataDir });
+
+      const snapshot = listCatalogedLocalSessions(undefined, { dataDir });
+      expect(snapshot.lastScannedAt).toBeUndefined();
+      expect(snapshot.sessions.find((s) => s.piSessionId === "uuid-sqlite-inv-keep")).toBeDefined();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes exact sqlite catalog rows before deleting known session files", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-tui-session-catalog-exact-delete-"));
+    try {
+      const filePath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-sqlite-exact-del.jsonl");
+      writeFileSync(filePath, makeSessionJsonl({ id: "uuid-sqlite-exact-del", name: "Delete me" }));
+
+      const first = await discoverLocalSessions(undefined, { dataDir });
+      expect(first.find((s) => s.piSessionId === "uuid-sqlite-exact-del")?.name).toBe("Delete me");
+
+      deleteCatalogedLocalSessionPaths([filePath], { dataDir });
+      rmSync(filePath);
+      invalidateLocalSessionsCache({ dataDir });
+
+      const snapshot = listCatalogedLocalSessions(undefined, { dataDir });
+      expect(snapshot.lastScannedAt).toBeUndefined();
+      expect(
+        snapshot.sessions.find((s) => s.piSessionId === "uuid-sqlite-exact-del"),
+      ).toBeUndefined();
+
+      const db = openDatabase(join(dataDir, "session-state.db"));
+      try {
+        const row = db
+          .prepare("SELECT path FROM tui_session_files WHERE pi_session_id = ?")
+          .get("uuid-sqlite-exact-del");
+        expect(row).toBeUndefined();
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });
