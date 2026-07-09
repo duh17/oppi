@@ -87,6 +87,28 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func collapsedFileToolTitlePreservesFileNameBeforeFirstLayoutPass() throws {
+        let path = "server/src/session-attachments.ts:1-260"
+        let config = makeTimelineToolConfiguration(
+            title: path,
+            languageBadge: "typescript",
+            titleLineBreakMode: .byTruncatingMiddle,
+            toolNamePrefix: "read",
+            isExpanded: false
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedTimelineSizeWithoutPrelayout(for: view, width: 360)
+
+        let labels = timelineAllLabels(in: view)
+        let titleLabel = try #require(labels.first {
+            timelineRenderedText(of: $0).contains("session-attachments.ts")
+        })
+
+        #expect(timelineRenderedText(of: titleLabel) == "s/s/session-attachments.ts:1-260")
+    }
+
+    @MainActor
     @Test func collapsedEditFileToolTitleAccountsForStatsAndLanguageBadgeWidth() throws {
         let path = "server/src/cli/local-api-client.ts"
         let config = makeTimelineToolConfiguration(
