@@ -108,7 +108,7 @@ describe("storage session metadata format", () => {
     expect(reloaded.getSession(oppiSession.id)?.runtime).toBe("oppi");
   });
 
-  it("imports legacy session metadata from disk", () => {
+  it("ignores session JSON metadata outside SQLite", () => {
     const now = Date.now();
 
     const sessionRecord = {
@@ -127,7 +127,6 @@ describe("storage session metadata format", () => {
     writeFileSync(sessionPath, JSON.stringify({ session: sessionRecord }, null, 2));
 
     const loaded = new Storage(dir).getSession("s1");
-    expect(loaded?.id).toBe("s1");
-    expect(loaded?.tokens.cacheRead).toBe(0);
+    expect(loaded).toBeUndefined();
   });
 });

@@ -29,12 +29,13 @@ describe("storage file permissions", () => {
 
     const session = storage.createSession("security-check", "anthropic/claude-sonnet-4-0");
     const sessionDbPath = join(dir, "session-state.db");
-    const sessionPath = join(dir, "sessions", `${session.id}.json`);
+    const sessionsDir = join(dir, "sessions");
+    const sessionPath = join(sessionsDir, `${session.id}.json`);
 
     const workspace = storage.createWorkspace({ name: "default" });
     const workspacePath = join(dir, "workspaces", `${workspace.id}.json`);
 
-    expect(statSync(join(dir, "sessions")).mode & 0o777).toBe(0o700);
+    expect(() => statSync(sessionsDir)).toThrow();
     expect(statSync(join(dir, "workspaces")).mode & 0o777).toBe(0o700);
     expect(statSync(sessionDbPath).mode & 0o777).toBe(0o600);
     expect(() => statSync(sessionPath)).toThrow();

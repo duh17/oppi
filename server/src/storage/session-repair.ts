@@ -15,15 +15,6 @@ export function normalizeSessionTokens(tokens: Session["tokens"] | undefined): S
   };
 }
 
-/** Backfill cache token fields for sessions persisted before cacheRead/cacheWrite existed. */
-export function backfillLegacyTokenFields(session: Session): void {
-  const tokens = session.tokens as Partial<Session["tokens"]> | undefined;
-  if (tokens && tokens.cacheRead === undefined) {
-    tokens.cacheRead = 0;
-    tokens.cacheWrite = 0;
-  }
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
