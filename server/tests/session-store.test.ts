@@ -87,7 +87,7 @@ describe("SessionStore trace context repair", () => {
 });
 
 describe("session sqlite store", () => {
-  it("uses sqlite as the runtime session backend without writing legacy JSON", () => {
+  it("uses sqlite as the runtime session backend without writing session JSON files", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-runtime-"));
 
     try {
@@ -106,6 +106,7 @@ describe("session sqlite store", () => {
       });
 
       expect(existsSync(join(dataDir, "session-state.db"))).toBe(true);
+      expect(existsSync(join(dataDir, "sessions"))).toBe(false);
       expect(existsSync(join(dataDir, "sessions", "runtime-sess.json"))).toBe(false);
       expect(new Storage(dataDir).getSession("runtime-sess")?.name).toBe("runtime");
     } finally {
@@ -113,65 +114,19 @@ describe("session sqlite store", () => {
     }
   });
 
-  it("deletes legacy JSON sidecars and prevents deleted sessions from re-importing", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-delete-legacy-"));
+  it("ignores session JSON files outside SQLite", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-ignore-json-"));
 
     try {
       mkdirSync(join(dataDir, "sessions"), { recursive: true });
       writeFileSync(
-        join(dataDir, "sessions", "keep-me.json"),
-        JSON.stringify(
-          {
-            session: {
-              id: "keep-me",
-              workspaceId: "ws-1",
-              workspaceName: "workspace one",
-              name: "legacy",
-              status: "ready",
-              createdAt: 10,
-              lastActivity: 20,
-              messageCount: 1,
-              tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
-              cost: 0.5,
-            },
-          },
-          null,
-          2,
-        ),
-      );
-      writeFileSync(join(dataDir, "sessions", "broken.json"), "{not-json");
-
-      const storage = new Storage(dataDir);
-      expect(storage.getSession("keep-me")?.name).toBe("legacy");
-
-      expect(storage.deleteSession("keep-me")).toBe(true);
-      expect(existsSync(join(dataDir, "sessions", "keep-me.json"))).toBe(false);
-
-      const reloaded = new Storage(dataDir);
-      expect(reloaded.getSession("keep-me")).toBeUndefined();
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not mark legacy session import complete until corrupt JSON is fixed", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-corrupt-import-"));
-
-    try {
-      mkdirSync(join(dataDir, "sessions"), { recursive: true });
-      const legacyPath = join(dataDir, "sessions", "sess-recovered.json");
-      writeFileSync(legacyPath, "{not-json");
-
-      expect(new Storage(dataDir).getSession("sess-recovered")).toBeUndefined();
-
-      writeFileSync(
-        legacyPath,
+        join(dataDir, "sessions", "old-json.json"),
         JSON.stringify({
           session: {
-            id: "sess-recovered",
+            id: "old-json",
             workspaceId: "ws-1",
             workspaceName: "workspace one",
-            name: "recovered",
+            name: "json",
             status: "ready",
             createdAt: 10,
             lastActivity: 20,
@@ -182,7 +137,36 @@ describe("session sqlite store", () => {
         }),
       );
 
-      expect(new Storage(dataDir).getSession("sess-recovered")?.name).toBe("recovered");
+      const storage = new Storage(dataDir);
+      expect(storage.getSession("old-json")).toBeUndefined();
+      expect(storage.listSessions()).toEqual([]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes sqlite sessions", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-delete-"));
+
+    try {
+      const storage = new Storage(dataDir);
+      storage.saveSession({
+        id: "sqlite-sess",
+        workspaceId: "ws-1",
+        workspaceName: "workspace one",
+        name: "sqlite",
+        status: "ready",
+        createdAt: 10,
+        lastActivity: 20,
+        messageCount: 1,
+        tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+        cost: 0.5,
+      });
+
+      expect(storage.deleteSession("sqlite-sess")).toBe(true);
+      expect(storage.getSession("sqlite-sess")).toBeUndefined();
+      expect(storage.deleteSession("sqlite-sess")).toBe(false);
+      expect(new Storage(dataDir).getSession("sqlite-sess")).toBeUndefined();
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
@@ -457,32 +441,23 @@ describe("legacy workspace session migration", () => {
 
     try {
       mkdirSync(projectDir, { recursive: true });
-      mkdirSync(join(dataDir, "sessions"), { recursive: true });
       const tracePath = join(dataDir, "legacy.jsonl");
       writeFileSync(
         tracePath,
         JSON.stringify({ type: "session", id: "pi-1", cwd: projectDir, timestamp: "now" }) + "\n",
       );
-      writeFileSync(
-        join(dataDir, "sessions", "legacy-1.json"),
-        JSON.stringify(
-          {
-            session: {
-              id: "legacy-1",
-              workspaceId: null,
-              status: "ready",
-              createdAt: Date.now(),
-              lastActivity: Date.now(),
-              messageCount: 0,
-              tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              cost: 0,
-              piSessionFile: tracePath,
-            },
-          },
-          null,
-          2,
-        ),
-      );
+
+      const storage = new Storage(dataDir);
+      storage.saveSession({
+        id: "legacy-1",
+        status: "ready",
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        piSessionFile: tracePath,
+      });
 
       const reloadedStorage = new Storage(dataDir);
       const reloaded = reloadedStorage.getSession("legacy-1");

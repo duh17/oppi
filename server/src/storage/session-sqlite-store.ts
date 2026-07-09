@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { generateId } from "../id.js";
@@ -6,12 +6,10 @@ import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
 import type { Session, SessionChangeStats } from "../types.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "../sqlite-compat.js";
-import { ConfigStore } from "./config-store.js";
 import type {
   WorkspaceSessionSummarySnapshot,
   WorkspaceStoppedTimeBucketSnapshot,
 } from "./session-dao.js";
-import { loadLegacySessions } from "./session-store.js";
 import {
   backfillContextTokensFromTrace,
   backfillCostFromTokens,
@@ -64,10 +62,6 @@ interface SessionProjectionRow {
   launch_metadata_json: string | null;
 }
 
-interface SessionIdRow {
-  id: string;
-}
-
 interface WorkspaceSummaryRow {
   workspace_id: string;
   latest_activity: number | null;
@@ -83,18 +77,8 @@ interface WorkspaceStoppedTimeBucketRow {
   item_count: number;
 }
 
-export interface SessionSqliteSyncResult {
-  upserted: number;
-  deleted: number;
-}
-
 export interface SessionSqliteStoreOptions {
   dbPath?: string;
-}
-
-export interface SessionSqliteSyncOptions {
-  deleteMissing?: boolean;
-  force?: boolean;
 }
 
 const SESSION_PROJECTION_COLUMNS = `
@@ -191,7 +175,6 @@ export class SessionSqliteStore {
   private stmtUpsert!: SqliteStatement;
   private stmtGet!: SqliteStatement;
   private stmtList!: SqliteStatement;
-  private stmtListIds!: SqliteStatement;
   private stmtDelete!: SqliteStatement;
 
   constructor(dataDir: string, dbPathOrOptions?: string | SessionSqliteStoreOptions) {
@@ -210,7 +193,6 @@ export class SessionSqliteStore {
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
     this.prepareStatements();
-    this.importLegacyJsonOnce(dataDir);
   }
 
   close(): void {
@@ -450,99 +432,9 @@ export class SessionSqliteStore {
   }
 
   deleteSession(sessionId: string): boolean {
-    const existed = this.cache
-      ? this.cache.has(sessionId)
-      : this.stmtGet.get(sessionId) !== undefined;
-    this.stmtDelete.run(sessionId);
+    const result = this.stmtDelete.run(sessionId) as { changes?: number };
     this.cache?.delete(sessionId);
-
-    // Legacy JSON sidecars are import-only now. Delete the sidecar too so a
-    // session delete removes all session persistence, while the tombstone still
-    // prevents an incomplete legacy import from resurrecting the session.
-    this.deleteLegacyJsonSidecar(sessionId);
-    this.markMigration(legacySessionDeleteMigrationKey(sessionId));
-
-    return existed;
-  }
-
-  private deleteLegacyJsonSidecar(sessionId: string): void {
-    const sessionsDir = resolve(this.dataDir, "sessions");
-    const target = resolve(sessionsDir, `${sessionId}.json`);
-    if (target !== sessionsDir && target.startsWith(`${sessionsDir}/`)) {
-      rmSync(target, { force: true });
-    }
-  }
-
-  syncFromSource(
-    sessions: Session[],
-    options: SessionSqliteSyncOptions = {},
-  ): SessionSqliteSyncResult {
-    const sourceIds = new Set(sessions.map((session) => session.id));
-    let upserted = 0;
-    let deleted = 0;
-
-    this.db.transaction(() => {
-      for (const session of sessions) {
-        const existing = options.force ? undefined : this.getSessionFromDb(session.id);
-        if (existing && !shouldImportSourceSession(session, existing)) {
-          continue;
-        }
-        this.upsertSession(session);
-        upserted += 1;
-      }
-
-      if (options.deleteMissing === true) {
-        const rows = this.stmtListIds.all() as SessionIdRow[];
-        for (const row of rows) {
-          if (sourceIds.has(row.id)) {
-            continue;
-          }
-          this.stmtDelete.run(row.id);
-          this.cache?.delete(row.id);
-          deleted += 1;
-        }
-      }
-    })();
-
-    return { upserted, deleted };
-  }
-
-  private importLegacyJsonOnce(dataDir: string): SessionSqliteSyncResult {
-    const migrationKey = "sessions_json_import_sqlite_backend_v2";
-    if (this.hasMigration(migrationKey)) {
-      return { upserted: 0, deleted: 0 };
-    }
-
-    const configStore = new ConfigStore(dataDir);
-    const { sessions, failures } = loadLegacySessions(configStore);
-    const filteredSessions = sessions.filter(
-      (session) => !this.hasMigration(legacySessionDeleteMigrationKey(session.id)),
-    );
-    const result = this.syncFromSource(filteredSessions);
-
-    if (failures.length > 0) {
-      log.warn("session_sqlite_store.legacy_json_import.incomplete", {
-        failedFiles: failures.length,
-      });
-      return result;
-    }
-
-    this.markMigration(migrationKey);
-    return result;
-  }
-
-  private hasMigration(key: string): boolean {
-    return Boolean(this.db.prepare("SELECT key FROM app_state_migrations WHERE key = ?").get(key));
-  }
-
-  private markMigration(key: string): void {
-    this.db
-      .prepare(
-        `INSERT INTO app_state_migrations (key, completed_at)
-         VALUES (?, ?)
-         ON CONFLICT(key) DO UPDATE SET completed_at = excluded.completed_at`,
-      )
-      .run(key, Date.now());
+    return (result.changes ?? 0) > 0;
   }
 
   private ensureSchema(): void {
@@ -792,7 +684,6 @@ export class SessionSqliteStore {
       FROM session_state_sessions
       ORDER BY last_activity DESC, id ASC
     `);
-    this.stmtListIds = this.db.prepare("SELECT id FROM session_state_sessions");
     this.stmtDelete = this.db.prepare("DELETE FROM session_state_sessions WHERE id = ?");
   }
 
@@ -1079,15 +970,6 @@ function parseJsonValue<T>(
   }
 }
 
-function shouldImportSourceSession(source: Session, existing: Session): boolean {
-  return source.lastActivity > existing.lastActivity;
-}
-
-function legacySessionDeleteMigrationKey(sessionId: string): string {
-  return `sessions_json_import_sqlite_backend_v2:deleted:${sessionId}`;
-}
-
-/** Backfill cache token fields for sessions persisted before cacheRead/cacheWrite existed. */
 function normalizePositiveInteger(value: number | undefined): number | undefined {
   if (value === undefined || !Number.isFinite(value)) {
     return undefined;

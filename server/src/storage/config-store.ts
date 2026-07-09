@@ -607,14 +607,12 @@ function normalizeConfig(
 export class ConfigStore {
   private readonly dataDir: string;
   private readonly configPath: string;
-  private readonly sessionsDir: string;
   private readonly workspacesDir: string;
   private config: ServerConfig;
 
   constructor(dataDir: string = DEFAULT_DATA_DIR) {
     this.dataDir = dataDir;
     this.configPath = join(this.dataDir, "config.json");
-    this.sessionsDir = join(this.dataDir, "sessions");
     this.workspacesDir = join(this.dataDir, "workspaces");
 
     this.ensureDirectories();
@@ -622,7 +620,7 @@ export class ConfigStore {
   }
 
   private ensureDirectories(): void {
-    for (const dir of [this.dataDir, this.sessionsDir, this.workspacesDir]) {
+    for (const dir of [this.dataDir, this.workspacesDir]) {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true, mode: 0o700 });
       }
@@ -738,10 +736,6 @@ export class ConfigStore {
 
   getDataDir(): string {
     return this.dataDir;
-  }
-
-  getSessionsDir(): string {
-    return this.sessionsDir;
   }
 
   getWorkspacesDir(): string {

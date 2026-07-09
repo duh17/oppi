@@ -5,7 +5,6 @@
  * ~/.config/oppi/
  * ├── config.json        # Server config + auth state
  * ├── session-state.db   # Runtime session state
- * ├── sessions/          # Legacy JSON session sidecars, read only for import
  * └── workspaces/
  *     └── <workspaceId>.json    # Flat owner layout (single-user mode)
  */

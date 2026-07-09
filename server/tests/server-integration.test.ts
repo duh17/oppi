@@ -718,7 +718,6 @@ describe("sessions API", () => {
     const piSessionDir = mkdtempSync(join(piSessionsRoot, "oppi-delete-session-e2e-"));
     const sessionId = `delete-e2e-${Date.now()}`;
     const jsonlPath = join(piSessionDir, "session.jsonl");
-    const legacyJsonPath = join(dataDir, "sessions", `${sessionId}.json`);
     const workspaceAttachmentDir = join(workspaceRoot, ".pi", "attachments", sessionId, "turn-1");
     const generatedAttachmentDir = join(dataDir, "session-attachments", sessionId);
 
@@ -741,8 +740,6 @@ describe("sessions API", () => {
         ),
       ).toBe(true);
 
-      mkdirSync(join(dataDir, "sessions"), { recursive: true });
-      writeFileSync(legacyJsonPath, JSON.stringify({ session: { id: sessionId } }));
       mkdirSync(workspaceAttachmentDir, { recursive: true });
       writeFileSync(join(workspaceAttachmentDir, "image-1.jpg"), Buffer.from("attached image"));
 
@@ -799,7 +796,6 @@ describe("sessions API", () => {
 
       expect(storage.getSession(sessionId)).toBeUndefined();
       expect(existsSync(jsonlPath)).toBe(false);
-      expect(existsSync(legacyJsonPath)).toBe(false);
       expect(existsSync(join(workspaceRoot, ".pi", "attachments", sessionId))).toBe(false);
       expect(existsSync(generatedAttachmentDir)).toBe(false);
       expect(
