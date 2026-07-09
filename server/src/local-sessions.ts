@@ -428,6 +428,10 @@ class TuiSessionCatalog {
       .run(String(timestampMs));
   }
 
+  clearLastScannedAt(): void {
+    this.db.prepare("DELETE FROM tui_session_catalog_state WHERE key = 'last_scanned_at'").run();
+  }
+
   private ensureSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tui_session_files (
@@ -537,9 +541,24 @@ async function refreshInMemoryLocalSessionCache(
   }
 }
 
-/** Invalidate the cache (call after importing a session). */
-export function invalidateLocalSessionsCache(): void {
+/** Invalidate cached local-session projections after import/delete. */
+export function invalidateLocalSessionsCache(options: { dataDir?: string } = {}): void {
   metadataCache.clear();
+
+  if (!options.dataDir) {
+    return;
+  }
+
+  try {
+    const catalog = new TuiSessionCatalog(options.dataDir);
+    try {
+      catalog.clearLastScannedAt();
+    } finally {
+      catalog.close();
+    }
+  } catch {
+    // Best-effort invalidation only; callers will repopulate on next discovery.
+  }
 }
 
 export function deleteCatalogedLocalSessionPaths(

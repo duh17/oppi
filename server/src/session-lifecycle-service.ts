@@ -289,7 +289,7 @@ export class SessionLifecycleService {
         existingSession.name = params.name;
       }
       this.deps.storage.saveSession(existingSession);
-      invalidateLocalSessionsCache();
+      invalidateLocalSessionsCache({ dataDir: this.deps.storage.getDataDir() });
       return {
         session: this.deps.ensureSessionContextWindow(existingSession),
         created: false,
@@ -325,7 +325,7 @@ export class SessionLifecycleService {
     session.status = "stopped";
     session.mirror = { status: "disconnected" };
     this.deps.storage.saveSession(session);
-    invalidateLocalSessionsCache();
+    invalidateLocalSessionsCache({ dataDir: this.deps.storage.getDataDir() });
 
     return {
       session: this.deps.ensureSessionContextWindow(session),
@@ -661,7 +661,7 @@ export class SessionLifecycleService {
     }
 
     if (deletedPaths.length > 0) {
-      invalidateLocalSessionsCache();
+      invalidateLocalSessionsCache({ dataDir: this.deps.storage.getDataDir() });
     }
 
     return deletedPaths;
