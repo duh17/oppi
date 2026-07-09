@@ -193,7 +193,7 @@ private struct AgentDetailView: View {
                 }
 
                 Section("Resources") {
-                    resourceRow("Skills", values: agent.definition.resources?.skillIds)
+                    resourceRow("Skill paths", values: agent.definition.resources?.skillPaths)
                     resourceRow("Prompt templates", values: agent.definition.resources?.promptTemplateIds)
                     resourceRow("Extensions", values: agent.definition.resources?.extensionIds)
                     if agent.definition.resources?.noContextFiles == true {
@@ -381,7 +381,7 @@ private struct AgentEditView: View {
     @State private var instructionMode: AgentInstructionMode = .append
     @State private var instructions = ""
     @State private var noContextFiles = false
-    @State private var skillIdsText = ""
+    @State private var skillPathsText = ""
     @State private var promptTemplateIdsText = ""
     @State private var extensionIdsText = ""
     @State private var model = ""
@@ -428,7 +428,7 @@ private struct AgentEditView: View {
 
             Section {
                 Toggle("Ignore discovered context files", isOn: $noContextFiles)
-                TextField("Skill IDs", text: $skillIdsText, axis: .vertical)
+                TextField("Skill paths", text: $skillPathsText, axis: .vertical)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 TextField("Prompt template IDs", text: $promptTemplateIdsText, axis: .vertical)
@@ -504,7 +504,7 @@ private struct AgentEditView: View {
         instructionMode = definition.instructions?.mode ?? .append
         instructions = definition.instructions?.text ?? ""
         noContextFiles = definition.resources?.noContextFiles == true
-        skillIdsText = Self.joinList(definition.resources?.skillIds)
+        skillPathsText = Self.joinList(definition.resources?.skillPaths)
         promptTemplateIdsText = Self.joinList(definition.resources?.promptTemplateIds)
         extensionIdsText = Self.joinList(definition.resources?.extensionIds)
         model = definition.sessionDefaults?.model ?? ""
@@ -543,7 +543,7 @@ private struct AgentEditView: View {
         let resources = AgentResources(
             agentsFiles: nil,
             noContextFiles: noContextFiles ? true : nil,
-            skillIds: Self.parseList(skillIdsText),
+            skillPaths: Self.parseList(skillPathsText),
             promptTemplateIds: Self.parseList(promptTemplateIdsText),
             extensionIds: Self.parseList(extensionIdsText)
         )

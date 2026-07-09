@@ -52,10 +52,11 @@ export class SessionStartCoordinator {
 
       try {
         const createStart = Date.now();
+        const agentDefinition = this.resolveAgentDefinition(session);
         const sdkBackend = await SdkBackend.create({
           session,
           workspace,
-          agentDefinition: this.resolveAgentDefinition(session),
+          agentDefinition,
           onEvent: (event) => this.deps.onPiEvent(key, event),
           onEnd: (reason) => this.deps.onSessionEnd(key, reason),
           dataDir: this.deps.storage.getDataDir(),

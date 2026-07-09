@@ -463,8 +463,8 @@ function validateResources(value: unknown): AgentDefinition["resources"] | undef
     ...(value.noContextFiles !== undefined
       ? { noContextFiles: validateBoolean(value.noContextFiles, "resources.noContextFiles") }
       : {}),
-    ...(value.skillIds !== undefined
-      ? { skillIds: validateStringArray(value.skillIds, "resources.skillIds") }
+    ...(value.skillPaths !== undefined
+      ? { skillPaths: validateStringArray(value.skillPaths, "resources.skillPaths") }
       : {}),
     ...(value.promptTemplateIds !== undefined
       ? {

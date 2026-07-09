@@ -98,6 +98,7 @@ describe("agent routes", () => {
             name: "Reviewer",
             description: "Reviews diffs",
             instructions: { mode: "append", text: "Focus on risk." },
+            resources: { skillPaths: [".pi/skills/reviewer"] },
             sessionDefaults: { model: "openai-codex/gpt-5.5", thinkingLevel: "medium" },
           }) as never,
           res: createRes as never,
@@ -137,7 +138,11 @@ describe("agent routes", () => {
       });
       expect(JSON.parse(getRes.body).agent).toMatchObject({
         id: created.id,
-        definition: { name: "Reviewer", description: "Reviews diffs" },
+        definition: {
+          name: "Reviewer",
+          description: "Reviews diffs",
+          resources: { skillPaths: [".pi/skills/reviewer"] },
+        },
       });
 
       const updateRes = makeResponse();
@@ -170,6 +175,7 @@ describe("agent routes", () => {
         req: makeRequest({
           description: null,
           instructions: null,
+          resources: null,
           sessionDefaults: { model: null, thinkingLevel: null },
         }) as never,
         res: clearRes as never,
@@ -177,6 +183,7 @@ describe("agent routes", () => {
       const cleared = JSON.parse(clearRes.body).agent as { definition: Record<string, unknown> };
       expect(cleared.definition).not.toHaveProperty("description");
       expect(cleared.definition).not.toHaveProperty("instructions");
+      expect(cleared.definition).not.toHaveProperty("resources");
       expect(cleared.definition.sessionDefaults).toEqual({});
 
       const archiveRes = makeResponse();
