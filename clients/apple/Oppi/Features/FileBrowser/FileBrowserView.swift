@@ -998,7 +998,7 @@ struct FileBrowserView: View {
         let target = FileBrowserNavTarget(serverId: serverId, workspaceId: workspaceId, worktreeId: worktreeId, path: path)
         switch navigation.workspaceNavigationPresentation {
         case .stack:
-            navigation.workspacePath.append(target)
+            navigation.pushWorkspaceFileBrowser(target)
         case .split:
             navigation.pushSplitDetailFileBrowser(target)
         }

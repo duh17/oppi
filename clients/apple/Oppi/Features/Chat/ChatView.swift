@@ -780,6 +780,7 @@ struct ChatView: View {
 
     private var usesCustomChatBackButton: Bool {
         appNavigation.workspaceNavigationPresentation == .stack
+            || appNavigation.workspaceNavigationPresentation == .split
     }
 
     @ViewBuilder
@@ -810,7 +811,7 @@ struct ChatView: View {
             return
         }
         if appNavigation.workspaceNavigationPresentation == .split {
-            appNavigation.splitColumnVisibility = .all
+            appNavigation.showSessionInboxInSplit()
             return
         }
         dismiss()

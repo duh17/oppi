@@ -24,6 +24,11 @@ class E2ETestCase: XCTestCase {
         false
     }
 
+    /// Override in labs that need the sessions-first inbox without opening a workspace.
+    var e2eLaunchesSessionsInboxOnly: Bool {
+        false
+    }
+
     /// Override in tests whose behavior starts from the auto-created chat session.
     var e2eStartsInAutoCreatedChat: Bool {
         false
@@ -65,6 +70,8 @@ class E2ETestCase: XCTestCase {
 
         if e2eLaunchesWorkspaceHomeOnly {
             try ensureAtWorkspaceHome()
+        } else if e2eLaunchesSessionsInboxOnly {
+            try ensureAtSessionsInbox()
         } else if e2eStartsInAutoCreatedChat {
             try ensureAtChatSession()
         } else {
@@ -85,7 +92,7 @@ class E2ETestCase: XCTestCase {
         if let deviceToken = try? readDeviceToken() {
             application.launchEnvironment["OPPI_E2E_DEVICE_TOKEN"] = deviceToken
         }
-        if !e2eLaunchesWorkspaceHomeOnly {
+        if !e2eLaunchesWorkspaceHomeOnly && !e2eLaunchesSessionsInboxOnly {
             application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = "e2e-workspace"
             if e2eAutoCreatesSessionOnLaunch {
                 application.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
@@ -107,27 +114,21 @@ class E2ETestCase: XCTestCase {
             revealSplitSidebarIfNeeded(in: application)
         }
 
-        // Wait for pairing to complete — workspace list appears. Use the
-        // collection identifier instead of the navigation title; chrome changes
-        // can hide or rename the bar without changing readiness.
-        let workspaceList = application.collectionViews["workspace.list"]
-        let showSidebarButton = application.buttons["Show Sidebar"]
-        let pairedDeadline = Date().addingTimeInterval(30)
-        var paired = workspaceList.exists
-            || showSidebarButton.exists
-            || workspaceDetailSurfaceExists(in: application)
-            || chatSessionSurfaceExists(in: application)
-        while !paired && Date() < pairedDeadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-            paired = workspaceList.exists
-                || showSidebarButton.exists
-                || workspaceDetailSurfaceExists(in: application)
-                || chatSessionSurfaceExists(in: application)
-        }
+        // Poll observable app surfaces instead of paying a fixed launch delay.
+        // Fifteen seconds is a failure ceiling; successful launches return as soon
+        // as the first paired surface appears.
+        let paired = waitForPairedAppSurface(in: application, timeout: 15)
         if e2eLaunchesWorkspaceHomeOnly {
             XCTAssertTrue(
-                waitForElementToExist(workspaceList, timeout: 15),
+                waitForWorkspaceList(in: application, timeout: 5),
                 "Workspace list did not appear after pairing"
+            )
+            return
+        }
+        if e2eLaunchesSessionsInboxOnly {
+            XCTAssertTrue(
+                waitForSessionsInbox(in: application, timeout: 5),
+                "Sessions inbox did not appear after pairing"
             )
             return
         }
@@ -153,12 +154,12 @@ class E2ETestCase: XCTestCase {
         // trailing open affordance navigates to workspace detail.
         revealSplitSidebarIfNeeded(in: application)
         let openWorkspaceButton = application.buttons["workspace.open.e2e-workspace"]
-        if !waitForElementToExist(openWorkspaceButton, timeout: 30) {
+        if !waitForElementToExist(openWorkspaceButton, timeout: 10) {
             // Pull to refresh as fallback — then poll again instead of sleeping.
-            workspaceList.swipeDown()
+            workspaceListElement(in: application).swipeDown()
         }
         XCTAssertTrue(
-            waitForElementToExist(openWorkspaceButton, timeout: 15),
+            waitForElementToExist(openWorkspaceButton, timeout: 10),
             "Workspace 'e2e-workspace' open button did not appear in list"
         )
         // The workspace row has an expanding row-body button next to the open
@@ -167,7 +168,7 @@ class E2ETestCase: XCTestCase {
         openWorkspaceButton.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.50)).tap()
 
         // Verify we arrived at workspace detail, or an E2E auto-created session opened directly.
-        let detailDeadline = Date().addingTimeInterval(15)
+        let detailDeadline = Date().addingTimeInterval(10)
         var openedWorkspaceSurface = workspaceDetailSurfaceExists(in: application) || chatSessionSurfaceExists(in: application)
         while !openedWorkspaceSurface && Date() < detailDeadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
@@ -184,16 +185,83 @@ class E2ETestCase: XCTestCase {
     }
 
     func revealSplitSidebarIfNeeded(in application: XCUIApplication) {
-        guard !waitForElementToExist(application.collectionViews["workspace.list"], timeout: 1) else { return }
+        guard !waitForWorkspaceList(in: application, timeout: 0.5) else { return }
+
+        let appSidebarButton = application.buttons["workspace.sidebar.open"]
+        if waitForElementToExist(appSidebarButton, timeout: 0.5) {
+            tap(appSidebarButton, named: "workspace sidebar button", timeout: 0.5)
+            _ = waitForWorkspaceList(in: application, timeout: 2)
+            return
+        }
+
+        let splitToggle = application.buttons["workspace.split.sidebarToggle"]
+        if waitForElementToExist(splitToggle, timeout: 0.5),
+           splitToggle.label.localizedCaseInsensitiveContains("show") {
+            tap(splitToggle, named: "split sidebar toggle", timeout: 0.5)
+            _ = waitForWorkspaceList(in: application, timeout: 2)
+            return
+        }
 
         let showSidebarButton = application.buttons["Show Sidebar"]
-        guard waitForElementToExist(showSidebarButton, timeout: 2) else { return }
+        guard waitForElementToExist(showSidebarButton, timeout: 0.5) else { return }
+        tap(showSidebarButton, named: "show sidebar button", timeout: 0.5)
+        _ = waitForWorkspaceList(in: application, timeout: 2)
+    }
 
-        if showSidebarButton.isHittable {
-            showSidebarButton.tap()
-        } else {
-            showSidebarButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        }
+    private func waitForPairedAppSurface(
+        in application: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if workspaceListSurfaceExists(in: application)
+                || sessionsInboxSurfaceExists(in: application)
+                || workspaceDetailSurfaceExists(in: application)
+                || chatSessionSurfaceExists(in: application) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return false
+    }
+
+    private func sessionsInboxSurfaceExists(in application: XCUIApplication) -> Bool {
+        application.buttons["workspace.quickSession.start"].exists
+            && application.collectionViews["workspace.sessionList"].exists
+    }
+
+    private func waitForSessionsInbox(
+        in application: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if sessionsInboxSurfaceExists(in: application) { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return sessionsInboxSurfaceExists(in: application)
+    }
+
+    private func workspaceListSurfaceExists(in application: XCUIApplication) -> Bool {
+        application.scrollViews["workspace.sidebar.scroll"].exists
+            || application.collectionViews["workspace.list"].exists
+    }
+
+    private func waitForWorkspaceList(
+        in application: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if workspaceListSurfaceExists(in: application) { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return workspaceListSurfaceExists(in: application)
+    }
+
+    private func workspaceListElement(in application: XCUIApplication) -> XCUIElement {
+        let sidebarScroll = application.scrollViews["workspace.sidebar.scroll"]
+        return sidebarScroll.exists ? sidebarScroll : application.collectionViews["workspace.list"]
     }
 
     private func readDeviceToken() throws -> String {
@@ -247,22 +315,57 @@ class E2ETestCase: XCTestCase {
     /// Ensures the app is at the workspace home screen before each test.
     /// Handles recovery from chat sessions, workspace detail, or modal sheets.
     private func ensureAtWorkspaceHome() throws {
-        let workspaceList = app.collectionViews["workspace.list"]
-        if waitForElementToExist(workspaceList, timeout: 3) {
+        if waitForWorkspaceList(in: app, timeout: 0.5) {
             return
         }
 
-        dismissExtensionSheetIfNeeded(timeout: 1)
-
-        for _ in 0..<5 {
-            if waitForElementToExist(workspaceList, timeout: 0.5) {
-                return
-            }
-            guard let backButton = navigationBackButton() else { break }
-            tap(backButton, named: "navigation back button", timeout: 1)
+        dismissExtensionSheetIfNeeded(timeout: 0.5)
+        revealSplitSidebarIfNeeded(in: app)
+        if waitForWorkspaceList(in: app, timeout: 2) {
+            return
         }
 
-        XCTAssertTrue(waitForElementToExist(workspaceList, timeout: 10), "Workspace home list not reachable")
+        for _ in 0..<3 {
+            guard let backButton = navigationBackButton() else { break }
+            tap(backButton, named: "navigation back button", timeout: 0.5)
+            revealSplitSidebarIfNeeded(in: app)
+            if waitForWorkspaceList(in: app, timeout: 1) { return }
+        }
+
+        XCTAssertTrue(waitForWorkspaceList(in: app, timeout: 5), "Workspace home list not reachable")
+    }
+
+    /// Ensures the app is at the global sessions inbox before each test.
+    private func ensureAtSessionsInbox() throws {
+        dismissWorkspaceDrawerIfNeeded()
+        if waitForSessionsInbox(in: app, timeout: 0.5) { return }
+
+        dismissExtensionSheetIfNeeded(timeout: 0.5)
+        for _ in 0..<3 {
+            let showAllSessions = app.buttons["workspace.sidebar.showWorkspaces"]
+            if showAllSessions.exists {
+                tap(showAllSessions, named: "show all sessions button", timeout: 0.5)
+            } else if let backButton = navigationBackButton() {
+                tap(backButton, named: "navigation back button", timeout: 0.5)
+            } else {
+                break
+            }
+            dismissWorkspaceDrawerIfNeeded()
+            if waitForSessionsInbox(in: app, timeout: 1) { return }
+        }
+
+        Self._app = nil
+        try launchAndPair()
+        XCTAssertTrue(
+            waitForSessionsInbox(in: app, timeout: 5),
+            "Sessions inbox not reachable after relaunch"
+        )
+    }
+
+    private func dismissWorkspaceDrawerIfNeeded() {
+        let closeButton = app.buttons["workspace.sidebar.close"]
+        guard closeButton.exists else { return }
+        tap(closeButton, named: "workspace sidebar close button", timeout: 0.5)
     }
 
     /// Ensures the app is inside a chat session before each test.
@@ -293,7 +396,6 @@ class E2ETestCase: XCTestCase {
 
     private func workspaceDetailSurfaceExists(in application: XCUIApplication) -> Bool {
         application.buttons["workspace.newSession"].exists
-            || application.collectionViews["workspace.sessionList"].exists
     }
 
     private func waitForWorkspaceDetailSurface(in application: XCUIApplication, timeout: TimeInterval) -> Bool {
@@ -440,8 +542,8 @@ class E2ETestCase: XCTestCase {
     }
 
     func revealWorkspace(named workspaceName: String, timeout: TimeInterval = 20) -> Bool {
-        let workspaceList = app.collectionViews["workspace.list"]
-        guard workspaceList.waitForExistence(timeout: min(5, timeout)) else { return false }
+        guard waitForWorkspaceList(in: app, timeout: min(5, timeout)) else { return false }
+        let workspaceList = workspaceListElement(in: app)
 
         let title = app.staticTexts[workspaceName]
         let openButton = app.buttons["workspace.open.\(workspaceName)"]

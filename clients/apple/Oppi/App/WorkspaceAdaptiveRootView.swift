@@ -47,7 +47,7 @@ private struct WorkspaceStackRootView: View {
         @Bindable var nav = navigation
 
         NavigationStack(path: $nav.workspacePath) {
-            WorkspaceHomeView()
+            WorkspaceSessionInboxStackRootView()
         }
     }
 }
@@ -104,19 +104,13 @@ private struct WorkspaceSplitSidebarToggleButton: View {
 }
 
 private struct WorkspaceSplitSidebarView: View {
-    @Environment(AppNavigation.self) private var navigation
-
     var body: some View {
-        if let target = navigation.splitSelectedWorkspace {
-            WorkspaceScopedDestinationView(target: target)
-                .id(target)
-        } else {
-            WorkspaceHomeView()
-        }
+        WorkspaceSidebarView()
     }
 }
 
 private struct WorkspaceSplitDetailDestinationView: View {
+    @Environment(AppNavigation.self) private var navigation
     let target: WorkspaceSplitDetailTarget?
 
     var body: some View {
@@ -132,11 +126,11 @@ private struct WorkspaceSplitDetailDestinationView: View {
         case .utility(let target):
             WorkspaceUtilityDestinationView(target: target)
         case nil:
-            WorkspaceSplitPlaceholder(
-                title: "Select a Session",
-                systemImage: "text.bubble",
-                description: "Open a session, Files, Server, or Settings from the workspace columns."
-            )
+            if let workspace = navigation.splitSelectedWorkspace {
+                WorkspaceScopedDestinationView(target: workspace)
+            } else {
+                SessionInboxView()
+            }
         }
     }
 }
@@ -201,6 +195,14 @@ private struct WorkspaceSplitWorkspaceConfigurationDestinationView: View {
                     navigation.completeWorkspaceConfiguration(target)
                 }
                 .withServerScopedEnvironment(connection)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") {
+                            navigation.completeWorkspaceConfiguration(target)
+                        }
+                        .accessibilityIdentifier("workspace.edit.done")
+                    }
+                }
             } else {
                 ProgressView("Connecting…")
             }

@@ -93,6 +93,17 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .all)
     }
 
+    @Test func openWorkspacePushesInboxInStackPresentation() {
+        let navigation = AppNavigation()
+        let target = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
+        navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+
+        navigation.openWorkspace(target)
+
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.selectedWorkspaceFilter == target)
+    }
+
     @Test func openWorkspaceUsesSplitSelectionInSplitPresentation() {
         let navigation = AppNavigation()
         let target = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
@@ -101,8 +112,106 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspace(target)
 
         #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.selectedWorkspaceFilter == target)
         #expect(navigation.splitSelectedWorkspace == target)
         #expect(navigation.splitSelectedSession == nil)
+        #expect(navigation.splitColumnVisibility == .all)
+    }
+
+    @Test func showAllWorkspaceSessionsPopsWorkspaceInbox() {
+        let navigation = AppNavigation()
+        let target = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
+        navigation.openWorkspace(target)
+
+        navigation.showAllWorkspaceSessions()
+
+        #expect(navigation.selectedWorkspaceFilter == nil)
+        #expect(navigation.workspacePath.count == 0)
+    }
+
+    @Test func sessionOpenedFromWorkspaceBuildsAllWorkspaceChatHierarchy() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        navigation.openWorkspace(workspaceTarget)
+
+        navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1"),
+            workspace: workspaceTarget
+        )
+
+        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
+
+        navigation.workspacePath.removeLast()
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
+
+        navigation.workspacePath.removeLast()
+        #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.selectedWorkspaceFilter == nil)
+    }
+
+    @Test func stackDiagnosticContextTracksVisibleDestinationAcrossBackNavigation() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        navigation.openWorkspace(workspaceTarget)
+        navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1"),
+            workspace: workspaceTarget
+        )
+
+        #expect(navigation.workspaceStackDiagnosticContext == WorkspaceStackDiagnosticContext(
+            screen: "chat",
+            sessionId: "session-1",
+            workspaceId: "workspace-1"
+        ))
+
+        navigation.workspacePath.removeLast()
+        #expect(navigation.workspaceStackDiagnosticContext == WorkspaceStackDiagnosticContext(
+            screen: "workspace_inbox_filtered",
+            sessionId: nil,
+            workspaceId: "workspace-1"
+        ))
+
+        navigation.openWorkspaceUtility(.appSettings)
+        #expect(navigation.workspaceStackDiagnosticContext == WorkspaceStackDiagnosticContext(
+            screen: "utility_app_settings",
+            sessionId: nil,
+            workspaceId: nil
+        ))
+    }
+
+    @Test func externallyAppendedStackDestinationDoesNotReuseStaleWorkspaceOrSession() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        navigation.openWorkspace(workspaceTarget)
+
+        navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+
+        #expect(navigation.workspaceStackDiagnosticContext == WorkspaceStackDiagnosticContext(
+            screen: "workspace_stack_unknown",
+            sessionId: nil,
+            workspaceId: nil
+        ))
+    }
+
+    @Test func showSessionInboxInSplitClearsDetailTarget() {
+        let navigation = AppNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceSession(WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1"))
+
+        navigation.showSessionInboxInSplit()
+
+        #expect(navigation.splitDetailTarget == nil)
         #expect(navigation.splitColumnVisibility == .all)
     }
 
@@ -289,6 +398,93 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspacePath.count == 3)
     }
 
+    @Test func splitWorkspaceSessionPreservesBothBackLayersOnCompactRotation() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
+
+        navigation.setWorkspaceNavigationPresentation(.stack)
+
+        #expect(navigation.workspacePath.count == 2)
+    }
+
+    @Test func stackWorkspaceSessionSurvivesRegularWidthRotation() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+        navigation.openWorkspace(workspaceTarget)
+        navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
+
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.splitSelectedWorkspace == workspaceTarget)
+        #expect(navigation.splitDetailTarget == .session(
+            WorkspaceSessionNavTarget(
+                serverId: "server-1",
+                sessionId: "session-1",
+                workspaceId: "workspace-1"
+            )
+        ))
+        #expect(navigation.splitColumnVisibility == .detailOnly)
+    }
+
+    @Test func stackFileBrowserDrillSurvivesRegularWidthRotation() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        let rootTarget = FileBrowserNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            path: ""
+        )
+        let childTarget = FileBrowserNavTarget(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            path: "notes/"
+        )
+        navigation.openWorkspace(workspaceTarget)
+        navigation.openWorkspaceFileBrowser(rootTarget, workspace: workspaceTarget)
+        navigation.pushWorkspaceFileBrowser(childTarget)
+
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        #expect(navigation.splitSelectedWorkspace == workspaceTarget)
+        #expect(navigation.splitDetailTarget == .fileBrowser(rootTarget))
+        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitColumnVisibility == .detailOnly)
+    }
+
+    @Test func stackBackBeforeRegularWidthRotationKeepsWorkspaceDetail() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        navigation.openWorkspace(workspaceTarget)
+        navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1"),
+            workspace: workspaceTarget
+        )
+        navigation.workspacePath.removeLast()
+
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        #expect(navigation.splitSelectedWorkspace == workspaceTarget)
+        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.splitColumnVisibility == .all)
+    }
+
     @Test func splitSystemBackBeforeCompactRotationDropsPoppedLinkedFile() {
         let navigation = AppNavigation()
         let firstTarget = WorkspaceLinkedFileNavTarget(
@@ -434,6 +630,37 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceConfiguration(workspaceTarget)
 
         #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.splitSelectedWorkspace == workspaceTarget)
+        #expect(navigation.splitDetailTarget == .workspaceConfiguration(workspaceTarget))
+        #expect(navigation.splitColumnVisibility == .all)
+    }
+
+    @Test func splitWorkspaceConfigurationPreservesWorkspaceBackLayerOnCompactRotation() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceConfiguration(workspaceTarget)
+
+        navigation.setWorkspaceNavigationPresentation(.stack)
+
+        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
+    }
+
+    @Test func stackWorkspaceConfigurationSurvivesRegularWidthRotation() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        navigation.openWorkspace(workspaceTarget)
+        navigation.openWorkspaceConfiguration(workspaceTarget)
+
+        navigation.setWorkspaceNavigationPresentation(.split)
+
         #expect(navigation.splitSelectedWorkspace == workspaceTarget)
         #expect(navigation.splitDetailTarget == .workspaceConfiguration(workspaceTarget))
         #expect(navigation.splitColumnVisibility == .all)

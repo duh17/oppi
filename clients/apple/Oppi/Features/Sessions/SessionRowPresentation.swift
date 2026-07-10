@@ -10,6 +10,7 @@ struct SessionRowPresentation {
     let pendingAskCount: Int
     let attentionText: String?
     let lineageHint: String?
+    let workspaceContext: String?
     let modelSummaries: [SessionModelSummary]
     let unreadCompletionAt: Date?
     let searchSnippet: AttributedString?
@@ -21,6 +22,7 @@ enum SessionRowPresentationBuilder {
         pendingAskCount: Int = 0,
         pendingAsk: AskRequest? = nil,
         lineageHint: String? = nil,
+        workspaceContext: String? = nil,
         unreadCompletionAt: Date? = nil,
         searchSnippet: AttributedString? = nil
     ) -> SessionRowPresentation {
@@ -29,6 +31,7 @@ enum SessionRowPresentationBuilder {
             pendingAskCount: pendingAskCount,
             attentionText: attentionText(for: pendingAsk) ?? attentionText(forPendingAskCount: pendingAskCount),
             lineageHint: lineageHint,
+            workspaceContext: normalizedWorkspaceContext(workspaceContext),
             modelSummaries: modelSummaries(for: session),
             unreadCompletionAt: unreadCompletionAt,
             searchSnippet: searchSnippet
@@ -60,6 +63,11 @@ enum SessionRowPresentationBuilder {
             descendantModels: []
         )
     }
+
+    static func normalizedWorkspaceContext(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
 }
 
 extension SessionRow {
@@ -69,6 +77,7 @@ extension SessionRow {
             pendingAskCount: presentation.pendingAskCount,
             attentionText: presentation.attentionText,
             lineageHint: presentation.lineageHint,
+            workspaceContext: presentation.workspaceContext,
             modelSummaries: presentation.modelSummaries,
             unreadCompletionAt: presentation.unreadCompletionAt,
             searchSnippet: presentation.searchSnippet

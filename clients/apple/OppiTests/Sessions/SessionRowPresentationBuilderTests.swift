@@ -74,6 +74,16 @@ struct SessionRowPresentationBuilderTests {
         #expect(presentation.unreadCompletionAt == completedAt)
     }
 
+    @Test func workspaceContextIsTrimmedAndCarriedToRowPresentation() {
+        let session = makeSession(id: "root", status: .ready)
+        let presentation = SessionRowPresentationBuilder.make(
+            session: session,
+            workspaceContext: "  dotfiles  "
+        )
+
+        #expect(presentation.workspaceContext == "dotfiles")
+    }
+
     @Test func attentionCountsUseSessionPendingCount() {
         let counts = SessionRowPresentationBuilder.attentionCounts(
             sessionId: "session-1",

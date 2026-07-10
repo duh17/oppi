@@ -124,7 +124,6 @@ struct WorkspaceDetailView: View {
     @State private var searchStore = SessionSearchStore()
     @State private var expandedStoppedGroupIDs: Set<String> = []
     @State private var collapsedStoppedGroupIDs: Set<String> = []
-    @State private var showEditWorkspace = false
     @State private var localSessions: [LocalSession] = []
     @State private var worktrees: [WorkspaceWorktree] = []
     @State private var selectedWorktreeId = WorkspaceWorktree.mainId
@@ -623,9 +622,6 @@ struct WorkspaceDetailView: View {
         .modifier(SessionDeleteConfirmationModifier(pendingSession: $pendingDeleteSession) { session in
             Task { await deleteSession(session) }
         })
-        .navigationDestination(isPresented: $showEditWorkspace) {
-            WorkspaceEditView(workspace: currentWorkspace)
-        }
     }
 
     /// Build a SessionRow with shared presentation inputs for the given session.
@@ -801,16 +797,10 @@ struct WorkspaceDetailView: View {
 
     private var workspaceConfigurationButton: some View {
         Button {
-            switch navigation.workspaceNavigationPresentation {
-            case .stack:
-                showEditWorkspace = true
-            case .split:
-                if let currentServerId {
-                    navigation.openWorkspaceConfiguration(
-                        WorkspaceNavTarget(serverId: currentServerId, workspace: currentWorkspace)
-                    )
-                }
-            }
+            guard let currentServerId else { return }
+            navigation.openWorkspaceConfiguration(
+                WorkspaceNavTarget(serverId: currentServerId, workspace: currentWorkspace)
+            )
         } label: {
             Image(systemName: "slider.horizontal.3")
                 .symbolRenderingMode(.monochrome)
@@ -984,14 +974,6 @@ struct WorkspaceDetailView: View {
             sessionId: sessionId,
             workspaceId: currentWorkspace.id
         )
-
-        if navigation.workspaceNavigationPresentation == .stack {
-            var path = NavigationPath()
-            path.append(workspaceTarget)
-            path.append(sessionTarget)
-            navigation.workspacePath = path
-            return
-        }
 
         navigation.openWorkspaceSession(
             sessionTarget,
