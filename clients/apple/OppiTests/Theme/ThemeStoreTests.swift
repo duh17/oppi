@@ -29,7 +29,7 @@ struct ThemeStoreTests {
             UserDefaults.standard.set(ThemeID.light.rawValue, forKey: lightThemeKey)
             UserDefaults.standard.set(ThemeID.oled.rawValue, forKey: darkThemeKey)
 
-            let store = ThemeStore()
+            let store = ThemeStore(initialSystemColorScheme: .dark, systemColorSchemeProvider: { _ in .dark })
 
             #expect(store.mode == .system)
             #expect(store.preferredColorScheme == nil)
@@ -45,11 +45,25 @@ struct ThemeStoreTests {
         }
     }
 
+    @Test func systemModeInitializesFromObservedSystemScheme() {
+        withCleanThemeDefaults {
+            UserDefaults.standard.set(ThemeMode.system.rawValue, forKey: modeKey)
+            UserDefaults.standard.set(ThemeID.light.rawValue, forKey: lightThemeKey)
+            UserDefaults.standard.set(ThemeID.oled.rawValue, forKey: darkThemeKey)
+
+            let store = ThemeStore(initialSystemColorScheme: .light, systemColorSchemeProvider: { _ in .light })
+
+            #expect(store.mode == .system)
+            #expect(store.activeThemeID == .light)
+            #expect(ThemeRuntimeState.currentThemeID() == .light)
+        }
+    }
+
     @Test func settingSelectedThemeReturnsToManualMode() {
         withCleanThemeDefaults {
             UserDefaults.standard.set(ThemeMode.system.rawValue, forKey: modeKey)
 
-            let store = ThemeStore()
+            let store = ThemeStore(initialSystemColorScheme: .dark, systemColorSchemeProvider: { _ in .dark })
             store.selectedThemeID = .light
 
             #expect(store.mode == .manual)
@@ -65,12 +79,26 @@ struct ThemeStoreTests {
             UserDefaults.standard.set(ThemeID.light.rawValue, forKey: lightThemeKey)
             UserDefaults.standard.set(ThemeID.night.rawValue, forKey: darkThemeKey)
 
-            let store = ThemeStore()
+            let store = ThemeStore(initialSystemColorScheme: .dark, systemColorSchemeProvider: { _ in .light })
             store.updateSystemColorScheme(.light)
             store.mode = .system
 
             #expect(store.activeThemeID == .light)
             #expect(store.preferredColorScheme == nil)
+            #expect(ThemeRuntimeState.currentThemeID() == .light)
+        }
+    }
+
+    @Test func switchingToSystemRefreshesStaleObservedScheme() {
+        withCleanThemeDefaults {
+            UserDefaults.standard.set(ThemeID.oled.rawValue, forKey: ThemeID.storageKey)
+            UserDefaults.standard.set(ThemeID.light.rawValue, forKey: lightThemeKey)
+            UserDefaults.standard.set(ThemeID.night.rawValue, forKey: darkThemeKey)
+
+            let store = ThemeStore(initialSystemColorScheme: .dark, systemColorSchemeProvider: { _ in .light })
+            store.mode = .system
+
+            #expect(store.activeThemeID == .light)
             #expect(ThemeRuntimeState.currentThemeID() == .light)
         }
     }
