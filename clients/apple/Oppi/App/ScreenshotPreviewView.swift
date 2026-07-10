@@ -31,6 +31,8 @@ struct ScreenshotPreviewView: View {
             ExtensionSurfacePreview()
         case "chat-input-attachment-containment":
             ChatInputAttachmentContainmentPreview()
+        case "ask-card-long-composer":
+            AskCardLongComposerPreview()
         case "extension-dock-stress":
             ExtensionDockStressPreview()
         case "extension-dock-review-combined":
@@ -458,6 +460,109 @@ private struct ChatInputAttachmentContainmentPreview: View {
             localFileData: nil,
             localMimeType: nil
         )
+    }
+}
+
+// MARK: - Ask Card Long Composer Preview
+
+private struct AskCardLongComposerPreview: View {
+    @State private var text = "Delete the CLI for Oppi sessions. We will use the Oppi CLI, and if we want to start Pi in Herdr, we can have a dedicated Herdr skill. I no longer use cmux or tmux, so we can clean those up completely. Keep the visible launch path separate and remove the old session lifecycle commands."
+    @State private var textBeforeRecording: String?
+    @State private var attachments: [PendingAttachment] = []
+    @State private var repoPointers: [PendingFileReference] = []
+    @State private var busyBehavior: StreamingBehavior = .steer
+    @State private var voiceInputManager = VoiceInputManager()
+    @State private var focusRequestID = 0
+
+    private static let request = AskRequest(
+        id: "preview-long-composer",
+        sessionId: "preview-session",
+        questions: [
+            AskQuestion(
+                id: "cleanup-scope",
+                question: "The session launcher still supports visible Herdr, cmux, and tmux launches. How far should the cleanup go?",
+                options: [
+                    AskOption(
+                        value: "preserve-visible",
+                        label: "Delete the CLI, preserve visible launch",
+                        description: "Move Herdr launching behind the dedicated launch tool."
+                    ),
+                    AskOption(
+                        value: "launch-only",
+                        label: "Keep a launch-only helper",
+                        description: "Remove lifecycle commands but keep a private launcher."
+                    ),
+                    AskOption(
+                        value: "remove-runtimes",
+                        label: "Delete CLI and visible runtimes",
+                        description: "Keep only Oppi-owned session creation."
+                    ),
+                ],
+                multiSelect: false
+            ),
+        ],
+        allowCustom: true,
+        timeout: nil
+    )
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.themeBg
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Long custom ask response")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+                Text("The answer should scroll inside the composer instead of crossing its bottom edge.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                Spacer()
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            ChatInputBar(
+                text: $text,
+                textBeforeRecording: $textBeforeRecording,
+                pendingAttachments: $attachments,
+                pendingRepoPointers: $repoPointers,
+                isBusy: true,
+                busyStreamingBehavior: $busyBehavior,
+                isSending: false,
+                sendProgressText: nil,
+                isStopping: false,
+                voiceInputManager: voiceInputManager,
+                showForceStop: false,
+                isForceStopInFlight: false,
+                askRequest: Self.request,
+                onAskSubmit: { _ in },
+                onAskIgnoreAll: {},
+                slashCommands: [],
+                fileSuggestions: [],
+                onFileSuggestionQuery: nil,
+                onSend: {},
+                onStop: {},
+                onForceStop: {},
+                onExpand: {},
+                externalFocusRequestID: focusRequestID,
+                appliesOuterPadding: true,
+                alwaysShowActionRow: true
+            ) {
+                Text("gpt-5.5 · max")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .glassEffect(.regular, in: Capsule())
+            }
+        }
+        .task {
+            try? await Task.sleep(for: .milliseconds(550))
+            focusRequestID &+= 1
+        }
+        .preferredColorScheme(.dark)
+        .accessibilityIdentifier("screenshot.ready")
     }
 }
 

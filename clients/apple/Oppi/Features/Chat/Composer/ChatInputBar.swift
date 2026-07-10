@@ -88,8 +88,6 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Tracks text view focus to reveal composer controls on demand.
     @State private var isInputFocused = false
 
-    private let inlineMaxLines = ComposerInputMetrics.inlineMaxLines
-    private let inlineMaxLinesWithImages = ComposerInputMetrics.inlineMaxLinesWithAttachments
     private let expandVisibilityLineThreshold = 5
     /// Apple HIG uses 44×44 pt as the practical minimum touch target.
     /// Keep visible controls at that floor so composer actions are easier to hit.
@@ -203,16 +201,20 @@ struct ChatInputBar<ActionRow: View>: View {
         return ComposerAutocomplete.slashSuggestions(query: query, commands: slashCommands)
     }
 
-    /// Effective max lines — reduced when images or files are present to prevent the
-    /// capsule from growing tall enough to push the send button off-screen.
+    /// Keep the text editor compact when other composer content already consumes
+    /// vertical space. Overflow remains available through internal scrolling and
+    /// the full-screen composer.
     private var effectiveMaxLines: Int {
-        (pendingAttachments.isEmpty && pendingRepoPointers.isEmpty) ? inlineMaxLines : inlineMaxLinesWithImages
+        Self.inlineTextMaxLines(
+            hasAskRequest: askRequest != nil,
+            hasAttachments: !pendingAttachments.isEmpty,
+            hasRepoPointers: !pendingRepoPointers.isEmpty
+        )
     }
 
-    /// Show manual expand only when input is getting long.
+    /// Show manual expand when the input reaches its current inline budget.
     private var showsExpandButton: Bool {
-        inlineVisualLineCount >= expandVisibilityLineThreshold
-            || (!(pendingAttachments.isEmpty && pendingRepoPointers.isEmpty) && inlineVisualLineCount >= inlineMaxLinesWithImages)
+        inlineVisualLineCount >= min(expandVisibilityLineThreshold, effectiveMaxLines)
     }
 
     /// Slack-style inline controls row: hidden until composer is active.
@@ -474,6 +476,10 @@ struct ChatInputBar<ActionRow: View>: View {
                     HStack(spacing: 6) {
                         attachButton
 
+                        if showsExpandButton, askRequest != nil {
+                            expandButton
+                        }
+
                         if showsBusyModeSelector {
                             busyModeSelector
                         }
@@ -493,7 +499,7 @@ struct ChatInputBar<ActionRow: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(alignment: .topTrailing) {
-            if showsExpandButton {
+            if showsExpandButton, askRequest == nil {
                 expandButton
                     .padding(.top, 6)
                     .padding(.trailing, composerHorizontalPadding)
@@ -633,6 +639,8 @@ struct ChatInputBar<ActionRow: View>: View {
                 .frame(width: expandVisualDiameter, height: expandVisualDiameter)
         }
         .accessibilityIdentifier("chat.expand")
+        .accessibilityLabel("Expand composer")
+        .accessibilityHint("Opens the full-screen message editor")
     }
 
     @ViewBuilder
@@ -819,6 +827,17 @@ struct ChatInputBar<ActionRow: View>: View {
 
     static func composerTextTrailingPadding(showsExpandButton: Bool) -> CGFloat {
         showsExpandButton ? 10 : 0
+    }
+
+    static func inlineTextMaxLines(
+        hasAskRequest: Bool,
+        hasAttachments: Bool,
+        hasRepoPointers: Bool
+    ) -> Int {
+        if hasAskRequest || hasAttachments || hasRepoPointers {
+            return ComposerInputMetrics.inlineMaxLinesWithAttachments
+        }
+        return ComposerInputMetrics.inlineMaxLines
     }
 
     static func canSubmitMessage(
