@@ -154,6 +154,28 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.selectedWorkspaceFilter == nil)
     }
 
+    @Test func sessionOpenedFromAllSessionsKeepsAllSessionsAsBackStop() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        let sessionTarget = WorkspaceSessionNavTarget(
+            serverId: "server-1",
+            sessionId: "session-1",
+            workspaceId: "workspace-1"
+        )
+
+        navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
+
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.selectedWorkspaceFilter == nil)
+
+        navigation.workspacePath.removeLast()
+        #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.selectedWorkspaceFilter == nil)
+    }
+
     @Test func stackDiagnosticContextTracksVisibleDestinationAcrossBackNavigation() {
         let navigation = AppNavigation()
         let workspaceTarget = WorkspaceNavTarget(
