@@ -69,6 +69,15 @@ enum ToolTimelineRowRenderMetrics {
         return hasher.finalize()
     }
 
+    static func streamingCodeSignature(byteCount: Int, startLine: Int) -> Int {
+        var hasher = Hasher()
+        hasher.combine("code-stream")
+        combineActiveTheme(into: &hasher)
+        hasher.combine(byteCount)
+        hasher.combine(startLine)
+        return hasher.finalize()
+    }
+
     static func codeSignature(
         displayText: String,
         language: SyntaxLanguage?,

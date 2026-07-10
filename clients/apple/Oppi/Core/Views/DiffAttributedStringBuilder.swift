@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// Attribute key for tagging diff line kind (added/removed/header) for full-width background rendering.
@@ -53,12 +52,39 @@ enum DiffAttributedStringBuilder {
         let removedAccentColor: UIColor
         let commentDimColor: UIColor
 
-        nonisolated(unsafe) private static var cached: Self?
-        nonisolated(unsafe) private static var cachedThemeID: ThemeID?
+        private final class CacheBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private var cached: StyleAttrs?
+            private var cachedThemeID: ThemeID?
+
+            func current() -> StyleAttrs {
+                let currentThemeID = ThemeRuntimeState.currentThemeID()
+
+                lock.lock()
+                if let cached, cachedThemeID == currentThemeID {
+                    lock.unlock()
+                    return cached
+                }
+                lock.unlock()
+
+                let attrs = StyleAttrs.make(themeID: currentThemeID)
+
+                lock.lock()
+                cached = attrs
+                cachedThemeID = currentThemeID
+                lock.unlock()
+                return attrs
+            }
+        }
+
+        private static let cacheBox = CacheBox()
 
         static func current() -> Self {
-            let currentTheme = ThemeRuntimeState.currentThemeID()
-            if let cached, cachedThemeID == currentTheme { return cached }
+            cacheBox.current()
+        }
+
+        private static func make(themeID: ThemeID) -> Self {
+            let palette = themeID.palette
             let codeFont = AppFont.monoMedium
             let headerFont = AppFont.monoBold
             let gutterFont = AppFont.monoBold
@@ -67,27 +93,32 @@ enum DiffAttributedStringBuilder {
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineBreakMode = .byClipping
 
-            let addedAccent = UIColor(Color.themeDiffAdded)
-            let removedAccent = UIColor(Color.themeDiffRemoved)
-            let contextDim = UIColor(Color.themeComment.opacity(0.4))
-            let lineNumColor = UIColor(Color.themeComment.opacity(0.5))
-            let fgColor = UIColor(Color.themeFg)
-            let fgDimColor = UIColor(Color.themeFgDim)
-            let headerColor = UIColor(Color.themePurple)
-            let gapSummaryColor = UIColor(Color.themeFgDim)
+            let addedAccent = UIColor(palette.toolDiffAdded)
+            let removedAccent = UIColor(palette.toolDiffRemoved)
+            let contextDim = UIColor(palette.comment.opacity(0.4))
+            let lineNumColor = UIColor(palette.comment.opacity(0.5))
+            let fgColor = UIColor(palette.fg)
+            let fgDimColor = UIColor(palette.fgDim)
+            let headerColor = UIColor(palette.purple)
+            let gapSummaryColor = UIColor(palette.fgDim)
 
-            let lineAddedBg = UIColor(Color.themeDiffAdded.opacity(0.12))
-            let lineRemovedBg = UIColor(Color.themeDiffRemoved.opacity(0.10))
-            let wordAddedBg = UIColor(Color.themeDiffAdded.opacity(0.35))
-            let wordRemovedBg = UIColor(Color.themeDiffRemoved.opacity(0.35))
+            let lineAddedBg = UIColor(palette.toolDiffAdded.opacity(0.12))
+            let lineRemovedBg = UIColor(palette.toolDiffRemoved.opacity(0.10))
+            let wordAddedBg = UIColor(palette.toolDiffAdded.opacity(0.35))
+            let wordRemovedBg = UIColor(palette.toolDiffRemoved.opacity(0.35))
 
             // Build direct-indexed color array (0=variable=nil, 1=comment, etc.)
             var syntaxColorArray: [UIColor?] = Array(repeating: nil, count: 9)
-            for kind: SyntaxHighlighter.TokenKind in [.comment, .keyword, .string, .number, .type, .punctuation, .function, .operator] {
-                syntaxColorArray[Int(kind.rawValue)] = SyntaxHighlighter.color(for: kind)
-            }
+            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.comment.rawValue)] = UIColor(palette.syntaxComment)
+            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.keyword.rawValue)] = UIColor(palette.syntaxKeyword)
+            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.string.rawValue)] = UIColor(palette.syntaxString)
+            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.number.rawValue)] = UIColor(palette.syntaxNumber)
+            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.type.rawValue)] = UIColor(palette.syntaxType)
+            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.punctuation.rawValue)] = UIColor(palette.syntaxPunctuation)
+            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.function.rawValue)] = UIColor(palette.syntaxFunction)
+            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.operator.rawValue)] = UIColor(palette.syntaxOperator)
 
-            let attrs = Self(
+            return Self(
                 codeFont: codeFont,
                 paragraph: paragraph,
                 headerAttrs: [.font: headerFont, .foregroundColor: headerColor, .paragraphStyle: paragraph, diffLineKindAttributeKey: "header"],
@@ -111,9 +142,6 @@ enum DiffAttributedStringBuilder {
                 removedAccentColor: removedAccent,
                 commentDimColor: lineNumColor
             )
-            cached = attrs
-            cachedThemeID = currentTheme
-            return attrs
         }
 
     }

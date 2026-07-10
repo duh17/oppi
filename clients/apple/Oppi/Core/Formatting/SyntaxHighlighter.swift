@@ -33,27 +33,49 @@ enum SyntaxHighlighter {
         let `operator`: [NSAttributedString.Key: Any]
 
         // Cache: UIColor(Color) is expensive (~10μs each × 9 = ~90μs per call).
-        // Invalidated on theme change via resetCachedAttrs().
-        nonisolated(unsafe) private static var cached: Self?
+        // Key by theme because tool render caches may ask for a fresh render after
+        // `ThemeRuntimeState` changes without restarting the process.
+        private final class CacheBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private var cached: TokenAttrs?
+            private var cachedThemeID: ThemeID?
+
+            func current() -> TokenAttrs {
+                let currentThemeID = ThemeRuntimeState.currentThemeID()
+
+                lock.lock()
+                if let cached, cachedThemeID == currentThemeID {
+                    lock.unlock()
+                    return cached
+                }
+                lock.unlock()
+
+                let palette = currentThemeID.palette
+                let attrs = TokenAttrs(
+                    comment: [.foregroundColor: UIColor(palette.syntaxComment)],
+                    keyword: [.foregroundColor: UIColor(palette.syntaxKeyword)],
+                    string: [.foregroundColor: UIColor(palette.syntaxString)],
+                    number: [.foregroundColor: UIColor(palette.syntaxNumber)],
+                    type: [.foregroundColor: UIColor(palette.syntaxType)],
+                    variable: [.foregroundColor: UIColor(palette.syntaxVariable)],
+                    punctuation: [.foregroundColor: UIColor(palette.syntaxPunctuation)],
+                    function: [.foregroundColor: UIColor(palette.syntaxFunction)],
+                    operator: [.foregroundColor: UIColor(palette.syntaxOperator)]
+                )
+
+                lock.lock()
+                cached = attrs
+                cachedThemeID = currentThemeID
+                lock.unlock()
+                return attrs
+            }
+        }
+
+        private static let cacheBox = CacheBox()
 
         // Called from Task.detached for performance — must remain nonisolated.
-        // Safe: cached is written only from @MainActor contexts; worst-case
-        // race reads nil and rebuilds (idempotent).
         static func current() -> Self {
-            if let cached { return cached }
-            let attrs = Self(
-                comment: [.foregroundColor: UIColor(Color.themeSyntaxComment)],
-                keyword: [.foregroundColor: UIColor(Color.themeSyntaxKeyword)],
-                string: [.foregroundColor: UIColor(Color.themeSyntaxString)],
-                number: [.foregroundColor: UIColor(Color.themeSyntaxNumber)],
-                type: [.foregroundColor: UIColor(Color.themeSyntaxType)],
-                variable: [.foregroundColor: UIColor(Color.themeSyntaxVariable)],
-                punctuation: [.foregroundColor: UIColor(Color.themeSyntaxPunctuation)],
-                function: [.foregroundColor: UIColor(Color.themeSyntaxFunction)],
-                operator: [.foregroundColor: UIColor(Color.themeSyntaxOperator)]
-            )
-            cached = attrs
-            return attrs
+            cacheBox.current()
         }
     }
 

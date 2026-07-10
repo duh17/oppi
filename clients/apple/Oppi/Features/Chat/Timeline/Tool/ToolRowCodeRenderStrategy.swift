@@ -33,8 +33,10 @@ struct ToolRowCodeRenderStrategy {
         let signature: Int
         let shouldRerender: Bool
         if isStreaming {
-            let byteCount = displayText.utf8.count
-            signature = byteCount ^ (resolvedStartLine &* 31)
+            signature = ToolTimelineRowRenderMetrics.streamingCodeSignature(
+                byteCount: displayText.utf8.count,
+                startLine: resolvedStartLine
+            )
             shouldRerender = signature != previousSignature
                 || !isCurrentModeCode
                 || previousRenderedText != displayText
@@ -189,7 +191,13 @@ struct ToolRowCodeRenderStrategy {
         }
 
         let suffix = nsText.substring(from: previousUTF16Length)
-        guard !suffix.isEmpty else { return }
+        guard !suffix.isEmpty else {
+            // A theme change invalidates the render signature even when the
+            // streaming text is unchanged. Repaint the existing text instead
+            // of treating that invalidation as an empty append.
+            applyPlainText(text, to: label)
+            return
+        }
 
         label.textStorage.append(NSAttributedString(
             string: suffix,
