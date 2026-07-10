@@ -557,7 +557,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // Detect theme change from runtime state instead of threaded param.
             let currentThemeID = ThemeRuntimeState.currentThemeID()
             let themeChanged = previousThemeID != currentThemeID || previousThemeID == nil
-            let appearanceChanged = themeChanged
+            // Row configuration also depends on session/workspace-scoped
+            // closures such as attachment fetchers. Reconfigure visible rows
+            // when that scope appears or changes, even if ChatItem values are
+            // identical, so expanded media retries with the current workspace.
+            let appearanceChanged = themeChanged || sessionScopeChanged
 
             // Only update backgroundColor when theme changed or on first apply.
             if themeChanged {

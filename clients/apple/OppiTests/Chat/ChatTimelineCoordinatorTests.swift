@@ -45,6 +45,78 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
+    @Test func sessionScopeChangeReconfiguresToolRowsWithAttachmentFetcher() throws {
+        let collectionView = UICollectionView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        let controller = ChatTimelineCollectionHost.Controller()
+        controller.configureDataSource(collectionView: collectionView)
+
+        let reducer = TimelineReducer()
+        let toolOutputStore = ToolOutputStore()
+        let toolArgsStore = ToolArgsStore()
+        let toolSegmentStore = ToolSegmentStore()
+        let connection = ServerConnection()
+        #expect(connection.configure(credentials: ServerCredentials(
+            host: "127.0.0.1",
+            port: 9,
+            token: "test-token",
+            name: "Test Server",
+            scheme: .http
+        )))
+        let scrollController = ChatScrollController()
+        let audioPlayer = AudioPlayerService()
+        let toolItem = ChatItem.toolCall(
+            id: "tool-read-attachment",
+            tool: "read",
+            argsSummary: "path: screenshot.png",
+            outputPreview: "Read image file [image/png]",
+            outputByteCount: 128,
+            isError: false,
+            isDone: true
+        )
+
+        let initialConfig = makeTimelineConfiguration(
+            items: [toolItem],
+            sessionId: "session-attachment-scope",
+            reducer: reducer,
+            toolOutputStore: toolOutputStore,
+            toolArgsStore: toolArgsStore,
+            toolSegmentStore: toolSegmentStore,
+            connection: connection,
+            scrollController: scrollController,
+            audioPlayer: audioPlayer,
+            workspaceId: nil
+        )
+        controller.apply(configuration: initialConfig, to: collectionView)
+        collectionView.layoutIfNeeded()
+
+        let initialCell = try configuredTimelineCell(in: collectionView, item: 0)
+        let initialRowConfig = try #require(initialCell.contentConfiguration as? ToolTimelineRowConfiguration)
+        #expect(initialRowConfig.sessionAttachmentFetcher == nil)
+
+        let resolvedConfig = makeTimelineConfiguration(
+            items: [toolItem],
+            sessionId: "session-attachment-scope",
+            reducer: reducer,
+            toolOutputStore: toolOutputStore,
+            toolArgsStore: toolArgsStore,
+            toolSegmentStore: toolSegmentStore,
+            connection: connection,
+            scrollController: scrollController,
+            audioPlayer: audioPlayer,
+            workspaceId: "ws-test"
+        )
+        controller.apply(configuration: resolvedConfig, to: collectionView)
+        collectionView.layoutIfNeeded()
+
+        let updatedCell = try configuredTimelineCell(in: collectionView, item: 0)
+        let updatedRowConfig = try #require(updatedCell.contentConfiguration as? ToolTimelineRowConfiguration)
+        #expect(updatedRowConfig.sessionAttachmentFetcher != nil)
+    }
+
+    @MainActor
     @Test func toolOutputCompletionDispositionGuardsStaleAndCanceledStates() {
         #expect(
             ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(

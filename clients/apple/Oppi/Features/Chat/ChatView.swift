@@ -190,6 +190,15 @@ struct ChatView: View {
         return connection.workspaceStore.workspaces.first { $0.id == workspaceId }
     }
 
+    private var timelineWorkspaceId: String? {
+        let sessionWorkspaceId = session?.workspaceId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let sessionWorkspaceId, !sessionWorkspaceId.isEmpty {
+            return sessionWorkspaceId
+        }
+        let fallback = workspaceIdHint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback?.isEmpty == false ? fallback : nil
+    }
+
     private var hasShareSlashCommand: Bool {
         chatState.slashCommands.contains { command in
             command.name.caseInsensitiveCompare("share") == .orderedSame
@@ -282,7 +291,7 @@ struct ChatView: View {
     private var chatTimeline: some View {
         ChatTimelineView(
             sessionId: sessionId,
-            workspaceId: session?.workspaceId,
+            workspaceId: timelineWorkspaceId,
             isBusy: isBusy,
             extensionWorkingState: extensionSurfaceState?.working,
             extensionHiddenThinkingLabel: extensionSurfaceState?.hiddenThinkingLabel,
