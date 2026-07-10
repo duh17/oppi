@@ -1,5 +1,4 @@
 #if DEBUG
-import Darwin.Mach
 import SwiftUI
 import UIKit
 
@@ -1815,86 +1814,4 @@ final class HarnessFrameIntervalMonitor: NSObject {
     }
 }
 
-// MARK: - Main Thread Lag Watchdog
-
-#if DEBUG
-struct MainThreadStallContext: Sendable {
-    let thresholdMs: Int
-    let footprintMB: Int?
-}
-
-final class MainThreadLagWatchdog {
-    var onStall: ((MainThreadStallContext) -> Void)?
-    private let queue = DispatchQueue(label: "\(AppIdentifiers.subsystem).main-thread-watchdog", qos: .utility)
-    private var timer: DispatchSourceTimer?
-
-    private let intervalMs = 1_000
-    private let warnThresholdMs = 700
-    private let stallLogCooldownMs = 2_000
-
-    private var lastStallLogUptimeNs: UInt64 = 0
-
-    func start() {
-        guard timer == nil else { return }
-
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(
-            deadline: .now() + .milliseconds(intervalMs),
-            repeating: .milliseconds(intervalMs),
-            leeway: .milliseconds(100)
-        )
-
-        timer.setEventHandler { [weak self] in
-            self?.probeMainThread()
-        }
-
-        self.timer = timer
-        timer.resume()
-    }
-
-    func stop() {
-        timer?.cancel()
-        timer = nil
-    }
-
-    private func probeMainThread() {
-        let thresholdMs = warnThresholdMs
-
-        let semaphore = DispatchSemaphore(value: 0)
-        DispatchQueue.main.async {
-            semaphore.signal()
-        }
-
-        if semaphore.wait(timeout: .now() + .milliseconds(thresholdMs)) == .timedOut {
-            let nowNs = DispatchTime.now().uptimeNanoseconds
-            let cooldownNs = UInt64(stallLogCooldownMs) * 1_000_000
-            guard nowNs &- lastStallLogUptimeNs >= cooldownNs else { return }
-            lastStallLogUptimeNs = nowNs
-
-            let footprintMB = Self.currentFootprintMB()
-
-            onStall?(
-                MainThreadStallContext(
-                    thresholdMs: thresholdMs,
-                    footprintMB: footprintMB
-                )
-            )
-        }
-    }
-
-    private static func currentFootprintMB() -> Int? {
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
-
-        let result: kern_return_t = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
-                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), rebound, &count)
-            }
-        }
-
-        guard result == KERN_SUCCESS else { return nil }
-        return Int(info.phys_footprint / 1_048_576)
-    }
-}
-#endif
 #endif

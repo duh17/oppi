@@ -1,3 +1,4 @@
+import Darwin.Mach
 import Foundation
 import OSLog
 
@@ -89,7 +90,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) {
         guard !payloads.isEmpty else { return }
-        let context = MetricKitCrashContextStore.snapshotMetadata()
+        let context = MetricKitCrashContextStore.postMortemSnapshotMetadata()
         let items = payloads.compactMap { payload in
             let item = MetricKitPayloadSerializer.item(
                 from: payload,
@@ -119,7 +120,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         let payloads = MXMetricManager.shared.pastDiagnosticPayloads
         guard !payloads.isEmpty else { return }
 
-        let context = MetricKitCrashContextStore.snapshotMetadata()
+        let context = MetricKitCrashContextStore.postMortemSnapshotMetadata()
         let items = payloads.compactMap { payload in
             let item = MetricKitPayloadSerializer.item(
                 from: payload,
@@ -169,7 +170,22 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
             if let workspaceId = item.summary["lastWorkspaceId"] {
                 metadata["workspaceId"] = workspaceId
             }
-            ClientLog.error("MetricKit", "Crash diagnostic payload queued", metadata: metadata)
+            for key in [
+                "lastScreen",
+                "lastScenePhase",
+                "lastLifecycleEvent",
+                "lastLifecycleStep",
+                "lastLifecycleRecordedAtMs",
+                "lastStallRecordedAtMs",
+                "lastStallThresholdMs",
+                "lastStallDurationMs",
+                "lastStallSequence",
+            ] {
+                if let value = item.summary[key] {
+                    metadata[key] = value
+                }
+            }
+            ClientLog.error("MetricKit", "Crash diagnostic payload queued", metadata: metadata, flush: true)
         }
     }
 
@@ -193,6 +209,176 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
 }
 
 extension MetricKitService: @unchecked Sendable {}
+
+struct MainThreadStallContext: Sendable {
+    let sequence: Int
+    let thresholdMs: Int
+    let detectedAtMs: Int64
+    let footprintMB: Int?
+}
+
+struct MainThreadStallRecoveryContext: Sendable {
+    let sequence: Int
+    let durationMs: Int
+    let recoveredAtMs: Int64
+}
+
+final class MainThreadLagWatchdog: @unchecked Sendable {
+    var onStall: (@Sendable (MainThreadStallContext) -> Void)?
+    var onRecovery: (@Sendable (MainThreadStallRecoveryContext) -> Void)?
+    // periphery:ignore - deterministic signal for MainThreadLagWatchdogTests
+    var onDelayedStopEvaluationForTesting: (@Sendable () -> Void)?
+
+    private let queue = DispatchQueue(label: "\(AppIdentifiers.subsystem).main-thread-watchdog", qos: .utility)
+    private var timer: DispatchSourceTimer?
+
+    private let intervalMs = 1_000
+    private let warnThresholdMs = 700
+    private let stallLogCooldownMs = 2_000
+
+    private var lastStallLogUptimeNs: UInt64 = 0
+    private var nextProbeID = 0
+    private var nextStallSequence = 0
+    private var lifecycleGeneration: UInt64 = 0
+    private var activeStall: ActiveStall?
+
+    private struct ActiveStall {
+        let sequence: Int
+        let startedNs: UInt64
+    }
+
+    func start() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            lifecycleGeneration &+= 1
+            startOnQueue()
+        }
+    }
+
+    func stop() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            lifecycleGeneration &+= 1
+            stopOnQueue()
+        }
+    }
+
+    func stopAfterGracePeriod(_ delayMs: Int) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            lifecycleGeneration &+= 1
+            let scheduledGeneration = lifecycleGeneration
+            queue.asyncAfter(deadline: .now() + .milliseconds(max(0, delayMs))) { [weak self] in
+                guard let self else { return }
+                if lifecycleGeneration == scheduledGeneration {
+                    stopOnQueue()
+                }
+                onDelayedStopEvaluationForTesting?()
+            }
+        }
+    }
+
+    // periphery:ignore - deterministic state probe for MainThreadLagWatchdogTests
+    func isRunningForTesting() -> Bool {
+        queue.sync { timer != nil }
+    }
+
+    private func startOnQueue() {
+        guard timer == nil else { return }
+
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(
+            deadline: .now() + .milliseconds(intervalMs),
+            repeating: .milliseconds(intervalMs),
+            leeway: .milliseconds(100)
+        )
+
+        timer.setEventHandler { [weak self] in
+            self?.probeMainThread()
+        }
+
+        self.timer = timer
+        timer.resume()
+    }
+
+    private func stopOnQueue() {
+        timer?.cancel()
+        timer = nil
+        activeStall = nil
+    }
+
+    private func probeMainThread() {
+        let thresholdMs = warnThresholdMs
+        let probeID = nextProbeID
+        nextProbeID &+= 1
+        let startedNs = DispatchTime.now().uptimeNanoseconds
+
+        let semaphore = DispatchSemaphore(value: 0)
+        let callbackQueue = queue
+        DispatchQueue.main.async { [weak self, callbackQueue] in
+            let completedNs = DispatchTime.now().uptimeNanoseconds
+            semaphore.signal()
+            callbackQueue.async { [weak self] in
+                self?.probeDidComplete(startedNs: startedNs, completedNs: completedNs)
+            }
+        }
+
+        if semaphore.wait(timeout: .now() + .milliseconds(thresholdMs)) == .timedOut {
+            recordTimedOutProbe(probeID: probeID, startedNs: startedNs, thresholdMs: thresholdMs)
+        }
+    }
+
+    private func recordTimedOutProbe(probeID: Int, startedNs: UInt64, thresholdMs: Int) {
+        let nowNs = DispatchTime.now().uptimeNanoseconds
+        let cooldownNs = UInt64(stallLogCooldownMs) * 1_000_000
+        let shouldEmit = activeStall == nil || nowNs &- lastStallLogUptimeNs >= cooldownNs
+        guard shouldEmit else { return }
+
+        if activeStall == nil {
+            nextStallSequence &+= 1
+            activeStall = ActiveStall(sequence: nextStallSequence, startedNs: startedNs)
+        }
+        lastStallLogUptimeNs = nowNs
+
+        let footprintMB = Self.currentFootprintMB()
+        onStall?(
+            MainThreadStallContext(
+                sequence: activeStall?.sequence ?? probeID,
+                thresholdMs: thresholdMs,
+                detectedAtMs: Date.nowMs(),
+                footprintMB: footprintMB
+            )
+        )
+    }
+
+    private func probeDidComplete(startedNs: UInt64, completedNs: UInt64) {
+        guard let stall = activeStall, completedNs >= stall.startedNs else { return }
+        activeStall = nil
+
+        let durationMs = Int((completedNs &- stall.startedNs) / 1_000_000)
+        onRecovery?(
+            MainThreadStallRecoveryContext(
+                sequence: stall.sequence,
+                durationMs: durationMs,
+                recoveredAtMs: Date.nowMs()
+            )
+        )
+    }
+
+    private static func currentFootprintMB() -> Int? {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+
+        let result: kern_return_t = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), rebound, &count)
+            }
+        }
+
+        guard result == KERN_SUCCESS else { return nil }
+        return Int(info.phys_footprint / 1_048_576)
+    }
+}
 
 private struct MetricKitUploadMetadata: Sendable {
     let appVersion: String
@@ -315,24 +501,148 @@ struct MetricKitCrashContext: Codable, Equatable, Sendable {
     let lastTimelinePayloadBytes: Int?
     let lastTimelinePayloadEventCount: Int?
     let lastTimelinePayloadLargestEventBytes: Int?
+    let activeServerId: String?
+    let screen: String?
+    let scenePhase: String?
+    let lifecycleEvent: String?
+    let lifecycleStep: String?
+    let lifecycleRecordedAtMs: Int64?
+    let lastStallRecordedAtMs: Int64?
+    let lastStallRecoveredAtMs: Int64?
+    let lastStallThresholdMs: Int?
+    let lastStallDurationMs: Int?
+    let lastStallFootprintMB: Int?
+    let lastStallSequence: Int?
 }
 
 enum MetricKitCrashContextStore {
     private static let defaultsKey = "oppi.diagnostics.lastActiveContext.v1"
+    private static let postMortemDefaultsKey = "oppi.diagnostics.previousProcessContext.v1"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var initializedCurrentProcessContext = false
 
     static func record(sessionId: String?, workspaceId: String?, streamState: String) {
-        let previous = snapshot()
-        let context = MetricKitCrashContext(
-            recordedAtMs: Date.nowMs(),
-            sessionId: clean(sessionId),
-            workspaceId: clean(workspaceId),
-            streamState: clean(streamState) ?? "unknown",
-            lastTimelinePayloadRecordedAtMs: previous?.lastTimelinePayloadRecordedAtMs,
-            lastTimelinePayloadBytes: previous?.lastTimelinePayloadBytes,
-            lastTimelinePayloadEventCount: previous?.lastTimelinePayloadEventCount,
-            lastTimelinePayloadLargestEventBytes: previous?.lastTimelinePayloadLargestEventBytes
-        )
-        save(context)
+        update { previous in
+            MetricKitCrashContext(
+                recordedAtMs: Date.nowMs(),
+                sessionId: clean(sessionId),
+                workspaceId: clean(workspaceId),
+                streamState: clean(streamState) ?? "unknown",
+                lastTimelinePayloadRecordedAtMs: previous?.lastTimelinePayloadRecordedAtMs,
+                lastTimelinePayloadBytes: previous?.lastTimelinePayloadBytes,
+                lastTimelinePayloadEventCount: previous?.lastTimelinePayloadEventCount,
+                lastTimelinePayloadLargestEventBytes: previous?.lastTimelinePayloadLargestEventBytes,
+                activeServerId: previous?.activeServerId,
+                screen: previous?.screen,
+                scenePhase: previous?.scenePhase,
+                lifecycleEvent: previous?.lifecycleEvent,
+                lifecycleStep: previous?.lifecycleStep,
+                lifecycleRecordedAtMs: previous?.lifecycleRecordedAtMs,
+                lastStallRecordedAtMs: previous?.lastStallRecordedAtMs,
+                lastStallRecoveredAtMs: previous?.lastStallRecoveredAtMs,
+                lastStallThresholdMs: previous?.lastStallThresholdMs,
+                lastStallDurationMs: previous?.lastStallDurationMs,
+                lastStallFootprintMB: previous?.lastStallFootprintMB,
+                lastStallSequence: previous?.lastStallSequence
+            )
+        }
+    }
+
+    static func recordAppContext(
+        sessionId: String?,
+        workspaceId: String?,
+        activeServerId: String?,
+        screen: String,
+        scenePhase: String,
+        lifecycleEvent: String? = nil,
+        lifecycleStep: String? = nil
+    ) {
+        let nowMs = Date.nowMs()
+        update { previous in
+            let hasLifecycleUpdate = lifecycleEvent != nil || lifecycleStep != nil
+            return MetricKitCrashContext(
+                recordedAtMs: nowMs,
+                sessionId: clean(sessionId),
+                workspaceId: clean(workspaceId),
+                streamState: previous?.streamState ?? "unknown",
+                lastTimelinePayloadRecordedAtMs: previous?.lastTimelinePayloadRecordedAtMs,
+                lastTimelinePayloadBytes: previous?.lastTimelinePayloadBytes,
+                lastTimelinePayloadEventCount: previous?.lastTimelinePayloadEventCount,
+                lastTimelinePayloadLargestEventBytes: previous?.lastTimelinePayloadLargestEventBytes,
+                activeServerId: clean(activeServerId),
+                screen: clean(screen),
+                scenePhase: clean(scenePhase),
+                lifecycleEvent: clean(lifecycleEvent) ?? previous?.lifecycleEvent,
+                lifecycleStep: clean(lifecycleStep) ?? previous?.lifecycleStep,
+                lifecycleRecordedAtMs: hasLifecycleUpdate ? nowMs : previous?.lifecycleRecordedAtMs,
+                lastStallRecordedAtMs: previous?.lastStallRecordedAtMs,
+                lastStallRecoveredAtMs: previous?.lastStallRecoveredAtMs,
+                lastStallThresholdMs: previous?.lastStallThresholdMs,
+                lastStallDurationMs: previous?.lastStallDurationMs,
+                lastStallFootprintMB: previous?.lastStallFootprintMB,
+                lastStallSequence: previous?.lastStallSequence
+            )
+        }
+    }
+
+    @discardableResult
+    static func recordMainThreadStall(thresholdMs: Int, footprintMB: Int?, sequence: Int) -> [String: String] {
+        let nowMs = Date.nowMs()
+        let context = update { previous in
+            MetricKitCrashContext(
+                recordedAtMs: nowMs,
+                sessionId: previous?.sessionId,
+                workspaceId: previous?.workspaceId,
+                streamState: previous?.streamState ?? "unknown",
+                lastTimelinePayloadRecordedAtMs: previous?.lastTimelinePayloadRecordedAtMs,
+                lastTimelinePayloadBytes: previous?.lastTimelinePayloadBytes,
+                lastTimelinePayloadEventCount: previous?.lastTimelinePayloadEventCount,
+                lastTimelinePayloadLargestEventBytes: previous?.lastTimelinePayloadLargestEventBytes,
+                activeServerId: previous?.activeServerId,
+                screen: previous?.screen,
+                scenePhase: previous?.scenePhase,
+                lifecycleEvent: previous?.lifecycleEvent,
+                lifecycleStep: previous?.lifecycleStep,
+                lifecycleRecordedAtMs: previous?.lifecycleRecordedAtMs,
+                lastStallRecordedAtMs: nowMs,
+                lastStallRecoveredAtMs: nil,
+                lastStallThresholdMs: thresholdMs,
+                lastStallDurationMs: nil,
+                lastStallFootprintMB: footprintMB,
+                lastStallSequence: sequence
+            )
+        }
+        return metadata(from: context)
+    }
+
+    @discardableResult
+    static func recordMainThreadStallRecovery(sequence: Int, durationMs: Int) -> [String: String] {
+        let nowMs = Date.nowMs()
+        let context = update { previous in
+            MetricKitCrashContext(
+                recordedAtMs: nowMs,
+                sessionId: previous?.sessionId,
+                workspaceId: previous?.workspaceId,
+                streamState: previous?.streamState ?? "unknown",
+                lastTimelinePayloadRecordedAtMs: previous?.lastTimelinePayloadRecordedAtMs,
+                lastTimelinePayloadBytes: previous?.lastTimelinePayloadBytes,
+                lastTimelinePayloadEventCount: previous?.lastTimelinePayloadEventCount,
+                lastTimelinePayloadLargestEventBytes: previous?.lastTimelinePayloadLargestEventBytes,
+                activeServerId: previous?.activeServerId,
+                screen: previous?.screen,
+                scenePhase: previous?.scenePhase,
+                lifecycleEvent: previous?.lifecycleEvent,
+                lifecycleStep: previous?.lifecycleStep,
+                lifecycleRecordedAtMs: previous?.lifecycleRecordedAtMs,
+                lastStallRecordedAtMs: previous?.lastStallRecordedAtMs,
+                lastStallRecoveredAtMs: nowMs,
+                lastStallThresholdMs: previous?.lastStallThresholdMs,
+                lastStallDurationMs: durationMs,
+                lastStallFootprintMB: previous?.lastStallFootprintMB,
+                lastStallSequence: sequence
+            )
+        }
+        return metadata(from: context)
     }
 
     static func recordLargeTimelinePayload(
@@ -341,55 +651,137 @@ enum MetricKitCrashContextStore {
         bytes: Int,
         largestEventBytes: Int
     ) {
-        let previous = snapshot()
-        let context = MetricKitCrashContext(
-            recordedAtMs: previous?.recordedAtMs ?? Date.nowMs(),
-            sessionId: clean(sessionId) ?? previous?.sessionId,
-            workspaceId: previous?.workspaceId,
-            streamState: previous?.streamState ?? "unknown",
-            lastTimelinePayloadRecordedAtMs: Date.nowMs(),
-            lastTimelinePayloadBytes: bytes,
-            lastTimelinePayloadEventCount: eventCount,
-            lastTimelinePayloadLargestEventBytes: largestEventBytes
-        )
-        save(context)
+        update { previous in
+            MetricKitCrashContext(
+                recordedAtMs: previous?.recordedAtMs ?? Date.nowMs(),
+                sessionId: clean(sessionId) ?? previous?.sessionId,
+                workspaceId: previous?.workspaceId,
+                streamState: previous?.streamState ?? "unknown",
+                lastTimelinePayloadRecordedAtMs: Date.nowMs(),
+                lastTimelinePayloadBytes: bytes,
+                lastTimelinePayloadEventCount: eventCount,
+                lastTimelinePayloadLargestEventBytes: largestEventBytes,
+                activeServerId: previous?.activeServerId,
+                screen: previous?.screen,
+                scenePhase: previous?.scenePhase,
+                lifecycleEvent: previous?.lifecycleEvent,
+                lifecycleStep: previous?.lifecycleStep,
+                lifecycleRecordedAtMs: previous?.lifecycleRecordedAtMs,
+                lastStallRecordedAtMs: previous?.lastStallRecordedAtMs,
+                lastStallRecoveredAtMs: previous?.lastStallRecoveredAtMs,
+                lastStallThresholdMs: previous?.lastStallThresholdMs,
+                lastStallDurationMs: previous?.lastStallDurationMs,
+                lastStallFootprintMB: previous?.lastStallFootprintMB,
+                lastStallSequence: previous?.lastStallSequence
+            )
+        }
     }
 
     static func snapshot() -> MetricKitCrashContext? {
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey) else { return nil }
-        return try? JSONDecoder().decode(MetricKitCrashContext.self, from: data)
+        lock.lock()
+        defer { lock.unlock() }
+        return snapshotUnlocked()
     }
 
     static func snapshotMetadata() -> [String: String] {
         guard let context = snapshot() else { return [:] }
+        return metadata(from: context)
+    }
+
+    static func postMortemSnapshotMetadata() -> [String: String] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let context = snapshotUnlocked(forKey: postMortemDefaultsKey) ?? snapshotUnlocked() else {
+            return [:]
+        }
+        return metadata(from: context)
+    }
+
+    // periphery:ignore - used by MetricKit serializer tests via @testable import
+    static func clearForTesting() {
+        lock.lock()
+        defer { lock.unlock() }
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
+        UserDefaults.standard.removeObject(forKey: postMortemDefaultsKey)
+        initializedCurrentProcessContext = false
+    }
+
+    // periphery:ignore - simulates a process boundary without discarding persisted defaults
+    static func simulateProcessRelaunchForTesting() {
+        lock.lock()
+        defer { lock.unlock() }
+        initializedCurrentProcessContext = false
+    }
+
+    @discardableResult
+    private static func update(_ build: (MetricKitCrashContext?) -> MetricKitCrashContext) -> MetricKitCrashContext {
+        lock.lock()
+        defer { lock.unlock() }
+        rotateContextForCurrentProcessIfNeeded()
+        let context = build(snapshotUnlocked())
+        saveUnlocked(context)
+        return context
+    }
+
+    private static func rotateContextForCurrentProcessIfNeeded() {
+        guard !initializedCurrentProcessContext else { return }
+        initializedCurrentProcessContext = true
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: defaultsKey) {
+            defaults.set(data, forKey: postMortemDefaultsKey)
+            defaults.removeObject(forKey: defaultsKey)
+        }
+    }
+
+    private static func snapshotUnlocked(forKey key: String = defaultsKey) -> MetricKitCrashContext? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(MetricKitCrashContext.self, from: data)
+    }
+
+    private static func saveUnlocked(_ context: MetricKitCrashContext) {
+        guard let data = try? JSONEncoder().encode(context) else { return }
+        UserDefaults.standard.set(data, forKey: defaultsKey)
+    }
+
+    private static func metadata(from context: MetricKitCrashContext) -> [String: String] {
         var metadata: [String: String] = [
             "lastContextRecordedAtMs": String(context.recordedAtMs),
             "lastStreamState": context.streamState,
         ]
-        if let sessionId = context.sessionId {
-            metadata["lastSessionId"] = sessionId
-        }
-        if let workspaceId = context.workspaceId {
-            metadata["lastWorkspaceId"] = workspaceId
-        }
-        if let recordedAtMs = context.lastTimelinePayloadRecordedAtMs {
-            metadata["lastTimelinePayloadRecordedAtMs"] = String(recordedAtMs)
-        }
-        if let bytes = context.lastTimelinePayloadBytes {
-            metadata["lastTimelinePayloadBytes"] = String(bytes)
-        }
-        if let eventCount = context.lastTimelinePayloadEventCount {
-            metadata["lastTimelinePayloadEventCount"] = String(eventCount)
-        }
-        if let largestEventBytes = context.lastTimelinePayloadLargestEventBytes {
-            metadata["lastTimelinePayloadLargestEventBytes"] = String(largestEventBytes)
-        }
+        add(context.sessionId, key: "lastSessionId", to: &metadata)
+        add(context.workspaceId, key: "lastWorkspaceId", to: &metadata)
+        add(context.lastTimelinePayloadRecordedAtMs, key: "lastTimelinePayloadRecordedAtMs", to: &metadata)
+        add(context.lastTimelinePayloadBytes, key: "lastTimelinePayloadBytes", to: &metadata)
+        add(context.lastTimelinePayloadEventCount, key: "lastTimelinePayloadEventCount", to: &metadata)
+        add(context.lastTimelinePayloadLargestEventBytes, key: "lastTimelinePayloadLargestEventBytes", to: &metadata)
+        add(context.activeServerId, key: "lastActiveServerId", to: &metadata)
+        add(context.screen, key: "lastScreen", to: &metadata)
+        add(context.scenePhase, key: "lastScenePhase", to: &metadata)
+        add(context.lifecycleEvent, key: "lastLifecycleEvent", to: &metadata)
+        add(context.lifecycleStep, key: "lastLifecycleStep", to: &metadata)
+        add(context.lifecycleRecordedAtMs, key: "lastLifecycleRecordedAtMs", to: &metadata)
+        add(context.lastStallRecordedAtMs, key: "lastStallRecordedAtMs", to: &metadata)
+        add(context.lastStallRecoveredAtMs, key: "lastStallRecoveredAtMs", to: &metadata)
+        add(context.lastStallThresholdMs, key: "lastStallThresholdMs", to: &metadata)
+        add(context.lastStallDurationMs, key: "lastStallDurationMs", to: &metadata)
+        add(context.lastStallFootprintMB, key: "lastStallFootprintMB", to: &metadata)
+        add(context.lastStallSequence, key: "lastStallSequence", to: &metadata)
         return metadata
     }
 
-    private static func save(_ context: MetricKitCrashContext) {
-        guard let data = try? JSONEncoder().encode(context) else { return }
-        UserDefaults.standard.set(data, forKey: defaultsKey)
+    private static func add(_ value: String?, key: String, to metadata: inout [String: String]) {
+        guard let value, !value.isEmpty else { return }
+        metadata[key] = value
+    }
+
+    private static func add(_ value: Int64?, key: String, to metadata: inout [String: String]) {
+        guard let value else { return }
+        metadata[key] = String(value)
+    }
+
+    private static func add(_ value: Int?, key: String, to metadata: inout [String: String]) {
+        guard let value else { return }
+        metadata[key] = String(value)
     }
 
     private static func clean(_ value: String?) -> String? {
@@ -406,6 +798,25 @@ enum MetricKitCrashContextStore {
 /// Internal visibility so tests can exercise the summary/raw pipeline directly
 /// without needing real MXMetricPayload instances (which only the system creates).
 enum MetricKitPayloadItemBuilder {
+    static let requiredDiagnosticContextKeys = [
+        "lastContextRecordedAtMs",
+        "lastSessionId",
+        "lastWorkspaceId",
+        "lastActiveServerId",
+        "lastScreen",
+        "lastScenePhase",
+        "lastLifecycleEvent",
+        "lastLifecycleStep",
+        "lastLifecycleRecordedAtMs",
+        "lastStallRecordedAtMs",
+        "lastStallRecoveredAtMs",
+        "lastStallThresholdMs",
+        "lastStallDurationMs",
+        "lastStallFootprintMB",
+        "lastStallSequence",
+        "lastStreamState",
+    ]
+
     static func makeItem(
         from snapshot: [String: Any],
         kind: MetricKitPayloadItem.Kind,
@@ -434,8 +845,15 @@ enum MetricKitPayloadItemBuilder {
         ]
 
         addDiagnosticCounts(from: snapshot, to: &out)
-        for (key, value) in context {
-            guard out.count < 24, !key.isEmpty else { break }
+        for key in requiredDiagnosticContextKeys {
+            guard out.count < 24 else { break }
+            if let value = context[key] {
+                out[key] = String(value.prefix(140))
+            }
+        }
+        for key in context.keys.sorted() where !requiredDiagnosticContextKeys.contains(key) {
+            guard out.count < 24 else { break }
+            guard !key.isEmpty, let value = context[key] else { continue }
             out[key] = String(value.prefix(140))
         }
 
