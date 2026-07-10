@@ -10,7 +10,7 @@ Oppi is an iPhone/iPad client and self-hosted server for [Pi](https://github.com
 - Keep contextual knowledge in comments close to the code.
 - Extension UI translation, dedupe, and rendering must stay extension-agnostic. Never branch on concrete tool, extension, status, widget, or display names in generic extension-surface code; add or consume semantic protocol metadata instead.
 - Keep durable repo-private working artifacts in `.internal/` (`reports/`, `research/`, `diagrams/`). Keep `.pi/` for runtime/session state and reusable local agent inputs such as todos, attachments, prompts, worktrees, and temporary caches. Reserve `docs/` for curated public docs.
-- Multiple agent sessions may work in the same directory at the same time. Do not fight each other; pause and let the user decide.
+- Preserve unrelated changes from other sessions. If overlapping edits cannot be safely separated, stop and ask the user.
 - Do not commit unless explicitly asked. Stage only paths/hunks changed in this session unless the user explicitly asks for broader scope; never use `git add .` or `git add -A`.
 
 ### TypeScript
