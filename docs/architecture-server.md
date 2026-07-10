@@ -198,7 +198,7 @@ graph TD
   Store[session-sqlite-store.ts]
   Local[local-sessions.ts cached catalog]
   Summary[SessionSummary rows]
-  Client[Apple workspace list]
+  Client[Apple session and workspace lists]
 
   Route --> Active
   Route --> Store
@@ -278,7 +278,7 @@ Keep these high-churn modules small and explicit:
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Server composition                          | `server/src/server.ts`, `server/src/cli.ts`                                                                                                                                  |
 | Route dispatch                              | `server/src/routes/index.ts`, `server/src/routes/*`                                                                                                                          |
-| Workspace home summaries                    | `server/src/routes/workspaces.ts`, `server/src/storage/session-sqlite-store.ts`                                                                                              |
+| Workspace catalog summaries                 | `server/src/routes/workspaces.ts`, `server/src/storage/session-sqlite-store.ts`                                                                                              |
 | Workspace detail recent list                | `server/src/routes/sessions.ts`, `server/src/session-list-service.ts`, `server/src/local-sessions.ts`                                                                        |
 | Session lifecycle HTTP actions              | `server/src/routes/sessions.ts`, `server/src/session-lifecycle-service.ts`                                                                                                   |
 | Saved Agent definitions and launches        | `server/src/routes/agents.ts`, `server/src/agent-definitions.ts`, `server/src/agent-launch-service.ts`                                                                       |

@@ -21,7 +21,7 @@ The Apple app is a remote control and renderer. The server is the authority for 
 graph TD
   subgraph Apple[Apple clients]
     App[iOS and macOS app]
-    WorkspaceUI[Workspace home and detail]
+    WorkspaceUI[Sessions inbox, workspace sidebar,<br/>and workspace detail]
     Timeline[UIKit chat timeline]
     Voice[Voice input and playback]
   end
@@ -98,19 +98,20 @@ Persisted runtime ownership uses `Session.runtime == "oppi"` for server-owned SD
 
 Oppi keeps workspace navigation HTTP-first. WebSockets carry live state where streaming is required.
 
-| Lane                                        | Transport                   | Carries                                                                                |
-| ------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------- |
-| Workspace home summaries                    | HTTP                        | Workspace cards, active/stopped counts, attention and error flags                      |
-| Workspace detail recent list                | HTTP                        | Recent active/stopped session summaries, attention snapshot, importable local sessions |
-| Workspace archive bucket                    | HTTP                        | Older stopped/importable rows for one lazy-loaded time bucket                          |
-| Workspace files and media                   | HTTP GET/HEAD               | Directory listings, raw bytes, uploads, attachments, byte-range media                  |
-| Workspace quick actions and review comments | HTTP                        | Prompt-template options, selected-file preparation, review comments                    |
-| Saved Agents and schedules                  | HTTP                        | Agent definitions, Agent launches, schedule definitions, manual runs, run history      |
-| Global app event stream                     | Server-to-client WebSocket  | Session row updates, extension UI attention, workspace invalidation                    |
-| Focused session stream                      | Bidirectional WebSocket     | Timeline events, prompts, commands, queue sync, focused session summaries              |
-| Focused session catch-up                    | HTTP GET                    | Missed durable focused-session events after reconnect                                  |
-| Mirror bridge                               | Bidirectional WebSocket     | Terminal-owned session registration, takeover, commands, queue, extension UI proxying  |
-| Dictation stream                            | Bidirectional JSON + binary | Dictation control frames, PCM audio, transcript events                                 |
+| Lane                                        | Transport                   | Carries                                                                                                  |
+| ------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Global sessions inbox                       | HTTP                        | Recent session summaries across workspaces; the root groups active rows by attention and execution state |
+| Workspace catalog summaries                 | HTTP                        | Workspace rows, active/stopped counts, attention and error flags                                         |
+| Workspace detail recent list                | HTTP                        | Recent active/stopped session summaries, attention snapshot, importable local sessions                   |
+| Workspace archive bucket                    | HTTP                        | Older stopped/importable rows for one lazy-loaded time bucket                                            |
+| Workspace files and media                   | HTTP GET/HEAD               | Directory listings, raw bytes, uploads, attachments, byte-range media                                    |
+| Workspace quick actions and review comments | HTTP                        | Prompt-template options, selected-file preparation, review comments                                      |
+| Saved Agents and schedules                  | HTTP                        | Agent definitions, Agent launches, schedule definitions, manual runs, run history                        |
+| Global app event stream                     | Server-to-client WebSocket  | Session row updates, extension UI attention, workspace invalidation                                      |
+| Focused session stream                      | Bidirectional WebSocket     | Timeline events, prompts, commands, queue sync, focused session summaries                                |
+| Focused session catch-up                    | HTTP GET                    | Missed durable focused-session events after reconnect                                                    |
+| Mirror bridge                               | Bidirectional WebSocket     | Terminal-owned session registration, takeover, commands, queue, extension UI proxying                    |
+| Dictation stream                            | Bidirectional JSON + binary | Dictation control frames, PCM audio, transcript events                                                   |
 
 ## Prompt to pixel
 
@@ -158,6 +159,7 @@ Durable session events get per-session sequence numbers and can be replayed thro
 ## Cross-system invariants
 
 - Workspace navigation is HTTP-first. `/app/events/stream` keeps visible rows and attention state fresh between snapshots.
+- The Workspaces root is a server-scoped active-session inbox. Workspace selection opens the workspace-scoped recent list, files, and configuration.
 - The hot workspace recent list is time-bounded. Older stopped/importable history belongs in archive buckets.
 - Workspace session-list endpoints return session summaries, not full `Session` payloads.
 - Hot workspace endpoints do not reread `~/.pi/agent/sessions/*.jsonl`; importable TUI metadata comes from the cached local-session catalog and SQLite read models.

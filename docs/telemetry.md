@@ -69,7 +69,8 @@ Allowed diagnostic data:
 - low-cardinality IDs such as session ID, workspace ID, app instance ID, and boot ID
 - low-cardinality tags such as `transport=lan`, `status=ok`, `error_kind=network`, or `tool=bash`
 - numeric timings, counts, ratios, byte counts, and resource samples
-- sanitized MetricKit summaries and crash diagnostics
+- sanitized MetricKit summaries and crash, hang, CPU, disk, and app-launch diagnostics
+- coarse screen, scene-phase, lifecycle-step, and main-thread stall context
 - redacted client logs
 
 ## Upload channels
@@ -77,8 +78,8 @@ Allowed diagnostic data:
 | Channel | Endpoint | Stored at | Purpose |
 |---|---|---|---|
 | Chat metrics | `POST /telemetry/chat-metrics` | `<OPPI_DATA_DIR>/diagnostics/telemetry/chat-metrics-YYYY-MM-DD.jsonl` | Client UX, rendering, queueing, dictation, and device metrics. |
-| MetricKit | `POST /telemetry/metrickit` | `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl` | Apple crash, hang, CPU, disk, and battery diagnostics. |
-| Client logs | `POST /telemetry/client-logs` | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl` | Redacted warning/error events and selected high-value info logs. |
+| MetricKit | `POST /telemetry/metrickit` | `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl` | Apple crash, hang, CPU, disk, battery, and app-launch diagnostics with bounded correlation context. |
+| Client logs | `POST /telemetry/client-logs` | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl` | Redacted warning/error events plus selected lifecycle, recovery, network, and memory info logs. |
 | Server resource metrics | local JSONL writer | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-metrics-YYYY-MM-DD.jsonl` | Server CPU, memory, event loop, sessions, and WebSocket counts. |
 | Server ops metrics | local JSONL writer | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-ops-metrics-YYYY-MM-DD.jsonl` | Server WebSocket, session, turn, extension UI, dictation, retry, and compaction metrics. |
 | Server log | local JSONL/text log | `<OPPI_DATA_DIR>/server.log` | Structured server events and warnings. |
@@ -182,8 +183,20 @@ The front page should focus on metrics that map directly to user experience. Low
 | `server.event_loop_lag_ms` | Server event-loop delay during sampler intervals. |
 | `server.rss_mb` and `server.heap_mb` | Server memory pressure. |
 | `server.sessions_total` and `server.ws_connections` | Local server concurrency pressure. |
-| MetricKit diagnostics | Crashes, hangs, CPU exceptions, and disk-write exceptions. |
+| MetricKit diagnostics | Crashes, hangs, CPU exceptions, disk-write exceptions, and app-launch diagnostics. |
 | Client logs | Redacted diagnostic context for what happened before failure. |
+
+## Lifecycle and hang correlation
+
+The Apple client persists a bounded diagnostic context locally so a later MetricKit payload can be tied to what the app was doing. The context can include session, workspace, and active-server IDs; a coarse screen label; scene phase; the latest lifecycle step; focused-stream state; and large timeline-payload counts and sizes. It does not include prompt, response, tool, URL, or file-path content.
+
+A release-build watchdog probes the main thread once per second while the app is active. A probe that cannot run within 700 ms records a stall sequence, threshold, timestamp, and current memory footprint. Recovery records the measured duration. Repeated notices for the same stall are limited to one every two seconds. The watchdog remains available for ten seconds after the app enters the background so background-transition hangs can retain their final lifecycle step.
+
+Scene transitions record ordered steps around restoration, background keep-alive, audio transport, and graceful connection close. Background steps, watchdog detections and recoveries, and MetricKit diagnostic notices force the client-log queue to flush in submission order.
+
+MetricKit usually delivers crash and hang diagnostics after the affected process has ended. On the first diagnostic-context write in a new process, Oppi rotates the saved context into a previous-process slot. MetricKit diagnostic serialization uses that previous-process context, falling back to the current context only when no previous snapshot exists.
+
+All remote upload rules still apply: public builds upload this context only when **Send Diagnostics to Server** is enabled, and the server stores it only in the telemetry files above. Use `telemetry:client-logs` to review lifecycle and watchdog events. The corresponding MetricKit JSONL record keeps the bounded context in its summary and raw `oppiDiagnosticContext` object.
 
 ## Informational metrics policy
 

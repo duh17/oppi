@@ -40,6 +40,14 @@ Extension prompts, confirmations, editor requests, status, and widgets render as
 └─────────────────────┘
 ```
 
+## Using Oppi
+
+The Workspaces tab opens **All Sessions** for the active server. It groups active work under **Your Turn** and **Working**, with workspace names on rows. Open the workspace sidebar to browse one workspace's sessions, files, and settings.
+
+**Quick Session** starts a session without navigating into a workspace first. Open it from Oppi, Control Center, the Action Button, Spotlight, Siri, or Shortcuts. The Shortcuts **New Session** action can preload optional text and one image into the composer.
+
+The iOS share extension accepts shared text, URLs, images, and files. iOS does not let a share extension launch its containing app, so the extension confirms **Saved to Oppi**. Open Oppi to continue with the saved content preloaded in Quick Session.
+
 ## Quick start
 
 Requires Node.js 23.6+ and at least one Pi provider configured (`pi auth`, or an API key such as `ANTHROPIC_API_KEY`). Linux self-signed TLS also requires `openssl` on PATH.

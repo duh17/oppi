@@ -6,10 +6,10 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Quic
 
 /// Compact sheet for starting a new agent session.
 ///
-/// Presented by the Action Button / Control Center / Spotlight via
-/// `StartQuickSessionIntent`. The sheet stays focused on one task: pick a
-/// workspace, compose the first message, then create and navigate to the new
-/// session. Active and recent sessions live under each workspace.
+/// Presented from Oppi, the Control widget, App Intents, or saved share intake.
+/// The sheet stays focused on one task: pick a workspace, compose the first
+/// message, then create and navigate to the new session. Session browsing stays
+/// in the Workspaces navigation shell.
 ///
 /// **Flow**: Pick workspace → compose message → send → session created →
 /// navigate to ChatView.
