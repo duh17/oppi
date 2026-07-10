@@ -132,6 +132,7 @@ describe("Default Agent Oppi tool command policy", () => {
       ["session", "search", "regression", "--workspace", "oppi"],
       ["session", "inspect", "sess-1", "--turns", "1-3", "--view", "messages"],
       ["session", "read", "sess-1", "--tail", "10"],
+      ["session", "messages", "sess-1"],
       ["session", "events", "sess-1"],
       ["session", "trace", "sess-1"],
       ["session", "changes", "sess-1"],

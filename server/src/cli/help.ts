@@ -901,6 +901,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "create", summary: "launch a workspace session" },
       { name: "send <id>", summary: "send text to a session" },
       { name: "read <id>", summary: "show transcript-style trace entries" },
+      { name: "messages <id>", summary: "show the latest assistant response" },
       { name: "events <id>", summary: "read live catch-up events" },
       { name: "trace <id>", summary: "show raw trace entries" },
       { name: "search <query>", summary: "search session content" },
@@ -917,7 +918,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Saved Agents can be launched with 'oppi session create --agent <agent>'.",
-      "Use 'oppi session read' for transcript-like output; 'oppi session get' returns metadata only.",
+      "Use 'oppi session messages' for the latest assistant response, 'read' for transcript-like output, and 'get' for metadata.",
     ],
     examples: [
       { command: "oppi session list --workspace ws_123" },
@@ -980,6 +981,29 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     examples: [{ command: "oppi session read sess_123 --tail 50 --json" }],
+  },
+  {
+    path: ["session", "messages"],
+    title: "Latest assistant response",
+    summary: "Print the latest non-empty assistant response without transcript or tool output.",
+    usage: "oppi session messages <id> [--workspace <workspace>] [--json]",
+    arguments: [{ name: "<id>", summary: "session id" }],
+    flags: [
+      {
+        name: "--workspace",
+        value: "<workspace>",
+        summary: "validate that the session belongs to this workspace",
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "Human output is the response text only, so shell tools such as tail can consume it directly.",
+      "JSON output also includes the assistant message count and resolved workspace identity.",
+    ],
+    examples: [
+      { command: "oppi session messages sess_123" },
+      { command: "oppi session messages sess_123 --workspace oppi --json" },
+    ],
   },
   {
     path: ["session", "events"],

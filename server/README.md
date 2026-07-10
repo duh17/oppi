@@ -165,6 +165,7 @@ oppi agent create            # create a saved Agent from flags or JSON
 oppi session create --agent  # launch a saved Agent into a workspace
 oppi session search          # search indexed session content (cwd workspace by default)
 oppi session inspect         # inspect selected turns from a session trace
+oppi session messages        # print the latest assistant response
 oppi schedule list           # list saved schedules
 oppi schedule create         # create an at/every/cron schedule
 oppi schedule run <id>       # run a schedule now
