@@ -798,7 +798,6 @@ struct WorkspaceSessionInboxStackRootView: View {
                 .simultaneousGesture(sidebarDismissGesture)
                 .accessibilityAddTraits(.isModal)
                 .accessibilityAction(.escape) { isSidebarOpen = false }
-                .accessibilityIdentifier("workspace.sidebar.drawer")
                 .zIndex(2)
             }
         }
@@ -864,9 +863,6 @@ struct WorkspaceSidebarView: View {
                         let summaries = connection?.workspaceStore.workspaceSummaries(forServer: serverId) ?? [:]
                         let workspaces = sortedWorkspaces(workspacesForServer(serverId), summaries: summaries)
 
-                        newWorkspaceButton(selectedServer)
-                            .padding(.bottom, 8)
-
                         if workspaces.isEmpty {
                             Text("No workspaces")
                                 .font(.subheadline)
@@ -877,18 +873,24 @@ struct WorkspaceSidebarView: View {
                         } else {
                             ForEach(workspaces) { workspace in
                                 let target = WorkspaceNavTarget(serverId: serverId, workspace: workspace)
+                                let status = workspaceSessionStatus(
+                                    workspaceId: workspace.id,
+                                    connection: connection
+                                )
                                 Button {
                                     navigation.openWorkspace(target)
                                     onSelect?()
                                 } label: {
                                     WorkspaceSidebarRow(
                                         workspace: workspace,
+                                        status: status,
                                         isSelected: navigation.selectedWorkspaceFilter == target
                                     )
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityIdentifier(WorkspaceHomeView.workspaceOpenAccessibilityIdentifier(workspaceName: workspace.name))
                                 .accessibilityLabel("Open \(workspace.name)")
+                                .accessibilityValue(status.accessibilityValue)
                             }
                         }
                     } else {
@@ -901,10 +903,18 @@ struct WorkspaceSidebarView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 32)
+                .padding(.bottom, 12)
             }
             .frame(maxHeight: .infinity)
             .accessibilityIdentifier("workspace.sidebar.scroll")
+
+            if let selectedServer {
+                Divider()
+
+                newWorkspaceButton(selectedServer)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color.themeBg.ignoresSafeArea())
@@ -981,6 +991,26 @@ struct WorkspaceSidebarView: View {
         coordinator.connection(for: serverId)?.workspaceStore.workspaces ?? []
     }
 
+    private func workspaceSessionStatus(
+        workspaceId: String,
+        connection: ServerConnection?
+    ) -> WorkspaceSidebarSessionStatus {
+        guard let connection else {
+            return WorkspaceSidebarSessionStatus(sessions: [])
+        }
+
+        return WorkspaceSidebarSessionStatus(
+            sessions: connection.sessionStore.listProjectionSessions(workspaceId: workspaceId),
+            pendingAskCountForSession: { sessionId in
+                SessionListAttentionMerger.askCount(
+                    listCount: connection.sessionStore.listPendingAskCount(for: sessionId),
+                    hasPendingAsk: connection.askRequestStore.hasPending(for: sessionId),
+                    hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
+                )
+            }
+        )
+    }
+
     private func sortedWorkspaces(
         _ workspaces: [Workspace],
         summaries: [String: WorkspaceListSummary]
@@ -1046,8 +1076,88 @@ struct WorkspaceSidebarView: View {
     }
 }
 
+/// Compact workspace aggregate using the same attention and status semantics as session rows.
+struct WorkspaceSidebarSessionStatus: Equatable {
+    let questionCount: Int
+    let errorCount: Int
+    let workingCount: Int
+    let doneCount: Int
+
+    init(
+        sessions: [Session],
+        pendingAskCountForSession: (String) -> Int = { _ in 0 }
+    ) {
+        var questionCount = 0
+        var errorCount = 0
+        var workingCount = 0
+        var doneCount = 0
+
+        for session in sessions {
+            switch SessionPillVariant.from(
+                session: session,
+                pendingAskCount: pendingAskCountForSession(session.id)
+            ) {
+            case .question:
+                questionCount += 1
+            case .error:
+                errorCount += 1
+            case .working:
+                workingCount += 1
+            case .done:
+                doneCount += 1
+            case .idle, .stopped:
+                break
+            }
+        }
+
+        self.questionCount = questionCount
+        self.errorCount = errorCount
+        self.workingCount = workingCount
+        self.doneCount = doneCount
+    }
+
+    var attentionCount: Int {
+        questionCount + errorCount
+    }
+
+    var isVisible: Bool {
+        attentionCount > 0 || workingCount > 0 || doneCount > 0
+    }
+
+    /// Attention replaces Done visually to keep the trailing cluster compact.
+    var showsDone: Bool {
+        attentionCount == 0 && doneCount > 0
+    }
+
+    var accessibilityValue: String {
+        [
+            sessionAttentionLabel(errorCount, state: "has an error", pluralState: "have errors"),
+            sessionAttentionLabel(questionCount, state: "needs attention", pluralState: "need attention"),
+            sessionCountLabel(workingCount, state: "working"),
+            sessionCountLabel(doneCount, state: "done"),
+        ]
+        .compactMap { $0 }
+        .joined(separator: ", ")
+    }
+
+    private func sessionAttentionLabel(
+        _ count: Int,
+        state: String,
+        pluralState: String
+    ) -> String? {
+        guard count > 0 else { return nil }
+        return count == 1 ? "1 session \(state)" : "\(count) sessions \(pluralState)"
+    }
+
+    private func sessionCountLabel(_ count: Int, state: String) -> String? {
+        guard count > 0 else { return nil }
+        return "\(count) \(state) \(count == 1 ? "session" : "sessions")"
+    }
+}
+
 private struct WorkspaceSidebarRow: View {
     let workspace: Workspace
+    let status: WorkspaceSidebarSessionStatus
     let isSelected: Bool
 
     var body: some View {
@@ -1068,6 +1178,11 @@ private struct WorkspaceSidebarRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
+
+            if status.isVisible {
+                WorkspaceSidebarSessionStatusIndicator(status: status)
+            }
         }
         .frame(minHeight: 44)
         .padding(.vertical, 4)
@@ -1079,5 +1194,44 @@ private struct WorkspaceSidebarRow: View {
             }
         }
         .contentShape(Rectangle())
+    }
+}
+
+struct WorkspaceSidebarSessionStatusIndicator: View {
+    let status: WorkspaceSidebarSessionStatus
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 7) {
+            if status.attentionCount > 0 {
+                metric(
+                    symbol: "exclamationmark.triangle.fill",
+                    count: status.attentionCount,
+                    tint: status.errorCount > 0 ? .themeRed : .themeOrange
+                )
+            }
+
+            if status.workingCount > 0 {
+                metric(symbol: "bolt.fill", count: status.workingCount, tint: .themeBlue)
+            }
+
+            if status.showsDone {
+                metric(symbol: "checkmark", count: status.doneCount, tint: .themeGreen)
+            }
+        }
+        .font(.caption2.weight(.semibold))
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityHidden(true)
+    }
+
+    private func metric(symbol: String, count: Int, tint: Color) -> some View {
+        HStack(alignment: .center, spacing: 2) {
+            Image(systemName: symbol)
+                .imageScale(.small)
+
+            Text(SessionFormatting.compactCount(count))
+                .monospacedDigit()
+        }
+        .foregroundStyle(tint)
+        .lineLimit(1)
     }
 }
