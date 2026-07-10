@@ -90,6 +90,7 @@ struct SessionRow: View {
     let pendingAskCount: Int
     let attentionText: String?
     let lineageHint: String?
+    let workspaceContext: String?
     let modelSummaries: [SessionModelSummary]
     let unreadCompletionAt: Date?
     let searchSnippet: AttributedString?
@@ -99,6 +100,7 @@ struct SessionRow: View {
         pendingAskCount: Int = 0,
         attentionText: String? = nil,
         lineageHint: String? = nil,
+        workspaceContext: String? = nil,
         modelSummaries: [SessionModelSummary] = [],
         unreadCompletionAt: Date? = nil,
         searchSnippet: AttributedString? = nil
@@ -107,6 +109,7 @@ struct SessionRow: View {
         self.pendingAskCount = pendingAskCount
         self.attentionText = attentionText
         self.lineageHint = lineageHint
+        self.workspaceContext = workspaceContext
         self.modelSummaries = modelSummaries
         self.unreadCompletionAt = unreadCompletionAt
         self.searchSnippet = searchSnippet
@@ -199,8 +202,12 @@ struct SessionRow: View {
                     .lineLimit(2)
             }
 
-            // Row 2: model + optional ask prompt
+            // Row 2: workspace + model + optional ask prompt
             HStack(spacing: 6) {
+                if let workspaceContext, !workspaceContext.isEmpty {
+                    workspaceContextView(workspaceContext)
+                }
+
                 if let firstModel = visibleModelSummaries.first {
                     modelSummaryView(firstModel)
                         .layoutPriority(1)
@@ -303,6 +310,22 @@ struct SessionRow: View {
             .padding(.vertical, 1)
             .background(Color.themePurple.opacity(0.14), in: Capsule())
             .accessibilityLabel("Incognito session")
+    }
+
+    // MARK: - Workspace Context
+
+    private func workspaceContextView(_ workspaceContext: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "folder")
+                .font(.caption2.weight(.semibold))
+            Text(workspaceContext)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .font(.caption2.weight(.medium))
+        .foregroundStyle(.themeFgDim)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Workspace \(workspaceContext)")
     }
 
     // MARK: - Model Summary

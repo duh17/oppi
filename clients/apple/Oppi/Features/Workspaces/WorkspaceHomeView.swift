@@ -102,7 +102,7 @@ enum WorkspaceUtilityNavTarget: Hashable {
     }
 }
 
-private struct WorkspaceCreateSheetContext: Identifiable {
+struct WorkspaceCreateSheetContext: Identifiable {
     let server: PairedServer
     let presentation: WorkspaceCreatePresentation
     let openWorkspaceAfterCreate: Bool
@@ -1231,7 +1231,7 @@ struct WorkspaceHomeView: View {
 
 // MARK: - Server Switcher
 
-private struct ServerSwitcherPill: View {
+struct ServerSwitcherPill: View {
     let server: PairedServer
     let connectionState: ServerBadgeConnectionState
 

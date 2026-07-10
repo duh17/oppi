@@ -13,7 +13,7 @@ This page covers the Apple client structure. Server route, runtime, and storage 
 The Apple client owns:
 
 - paired-server credentials and endpoint selection,
-- workspace home and workspace detail navigation,
+- the global sessions inbox, workspace sidebar, workspace detail navigation, and focused-session navigation,
 - focused session stream setup and recovery,
 - app-event stream consumption and HTTP snapshot repair,
 - per-session chat timeline state and rendering,
@@ -50,7 +50,8 @@ graph TD
   end
 
   subgraph WorkspaceViews[Workspace navigation]
-    Home[WorkspaceHomeView]
+    Sidebar[WorkspaceSidebarView]
+    Inbox[SessionInboxView]
     Detail[WorkspaceDetailView]
     Archive[WorkspaceStoppedSessionsSection]
     Review[Workspace review<br/>quick actions]
@@ -73,7 +74,10 @@ graph TD
   Connection --> WorkspaceStore
   Connection --> ExtensionUIState
   Connection --> ChatManager
-  Home --> WorkspaceStore
+  Sidebar --> WorkspaceStore
+  Inbox --> WorkspaceStore
+  Inbox --> SessionStore
+  Inbox --> API
   Detail --> SessionStore
   Detail --> API
   Archive --> API
@@ -120,7 +124,8 @@ graph TD
   Client --> AudioWS[Dictation stream<br/>/dictation/stream]
 
   WorkspaceHTTP --> Home[Workspace catalog and summaries]
-  WorkspaceHTTP --> Recent[Workspace recent session list]
+  WorkspaceHTTP --> Recent[Recent session summaries across workspaces]
+  WorkspaceHTTP --> WorkspaceRecent[Workspace recent session list]
   WorkspaceHTTP --> Archive[Stopped archive buckets]
   WorkspaceHTTP --> Attention[Workspace attention snapshot]
   WorkspaceHTTP --> Files[Files, media, uploads, attachments]
@@ -136,25 +141,33 @@ The global app event stream and focused session stream are intentionally separat
 
 ## Workspace navigation flow
 
-Workspace navigation avoids rereading full traces.
+The Workspaces tab opens the global `SessionInboxView` for the active server. Selecting a workspace from the sidebar opens `WorkspaceDetailView`; it does not filter or replace the global inbox. Selecting a session from either list opens focused chat without reading a Pi JSONL file.
 
 ```mermaid
 graph TD
-  Home[WorkspaceHomeView] --> SummaryAPI[APIClient.listWorkspaceCatalog]
-  SummaryAPI --> WorkspaceStore[WorkspaceStore<br/>catalog + summaries]
+  Sidebar[WorkspaceSidebarView] --> CatalogAPI[APIClient.listWorkspaceCatalog]
+  CatalogAPI --> WorkspaceStore[WorkspaceStore<br/>catalog + summaries]
 
-  Detail[WorkspaceDetailView] --> RecentAPI[APIClient.getWorkspaceSessionList]
-  RecentAPI --> SessionStore[SessionStore.applyWorkspaceRecentSnapshot]
-  RecentAPI --> LocalRows[Importable local Pi rows]
-  RecentAPI --> Attention[Workspace attention snapshot]
+  Inbox[Global SessionInboxView] --> Refresh[ConnectionCoordinator.refreshAllServers]
+  Refresh --> RecentAPI[APIClient.listRecentWorkspaceSessionSummaries]
+  RecentAPI --> SessionStore[SessionStore.applyRecentWorkspaceSummaryProjection]
+  SessionStore --> Projection[SessionStore.listProjectionSessions]
+  Projection --> Inbox
 
-  Expand[Expand archive bucket] --> BucketAPI[APIClient.getWorkspaceSessionListBucket]
-  BucketAPI --> Archive[WorkspaceStoppedSessionsSection]
+  Sidebar --> Detail[WorkspaceDetailView]
+  Detail --> WorkspaceAPI[APIClient.getWorkspaceSessionList]
+  WorkspaceAPI --> SessionStore
+  WorkspaceAPI --> LocalRows[Importable local Pi rows]
+  WorkspaceAPI --> Attention[Workspace attention snapshot]
+  Detail --> Worktrees[Workspace worktree selection]
+  Detail --> Stopped[WorkspaceStoppedSessionsSection]
+  Stopped --> BucketAPI[APIClient.getWorkspaceSessionListBucket]
+
+  Inbox --> Chat[Focused session destination]
+  Detail --> Chat
 ```
 
-`WorkspaceStore` owns workspace cards and summaries. `SessionStore` owns session rows and exposes `listProjectionSessions` for workspace and quick-session lists. List views must not read the full `SessionStore.sessions` array because hot timeline updates can change full session state without changing row-level summary data.
-
-`WorkspaceDetailView` owns view-scoped refresh and polling for one workspace. It fetches the hot stopped range and archive buckets through HTTP, applies the recent snapshot to `SessionStore`, and keeps older archive buckets in view state until loaded.
+`WorkspaceStore` owns the workspace catalog and sidebar summaries. `SessionStore` owns session rows and exposes `listProjectionSessions` for the global inbox, workspace detail, and quick-session lists. The global inbox reads the active server's projection and groups active rows by attention and execution state. `WorkspaceDetailView` applies a workspace and worktree scope, refreshes the hot stopped range, exposes importable local sessions, and keeps older archive buckets in view state until loaded. List views must not read the full `SessionStore.sessions` array because hot timeline updates can change full session state without changing row-level summary data.
 
 ## Focused session flow
 
@@ -239,7 +252,8 @@ Keep these high-churn client modules small and explicit:
 
 - `APIClient.swift` — split by route domain while keeping the same actor and request helpers.
 - `ServerConnection.swift` and extensions — keep as composition root; move capability/reconnect policy and extension UI state transitions into smaller coordinators when behavior grows.
-- `WorkspaceDetailView.swift` — extract refresh, archive bucket, and local-import state into a `@MainActor @Observable` controller.
+- `SessionInboxView.swift` — keep global grouping, sidebar selection, and session actions explicit; move them into a `@MainActor @Observable` controller if the view's state continues to grow.
+- `WorkspaceDetailView.swift` — extract refresh, worktree, archive bucket, and local-import state into a `@MainActor @Observable` controller as the view grows.
 - `ChatView.swift` — keep rendering and composition in the view; push lifecycle and timeline policy into `ChatSessionManager` and timeline helpers.
 - `FullScreenCodeBodies.swift` and timeline tool rows — continue moving heavy rendering and measurement code behind focused view models/builders.
 
@@ -251,8 +265,9 @@ Keep these high-churn client modules small and explicit:
 | HTTP API                    | `clients/apple/Oppi/Core/Networking/APIClient.swift`                                                                                                                  |
 | Focused WebSocket transport | `clients/apple/Oppi/Core/Networking/WebSocketClient.swift`, `SessionStreamCoordinator.swift`, `MessageSender.swift`; shared state in `clients/apple/OppiCore/Runtime/FocusedSessionStore.swift` and `SessionStreamCatchUpTracker.swift` |
 | App event stream            | `clients/apple/Oppi/Core/Networking/AppEventStreamClient.swift`, `AppEventStreamCoordinator.swift`, `ServerConnection+AppEvents.swift`                                |
-| Workspace catalog           | `clients/apple/Oppi/Core/Services/WorkspaceStore.swift`, shared file index and freshness/health state in `clients/apple/OppiCore/Stores/**`, `WorkspaceHomeView.swift` |
-| Workspace detail list       | `clients/apple/Oppi/Features/Workspaces/WorkspaceDetailView.swift`, `WorkspaceStoppedSessionsSection.swift`                                                           |
+| Workspace catalog and sidebar | `clients/apple/Oppi/Core/Services/WorkspaceStore.swift`, shared file index and freshness/health state in `clients/apple/OppiCore/Stores/**`, `SessionInboxView.swift` |
+| Global sessions inbox       | `clients/apple/Oppi/Features/Workspaces/SessionInboxView.swift`, `SessionRow.swift`, `SessionRowPresentation.swift`                                                   |
+| Workspace detail list       | `clients/apple/Oppi/Features/Workspaces/WorkspaceDetailView.swift`, `WorkspaceStoppedSessionsSection.swift`                                                          |
 | Session store               | `clients/apple/Oppi/Core/Services/SessionStore.swift`; shared ask/queue/review state in `clients/apple/OppiCore/Stores/**`                                             |
 | Chat session lifecycle      | `clients/apple/Oppi/Features/Chat/Session/ChatSessionManager.swift`, `ChatActionHandler.swift`                                                                        |
 | Timeline model              | `clients/apple/OppiCore/Runtime/TimelineReducer.swift`, `DeltaCoalescer.swift`, and shared support under `OppiCore/Runtime/**`                                      |

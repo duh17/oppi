@@ -13,6 +13,11 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         true
     }
 
+    override func setUpWithError() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        try super.setUpWithError()
+    }
+
     override func seedE2EFixtures() throws {
         let defaultModel = ProcessInfo.processInfo.environment["E2E_MODEL"] ?? "omlx/Qwen3.6-27B-8bit"
         let workspaceId = try createLabWorkspace(named: anchorWorkspaceName, defaultModel: defaultModel)
@@ -28,8 +33,8 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
     func testIPadMainAndChatTimelineScreenshots() throws {
         try prepareIPadLandscapeCanvas()
 
-        let workspaceList = app.collectionViews["workspace.list"]
-        XCTAssertTrue(workspaceList.waitForExistence(timeout: 15), "Workspace home list not visible")
+        let workspaceList = app.scrollViews["workspace.sidebar.scroll"]
+        XCTAssertTrue(workspaceList.waitForExistence(timeout: 15), "Workspace sidebar not visible")
         dismissExtensionSheetIfNeeded(timeout: 3)
         workspaceList.swipeDown()
 
@@ -94,16 +99,10 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
 
     private func openWorkspaceCreateForm() {
         showWorkspaceHomeListIfNeeded()
-        openCurrentServerMenu()
 
-        let createButton = app.buttons["workspace.create.open"]
-        if createButton.waitForExistence(timeout: 5) {
-            tap(createButton, named: "create workspace menu item", timeout: 1)
-        } else {
-            let menuItem = app.menuItems["Create Workspace"]
-            XCTAssertTrue(menuItem.waitForExistence(timeout: 5), "Create Workspace menu item missing")
-            tap(menuItem, named: "create workspace menu item", timeout: 1)
-        }
+        let createButton = app.buttons["workspace.create.sidebar.open"]
+        XCTAssertTrue(createButton.waitForExistence(timeout: 5), "Create workspace sidebar button missing")
+        tap(createButton, named: "create workspace sidebar button", timeout: 1)
 
         let manualButton = app.buttons["workspace.create.manual"]
         XCTAssertTrue(manualButton.waitForExistence(timeout: 15), "Manual create button not shown")
@@ -124,8 +123,8 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         tap(cancelButton, named: "workspace create cancel button", timeout: 1)
 
         XCTAssertTrue(
-            app.collectionViews["workspace.list"].waitForExistence(timeout: 10),
-            "Workspace list did not return after dismissing create form"
+            app.scrollViews["workspace.sidebar.scroll"].waitForExistence(timeout: 10),
+            "Workspace sidebar did not return after dismissing create form"
         )
     }
 
@@ -147,9 +146,14 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
             return
         }
 
-        let backButton = app.navigationBars["Edit Workspace"].buttons.firstMatch
-        XCTAssertTrue(backButton.waitForExistence(timeout: 5), "Workspace edit back button missing")
-        tap(backButton, named: "workspace edit back button", timeout: 1)
+        let doneButton = app.buttons["workspace.edit.done"]
+        if doneButton.waitForExistence(timeout: 2) {
+            tap(doneButton, named: "workspace edit done button", timeout: 1)
+        } else {
+            let backButton = app.navigationBars["Edit Workspace"].buttons["Back"]
+            XCTAssertTrue(backButton.waitForExistence(timeout: 5), "Workspace edit back button missing")
+            tap(backButton, named: "workspace edit back button", timeout: 1)
+        }
 
         XCTAssertTrue(
             sessionList.waitForExistence(timeout: 10),
@@ -276,7 +280,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
     }
 
     private func showWorkspaceHomeListIfNeeded() {
-        let workspaceList = app.collectionViews["workspace.list"]
+        let workspaceList = app.scrollViews["workspace.sidebar.scroll"]
         for _ in 0..<4 {
             revealSplitDetailSidebarIfNeeded()
 
@@ -304,8 +308,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
     }
 
     private func revealSplitDetailSidebarIfNeeded() {
-        if app.collectionViews["workspace.list"].waitForExistence(timeout: 1)
-            || app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 1) {
+        if app.scrollViews["workspace.sidebar.scroll"].waitForExistence(timeout: 1) {
             return
         }
 
@@ -343,14 +346,6 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         if workspaceNavigationBar.waitForExistence(timeout: 2) {
             workspaceNavigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         }
-    }
-
-    private func openCurrentServerMenu() {
-        let currentServerButton = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Current server:")
-        ).firstMatch
-        XCTAssertTrue(currentServerButton.waitForExistence(timeout: 10), "Current server menu missing")
-        tap(currentServerButton, named: "current server menu")
     }
 
 }

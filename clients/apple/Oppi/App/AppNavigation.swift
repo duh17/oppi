@@ -34,6 +34,38 @@ enum WorkspaceSplitDetailPathElement: Hashable {
     case linkedFile(WorkspaceLinkedFileNavTarget)
 }
 
+struct WorkspaceConfigurationNavTarget: Hashable {
+    let workspaceTarget: WorkspaceNavTarget
+}
+
+private enum WorkspaceStackRouteElement: Hashable {
+    case workspace(WorkspaceNavTarget)
+    case session(WorkspaceSessionNavTarget)
+    case fileBrowser(FileBrowserNavTarget)
+    case linkedFile(WorkspaceLinkedFileNavTarget)
+    case workspaceConfiguration(WorkspaceNavTarget)
+    case utility(WorkspaceUtilityNavTarget)
+    case unknown
+}
+
+struct WorkspaceStackDiagnosticContext: Equatable, Sendable {
+    let screen: String
+    let sessionId: String?
+    let workspaceId: String?
+
+    static let inboxAll = WorkspaceStackDiagnosticContext(
+        screen: "workspace_inbox_all",
+        sessionId: nil,
+        workspaceId: nil
+    )
+
+    static let unknown = WorkspaceStackDiagnosticContext(
+        screen: "workspace_stack_unknown",
+        sessionId: nil,
+        workspaceId: nil
+    )
+}
+
 /// Navigation state for the app.
 @MainActor @Observable
 final class AppNavigation {
@@ -44,6 +76,10 @@ final class AppNavigation {
     /// Current workspace navigation shell. Compact width keeps the existing
     /// push stack; regular width selects workspace/session columns directly.
     var workspaceNavigationPresentation: WorkspaceNavigationPresentation = .stack
+
+    /// Workspace selection retained while moving between stack and split shells.
+    /// Nil means the global sessions inbox is visible for the active server.
+    var selectedWorkspaceFilter: WorkspaceNavTarget?
 
     /// Selection backing the regular-width split shell.
     var splitSelectedWorkspace: WorkspaceNavTarget?
@@ -93,35 +129,76 @@ final class AppNavigation {
 
     /// Programmatic navigation path for the workspace tab.
     /// Set externally (e.g. by QuickSessionSheet) to deep-link to a session.
-    var workspacePath = NavigationPath()
+    var workspacePath = NavigationPath() {
+        didSet {
+            synchronizeWorkspaceStackMetadata()
+            if workspaceNavigationPresentation == .stack, workspacePath.count == 0 {
+                selectedWorkspaceFilter = nil
+            }
+        }
+    }
+    private var workspaceStackDiagnosticContexts: [WorkspaceStackDiagnosticContext] = []
+    private var workspaceStackRouteElements: [WorkspaceStackRouteElement] = []
+
+    var workspaceStackDiagnosticContext: WorkspaceStackDiagnosticContext {
+        workspaceStackDiagnosticContexts.last ?? .inboxAll
+    }
 
     func setWorkspaceNavigationPresentation(_ presentation: WorkspaceNavigationPresentation) {
         guard workspaceNavigationPresentation != presentation else { return }
-        let preservedStackPath = presentation == .stack ? stackPathForCurrentSplitSelection() : nil
+        let preservedStackState = presentation == .stack ? stackStateForCurrentSplitSelection() : nil
+        let preservedSplitState = presentation == .split ? splitStateForCurrentStackSelection() : nil
+
         workspaceNavigationPresentation = presentation
         switch presentation {
         case .stack:
-            if let preservedStackPath {
-                workspacePath = preservedStackPath
+            selectedWorkspaceFilter = splitSelectedWorkspace ?? selectedWorkspaceFilter
+            if let preservedStackState {
+                replaceWorkspaceStack(
+                    path: preservedStackState.path,
+                    diagnosticContexts: preservedStackState.contexts,
+                    routeElements: preservedStackState.routeElements
+                )
             }
             splitSelectedWorkspace = nil
             splitDetailTarget = nil
             resetSplitDetailPath()
             splitColumnVisibility = .automatic
         case .split:
-            workspacePath = NavigationPath()
-            resetSplitDetailPath()
-            splitColumnVisibility = .all
+            splitSelectedWorkspace = preservedSplitState?.workspace ?? selectedWorkspaceFilter
+            splitDetailTarget = preservedSplitState?.detail
+            installSplitDetailPath(preservedSplitState?.detailPathElements ?? [])
+            replaceWorkspaceStack(path: NavigationPath(), diagnosticContexts: [], routeElements: [])
+            splitColumnVisibility = splitVisibility(for: splitDetailTarget)
         }
     }
 
     func openWorkspace(_ target: WorkspaceNavTarget) {
         selectedTab = .workspaces
+        selectedWorkspaceFilter = target
         switch workspaceNavigationPresentation {
         case .stack:
-            workspacePath.append(target)
+            replaceWorkspaceStack(
+                path: Self.workspaceInboxPath(target),
+                diagnosticContexts: [Self.workspaceInboxDiagnosticContext(target)],
+                routeElements: [.workspace(target)]
+            )
         case .split:
             splitSelectedWorkspace = target
+            splitDetailTarget = nil
+            resetSplitDetailPath()
+            splitColumnVisibility = .all
+        }
+    }
+
+    func showAllWorkspaceSessions() {
+        selectedTab = .workspaces
+        selectedWorkspaceFilter = nil
+        switch workspaceNavigationPresentation {
+        case .stack:
+            replaceWorkspaceStack(path: NavigationPath(), diagnosticContexts: [], routeElements: [])
+        case .split:
+            splitSelectedWorkspace = nil
             splitDetailTarget = nil
             resetSplitDetailPath()
             splitColumnVisibility = .all
@@ -131,9 +208,45 @@ final class AppNavigation {
     func openWorkspaceSession(_ target: WorkspaceSessionNavTarget, workspace: WorkspaceNavTarget? = nil) {
         selectedTab = .workspaces
         let resolvedTarget = target.withWorkspaceIdIfMissing(workspace?.workspace.id)
+        let wasShowingWorkspaceInbox = workspace.map {
+            selectedWorkspaceFilter == $0 && workspacePath.count == 1
+        } ?? false
+        if let workspace {
+            selectedWorkspaceFilter = workspace
+        }
         switch workspaceNavigationPresentation {
         case .stack:
-            workspacePath.append(resolvedTarget)
+            let sessionContext = Self.sessionDiagnosticContext(resolvedTarget)
+            if let workspace {
+                if wasShowingWorkspaceInbox {
+                    appendWorkspaceStack(
+                        resolvedTarget,
+                        diagnosticContext: sessionContext,
+                        routeElement: .session(resolvedTarget)
+                    )
+                } else {
+                    replaceWorkspaceStack(
+                        path: Self.workspaceSessionPath(
+                            workspace: workspace,
+                            session: resolvedTarget
+                        ),
+                        diagnosticContexts: [
+                            Self.workspaceInboxDiagnosticContext(workspace),
+                            sessionContext,
+                        ],
+                        routeElements: [
+                            .workspace(workspace),
+                            .session(resolvedTarget),
+                        ]
+                    )
+                }
+            } else {
+                appendWorkspaceStack(
+                    resolvedTarget,
+                    diagnosticContext: sessionContext,
+                    routeElement: .session(resolvedTarget)
+                )
+            }
         case .split:
             if let workspace {
                 splitSelectedWorkspace = workspace
@@ -146,9 +259,16 @@ final class AppNavigation {
 
     func openWorkspaceFileBrowser(_ target: FileBrowserNavTarget, workspace: WorkspaceNavTarget? = nil) {
         selectedTab = .workspaces
+        if let workspace {
+            selectedWorkspaceFilter = workspace
+        }
         switch workspaceNavigationPresentation {
         case .stack:
-            workspacePath.append(target)
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.fileBrowserDiagnosticContext(target),
+                routeElement: .fileBrowser(target)
+            )
         case .split:
             if let workspace {
                 splitSelectedWorkspace = workspace
@@ -161,9 +281,16 @@ final class AppNavigation {
 
     func openWorkspaceLinkedFile(_ target: WorkspaceLinkedFileNavTarget, workspace: WorkspaceNavTarget? = nil) {
         selectedTab = .workspaces
+        if let workspace {
+            selectedWorkspaceFilter = workspace
+        }
         switch workspaceNavigationPresentation {
         case .stack:
-            workspacePath.append(target)
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.linkedFileDiagnosticContext(target),
+                routeElement: .linkedFile(target)
+            )
         case .split:
             if let workspace {
                 splitSelectedWorkspace = workspace
@@ -184,7 +311,11 @@ final class AppNavigation {
         selectedTab = .workspaces
         switch workspaceNavigationPresentation {
         case .stack:
-            workspacePath.append(target)
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.utilityDiagnosticContext(target),
+                routeElement: .utility(target)
+            )
         case .split:
             splitDetailTarget = .utility(target)
             resetSplitDetailPath()
@@ -194,9 +325,14 @@ final class AppNavigation {
 
     func openWorkspaceConfiguration(_ target: WorkspaceNavTarget) {
         selectedTab = .workspaces
+        selectedWorkspaceFilter = target
         switch workspaceNavigationPresentation {
         case .stack:
-            workspacePath.append(target)
+            appendWorkspaceStack(
+                WorkspaceConfigurationNavTarget(workspaceTarget: target),
+                diagnosticContext: Self.workspaceConfigurationDiagnosticContext(target),
+                routeElement: .workspaceConfiguration(target)
+            )
         case .split:
             splitSelectedWorkspace = target
             splitDetailTarget = .workspaceConfiguration(target)
@@ -208,20 +344,29 @@ final class AppNavigation {
     func showWorkspaceListInSplitSidebar() {
         guard workspaceNavigationPresentation == .split else { return }
         selectedTab = .workspaces
+        selectedWorkspaceFilter = nil
         splitSelectedWorkspace = nil
-        workspacePath = NavigationPath()
+        replaceWorkspaceStack(path: NavigationPath(), diagnosticContexts: [], routeElements: [])
         splitColumnVisibility = .all
     }
 
     func completeWorkspaceConfiguration(_ target: WorkspaceNavTarget) {
         guard workspaceNavigationPresentation == .split else { return }
         guard splitDetailTarget == .workspaceConfiguration(target) else { return }
+        showSessionInboxInSplit()
+    }
+
+    func showSessionInboxInSplit() {
+        guard workspaceNavigationPresentation == .split else { return }
+        selectedTab = .workspaces
         splitDetailTarget = nil
         resetSplitDetailPath()
+        splitColumnVisibility = .all
     }
 
     func clearWorkspaceSelections() {
-        workspacePath = NavigationPath()
+        selectedWorkspaceFilter = nil
+        replaceWorkspaceStack(path: NavigationPath(), diagnosticContexts: [], routeElements: [])
         splitSelectedWorkspace = nil
         splitDetailTarget = nil
         resetSplitDetailPath()
@@ -237,7 +382,15 @@ final class AppNavigation {
         let target = WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId)
         switch workspaceNavigationPresentation {
         case .stack:
-            workspacePath = Self.workspaceSessionPath(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId)
+            replaceWorkspaceStack(
+                path: Self.workspaceSessionPath(
+                    serverId: serverId,
+                    sessionId: sessionId,
+                    workspaceId: workspaceId
+                ),
+                diagnosticContexts: [Self.sessionDiagnosticContext(target)],
+                routeElements: [.session(target)]
+            )
         case .split:
             splitDetailTarget = .session(target)
             resetSplitDetailPath()
@@ -248,6 +401,21 @@ final class AppNavigation {
     static func workspaceSessionPath(serverId: String, sessionId: String, workspaceId: String? = nil) -> NavigationPath {
         var path = NavigationPath()
         path.append(WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId))
+        return path
+    }
+
+    private static func workspaceInboxPath(_ target: WorkspaceNavTarget) -> NavigationPath {
+        var path = NavigationPath()
+        path.append(target)
+        return path
+    }
+
+    private static func workspaceSessionPath(
+        workspace: WorkspaceNavTarget,
+        session: WorkspaceSessionNavTarget
+    ) -> NavigationPath {
+        var path = workspaceInboxPath(workspace)
+        path.append(session)
         return path
     }
 
@@ -305,14 +473,27 @@ final class AppNavigation {
 
         switch workspaceNavigationPresentation {
         case .stack:
-            workspacePath = NavigationPath()
-            workspacePath.append(target)
+            var path = NavigationPath()
+            path.append(target)
+            replaceWorkspaceStack(
+                path: path,
+                diagnosticContexts: [Self.utilityDiagnosticContext(target)],
+                routeElements: [.utility(target)]
+            )
         case .split:
             splitDetailTarget = .utility(target)
             resetSplitDetailPath()
         }
         selectedTab = .workspaces
         return target
+    }
+
+    func pushWorkspaceFileBrowser(_ target: FileBrowserNavTarget) {
+        appendWorkspaceStack(
+            target,
+            diagnosticContext: Self.fileBrowserDiagnosticContext(target),
+            routeElement: .fileBrowser(target)
+        )
     }
 
     func pushSplitDetailFileBrowser(_ target: FileBrowserNavTarget) {
@@ -332,41 +513,12 @@ final class AppNavigation {
     }
 
     private func resetSplitDetailPath() {
-        splitDetailPathElements = []
-        splitDetailPath = NavigationPath()
+        installSplitDetailPath([])
     }
 
-    private func trimSplitDetailElementsToPathCount() {
-        guard splitDetailPathElements.count > splitDetailPath.count else { return }
-        splitDetailPathElements.removeLast(splitDetailPathElements.count - splitDetailPath.count)
-    }
-
-    private func stackPathForCurrentSplitSelection() -> NavigationPath? {
+    private func installSplitDetailPath(_ elements: [WorkspaceSplitDetailPathElement]) {
         var path = NavigationPath()
-
-        switch splitDetailTarget {
-        case .session(let target):
-            path.append(target)
-        case .fileBrowser(let target):
-            if let workspace = splitSelectedWorkspace {
-                path.append(workspace)
-                path.append(target)
-            }
-        case .linkedFile(let target):
-            path.append(target)
-        case .workspaceConfiguration(let target):
-            path.append(target)
-        case .utility(let target):
-            if target.isReleaseEnabled {
-                path.append(target)
-            }
-        case nil:
-            if let workspace = splitSelectedWorkspace {
-                path.append(workspace)
-            }
-        }
-
-        for element in splitDetailPathElements {
+        for element in elements {
             switch element {
             case .fileBrowser(let target):
                 path.append(target)
@@ -374,8 +526,238 @@ final class AppNavigation {
                 path.append(target)
             }
         }
+        splitDetailPathElements = elements
+        splitDetailPath = path
+    }
 
-        return path.count > 0 ? path : nil
+    private func trimSplitDetailElementsToPathCount() {
+        guard splitDetailPathElements.count > splitDetailPath.count else { return }
+        splitDetailPathElements.removeLast(splitDetailPathElements.count - splitDetailPath.count)
+    }
+
+    private func replaceWorkspaceStack(
+        path: NavigationPath,
+        diagnosticContexts: [WorkspaceStackDiagnosticContext],
+        routeElements: [WorkspaceStackRouteElement]
+    ) {
+        workspaceStackDiagnosticContexts = Array(diagnosticContexts.prefix(path.count))
+        workspaceStackRouteElements = Array(routeElements.prefix(path.count))
+        workspacePath = path
+        synchronizeWorkspaceStackMetadata()
+    }
+
+    private func appendWorkspaceStack<Element: Hashable>(
+        _ element: Element,
+        diagnosticContext: WorkspaceStackDiagnosticContext,
+        routeElement: WorkspaceStackRouteElement
+    ) {
+        workspaceStackDiagnosticContexts.append(diagnosticContext)
+        workspaceStackRouteElements.append(routeElement)
+        workspacePath.append(element)
+    }
+
+    private func synchronizeWorkspaceStackMetadata() {
+        let pathCount = workspacePath.count
+        synchronizeWorkspaceStackArray(&workspaceStackDiagnosticContexts, pathCount: pathCount, fill: .unknown)
+        synchronizeWorkspaceStackArray(&workspaceStackRouteElements, pathCount: pathCount, fill: .unknown)
+    }
+
+    private func synchronizeWorkspaceStackArray<Element>(
+        _ elements: inout [Element],
+        pathCount: Int,
+        fill: Element
+    ) {
+        if elements.count > pathCount {
+            elements.removeLast(elements.count - pathCount)
+        } else if elements.count < pathCount {
+            elements.append(
+                contentsOf: repeatElement(fill, count: pathCount - elements.count)
+            )
+        }
+    }
+
+    private static func workspaceInboxDiagnosticContext(
+        _ target: WorkspaceNavTarget
+    ) -> WorkspaceStackDiagnosticContext {
+        WorkspaceStackDiagnosticContext(
+            screen: "workspace_inbox_filtered",
+            sessionId: nil,
+            workspaceId: target.workspace.id
+        )
+    }
+
+    private static func sessionDiagnosticContext(
+        _ target: WorkspaceSessionNavTarget
+    ) -> WorkspaceStackDiagnosticContext {
+        WorkspaceStackDiagnosticContext(
+            screen: "chat",
+            sessionId: target.sessionId,
+            workspaceId: target.workspaceId
+        )
+    }
+
+    private static func fileBrowserDiagnosticContext(
+        _ target: FileBrowserNavTarget
+    ) -> WorkspaceStackDiagnosticContext {
+        WorkspaceStackDiagnosticContext(
+            screen: "file_browser",
+            sessionId: nil,
+            workspaceId: target.workspaceId
+        )
+    }
+
+    private static func linkedFileDiagnosticContext(
+        _ target: WorkspaceLinkedFileNavTarget
+    ) -> WorkspaceStackDiagnosticContext {
+        WorkspaceStackDiagnosticContext(
+            screen: "linked_file",
+            sessionId: nil,
+            workspaceId: target.workspaceId
+        )
+    }
+
+    private static func workspaceConfigurationDiagnosticContext(
+        _ target: WorkspaceNavTarget
+    ) -> WorkspaceStackDiagnosticContext {
+        WorkspaceStackDiagnosticContext(
+            screen: "workspace_configuration",
+            sessionId: nil,
+            workspaceId: target.workspace.id
+        )
+    }
+
+    private static func utilityDiagnosticContext(
+        _ target: WorkspaceUtilityNavTarget
+    ) -> WorkspaceStackDiagnosticContext {
+        let label = switch target {
+        case .schedules: "schedules"
+        case .agents: "agents"
+        case .manageServers: "manage_servers"
+        case .appSettings: "app_settings"
+        }
+        return WorkspaceStackDiagnosticContext(
+            screen: "utility_\(label)",
+            sessionId: nil,
+            workspaceId: nil
+        )
+    }
+
+    private func stackStateForCurrentSplitSelection() -> (
+        path: NavigationPath,
+        contexts: [WorkspaceStackDiagnosticContext],
+        routeElements: [WorkspaceStackRouteElement]
+    )? {
+        var path = NavigationPath()
+        var contexts: [WorkspaceStackDiagnosticContext] = []
+        var routeElements: [WorkspaceStackRouteElement] = []
+
+        let includesWorkspaceDetail = switch splitDetailTarget {
+        case .utility:
+            false
+        case .session, .fileBrowser, .linkedFile, .workspaceConfiguration, nil:
+            true
+        }
+        if includesWorkspaceDetail, let splitSelectedWorkspace {
+            path.append(splitSelectedWorkspace)
+            contexts.append(Self.workspaceInboxDiagnosticContext(splitSelectedWorkspace))
+            routeElements.append(.workspace(splitSelectedWorkspace))
+        }
+
+        switch splitDetailTarget {
+        case .session(let target):
+            path.append(target)
+            contexts.append(Self.sessionDiagnosticContext(target))
+            routeElements.append(.session(target))
+        case .fileBrowser(let target):
+            path.append(target)
+            contexts.append(Self.fileBrowserDiagnosticContext(target))
+            routeElements.append(.fileBrowser(target))
+        case .linkedFile(let target):
+            path.append(target)
+            contexts.append(Self.linkedFileDiagnosticContext(target))
+            routeElements.append(.linkedFile(target))
+        case .workspaceConfiguration(let target):
+            path.append(WorkspaceConfigurationNavTarget(workspaceTarget: target))
+            contexts.append(Self.workspaceConfigurationDiagnosticContext(target))
+            routeElements.append(.workspaceConfiguration(target))
+        case .utility(let target):
+            if target.isReleaseEnabled {
+                path.append(target)
+                contexts.append(Self.utilityDiagnosticContext(target))
+                routeElements.append(.utility(target))
+            }
+        case nil:
+            break
+        }
+
+        for element in splitDetailPathElements {
+            switch element {
+            case .fileBrowser(let target):
+                path.append(target)
+                contexts.append(Self.fileBrowserDiagnosticContext(target))
+                routeElements.append(.fileBrowser(target))
+            case .linkedFile(let target):
+                path.append(target)
+                contexts.append(Self.linkedFileDiagnosticContext(target))
+                routeElements.append(.linkedFile(target))
+            }
+        }
+
+        return path.count > 0 ? (path, contexts, routeElements) : nil
+    }
+
+    private func splitStateForCurrentStackSelection() -> (
+        workspace: WorkspaceNavTarget?,
+        detail: WorkspaceSplitDetailTarget?,
+        detailPathElements: [WorkspaceSplitDetailPathElement]
+    ) {
+        var workspace: WorkspaceNavTarget?
+        var detail: WorkspaceSplitDetailTarget?
+        var detailPathElements: [WorkspaceSplitDetailPathElement] = []
+
+        for element in workspaceStackRouteElements {
+            switch element {
+            case .workspace(let target):
+                workspace = target
+            case .session(let target):
+                detail = .session(target)
+                detailPathElements = []
+            case .fileBrowser(let target):
+                if detail == nil {
+                    detail = .fileBrowser(target)
+                } else {
+                    detailPathElements.append(.fileBrowser(target))
+                }
+            case .linkedFile(let target):
+                if detail == nil {
+                    detail = .linkedFile(target)
+                } else {
+                    detailPathElements.append(.linkedFile(target))
+                }
+            case .workspaceConfiguration(let target):
+                workspace = target
+                detail = .workspaceConfiguration(target)
+                detailPathElements = []
+            case .utility(let target):
+                detail = target.isReleaseEnabled ? .utility(target) : nil
+                detailPathElements = []
+            case .unknown:
+                break
+            }
+        }
+
+        return (workspace, detail, detailPathElements)
+    }
+
+    private func splitVisibility(
+        for detail: WorkspaceSplitDetailTarget?
+    ) -> NavigationSplitViewVisibility {
+        switch detail {
+        case .session, .fileBrowser, .linkedFile:
+            .detailOnly
+        case .workspaceConfiguration, .utility, nil:
+            .all
+        }
     }
 }
 
