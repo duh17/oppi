@@ -31,7 +31,7 @@ Use `oppi ...` commands for normal installs. Source checkouts can use `node dist
 
 4. Confirm server trust. If **Require Face ID/Touch ID/Optic ID/Passcode** is enabled, iOS asks for local authentication before accepting the server identity.
 
-5. Oppi opens **Workspaces**.
+5. Oppi opens **Workspaces** at **All Sessions**.
 
 6. If the server has no workspaces, Oppi opens guided **Create Workspace** setup.
 

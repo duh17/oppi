@@ -19,14 +19,12 @@ enum QuickSessionPendingPayload: Equatable, Sendable {
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "QuickSessionTrigger")
 
-/// Lightweight trigger that bridges App Intents with the SwiftUI presentation layer.
+/// Lightweight trigger that bridges external intake with SwiftUI presentation.
 ///
-/// The intent (running possibly out-of-process via widget extension) writes
-/// a flag to shared UserDefaults. The main app observes `presentationRequestID`
-/// and presents the Quick Session sheet when it changes.
-///
-/// For in-process intents (Action Button / Spotlight), the intent calls
-/// `requestPresentation()` directly.
+/// The Control widget and share extension write app-group state for the main app
+/// to consume on launch or foreground. Main-app App Intents, including Spotlight,
+/// Siri, and Shortcuts, call `requestPresentation` directly and can include an
+/// initial composer payload.
 @MainActor @Observable
 final class QuickSessionTrigger {
     static let shared = QuickSessionTrigger()
