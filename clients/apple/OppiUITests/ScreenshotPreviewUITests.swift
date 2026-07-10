@@ -103,6 +103,28 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "chat-input-attachment-contained")
     }
 
+    func testAskCardLongComposerStaysInsideKeyboardSafeBar() throws {
+        launchPreview(screen: "ask-card-long-composer")
+
+        let keyboardFirstRunContinue = app.buttons["Continue"]
+        if keyboardFirstRunContinue.waitForExistence(timeout: 2) {
+            keyboardFirstRunContinue.tap()
+        }
+
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "Keyboard did not appear for the long ask response")
+
+        let actionRowLabel = app.staticTexts["gpt-5.5 · max"]
+        XCTAssertTrue(actionRowLabel.waitForExistence(timeout: 5), "Composer action row not visible")
+
+        XCTAssertLessThanOrEqual(
+            actionRowLabel.frame.maxY,
+            keyboard.frame.minY + 2,
+            "Composer controls must remain above the keyboard"
+        )
+        saveScreenshot(name: "ask-card-long-composer-contained")
+    }
+
     func testExtensionDockStressPreview() throws {
         launchPreview(screen: "extension-dock-stress")
 

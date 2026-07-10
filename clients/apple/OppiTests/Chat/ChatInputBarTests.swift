@@ -294,6 +294,29 @@ struct ChatInputBarTests {
         #expect(growth.isScrollEnabled)
     }
 
+    @Test("Ask request constrains inline input height")
+    func askRequestConstrainsInlineInputHeight() {
+        let maxLines = ChatInputBar<EmptyView>.inlineTextMaxLines(
+            hasAskRequest: true,
+            hasAttachments: false,
+            hasRepoPointers: false
+        )
+
+        #expect(maxLines == ComposerInputMetrics.inlineMaxLinesWithAttachments)
+        #expect(maxLines < ComposerInputMetrics.inlineMaxLines)
+    }
+
+    @Test("Plain composer keeps the full inline input height")
+    func plainComposerKeepsFullInlineInputHeight() {
+        let maxLines = ChatInputBar<EmptyView>.inlineTextMaxLines(
+            hasAskRequest: false,
+            hasAttachments: false,
+            hasRepoPointers: false
+        )
+
+        #expect(maxLines == ComposerInputMetrics.inlineMaxLines)
+    }
+
     @Test("Expand affordance reserves only a tight trailing gutter")
     func expandAffordanceUsesTightTrailingGutter() {
         #expect(ChatInputBar<EmptyView>.composerTextTrailingPadding(showsExpandButton: false) == 0)
