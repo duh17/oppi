@@ -261,8 +261,13 @@ struct QuickSessionSheet: View {
             configureVoiceInputForSelectedServer(manager)
         }
 
-        if let sharedPayload = QuickSessionTrigger.shared.consumePendingSharePayload() {
-            applySharedPayload(sharedPayload)
+        if let pendingPayload = QuickSessionTrigger.shared.consumePendingPayload() {
+            switch pendingPayload {
+            case .share(let payload):
+                applySharedPayload(payload)
+            case .initial(let payload):
+                applyInitialPayload(payload)
+            }
         }
 
         // Auto-focus the text input
@@ -277,24 +282,45 @@ struct QuickSessionSheet: View {
     private func applySharedPayload(_ payload: ShareQuickSessionPayload) {
         defer { ShareQuickSessionPayload.removePayloadFiles(id: payload.id) }
 
-        if let sharedText = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines), !sharedText.isEmpty {
-            text = sharedText
-        }
+        appendInitialText(payload.text)
 
         for file in payload.files {
             guard let inboxURL = ShareQuickSessionPayload.inboxURL else { continue }
             let url = inboxURL.appendingPathComponent(file.relativePath, isDirectory: false)
             guard let data = try? Data(contentsOf: url) else { continue }
+            appendInitialAttachment(name: file.name, data: data, mimeType: file.mimeType)
+        }
+    }
 
-            if file.mimeType.hasPrefix("image/"), let image = UIImage(data: data) {
-                pendingAttachments.append(PendingImage.from(data: data, mimeType: file.mimeType, image: image).pendingAttachment)
-            } else {
-                pendingAttachments.append(PendingAttachment.localFile(
-                    name: file.name,
-                    data: data,
-                    mimeType: file.mimeType
-                ))
-            }
+    private func applyInitialPayload(_ payload: QuickSessionInitialPayload) {
+        appendInitialText(payload.text)
+        for attachment in payload.attachments {
+            appendInitialAttachment(
+                name: attachment.name,
+                data: attachment.data,
+                mimeType: attachment.mimeType
+            )
+        }
+    }
+
+    private func appendInitialText(_ value: String?) {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            text = value
+        } else {
+            text += "\n\(value)"
+        }
+    }
+
+    private func appendInitialAttachment(name: String, data: Data, mimeType: String) {
+        if mimeType.hasPrefix("image/"), let image = UIImage(data: data) {
+            pendingAttachments.append(PendingImage.from(data: data, mimeType: mimeType, image: image).pendingAttachment)
+        } else {
+            pendingAttachments.append(PendingAttachment.localFile(
+                name: name,
+                data: data,
+                mimeType: mimeType
+            ))
         }
     }
 
