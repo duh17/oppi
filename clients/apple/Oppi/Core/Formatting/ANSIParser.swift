@@ -272,7 +272,8 @@ enum ANSIParser {
         }
 
         var fontCache = FontCache(base: baseFont)
-        var state = SGRState()
+        let ansiColors = ANSIColorCache.current()
+        var state = SGRState(colors: ansiColors)
 
         // Phase 1: Single-pass scan. Build plain text and record attribute runs.
         struct AttrRun {
@@ -472,41 +473,81 @@ private struct FontCache {
 
 // MARK: - Cached Theme Colors
 
-/// Pre-resolved UIColors for ANSI -> Tokyo Night mapping.
-/// Created once, avoids repeated `UIColor(Color.themeX)` bridge calls.
-private enum ANSIColorCache {
+/// Pre-resolved UIColors for ANSI output for one active theme.
+private struct ANSIThemeColors {
     // Foreground
-    static let fgDim = UIColor(Color.themeFgDim)
-    static let red = UIColor(Color.themeRed)
-    static let green = UIColor(Color.themeGreen)
-    static let yellow = UIColor(Color.themeYellow)
-    static let blue = UIColor(Color.themeBlue)
-    static let purple = UIColor(Color.themePurple)
-    static let cyan = UIColor(Color.themeCyan)
-    static let fg = UIColor(Color.themeFg)
-    static let comment = UIColor(Color.themeComment)
+    let fgDim: UIColor
+    let red: UIColor
+    let green: UIColor
+    let yellow: UIColor
+    let blue: UIColor
+    let purple: UIColor
+    let cyan: UIColor
+    let fg: UIColor
+    let comment: UIColor
 
     // Background (standard 40-47)
-    static let bgBlack = UIColor(Color.themeFgDim.opacity(0.35))
-    static let bgRed = UIColor(Color.themeRed.opacity(0.55))
-    static let bgGreen = UIColor(Color.themeGreen.opacity(0.45))
-    static let bgYellow = UIColor(Color.themeYellow.opacity(0.45))
-    static let bgBlue = UIColor(Color.themeBlue.opacity(0.45))
-    static let bgPurple = UIColor(Color.themePurple.opacity(0.45))
-    static let bgCyan = UIColor(Color.themeCyan.opacity(0.40))
-    static let bgWhite = UIColor(Color.themeFg.opacity(0.20))
+    let bgBlack: UIColor
+    let bgRed: UIColor
+    let bgGreen: UIColor
+    let bgYellow: UIColor
+    let bgBlue: UIColor
+    let bgPurple: UIColor
+    let bgCyan: UIColor
+    let bgWhite: UIColor
 
     // Background (bright 100-107)
-    static let bgBrightBlack = UIColor(Color.themeComment.opacity(0.30))
-    static let bgBrightRed = UIColor(Color.themeRed.opacity(0.65))
-    static let bgBrightGreen = UIColor(Color.themeGreen.opacity(0.55))
-    static let bgBrightYellow = UIColor(Color.themeYellow.opacity(0.55))
-    static let bgBrightBlue = UIColor(Color.themeBlue.opacity(0.55))
-    static let bgBrightPurple = UIColor(Color.themePurple.opacity(0.55))
-    static let bgBrightCyan = UIColor(Color.themeCyan.opacity(0.50))
-    static let bgBrightWhite = UIColor(Color.themeFg.opacity(0.30))
+    let bgBrightBlack: UIColor
+    let bgBrightRed: UIColor
+    let bgBrightGreen: UIColor
+    let bgBrightYellow: UIColor
+    let bgBrightBlue: UIColor
+    let bgBrightPurple: UIColor
+    let bgBrightCyan: UIColor
+    let bgBrightWhite: UIColor
 
-    static let color256Palette: [UIColor] = {
+    let color256Palette: [UIColor]
+
+    init(themeID: ThemeID) {
+        let palette = themeID.palette
+        let fgDim = UIColor(palette.fgDim)
+        let red = UIColor(palette.red)
+        let green = UIColor(palette.green)
+        let yellow = UIColor(palette.yellow)
+        let blue = UIColor(palette.blue)
+        let purple = UIColor(palette.purple)
+        let cyan = UIColor(palette.cyan)
+        let fg = UIColor(palette.fg)
+        let comment = UIColor(palette.comment)
+
+        self.fgDim = fgDim
+        self.red = red
+        self.green = green
+        self.yellow = yellow
+        self.blue = blue
+        self.purple = purple
+        self.cyan = cyan
+        self.fg = fg
+        self.comment = comment
+
+        self.bgBlack = UIColor(palette.fgDim.opacity(0.35))
+        self.bgRed = UIColor(palette.red.opacity(0.55))
+        self.bgGreen = UIColor(palette.green.opacity(0.45))
+        self.bgYellow = UIColor(palette.yellow.opacity(0.45))
+        self.bgBlue = UIColor(palette.blue.opacity(0.45))
+        self.bgPurple = UIColor(palette.purple.opacity(0.45))
+        self.bgCyan = UIColor(palette.cyan.opacity(0.40))
+        self.bgWhite = UIColor(palette.fg.opacity(0.20))
+
+        self.bgBrightBlack = UIColor(palette.comment.opacity(0.30))
+        self.bgBrightRed = UIColor(palette.red.opacity(0.65))
+        self.bgBrightGreen = UIColor(palette.green.opacity(0.55))
+        self.bgBrightYellow = UIColor(palette.yellow.opacity(0.55))
+        self.bgBrightBlue = UIColor(palette.blue.opacity(0.55))
+        self.bgBrightPurple = UIColor(palette.purple.opacity(0.55))
+        self.bgBrightCyan = UIColor(palette.cyan.opacity(0.50))
+        self.bgBrightWhite = UIColor(palette.fg.opacity(0.30))
+
         var colors = Array(repeating: fg, count: 256)
         colors[0] = fgDim
         colors[1] = red
@@ -527,10 +568,10 @@ private enum ANSIColorCache {
 
         for n in 16..<232 {
             let idx = n - 16
-            let r = CGFloat((idx / 36) % 6) / 5.0
-            let g = CGFloat((idx / 6) % 6) / 5.0
-            let b = CGFloat(idx % 6) / 5.0
-            colors[n] = UIColor(red: r, green: g, blue: b, alpha: 1)
+            let redComponent = CGFloat((idx / 36) % 6) / 5.0
+            let greenComponent = CGFloat((idx / 6) % 6) / 5.0
+            let blueComponent = CGFloat(idx % 6) / 5.0
+            colors[n] = UIColor(red: redComponent, green: greenComponent, blue: blueComponent, alpha: 1)
         }
 
         for n in 232..<256 {
@@ -538,14 +579,50 @@ private enum ANSIColorCache {
             colors[n] = UIColor(white: gray, alpha: 1)
         }
 
-        return colors
-    }()
+        self.color256Palette = colors
+    }
+}
+
+/// Created once per active theme, avoids repeated `UIColor(Color.themeX)` bridge calls.
+private enum ANSIColorCache {
+    private final class CacheBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cached: ANSIThemeColors?
+        private var cachedThemeID: ThemeID?
+
+        func current() -> ANSIThemeColors {
+            let currentThemeID = ThemeRuntimeState.currentThemeID()
+
+            lock.lock()
+            if let cached, cachedThemeID == currentThemeID {
+                lock.unlock()
+                return cached
+            }
+            lock.unlock()
+
+            let colors = ANSIThemeColors(themeID: currentThemeID)
+
+            lock.lock()
+            cached = colors
+            cachedThemeID = currentThemeID
+            lock.unlock()
+            return colors
+        }
+    }
+
+    private static let cacheBox = CacheBox()
+
+    static func current() -> ANSIThemeColors {
+        cacheBox.current()
+    }
 }
 
 // MARK: - SGR State
 
 /// Tracks cumulative SGR state across escape sequences.
 private struct SGRState {
+    let colors: ANSIThemeColors
+
     var bold = false
     var dim = false
     var italic = false
@@ -813,50 +890,50 @@ private struct SGRState {
         case 39: foregroundUIColor = nil
         case 49: backgroundUIColor = nil
 
-        case 30: foregroundUIColor = ANSIColorCache.fgDim
-        case 31: foregroundUIColor = ANSIColorCache.red
-        case 32: foregroundUIColor = ANSIColorCache.green
-        case 33: foregroundUIColor = ANSIColorCache.yellow
-        case 34: foregroundUIColor = ANSIColorCache.blue
-        case 35: foregroundUIColor = ANSIColorCache.purple
-        case 36: foregroundUIColor = ANSIColorCache.cyan
-        case 37: foregroundUIColor = ANSIColorCache.fg
+        case 30: foregroundUIColor = colors.fgDim
+        case 31: foregroundUIColor = colors.red
+        case 32: foregroundUIColor = colors.green
+        case 33: foregroundUIColor = colors.yellow
+        case 34: foregroundUIColor = colors.blue
+        case 35: foregroundUIColor = colors.purple
+        case 36: foregroundUIColor = colors.cyan
+        case 37: foregroundUIColor = colors.fg
 
-        case 90: foregroundUIColor = ANSIColorCache.comment
-        case 91: foregroundUIColor = ANSIColorCache.red
-        case 92: foregroundUIColor = ANSIColorCache.green
-        case 93: foregroundUIColor = ANSIColorCache.yellow
-        case 94: foregroundUIColor = ANSIColorCache.blue
-        case 95: foregroundUIColor = ANSIColorCache.purple
-        case 96: foregroundUIColor = ANSIColorCache.cyan
-        case 97: foregroundUIColor = ANSIColorCache.fg
+        case 90: foregroundUIColor = colors.comment
+        case 91: foregroundUIColor = colors.red
+        case 92: foregroundUIColor = colors.green
+        case 93: foregroundUIColor = colors.yellow
+        case 94: foregroundUIColor = colors.blue
+        case 95: foregroundUIColor = colors.purple
+        case 96: foregroundUIColor = colors.cyan
+        case 97: foregroundUIColor = colors.fg
 
-        case 40: backgroundUIColor = ANSIColorCache.bgBlack
-        case 41: backgroundUIColor = ANSIColorCache.bgRed
-        case 42: backgroundUIColor = ANSIColorCache.bgGreen
-        case 43: backgroundUIColor = ANSIColorCache.bgYellow
-        case 44: backgroundUIColor = ANSIColorCache.bgBlue
-        case 45: backgroundUIColor = ANSIColorCache.bgPurple
-        case 46: backgroundUIColor = ANSIColorCache.bgCyan
-        case 47: backgroundUIColor = ANSIColorCache.bgWhite
+        case 40: backgroundUIColor = colors.bgBlack
+        case 41: backgroundUIColor = colors.bgRed
+        case 42: backgroundUIColor = colors.bgGreen
+        case 43: backgroundUIColor = colors.bgYellow
+        case 44: backgroundUIColor = colors.bgBlue
+        case 45: backgroundUIColor = colors.bgPurple
+        case 46: backgroundUIColor = colors.bgCyan
+        case 47: backgroundUIColor = colors.bgWhite
 
-        case 100: backgroundUIColor = ANSIColorCache.bgBrightBlack
-        case 101: backgroundUIColor = ANSIColorCache.bgBrightRed
-        case 102: backgroundUIColor = ANSIColorCache.bgBrightGreen
-        case 103: backgroundUIColor = ANSIColorCache.bgBrightYellow
-        case 104: backgroundUIColor = ANSIColorCache.bgBrightBlue
-        case 105: backgroundUIColor = ANSIColorCache.bgBrightPurple
-        case 106: backgroundUIColor = ANSIColorCache.bgBrightCyan
-        case 107: backgroundUIColor = ANSIColorCache.bgBrightWhite
+        case 100: backgroundUIColor = colors.bgBrightBlack
+        case 101: backgroundUIColor = colors.bgBrightRed
+        case 102: backgroundUIColor = colors.bgBrightGreen
+        case 103: backgroundUIColor = colors.bgBrightYellow
+        case 104: backgroundUIColor = colors.bgBrightBlue
+        case 105: backgroundUIColor = colors.bgBrightPurple
+        case 106: backgroundUIColor = colors.bgBrightCyan
+        case 107: backgroundUIColor = colors.bgBrightWhite
 
         default: break
         }
     }
 
     private func color256(_ n: Int) -> UIColor {
-        if n >= 0 && n < ANSIColorCache.color256Palette.count {
-            return ANSIColorCache.color256Palette[n]
+        if n >= 0 && n < colors.color256Palette.count {
+            return colors.color256Palette[n]
         }
-        return ANSIColorCache.fg
+        return colors.fg
     }
 }

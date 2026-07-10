@@ -5,6 +5,8 @@ import SwiftUI
 /// Uses the same layout as SessionRow (content + trailing time)
 /// with a small "Terminal" badge in the subtitle.
 struct LocalSessionRow: View {
+    @Environment(\.themeID) private var themeID
+
     let session: LocalSession
 
     private var modelSummary: SessionModelSummary? {
@@ -56,6 +58,7 @@ struct LocalSessionRow: View {
                 .font(.caption2)
                 .foregroundStyle(.themeComment)
         }
+        .id(themeID)
         .padding(.vertical, 2)
     }
 }

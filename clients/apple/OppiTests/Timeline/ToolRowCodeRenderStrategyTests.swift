@@ -198,6 +198,33 @@ struct ToolRowCodeRenderStrategyTests {
         #expect(label.text.count == previous.count + suffix.count)
     }
 
+    @Test("streaming code updates color when theme changes")
+    func streamingCodeUpdatesColorWhenThemeChanges() {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+
+        let text = "let answer = 42"
+        ThemeRuntimeState.setThemeID(.dark)
+        let dark = render(text: text, language: .swift, isStreaming: true)
+        let darkColor = dark.label.textColor
+
+        ThemeRuntimeState.setThemeID(.light)
+        let light = render(
+            text: text,
+            language: .swift,
+            isStreaming: true,
+            label: dark.label,
+            previousSignature: dark.output.renderSignature,
+            previousRenderedText: dark.output.renderedText,
+            isCurrentModeCode: true,
+            wasExpandedVisible: true
+        )
+
+        #expect(dark.output.renderSignature != light.output.renderSignature)
+        #expect(darkColor == UIColor(ThemePalettes.dark.fg))
+        #expect(light.label.textColor == UIColor(ThemePalettes.light.fg))
+    }
+
     private func render(
         text: String,
         language: SyntaxLanguage?,
@@ -232,6 +259,9 @@ struct ToolRowCodeRenderStrategyTests {
     }
 
     private func streamingSignature(for text: String, startLine: Int) -> Int {
-        text.utf8.count ^ (startLine &* 31)
+        ToolTimelineRowRenderMetrics.streamingCodeSignature(
+            byteCount: text.utf8.count,
+            startLine: startLine
+        )
     }
 }

@@ -280,9 +280,20 @@ private struct ThemeKey: EnvironmentKey {
     }
 }
 
+private struct ThemeIDKey: EnvironmentKey {
+    static var defaultValue: ThemeID {
+        ThemeRuntimeState.currentThemeID()
+    }
+}
+
 extension EnvironmentValues {
     var theme: AppTheme {
         get { self[ThemeKey.self] }
         set { self[ThemeKey.self] = newValue }
+    }
+
+    var themeID: ThemeID {
+        get { self[ThemeIDKey.self] }
+        set { self[ThemeIDKey.self] = newValue }
     }
 }

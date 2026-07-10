@@ -294,14 +294,19 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
             scrollView.contentOffset = .zero
         }
 
-        let palette = ThemeRuntimeState.currentPalette()
+        let themeID = ThemeRuntimeState.currentThemeID()
+        let palette = themeID.palette
         brainIcon.tintColor = UIColor(palette.purple).withAlphaComponent(0.7)
         let text = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
         let sourceLabel = configuration.normalizedSourceLabel
         textLabel.accessibilityLabel = text.isEmpty ? nil : "\(sourceLabel): \(text)"
         fullScreenThinkingStream.update(text: text, isDone: configuration.isDone)
 
-        let signature = Self.textSignature(text: text, isDone: configuration.isDone)
+        let signature = Self.textSignature(
+            text: text,
+            isDone: configuration.isDone,
+            themeID: themeID
+        )
         let needsTextUpdate = signature != renderSignature
 
         if configuration.isDone {
@@ -383,10 +388,11 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
 
     /// Cheap render signature to skip redundant text updates.
-    private static func textSignature(text: String, isDone: Bool) -> Int {
+    private static func textSignature(text: String, isDone: Bool, themeID: ThemeID) -> Int {
         var hasher = Hasher()
         hasher.combine(text.count)
         hasher.combine(isDone)
+        hasher.combine(themeID)
         // Include prefix + suffix for content-change detection without
         // hashing the full multi-KB thinking text on every flush.
         hasher.combine(text.prefix(128))

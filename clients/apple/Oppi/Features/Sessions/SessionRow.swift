@@ -84,6 +84,8 @@ struct SessionWorktreeIndicatorPresentation: Equatable, Sendable {
 /// Attention text is passed in by the caller to keep this view testable and
 /// avoid environment collisions with parallel work.
 struct SessionRow: View {
+    @Environment(\.themeID) private var themeID
+
     let session: Session
     let pendingAskCount: Int
     let attentionText: String?
@@ -263,6 +265,7 @@ struct SessionRow: View {
             .foregroundStyle(.themeFgDim)
             .lineLimit(1)
         }
+        .id(themeID)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 4)
         .padding(.vertical, 2)

@@ -294,6 +294,31 @@ struct ThinkingRowContentViewTests {
         #expect(sig1 != sig2, "Render signature should change when text changes")
     }
 
+    @Test func unchangedDoneTextUpdatesColorWhenThemeChanges() throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+
+        let configuration = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: "",
+            fullText: "Same reasoning text"
+        )
+
+        ThemeRuntimeState.setThemeID(.dark)
+        let view = ThinkingTimelineRowContentView(configuration: configuration)
+        _ = fittedTimelineSize(for: view, width: 360)
+        let label = try #require(privateTextLabel(in: view))
+        let darkColor = try #require(foregroundColor(in: label))
+
+        ThemeRuntimeState.setThemeID(.light)
+        view.configuration = configuration
+        let lightColor = try #require(foregroundColor(in: label))
+
+        #expect(darkColor == UIColor(ThemePalettes.dark.fg).withAlphaComponent(0.94))
+        #expect(lightColor == UIColor(ThemePalettes.light.fg).withAlphaComponent(0.94))
+        #expect(darkColor != lightColor)
+    }
+
     @Test func transitionFromStreamingToDoneRendersMarkdown() throws {
         let text = "Thinking about **bold** patterns"
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
@@ -361,6 +386,12 @@ private func privateTextLabel(in view: ThinkingTimelineRowContentView) -> UIText
 @MainActor
 private func privateRenderSignature(in view: ThinkingTimelineRowContentView) -> Int? {
     Mirror(reflecting: view).children.first { $0.label == "renderSignature" }?.value as? Int
+}
+
+@MainActor
+private func foregroundColor(in textView: UITextView) -> UIColor? {
+    guard let attributedText = textView.attributedText, attributedText.length > 0 else { return nil }
+    return attributedText.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
 }
 
 @MainActor

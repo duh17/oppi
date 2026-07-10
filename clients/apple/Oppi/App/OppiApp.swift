@@ -222,6 +222,7 @@ struct OppiApp: App {
             .environment(themeStore)
             .environment(quickCommentTemplateStore)
             .environment(\.theme, themeStore.appTheme)
+            .environment(\.themeID, themeStore.activeThemeID)
             .tint(.themeBlue)
             .background {
                 ThemeColorSchemeSyncView(themeStore: themeStore)

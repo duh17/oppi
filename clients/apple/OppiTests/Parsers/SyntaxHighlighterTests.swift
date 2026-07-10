@@ -343,6 +343,24 @@ struct SyntaxHighlighterTests {
         #expect(optionColor == UIColor(Color.themeSyntaxNumber))
     }
 
+    @Test func cachedTokenColorsUpdateWhenThemeChanges() {
+        let original = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(original) }
+
+        let code = "let value = 1"
+        ThemeRuntimeState.setThemeID(.dark)
+        let darkResult = SyntaxHighlighter.highlight(code, language: .swift)
+        let darkKeywordColor = foregroundColor(of: "let", in: darkResult)
+
+        ThemeRuntimeState.setThemeID(.light)
+        let lightResult = SyntaxHighlighter.highlight(code, language: .swift)
+        let lightKeywordColor = foregroundColor(of: "let", in: lightResult)
+
+        #expect(darkKeywordColor == UIColor(ThemePalettes.dark.syntaxKeyword))
+        #expect(lightKeywordColor == UIColor(ThemePalettes.light.syntaxKeyword))
+        #expect(darkKeywordColor != lightKeywordColor)
+    }
+
     // MARK: - Helpers
 
     private func foregroundColor(of substring: String, in attributed: NSAttributedString) -> UIColor? {

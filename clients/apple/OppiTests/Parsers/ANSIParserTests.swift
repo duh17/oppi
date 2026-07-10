@@ -81,6 +81,25 @@ struct ANSIParserTests {
         #expect(plainColor == UIColor(Color.themeFg))
     }
 
+    @Test("attributedString ANSI color cache updates when theme changes")
+    func attrColorCacheUpdatesWhenThemeChanges() {
+        let original = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(original) }
+
+        let input = "\u{1B}[32mFresh\u{1B}[0m"
+        ThemeRuntimeState.setThemeID(.dark)
+        let darkResult = ANSIParser.attributedString(from: input)
+        let darkColor = darkResult.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
+
+        ThemeRuntimeState.setThemeID(.light)
+        let lightResult = ANSIParser.attributedString(from: input)
+        let lightColor = lightResult.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
+
+        #expect(darkColor == UIColor(ThemePalettes.dark.green))
+        #expect(lightColor == UIColor(ThemePalettes.light.green))
+        #expect(darkColor != lightColor)
+    }
+
     @Test("handles kypu status output")
     func kypuStatus() {
         let input = """
