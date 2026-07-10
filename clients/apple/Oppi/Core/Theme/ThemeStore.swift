@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 enum ThemeMode: String, CaseIterable, Identifiable {
     case manual
@@ -30,10 +31,18 @@ final class ThemeStore {
     private static let lightThemeKey = "\(AppIdentifiers.subsystem).theme.light.id"
     private static let darkThemeKey = "\(AppIdentifiers.subsystem).theme.dark.id"
 
+    @ObservationIgnored private let systemColorSchemeProvider: (ColorScheme) -> ColorScheme
+
     var mode: ThemeMode {
         didSet {
             guard mode != oldValue else { return }
             UserDefaults.standard.set(mode.rawValue, forKey: Self.modeKey)
+            if mode == .system {
+                // When leaving a forced manual scheme, SwiftUI can report the
+                // previous environment value for one transaction. Read UIKit's
+                // system trait first so List/Form chrome and palette stay aligned.
+                refreshSystemColorSchemeFromSystemTraits()
+            }
             applyResolvedTheme()
         }
     }
@@ -62,7 +71,7 @@ final class ThemeStore {
         }
     }
 
-    private var systemColorScheme: ColorScheme = .dark {
+    private var systemColorScheme: ColorScheme {
         didSet {
             guard systemColorScheme != oldValue else { return }
             applyResolvedTheme()
@@ -88,7 +97,14 @@ final class ThemeStore {
         mode == .system ? nil : activeThemeID.preferredColorScheme
     }
 
-    init() {
+    init(
+        initialSystemColorScheme: ColorScheme? = nil,
+        systemColorSchemeProvider: ((ColorScheme) -> ColorScheme)? = nil
+    ) {
+        let systemColorSchemeProvider = systemColorSchemeProvider ?? { fallback in
+            Self.currentSystemColorScheme(fallback: fallback)
+        }
+        let observedSystemColorScheme = initialSystemColorScheme ?? systemColorSchemeProvider(.dark)
         let persistedManual = ThemeID.loadPersisted()
         let persistedMode = UserDefaults.standard.string(forKey: Self.modeKey)
             .flatMap(ThemeMode.init(rawValue:)) ?? .manual
@@ -97,16 +113,37 @@ final class ThemeStore {
         let persistedDark = UserDefaults.standard.string(forKey: Self.darkThemeKey)
             .map(ThemeID.init(rawValue:)) ?? (persistedManual.preferredColorScheme == .light ? .dark : persistedManual)
 
+        self.systemColorSchemeProvider = systemColorSchemeProvider
+        systemColorScheme = observedSystemColorScheme
         mode = persistedMode
         manualThemeID = persistedManual
         lightThemeID = persistedLight
         darkThemeID = persistedDark
-        activeThemeID = persistedMode == .system ? persistedDark : persistedManual
+        activeThemeID = persistedMode == .system
+            ? (observedSystemColorScheme == .light ? persistedLight : persistedDark)
+            : persistedManual
         ThemeRuntimeState.setThemeID(activeThemeID)
     }
 
     func updateSystemColorScheme(_ colorScheme: ColorScheme) {
         systemColorScheme = colorScheme
+    }
+
+    private static func currentSystemColorScheme(fallback: ColorScheme = .dark) -> ColorScheme {
+        switch UIScreen.main.traitCollection.userInterfaceStyle {
+        case .light:
+            return .light
+        case .dark:
+            return .dark
+        case .unspecified:
+            return fallback
+        @unknown default:
+            return fallback
+        }
+    }
+
+    private func refreshSystemColorSchemeFromSystemTraits() {
+        systemColorScheme = systemColorSchemeProvider(systemColorScheme)
     }
 
     private func resolvedThemeID() -> ThemeID {

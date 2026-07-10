@@ -44,9 +44,6 @@ private struct ThemeColorSchemeSyncView: View {
             .onChange(of: colorScheme) { _, _ in
                 syncIfSystemMode()
             }
-            .onChange(of: themeStore.mode) { _, _ in
-                syncIfSystemMode()
-            }
     }
 
     private func syncIfSystemMode() {
