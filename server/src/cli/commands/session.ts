@@ -177,6 +177,37 @@ export async function cmdSession(
       return;
     }
 
+    if (mode === "messages") {
+      const id = requirePositional(positional, "session id is required");
+      const result = await call<Record<string, unknown>>(
+        `/sessions/${encodeURIComponent(id)}/trace?include=messages`,
+      );
+      const session = result.session as Partial<Session> | undefined;
+      if (flags.workspace) {
+        const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace, hostResolvers);
+        if (session?.workspaceId && session.workspaceId !== workspaceId) {
+          throw new Error(`Session ${id} does not belong to workspace ${flags.workspace}`);
+        }
+      }
+      const trace = Array.isArray(result.trace) ? (result.trace as SessionTraceEvent[]) : [];
+      const assistantMessages = trace
+        .filter((event) => event.type === "assistant")
+        .map((event) => eventText(event).trim())
+        .filter(Boolean);
+      const finalAssistantText = assistantMessages.at(-1) ?? null;
+      const data = {
+        sessionId: session?.id ?? id,
+        workspaceId: session?.workspaceId,
+        workspaceName: session?.workspaceName,
+        finalAssistantText,
+        assistantMessageCount: assistantMessages.length,
+      };
+      output(data, () => {
+        console.log(finalAssistantText ?? "(no assistant response)");
+      });
+      return;
+    }
+
     if (mode === "events") {
       const id = requirePositional(positional, "session id is required");
       const params = new URLSearchParams();
@@ -400,7 +431,7 @@ export async function cmdSession(
     }
 
     throw new Error(
-      "Usage: oppi session list|get|create|send|read|events|trace|search|inspect|stop|resume|fork|delete|changes|diff|tool-output|trace-page|trace-outline",
+      "Usage: oppi session list|get|create|send|read|messages|events|trace|search|inspect|stop|resume|fork|delete|changes|diff|tool-output|trace-page|trace-outline",
     );
   } catch (err: unknown) {
     const status = apiStatus(err);

@@ -225,6 +225,7 @@ describe("oppi help", () => {
       "create",
       "send",
       "read",
+      "messages",
       "events",
       "trace",
       "search",
@@ -419,6 +420,10 @@ describe("oppi help", () => {
       {
         args: ["session", "read", "--help"],
         expected: ["Usage: oppi session read <id>", "--tail <count>"],
+      },
+      {
+        args: ["session", "messages", "--help"],
+        expected: ["Usage: oppi session messages <id>", "Latest assistant response"],
       },
       {
         args: ["session", "events", "--help"],
@@ -1219,6 +1224,10 @@ describe("oppi local API commands", () => {
           expected: ["GET /sessions/sess-1/read?tail=1"],
         },
         {
+          args: ["session", "messages", "sess-1", "--workspace", "ws-1", "--json"],
+          expected: ["GET /workspaces/ws-1", "GET /sessions/sess-1/trace?include=messages"],
+        },
+        {
           args: ["session", "events", "sess-1", "--since", "4", "--json"],
           expected: ["GET /sessions/sess-1/events?since=4"],
         },
@@ -1418,6 +1427,25 @@ describe("oppi local API commands", () => {
         ok: false,
         error: { message: "Could not infer workspace from cwd; pass --workspace or --all" },
       });
+
+      const messagesJson = await runAsync(["session", "messages", "sess-1", "--json"], {
+        OPPI_DATA_DIR: cliDir,
+      });
+      expect(messagesJson.exitCode).toBe(0);
+      expect(JSON.parse(messagesJson.stdout)).toMatchObject({
+        ok: true,
+        data: {
+          sessionId: "sess-1",
+          finalAssistantText: "trace",
+          assistantMessageCount: 1,
+        },
+      });
+
+      const messagesHuman = await runAsync(["session", "messages", "sess-1"], {
+        OPPI_DATA_DIR: cliDir,
+      });
+      expect(messagesHuman.exitCode).toBe(0);
+      expect(messagesHuman.stdout.trim()).toBe("trace");
 
       const inspectJson = await runAsync(
         ["session", "inspect", "sess-1", "--view", "messages", "--json"],

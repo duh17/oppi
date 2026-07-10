@@ -44,6 +44,7 @@ const READ_ACTIONS: Record<string, Set<string>> = {
     "list",
     "get",
     "read",
+    "messages",
     "events",
     "trace",
     "search",
@@ -90,6 +91,7 @@ export function createDefaultAgentExtensionFactory(options: {
         "Use oppi for Oppi app state instead of shell or filesystem tools.",
         "Use oppi read commands before asking the user about discoverable workspace, Agent, session, schedule, or worktree state.",
         "Use oppi session search and oppi session inspect for past Oppi session history instead of local JSONL-reading tools.",
+        "Use oppi session messages when only the latest assistant response is needed.",
         "Use oppi commands that create or modify Oppi state only after the user asks for them; they will request explicit approval.",
       ],
       parameters: Type.Object({
