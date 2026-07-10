@@ -1,8 +1,10 @@
+import AppIntents
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 @testable import Oppi
 
-@Suite("QuickSessionTrigger")
+@Suite("QuickSessionTrigger", .serialized)
 @MainActor
 struct QuickSessionTriggerTests {
 
@@ -12,6 +14,7 @@ struct QuickSessionTriggerTests {
         let trigger = QuickSessionTrigger.shared
         // Reset to known state for test isolation
         trigger.isPresented = false
+        _ = trigger.consumePendingPayload()
 
         // presentationRequestID starts at some value (may have been bumped by prior tests),
         // but isPresented should be controllable
@@ -151,10 +154,102 @@ struct QuickSessionTriggerTests {
         trigger.isPresented = false
     }
 
+    @Test func requestPresentationStoresInitialPayload() {
+        let trigger = QuickSessionTrigger.shared
+        trigger.isPresented = false
+        _ = trigger.consumePendingPayload()
+
+        let payload = QuickSessionInitialPayload(
+            text: "Describe this screenshot",
+            attachments: [
+                QuickSessionInitialPayload.Attachment(
+                    name: "screenshot.png",
+                    data: Data([0x89, 0x50, 0x4e, 0x47]),
+                    mimeType: "image/png"
+                )
+            ]
+        )
+        let before = trigger.presentationRequestID
+
+        trigger.requestPresentation(initialPayload: payload)
+
+        #expect(trigger.presentationRequestID == before + 1)
+        #expect(trigger.consumePendingPayload() == .initial(payload))
+        #expect(trigger.consumePendingPayload() == nil)
+        trigger.isPresented = false
+    }
+
+    @Test func latestRequestWithoutPayloadClearsPendingPayload() {
+        let trigger = QuickSessionTrigger.shared
+        trigger.isPresented = false
+        let payload = QuickSessionInitialPayload(text: "Replace me", attachments: [])
+        trigger.requestPresentation(initialPayload: payload)
+
+        trigger.requestPresentation(initialPayload: nil)
+
+        #expect(trigger.consumePendingPayload() == nil)
+        trigger.isPresented = false
+    }
+
+    @Test func latestRequestReplacesPendingPayload() {
+        let trigger = QuickSessionTrigger.shared
+        trigger.isPresented = false
+        let first = QuickSessionInitialPayload(text: "First", attachments: [])
+        let second = QuickSessionInitialPayload(text: "Second", attachments: [])
+        trigger.requestPresentation(initialPayload: first)
+
+        trigger.requestPresentation(initialPayload: second)
+
+        #expect(trigger.consumePendingPayload() == .initial(second))
+        trigger.isPresented = false
+    }
+
+    @Test func latestInitialRequestReplacesPendingSharePayload() throws {
+        let trigger = QuickSessionTrigger.shared
+        trigger.isPresented = false
+        _ = trigger.consumePendingPayload()
+        let sharePayload = ShareQuickSessionPayload(
+            id: "share-replaced-test",
+            text: "Shared first",
+            files: [],
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        try ShareQuickSessionPayload.store(sharePayload)
+        defer {
+            let defaults = SharedConstants.sharedDefaults
+            defaults.removeObject(forKey: ShareQuickSessionPayload.defaultsKey(for: sharePayload.id))
+            defaults.removeObject(forKey: ShareQuickSessionPayload.pendingPayloadIdKey)
+            defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
+            _ = trigger.consumePendingPayload()
+            trigger.isPresented = false
+        }
+        trigger.checkForPendingRequest()
+
+        let latestPayload = QuickSessionInitialPayload(text: "Shortcut wins", attachments: [])
+        trigger.requestPresentation(initialPayload: latestPayload)
+
+        #expect(trigger.consumePendingPayload() == .initial(latestPayload))
+    }
+
+    @Test func ignoredPresentationDoesNotQueueInitialPayload() {
+        let trigger = QuickSessionTrigger.shared
+        _ = trigger.consumePendingPayload()
+        trigger.isPresented = true
+        let before = trigger.presentationRequestID
+
+        trigger.requestPresentation(
+            initialPayload: QuickSessionInitialPayload(text: "Do not keep me", attachments: [])
+        )
+
+        #expect(trigger.presentationRequestID == before)
+        #expect(trigger.consumePendingPayload() == nil)
+        trigger.isPresented = false
+    }
+
     @Test func checkForPendingRequestConsumesStoredSharePayload() throws {
         let trigger = QuickSessionTrigger.shared
         trigger.isPresented = false
-        _ = trigger.consumePendingSharePayload()
+        _ = trigger.consumePendingPayload()
 
         let payload = ShareQuickSessionPayload(
             id: "share-payload-test",
@@ -174,7 +269,7 @@ struct QuickSessionTriggerTests {
             defaults.removeObject(forKey: ShareQuickSessionPayload.defaultsKey(for: payload.id))
             defaults.removeObject(forKey: ShareQuickSessionPayload.pendingPayloadIdKey)
             defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
-            _ = trigger.consumePendingSharePayload()
+            _ = trigger.consumePendingPayload()
             trigger.isPresented = false
         }
 
@@ -183,7 +278,7 @@ struct QuickSessionTriggerTests {
         trigger.checkForPendingRequest()
 
         #expect(trigger.presentationRequestID == before + 1)
-        #expect(trigger.consumePendingSharePayload() == payload)
+        #expect(trigger.consumePendingPayload() == .share(payload))
         #expect(SharedConstants.sharedDefaults.bool(forKey: SharedConstants.quickSessionPendingKey) == false)
         #expect(SharedConstants.sharedDefaults.string(forKey: ShareQuickSessionPayload.pendingPayloadIdKey) == nil)
         #expect(ShareQuickSessionPayload.load(id: payload.id) == nil)
@@ -415,12 +510,105 @@ struct QuickSessionTests {
 
 // MARK: - StartQuickSessionIntent (static properties)
 
-@Suite("StartQuickSessionIntent")
+@Suite("StartQuickSessionIntent", .serialized)
 @MainActor
 struct StartQuickSessionIntentTests {
 
-    @Test func openAppWhenRunIsTrue() {
-        #expect(StartQuickSessionIntent.openAppWhenRun == true)
+    @Test func opensAppImmediately() {
+        #expect(StartQuickSessionIntent.supportedModes == .foreground(.immediate))
+    }
+
+    @Test func inputParametersDefaultToNil() {
+        let intent = StartQuickSessionIntent()
+        #expect(intent.text == nil)
+        #expect(intent.image == nil)
+    }
+
+#if compiler(>=6.4)
+    @available(iOS 27.0, *)
+    @Test func targetsMainAppOnIOS27() {
+        #expect(StartQuickSessionIntent.allowedExecutionTargets == .main)
+    }
+#endif
+
+    @Test func performTrimsAndQueuesText() async throws {
+        let trigger = QuickSessionTrigger.shared
+        trigger.isPresented = false
+        _ = trigger.consumePendingPayload()
+        let intent = StartQuickSessionIntent()
+        intent.text = "  Describe this workspace  \n"
+
+        _ = try await intent.perform()
+
+        #expect(
+            trigger.consumePendingPayload()
+                == .initial(QuickSessionInitialPayload(text: "Describe this workspace", attachments: []))
+        )
+        trigger.isPresented = false
+    }
+
+    @Test func performQueuesImageWithMatchingMetadata() async throws {
+        let trigger = QuickSessionTrigger.shared
+        trigger.isPresented = false
+        _ = trigger.consumePendingPayload()
+        let imageData = try #require(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        ))
+        let intent = StartQuickSessionIntent()
+        intent.image = IntentFile(data: imageData, filename: "shortcut-image", type: .png)
+
+        _ = try await intent.perform()
+
+        let pending = trigger.consumePendingPayload()
+        guard case .initial(let payload) = pending else {
+            Issue.record("Expected an initial Quick Session payload")
+            return
+        }
+        #expect(payload.text == nil)
+        #expect(payload.attachments == [
+            QuickSessionInitialPayload.Attachment(
+                name: "shortcut-image.png",
+                data: imageData,
+                mimeType: "image/png"
+            ),
+        ])
+        trigger.isPresented = false
+    }
+
+    @Test func performRejectsNonImageFile() async throws {
+        let trigger = QuickSessionTrigger.shared
+        trigger.isPresented = false
+        _ = trigger.consumePendingPayload()
+        let intent = StartQuickSessionIntent()
+        intent.image = IntentFile(
+            data: Data([0x00, 0x01, 0x02, 0x03]),
+            filename: "document.bin",
+            type: .data
+        )
+
+        await #expect(throws: QuickSessionIntentPayloadError.unsupportedImage) {
+            _ = try await intent.perform()
+        }
+        #expect(trigger.consumePendingPayload() == nil)
+        trigger.isPresented = false
+    }
+
+    @Test func performRejectsImageOverComposerUploadLimit() async throws {
+        let trigger = QuickSessionTrigger.shared
+        trigger.isPresented = false
+        _ = trigger.consumePendingPayload()
+        let intent = StartQuickSessionIntent()
+        intent.image = IntentFile(
+            data: Data(repeating: 0x00, count: PendingImage.autoResizeMaxDataBytes + 1),
+            filename: "oversized.png",
+            type: .png
+        )
+
+        await #expect(throws: QuickSessionIntentPayloadError.imageTooLarge) {
+            _ = try await intent.perform()
+        }
+        #expect(trigger.consumePendingPayload() == nil)
+        trigger.isPresented = false
     }
 }
 

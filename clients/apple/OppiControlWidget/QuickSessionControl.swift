@@ -27,9 +27,9 @@ struct QuickSessionControl: ControlWidget {
 
 /// Intent used by the ControlWidget.
 ///
-/// Unlike `StartQuickSessionIntent` (which runs in-process with `openAppWhenRun`),
-/// this intent runs in the widget extension process. It writes a flag to shared
-/// UserDefaults that the main app picks up on foreground.
+/// Unlike `StartQuickSessionIntent` (which uses immediate foreground execution
+/// in the main app), this intent runs in the widget extension process. It writes
+/// a flag to shared UserDefaults that the main app picks up on foreground.
 ///
 /// The system opens the app after `perform()` returns because ControlWidgetButton
 /// with a non-background intent triggers app launch.

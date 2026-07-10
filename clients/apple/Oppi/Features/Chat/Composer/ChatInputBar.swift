@@ -1136,7 +1136,8 @@ struct PendingImage: Identifiable, Sendable {
     private typealias EncodedImage = (data: Data, mimeType: String)
 
     private static let autoResizeMaxDimension: CGFloat = 2_000
-    private static let autoResizeMaxBase64Bytes = 4_718_592
+    static let autoResizeMaxBase64Bytes = 4_718_592
+    static let autoResizeMaxDataBytes = (autoResizeMaxBase64Bytes / 4) * 3
     private static let autoResizeJPEGQualities: [CGFloat] = [0.8, 0.85, 0.7, 0.55, 0.4]
 
     var pendingAttachment: PendingAttachment {
