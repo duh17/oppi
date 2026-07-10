@@ -18,9 +18,9 @@ enum WorkspaceNavigationPresentation: Sendable, Equatable {
 
 /// Detail-column target for the regular-width workspace split shell.
 ///
-/// The sidebar alternates between the workspace list and the selected
-/// workspace's session list. The wide detail pane hosts chat, files, or utility
-/// views. Compact width keeps using `workspacePath` pushes.
+/// The sidebar keeps the workspace catalog visible. The detail pane hosts the
+/// global sessions inbox, workspace detail, chat, files, configuration, or
+/// utility views. Compact width keeps using `workspacePath` pushes.
 enum WorkspaceSplitDetailTarget: Hashable {
     case session(WorkspaceSessionNavTarget)
     case fileBrowser(FileBrowserNavTarget)
@@ -121,7 +121,7 @@ final class AppNavigation {
     var launchPhase: AppLaunchPhase = .resolving
 
     /// Set after a fresh pairing when the server had no workspaces.
-    /// WorkspaceHomeView consumes this to auto-present workspace creation.
+    /// The workspace navigation shell consumes this to present guided creation.
     var shouldGuideWorkspaceCreation: Bool = false
 
     /// When set, the Quick Session sheet is presented over the current view.
@@ -211,13 +211,18 @@ final class AppNavigation {
         let wasShowingWorkspaceInbox = workspace.map {
             selectedWorkspaceFilter == $0 && workspacePath.count == 1
         } ?? false
-        if let workspace {
+        // The all-sessions inbox is the stack root. Opening a session from
+        // there appends the chat so swiping back returns to all sessions
+        // instead of the session's workspace-scoped inbox. The workspace hint
+        // still rides on the session target for server scoping.
+        let isAtAllSessionsRoot = selectedWorkspaceFilter == nil && workspacePath.count == 0
+        if let workspace, !(workspaceNavigationPresentation == .stack && isAtAllSessionsRoot) {
             selectedWorkspaceFilter = workspace
         }
         switch workspaceNavigationPresentation {
         case .stack:
             let sessionContext = Self.sessionDiagnosticContext(resolvedTarget)
-            if let workspace {
+            if let workspace, !isAtAllSessionsRoot {
                 if wasShowingWorkspaceInbox {
                     appendWorkspaceStack(
                         resolvedTarget,
@@ -420,7 +425,7 @@ final class AppNavigation {
     }
 
     /// Pending workspace creation deep-link payload.
-    /// Consumed once by WorkspaceHomeView, then cleared.
+    /// The workspace navigation shell consumes this once and clears it.
     var pendingWorkspaceDeepLink: WorkspaceDeepLink.Payload?
 
     // MARK: - Quick Session Handoff
@@ -453,9 +458,8 @@ final class AppNavigation {
     /// Routes legacy tab selections into the Workspaces-primary navigation stack.
     ///
     /// Older persisted state and a few compatibility call sites can still set
-    /// `.server` or `.settings`. Those are no longer primary app roots; they
-    /// become utility destinations under `WorkspaceHomeView` and the selected
-    /// tab resets to `.workspaces`.
+    /// `.server` or `.settings`. They route to utility destinations in the
+    /// Workspaces navigation shell and the selected tab resets to `.workspaces`.
     @discardableResult
     func routeLegacySelectedTabIfNeeded() -> WorkspaceUtilityNavTarget? {
         guard !showOnboarding else { return nil }
