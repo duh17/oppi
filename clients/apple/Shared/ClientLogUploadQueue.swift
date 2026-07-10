@@ -14,6 +14,7 @@ actor ClientLogUploadQueue {
     private var metadata: ClientLogUploadMetadata?
     private var backlog: [ClientLogUploadEntry] = []
     private var flushing = false
+    private var flushWaiters: [CheckedContinuation<Void, Never>] = []
     private var flushTask: Task<Void, Never>?
     private var nextSeq = 0
     private var droppedCount = 0
@@ -123,6 +124,15 @@ actor ClientLogUploadQueue {
         }
     }
 
+    func flushNow() async {
+        if flushing {
+            await withCheckedContinuation { continuation in
+                flushWaiters.append(continuation)
+            }
+        }
+        await flushLoop()
+    }
+
     private func flushLoop() async {
         guard isUploadAllowed() else {
             clearUploadState()
@@ -132,7 +142,14 @@ actor ClientLogUploadQueue {
         guard !backlog.isEmpty else { return }
 
         flushing = true
-        defer { flushing = false }
+        defer {
+            flushing = false
+            let waiters = flushWaiters
+            flushWaiters.removeAll(keepingCapacity: true)
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
 
         flushTask?.cancel()
         flushTask = nil

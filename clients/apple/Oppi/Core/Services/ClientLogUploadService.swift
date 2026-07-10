@@ -1,5 +1,72 @@
 import Foundation
 
+final class ClientLogUploadDispatcher: @unchecked Sendable {
+    private let queue: ClientLogUploadQueue
+    private let lock = NSLock()
+    private var tailTask: Task<Void, Never>?
+
+    init(queue: ClientLogUploadQueue) {
+        self.queue = queue
+    }
+
+    func configureUploader(_ uploader: (any ClientLogUploading)?, metadata: ClientLogUploadMetadata?) {
+        enqueue { [queue] in
+            if let metadata {
+                await queue.setMetadata(metadata)
+            }
+            await queue.setUploader(uploader)
+        }
+    }
+
+    func record(
+        level: ClientLogUploadLevel,
+        category: String,
+        message: String,
+        metadata: [String: String],
+        flush: Bool = false
+    ) {
+        enqueue { [queue] in
+            await queue.record(
+                level: level,
+                category: category,
+                message: message,
+                metadata: metadata
+            )
+            if flush {
+                await queue.flushNow()
+            }
+        }
+    }
+
+    func flush() {
+        enqueue { [queue] in
+            await queue.flushNow()
+        }
+    }
+
+    // periphery:ignore - deterministic barrier for dispatcher ordering tests
+    func waitUntilIdleForTesting() async {
+        await currentTailTask()?.value
+    }
+
+    private func currentTailTask() -> Task<Void, Never>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return tailTask
+    }
+
+    private func enqueue(_ operation: @escaping @Sendable () async -> Void) {
+        lock.lock()
+        let predecessor = tailTask
+        let task = Task.detached(priority: .utility) {
+            await predecessor?.value
+            await operation()
+        }
+        tailTask = task
+        lock.unlock()
+    }
+}
+
 /// Bridges app-facing `ClientLog` calls to the shared upload queue.
 ///
 /// The queue and wire models live in `Shared` so the future Mac client can use
@@ -16,34 +83,35 @@ enum ClientLogUploadService {
         bootId: bootId,
         isUploadAllowed: { TelemetrySettings.allowsRemoteDiagnosticsUpload }
     )
+    private static let dispatcher = ClientLogUploadDispatcher(queue: shared)
 
     static func configureUploader(_ client: APIClient?) {
-        Task.detached(priority: .utility) {
-            if let client {
-                await shared.setMetadata(makeMetadata())
-                await shared.setUploader(client)
-            } else {
-                await shared.setUploader(nil)
-            }
-        }
+        dispatcher.configureUploader(
+            client,
+            metadata: client == nil ? nil : makeMetadata()
+        )
     }
 
     static func record(
         level: ClientLogLevel,
         category: String,
         message: String,
-        metadata: [String: String]
+        metadata: [String: String],
+        flush: Bool = false
     ) {
         guard shouldUpload(level: level, category: category) else { return }
 
-        Task.detached(priority: .utility) {
-            await shared.record(
-                level: uploadLevel(for: level),
-                category: category,
-                message: message,
-                metadata: metadata
-            )
-        }
+        dispatcher.record(
+            level: uploadLevel(for: level),
+            category: category,
+            message: message,
+            metadata: metadata,
+            flush: flush
+        )
+    }
+
+    static func flush() {
+        dispatcher.flush()
     }
 
     private static func shouldUpload(level: ClientLogLevel, category: String) -> Bool {
@@ -63,6 +131,7 @@ enum ClientLogUploadService {
         "Cache",
         "ChatSession",
         "Diagnostics",
+        "Lifecycle",
         "Memory",
         "Network",
         "StreamSession",

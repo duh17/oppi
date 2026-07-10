@@ -131,6 +131,7 @@ struct MetricKitSerializerTests {
     }
 
     @Test func crashContextIncludesLargeTimelinePayloadBreadcrumbs() {
+        MetricKitCrashContextStore.clearForTesting()
         MetricKitCrashContextStore.record(
             sessionId: "session-large",
             workspaceId: "workspace-1",
@@ -154,6 +155,7 @@ struct MetricKitSerializerTests {
     }
 
     @Test func appCoalescerTelemetryRecordsFlushesAndCrashBreadcrumbs() async {
+        MetricKitCrashContextStore.clearForTesting()
         MetricKitCrashContextStore.record(
             sessionId: "session-coalescer",
             workspaceId: "workspace-telemetry",
@@ -184,6 +186,156 @@ struct MetricKitSerializerTests {
         #expect(metadata["lastTimelinePayloadBytes"] == "1024")
         #expect(metadata["lastTimelinePayloadEventCount"] == "3")
         #expect(metadata["lastTimelinePayloadLargestEventBytes"] == "512")
+    }
+
+    @Test func crashContextIncludesAppLifecycleAndStallBreadcrumbs() {
+        MetricKitCrashContextStore.clearForTesting()
+        MetricKitCrashContextStore.recordAppContext(
+            sessionId: nil,
+            workspaceId: "workspace-list",
+            activeServerId: "server-1",
+            screen: "workspace_inbox_filtered",
+            scenePhase: "background",
+            lifecycleEvent: "scene_phase",
+            lifecycleStep: "prepare_for_background_begin"
+        )
+        MetricKitCrashContextStore.recordMainThreadStall(
+            thresholdMs: 700,
+            footprintMB: 73,
+            sequence: 2
+        )
+        MetricKitCrashContextStore.recordMainThreadStallRecovery(
+            sequence: 2,
+            durationMs: 9_121
+        )
+
+        let metadata = MetricKitCrashContextStore.snapshotMetadata()
+
+        #expect(metadata["lastSessionId"] == nil)
+        #expect(metadata["lastWorkspaceId"] == "workspace-list")
+        #expect(metadata["lastActiveServerId"] == "server-1")
+        #expect(metadata["lastScreen"] == "workspace_inbox_filtered")
+        #expect(metadata["lastScenePhase"] == "background")
+        #expect(metadata["lastLifecycleEvent"] == "scene_phase")
+        #expect(metadata["lastLifecycleStep"] == "prepare_for_background_begin")
+        #expect(metadata["lastStallThresholdMs"] == "700")
+        #expect(metadata["lastStallFootprintMB"] == "73")
+        #expect(metadata["lastStallSequence"] == "2")
+        #expect(metadata["lastStallDurationMs"] == "9121")
+    }
+
+    @Test func newStallClearsRecoveryMetadataFromPreviousStall() {
+        MetricKitCrashContextStore.clearForTesting()
+        MetricKitCrashContextStore.recordMainThreadStall(
+            thresholdMs: 700,
+            footprintMB: 73,
+            sequence: 1
+        )
+        MetricKitCrashContextStore.recordMainThreadStallRecovery(sequence: 1, durationMs: 2_400)
+
+        MetricKitCrashContextStore.recordMainThreadStall(
+            thresholdMs: 700,
+            footprintMB: 75,
+            sequence: 2
+        )
+
+        let metadata = MetricKitCrashContextStore.snapshotMetadata()
+        #expect(metadata["lastStallSequence"] == "2")
+        #expect(metadata["lastStallRecoveredAtMs"] == nil)
+        #expect(metadata["lastStallDurationMs"] == nil)
+    }
+
+    @Test func previousProcessContextSurvivesFirstContextWriteAfterRelaunch() {
+        MetricKitCrashContextStore.clearForTesting()
+        MetricKitCrashContextStore.recordAppContext(
+            sessionId: "session-before-watchdog",
+            workspaceId: "workspace-before-watchdog",
+            activeServerId: "server-1",
+            screen: "chat",
+            scenePhase: "background",
+            lifecycleEvent: "scene_phase",
+            lifecycleStep: "end"
+        )
+
+        MetricKitCrashContextStore.simulateProcessRelaunchForTesting()
+        MetricKitCrashContextStore.recordAppContext(
+            sessionId: nil,
+            workspaceId: nil,
+            activeServerId: nil,
+            screen: "launch_resolving",
+            scenePhase: "active",
+            lifecycleEvent: "root",
+            lifecycleStep: "appear"
+        )
+
+        let current = MetricKitCrashContextStore.snapshotMetadata()
+        let postMortem = MetricKitCrashContextStore.postMortemSnapshotMetadata()
+        #expect(current["lastScreen"] == "launch_resolving")
+        #expect(postMortem["lastSessionId"] == "session-before-watchdog")
+        #expect(postMortem["lastWorkspaceId"] == "workspace-before-watchdog")
+        #expect(postMortem["lastScreen"] == "chat")
+        #expect(postMortem["lastLifecycleStep"] == "end")
+    }
+
+    @Test func diagnosticSummaryPrioritizesLifecycleAndStallContextWithinFieldLimit() {
+        let requiredContext = Dictionary(
+            uniqueKeysWithValues: MetricKitPayloadItemBuilder.requiredDiagnosticContextKeys.map { key in
+                (key, "value-\(key)")
+            }
+        )
+        var context = requiredContext
+        context["lastTimelinePayloadRecordedAtMs"] = "1"
+        context["lastTimelinePayloadBytes"] = "2"
+        context["lastTimelinePayloadEventCount"] = "3"
+        context["lastTimelinePayloadLargestEventBytes"] = "4"
+
+        let item = MetricKitPayloadItemBuilder.makeItem(
+            from: [
+                "crashDiagnostics": [[:]],
+                "hangDiagnostics": [[:]],
+                "cpuExceptionDiagnostics": [[:]],
+                "diskWriteExceptionDiagnostics": [[:]],
+                "appLaunchDiagnostics": [[:]],
+            ],
+            kind: .diagnostic,
+            windowStartMs: 0,
+            windowEndMs: 1,
+            context: context
+        )
+
+        #expect(item.summary.count <= 24)
+        for key in MetricKitPayloadItemBuilder.requiredDiagnosticContextKeys {
+            #expect(item.summary[key] == "value-\(key)", "missing required context key \(key)")
+        }
+    }
+
+    @Test func flushedClientLogsKeepSubmissionOrder() async {
+        let uploader = RecordingClientLogUploader()
+        let queue = ClientLogUploadQueue(
+            clientKind: .ios,
+            appInstanceId: "app-1",
+            bootId: "boot-1",
+            isUploadAllowed: { true },
+            nowMs: { 1 },
+            flushInterval: .seconds(60)
+        )
+        await queue.setMetadata(ClientLogUploadMetadata(
+            appVersion: "1",
+            buildNumber: "1",
+            osVersion: "test",
+            deviceModel: "test"
+        ))
+        await queue.setUploader(uploader)
+        let dispatcher = ClientLogUploadDispatcher(queue: queue)
+
+        dispatcher.record(level: .info, category: "Lifecycle", message: "begin", metadata: [:])
+        dispatcher.record(level: .info, category: "Lifecycle", message: "save", metadata: [:])
+        dispatcher.record(level: .info, category: "Lifecycle", message: "end", metadata: [:], flush: true)
+        await dispatcher.waitUntilIdleForTesting()
+
+        let entries = await uploader.entries()
+        #expect(entries.map(\.message) == ["begin", "save", "end"])
+        #expect(entries.map(\.seq) == [1, 2, 3])
     }
 
     // MARK: - Empty/broken payloads (the old bug)
@@ -303,5 +455,40 @@ struct MetricKitSerializerTests {
         let launchMetrics = parsed?["applicationLaunchMetrics"] as? [String: Any]
         let resumeTime = launchMetrics?["histogrammedResumeTime"] as? [String: Any]
         #expect(resumeTime?["histogramNumBuckets"] as? Int == 3)
+    }
+}
+
+@Suite("Main thread lag watchdog")
+struct MainThreadLagWatchdogTests {
+    @Test func foregroundRestartInvalidatesDelayedStop() async {
+        let watchdog = MainThreadLagWatchdog()
+        let evaluations = AsyncStream<Void> { continuation in
+            watchdog.onDelayedStopEvaluationForTesting = {
+                continuation.yield()
+                continuation.finish()
+            }
+        }
+        var iterator = evaluations.makeAsyncIterator()
+
+        watchdog.start()
+        watchdog.stopAfterGracePeriod(10)
+        watchdog.start()
+
+        let evaluation = await iterator.next()
+        #expect(evaluation != nil)
+        #expect(watchdog.isRunningForTesting())
+        watchdog.stop()
+    }
+}
+
+private actor RecordingClientLogUploader: ClientLogUploading {
+    private var uploadedEntries: [ClientLogUploadEntry] = []
+
+    func uploadClientLogs(request: ClientLogUploadRequest) async throws {
+        uploadedEntries.append(contentsOf: request.entries)
+    }
+
+    func entries() -> [ClientLogUploadEntry] {
+        uploadedEntries
     }
 }

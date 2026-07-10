@@ -159,10 +159,8 @@ struct OppiApp: App {
     /// Convenience accessor — most lifecycle code targets the active connection.
     private var connection: ServerConnection { coordinator.activeConnection }
     private var serverStore: ServerStore { coordinator.serverStore }
-#if DEBUG
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
 
-#endif
     @State private var inviteBootstrapInFlight = false
     @State private var foregroundReconnectGate = ForegroundReconnectGate()
     @State private var backgroundKeepAlive = BackgroundKeepAlive()
@@ -228,8 +226,32 @@ struct OppiApp: App {
                 ThemeColorSchemeSyncView(themeStore: themeStore)
             }
             .preferredColorScheme(themeStore.preferredColorScheme)
+            .onAppear {
+                recordDiagnosticContext(lifecycleEvent: "root", lifecycleStep: "appear")
+            }
             .onChange(of: scenePhase) { _, phase in
                 handleScenePhase(phase)
+            }
+            .onChange(of: navigation.launchPhase) { _, _ in
+                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "launch_phase")
+            }
+            .onChange(of: navigation.showOnboarding) { _, _ in
+                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "onboarding")
+            }
+            .onChange(of: navigation.showQuickSession) { _, _ in
+                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "quick_session")
+            }
+            .onChange(of: navigation.selectedWorkspaceFilter) { _, _ in
+                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "workspace_filter")
+            }
+            .onChange(of: navigation.workspacePath.count) { _, _ in
+                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "workspace_path")
+            }
+            .onChange(of: navigation.workspaceStackDiagnosticContext) { _, _ in
+                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "stack_destination")
+            }
+            .onChange(of: navigation.splitDetailTarget) { _, _ in
+                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "split_detail")
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                 handleMemoryWarning()
@@ -262,54 +284,56 @@ struct OppiApp: App {
             }
             .onOpenURL { url in Task { @MainActor in await handleIncomingURL(url) } }
             .task {
-                AppFont.rebuild()
-                MetricKitService.shared.configure()
-                DeviceResourceSampler.shared.configure()
-#if DEBUG
-                configureWatchdogHooks()
-                mainThreadLagWatchdog.start()
-#endif
-                coordinator.startLANDiscovery()
-                coordinator.startNetworkPathMonitor()
-                await setupNotifications()
-#if DEBUG
-                scheduleE2EInAppBrowserIfRequested()
-                seedE2EPendingQuickSessionShareIfRequested()
-#endif
-#if DEBUG
-                // E2E test support: process invite URL from launch environment.
-                // Must run BEFORE reconnectOnLaunch to prevent stale simulator
-                // Keychain entries from flooding the ephemeral Docker server with
-                // 401s on every old device token.
-                if let e2eInvite = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"],
-                   let e2eURL = URL(string: e2eInvite) {
-                    if e2eInviteProcessedThisProcess {
-                        os_log(.error, "[E2E] Invite already processed this process; skipping duplicate bootstrap")
-                        navigation.launchPhase = .ready
-                        navigation.showOnboarding = false
-                    } else {
-                        // Wipe all stale servers before connecting anything
-                        let staleCount = serverStore.servers.count
-                        for server in serverStore.servers {
-                            coordinator.removeServer(id: server.id)
-                        }
-                        os_log(.error, "[E2E] Cleared %{public}d stale servers", staleCount)
-
-                        os_log(.error, "[E2E] Processing invite URL: %{public}@", e2eInvite.prefix(80).description)
-                        await handleIncomingURL(e2eURL)
-                        navigation.launchPhase = .ready
-                        os_log(.error, "[E2E] Invite processing complete. showOnboarding=%{public}d workspaces=%{public}d",
-                               navigation.showOnboarding ? 1 : 0,
-                               connection.workspaceStore.workspaces.count)
-                    }
-                } else {
-                    await reconnectOnLaunch()
-                }
-#else
-                await reconnectOnLaunch()
-#endif
-                QuickSessionTrigger.shared.checkForPendingRequest()
+                await startApp()
             }
+    }
+
+    @MainActor
+    private func startApp() async {
+        AppFont.rebuild()
+        MetricKitService.shared.configure()
+        DeviceResourceSampler.shared.configure()
+        configureWatchdogHooks()
+        mainThreadLagWatchdog.start()
+        coordinator.startLANDiscovery()
+        coordinator.startNetworkPathMonitor()
+        await setupNotifications()
+#if DEBUG
+        scheduleE2EInAppBrowserIfRequested()
+        seedE2EPendingQuickSessionShareIfRequested()
+
+        // E2E test support: process invite URL from launch environment.
+        // Must run BEFORE reconnectOnLaunch to prevent stale simulator
+        // Keychain entries from flooding the ephemeral Docker server with
+        // 401s on every old device token.
+        if let e2eInvite = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"],
+           let e2eURL = URL(string: e2eInvite) {
+            if e2eInviteProcessedThisProcess {
+                os_log(.error, "[E2E] Invite already processed this process; skipping duplicate bootstrap")
+                navigation.launchPhase = .ready
+                navigation.showOnboarding = false
+            } else {
+                // Wipe all stale servers before connecting anything
+                let staleCount = serverStore.servers.count
+                for server in serverStore.servers {
+                    coordinator.removeServer(id: server.id)
+                }
+                os_log(.error, "[E2E] Cleared %{public}d stale servers", staleCount)
+
+                os_log(.error, "[E2E] Processing invite URL: %{public}@", e2eInvite.prefix(80).description)
+                await handleIncomingURL(e2eURL)
+                navigation.launchPhase = .ready
+                os_log(.error, "[E2E] Invite processing complete. showOnboarding=%{public}d workspaces=%{public}d",
+                       navigation.showOnboarding ? 1 : 0,
+                       connection.workspaceStore.workspaces.count)
+            }
+        } else {
+            await reconnectOnLaunch()
+        }
+#else
+        await reconnectOnLaunch()
+#endif
+        QuickSessionTrigger.shared.checkForPendingRequest()
     }
 
 #if DEBUG
@@ -627,14 +651,143 @@ struct OppiApp: App {
         }
     }
 
+    @MainActor
+    private func recordDiagnosticContext(
+        phase: ScenePhase? = nil,
+        lifecycleEvent: String? = nil,
+        lifecycleStep: String? = nil
+    ) {
+        MetricKitCrashContextStore.recordAppContext(
+            sessionId: diagnosticVisibleSessionId(),
+            workspaceId: diagnosticVisibleWorkspaceId(),
+            activeServerId: coordinator.activeServerId,
+            screen: diagnosticScreenLabel(),
+            scenePhase: diagnosticScenePhase(phase ?? scenePhase),
+            lifecycleEvent: lifecycleEvent,
+            lifecycleStep: lifecycleStep
+        )
+    }
+
+    @MainActor
+    private func diagnosticVisibleSessionId() -> String? {
+        switch navigation.workspaceNavigationPresentation {
+        case .split:
+            if case .session(let target) = navigation.splitDetailTarget {
+                return target.sessionId
+            }
+            return nil
+        case .stack:
+            return navigation.workspaceStackDiagnosticContext.sessionId
+        }
+    }
+
+    @MainActor
+    private func diagnosticVisibleWorkspaceId() -> String? {
+        switch navigation.workspaceNavigationPresentation {
+        case .split:
+            switch navigation.splitDetailTarget {
+            case .session(let target):
+                return target.workspaceId ?? navigation.splitSelectedWorkspace?.workspace.id
+            case .fileBrowser(let target):
+                return target.workspaceId
+            case .linkedFile(let target):
+                return target.workspaceId
+            case .workspaceConfiguration(let target):
+                return target.workspace.id
+            case .utility, nil:
+                return navigation.splitSelectedWorkspace?.workspace.id
+                    ?? navigation.selectedWorkspaceFilter?.workspace.id
+            }
+        case .stack:
+            return navigation.workspaceStackDiagnosticContext.workspaceId
+        }
+    }
+
+    @MainActor
+    private func diagnosticScreenLabel() -> String {
+        guard navigation.launchPhase == .ready else { return "launch_resolving" }
+        if navigation.showOnboarding { return "onboarding" }
+        if navigation.showQuickSession { return "quick_session" }
+
+        switch navigation.workspaceNavigationPresentation {
+        case .stack:
+            return navigation.workspaceStackDiagnosticContext.screen
+        case .split:
+            switch navigation.splitDetailTarget {
+            case .session:
+                return "chat"
+            case .fileBrowser:
+                return "file_browser"
+            case .linkedFile:
+                return "linked_file"
+            case .workspaceConfiguration:
+                return "workspace_configuration"
+            case .utility(let target):
+                return "utility_\(diagnosticUtilityLabel(target))"
+            case nil:
+                return navigation.splitSelectedWorkspace == nil
+                    ? "workspace_split_inbox_all"
+                    : "workspace_split_inbox_filtered"
+            }
+        }
+    }
+
+    private func diagnosticUtilityLabel(_ target: WorkspaceUtilityNavTarget) -> String {
+        switch target {
+        case .schedules: "schedules"
+        case .agents: "agents"
+        case .manageServers: "manage_servers"
+        case .appSettings: "app_settings"
+        }
+    }
+
+    private func diagnosticScenePhase(_ phase: ScenePhase) -> String {
+        switch phase {
+        case .active: "active"
+        case .inactive: "inactive"
+        case .background: "background"
+        @unknown default: "unknown"
+        }
+    }
+
+    @MainActor
+    private func diagnosticLifecycleMetadata(phase: ScenePhase, step: String) -> [String: String] {
+        var metadata: [String: String] = [
+            "phase": diagnosticScenePhase(phase),
+            "step": step,
+            "screen": diagnosticScreenLabel(),
+        ]
+        if let sessionId = diagnosticVisibleSessionId() {
+            metadata["sessionId"] = sessionId
+        }
+        if let workspaceId = diagnosticVisibleWorkspaceId() {
+            metadata["workspaceId"] = workspaceId
+        }
+        if let activeServerId = coordinator.activeServerId {
+            metadata["activeServerId"] = activeServerId
+        }
+        return metadata
+    }
+
+    @MainActor
+    private func recordLifecycleStep(_ phase: ScenePhase, _ step: String, flush: Bool = false) {
+        recordDiagnosticContext(phase: phase, lifecycleEvent: "scene_phase", lifecycleStep: step)
+        ClientLog.info(
+            "Lifecycle",
+            "Scene phase \(diagnosticScenePhase(phase)) \(step)",
+            metadata: diagnosticLifecycleMetadata(phase: phase, step: step),
+            flush: flush
+        )
+    }
+
+    @MainActor
     private func handleScenePhase(_ phase: ScenePhase) {
         let shouldReconnect = foregroundReconnectGate.shouldReconnect(for: phase)
+        recordLifecycleStep(phase, "begin", flush: phase == .background)
 
         switch phase {
         case .active:
-#if DEBUG
             mainThreadLagWatchdog.start()
-#endif
             // Footprint telemetry on foreground — helps diagnose jetsam kills.
             let footprint = AppDiagnosticsService.currentFootprintMB()
             ClientLog.info("Memory", "Foreground", metadata: [
@@ -662,10 +815,9 @@ struct OppiApp: App {
             }
 
         case .background:
-#if DEBUG
-            mainThreadLagWatchdog.stop()
-#endif
+            recordLifecycleStep(phase, "restoration_save_begin", flush: true)
             RestorationState.save(from: connection, coordinator: coordinator, navigation: navigation)
+            recordLifecycleStep(phase, "restoration_save_done", flush: true)
 
             // Keep the WS alive while agents are working so we receive status
             // updates without reconnecting.
@@ -673,18 +825,22 @@ struct OppiApp: App {
                 $0.status == .busy || $0.status == .starting
             }
             if hasActiveAgent {
+                recordLifecycleStep(phase, "keep_alive_begin", flush: true)
                 backgroundKeepAlive.begin(sessionStore: connection.sessionStore)
             } else if coordinator.hasActiveAudioTransportPlayback {
                 // Let live streamed playback continue under the audio background mode.
                 // Local clips can finish without keeping the focused session stream open; only
                 // active audio_stream delivery needs the transport to drain.
+                recordLifecycleStep(phase, "audio_transport_background", flush: true)
                 backgroundKeepAlive.end()
             } else {
                 // No active agents or playback — send graceful close so the
                 // server sees 1001 (going away) instead of discovering the
                 // dead connection via ping timeout (1006). This avoids a 30-60s
                 // server-side wait and produces cleaner telemetry.
+                recordLifecycleStep(phase, "prepare_for_background_begin", flush: true)
                 connection.prepareForBackground()
+                recordLifecycleStep(phase, "prepare_for_background_done", flush: true)
                 backgroundKeepAlive.end()
             }
 
@@ -693,6 +849,11 @@ struct OppiApp: App {
 
         @unknown default:
             break
+        }
+
+        recordLifecycleStep(phase, "end", flush: phase == .background)
+        if phase == .background {
+            mainThreadLagWatchdog.stopAfterGracePeriod(10_000)
         }
     }
 
@@ -727,34 +888,39 @@ struct OppiApp: App {
     }
 
     private func configureWatchdogHooks() {
-#if DEBUG
         mainThreadLagWatchdog.onStall = { context in
-            Task { @MainActor in
-                await self.handleWatchdogStall(context)
-            }
+            var metadata = MetricKitCrashContextStore.recordMainThreadStall(
+                thresholdMs: context.thresholdMs,
+                footprintMB: context.footprintMB,
+                sequence: context.sequence
+            )
+            metadata["sequence"] = String(context.sequence)
+            metadata["thresholdMs"] = String(context.thresholdMs)
+            metadata["detectedAtMs"] = String(context.detectedAtMs)
+            metadata["footprintMB"] = context.footprintMB.map(String.init) ?? "n/a"
+            ClientLog.error(
+                "Diagnostics",
+                "Main-thread stall detected",
+                metadata: metadata,
+                flush: true
+            )
         }
-#endif
+        mainThreadLagWatchdog.onRecovery = { context in
+            var metadata = MetricKitCrashContextStore.recordMainThreadStallRecovery(
+                sequence: context.sequence,
+                durationMs: context.durationMs
+            )
+            metadata["sequence"] = String(context.sequence)
+            metadata["durationMs"] = String(context.durationMs)
+            metadata["recoveredAtMs"] = String(context.recoveredAtMs)
+            ClientLog.info(
+                "Diagnostics",
+                "Main-thread stall recovered",
+                metadata: metadata,
+                flush: true
+            )
+        }
     }
-
-#if DEBUG
-    @MainActor
-    private func handleWatchdogStall(_ context: MainThreadStallContext) async {
-        guard scenePhase == .active else { return }
-        guard !navigation.showOnboarding else { return }
-
-        guard let sessionId = connection.sessionStore.activeSessionId else { return }
-
-        ClientLog.error(
-            "Diagnostics",
-            "Main-thread stall detected",
-            metadata: [
-                "sessionId": sessionId,
-                "thresholdMs": String(context.thresholdMs),
-                "footprintMB": context.footprintMB.map(String.init) ?? "n/a",
-            ]
-        )
-    }
-#endif
 
     private func setupNotifications() async {
         guard ReleaseFeatures.localAttentionNotificationsEnabled else {
