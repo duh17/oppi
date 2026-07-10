@@ -456,7 +456,8 @@ func makeTimelineConfiguration(
     onBackSwipe: @escaping () -> Void = {},
     topOverlap: CGFloat = 0,
     bottomOverlap: CGFloat = 0,
-    reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
+    reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
+    workspaceId: String? = "ws-test"
 ) -> ChatTimelineCollectionHost.Configuration {
     ChatTimelineCollectionHost.Configuration(
         items: items,
@@ -465,7 +466,7 @@ func makeTimelineConfiguration(
         isBusy: isBusy,
         streamingAssistantID: streamingAssistantID,
         sessionId: sessionId,
-        workspaceId: "ws-test",
+        workspaceId: workspaceId,
         onFork: { _ in },
         onBackSwipe: onBackSwipe,
         onShowEarlier: onShowEarlier,
