@@ -65,6 +65,54 @@ export function pendingAskSnapshots(
   return asks;
 }
 
+/**
+ * Summarize pending, user-reply extension UI dialogs for a single session into
+ * transport-neutral records. Kept deliberately extension-agnostic: it reads only
+ * semantic protocol metadata carried by extension_ui_request and never branches on
+ * concrete tool, extension, or widget names.
+ */
+export function pendingDialogSnapshots(messages: ServerMessage[]): Array<Record<string, unknown>> {
+  const dialogs: Array<Record<string, unknown>> = [];
+  const seenRequestIds = new Set<string>();
+
+  for (const message of messages) {
+    if (message.type !== "extension_ui_request" || !isPendingUserReplyRequest(message)) {
+      continue;
+    }
+    if (seenRequestIds.has(message.id)) {
+      continue;
+    }
+    seenRequestIds.add(message.id);
+    dialogs.push(dialogSnapshotFromRequest(message));
+  }
+
+  return dialogs;
+}
+
+function dialogSnapshotFromRequest(
+  message: Extract<ServerMessage, { type: "extension_ui_request" }>,
+): Record<string, unknown> {
+  return {
+    id: message.id,
+    method: message.method,
+    ...(message.title !== undefined ? { title: message.title } : {}),
+    ...(message.message !== undefined ? { message: message.message } : {}),
+    ...(message.placeholder !== undefined ? { placeholder: message.placeholder } : {}),
+    ...(message.prefill !== undefined ? { prefill: message.prefill } : {}),
+    ...(message.options !== undefined ? { options: message.options } : {}),
+    ...(message.questions !== undefined ? { questions: message.questions } : {}),
+    ...(message.allowCustom !== undefined ? { allowCustom: message.allowCustom } : {}),
+    ...(message.timeout !== undefined ? { timeout: message.timeout } : {}),
+    ...(message.timeoutAt !== undefined ? { timeoutAt: message.timeoutAt } : {}),
+    ...(message.extensionScopeId !== undefined
+      ? { extensionScopeId: message.extensionScopeId }
+      : {}),
+    ...(message.extensionDisplayName !== undefined
+      ? { extensionDisplayName: message.extensionDisplayName }
+      : {}),
+  };
+}
+
 function isPendingUserReplyRequest(message: ServerMessage): boolean {
   if (message.type !== "extension_ui_request") {
     return false;

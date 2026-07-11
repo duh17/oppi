@@ -17,7 +17,6 @@ export const red = esc("31");
 export const green = esc("32");
 export const yellow = esc("33");
 export const cyan = esc("36");
-export const boldMagenta = (s: string): string => (ANSI_ENABLED ? `\x1b[1;35m${s}\x1b[0m` : s);
 
 // ─── ANSI Sanitization ───
 

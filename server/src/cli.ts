@@ -68,16 +68,6 @@ function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   }
 }
 
-function printHeader(): void {
-  console.log("");
-  console.log(c.boldMagenta("  ╭─────────────────────────────────────╮"));
-  console.log(
-    c.boldMagenta("  │") + c.bold("               π  oppi               ") + c.boldMagenta("│"),
-  );
-  console.log(c.boldMagenta("  ╰─────────────────────────────────────╯"));
-  console.log("");
-}
-
 function getTailscaleHostname(): string | null {
   try {
     const result = execSync("tailscale status --json", {
@@ -159,8 +149,6 @@ function shortHostLabel(host: string): string {
 // ─── Commands ───
 
 async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
-  printHeader();
-
   const wasPaired = storage.isPaired();
 
   // Auto-init: generate owner token + identity keys if this is a fresh install.
@@ -354,16 +342,12 @@ async function cmdPair(
     return;
   }
 
-  printHeader();
-
   if (!showPairingQR(storage, requestedName, hostOverride, showToken)) {
     process.exit(1);
   }
 }
 
 function cmdStatus(storage: CliConnectionConfig): void {
-  printHeader();
-
   const config = storage.getConfig();
   const hostname = getTailscaleHostname();
   const ip = getTailscaleIp();
@@ -418,8 +402,6 @@ function isLoopbackHost(host: string): boolean {
 }
 
 function cmdDoctor(storage: CliConnectionConfig): void {
-  printHeader();
-
   type CheckLevel = "pass" | "warn" | "fail";
   type Check = { level: CheckLevel; message: string };
   const checks: Check[] = [];
@@ -688,8 +670,6 @@ function cmdDoctor(storage: CliConnectionConfig): void {
 }
 
 function cmdToken(storage: Storage, action: string | undefined): void {
-  printHeader();
-
   const mode = action || "help";
 
   if (mode === "rotate") {
@@ -732,7 +712,6 @@ function prompt(question: string, defaultValue?: string): Promise<string> {
 // ─── Init Command ───
 
 async function cmdInit(flags: Record<string, string>): Promise<void> {
-  printHeader();
   console.log(c.bold("  First-time setup"));
   console.log("");
 
@@ -985,8 +964,6 @@ function cmdConfig(
     return;
   }
 
-  printHeader();
-
   if (mode === "show") {
     const showDefault = flags.default === "true";
     const config = showDefault
@@ -1085,8 +1062,6 @@ function cmdConfig(
 }
 
 function cmdServer(action: string | undefined, flags: Record<string, string>): void {
-  printHeader();
-
   const mode = action || "status";
 
   if (mode === "install") {
@@ -1312,8 +1287,6 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
 }
 
 async function cmdUpdate(flags: Record<string, string>): Promise<void> {
-  printHeader();
-
   const mode = flags.self === "true" ? "self" : "runtime";
   if (mode === "self") {
     await cmdSelfUpdate(flags);
@@ -1444,7 +1417,6 @@ function cmdHelp(path: string[] = [], jsonOutput = false): void {
     return;
   }
 
-  printHeader();
   console.log(renderHelpTopic(topic));
 }
 
