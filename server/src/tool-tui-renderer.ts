@@ -61,6 +61,7 @@ const SNAPSHOT_FG_COLORS: Record<ThemeColor, string> = {
   thinkingMedium: "#9ece6a",
   thinkingHigh: "#e0af68",
   thinkingXhigh: "#f7768e",
+  thinkingMax: "#ff5fff",
   bashMode: "#7dcfff",
 };
 
