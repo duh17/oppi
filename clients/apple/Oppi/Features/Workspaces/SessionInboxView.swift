@@ -119,7 +119,6 @@ struct SessionInboxView: View {
     @Environment(AppNavigation.self) private var navigation
 
     let onOpenSidebar: (() -> Void)?
-    let isSidebarPresented: Bool
 
     @State private var searchText = ""
     @State private var error: String?
@@ -131,9 +130,8 @@ struct SessionInboxView: View {
     @State private var hasAutoCreatedE2ESession = false
     @State private var hasAutoOpenedE2ESession = false
 
-    init(onOpenSidebar: (() -> Void)? = nil, isSidebarPresented: Bool = false) {
+    init(onOpenSidebar: (() -> Void)? = nil) {
         self.onOpenSidebar = onOpenSidebar
-        self.isSidebarPresented = isSidebarPresented
     }
 
     private var activeServerId: String? {
@@ -250,14 +248,11 @@ struct SessionInboxView: View {
             }
         }
         .accessibilityIdentifier("workspace.sessionList")
-        .listStyle(.insetGrouped)
+        .listStyle(.plain)
         .themedListSurface()
         .navigationTitle(inboxNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarVisibility(.hidden, for: .tabBar)
-        .toolbarVisibility(isSidebarPresented ? .hidden : .automatic, for: .navigationBar)
-        .toolbarVisibility(isSidebarPresented ? .hidden : .automatic, for: .bottomBar)
-        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search sessions")
+        .searchable(text: $searchText, prompt: "Search sessions")
         .toolbar { toolbarContent }
         .refreshable {
             await refreshVisibleServer()
@@ -935,12 +930,6 @@ private struct WorkspaceConfigurationScopedDestinationView: View {
                     dismissConfiguration()
                 }
                 .withServerScopedEnvironment(connection)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done", action: dismissConfiguration)
-                            .accessibilityIdentifier("workspace.edit.done")
-                    }
-                }
             } else {
                 ProgressView("Connecting…")
             }
@@ -963,99 +952,180 @@ private struct WorkspaceConfigurationScopedDestinationView: View {
     }
 }
 
+private struct WorkspaceSidebarDragState {
+    enum Axis {
+        case horizontal
+        case vertical
+    }
+
+    var axis: Axis?
+    var horizontalTranslation: CGFloat = 0
+}
+
+/// Sessions-first home surface for compact widths.
+///
+/// Layout: the workspace sidebar sits *beneath* the session layer. The session
+/// layer — a `NavigationStack` wrapping `SessionInboxView` — slides right to
+/// reveal the sidebar, tracks the drag 1:1, and settles with a spring. Because
+/// the nav bar, search, and bottom toolbar all live inside that sliding
+/// `NavigationStack`, they travel as one surface with the list (no detached
+/// "card" sliding under static bars). The sidebar layer itself owns no bars.
+///
+/// Edge reveal: instead of a full-height `Color.clear` strip (which covers the
+/// leading toolbar toggle and steals its taps), the reveal drag is a
+/// `simultaneousGesture` on the foreground layer that only engages for drags
+/// starting within ~32pt of the leading edge. It is disabled entirely once a
+/// destination is pushed so it never fights the interactive back-swipe.
 struct WorkspaceSessionInboxStackRootView: View {
+    @Environment(AppNavigation.self) private var navigation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isSidebarOpen = false
+    @State private var sidebarRestingProgress: CGFloat = 0
+    @State private var isSidebarPresented = false
+    @GestureState private var sidebarDrag = WorkspaceSidebarDragState()
+
+    private static let edgePanWidth: CGFloat = 32
 
     var body: some View {
+        @Bindable var nav = navigation
+
         GeometryReader { proxy in
             let sidebarWidth = min(proxy.size.width * 0.86, 360)
+            let dragProgress = sidebarDrag.horizontalTranslation / sidebarWidth
+            let sidebarProgress = min(1, max(0, sidebarRestingProgress + dragProgress))
+            let sidebarOffset = sidebarWidth * sidebarProgress
+            let interceptsForegroundTouches = isSidebarPresented || sidebarRestingProgress > 0
+            // The edge-pan fights the interactive back-swipe once a destination
+            // is pushed, so only arm it at the stack root.
+            let edgePanEnabled = nav.workspacePath.isEmpty && !isSidebarPresented
 
-            ZStack(alignment: .leading) {
-                if isSidebarOpen {
-                    WorkspaceSidebarView(
-                        onSelect: { isSidebarOpen = false },
-                        onDismiss: { isSidebarOpen = false }
-                    )
-                    .frame(width: sidebarWidth)
-                    .frame(maxHeight: .infinity)
-                    .accessibilityAddTraits(.isModal)
-                    .accessibilityAction(.escape) { isSidebarOpen = false }
-                    .simultaneousGesture(sidebarDismissGesture)
-                    .zIndex(0)
-                }
-
-                SessionInboxView(
-                    onOpenSidebar: { isSidebarOpen = true },
-                    isSidebarPresented: isSidebarOpen
+            ZStack(alignment: .topLeading) {
+                WorkspaceSidebarView(
+                    onSelect: { settleSidebar(open: false) }
                 )
+                .frame(width: sidebarWidth, alignment: .topLeading)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(isSidebarPresented)
+                .accessibilityHidden(!isSidebarPresented)
+                .accessibilityAddTraits(.isModal)
+                .accessibilityAction(.escape) { settleSidebar(open: false) }
+                .accessibilityAction(named: "Close workspaces") { settleSidebar(open: false) }
+                .zIndex(0)
+
+                NavigationStack(path: $nav.workspacePath) {
+                    SessionInboxView(
+                        onOpenSidebar: { settleSidebar(open: true) }
+                    )
+                    .navigationDestination(for: WorkspaceNavTarget.self) { target in
+                        WorkspaceScopedDestinationView(target: target)
+                    }
+                }
                 .background(Color.themeBg)
-                .clipShape(
-                    RoundedRectangle(
-                        cornerRadius: isSidebarOpen ? 28 : 0,
-                        style: .continuous
-                    )
+                .offset(x: sidebarOffset)
+                .accessibilityHidden(isSidebarPresented)
+                .simultaneousGesture(
+                    edgePanEnabled ? sidebarRevealGesture(sidebarWidth: sidebarWidth) : nil
                 )
-                .shadow(
-                    color: isSidebarOpen ? .black.opacity(0.35) : .clear,
-                    radius: 24,
-                    x: -8,
-                    y: 0
-                )
-                .offset(x: isSidebarOpen ? sidebarWidth : 0)
-                .disabled(isSidebarOpen)
-                .accessibilityHidden(isSidebarOpen)
-                .navigationDestination(for: WorkspaceNavTarget.self) { target in
-                    WorkspaceScopedDestinationView(target: target)
-                }
                 .zIndex(1)
 
-                if !isSidebarOpen {
+                // Scrim over the revealed foreground: only present while the
+                // sidebar is intercepting (open or mid-drag). When closed it is
+                // absent so it never steals taps from the session surface.
+                if interceptsForegroundTouches {
                     Color.clear
-                        .frame(width: 32)
+                        .frame(maxWidth: .infinity)
                         .frame(maxHeight: .infinity)
                         .contentShape(Rectangle())
-                        .gesture(sidebarOpenGesture)
-                        .accessibilityHidden(true)
-                        .zIndex(2)
-                } else {
-                    Color.clear
-                        .frame(width: proxy.size.width - sidebarWidth)
-                        .frame(maxHeight: .infinity)
-                        .contentShape(Rectangle())
-                        .offset(x: sidebarWidth)
-                        .onTapGesture { isSidebarOpen = false }
-                        .gesture(sidebarDismissGesture)
+                        .offset(x: sidebarOffset)
+                        .gesture(sidebarDragGesture(sidebarWidth: sidebarWidth, minimumDistance: 0, tapCloses: true))
                         .accessibilityHidden(true)
                         .accessibilityIdentifier("workspace.sidebar.scrim")
                         .zIndex(2)
                 }
             }
-            .animation(
-                ThemeMotion.easeInOut(duration: 0.22, reduceMotion: reduceMotion),
-                value: isSidebarOpen
-            )
         }
     }
 
-    private var sidebarOpenGesture: some Gesture {
-        DragGesture(minimumDistance: 24, coordinateSpace: .local)
+    /// Edge-originated reveal drag attached as a `simultaneousGesture` on the
+    /// foreground. No covering view, so the leading toolbar toggle and list
+    /// rows keep working. Only drags beginning within `edgePanWidth` of the
+    /// leading edge actually move the sidebar.
+    private func sidebarRevealGesture(sidebarWidth: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 10, coordinateSpace: .local)
+            .updating($sidebarDrag) { value, state, transaction in
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+
+                if state.axis == nil {
+                    guard value.startLocation.x <= Self.edgePanWidth else { return }
+                    let horizontal = abs(value.translation.width)
+                    let vertical = abs(value.translation.height)
+                    guard max(horizontal, vertical) >= 2 else { return }
+                    state.axis = horizontal >= vertical ? .horizontal : .vertical
+                }
+
+                guard state.axis == .horizontal else { return }
+                state.horizontalTranslation = value.translation.width
+            }
             .onEnded { value in
-                let horizontal = value.translation.width
+                guard value.startLocation.x <= Self.edgePanWidth else { return }
+                let horizontal = abs(value.translation.width)
                 let vertical = abs(value.translation.height)
-                guard horizontal > 70, horizontal > vertical * 1.25 else { return }
-                isSidebarOpen = true
+                guard max(horizontal, vertical) >= 2 else { return }
+                guard horizontal >= vertical else { return }
+
+                let projectedProgress = sidebarRestingProgress
+                    + value.predictedEndTranslation.width / sidebarWidth
+                settleSidebar(open: projectedProgress >= 0.5)
             }
     }
 
-    private var sidebarDismissGesture: some Gesture {
-        DragGesture(minimumDistance: 24, coordinateSpace: .local)
-            .onEnded { value in
-                let horizontal = value.translation.width
-                let vertical = abs(value.translation.height)
-                guard horizontal < -70, abs(horizontal) > vertical * 1.25 else { return }
-                isSidebarOpen = false
+    private func sidebarDragGesture(
+        sidebarWidth: CGFloat,
+        minimumDistance: CGFloat,
+        tapCloses: Bool = false
+    ) -> some Gesture {
+        DragGesture(minimumDistance: minimumDistance, coordinateSpace: .local)
+            .updating($sidebarDrag) { value, state, transaction in
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+
+                if state.axis == nil {
+                    let horizontal = abs(value.translation.width)
+                    let vertical = abs(value.translation.height)
+                    guard max(horizontal, vertical) >= 2 else { return }
+                    state.axis = horizontal >= vertical ? .horizontal : .vertical
+                }
+
+                guard state.axis == .horizontal else { return }
+                state.horizontalTranslation = value.translation.width
             }
+            .onEnded { value in
+                let horizontal = abs(value.translation.width)
+                let vertical = abs(value.translation.height)
+                guard max(horizontal, vertical) >= 2 else {
+                    if tapCloses {
+                        settleSidebar(open: false)
+                    }
+                    return
+                }
+                guard horizontal >= vertical else { return }
+
+                let projectedProgress = sidebarRestingProgress
+                    + value.predictedEndTranslation.width / sidebarWidth
+                settleSidebar(open: projectedProgress >= 0.5)
+            }
+    }
+
+    private func settleSidebar(open: Bool) {
+        isSidebarPresented = open
+        withAnimation(
+            ThemeMotion.animation(
+                .spring(duration: 0.28, bounce: 0.06),
+                reduceMotion: reduceMotion
+            )
+        ) {
+            sidebarRestingProgress = open ? 1 : 0
+        }
     }
 }
 

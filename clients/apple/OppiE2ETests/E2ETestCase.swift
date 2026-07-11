@@ -363,9 +363,16 @@ class E2ETestCase: XCTestCase {
     }
 
     private func dismissWorkspaceDrawerIfNeeded() {
-        let closeButton = app.buttons["workspace.sidebar.close"]
-        guard closeButton.exists else { return }
-        tap(closeButton, named: "workspace sidebar close button", timeout: 0.5)
+        let sidebarContent = app.buttons["workspace.create.sidebar.open"]
+        guard sidebarContent.isHittable else { return }
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.50)).tap()
+        _ = XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "isHittable == false"),
+                object: sidebarContent
+            )],
+            timeout: 1
+        )
     }
 
     /// Ensures the app is inside a chat session before each test.

@@ -42,14 +42,11 @@ struct WorkspaceAdaptiveRootView: View {
 }
 
 private struct WorkspaceStackRootView: View {
-    @Environment(AppNavigation.self) private var navigation
-
     var body: some View {
-        @Bindable var nav = navigation
-
-        NavigationStack(path: $nav.workspacePath) {
-            WorkspaceSessionInboxStackRootView()
-        }
+        // The NavigationStack lives inside WorkspaceSessionInboxStackRootView's
+        // sliding foreground layer so the nav bar, search, and bottom toolbar
+        // travel as one surface with the session list when the sidebar reveals.
+        WorkspaceSessionInboxStackRootView()
     }
 }
 
