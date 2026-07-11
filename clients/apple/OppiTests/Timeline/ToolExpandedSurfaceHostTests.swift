@@ -463,6 +463,19 @@ struct ToolExpandedSurfaceHostTests {
         container.setNeedsLayout()
         container.layoutIfNeeded()
         #expect(readMediaContentImageView(in: view) == nil)
+        let showsUnavailable = timelineAllLabels(in: view).contains {
+            !$0.isHidden && $0.text == "Image unavailable"
+        }
+        let hasAnimatingIndicator = timelineAllViews(in: view)
+            .compactMap { $0 as? UIActivityIndicatorView }
+            .contains { $0.isAnimating }
+        let unavailableViewport = timelineAllViews(in: view).first {
+            $0.accessibilityIdentifier == "toolRow.readMedia.imageViewport"
+        }
+        #expect(showsUnavailable)
+        #expect(!hasAnimatingIndicator)
+        #expect(unavailableViewport?.accessibilityLabel == "Image unavailable")
+        #expect(unavailableViewport?.accessibilityValue == nil)
 
         view.configuration = baseConfiguration.withSessionAttachmentFetcher { attachmentId in
             #expect(attachmentId == "att-late-fetcher-image")

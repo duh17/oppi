@@ -956,6 +956,7 @@ final class NativeExpandedInlineImageView: UIView {
 
     private let imageView = UIImageView()
     private let placeholder = UIActivityIndicatorView(style: .medium)
+    private let failureLabel = UILabel()
     private let overflowLabel = UILabel()
     private var heightConstraint: NSLayoutConstraint?
     private var naturalHeightToWidthRatio: CGFloat?
@@ -1130,7 +1131,10 @@ final class NativeExpandedInlineImageView: UIView {
         animatedImageView.isHidden = true
         placeholder.isHidden = false
         placeholder.startAnimating()
+        failureLabel.isHidden = true
         overflowLabel.isHidden = true
+        accessibilityLabel = "Image preview"
+        accessibilityValue = "Loading"
         previewMimeType = nil
         previewData = nil
     }
@@ -1194,6 +1198,14 @@ final class NativeExpandedInlineImageView: UIView {
         placeholder.translatesAutoresizingMaskIntoConstraints = false
         addSubview(placeholder)
 
+        failureLabel.translatesAutoresizingMaskIntoConstraints = false
+        failureLabel.text = "Image unavailable"
+        failureLabel.font = ToolFont.small
+        failureLabel.textColor = UIColor(Color.themeComment)
+        failureLabel.textAlignment = .center
+        failureLabel.isHidden = true
+        addSubview(failureLabel)
+
         overflowLabel.translatesAutoresizingMaskIntoConstraints = false
         overflowLabel.text = "Tap to open full image"
         overflowLabel.font = ToolFont.small
@@ -1216,6 +1228,8 @@ final class NativeExpandedInlineImageView: UIView {
             animatedImageView.bottomAnchor.constraint(equalTo: bottomAnchor),
             placeholder.centerXAnchor.constraint(equalTo: centerXAnchor),
             placeholder.centerYAnchor.constraint(equalTo: centerYAnchor),
+            failureLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            failureLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             overflowLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             overflowLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             overflowLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
@@ -1298,7 +1312,10 @@ final class NativeExpandedInlineImageView: UIView {
         imageView.isHidden = false
         animatedImageView.isHidden = true
         placeholder.stopAnimating()
-        placeholder.isHidden = image != nil
+        placeholder.isHidden = true
+        failureLabel.isHidden = image != nil
+        accessibilityLabel = image == nil ? "Image unavailable" : "Image preview"
+        accessibilityValue = nil
 
         previewMimeType = nil
         previewData = nil
@@ -1330,6 +1347,9 @@ final class NativeExpandedInlineImageView: UIView {
         animatedImageView.apply(dataURLString: dataURLString)
         placeholder.stopAnimating()
         placeholder.isHidden = true
+        failureLabel.isHidden = true
+        accessibilityLabel = "Image preview"
+        accessibilityValue = nil
 
         previewData = data
         previewMimeType = mimeType
