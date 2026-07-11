@@ -98,7 +98,7 @@ describe("file transport security parity", () => {
     }
   });
 
-  it("blocks sensitive files consistently across workspace raw and session raw routes", async () => {
+  it("keeps workspace browsing guards separate from session-reported file previews", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-"));
     writeFileSync(join(root, ".env"), "SECRET=yes\n", "utf8");
 
@@ -120,18 +120,20 @@ describe("file transport security parity", () => {
     });
 
     const sessionHandlers = createSessionFileHandlers(ctx, helpers);
+    const sessionRes = new MockWritableResponse();
+    const sessionFinished = once(sessionRes, "finish");
     await sessionHandlers.handleGetSessionRaw(
       "ws-1",
       "sess-1",
       ".env",
-      new MockWritableResponse() as unknown as ServerResponse,
+      sessionRes as unknown as ServerResponse,
     );
+    await sessionFinished;
 
     expect(handledRaw).toBe(true);
-    expect(errors).toEqual([
-      { status: 403, message: "Access denied: sensitive file" },
-      { status: 403, message: "Access denied: sensitive file" },
-    ]);
+    expect(errors).toEqual([{ status: 403, message: "Access denied: sensitive file" }]);
+    expect(sessionRes.statusCode).toBe(200);
+    expect(sessionRes.body.toString("utf8")).toBe("SECRET=yes\n");
   });
 
   it("decodes percent-encoded workspace raw route paths before filesystem resolution", async () => {
@@ -173,12 +175,7 @@ describe("file transport security parity", () => {
     writeFileSync(join(root, "notes", "hello world.txt"), "hi from oppi\n", "utf8");
 
     const workspace = makeWorkspace(root);
-    const session = makeSession({
-      changeStats: {
-        changedFiles: ["notes/hello world.txt"],
-        filesChanged: 1,
-      } as Session["changeStats"],
-    });
+    const session = makeSession();
     const errors: Array<{ status: number; message: string }> = [];
     const helpers = makeHelpers(errors);
     const handlers = createSessionFileHandlers(makeContext(workspace, session), helpers);
@@ -196,6 +193,85 @@ describe("file transport security parity", () => {
     expect(errors).toEqual([]);
     expect(rawRes.statusCode).toBe(200);
     expect(rawRes.body.toString("utf8")).toBe("hi from oppi\n");
+  });
+
+  it("serves session raw byte ranges and HEAD without buffering media", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-session-file-range-"));
+    writeFileSync(join(root, "clip.mp4"), "0123456789", "utf8");
+
+    const workspace = makeWorkspace(root);
+    const session = makeSession();
+    const errors: Array<{ status: number; message: string }> = [];
+    const handlers = createSessionFileHandlers(
+      makeContext(workspace, session),
+      makeHelpers(errors),
+    );
+
+    const rangeRes = new MockWritableResponse();
+    const rangeFinished = once(rangeRes, "finish");
+    await handlers.handleGetSessionRaw(
+      "ws-1",
+      "sess-1",
+      "clip.mp4",
+      rangeRes as unknown as ServerResponse,
+      makeIncoming({ range: "bytes=2-5" }),
+      "GET",
+    );
+    await rangeFinished;
+
+    expect(rangeRes.statusCode).toBe(206);
+    expect(rangeRes.headers["Accept-Ranges"]).toBe("bytes");
+    expect(rangeRes.headers["Content-Range"]).toBe("bytes 2-5/10");
+    expect(rangeRes.headers["Content-Length"]).toBe("4");
+    expect(rangeRes.body.toString("utf8")).toBe("2345");
+
+    const headRes = new MockWritableResponse();
+    const headFinished = once(headRes, "finish");
+    await handlers.handleGetSessionRaw(
+      "ws-1",
+      "sess-1",
+      "clip.mp4",
+      headRes as unknown as ServerResponse,
+      makeIncoming(),
+      "HEAD",
+    );
+    await headFinished;
+
+    expect(errors).toEqual([]);
+    expect(headRes.statusCode).toBe(200);
+    expect(headRes.headers["Content-Type"]).toBe("video/mp4");
+    expect(headRes.headers["Accept-Ranges"]).toBe("bytes");
+    expect(headRes.headers["Content-Length"]).toBe("10");
+    expect(headRes.body).toHaveLength(0);
+  });
+
+  it("rejects unsatisfiable session raw ranges with the file size", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-session-file-range-invalid-"));
+    writeFileSync(join(root, "clip.mp4"), "0123456789", "utf8");
+    const workspace = makeWorkspace(root);
+    const errors: Array<{ status: number; message: string }> = [];
+    const handlers = createSessionFileHandlers(
+      makeContext(workspace, makeSession()),
+      makeHelpers(errors),
+    );
+    const res = new MockWritableResponse();
+    const finished = once(res, "finish");
+
+    await handlers.handleGetSessionRaw(
+      "ws-1",
+      "sess-1",
+      "clip.mp4",
+      res as unknown as ServerResponse,
+      makeIncoming({ range: "bytes=50-60" }),
+      "GET",
+    );
+    await finished;
+
+    expect(errors).toEqual([]);
+    expect(res.statusCode).toBe(416);
+    expect(res.headers["Content-Range"]).toBe("bytes */10");
+    expect(res.headers["Content-Length"]).toBe("0");
+    expect(res.body).toHaveLength(0);
   });
 
   it("reports session raw stream open errors before sending success headers", async () => {
@@ -360,7 +436,7 @@ describe("file transport security parity", () => {
     expect(res.body).toHaveLength(0);
   });
 
-  it("serves session raw reads from another registered workspace", async () => {
+  it("serves reported absolute session raw reads from another workspace", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-root-"));
     const otherRoot = mkdtempSync(join(tmpdir(), "oppi-file-security-other-"));
     const otherFile = join(otherRoot, "release-lanes.md");
@@ -399,7 +475,7 @@ describe("file transport security parity", () => {
     }
   });
 
-  it("serves session-created temp artifacts outside configured workspaces", async () => {
+  it("serves reported absolute session-created temp artifacts", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-root-"));
     const artifactRoot = mkdtempSync(join(tmpdir(), "oppi-session-artifact-"));
     const artifactFile = join(artifactRoot, "pi-codex-websocket-limit-issue.md");
@@ -438,7 +514,7 @@ describe("file transport security parity", () => {
     }
   });
 
-  it("blocks session-created files outside configured workspaces and temp artifact roots", async () => {
+  it("serves reported session-created files outside configured workspaces", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-root-"));
     const unsafeRoot = mkdtempSync(join(homedir(), ".oppi-file-security-unsafe-"));
     const unsafeFile = join(unsafeRoot, "report.md");
@@ -459,20 +535,25 @@ describe("file transport security parity", () => {
         makeHelpers(errors),
       );
 
+      const rawRes = new MockWritableResponse();
+      const rawFinished = once(rawRes, "finish");
       await handlers.handleGetSessionRaw(
         "ws-1",
         "sess-1",
         unsafeFile,
-        new MockWritableResponse() as unknown as ServerResponse,
+        rawRes as unknown as ServerResponse,
       );
+      await rawFinished;
 
-      expect(errors).toEqual([{ status: 403, message: "Path outside configured workspaces" }]);
+      expect(errors).toEqual([]);
+      expect(rawRes.statusCode).toBe(200);
+      expect(rawRes.body.toString("utf8")).toBe("home artifact\n");
     } finally {
       rmSync(unsafeRoot, { recursive: true, force: true });
     }
   });
 
-  it("blocks session raw reads outside configured workspaces", async () => {
+  it("blocks unreported session raw reads outside the workspace", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-root-"));
     const outsideRoot = mkdtempSync(join(tmpdir(), "oppi-file-security-outside-"));
     const outsideFile = join(outsideRoot, "outside.txt");
@@ -480,12 +561,7 @@ describe("file transport security parity", () => {
 
     try {
       const workspace = makeWorkspace(root);
-      const session = makeSession({
-        changeStats: {
-          changedFiles: [outsideFile],
-          filesChanged: 1,
-        } as Session["changeStats"],
-      });
+      const session = makeSession();
       const errors: Array<{ status: number; message: string }> = [];
       const handlers = createSessionFileHandlers(
         makeContext(workspace, session),
@@ -499,7 +575,7 @@ describe("file transport security parity", () => {
         new MockWritableResponse() as unknown as ServerResponse,
       );
 
-      expect(errors).toEqual([{ status: 403, message: "Path outside configured workspaces" }]);
+      expect(errors).toEqual([{ status: 403, message: "Path outside session workspace" }]);
     } finally {
       rmSync(outsideRoot, { recursive: true, force: true });
     }

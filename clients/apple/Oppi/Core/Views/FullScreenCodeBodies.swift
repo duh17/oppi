@@ -1310,6 +1310,13 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
 
     private weak var textViewDelegate: (any UITextViewDelegate)?
     private var doubleTapActivation: (() -> Void)?
+    /// Guards against re-entrant self-sizing. UICollectionView calls
+    /// `preferredLayoutAttributesFitting` inside its own layout pass; when the
+    /// cell held a large streaming markdown segment, forcing a synchronous
+    /// `layoutIfNeeded()` here re-entered that pass and recursed until the
+    /// thread stack overflowed (MetricKit badAccess in the stack-guard page).
+    private var isMeasuringLayout = false
+    private var lastMeasuredAttributes: UICollectionViewLayoutAttributes?
     private lazy var doubleTapRecognizer: UITapGestureRecognizer = {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap))
         recognizer.numberOfTapsRequired = 2
@@ -1370,14 +1377,29 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
     override func preferredLayoutAttributesFitting(
         _ layoutAttributes: UICollectionViewLayoutAttributes
     ) -> UICollectionViewLayoutAttributes {
-        let attributes = super.preferredLayoutAttributesFitting(layoutAttributes)
-        bounds.size.width = layoutAttributes.size.width
-        contentView.bounds.size.width = layoutAttributes.size.width
-        setNeedsLayout()
-        layoutIfNeeded()
+        // Break any residual self-sizing recursion: if UIKit re-enters while we
+        // are already measuring, hand back the last result instead of forcing
+        // another synchronous layout.
+        if isMeasuringLayout {
+            return lastMeasuredAttributes ?? super.preferredLayoutAttributesFitting(layoutAttributes)
+        }
+        isMeasuringLayout = true
+        defer { isMeasuringLayout = false }
 
+        let attributes = super.preferredLayoutAttributesFitting(layoutAttributes)
+        let width = layoutAttributes.size.width
+        if bounds.size.width != width {
+            bounds.size.width = width
+        }
+        if contentView.bounds.size.width != width {
+            contentView.bounds.size.width = width
+        }
+
+        // `systemLayoutSizeFitting` runs the Auto Layout solve internally, so we
+        // do not need (and must not force) a `layoutIfNeeded()` pass here — that
+        // was the re-entrancy trigger behind the streaming stack overflow.
         let targetSize = CGSize(
-            width: layoutAttributes.size.width,
+            width: width,
             height: UIView.layoutFittingCompressedSize.height
         )
         let size = stackView.systemLayoutSizeFitting(
@@ -1385,7 +1407,8 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         )
-        attributes.size = CGSize(width: layoutAttributes.size.width, height: ceil(max(1, size.height)))
+        attributes.size = CGSize(width: width, height: ceil(max(1, size.height)))
+        lastMeasuredAttributes = attributes
         return attributes
     }
 

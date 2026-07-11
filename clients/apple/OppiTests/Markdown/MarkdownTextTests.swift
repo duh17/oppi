@@ -897,7 +897,7 @@ struct FlatSegmentImageResolutionTests {
         }
     }
 
-    @Test func leadingSlashInSourceIsStripped() {
+    @Test func absolutePathWithoutSessionContextFallsBackToAltText() {
         let blocks: [MarkdownBlock] = [
             .paragraph([.image(alt: "Fig", source: "/absolute/path/image.png")])
         ]
@@ -976,7 +976,7 @@ struct FlatSegmentImageResolutionTests {
         }
     }
 
-    @Test func absolutePathWithSessionContextUsesSessionFileURL() {
+    @Test func absolutePathWithSessionContextDoesNotResolveImage() {
         let blocks: [MarkdownBlock] = [
             .paragraph([.image(alt: "Fig", source: "/absolute/image.png")])
         ]
@@ -987,17 +987,13 @@ struct FlatSegmentImageResolutionTests {
             serverBaseURL: baseURL,
             sourceDirectory: "docs"
         )
-        if case .image(_, let url) = segments[0] {
-            let components = SessionFileURL.parse(url)
-            #expect(components?.workspaceID == workspaceID)
-            #expect(components?.sessionID == "sess-123")
-            #expect(components?.filePath == "/absolute/image.png")
-        } else {
-            Issue.record("Expected session-scoped .image segment")
-        }
+        #expect(segments.allSatisfy { segment in
+            if case .image = segment { return false }
+            return true
+        })
     }
 
-    @Test func fileURLWithSessionContextUsesSessionFileURL() {
+    @Test func fileURLWithSessionContextDoesNotResolveImage() {
         let blocks: [MarkdownBlock] = [
             .paragraph([.image(alt: "Local", source: "file:///Users/example/workspace/oppi/downloads/local.jpeg")])
         ]
@@ -1007,14 +1003,10 @@ struct FlatSegmentImageResolutionTests {
             sessionID: "sess-123",
             serverBaseURL: baseURL
         )
-        if case .image(_, let url) = segments[0] {
-            let components = SessionFileURL.parse(url)
-            #expect(components?.workspaceID == workspaceID)
-            #expect(components?.sessionID == "sess-123")
-            #expect(components?.filePath == "/Users/example/workspace/oppi/downloads/local.jpeg")
-        } else {
-            Issue.record("Expected file:// markdown image to resolve through session file API")
-        }
+        #expect(segments.allSatisfy { segment in
+            if case .image = segment { return false }
+            return true
+        })
     }
 
     @Test func httpsURLIgnoresSourceDirectory() {
@@ -1054,7 +1046,7 @@ struct FlatSegmentImageResolutionTests {
 
 @Suite("Session file full-screen content")
 struct SessionFileFullScreenContentBuilderTests {
-    @Test func outsideWorkspaceMarkdownKeepsSessionFileContext() throws {
+    @Test func outsideWorkspaceMarkdownDoesNotExposeAbsoluteFileFetcher() throws {
         let serverBaseURL = try #require(URL(string: "https://server.example.com"))
         let content = SessionFileFullScreenContentBuilder.content(
             text: "![Generated chart](/tmp/chart.png)",
@@ -1075,7 +1067,7 @@ struct SessionFileFullScreenContentBuilderTests {
         let context = try #require(workspaceContext)
         #expect(context.workspaceID == "workspace-1")
         #expect(context.sessionID == "session-1")
-        #expect(context.fetchSessionFile != nil)
+        #expect(context.fetchSessionFile == nil)
     }
 }
 
@@ -1375,15 +1367,12 @@ struct AssistantMarkdownInlineImageRenderingTests {
         #expect(!renderedText.contains("[Red green]"))
     }
 
-    @Test func mixedParagraphFileURLJPEGRendersNativeImageView() async throws {
-        let imageData = try #require(makeRedGreenTestImage().jpegData(compressionQuality: 0.9))
+    @Test func mixedParagraphFileURLFallsBackWithoutFetching() throws {
         let markdownView = AssistantMarkdownContentView()
         markdownView.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
-        markdownView.fetchSessionFile = { workspaceID, sessionID, path in
-            #expect(workspaceID == "workspace-1")
-            #expect(sessionID == "session-1")
-            #expect(path == "/Users/example/workspace/oppi/downloads/red-green.jpeg")
-            return imageData
+        markdownView.fetchSessionFile = { _, _, _ in
+            Issue.record("Absolute markdown images must not use the session raw-file fetcher")
+            return Data()
         }
 
         let serverBaseURL = try #require(URL(string: "https://server.example.com/api"))
@@ -1397,13 +1386,13 @@ struct AssistantMarkdownInlineImageRenderingTests {
         ))
         markdownView.layoutIfNeeded()
 
-        let imageHost = try #require(timelineFirstView(ofType: NativeMarkdownImageView.self, in: markdownView))
-        let decoded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
-            markdownView.layoutIfNeeded()
-            return timelineAllImageViews(in: imageHost).contains { !$0.isHidden && $0.image != nil }
-        }
-
-        #expect(decoded, "Local file:// JPEG markdown images should render as native image views")
+        #expect(timelineFirstView(ofType: NativeMarkdownImageView.self, in: markdownView) == nil)
+        let renderedText = timelineAllTextViews(in: markdownView)
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: " ")
+        #expect(renderedText.contains("Before"))
+        #expect(renderedText.contains("[Red green]"))
+        #expect(renderedText.contains("after"))
     }
 
     private func makeReadSupportedTestImageData(ext: String) throws -> Data {
@@ -1619,7 +1608,7 @@ struct NativeMarkdownImageViewTests {
         #expect(!view.isHidden)
     }
 
-    @Test func fullScreenMarkdownBodyCreatesImageViewsForSessionAbsolutePaths() {
+    @Test func fullScreenMarkdownBodyDoesNotFetchSessionAbsolutePaths() {
         let body = NativeFullScreenMarkdownBody(
             content: "![Generated chart](/tmp/chart.png)",
             stream: nil,
@@ -1630,7 +1619,10 @@ struct NativeMarkdownImageViewTests {
             sessionID: "session-1",
             serverBaseURL: URL(string: "https://example.com/api")!,
             fetchWorkspaceFile: nil,
-            fetchSessionFile: { _, _, _ in Data() }
+            fetchSessionFile: { _, _, _ in
+                Issue.record("Absolute markdown images must not use the session raw-file fetcher")
+                return Data()
+            }
         )
 
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 600, height: 1000))
@@ -1644,8 +1636,7 @@ struct NativeMarkdownImageViewTests {
         ])
         host.layoutIfNeeded()
 
-        let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: body)
-        #expect(imageView != nil, "Full-screen markdown should resolve absolute session image paths the same way assistant messages do")
+        #expect(timelineFirstView(ofType: NativeMarkdownImageView.self, in: body) == nil)
     }
 
     private static func makeRedGreenImage() -> UIImage {

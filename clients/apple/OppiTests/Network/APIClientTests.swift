@@ -920,7 +920,7 @@ struct APIClientTests {
         #expect(content == "ok")
     }
 
-    @Test func getSessionFileUsesSessionRawRoute() async throws {
+    @Test func getSessionFileUsesWorkspaceRelativeSessionRawRoute() async throws {
         let client = makeClient()
         defer { cleanup() }
 
@@ -929,7 +929,7 @@ struct APIClientTests {
 
             #expect(
                 components?.percentEncodedPath ==
-                    "/workspaces/w1/sessions/s1/raw/%2Ftmp%2Fmain.swift"
+                    "/workspaces/w1/sessions/s1/raw/Sources%2Fmain.swift"
             )
             #expect(components?.percentEncodedQuery == nil)
 
@@ -943,8 +943,57 @@ struct APIClientTests {
             return (body, response)
         }
 
-        let content = try await client.getSessionFile(workspaceId: "w1", sessionId: "s1", path: "/tmp/main.swift")
+        let content = try await client.getSessionFile(workspaceId: "w1", sessionId: "s1", path: "Sources/main.swift")
         #expect(content == "print(\"hello\")")
+    }
+
+    @Test func sessionRawFileSendsAbsoluteReportedPath() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        MockURLProtocol.handler = { request in
+            #expect(
+                URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.percentEncodedPath ==
+                    "/workspaces/w1/sessions/s1/raw/%2Ftmp%2Fmain.swift"
+            )
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "text/plain"]
+            )!
+            return (Data("preview".utf8), response)
+        }
+
+        let data = try await client.getSessionFileData(
+            workspaceId: "w1",
+            sessionId: "s1",
+            path: "/tmp/main.swift"
+        )
+        #expect(String(data: data, encoding: .utf8) == "preview")
+    }
+
+    @Test func sessionRawFilePreservesExactReportedPathWhitespace() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        MockURLProtocol.handler = { request in
+            #expect(
+                URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.percentEncodedPath ==
+                    "/workspaces/w1/sessions/s1/raw/%20%2Ftmp%2Fmovie.mp4%20"
+            )
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "video/mp4"]
+            )!
+            return (Data(), response)
+        }
+
+        _ = try await client.getSessionFileData(
+            workspaceId: "w1",
+            sessionId: "s1",
+            path: " /tmp/movie.mp4 "
+        )
     }
 
     @Test func fileEndpointsPercentEncodePathSegmentsAndUseStructuredQueries() async throws {
@@ -1035,10 +1084,29 @@ struct APIClientTests {
         #expect(source.sourceFileExtension == "mov")
     }
 
+    @Test func sessionFileMediaSourceUsesSessionRawRouteForExternalPath() async throws {
+        let client = makeClient()
+        let source = try await client.makeSessionFileMediaSource(
+            workspaceId: "w1",
+            sessionId: "s1",
+            path: "/tmp/movie clip.mp4",
+            contentTypeHint: "video/mp4",
+            sourceFileExtension: "mp4"
+        )
+
+        let components = URLComponents(url: source.url, resolvingAgainstBaseURL: false)
+        #expect(
+            components?.percentEncodedPath ==
+                "/workspaces/w1/sessions/s1/raw/%2Ftmp%2Fmovie%20clip.mp4"
+        )
+        #expect(source.authorizationHeaderValue == "Bearer sk_test")
+        #expect(source.contentTypeHint == "video/mp4")
+        #expect(source.sourceFileExtension == "mp4")
+    }
+
     @Test func sessionAttachmentMediaSourceUsesEncodedPathSegmentsAndBearerAuth() async throws {
         let client = makeClient()
         let source = try await client.makeSessionAttachmentMediaSource(
-            workspaceId: "w1",
             sessionId: "s1",
             attachmentId: "att_space +?#%& 日本語",
             contentTypeHint: "audio/wav",
@@ -1048,7 +1116,7 @@ struct APIClientTests {
         let components = URLComponents(url: source.url, resolvingAgainstBaseURL: false)
         #expect(
             components?.percentEncodedPath ==
-                "/workspaces/w1/sessions/s1/attachments/att_space%20%2B%3F%23%25%26%20%E6%97%A5%E6%9C%AC%E8%AA%9E"
+                "/sessions/s1/attachments/att_space%20%2B%3F%23%25%26%20%E6%97%A5%E6%9C%AC%E8%AA%9E"
         )
         #expect(components?.queryItems?.isEmpty ?? true)
         #expect(source.url.absoluteString.contains("sk_test") == false)
@@ -1068,7 +1136,7 @@ struct APIClientTests {
             #expect(request.cachePolicy == .reloadIgnoringLocalCacheData)
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
             #expect(request.value(forHTTPHeaderField: "Cache-Control") == "no-cache")
-            #expect(request.url?.path == "/workspaces/w1/sessions/s1/attachments/att-image")
+            #expect(request.url?.path == "/sessions/s1/attachments/att-image")
 
             let data = Data([0xFF, 0xD8, 0xFF])
             let response = HTTPURLResponse(
@@ -1082,7 +1150,6 @@ struct APIClientTests {
 
         do {
             _ = try await client.fetchSessionAttachment(
-                workspaceId: "w1",
                 sessionId: "s1",
                 attachmentId: "att-image"
             )
@@ -1159,7 +1226,7 @@ struct APIClientTests {
         let client = makeClient()
         defer { cleanup() }
 
-        let specialPath = "/tmp/space +?#%&=/日本語.swift"
+        let specialPath = "Sources/space +?#%&=/日本語.swift"
         let specialSkillPath = "nested dir/+?#%&=/日本語.md"
         var step = 0
 
@@ -1170,7 +1237,7 @@ struct APIClientTests {
             if step == 1 {
                 #expect(
                     components?.percentEncodedPath ==
-                        "/workspaces/w1/sessions/s1/raw/%2Ftmp%2Fspace%20%2B%3F%23%25%26=%2F%E6%97%A5%E6%9C%AC%E8%AA%9E.swift"
+                        "/workspaces/w1/sessions/s1/raw/Sources%2Fspace%20%2B%3F%23%25%26=%2F%E6%97%A5%E6%9C%AC%E8%AA%9E.swift"
                 )
                 #expect(components?.percentEncodedQuery == nil)
             } else if step == 2 {

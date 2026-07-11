@@ -9,7 +9,6 @@ final class ToolRowAudioArtifactE2ETests: E2ETestCase {
         createAndEnterSession()
         _ = waitForWebSocketConnected(timeout: 20)
         let sessionId = waitForFocusedSessionId(timeout: 20)
-        let workspaceId = try e2eWorkspaceId()
         let toolId = "tool-row-audio-e2e"
         let transcript = "E2E audio artifact reached the client."
 
@@ -47,7 +46,7 @@ final class ToolRowAudioArtifactE2ETests: E2ETestCase {
         let attachmentId = try assertHarnessMaterializedAttachment(in: endResponse)
         let attachment = try e2eLabAPIBytes(
             method: "GET",
-            path: "/workspaces/\(workspaceId)/sessions/\(sessionId)/attachments/\(attachmentId)"
+            path: "/sessions/\(sessionId)/attachments/\(attachmentId)"
         )
         XCTAssertEqual(attachment.statusCode, 200)
         XCTAssertEqual(String(data: attachment.body.prefix(4), encoding: .ascii), "RIFF")
@@ -80,16 +79,6 @@ final class ToolRowAudioArtifactE2ETests: E2ETestCase {
         XCTAssertNil(audio["base64"], "Harness response should strip inline base64 after materializing the attachment")
         XCTAssertEqual(audio["mimeType"] as? String, "audio/wav")
         return attachmentId
-    }
-
-    private func e2eWorkspaceId() throws -> String {
-        let response = try e2eLabAPIJSON(method: "GET", path: "/workspaces")
-        let workspaces = try XCTUnwrap(response["workspaces"] as? [[String: Any]], "Workspace list response missing workspaces")
-        let workspace = try XCTUnwrap(
-            workspaces.first { ($0["name"] as? String) == "e2e-workspace" },
-            "e2e-workspace not found"
-        )
-        return try XCTUnwrap(workspace["id"] as? String, "e2e-workspace response missing id")
     }
 
     private func tapToolRowChrome(_ row: XCUIElement) {

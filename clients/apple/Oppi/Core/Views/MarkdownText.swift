@@ -1191,10 +1191,9 @@ enum FlatSegment: Sendable {
 
     /// Resolve a markdown image source to a loadable URL.
     ///
-    /// Handles three cases:
+    /// Handles two cases:
     /// - **Relative paths** (e.g. `screenshots/img.jpeg`): resolved against
     ///   the workspace file API when `workspaceID` and `serverBaseURL` are set.
-    /// - **Absolute filesystem paths**: resolved through the session-scoped file API.
     /// - **Absolute URLs** (e.g. `https://example.com/photo.jpg`): passed
     ///   through directly for `NativeMarkdownImageView` to show as tap-to-load
     ///   remote images.
@@ -1220,26 +1219,10 @@ enum FlatSegment: Sendable {
             return url
         }
 
-        // Local file URL — fetch through the session-scoped file API. Agents
-        // commonly paste markdown like `![](file:///.../downloaded.jpeg)` after
-        // downloading an image locally.
-        if let url = URL(string: source), url.scheme == "file" {
-            guard let workspaceID, !workspaceID.isEmpty,
-                  let sessionID, !sessionID.isEmpty else {
-                return nil
-            }
-            return SessionFileURL.make(workspaceID: workspaceID, sessionID: sessionID, filePath: url.path)
-        }
-
-        // Absolute filesystem path — fetch through the session-scoped file API
-        // so assistant messages can display freshly written files like
-        // `/Users/.../generated-chart.jpeg`.
-        if source.hasPrefix("/") || source.hasPrefix("~") {
-            guard let workspaceID, !workspaceID.isEmpty,
-                  let sessionID, !sessionID.isEmpty else {
-                return nil
-            }
-            return SessionFileURL.make(workspaceID: workspaceID, sessionID: sessionID, filePath: source)
+        // Local and absolute filesystem paths are intentionally not previewed.
+        // Tools should return stored attachments or workspace-relative paths.
+        if (URL(string: source)?.scheme == "file") || source.hasPrefix("/") || source.hasPrefix("~") {
+            return nil
         }
 
         // Relative path — resolve against workspace file API.

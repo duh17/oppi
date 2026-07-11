@@ -18,7 +18,7 @@ Expanded tool rows understand `details.media[]` for stored image and video attac
 
 Attachments are structured metadata plus server-owned bytes. They are not markdown URLs.
 
-Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Markdown `![]()` keeps its current job: resolving image file paths and remote images. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
+Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Stored attachment retrieval is scoped by session ID and attachment ID; it does not depend on workspace file-path authorization after the server has copied the bytes. Markdown `![]()` keeps its current job: resolving image file paths and remote images. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
 
 ## Deployment model and trust boundary
 
@@ -194,9 +194,9 @@ Markdown `![]()` continues to resolve images through the existing image resolver
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `![x](images/a.png)`                   | Resolves as a workspace-relative file when the renderer has workspace context.                              |
 | `![x](../images/a.png)`                | Resolves relative to the markdown file directory when the source file path is known.                        |
-| `![x](/abs/path.png)`                  | Resolves through the session raw-file API; the server requires a touched session file inside the workspace. |
-| `![x](~/a.png)`                        | Same session raw-file path as absolute paths.                                                               |
-| `![x](file:///abs/path.png)`           | Same session raw-file path as absolute paths.                                                               |
+| `![x](/abs/path.png)`                  | Not fetched. Use a workspace-relative path or stored attachment.                                            |
+| `![x](~/a.png)`                        | Not fetched. Use a workspace-relative path or stored attachment.                                            |
+| `![x](file:///abs/path.png)`           | Not fetched. Use a workspace-relative path or stored attachment.                                            |
 | `![x](https://example.com/a.png)`      | Shows a tap-to-load remote image prompt before fetching.                                                    |
 | `![x](http://...)`, localhost, LAN IPs | Blocked by the remote image policy.                                                                         |
 | `![x](data:...)`                       | Skipped by the markdown image resolver.                                                                     |
@@ -250,7 +250,10 @@ Use workspace/session file routes for current project files, PDFs, reports, and 
 - `docs/example.png`
 - `reports/run-summary.pdf`
 - a source-controlled media file
-- a touched session file that passes the session raw-file policy
+- a file addressed relative to the session workspace or worktree
+- an exact external path recorded in that session's changed-file metadata or tool arguments
+
+Session raw-file routes do not apply the workspace browser's sensitive-name filter. They require owner authentication and session ownership, and external paths must be capabilities already present in that session's trace or changed-file metadata. They do not accept arbitrary unreported host paths. Current-file audio and video stream through authenticated `GET`/`HEAD` requests to `/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}` with single-range byte responses.
 
 Use stored tool attachments for media associated with a message or tool result:
 
@@ -271,8 +274,10 @@ The server owns attachment materialization and serving.
 - Sniff image/audio/video headers where practical; do not trust only file extensions.
 - Copy bytes from helper-approved paths, generated temp files, or authenticated uploads.
 - Do not expose an HTTP API that attaches arbitrary server paths by name.
-- Reject path traversal and symlink escapes.
-- Serve media through authenticated endpoints.
+- Reject unreported path traversal and symlink escapes; session raw previews may follow an exact path reported by the owning session.
+- Serve stored media through authenticated `GET` and `HEAD` requests to `/sessions/{sessionId}/attachments/{attachmentId}`.
+- Serve session-reported current-file media through authenticated, range-capable `GET` and `HEAD` requests to `/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}`.
+- Use workspace-scoped attachment routes only for upload creation and upload content.
 - Support byte ranges for audio and video.
 - Delete attachments when the owning session is deleted.
 
@@ -307,7 +312,8 @@ Clients render attachments from metadata and authenticated byte sources.
 - Do not auto-fetch remote media as a substitute for stored tool attachments.
 - Route remote URLs through the existing tap-to-load remote image policy.
 - Keep attachment endpoints authenticated and session-scoped.
-- Block sensitive workspace paths in direct file-preview routes.
+- Build timeline attachment and session-file providers even when API-client or workspace metadata is still loading; resolve that context when the fetch starts so cached rows can recover.
+- Keep workspace browsing's sensitive-path policy separate from authenticated session-reported file previews.
 - Avoid logging full file paths or attachment text when it can contain private data.
 - Treat stored attachments as durable session history until the session or attachment is deleted.
 
@@ -330,7 +336,7 @@ A complete implementation satisfies these checks:
 - Existing `kind: "audio_presentation"` results still render voice/audio cards.
 - A generic extension result with `details.media[]` can render image and video attachment rows.
 - A tool-generated video can be stored outside the workspace and rendered from `details.media[]`.
-- Markdown `![]()` keeps resolving workspace/session/remote images through the existing image resolver.
+- Markdown `![]()` keeps resolving workspace-relative and remote images through the existing image resolver.
 - Unknown attachment IDs render fallback text and do not trigger network fetches.
 - Video and audio playback use authenticated range-capable media sources.
 - Large binary data stays out of message text and tool `details` JSON.

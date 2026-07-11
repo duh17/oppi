@@ -1,9 +1,34 @@
-import type { ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { createReadStream } from "node:fs";
 
+import { parseByteRangeHeader } from "../http-range.js";
 import { SessionTraceService } from "../session-trace-service.js";
 import type { Session, Workspace } from "../types.js";
 import type { RouteContext, RouteHelpers } from "./types.js";
+
+function pipeSessionFile(
+  filePath: string,
+  res: ServerResponse,
+  statusCode: number,
+  headers: Record<string, string>,
+  onOpenError: () => void,
+  range?: { start: number; end: number },
+): void {
+  const stream = range
+    ? createReadStream(filePath, { start: range.start, end: range.end })
+    : createReadStream(filePath);
+  stream.once("error", (error) => {
+    if (!res.headersSent) {
+      onOpenError();
+      return;
+    }
+    res.destroy(error);
+  });
+  stream.once("open", () => {
+    res.writeHead(statusCode, headers);
+    stream.pipe(res as NodeJS.WritableStream);
+  });
+}
 
 export interface SessionFileHandlers {
   handleListSessionChanges(
@@ -16,6 +41,8 @@ export interface SessionFileHandlers {
     sessionId: string,
     requestedPath: string,
     res: ServerResponse,
+    req?: IncomingMessage,
+    method?: string,
   ): Promise<void>;
 }
 
@@ -68,6 +95,8 @@ export function createSessionFileHandlers(
     sessionId: string,
     requestedPath: string,
     res: ServerResponse,
+    req?: IncomingMessage,
+    method = "GET",
   ): Promise<void> {
     const ownedSession = requireWorkspaceSession(workspaceId, sessionId, res);
     if (!ownedSession) return;
@@ -80,32 +109,63 @@ export function createSessionFileHandlers(
 
     switch (result.kind) {
       case "ok": {
-        const stream = createReadStream(result.filePath);
-        stream.once("error", (error) => {
-          if (!res.headersSent) {
-            helpers.error(res, 500, "Failed to read file");
+        const commonHeaders = {
+          "Content-Type": result.contentType,
+          "Cache-Control": "private, no-cache",
+          "Accept-Ranges": "bytes",
+        };
+        const range = parseByteRangeHeader(req?.headers.range, result.size);
+        const isHeadRequest = method.toUpperCase() === "HEAD";
+
+        if (range.kind === "invalid" || range.kind === "unsatisfiable") {
+          res.writeHead(416, {
+            ...commonHeaders,
+            "Content-Range": `bytes */${result.size}`,
+            "Content-Length": "0",
+          });
+          res.end();
+          return;
+        }
+
+        if (range.kind === "valid") {
+          const contentLength = range.end - range.start + 1;
+          const headers = {
+            ...commonHeaders,
+            "Content-Range": `bytes ${range.start}-${range.end}/${result.size}`,
+            "Content-Length": contentLength.toString(),
+          };
+          if (isHeadRequest) {
+            res.writeHead(206, headers);
+            res.end();
             return;
           }
-          res.destroy(error);
-        });
-        stream.once("open", () => {
-          res.writeHead(200, {
-            "Content-Type": result.contentType,
-            "Content-Length": result.size.toString(),
-            "Cache-Control": "private, no-cache",
-          });
-          stream.pipe(res as NodeJS.WritableStream);
-        });
+          pipeSessionFile(
+            result.filePath,
+            res,
+            206,
+            headers,
+            () => helpers.error(res, 500, "Failed to read file"),
+            range,
+          );
+          return;
+        }
+
+        const headers = {
+          ...commonHeaders,
+          "Content-Length": result.size.toString(),
+        };
+        if (isHeadRequest) {
+          res.writeHead(200, headers);
+          res.end();
+          return;
+        }
+        pipeSessionFile(result.filePath, res, 200, headers, () =>
+          helpers.error(res, 500, "Failed to read file"),
+        );
         return;
       }
       case "path-required":
         helpers.error(res, 400, "path parameter required");
-        return;
-      case "path-not-in-session-changes":
-        helpers.error(res, 403, "Path not in session changed files");
-        return;
-      case "sensitive-path":
-        helpers.error(res, 403, "Access denied: sensitive file");
         return;
       case "file-not-found":
         helpers.error(res, 404, "File not found");
@@ -113,8 +173,8 @@ export function createSessionFileHandlers(
       case "workspace-root-not-found":
         helpers.error(res, 404, "Workspace root not found");
         return;
-      case "path-outside-workspaces":
-        helpers.error(res, 403, "Path outside configured workspaces");
+      case "path-outside-workspace":
+        helpers.error(res, 403, "Path outside session workspace");
         return;
       case "not-file":
         helpers.error(res, 400, "Not a file");

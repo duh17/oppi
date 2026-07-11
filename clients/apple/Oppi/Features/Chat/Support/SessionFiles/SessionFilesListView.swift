@@ -19,7 +19,7 @@ enum SessionFileOpenRouting {
 ///
 /// Tapping a row navigates to the appropriate detail view:
 /// - In-workspace files with git changes → diff + current view
-/// - Other touched files → session raw content view, so ignored or symlinked paths remain openable
+/// - Other workspace files and session-reported external paths → current-content view
 struct SessionFilesListView: View {
     let sessionId: String
     let workspaceId: String?

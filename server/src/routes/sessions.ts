@@ -705,7 +705,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   }
 
   async function handleGetSessionAttachment(
-    workspaceId: string,
     sessionId: string,
     attachmentId: string,
     req: IncomingMessage,
@@ -715,10 +714,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const session = ctx.storage.getSession(sessionId);
     if (!session) {
       helpers.error(res, 404, "Session not found");
-      return;
-    }
-    if (session.workspaceId !== workspaceId) {
-      helpers.error(res, 400, "Session does not belong to this workspace");
       return;
     }
 
@@ -1212,6 +1207,18 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
+    const sessionAttachmentMatch = path.match(/^\/sessions\/([^/]+)\/attachments\/([^/]+)$/);
+    if (sessionAttachmentMatch && (method === "GET" || method === "HEAD")) {
+      await handleGetSessionAttachment(
+        sessionAttachmentMatch[1],
+        sessionAttachmentMatch[2],
+        req,
+        res,
+        method,
+      );
+      return true;
+    }
+
     const sessionMatch = path.match(/^\/sessions\/([^/]+)$/);
     if (sessionMatch && method === "GET") {
       await handleGenericGetSession(sessionMatch[1], res);
@@ -1266,21 +1273,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
-    const wsSessionAttachmentMatch = path.match(
-      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/attachments\/([^/]+)$/,
-    );
-    if (wsSessionAttachmentMatch && (method === "GET" || method === "HEAD")) {
-      await handleGetSessionAttachment(
-        wsSessionAttachmentMatch[1],
-        wsSessionAttachmentMatch[2],
-        wsSessionAttachmentMatch[3],
-        req,
-        res,
-        method,
-      );
-      return true;
-    }
-
     const wsSessionToolOutputMatch = path.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
     );
@@ -1316,7 +1308,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     const wsSessionRawMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/raw\/(.+)$/);
-    if (wsSessionRawMatch && method === "GET") {
+    if (wsSessionRawMatch && (method === "GET" || method === "HEAD")) {
       const requestedPath = decodeWorkspaceRoutePath(wsSessionRawMatch[3]);
       if (requestedPath === null) {
         helpers.error(res, 400, "Invalid file path encoding");
@@ -1328,6 +1320,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         wsSessionRawMatch[2],
         requestedPath,
         res,
+        req,
+        method,
       );
       return true;
     }
