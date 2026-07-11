@@ -109,8 +109,8 @@ describe("resolveRuntimeLimits", () => {
 
     const limits = resolveRuntimeLimits(config);
 
-    expect(limits.maxSessionsPerWorkspace).toBe(20);
-    expect(limits.maxSessionsGlobal).toBe(40);
+    expect(limits.maxSessionsPerWorkspace).toBe(100);
+    expect(limits.maxSessionsGlobal).toBe(200);
     expect(limits.sessionIdleTimeoutMs).toBe(600_000);
     expect(limits.workspaceIdleTimeoutMs).toBe(1_800_000);
   });
@@ -374,14 +374,14 @@ describe("WorkspaceRuntime", () => {
       expect(limits.maxSessionsPerWorkspace).toBe(7);
       expect(limits.sessionIdleTimeoutMs).toBe(42_000);
       // Defaults for unset
-      expect(limits.maxSessionsGlobal).toBe(40);
+      expect(limits.maxSessionsGlobal).toBe(200);
       expect(limits.workspaceIdleTimeoutMs).toBe(1_800_000);
     });
 
     it("returns defaults with no config", () => {
       const limits = rt.getLimits();
-      expect(limits.maxSessionsPerWorkspace).toBe(20);
-      expect(limits.maxSessionsGlobal).toBe(40);
+      expect(limits.maxSessionsPerWorkspace).toBe(100);
+      expect(limits.maxSessionsGlobal).toBe(200);
     });
   });
 

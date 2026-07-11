@@ -22,6 +22,8 @@ describe("Storage config validation", () => {
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(result.config?.configVersion).toBe(2);
+    expect(result.config?.maxSessionsPerWorkspace).toBe(100);
+    expect(result.config?.maxSessionsGlobal).toBe(200);
     expect(result.config?.runtimePathEntries?.length).toBeGreaterThan(0);
     expect(result.config?.oppiDocsPrompt?.enabled).toBe(true);
     expect(result.config?.tls?.mode).toBe("self-signed");
