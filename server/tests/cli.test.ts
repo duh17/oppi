@@ -225,7 +225,6 @@ describe("oppi help", () => {
       "create",
       "send",
       "read",
-      "messages",
       "events",
       "trace",
       "search",
@@ -242,6 +241,9 @@ describe("oppi help", () => {
     ]) {
       expect(text).toContain(implemented);
     }
+    expect(text).toContain("Inspect history progressively");
+    expect(text).toContain("--view outline");
+    expect(text).not.toContain("messages <id>");
     expect(text).not.toContain("Not implemented in the CLI yet");
   });
 
@@ -422,10 +424,6 @@ describe("oppi help", () => {
         expected: ["Usage: oppi session read <id>", "--tail <count>"],
       },
       {
-        args: ["session", "messages", "--help"],
-        expected: ["Usage: oppi session messages <id>", "Latest assistant response"],
-      },
-      {
         args: ["session", "events", "--help"],
         expected: ["Usage: oppi session events <id>", "--since <cursor>"],
       },
@@ -446,6 +444,9 @@ describe("oppi help", () => {
         expected: [
           "Usage: oppi session inspect <id>",
           "--turns <spec>",
+          "overview|outline|response|messages|summary|tools",
+          "progressive disclosure",
+          "defaults to outline",
           "canonical Oppi session trace API",
         ],
       },
@@ -479,7 +480,7 @@ describe("oppi help", () => {
       },
       {
         args: ["session", "trace-outline", "--help"],
-        expected: ["Usage: oppi session trace-outline <id>", "compact trace outline"],
+        expected: ["Usage: oppi session trace-outline <id>", "compact, jumpable event index"],
       },
       {
         args: ["agent", "list", "--help"],
@@ -960,6 +961,30 @@ describe("oppi local API commands", () => {
           });
           return;
         }
+        if (method === "GET" && url.pathname === "/sessions/sess-data-url/trace") {
+          json({
+            session: { id: "sess-data-url", workspaceId: "ws-1", status: "stopped" },
+            trace: [
+              {
+                type: "user",
+                text: "inspect this image\ndata:image/png;base64,QUJDREVGRw==",
+              },
+              { type: "assistant", text: "image inspected" },
+            ],
+          });
+          return;
+        }
+        if (method === "GET" && url.pathname === "/sessions/sess-trailing-user/trace") {
+          json({
+            session: { id: "sess-trailing-user", workspaceId: "ws-1", status: "stopped" },
+            trace: [
+              { type: "user", text: "first prompt" },
+              { type: "assistant", text: "completed response" },
+              { type: "user", text: "unanswered follow-up" },
+            ],
+          });
+          return;
+        }
         if (method === "GET" && url.pathname === "/sessions/sess-1/trace") {
           const fullTrace = [
             { type: "user", text: "hello" },
@@ -1034,7 +1059,27 @@ describe("oppi local API commands", () => {
           return;
         }
         if (method === "GET" && url.pathname === "/workspaces/ws-1/sessions/sess-1/trace-outline") {
-          json({ outline: [], metrics: {} });
+          json({
+            outline: {
+              traceVersion: "fixture",
+              entries: [
+                { id: "u1", kind: "user", summary: "hello" },
+                { id: "a1", kind: "assistant", summary: "trace" },
+                {
+                  id: "tc-1",
+                  kind: "tool",
+                  tool: "bash",
+                  summary: "$ false",
+                  isError: true,
+                },
+                { id: "s1", kind: "system", summary: "Model: test-model" },
+              ],
+              itemCount: 4,
+              sourceCount: 1,
+              jsonlBytes: 500,
+            },
+            metrics: { rawEntryCount: 4 },
+          });
           return;
         }
         if (method === "GET" && url.pathname === "/schedules") {
@@ -1100,7 +1145,7 @@ describe("oppi local API commands", () => {
         run(["config", "set", "port", String(address.port)], { OPPI_DATA_DIR: cliDir }).exitCode,
       ).toBe(0);
 
-      const cases: Array<{ args: string[]; expected: string[] }> = [
+      const cases: Array<{ args: string[]; expected: string[]; exact?: boolean }> = [
         { args: ["workspace", "list", "--json"], expected: ["GET /workspaces"] },
         { args: ["workspace", "get", "ws-1", "--json"], expected: ["GET /workspaces/ws-1"] },
         {
@@ -1224,10 +1269,6 @@ describe("oppi local API commands", () => {
           expected: ["GET /sessions/sess-1/read?tail=1"],
         },
         {
-          args: ["session", "messages", "sess-1", "--workspace", "ws-1", "--json"],
-          expected: ["GET /workspaces/ws-1", "GET /sessions/sess-1/trace?include=messages"],
-        },
-        {
           args: ["session", "events", "sess-1", "--since", "4", "--json"],
           expected: ["GET /sessions/sess-1/events?since=4"],
         },
@@ -1265,6 +1306,21 @@ describe("oppi local API commands", () => {
         {
           args: ["session", "inspect", "sess-1", "--turns", "all", "--view", "messages", "--json"],
           expected: ["GET /sessions/sess-1/trace"],
+        },
+        {
+          args: ["session", "inspect", "sess-1", "--view", "response", "--json"],
+          expected: ["GET /sessions/sess-1/trace?include=messages"],
+          exact: true,
+        },
+        {
+          args: ["session", "inspect", "sess-1", "--json"],
+          expected: ["GET /sessions/sess-1", "GET /workspaces/ws-1/sessions/sess-1/trace-outline"],
+          exact: true,
+        },
+        {
+          args: ["session", "inspect", "sess-1", "--view", "summary", "--json"],
+          expected: ["GET /sessions/sess-1", "GET /workspaces/ws-1/sessions/sess-1/trace-outline"],
+          exact: true,
         },
         {
           args: ["session", "resume", "sess-1", "--json"],
@@ -1385,6 +1441,9 @@ describe("oppi local API commands", () => {
             expect(seen, testCase.args.join(" ")).toContain(expected);
           }
         }
+        if (testCase.exact) {
+          expect(seen, testCase.args.join(" ")).toEqual(testCase.expected);
+        }
       }
 
       const beforeInferredSearch = requests.length;
@@ -1428,24 +1487,39 @@ describe("oppi local API commands", () => {
         error: { message: "Could not infer workspace from cwd; pass --workspace or --all" },
       });
 
-      const messagesJson = await runAsync(["session", "messages", "sess-1", "--json"], {
-        OPPI_DATA_DIR: cliDir,
-      });
-      expect(messagesJson.exitCode).toBe(0);
-      expect(JSON.parse(messagesJson.stdout)).toMatchObject({
+      const responseJson = await runAsync(
+        ["session", "inspect", "sess-1", "--view", "response", "--json"],
+        { OPPI_DATA_DIR: cliDir },
+      );
+      expect(responseJson.exitCode).toBe(0);
+      expect(JSON.parse(responseJson.stdout)).toMatchObject({
         ok: true,
         data: {
-          sessionId: "sess-1",
-          finalAssistantText: "trace",
-          assistantMessageCount: 1,
+          selected_turns: [1],
+          view: "response",
+          text: "trace",
         },
       });
 
-      const messagesHuman = await runAsync(["session", "messages", "sess-1"], {
+      const responseHuman = await runAsync(["session", "inspect", "sess-1", "--view", "response"], {
         OPPI_DATA_DIR: cliDir,
       });
-      expect(messagesHuman.exitCode).toBe(0);
-      expect(messagesHuman.stdout.trim()).toBe("trace");
+      expect(responseHuman.exitCode).toBe(0);
+      expect(responseHuman.stdout.trim()).toBe("trace");
+
+      const trailingResponse = await runAsync(
+        ["session", "inspect", "sess-trailing-user", "--view", "response", "--json"],
+        { OPPI_DATA_DIR: cliDir },
+      );
+      expect(trailingResponse.exitCode).toBe(0);
+      expect(JSON.parse(trailingResponse.stdout)).toMatchObject({
+        ok: true,
+        data: {
+          selected_turns: [1, 2],
+          view: "response",
+          text: "completed response",
+        },
+      });
 
       const inspectJson = await runAsync(
         ["session", "inspect", "sess-1", "--view", "messages", "--json"],
@@ -1463,11 +1537,26 @@ describe("oppi local API commands", () => {
       expect(inspectEnvelope.data?.text).toContain("assistant: trace");
       expect(inspectEnvelope.data?.text).not.toContain("failed");
 
+      const inspectOutlineJson = await runAsync(
+        ["session", "inspect", "sess-1", "--view", "outline", "--json"],
+        { OPPI_DATA_DIR: cliDir },
+      );
+      expect(inspectOutlineJson.exitCode).toBe(0);
+      const inspectOutlineEnvelope = JSON.parse(inspectOutlineJson.stdout) as {
+        data?: { selected_turns?: number[]; text?: string };
+      };
+      expect(inspectOutlineEnvelope.data?.selected_turns).toEqual([1]);
+      expect(inspectOutlineEnvelope.data?.text).toContain("Turn 1");
+      expect(inspectOutlineEnvelope.data?.text).toContain("user: hello");
+      expect(inspectOutlineEnvelope.data?.text).toContain("assistant: trace");
+      expect(inspectOutlineEnvelope.data?.text).toContain("activity: 1 tool call · 1 error");
+      expect(inspectOutlineEnvelope.data?.text).not.toContain("failed");
+
       const leadingInspectJson = await runAsync(
         ["session", "inspect", "sess-leading", "--turns", "1", "--view", "messages", "--json"],
         { OPPI_DATA_DIR: cliDir },
       );
-      expect(leadingInspectJson.exitCode).toBe(0);
+      expect(leadingInspectJson.exitCode, leadingInspectJson.stdout).toBe(0);
       const leadingInspectEnvelope = JSON.parse(leadingInspectJson.stdout) as {
         data?: {
           selected_turns?: number[];
@@ -1481,6 +1570,17 @@ describe("oppi local API commands", () => {
       expect(leadingInspectEnvelope.data?.text).toContain("system: Model: test-model");
       expect(leadingInspectEnvelope.data?.text).toContain("user: first prompt");
 
+      const dataUrlInspectJson = await runAsync(
+        ["session", "inspect", "sess-data-url", "--view", "messages", "--json"],
+        { OPPI_DATA_DIR: cliDir },
+      );
+      expect(dataUrlInspectJson.exitCode).toBe(0);
+      const dataUrlInspectEnvelope = JSON.parse(dataUrlInspectJson.stdout) as {
+        data?: { text?: string };
+      };
+      expect(dataUrlInspectEnvelope.data?.text).toContain("[inline image/png data omitted]");
+      expect(dataUrlInspectEnvelope.data?.text).not.toContain("QUJDREVGRw==");
+
       for (const turns of ["1abc", "1-2x", "0", "2", "1-2", "2-1", "1,,1"]) {
         const invalidInspectTurns = await runAsync(
           ["session", "inspect", "sess-1", "--turns", turns, "--json"],
@@ -1493,9 +1593,10 @@ describe("oppi local API commands", () => {
         });
       }
 
-      const malformedInspect = await runAsync(["session", "inspect", "sess-malformed", "--json"], {
-        OPPI_DATA_DIR: cliDir,
-      });
+      const malformedInspect = await runAsync(
+        ["session", "inspect", "sess-malformed", "--view", "messages", "--json"],
+        { OPPI_DATA_DIR: cliDir },
+      );
       expect(malformedInspect.exitCode).toBe(1);
       expect(JSON.parse(malformedInspect.stdout)).toMatchObject({
         ok: false,

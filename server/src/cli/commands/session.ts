@@ -35,7 +35,16 @@ type SessionTraceEvent = {
   [key: string]: unknown;
 };
 
-type SessionInspectView = "overview" | "messages" | "summary" | "tools";
+type SessionTraceOutlineEntry = {
+  id: string;
+  kind: string;
+  summary: string;
+  timestamp?: string;
+  tool?: string;
+  isError?: boolean;
+};
+
+type SessionInspectView = "overview" | "outline" | "response" | "messages" | "summary" | "tools";
 
 type SessionInspectTurn = {
   turn: number;
@@ -72,6 +81,7 @@ type SessionListResponse = {
 
 const DEFAULT_SESSION_LIST_RECENT_DAYS = 3;
 const DAY_MS = 86_400_000;
+const INLINE_DATA_URL_RE = /data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,[a-z0-9+/_=-]+/gi;
 
 export async function cmdSession(
   storage: LocalApiConnection,
@@ -173,37 +183,6 @@ export async function cmdSession(
           })),
           { empty: "No trace events returned." },
         );
-      });
-      return;
-    }
-
-    if (mode === "messages") {
-      const id = requirePositional(positional, "session id is required");
-      const result = await call<Record<string, unknown>>(
-        `/sessions/${encodeURIComponent(id)}/trace?include=messages`,
-      );
-      const session = result.session as Partial<Session> | undefined;
-      if (flags.workspace) {
-        const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace, hostResolvers);
-        if (session?.workspaceId && session.workspaceId !== workspaceId) {
-          throw new Error(`Session ${id} does not belong to workspace ${flags.workspace}`);
-        }
-      }
-      const trace = Array.isArray(result.trace) ? (result.trace as SessionTraceEvent[]) : [];
-      const assistantMessages = trace
-        .filter((event) => event.type === "assistant")
-        .map((event) => eventText(event).trim())
-        .filter(Boolean);
-      const finalAssistantText = assistantMessages.at(-1) ?? null;
-      const data = {
-        sessionId: session?.id ?? id,
-        workspaceId: session?.workspaceId,
-        workspaceName: session?.workspaceName,
-        finalAssistantText,
-        assistantMessageCount: assistantMessages.length,
-      };
-      output(data, () => {
-        console.log(finalAssistantText ?? "(no assistant response)");
       });
       return;
     }
@@ -423,15 +402,17 @@ export async function cmdSession(
         `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/${mode}${querySuffix(params)}`,
       );
       output(result, () => {
-        printDetails(mode === "trace-page" ? "Trace page" : "Trace outline", [
-          ["Session", codeValue(id)],
-        ]);
+        if (mode === "trace-outline") {
+          printTraceOutline(id, result);
+          return;
+        }
+        printDetails("Trace page", [["Session", codeValue(id)]]);
       });
       return;
     }
 
     throw new Error(
-      "Usage: oppi session list|get|create|send|read|messages|events|trace|search|inspect|stop|resume|fork|delete|changes|diff|tool-output|trace-page|trace-outline",
+      "Usage: oppi session list|get|create|send|read|events|trace|search|inspect|stop|resume|fork|delete|changes|diff|tool-output|trace-page|trace-outline",
     );
   } catch (err: unknown) {
     const status = apiStatus(err);
@@ -709,19 +690,48 @@ async function inspectSession(
   const turnsSpec = flags.turns?.trim() || positional[0]?.trim() || "all";
   const view = inspectView(flags.view);
 
-  const result = await call<{ session?: Partial<Session>; trace?: SessionTraceEvent[] }>(
-    `/sessions/${encodeURIComponent(id)}/trace`,
-  );
+  if (view === "outline" || view === "overview" || view === "summary") {
+    const sessionResult = await call<{ session?: Partial<Session> }>(
+      `/sessions/${encodeURIComponent(id)}`,
+    );
+    const workspaceId = sessionResult.session?.workspaceId?.trim();
+    if (!workspaceId) throw new Error("Session has no workspaceId");
+    const outlineResult = await call<Record<string, unknown>>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/trace-outline`,
+    );
+    return buildInspectResult(
+      sessionResult.session,
+      traceEventsFromOutline(parseTraceOutlineEntries(outlineResult)),
+      turnsSpec,
+      view,
+    );
+  }
+
+  // Response only needs conversational messages. Keep the full trace for views that explicitly
+  // request message context or tools so their summary counts remain complete.
+  const tracePath =
+    view === "response"
+      ? `/sessions/${encodeURIComponent(id)}/trace?include=messages`
+      : `/sessions/${encodeURIComponent(id)}/trace`;
+  const result = await call<{ session?: Partial<Session>; trace?: SessionTraceEvent[] }>(tracePath);
   if (!Array.isArray(result.trace)) throw new Error("Local API did not return a trace array");
-  const trace = result.trace;
+  return buildInspectResult(result.session, result.trace, turnsSpec, view);
+}
+
+function buildInspectResult(
+  session: Partial<Session> | undefined,
+  trace: SessionTraceEvent[],
+  turnsSpec: string,
+  view: SessionInspectView,
+): SessionInspectResult {
   const turns = buildInspectTurns(trace);
   const selectedTurns = parseInspectTurnSelector(turnsSpec, turns.length);
   const selectedSet = new Set(selectedTurns);
-  const summary = inspectSummary(result.session, trace, turns);
+  const summary = inspectSummary(session, trace, turns);
   const text = renderInspectView(view, turns, selectedSet, summary);
 
   return {
-    session: result.session,
+    session,
     turns: turnsSpec,
     selectedTurns,
     selected_turns: selectedTurns,
@@ -732,11 +742,18 @@ async function inspectSession(
 }
 
 function inspectView(raw: string | undefined): SessionInspectView {
-  const view = raw?.trim() || "messages";
-  if (view === "overview" || view === "messages" || view === "summary" || view === "tools") {
+  const view = raw?.trim() || "outline";
+  if (
+    view === "overview" ||
+    view === "outline" ||
+    view === "response" ||
+    view === "messages" ||
+    view === "summary" ||
+    view === "tools"
+  ) {
     return view;
   }
-  throw new Error("--view must be one of overview, messages, summary, or tools");
+  throw new Error("--view must be one of overview, outline, response, messages, summary, or tools");
 }
 
 function buildInspectTurns(trace: SessionTraceEvent[]): SessionInspectTurn[] {
@@ -917,6 +934,8 @@ function renderInspectView(
   summary: Record<string, unknown>,
 ): string {
   if (view === "overview") return renderInspectOverview(summary);
+  if (view === "outline") return renderInspectOutline(turns, selectedSet);
+  if (view === "response") return renderInspectResponse(turns, selectedSet);
   if (view === "summary") return JSON.stringify(summary, null, 2);
   if (view === "tools") return renderInspectTools(turns, selectedSet);
   return renderInspectMessages(turns, selectedSet);
@@ -940,16 +959,59 @@ function renderInspectOverview(summary: Record<string, unknown>): string {
   ].join("\n");
 }
 
+function renderInspectOutline(turns: SessionInspectTurn[], selectedSet: Set<number>): string {
+  const lines: string[] = [];
+  for (const turn of turns) {
+    if (!selectedSet.has(turn.turn)) continue;
+
+    const userText = inspectDisplayText(
+      turn.userTexts.find((text) => text.trim()) ?? "(no user message)",
+    );
+    const assistantText = inspectDisplayText(
+      turn.assistantTexts.filter((text) => text.trim()).at(-1) ?? "(no response)",
+    );
+    const toolErrors = turn.toolResults.filter((result) => result.isError === true).length;
+    const activity = [
+      countLabel(turn.toolCalls.length, "tool call"),
+      countLabel(toolErrors, "error"),
+      countLabel(turn.thinkingTexts.length, "thinking block"),
+      countLabel(turn.summaryTexts.length, "compaction"),
+    ].filter(Boolean);
+
+    lines.push(`Turn ${turn.turn}`);
+    lines.push(`  user: ${clipListCell(userText, 180)}`);
+    lines.push(`  assistant: ${clipListCell(assistantText, 180)}`);
+    if (activity.length > 0) lines.push(`  activity: ${activity.join(" · ")}`);
+    lines.push("");
+  }
+
+  return lines.length > 0 ? lines.join("\n").trimEnd() : "No turns found.";
+}
+
+function countLabel(count: number, singular: string): string {
+  if (count === 0) return "";
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
+function renderInspectResponse(turns: SessionInspectTurn[], selectedSet: Set<number>): string {
+  const response = turns
+    .filter((turn) => selectedSet.has(turn.turn))
+    .flatMap((turn) => turn.assistantTexts)
+    .filter((text) => text.trim())
+    .at(-1);
+  return response ? inspectDisplayText(response) : "(no assistant response)";
+}
+
 function renderInspectMessages(turns: SessionInspectTurn[], selectedSet: Set<number>): string {
   const lines: string[] = [];
   for (const turn of turns) {
     if (!selectedSet.has(turn.turn)) continue;
     lines.push(`Turn ${turn.turn}`);
-    for (const text of turn.summaryTexts) lines.push(`  summary: ${text}`);
-    for (const text of turn.systemTexts) lines.push(`  system: ${text}`);
-    for (const text of turn.userTexts) lines.push(`  user: ${text}`);
-    for (const text of turn.assistantTexts) lines.push(`  assistant: ${text}`);
-    for (const text of turn.thinkingTexts) lines.push(`  thinking: ${text}`);
+    for (const text of turn.summaryTexts) lines.push(`  summary: ${inspectDisplayText(text)}`);
+    for (const text of turn.systemTexts) lines.push(`  system: ${inspectDisplayText(text)}`);
+    for (const text of turn.userTexts) lines.push(`  user: ${inspectDisplayText(text)}`);
+    for (const text of turn.assistantTexts) lines.push(`  assistant: ${inspectDisplayText(text)}`);
+    for (const text of turn.thinkingTexts) lines.push(`  thinking: ${inspectDisplayText(text)}`);
     if (
       turn.summaryTexts.length === 0 &&
       turn.systemTexts.length === 0 &&
@@ -962,6 +1024,12 @@ function renderInspectMessages(turns: SessionInspectTurn[], selectedSet: Set<num
     lines.push("");
   }
   return lines.join("\n").trimEnd();
+}
+
+function inspectDisplayText(text: string): string {
+  return text.replace(INLINE_DATA_URL_RE, (_match, contentType: string) => {
+    return `[inline ${contentType} data omitted]`;
+  });
 }
 
 function renderInspectTools(turns: SessionInspectTurn[], selectedSet: Set<number>): string {
@@ -991,6 +1059,79 @@ function renderInspectTools(turns: SessionInspectTurn[], selectedSet: Set<number
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseTraceOutlineEntries(result: Record<string, unknown>): SessionTraceOutlineEntry[] {
+  const outline = result.outline;
+  if (!isRecord(outline) || !Array.isArray(outline.entries)) {
+    throw new Error("Local API did not return a trace outline entries array");
+  }
+
+  return outline.entries.map((value) => {
+    if (
+      !isRecord(value) ||
+      typeof value.id !== "string" ||
+      typeof value.kind !== "string" ||
+      typeof value.summary !== "string"
+    ) {
+      throw new Error("Local API returned an invalid trace outline entry");
+    }
+    return {
+      id: value.id,
+      kind: value.kind,
+      summary: value.summary,
+      ...(typeof value.timestamp === "string" ? { timestamp: value.timestamp } : {}),
+      ...(typeof value.tool === "string" ? { tool: value.tool } : {}),
+      ...(typeof value.isError === "boolean" ? { isError: value.isError } : {}),
+    };
+  });
+}
+
+function traceEventsFromOutline(entries: SessionTraceOutlineEntry[]): SessionTraceEvent[] {
+  return entries.flatMap((entry): SessionTraceEvent[] => {
+    switch (entry.kind) {
+      case "user":
+      case "assistant":
+      case "system":
+      case "compaction":
+        return [{ id: entry.id, type: entry.kind, text: entry.summary }];
+      case "thinking":
+        return [{ id: entry.id, type: "thinking", thinking: entry.summary }];
+      case "tool": {
+        const call: SessionTraceEvent = {
+          id: entry.id,
+          type: "toolCall",
+          ...(entry.tool ? { tool: entry.tool } : {}),
+        };
+        if (entry.isError === undefined) return [call];
+        return [
+          call,
+          {
+            type: "toolResult",
+            ...(entry.tool ? { toolName: entry.tool } : {}),
+            isError: entry.isError,
+          },
+        ];
+      }
+      default:
+        return [];
+    }
+  });
+}
+
+function printTraceOutline(id: string, result: Record<string, unknown>): void {
+  const entries = parseTraceOutlineEntries(result);
+
+  printList(
+    `Trace outline for ${id} (${entries.length})`,
+    entries.map((entry) => ({
+      id: entry.id,
+      status: entry.kind,
+      title: entry.summary,
+      meta: [entry.tool ? `tool ${entry.tool}` : "", entry.isError === true ? "error" : ""],
+    })),
+    { empty: "No trace entries found." },
+  );
 }
 
 function savedAgentReference(agent: string | undefined): string | undefined {

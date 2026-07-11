@@ -43,6 +43,56 @@ async function runCli(args: string[], dataDir: string): Promise<string> {
   });
 }
 
+type TraceOutlineFixtureEntry = {
+  id: string;
+  kind: string;
+  summary: string;
+  tool?: string;
+  isError?: boolean;
+};
+
+async function runTraceOutlineCli(entries: TraceOutlineFixtureEntry[]): Promise<string> {
+  const fixtureDataDir = mkdtempSync(join(tmpdir(), "oppi-cli-trace-outline-"));
+  const api = createHttpServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    res.writeHead(200, { "Content-Type": "application/json" });
+    if (url.pathname === "/sessions/sess-1") {
+      res.end(JSON.stringify({ session: { id: "sess-1", workspaceId: "ws-1" } }));
+      return;
+    }
+    if (url.pathname === "/workspaces/ws-1/sessions/sess-1/trace-outline") {
+      res.end(
+        JSON.stringify({
+          session: { id: "sess-1", workspaceId: "ws-1" },
+          outline: {
+            traceVersion: "fixture",
+            entries,
+            itemCount: entries.length,
+            sourceCount: entries.length > 0 ? 1 : 0,
+            jsonlBytes: entries.length > 0 ? 100 : 0,
+          },
+          metrics: {},
+        }),
+      );
+      return;
+    }
+    res.end(JSON.stringify({ error: `Unexpected route: ${url.pathname}` }));
+  });
+
+  try {
+    await new Promise<void>((resolveListen) => api.listen(0, "127.0.0.1", resolveListen));
+    const address = api.address();
+    if (!address || typeof address === "string") throw new Error("API fixture did not bind");
+    writeCliConfig(fixtureDataDir, address.port);
+    return await runCli(["session", "trace-outline", "sess-1"], fixtureDataDir);
+  } finally {
+    await new Promise<void>((resolveClose, rejectClose) =>
+      api.close((error) => (error ? rejectClose(error) : resolveClose())),
+    );
+    rmSync(fixtureDataDir, { recursive: true, force: true });
+  }
+}
+
 describe("CLI app-state API boundary", () => {
   beforeAll(() => {
     execSync("npm run build", { cwd: resolve(__dirname, ".."), stdio: "pipe" });
@@ -77,5 +127,32 @@ describe("CLI app-state API boundary", () => {
       );
       rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("renders trace outline messages and tool activity from the API snapshot", async () => {
+    const stdout = await runTraceOutlineCli([
+      { id: "u1", kind: "user", summary: "first prompt" },
+      { id: "a1-text-0", kind: "assistant", summary: "first answer" },
+      {
+        id: "tc-1",
+        kind: "tool",
+        tool: "read",
+        summary: "read server/src/trace.ts",
+        isError: false,
+      },
+    ]);
+
+    expect(stdout).toContain("Trace outline for sess-1 (3)");
+    expect(stdout).toContain("u1  user  first prompt");
+    expect(stdout).toContain("a1-text-0  assistant  first answer");
+    expect(stdout).toContain("tc-1  tool  read server/src/trace.ts");
+    expect(stdout).toContain("tool read");
+  });
+
+  it("states clearly when the API trace outline is genuinely empty", async () => {
+    const stdout = await runTraceOutlineCli([]);
+
+    expect(stdout).toContain("Trace outline for sess-1 (0)");
+    expect(stdout).toContain("No trace entries found.");
   });
 });

@@ -164,8 +164,8 @@ oppi agent list              # list saved Agent definitions
 oppi agent create            # create a saved Agent from flags or JSON
 oppi session create --agent  # launch a saved Agent into a workspace
 oppi session search          # search indexed session content (cwd workspace by default)
-oppi session inspect         # inspect selected turns from a session trace
-oppi session messages        # print the latest assistant response
+oppi session inspect         # inspect a compact turn outline by default
+oppi session inspect --view response  # print the latest assistant response
 oppi schedule list           # list saved schedules
 oppi schedule create         # create an at/every/cron schedule
 oppi schedule run <id>       # run a schedule now
@@ -176,6 +176,8 @@ oppi server status           # check background service
 oppi server restart          # restart background server
 oppi server stop             # stop background server
 ```
+
+Session history reads are consolidated under `oppi session inspect`. Start with its default turn outline, use `--view summary` for counts, and request `--turns <spec> --view messages|tools` only for the smallest relevant turn set.
 
 ### Saved Agents and schedules
 
