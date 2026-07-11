@@ -1069,6 +1069,10 @@ final class NativeExpandedInlineImageView: UIView {
         prepareForDecode()
 
         guard let fetcher else {
+            ClientLog.warning("Network", "Tool image attachment fetcher unavailable", metadata: [
+                "attachmentIdPrefix": String(attachment.id.prefix(12)),
+                "mimeType": attachment.mimeType,
+            ], flush: true)
             applyDecodedImage(nil)
             return
         }
@@ -1076,6 +1080,11 @@ final class NativeExpandedInlineImageView: UIView {
         let maxPixelSize = self.maxPixelSize
         let attachmentCacheKey = ToolImageAttachmentDataCache.key(for: attachment)
         decodeTask = Task { [weak self] in
+            let attachmentIdPrefix = String(attachment.id.prefix(12))
+            ClientLog.info("Network", "Tool image attachment fetch started", metadata: [
+                "attachmentIdPrefix": attachmentIdPrefix,
+                "mimeType": attachment.mimeType,
+            ])
             do {
                 let data = try await ToolImageAttachmentDataCache.data(for: attachmentCacheKey) {
                     let fetchedData = try await fetcher(attachment.id)
@@ -1083,8 +1092,22 @@ final class NativeExpandedInlineImageView: UIView {
                     return fetchedData
                 }
                 try Self.validateAttachmentData(data, attachment: attachment)
+                ClientLog.info("Network", "Tool image attachment fetch completed", metadata: [
+                    "attachmentIdPrefix": attachmentIdPrefix,
+                    "bytes": String(data.count),
+                    "mimeType": attachment.mimeType,
+                ])
                 await self?.applyFetchedImageData(data, mimeType: attachment.mimeType, key: key, maxPixelSize: maxPixelSize)
             } catch {
+                var metadata = ClientLog.networkErrorMetadata(error)
+                metadata["attachmentIdPrefix"] = attachmentIdPrefix
+                metadata["mimeType"] = attachment.mimeType
+                ClientLog.error(
+                    "Network",
+                    "Tool image attachment fetch failed",
+                    metadata: metadata,
+                    flush: true
+                )
                 await MainActor.run { [weak self] in
                     guard let self, self.decodedKey == key else { return }
                     self.decodedKey = nil

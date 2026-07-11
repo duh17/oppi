@@ -33,9 +33,7 @@ enum SessionFileFullScreenContentBuilder {
                     try await fetchSessionFileData(path)
                 },
                 sessionID: sessionID,
-                fetchSessionFile: { _, _, path in
-                    try await fetchSessionFileData(path)
-                }
+                fetchSessionFile: nil
             )
         )
     }
@@ -234,33 +232,31 @@ struct RemoteFileView: View {
         }
 
         loadedServerBaseURL = api.baseURL
+        self.resolvedWorkspaceId = resolvedWorkspaceId
+        let workspaceHostMount = currentWorkspaceHostMount
         fetchSessionFileData = { [api, resolvedWorkspaceId, sessionId] filePath in
-            try await api.getSessionFileData(
+            let previewPath = filePath.workspaceRelativePath(hostMount: workspaceHostMount) ?? filePath
+            return try await api.getSessionFileData(
                 workspaceId: resolvedWorkspaceId,
                 sessionId: sessionId,
-                path: filePath
+                path: previewPath
             )
         }
-        self.resolvedWorkspaceId = resolvedWorkspaceId
+        let previewPath = path.workspaceRelativePath(hostMount: workspaceHostMount) ?? path
 
         do {
             if isImagePath {
                 let data = try await api.getSessionFileData(
                     workspaceId: resolvedWorkspaceId,
                     sessionId: sessionId,
-                    path: path
+                    path: previewPath
                 )
                 self.imageData = data
             } else if isVideoPath {
-                guard let streamPath = path.workspaceRelativePath(hostMount: currentWorkspaceHostMount) else {
-                    throw APIError.server(
-                        status: 400,
-                        message: "Video preview requires a workspace file path"
-                    )
-                }
-                self.videoSource = try await api.makeWorkspaceMediaSource(
+                self.videoSource = try await api.makeSessionFileMediaSource(
                     workspaceId: resolvedWorkspaceId,
-                    path: streamPath,
+                    sessionId: sessionId,
+                    path: previewPath,
                     contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: pathExtension),
                     sourceFileExtension: pathExtension
                 )
@@ -268,7 +264,7 @@ struct RemoteFileView: View {
                 let text = try await api.getSessionFile(
                     workspaceId: resolvedWorkspaceId,
                     sessionId: sessionId,
-                    path: path
+                    path: previewPath
                 )
                 self.content = text
             }

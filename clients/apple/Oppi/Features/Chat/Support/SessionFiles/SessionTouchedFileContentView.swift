@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Displays content of a session-touched file that may live outside the workspace.
+/// Displays content of a file reported by the session.
 ///
-/// Loads file content via the session raw API and renders using
+/// Loads workspace files and reported external paths via the session raw API, then renders using
 /// `FileContentView` — the same renderer used by the file browser.
 /// HTML files default to rendered preview via `HTMLFileView` in document mode.
 struct SessionTouchedFileContentView: View {
@@ -158,20 +158,23 @@ struct SessionTouchedFileContentView: View {
             return
         }
         loadedServerBaseURL = api.baseURL
+        let workspaceHostMount = currentWorkspaceHostMount
         fetchSessionFileData = { [api, workspaceId, sessionId] path in
-            try await api.getSessionFileData(
+            let previewPath = path.workspaceRelativePath(hostMount: workspaceHostMount) ?? path
+            return try await api.getSessionFileData(
                 workspaceId: workspaceId,
                 sessionId: sessionId,
-                path: path
+                path: previewPath
             )
         }
         let requestedPath = currentFilePath
+        let previewPath = requestedPath.workspaceRelativePath(hostMount: workspaceHostMount) ?? requestedPath
         phase = .loading
         do {
             let data = try await api.browseSessionTouchedFile(
                 workspaceId: workspaceId,
                 sessionId: sessionId,
-                path: requestedPath
+                path: previewPath
             )
             guard isCurrentFile(requestedPath) else { return }
 

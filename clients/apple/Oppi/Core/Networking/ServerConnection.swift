@@ -354,6 +354,97 @@ final class ServerConnection {
         )
     }
 
+    func fetchSessionAttachmentWhenReady(
+        sessionId: String,
+        attachmentId: String
+    ) async throws -> Data {
+        let apiClient = try await waitForAPIClient()
+        return try await apiClient.fetchSessionAttachment(
+            sessionId: sessionId,
+            attachmentId: attachmentId
+        )
+    }
+
+    func makeSessionAttachmentMediaSourceWhenReady(
+        sessionId: String,
+        attachmentId: String,
+        contentTypeHint: String?,
+        sourceFileExtension: String?
+    ) async throws -> AuthenticatedMediaSource {
+        let apiClient = try await waitForAPIClient()
+        return try await apiClient.makeSessionAttachmentMediaSource(
+            sessionId: sessionId,
+            attachmentId: attachmentId,
+            contentTypeHint: contentTypeHint,
+            sourceFileExtension: sourceFileExtension
+        )
+    }
+
+    func fetchSessionFileDataWhenReady(
+        workspaceId: String?,
+        sessionId: String,
+        path: String
+    ) async throws -> Data {
+        let context = try await waitForSessionFileContext(
+            workspaceId: workspaceId,
+            sessionId: sessionId
+        )
+        return try await context.apiClient.getSessionFileData(
+            workspaceId: context.workspaceId,
+            sessionId: sessionId,
+            path: path
+        )
+    }
+
+    func makeSessionFileMediaSourceWhenReady(
+        workspaceId: String?,
+        sessionId: String,
+        path: String,
+        contentTypeHint: String?,
+        sourceFileExtension: String?
+    ) async throws -> AuthenticatedMediaSource {
+        let context = try await waitForSessionFileContext(
+            workspaceId: workspaceId,
+            sessionId: sessionId
+        )
+        return try await context.apiClient.makeSessionFileMediaSource(
+            workspaceId: context.workspaceId,
+            sessionId: sessionId,
+            path: path,
+            contentTypeHint: contentTypeHint,
+            sourceFileExtension: sourceFileExtension
+        )
+    }
+
+    private func waitForAPIClient() async throws -> APIClient {
+        for _ in 0..<50 {
+            if let apiClient {
+                return apiClient
+            }
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(100))
+        }
+
+        throw APIError.server(status: 503, message: "Server client is not ready")
+    }
+
+    private func waitForSessionFileContext(
+        workspaceId: String?,
+        sessionId: String
+    ) async throws -> (apiClient: APIClient, workspaceId: String) {
+        for _ in 0..<50 {
+            let resolvedWorkspaceId = normalizedWorkspaceId(workspaceId)
+                ?? normalizedWorkspaceId(sessionStore.workspaceId(for: sessionId))
+            if let apiClient, let resolvedWorkspaceId {
+                return (apiClient, resolvedWorkspaceId)
+            }
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(100))
+        }
+
+        throw APIError.server(status: 503, message: "Session file client is not ready")
+    }
+
     func setDiscoveredLANEndpoint(_ endpoint: LANDiscoveredEndpoint?) {
         discoveredLANEndpoint = endpoint
         guard let credentials else { return }

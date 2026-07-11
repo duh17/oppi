@@ -37,7 +37,7 @@ final class AssistantMarkdownContentView: UIView {
         let reviewCommentSourceContext: ReviewCommentSourceContext?
         /// Workspace context for resolving inline image paths.
         let workspaceID: String?
-        /// Session context for resolving absolute file paths in assistant markdown.
+        /// Session context retained for review and full-screen presentation.
         let sessionID: String?
         let serverBaseURL: URL?
         /// Path of the source markdown file in the workspace (e.g. "docs/readme.md").
@@ -166,8 +166,7 @@ final class AssistantMarkdownContentView: UIView {
         didSet { segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile }
     }
 
-    /// Closure for fetching files from the active session working directory.
-    /// Used for absolute assistant markdown image paths.
+    /// Optional session-file fetcher retained for internal session-file URLs.
     var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? {
         didSet { segmentApplier.fetchSessionFile = fetchSessionFile }
     }

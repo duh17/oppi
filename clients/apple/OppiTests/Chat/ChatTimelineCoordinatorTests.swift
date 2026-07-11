@@ -45,7 +45,7 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
-    @Test func sessionScopeChangeReconfiguresToolRowsWithAttachmentFetcher() throws {
+    @Test func toolRowsKeepDeferredAttachmentFetchersBeforeAPIClientIsReady() async throws {
         let collectionView = UICollectionView(
             frame: CGRect(x: 0, y: 0, width: 390, height: 844),
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
@@ -58,26 +58,18 @@ struct ChatTimelineCoordinatorTests {
         let toolArgsStore = ToolArgsStore()
         let toolSegmentStore = ToolSegmentStore()
         let connection = ServerConnection()
-        #expect(connection.configure(credentials: ServerCredentials(
-            host: "127.0.0.1",
-            port: 9,
-            token: "test-token",
-            name: "Test Server",
-            scheme: .http
-        )))
-        let scrollController = ChatScrollController()
-        let audioPlayer = AudioPlayerService()
+        #expect(connection.apiClient == nil)
         let toolItem = ChatItem.toolCall(
             id: "tool-read-attachment",
             tool: "read",
-            argsSummary: "path: screenshot.png",
+            argsSummary: "path: /tmp/screenshot.png",
             outputPreview: "Read image file [image/png]",
             outputByteCount: 128,
             isError: false,
             isDone: true
         )
 
-        let initialConfig = makeTimelineConfiguration(
+        let config = makeTimelineConfiguration(
             items: [toolItem],
             sessionId: "session-attachment-scope",
             reducer: reducer,
@@ -85,35 +77,84 @@ struct ChatTimelineCoordinatorTests {
             toolArgsStore: toolArgsStore,
             toolSegmentStore: toolSegmentStore,
             connection: connection,
-            scrollController: scrollController,
-            audioPlayer: audioPlayer,
+            scrollController: ChatScrollController(),
+            audioPlayer: AudioPlayerService(),
             workspaceId: nil
         )
-        controller.apply(configuration: initialConfig, to: collectionView)
+        controller.apply(configuration: config, to: collectionView)
         collectionView.layoutIfNeeded()
 
-        let initialCell = try configuredTimelineCell(in: collectionView, item: 0)
-        let initialRowConfig = try #require(initialCell.contentConfiguration as? ToolTimelineRowConfiguration)
-        #expect(initialRowConfig.sessionAttachmentFetcher == nil)
+        let cell = try configuredTimelineCell(in: collectionView, item: 0)
+        let rowConfig = try #require(cell.contentConfiguration as? ToolTimelineRowConfiguration)
+        #expect(rowConfig.sessionAttachmentFetcher != nil)
+        let sourceProvider = try #require(rowConfig.sessionAttachmentMediaSourceProvider)
 
-        let resolvedConfig = makeTimelineConfiguration(
-            items: [toolItem],
-            sessionId: "session-attachment-scope",
-            reducer: reducer,
-            toolOutputStore: toolOutputStore,
-            toolArgsStore: toolArgsStore,
-            toolSegmentStore: toolSegmentStore,
-            connection: connection,
-            scrollController: scrollController,
-            audioPlayer: audioPlayer,
-            workspaceId: "ws-test"
+        #expect(connection.configure(credentials: ServerCredentials(
+            host: "127.0.0.1",
+            port: 7749,
+            token: "test-token",
+            name: "Test Server",
+            scheme: .http
+        )))
+        let source = try await sourceProvider("att-image", "image/png", "png")
+        #expect(source.url.path == "/sessions/session-attachment-scope/attachments/att-image")
+    }
+
+    @MainActor
+    @Test func toolRowsUseSessionRawMediaSourceForExternalVideoPaths() async throws {
+        let collectionView = UICollectionView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
         )
-        controller.apply(configuration: resolvedConfig, to: collectionView)
+        let controller = ChatTimelineCollectionHost.Controller()
+        controller.configureDataSource(collectionView: collectionView)
+        let connection = ServerConnection()
+        #expect(connection.apiClient == nil)
+        let item = ChatItem.toolCall(
+            id: "tool-read-video",
+            tool: "read",
+            argsSummary: "path: /tmp/movie.mp4",
+            outputPreview: "Read video file",
+            outputByteCount: 64,
+            isError: false,
+            isDone: true
+        )
+        let config = makeTimelineConfiguration(
+            items: [item],
+            sessionId: "session-video",
+            reducer: TimelineReducer(),
+            toolOutputStore: ToolOutputStore(),
+            toolArgsStore: ToolArgsStore(),
+            toolSegmentStore: ToolSegmentStore(),
+            connection: connection,
+            scrollController: ChatScrollController(),
+            audioPlayer: AudioPlayerService(),
+            workspaceId: nil
+        )
+        controller.apply(configuration: config, to: collectionView)
         collectionView.layoutIfNeeded()
 
-        let updatedCell = try configuredTimelineCell(in: collectionView, item: 0)
-        let updatedRowConfig = try #require(updatedCell.contentConfiguration as? ToolTimelineRowConfiguration)
-        #expect(updatedRowConfig.sessionAttachmentFetcher != nil)
+        let cell = try configuredTimelineCell(in: collectionView, item: 0)
+        let rowConfig = try #require(cell.contentConfiguration as? ToolTimelineRowConfiguration)
+        #expect(rowConfig.sessionFileDataFetcher != nil)
+        let provider = try #require(rowConfig.sessionFileMediaSourceProvider)
+
+        connection.sessionStore.upsert(makeTestSession(
+            id: "session-video",
+            workspaceId: "workspace-video"
+        ))
+        #expect(connection.configure(credentials: ServerCredentials(
+            host: "127.0.0.1",
+            port: 7749,
+            token: "test-token",
+            name: "Test Server",
+            scheme: .http
+        )))
+        let source = try await provider("/tmp/movie.mp4")
+        #expect(
+            URLComponents(url: source.url, resolvingAgainstBaseURL: false)?.percentEncodedPath ==
+                "/workspaces/workspace-video/sessions/session-video/raw/%2Ftmp%2Fmovie.mp4"
+        )
     }
 
     @MainActor

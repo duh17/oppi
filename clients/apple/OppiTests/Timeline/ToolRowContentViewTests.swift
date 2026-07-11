@@ -1409,7 +1409,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func expandedVoiceMessagePlayButtonIsHitTestTarget() throws {
         let source = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/sessions/s1/attachments/att-session-owned-voice")),
+            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",
@@ -1443,7 +1443,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func collapsedVoiceMessagePlayButtonIsHitTestTarget() throws {
         let source = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/sessions/s1/attachments/att-session-owned-voice")),
+            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",
@@ -1477,7 +1477,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func expandedVoiceMessageOnlyShowsHeaderPlaybackControl() throws {
         let source = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/sessions/s1/attachments/att-session-owned-voice")),
+            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",
@@ -1531,7 +1531,7 @@ struct ToolTimelineRowContentViewTests {
         }
 
         let mediaSource = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/sessions/s1/attachments/att-session-owned-voice")),
+            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",

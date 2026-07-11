@@ -1,11 +1,11 @@
-import { homedir, tmpdir } from "node:os";
-import { extname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { extname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 
 import {
   getContentType,
   isBrowseMediaContentType,
-  isSensitivePath,
   isStreamingMediaContentType,
   MAX_BROWSE_IMAGE_FILE_SIZE,
   MAX_BROWSE_TEXT_FILE_SIZE,
@@ -91,11 +91,6 @@ type CurrentFileTextResult =
   | { kind: "ok"; text: string }
   | Exclude<SessionOverallDiffResult, { kind: "ok" | "trace-not-found" | "mutations-not-found" }>;
 
-type ResolvedTouchedFilePath = {
-  realPath: string;
-  requestedAbsolutePath: string;
-};
-
 export interface SessionChangesResult {
   workspaceId: string;
   sessionId: string;
@@ -107,16 +102,14 @@ export interface SessionChangesResult {
 export type SessionRawFileResult =
   | { kind: "ok"; filePath: string; contentType: string; size: number }
   | { kind: "path-required" }
-  | { kind: "path-not-in-session-changes" }
-  | { kind: "sensitive-path" }
   | { kind: "file-not-found" }
   | { kind: "workspace-root-not-found" }
-  | { kind: "path-outside-workspaces" }
+  | { kind: "path-outside-workspace" }
   | { kind: "not-file" }
   | { kind: "file-too-large"; maxSizeMegabytes: number };
 
 export interface SessionTraceServiceDeps {
-  storage: Pick<Storage, "getDataDir" | "getSession" | "getWorkspace" | "listWorkspaces">;
+  storage: Pick<Storage, "getDataDir" | "getSession" | "getWorkspace">;
   sessionRuntimes: Pick<SessionRuntimes, "getToolFullOutputPath" | "refreshSessionState">;
   ensureSessionContextWindow: (session: Session) => Session;
 }
@@ -385,51 +378,33 @@ export class SessionTraceService {
       return { kind: "path-required" };
     }
 
-    const changedFiles = params.session.changeStats?.changedFiles ?? [];
-    if (!changedFiles.includes(reqPath)) {
-      return { kind: "path-not-in-session-changes" };
-    }
-
-    if (isSensitivePath(reqPath)) {
-      return { kind: "sensitive-path" };
-    }
-
-    const resolvedFile = await this.resolveTouchedFilePath(
-      params.workspace,
-      params.session,
-      reqPath,
-    );
-    if (!resolvedFile) {
-      return { kind: "file-not-found" };
-    }
-    const resolvedPath = resolvedFile.realPath;
-
-    const readableWorkspaceRoots = await this.resolveReadableWorkspaceRoots(
-      params.workspace,
-      params.session,
-    );
-    if (readableWorkspaceRoots.length === 0) {
+    const workspaceRoot = resolveSdkSessionCwd(params.workspace, params.session, {
+      dataDir: this.deps.storage.getDataDir(),
+    });
+    let realWorkspaceRoot: string;
+    try {
+      realWorkspaceRoot = await realpath(workspaceRoot);
+    } catch {
       return { kind: "workspace-root-not-found" };
     }
 
-    const isUnderReadableWorkspaceRoot = readableWorkspaceRoots.some((root) =>
-      isPathWithinRoot(resolvedPath, root),
-    );
-    const isWorkspaceRoutedTouchedPath = readableWorkspaceRoots.some((root) =>
-      isPathWithinRoot(resolvedFile.requestedAbsolutePath, root),
-    );
+    const requestedPath = resolveSessionRawPath(reqPath, realWorkspaceRoot);
+    if (!requestedPath) {
+      return { kind: "path-outside-workspace" };
+    }
 
-    if (!isUnderReadableWorkspaceRoot && !isWorkspaceRoutedTouchedPath) {
-      const sessionCreatedFiles = params.session.changeStats?._sessionCreatedFiles ?? [];
-      const isSessionCreatedTempFile =
-        sessionCreatedFiles.includes(reqPath) &&
-        (await this.resolveReadableSessionTempRoots()).some((root) =>
-          isPathWithinRoot(resolvedPath, root),
-        );
+    let resolvedPath: string;
+    try {
+      resolvedPath = await realpath(requestedPath);
+    } catch {
+      return { kind: "file-not-found" };
+    }
 
-      if (!isSessionCreatedTempFile) {
-        return { kind: "path-outside-workspaces" };
-      }
+    if (
+      !isPathWithinRoot(resolvedPath, realWorkspaceRoot) &&
+      !this.sessionReportsPath(params.session, reqPath)
+    ) {
+      return { kind: "path-outside-workspace" };
     }
 
     let fileStat: Awaited<ReturnType<typeof stat>>;
@@ -463,6 +438,19 @@ export class SessionTraceService {
       contentType,
       size: fileStat.size,
     };
+  }
+
+  private sessionReportsPath(session: Session, requestedPath: string): boolean {
+    const changedFiles = session.changeStats?.changedFiles ?? [];
+    const sessionCreatedFiles = session.changeStats?._sessionCreatedFiles ?? [];
+    if (changedFiles.includes(requestedPath) || sessionCreatedFiles.includes(requestedPath)) {
+      return true;
+    }
+
+    const trace = this.loadSessionTrace(session, "full") ?? [];
+    return trace.some(
+      (event) => event.type === "toolCall" && containsExactString(event.args, requestedPath),
+    );
   }
 
   private async readCurrentFileText(
@@ -532,83 +520,6 @@ export class SessionTraceService {
     return homedir();
   }
 
-  private async resolveTouchedFilePath(
-    workspace: Workspace,
-    session: Session,
-    reqPath: string,
-  ): Promise<ResolvedTouchedFilePath | null> {
-    let absolutePath: string;
-    if (reqPath.startsWith("/")) {
-      absolutePath = resolve(reqPath);
-    } else if (reqPath.startsWith("~")) {
-      absolutePath = resolve(reqPath.replace(/^~(?=\/|$)/, homedir()));
-    } else {
-      const workspaceRoot = resolveSdkSessionCwd(workspace, session, {
-        dataDir: this.deps.storage.getDataDir(),
-      });
-      let workspaceRouteRoot = workspaceRoot;
-      try {
-        workspaceRouteRoot = await realpath(workspaceRoot);
-      } catch {
-        // Keep the configured root; the later realpath call reports missing files.
-      }
-      absolutePath = resolve(workspaceRouteRoot, reqPath);
-    }
-
-    try {
-      return {
-        realPath: await realpath(absolutePath),
-        requestedAbsolutePath: absolutePath,
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  private async resolveReadableWorkspaceRoots(
-    currentWorkspace: Workspace,
-    currentSession?: Pick<Session, "worktreeId">,
-  ): Promise<string[]> {
-    const roots: string[] = [];
-    const workspaces = [
-      currentWorkspace,
-      ...this.deps.storage
-        .listWorkspaces()
-        .filter((workspace) => workspace.id !== currentWorkspace.id),
-    ];
-
-    for (const workspace of workspaces) {
-      try {
-        const session = workspace.id === currentWorkspace.id ? currentSession : undefined;
-        addUniquePath(
-          roots,
-          await realpath(
-            resolveSdkSessionCwd(workspace, session, { dataDir: this.deps.storage.getDataDir() }),
-          ),
-        );
-      } catch {
-        continue;
-      }
-    }
-
-    return roots;
-  }
-
-  private async resolveReadableSessionTempRoots(): Promise<string[]> {
-    const candidates = [tmpdir(), "/tmp", "/private/tmp", "/var/tmp"];
-    const roots: string[] = [];
-
-    for (const candidate of candidates) {
-      try {
-        addUniquePath(roots, await realpath(candidate));
-      } catch {
-        continue;
-      }
-    }
-
-    return roots;
-  }
-
   private traceBaseDir(): string {
     return this.deps.storage.getDataDir?.() ?? process.cwd();
   }
@@ -639,6 +550,36 @@ export class SessionTraceService {
   }
 }
 
+function resolveSessionRawPath(requestedPath: string, workspaceRoot: string): string | null {
+  if (requestedPath.toLowerCase().startsWith("file:")) {
+    try {
+      const url = new URL(requestedPath);
+      return url.protocol === "file:" ? fileURLToPath(url) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (requestedPath === "~" || requestedPath.startsWith("~/")) {
+    return resolve(requestedPath.replace(/^~(?=\/|$)/, homedir()));
+  }
+
+  return isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(workspaceRoot, requestedPath);
+}
+
+function containsExactString(value: unknown, expected: string): boolean {
+  if (typeof value === "string") {
+    return value === expected;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => containsExactString(item, expected));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.values(value).some((item) => containsExactString(item, expected));
+  }
+  return false;
+}
+
 async function existingPaths(candidates: string[]): Promise<string[]> {
   const uniquePaths = Array.from(new Set(candidates));
   const existing = await Promise.all(
@@ -667,10 +608,4 @@ function isPathMissingError(error: unknown): boolean {
     "code" in error &&
     (error.code === "ENOENT" || error.code === "ENOTDIR")
   );
-}
-
-function addUniquePath(paths: string[], path: string): void {
-  if (!paths.includes(path)) {
-    paths.push(path);
-  }
 }

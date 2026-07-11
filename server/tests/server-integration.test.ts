@@ -699,6 +699,84 @@ describe("workspace file browser", () => {
 // ── Sessions (workspace-scoped) ──
 
 describe("sessions API", () => {
+  it("streams authenticated session-reported files through the real router", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-session-raw-router-ws-"));
+    const externalRoot = mkdtempSync(join(tmpdir(), "oppi-session-raw-router-external-"));
+    const externalFile = join(externalRoot, "movie clip.mp4");
+    writeFileSync(externalFile, "0123456789", "utf8");
+
+    try {
+      const wsRes = await post("/workspaces", {
+        name: "session-raw-router",
+        hostMount: workspaceRoot,
+      });
+      expect(wsRes.status).toBe(201);
+      const { workspace } = await wsRes.json();
+      const sessionId = `session-raw-router-${Date.now()}`;
+      storage.saveSession({
+        id: sessionId,
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        status: "stopped",
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        messageCount: 1,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        changeStats: {
+          mutatingToolCalls: 1,
+          filesChanged: 1,
+          changedFiles: [externalFile],
+          addedLines: 0,
+          removedLines: 0,
+        },
+      });
+
+      const route = `/workspaces/${workspace.id}/sessions/${sessionId}/raw/${encodeURIComponent(externalFile)}`;
+      const unauthorized = await fetch(`${baseUrl}${route}`);
+      expect(unauthorized.status).toBe(401);
+
+      const full = await get(route);
+      expect(full.status).toBe(200);
+      expect(full.headers.get("accept-ranges")).toBe("bytes");
+      expect(full.headers.get("content-length")).toBe("10");
+      expect(await full.text()).toBe("0123456789");
+
+      const head = await fetch(`${baseUrl}${route}`, {
+        method: "HEAD",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(head.status).toBe(200);
+      expect(head.headers.get("accept-ranges")).toBe("bytes");
+      expect(head.headers.get("content-length")).toBe("10");
+      expect((await head.arrayBuffer()).byteLength).toBe(0);
+
+      const singleByte = await fetch(`${baseUrl}${route}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Range: "bytes=2-2",
+        },
+      });
+      expect(singleByte.status).toBe(206);
+      expect(singleByte.headers.get("content-range")).toBe("bytes 2-2/10");
+      expect(singleByte.headers.get("content-length")).toBe("1");
+      expect(await singleByte.text()).toBe("2");
+
+      const unsatisfiable = await fetch(`${baseUrl}${route}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Range: "bytes=20-30",
+        },
+      });
+      expect(unsatisfiable.status).toBe(416);
+      expect(unsatisfiable.headers.get("content-range")).toBe("bytes */10");
+      expect(unsatisfiable.headers.get("content-length")).toBe("0");
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+      rmSync(externalRoot, { recursive: true, force: true });
+    }
+  });
+
   it("POST /workspaces/:id/sessions creates a session", async () => {
     const wsRes = await post("/workspaces", { name: "session-ws" });
     const { workspace } = await wsRes.json();
@@ -779,10 +857,32 @@ describe("sessions API", () => {
         piSessionFiles: [jsonlPath],
       });
 
-      const attachmentBeforeDelete = await get(
+      const attachmentRoute = `/sessions/${sessionId}/attachments/${generatedAttachmentId}`;
+      const attachmentBeforeDelete = await get(attachmentRoute);
+      expect(attachmentBeforeDelete.status).toBe(200);
+
+      const attachmentHead = await fetch(`${baseUrl}${attachmentRoute}`, {
+        method: "HEAD",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(attachmentHead.status).toBe(200);
+      expect(attachmentHead.headers.get("accept-ranges")).toBe("bytes");
+      expect((await attachmentHead.arrayBuffer()).byteLength).toBe(0);
+
+      const attachmentRange = await fetch(`${baseUrl}${attachmentRoute}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Range: "bytes=0-0",
+        },
+      });
+      expect(attachmentRange.status).toBe(206);
+      expect(attachmentRange.headers.get("content-range")).toMatch(/^bytes 0-0\/\d+$/);
+      expect((await attachmentRange.arrayBuffer()).byteLength).toBe(1);
+
+      const retiredWorkspaceAttachmentRoute = await get(
         `/workspaces/${workspace.id}/sessions/${sessionId}/attachments/${generatedAttachmentId}`,
       );
-      expect(attachmentBeforeDelete.status).toBe(200);
+      expect(retiredWorkspaceAttachmentRoute.status).toBe(404);
 
       const deleteRes = await del(`/workspaces/${workspace.id}/sessions/${sessionId}`);
       expect(deleteRes.status).toBe(200);

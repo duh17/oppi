@@ -269,7 +269,7 @@ final class NativeMarkdownImageView: UIView {
         fetchWorkspaceFile: FetchWorkspaceFile?,
         fetchSessionFile: FetchSessionFile?
     ) async {
-        // Try session-scoped file path first for absolute markdown paths.
+        // Handle an internal session-file URL when supplied directly.
         if let components = SessionFileURL.parse(url), let fetchSessionFile {
             do {
                 let data = try await fetchSessionFile(

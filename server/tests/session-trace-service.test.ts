@@ -479,7 +479,7 @@ describe("SessionTraceService", () => {
     });
   });
 
-  it("opens a session-touched relative path that resolves through a workspace symlink", async () => {
+  it("serves a reported workspace-relative symlink that resolves outside the workspace", async () => {
     const dataDir = tempDir("oppi-session-raw-symlink-data-");
     const workspaceRoot = tempDir("oppi-session-raw-symlink-workspace-");
     const outsideRoot = tempDir("oppi-session-raw-symlink-outside-");
@@ -511,7 +511,7 @@ describe("SessionTraceService", () => {
     });
   });
 
-  it("still rejects session-touched relative paths that escape the workspace", async () => {
+  it("serves session-reported relative paths that escape the workspace", async () => {
     const dataDir = tempDir("oppi-session-raw-escape-data-");
     const workspaceRoot = tempDir("oppi-session-raw-escape-workspace-");
     const outsideRoot = tempDir("oppi-session-raw-escape-outside-");
@@ -535,10 +535,62 @@ describe("SessionTraceService", () => {
 
     await expect(
       service.getSessionRawFile({ workspace, session, path: escapePath }),
-    ).resolves.toEqual({ kind: "path-outside-workspaces" });
+    ).resolves.toMatchObject({
+      kind: "ok",
+      contentType: "text/plain; charset=utf-8",
+      size: 8,
+    });
   });
 
-  it("reports typed raw file misses for unchanged and sensitive paths", async () => {
+  it("blocks unreported paths outside the workspace", async () => {
+    const dataDir = tempDir("oppi-session-raw-unreported-data-");
+    const workspaceRoot = tempDir("oppi-session-raw-unreported-workspace-");
+    const outsideRoot = tempDir("oppi-session-raw-unreported-outside-");
+    const outsidePath = join(outsideRoot, "outside.txt");
+    writeFileSync(outsidePath, "outside\n", "utf8");
+    const workspace = makeWorkspace({ hostMount: workspaceRoot });
+    const { service } = makeService({ dataDir, workspace });
+
+    await expect(
+      service.getSessionRawFile({ workspace, session: makeSession(), path: outsidePath }),
+    ).resolves.toEqual({ kind: "path-outside-workspace" });
+  });
+
+  it("serves an absolute path reported in tool arguments", async () => {
+    const dataDir = tempDir("oppi-session-raw-tool-path-data-");
+    const workspaceRoot = tempDir("oppi-session-raw-tool-path-workspace-");
+    const outsideRoot = tempDir("oppi-session-raw-tool-path-outside-");
+    const outsidePath = join(outsideRoot, "image.png");
+    const tracePath = join(dataDir, "trace.jsonl");
+    writeFileSync(outsidePath, "image bytes", "utf8");
+    writeJsonl(tracePath, [
+      { type: "session", id: "pi-1", cwd: workspaceRoot },
+      {
+        type: "message",
+        id: "assistant-1",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-read",
+              name: "read",
+              arguments: { path: outsidePath },
+            },
+          ],
+        },
+      },
+    ]);
+    const workspace = makeWorkspace({ hostMount: workspaceRoot });
+    const session = makeSession({ piSessionFile: tracePath });
+    const { service } = makeService({ dataDir, workspace, storedSession: session });
+
+    await expect(
+      service.getSessionRawFile({ workspace, session, path: outsidePath }),
+    ).resolves.toMatchObject({ kind: "ok", size: 11 });
+  });
+
+  it("reports typed raw file misses and serves workspace files regardless of name", async () => {
     const dataDir = tempDir("oppi-session-raw-misses-");
     const workspaceRoot = tempDir("oppi-session-raw-misses-workspace-");
     writeFileSync(join(workspaceRoot, ".env"), "SECRET=yes\n", "utf8");
@@ -547,21 +599,17 @@ describe("SessionTraceService", () => {
 
     await expect(
       service.getSessionRawFile({ workspace, session: makeSession(), path: "notes/missing.txt" }),
-    ).resolves.toEqual({ kind: "path-not-in-session-changes" });
+    ).resolves.toEqual({ kind: "file-not-found" });
     await expect(
       service.getSessionRawFile({
         workspace,
-        session: makeSession({
-          changeStats: {
-            mutatingToolCalls: 1,
-            filesChanged: 1,
-            changedFiles: [".env"],
-            addedLines: 1,
-            removedLines: 0,
-          },
-        }),
+        session: makeSession(),
         path: ".env",
       }),
-    ).resolves.toEqual({ kind: "sensitive-path" });
+    ).resolves.toMatchObject({
+      kind: "ok",
+      contentType: "application/octet-stream",
+      size: 11,
+    });
   });
 });

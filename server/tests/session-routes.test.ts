@@ -349,6 +349,35 @@ describe("sessions module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "Workspace not found" });
   });
 
+  it("handles session attachment routes without workspace scope", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-generic-session-attachment-"));
+    try {
+      const ctx = {
+        storage: {
+          getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
+          getDataDir: vi.fn(() => dataDir),
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+      const handled = await dispatch({
+        method: "GET",
+        path: "/sessions/s1/attachments/missing",
+        url: new URL("http://localhost/sessions/s1/attachments/missing"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.body)).toEqual({ error: "Attachment not found" });
+      expect(ctx.storage.getSession).toHaveBeenCalledWith("s1");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns 404 for tool output with missing session", async () => {
     const ctx = {
       storage: {

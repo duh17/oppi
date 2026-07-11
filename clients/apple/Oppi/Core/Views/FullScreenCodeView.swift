@@ -8,8 +8,19 @@ final class ThinkingTraceStream {
         let isDone: Bool
     }
 
+    /// Minimum interval between observer deliveries while streaming. Thinking
+    /// traces arrive token-by-token; delivering every delta forces the
+    /// full-screen reader to reparse and re-measure the whole document per token
+    /// (O(N^2) over the stream) and previously drove a self-sizing layout deep
+    /// enough to overflow the stack. Coalescing to ~30 Hz keeps the streaming
+    /// tail visibly live while collapsing bursts into one render. The terminal
+    /// (isDone) snapshot always flushes immediately.
+    private static let minDeliveryInterval: Duration = .milliseconds(33)
+
     private var snapshotStorage: Snapshot
     private var observers: [UUID: (Snapshot) -> Void] = [:]
+    private var lastDeliveryTime: ContinuousClock.Instant?
+    private var pendingFlush: Task<Void, Never>?
 
     init(text: String, isDone: Bool) {
         snapshotStorage = Snapshot(text: text, isDone: isDone)
@@ -22,10 +33,40 @@ final class ThinkingTraceStream {
     func update(text: String, isDone: Bool) {
         let next = Snapshot(text: text, isDone: isDone)
         guard next != snapshotStorage else { return }
-
+        // Keep the latest snapshot readable synchronously even while a delivery
+        // is being coalesced (init and reopen read `snapshot` directly).
         snapshotStorage = next
+
+        // Completion settles the reader on the final text without waiting out the
+        // throttle window.
+        if isDone {
+            pendingFlush?.cancel()
+            pendingFlush = nil
+            deliver(next)
+            return
+        }
+
+        let now = ContinuousClock.now
+        if let last = lastDeliveryTime, now - last < Self.minDeliveryInterval {
+            // Within the throttle window: schedule a single trailing flush that
+            // delivers whatever the latest snapshot is when it fires.
+            guard pendingFlush == nil else { return }
+            let delay = Self.minDeliveryInterval - (now - last)
+            pendingFlush = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: delay)
+                guard let self, !Task.isCancelled else { return }
+                self.pendingFlush = nil
+                self.deliver(self.snapshotStorage)
+            }
+        } else {
+            deliver(next)
+        }
+    }
+
+    private func deliver(_ snapshot: Snapshot) {
+        lastDeliveryTime = ContinuousClock.now
         for observer in observers.values {
-            observer(next)
+            observer(snapshot)
         }
     }
 

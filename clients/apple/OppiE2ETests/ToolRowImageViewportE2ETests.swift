@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// Paired-server proof that read-tool image rows expand to the rendered image
@@ -9,13 +10,11 @@ final class ToolRowImageViewportE2ETests: E2ETestCase {
         _ = waitForWebSocketConnected(timeout: 20)
         let sessionId = waitForFocusedSessionId(timeout: 20)
         let toolId = "tool-row-image-e2e"
-        let imagePath = "tool-row-image-proof.svg"
-        let imageBase64 = Data(Self.imageViewportSVG.utf8).base64EncodedString()
+        let imagePath = "/tmp/tool-row-image-proof.png"
+        let imageData = try XCTUnwrap(Self.imageViewportPNG())
         let output = """
-        Read image file [image/svg+xml]
+        Read image file [image/png]
         [Image: original 300x180, displayed at 300x180. Multiply coordinates by 1.00 to map to original image.]
-
-        data:image/svg+xml;base64,\(imageBase64)
         """
 
         try sendE2EHarnessMessage(sessionId: sessionId, [
@@ -39,6 +38,17 @@ final class ToolRowImageViewportE2ETests: E2ETestCase {
             "type": "tool_end",
             "tool": "read",
             "toolCallId": toolId,
+            "details": [
+                "media": [[
+                    "kind": "image",
+                    "mimeType": "image/png",
+                    "fileName": "tool-row-image-proof.png",
+                    "sizeBytes": imageData.count,
+                    "width": 300,
+                    "height": 180,
+                    "base64": imageData.base64EncodedString(),
+                ]],
+            ],
         ])
         try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
 
@@ -82,13 +92,16 @@ final class ToolRowImageViewportE2ETests: E2ETestCase {
     }
 
     private static let imageViewportHeightToWidthRatio: CGFloat = 180.0 / 300.0
-    private static let imageViewportSVG = #"""
-    <svg xmlns="http://www.w3.org/2000/svg" width="300" height="180">
-      <rect width="300" height="180" fill="#111827"/>
-      <rect x="20" y="20" width="260" height="140" fill="#38bdf8"/>
-      <text x="150" y="102" text-anchor="middle" font-size="28" fill="white">E2E image</text>
-    </svg>
-    """#
+
+    private static func imageViewportPNG() -> Data? {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 180))
+        return renderer.image { context in
+            UIColor(red: 0.07, green: 0.09, blue: 0.15, alpha: 1).setFill()
+            context.cgContext.fill(CGRect(x: 0, y: 0, width: 300, height: 180))
+            UIColor(red: 0.22, green: 0.74, blue: 0.97, alpha: 1).setFill()
+            context.cgContext.fill(CGRect(x: 20, y: 20, width: 260, height: 140))
+        }.pngData()
+    }
 
     private func tapToolRowChrome(_ row: XCUIElement) {
         XCTAssertTrue(row.waitForExistence(timeout: 5), "Tool row did not exist before tap")

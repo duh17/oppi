@@ -1233,8 +1233,8 @@ actor APIClient: ClientLogUploading {
     ///
     /// Session attachments are server-owned artifacts (for example, voice_speak audio)
     /// stored in the Oppi data directory rather than the workspace checkout.
-    func fetchSessionAttachment(workspaceId: String, sessionId: String, attachmentId: String) async throws -> Data {
-        let url = try makeURL(pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "attachments", attachmentId])
+    func fetchSessionAttachment(sessionId: String, attachmentId: String) async throws -> Data {
+        let url = try makeURL(pathSegments: ["sessions", sessionId, "attachments", attachmentId])
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
         req.httpMethod = "GET"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -1247,7 +1247,7 @@ actor APIClient: ClientLogUploading {
         return data
     }
 
-    /// Fetch a file from the session's working directory.
+    /// Fetch a workspace file or an external path reported by the session.
     ///
     /// Returns the raw file content as a string. Used when the user taps a file path
     /// in a tool call row to view the current file on disk.
@@ -1261,7 +1261,7 @@ actor APIClient: ClientLogUploading {
         return text
     }
 
-    /// Fetch raw file data from the session's working directory (for binary files like images).
+    /// Fetch raw data for a workspace file or an external path reported by the session.
     func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
         return try await get(url: makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path))
     }
@@ -1354,16 +1354,33 @@ actor APIClient: ClientLogUploading {
         )
     }
 
+    /// Build a bearer-authenticated, range-capable media source for a file
+    /// addressable through the owning session's raw-file capability.
+    func makeSessionFileMediaSource(
+        workspaceId: String,
+        sessionId: String,
+        path: String,
+        contentTypeHint: String? = nil,
+        sourceFileExtension: String? = nil
+    ) throws -> AuthenticatedMediaSource {
+        AuthenticatedMediaSource(
+            url: try makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path),
+            authorizationHeaderValue: "Bearer \(token)",
+            tlsCertFingerprint: tlsCertFingerprint,
+            contentTypeHint: contentTypeHint,
+            sourceFileExtension: sourceFileExtension
+        )
+    }
+
     /// Build a bearer-authenticated media source for a session attachment.
     func makeSessionAttachmentMediaSource(
-        workspaceId: String,
         sessionId: String,
         attachmentId: String,
         contentTypeHint: String? = nil,
         sourceFileExtension: String? = nil
     ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
-            url: try makeURL(pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "attachments", attachmentId]),
+            url: try makeURL(pathSegments: ["sessions", sessionId, "attachments", attachmentId]),
             authorizationHeaderValue: "Bearer \(token)",
             tlsCertFingerprint: tlsCertFingerprint,
             contentTypeHint: contentTypeHint,
@@ -1389,10 +1406,10 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
     }
 
-    /// Fetch content of a file that was touched (written/edited) by a specific session.
+    /// Fetch content of a file reported by a specific session.
     ///
-    /// Works for both workspace-relative paths and absolute paths (e.g. ~/.agent/diagrams/).
-    /// The server validates the path exists in the session's `changeStats.changedFiles`.
+    /// Relative paths resolve against the session workspace or worktree. The server also accepts
+    /// exact external paths present in that session's changed-file metadata or tool arguments.
     func browseSessionTouchedFile(workspaceId: String, sessionId: String, path: String) async throws -> Data {
         return try await get(url: makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path))
     }

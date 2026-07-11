@@ -40,11 +40,7 @@ extension ChatTimelineCollectionHost.Controller {
                     try await client.fetchWorkspaceFile(workspaceID: workspaceID, path: path)
                 }
             },
-            fetchSessionFile: connection?.apiClient.map { client in
-                { workspaceID, sessionID, path in
-                    try await client.getSessionFileData(workspaceId: workspaceID, sessionId: sessionID, path: path)
-                }
-            }
+            fetchSessionFile: nil
         )
     }
 
@@ -188,61 +184,48 @@ extension ChatTimelineCollectionHost.Controller {
         )
 
         let interactionCtx = self.interactionContext
-        let attachmentFetcher: ((String) async throws -> Data)? = if let workspaceId, let apiClient = connection?.apiClient {
+        // Stored tool attachments belong to the session, not its workspace path.
+        // Keep their fetchers available while workspace metadata is still resolving.
+        let attachmentFetcher: ((String) async throws -> Data)? = connection.map { connection in
             { [sessionId] attachmentId in
-                try await apiClient.fetchSessionAttachment(
-                    workspaceId: workspaceId,
+                try await connection.fetchSessionAttachmentWhenReady(
                     sessionId: sessionId,
                     attachmentId: attachmentId
                 )
             }
-        } else {
-            nil
         }
-        let attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = if let workspaceId, let apiClient = connection?.apiClient {
+        let attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = connection.map { connection in
             { [sessionId] attachmentId, mimeType, sourceFileExtension in
-                try await apiClient.makeSessionAttachmentMediaSource(
-                    workspaceId: workspaceId,
+                try await connection.makeSessionAttachmentMediaSourceWhenReady(
                     sessionId: sessionId,
                     attachmentId: attachmentId,
                     contentTypeHint: mimeType,
                     sourceFileExtension: sourceFileExtension
                 )
             }
-        } else {
-            nil
         }
-        let sessionFileDataFetcher: ((String) async throws -> Data)? = if let workspaceId, let apiClient = connection?.apiClient {
-            { [sessionId] path in
-                try await apiClient.getSessionFileData(
+        // Session-file rows can be created from cached trace data before the API client or
+        // session workspace metadata is ready. Resolve both when the row actually fetches.
+        let sessionFileDataFetcher: ((String) async throws -> Data)? = connection.map { connection in
+            { [sessionId, workspaceId] path in
+                try await connection.fetchSessionFileDataWhenReady(
                     workspaceId: workspaceId,
                     sessionId: sessionId,
                     path: path
                 )
             }
-        } else {
-            nil
         }
-        let sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)?
-        if let workspaceId, let apiClient = connection?.apiClient {
-            let workspaceHostMount = connection?.workspaceStore.workspaces.first { $0.id == workspaceId }?.hostMount
-            sessionFileMediaSourceProvider = { path in
-                guard let streamPath = path.workspaceRelativePath(hostMount: workspaceHostMount) else {
-                    throw APIError.server(
-                        status: 400,
-                        message: "Video path is outside the workspace"
-                    )
-                }
-                let pathExtension = (streamPath as NSString).pathExtension
-                return try await apiClient.makeWorkspaceMediaSource(
+        let sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)? = connection.map { connection in
+            { [sessionId, workspaceId] path in
+                let pathExtension = (path as NSString).pathExtension
+                return try await connection.makeSessionFileMediaSourceWhenReady(
                     workspaceId: workspaceId,
-                    path: streamPath,
+                    sessionId: sessionId,
+                    path: path,
                     contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: pathExtension),
                     sourceFileExtension: pathExtension
                 )
             }
-        } else {
-            sessionFileMediaSourceProvider = nil
         }
         var configuration = ToolPresentationBuilder.build(
             itemID: itemID,

@@ -125,8 +125,7 @@ actor MacWorkspaceClient {
     func getSessionRawFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
         try await get(
             url: try makeURL(
-                pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "raw"],
-                appendedPath: path
+                pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "raw", path]
             )
         )
     }
