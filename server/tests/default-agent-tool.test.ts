@@ -24,6 +24,34 @@ describe("Default Agent Oppi tool command runner", () => {
     }
   });
 
+  it("exposes the progressive session inspection workflow in agent-readable help", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-tool-inspect-help-"));
+    try {
+      const result = await runOppiToolCommand({
+        dataDir,
+        args: ["session", "inspect", "--help"],
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.data).toMatchObject({
+        help: {
+          usage: expect.stringContaining("overview|outline|response|messages|summary|tools"),
+          notes: expect.arrayContaining([
+            expect.stringContaining("defaults to outline"),
+            expect.stringContaining("outline shows clipped messages and activity counts"),
+          ]),
+          examples: expect.arrayContaining([
+            expect.objectContaining({
+              command: "oppi session inspect sess_123 --view outline --json",
+            }),
+          ]),
+        },
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("dispatches allowed read commands through the JSON CLI modules", async () => {
     const requests: string[] = [];
     const api = createHttpServer((req, res) => {
@@ -132,7 +160,7 @@ describe("Default Agent Oppi tool command policy", () => {
       ["session", "search", "regression", "--workspace", "oppi"],
       ["session", "inspect", "sess-1", "--turns", "1-3", "--view", "messages"],
       ["session", "read", "sess-1", "--tail", "10"],
-      ["session", "messages", "sess-1"],
+      ["session", "inspect", "sess-1", "--view", "response"],
       ["session", "events", "sess-1"],
       ["session", "trace", "sess-1"],
       ["session", "changes", "sess-1"],

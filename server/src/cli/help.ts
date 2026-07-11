@@ -901,7 +901,6 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "create", summary: "launch a workspace session" },
       { name: "send <id>", summary: "send text to a session" },
       { name: "read <id>", summary: "show transcript-style trace entries" },
-      { name: "messages <id>", summary: "show the latest assistant response" },
       { name: "events <id>", summary: "read live catch-up events" },
       { name: "trace <id>", summary: "show raw trace entries" },
       { name: "search <query>", summary: "search session content" },
@@ -918,12 +917,14 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Saved Agents can be launched with 'oppi session create --agent <agent>'.",
-      "Use 'oppi session messages' for the latest assistant response, 'read' for transcript-like output, and 'get' for metadata.",
+      "Use 'inspect <id> --view response' for the latest assistant response, 'read' for transcript-like output, and 'get' for metadata.",
+      "Inspect history progressively: start with 'inspect <id> --view summary', use '--view outline' to choose turns, then read only those turns with '--view messages' or '--view tools'.",
+      "Use 'trace-outline' only when exact entry ids are needed, followed by 'trace-page --around-entry <id>' or 'tool-output'.",
     ],
     examples: [
       { command: "oppi session list --workspace ws_123" },
       { command: "oppi session create --help" },
-      { command: "oppi session read sess_123 --tail 50" },
+      { command: "oppi session inspect sess_123 --view outline" },
     ],
   },
   {
@@ -981,29 +982,6 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     examples: [{ command: "oppi session read sess_123 --tail 50 --json" }],
-  },
-  {
-    path: ["session", "messages"],
-    title: "Latest assistant response",
-    summary: "Print the latest non-empty assistant response without transcript or tool output.",
-    usage: "oppi session messages <id> [--workspace <workspace>] [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
-    flags: [
-      {
-        name: "--workspace",
-        value: "<workspace>",
-        summary: "validate that the session belongs to this workspace",
-      },
-      { name: "--json", summary: "write the standard JSON envelope" },
-    ],
-    notes: [
-      "Human output is the response text only, so shell tools such as tail can consume it directly.",
-      "JSON output also includes the assistant message count and resolved workspace identity.",
-    ],
-    examples: [
-      { command: "oppi session messages sess_123" },
-      { command: "oppi session messages sess_123 --workspace oppi --json" },
-    ],
   },
   {
     path: ["session", "events"],
@@ -1080,7 +1058,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Inspect session",
     summary: "Inspect selected turns from the canonical Oppi session trace API.",
     usage:
-      "oppi session inspect <id> [--turns <spec>] [--view overview|messages|summary|tools] [--json]",
+      "oppi session inspect <id> [--turns <spec>] [--view overview|outline|response|messages|summary|tools] [--json]",
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [
       {
@@ -1088,14 +1066,26 @@ const HELP_TOPICS: HelpTopic[] = [
         value: "<spec>",
         summary: "all, one turn, a range, or comma-separated turns",
       },
-      { name: "--view", value: "<view>", summary: "overview, messages, summary, or tools" },
+      {
+        name: "--view",
+        value: "<view>",
+        summary: "overview, outline, response, messages, summary, or tools",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
       "This command reads through the Oppi server and does not accept direct JSONL paths.",
       "Use 'oppi session search' first, then inspect the returned session id.",
+      "Without --view, inspect defaults to outline so bare inspection stays compact.",
+      "For progressive disclosure, start with the default outline; use summary for counts, then request messages or tools for the smallest relevant turn set.",
+      "Response returns the latest non-empty assistant response in the selected turns; outline shows clipped messages and activity counts per turn.",
     ],
-    examples: [{ command: "oppi session inspect sess_123 --turns 3-7 --view messages --json" }],
+    examples: [
+      { command: "oppi session inspect sess_123 --view summary --json" },
+      { command: "oppi session inspect sess_123 --view outline --json" },
+      { command: "oppi session inspect sess_123 --view response" },
+      { command: "oppi session inspect sess_123 --turns 3-7 --view messages --json" },
+    ],
   },
   {
     path: ["session", "resume"],
@@ -1189,11 +1179,19 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["session", "trace-outline"],
     title: "Session trace outline",
-    summary: "Read a compact trace outline for a session.",
+    summary: "Read a compact, jumpable event index for a session without full tool output.",
     usage: "oppi session trace-outline <id> [--json]",
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
-    examples: [{ command: "oppi session trace-outline sess_123 --json" }],
+    notes: [
+      "This is a low-level entry index, not a turn summary; large sessions can still return many rows.",
+      "Start with 'oppi session inspect <id> --view outline' unless exact entry ids are needed.",
+      "Pass an entry id to 'trace-page --around-entry' for bounded surrounding detail.",
+    ],
+    examples: [
+      { command: "oppi session inspect sess_123 --view outline --json" },
+      { command: "oppi session trace-outline sess_123 --json" },
+    ],
   },
   {
     path: ["agent"],

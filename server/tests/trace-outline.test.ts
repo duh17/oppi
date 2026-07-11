@@ -42,6 +42,19 @@ function messageEntry(
 }
 
 describe("trace outline projection", () => {
+  it("returns an explicit empty snapshot when no trace files exist", async () => {
+    const result = await readSessionTraceOutlineFromFiles([]);
+
+    expect(result.outline).toMatchObject({
+      traceVersion: "",
+      entries: [],
+      itemCount: 0,
+      sourceCount: 0,
+      jsonlBytes: 0,
+    });
+    expect(result.metrics.outlineEntryCount).toBe(0);
+  });
+
   it("projects a multi-file trace into small outline rows", async () => {
     const paths = tempJsonlFiles([
       [
