@@ -44,8 +44,8 @@ Workspace defaults are stored on each workspace as `defaultModel` in canonical `
 | ------------------------- | ------ | --------- | --------------------------------------------------------------------------------------------- |
 | `sessionIdleTimeoutMs`    | number | `600000`  | Stop sessions after this many ms of inactivity. 600000 = 10 min. Min: 1.                      |
 | `workspaceIdleTimeoutMs`  | number | `1800000` | Stop workspace runtimes after this many ms with no active sessions. 1800000 = 30 min. Min: 1. |
-| `maxSessionsPerWorkspace` | number | `20`      | Max concurrent sessions in a single workspace. Min: 1.                                        |
-| `maxSessionsGlobal`       | number | `40`      | Max concurrent sessions across all workspaces. Min: 1.                                        |
+| `maxSessionsPerWorkspace` | number | `100`     | Max concurrent sessions in a single workspace. Min: 1.                                        |
+| `maxSessionsGlobal`       | number | `200`     | Max concurrent sessions across all workspaces. Min: 1.                                        |
 
 Use `sessionIdleTimeoutMs` in config files.
 
@@ -170,8 +170,8 @@ Controls client-side preprocessing for image attachments before upload.
   "dataDir": "/Users/you/.config/oppi",
   "sessionIdleTimeoutMs": 600000,
   "workspaceIdleTimeoutMs": 1800000,
-  "maxSessionsPerWorkspace": 20,
-  "maxSessionsGlobal": 40,
+  "maxSessionsPerWorkspace": 100,
+  "maxSessionsGlobal": 200,
   "runtimePathEntries": ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"],
   "runtimeEnv": {},
   "oppiDocsPrompt": { "enabled": true },

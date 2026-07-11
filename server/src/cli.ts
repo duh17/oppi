@@ -762,7 +762,7 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   if (nonInteractive) {
     // Non-interactive: use flags or defaults
     port = parseInt(flags.port || "7749") || 7749;
-    maxSessionsGlobal = parseInt(flags["max-sessions"] || "40") || 40;
+    maxSessionsGlobal = parseInt(flags["max-sessions"] || "200") || 200;
 
     console.log(c.dim(`  Port:         ${port}`));
     console.log(c.dim("  Model:        Pi settings (~/.pi/agent/settings.json)"));
@@ -779,8 +779,8 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
     console.log(c.dim("    <workspace>/.pi/settings.json"));
     console.log("");
 
-    const maxSessionsStr = await prompt("Max concurrent sessions", "40");
-    maxSessionsGlobal = parseInt(maxSessionsStr) || 40;
+    const maxSessionsStr = await prompt("Max concurrent sessions", "200");
+    maxSessionsGlobal = parseInt(maxSessionsStr) || 200;
   }
 
   // Create storage (auto-creates dirs + default config)

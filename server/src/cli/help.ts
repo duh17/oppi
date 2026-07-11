@@ -102,7 +102,7 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--max-sessions",
         value: "<count>",
-        summary: "global concurrent session limit; defaults to 40",
+        summary: "global concurrent session limit; defaults to 200",
       },
       { name: "--yes", summary: "non-interactive setup with defaults" },
       { name: "--force", summary: "continue when config already exists" },

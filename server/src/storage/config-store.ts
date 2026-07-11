@@ -43,8 +43,8 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     dataDir,
     sessionIdleTimeoutMs: 10 * 60 * 1000,
     workspaceIdleTimeoutMs: 30 * 60 * 1000,
-    maxSessionsPerWorkspace: 20,
-    maxSessionsGlobal: 40,
+    maxSessionsPerWorkspace: 100,
+    maxSessionsGlobal: 200,
 
     runtimePathEntries: defaultRuntimePathEntries(),
     runtimeEnv: {},
