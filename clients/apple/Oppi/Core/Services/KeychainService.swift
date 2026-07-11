@@ -9,9 +9,9 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Keyc
 /// Items are stored in the shared App Group keychain access group so
 /// the widget extension can read them for Live Activity intent actions.
 ///
-/// Legacy items in the app's default keychain group remain readable.
-/// They are only migrated into the shared group when Live Activities are
-/// explicitly enabled (opt-in rollout).
+/// Legacy items in the app's default keychain group remain readable and are
+/// migrated into the shared group on load so app extensions can use existing
+/// pairings without asking the user to pair again.
 enum KeychainService {
     private static let service = SharedConstants.keychainService
     private static let accessGroup = SharedConstants.keychainAccessGroup
@@ -60,11 +60,9 @@ enum KeychainService {
     ///
     /// 1. Uses stored server IDs when available (fast path).
     /// 2. Discovery scans both shared-group and any-group keychain entries.
-    /// 3. Legacy entries are migrated to the shared group only when Live
-    ///    Activities are enabled.
+    /// 3. Legacy entries are migrated to the shared group for extension access.
     static func loadServers() -> [PairedServer] {
         syncUserDefaultsIndex()
-        let shouldMigrateLegacyItems = AppPreferences.LiveActivity.isEnabled
 
         let ids = SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey)
             ?? UserDefaults.standard.stringArray(forKey: SharedConstants.pairedServerIdsKey)
@@ -98,12 +96,12 @@ enum KeychainService {
                 discoveredById[server.id] = server
             }
 
-            if shouldMigrateLegacyItems, migrateToSharedGroupIfNeeded(server) {
+            if migrateToSharedGroupIfNeeded(server) {
                 migratedCount += 1
             }
         }
 
-        if shouldMigrateLegacyItems, migratedCount > 0 {
+        if migratedCount > 0 {
             logger.error("Found \(migratedCount) server(s) in legacy keychain group, re-saving to shared group")
         }
 
@@ -145,8 +143,7 @@ enum KeychainService {
 
         // Any-group fallback (legacy items)
         if let server = loadServerFromGroup(account: account, accessGroup: nil) {
-            if AppPreferences.LiveActivity.isEnabled,
-               migrateToSharedGroupIfNeeded(server) {
+            if migrateToSharedGroupIfNeeded(server) {
                 logger.error("Found server \(id.prefix(8), privacy: .public) in legacy group, re-saving to shared")
             }
             return server

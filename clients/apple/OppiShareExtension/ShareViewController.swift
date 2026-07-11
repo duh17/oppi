@@ -29,6 +29,7 @@ private final class SharePayloadAccumulator: @unchecked Sendable {
 
 final class ShareViewController: UIViewController {
     private var didStart = false
+    private var composerController: ShareQuickSessionComposerViewController?
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
@@ -144,126 +145,33 @@ final class ShareViewController: UIViewController {
             let payload = ShareQuickSessionPayload(
                 id: payloadId,
                 text: combinedText.isEmpty ? nil : combinedText,
-                files: snapshot.files,
-                createdAt: Date()
+                files: snapshot.files
             )
 
-            do {
-                try ShareQuickSessionPayload.store(payload)
-                self.finishOrRequestHostAppOpen(payloadId: payloadId)
-            } catch {
+            guard payload.text != nil || !payload.files.isEmpty else {
+                ShareQuickSessionPayload.removePayloadFiles(id: payloadId)
                 self.finish(cancelled: true)
+                return
             }
+            self.presentComposer(payload)
         }
     }
 
-    private func finishOrRequestHostAppOpen(payloadId: String) {
-        let extensionPointIdentifier = ExtensionContextOpenSupport.extensionPointIdentifier()
-        guard ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(
-            extensionPointIdentifier: extensionPointIdentifier
-        ) else {
-            showSavedMessage()
-            return
+    private func presentComposer(_ payload: ShareQuickSessionPayload) {
+        let composer = ShareQuickSessionComposerViewController(payload: payload) { [weak self] cancelled in
+            self?.finish(cancelled: cancelled)
         }
-
-        guard var components = URLComponents(string: "oppi://quick-session-share") else {
-            showSavedMessage()
-            return
-        }
-        components.queryItems = [URLQueryItem(name: "id", value: payloadId)]
-        guard let url = components.url, let extensionContext else {
-            showSavedMessage()
-            return
-        }
-
-        extensionContext.open(url) { [weak self] opened in
-            Task { @MainActor in
-                guard let self else { return }
-                if opened {
-                    self.finish(cancelled: false)
-                } else {
-                    self.showSavedMessage()
-                }
-            }
-        }
-    }
-
-    private func showSavedMessage() {
-        view.subviews.forEach { $0.removeFromSuperview() }
-
-        let imageView = UIImageView(image: UIImage(systemName: "checkmark.circle.fill"))
-        imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 44, weight: .semibold)
-        imageView.tintColor = .systemGreen
-        imageView.contentMode = .scaleAspectFit
-        imageView.isAccessibilityElement = false
-
-        let titleLabel = UILabel()
-        titleLabel.text = "Saved to Oppi"
-        titleLabel.font = .preferredFont(forTextStyle: .headline)
-        titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.textAlignment = .center
-        titleLabel.accessibilityTraits.insert(.header)
-
-        let messageLabel = UILabel()
-        messageLabel.text = "Open Oppi to continue in Quick Session."
-        messageLabel.font = .preferredFont(forTextStyle: .body)
-        messageLabel.adjustsFontForContentSizeCategory = true
-        messageLabel.textColor = .secondaryLabel
-        messageLabel.textAlignment = .center
-        messageLabel.numberOfLines = 0
-
-        let doneButton = UIButton(type: .system)
-        doneButton.configuration = .filled()
-        doneButton.configuration?.title = "Done"
-        doneButton.addTarget(self, action: #selector(finishSavedShare), for: .touchUpInside)
-        doneButton.accessibilityIdentifier = "share.saved.done"
-
-        let stack = UIStackView(arrangedSubviews: [imageView, titleLabel, messageLabel, doneButton])
-        stack.axis = .vertical
-        stack.alignment = .fill
-        stack.spacing = 12
-        stack.setCustomSpacing(20, after: messageLabel)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        let scrollView = UIScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.alwaysBounceVertical = false
-        view.addSubview(scrollView)
-
-        let scrollContentView = UIView()
-        scrollContentView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(scrollContentView)
-        scrollContentView.addSubview(stack)
-
+        composerController = composer
+        addChild(composer)
+        composer.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(composer.view)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-
-            scrollContentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            scrollContentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            scrollContentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            scrollContentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            scrollContentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-            scrollContentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.heightAnchor),
-
-            imageView.heightAnchor.constraint(equalToConstant: 52),
-            doneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            stack.centerXAnchor.constraint(equalTo: scrollContentView.centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: scrollContentView.centerYAnchor),
-            stack.topAnchor.constraint(greaterThanOrEqualTo: scrollContentView.topAnchor, constant: 20),
-            stack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollContentView.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: scrollContentView.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: scrollContentView.bottomAnchor, constant: -20),
-            stack.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
+            composer.view.topAnchor.constraint(equalTo: view.topAnchor),
+            composer.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            composer.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            composer.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-
-        UIAccessibility.post(notification: .screenChanged, argument: titleLabel)
-    }
-
-    @objc private func finishSavedShare() {
-        finish(cancelled: false)
+        composer.didMove(toParent: self)
     }
 
     private func finish(cancelled: Bool) {

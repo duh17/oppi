@@ -262,12 +262,7 @@ struct QuickSessionSheet: View {
         }
 
         if let pendingPayload = QuickSessionTrigger.shared.consumePendingPayload() {
-            switch pendingPayload {
-            case .share(let payload):
-                applySharedPayload(payload)
-            case .initial(let payload):
-                applyInitialPayload(payload)
-            }
+            applyInitialPayload(pendingPayload)
         }
 
         // Auto-focus the text input
@@ -276,19 +271,6 @@ struct QuickSessionSheet: View {
         // Ensure model cache is fresh for the selected server.
         if let api = selectedServerConnection().apiClient {
             await chatState.refreshModelCache(api: api)
-        }
-    }
-
-    private func applySharedPayload(_ payload: ShareQuickSessionPayload) {
-        defer { ShareQuickSessionPayload.removePayloadFiles(id: payload.id) }
-
-        appendInitialText(payload.text)
-
-        for file in payload.files {
-            guard let inboxURL = ShareQuickSessionPayload.inboxURL else { continue }
-            let url = inboxURL.appendingPathComponent(file.relativePath, isDirectory: false)
-            guard let data = try? Data(contentsOf: url) else { continue }
-            appendInitialAttachment(name: file.name, data: data, mimeType: file.mimeType)
         }
     }
 

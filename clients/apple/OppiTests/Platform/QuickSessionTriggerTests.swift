@@ -174,7 +174,7 @@ struct QuickSessionTriggerTests {
         trigger.requestPresentation(initialPayload: payload)
 
         #expect(trigger.presentationRequestID == before + 1)
-        #expect(trigger.consumePendingPayload() == .initial(payload))
+        #expect(trigger.consumePendingPayload() == payload)
         #expect(trigger.consumePendingPayload() == nil)
         trigger.isPresented = false
     }
@@ -200,35 +200,8 @@ struct QuickSessionTriggerTests {
 
         trigger.requestPresentation(initialPayload: second)
 
-        #expect(trigger.consumePendingPayload() == .initial(second))
+        #expect(trigger.consumePendingPayload() == second)
         trigger.isPresented = false
-    }
-
-    @Test func latestInitialRequestReplacesPendingSharePayload() throws {
-        let trigger = QuickSessionTrigger.shared
-        trigger.isPresented = false
-        _ = trigger.consumePendingPayload()
-        let sharePayload = ShareQuickSessionPayload(
-            id: "share-replaced-test",
-            text: "Shared first",
-            files: [],
-            createdAt: Date(timeIntervalSince1970: 0)
-        )
-        try ShareQuickSessionPayload.store(sharePayload)
-        defer {
-            let defaults = SharedConstants.sharedDefaults
-            defaults.removeObject(forKey: ShareQuickSessionPayload.defaultsKey(for: sharePayload.id))
-            defaults.removeObject(forKey: ShareQuickSessionPayload.pendingPayloadIdKey)
-            defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
-            _ = trigger.consumePendingPayload()
-            trigger.isPresented = false
-        }
-        trigger.checkForPendingRequest()
-
-        let latestPayload = QuickSessionInitialPayload(text: "Shortcut wins", attachments: [])
-        trigger.requestPresentation(initialPayload: latestPayload)
-
-        #expect(trigger.consumePendingPayload() == .initial(latestPayload))
     }
 
     @Test func ignoredPresentationDoesNotQueueInitialPayload() {
@@ -246,72 +219,6 @@ struct QuickSessionTriggerTests {
         trigger.isPresented = false
     }
 
-    @Test func checkForPendingRequestConsumesStoredSharePayload() throws {
-        let trigger = QuickSessionTrigger.shared
-        trigger.isPresented = false
-        _ = trigger.consumePendingPayload()
-
-        let payload = ShareQuickSessionPayload(
-            id: "share-payload-test",
-            text: "Summarize this page",
-            files: [
-                ShareQuickSessionPayload.SharedFile(
-                    name: "notes.pdf",
-                    relativePath: "share-payload-test/notes.pdf",
-                    mimeType: "application/pdf"
-                )
-            ],
-            createdAt: Date(timeIntervalSince1970: 0)
-        )
-        try ShareQuickSessionPayload.store(payload)
-        defer {
-            let defaults = SharedConstants.sharedDefaults
-            defaults.removeObject(forKey: ShareQuickSessionPayload.defaultsKey(for: payload.id))
-            defaults.removeObject(forKey: ShareQuickSessionPayload.pendingPayloadIdKey)
-            defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
-            _ = trigger.consumePendingPayload()
-            trigger.isPresented = false
-        }
-
-        let before = trigger.presentationRequestID
-
-        trigger.checkForPendingRequest()
-
-        #expect(trigger.presentationRequestID == before + 1)
-        #expect(trigger.consumePendingPayload() == .share(payload))
-        #expect(SharedConstants.sharedDefaults.bool(forKey: SharedConstants.quickSessionPendingKey) == false)
-        #expect(SharedConstants.sharedDefaults.string(forKey: ShareQuickSessionPayload.pendingPayloadIdKey) == nil)
-        #expect(ShareQuickSessionPayload.load(id: payload.id) == nil)
-    }
-}
-
-@Suite("ExtensionContextOpenSupport")
-struct ExtensionContextOpenSupportTests {
-    @Test func shareExtensionPointCannotOpenContainingAppOnIOS() {
-        #expect(
-            ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(
-                extensionPointIdentifier: ExtensionContextOpenSupport.shareServicesExtensionPointIdentifier
-            ) == false
-        )
-    }
-
-    @Test func documentedOpenExtensionPointsCanOpenContainingAppOnIOS() {
-        #expect(
-            ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(
-                extensionPointIdentifier: ExtensionContextOpenSupport.todayExtensionPointIdentifier
-            )
-        )
-        #expect(
-            ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(
-                extensionPointIdentifier: ExtensionContextOpenSupport.iMessageExtensionPointIdentifier
-            )
-        )
-    }
-
-    @Test func missingOrUnknownExtensionPointCannotOpenContainingAppOnIOS() {
-        #expect(!ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(extensionPointIdentifier: nil))
-        #expect(!ExtensionContextOpenSupport.supportsOpeningContainingAppOnIOS(extensionPointIdentifier: "com.apple.ui-services"))
-    }
 }
 
 // MARK: - ThinkingLevelEnum (Intent type)
@@ -542,7 +449,7 @@ struct StartQuickSessionIntentTests {
 
         #expect(
             trigger.consumePendingPayload()
-                == .initial(QuickSessionInitialPayload(text: "Describe this workspace", attachments: []))
+                == QuickSessionInitialPayload(text: "Describe this workspace", attachments: [])
         )
         trigger.isPresented = false
     }
@@ -559,11 +466,7 @@ struct StartQuickSessionIntentTests {
 
         _ = try await intent.perform()
 
-        let pending = trigger.consumePendingPayload()
-        guard case .initial(let payload) = pending else {
-            Issue.record("Expected an initial Quick Session payload")
-            return
-        }
+        let payload = try #require(trigger.consumePendingPayload())
         #expect(payload.text == nil)
         #expect(payload.attachments == [
             QuickSessionInitialPayload.Attachment(

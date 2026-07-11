@@ -235,6 +235,13 @@ File previews and media playback use authenticated HTTP routes. The focused sess
 - File browser views use workspace path/list/raw endpoints and client-side cached file indexes for search.
 - Sharing and export code uses redaction and file-rendering services outside the transport layer.
 
+Quick Session intake has two paths:
+
+- `StartQuickSessionIntent` runs in the main app and can preload optional text plus one image from Shortcuts. The image must have an image representation and fit the composer's upload limit.
+- The iOS share extension collects text, URLs, images, and files into an app-group staging directory, presents `ShareQuickSessionComposerViewController`, loads paired-server workspaces through `ShareQuickSessionSender`, and starts the selected session directly from the extension. Uploads are file-backed, and staged files are deleted on success or cancellation.
+
+`QuickSessionTrigger` owns the latest accepted main-app payload from Shortcuts and the Control widget presentation signal. A request received while the sheet is already open is ignored. Share-extension drafts do not enter the main app or merge with these requests.
+
 ## Client boundary rules current code
 
 These rules are enforced by `server/scripts/check-architecture-boundaries.ts` during server checks and the Apple build phase:
@@ -274,4 +281,5 @@ Keep these high-churn client modules small and explicit:
 | Timeline rendering          | `clients/apple/Oppi/Features/Chat/Timeline/**`, `ChatTimelineCollectionView.swift`                                                                                    |
 | Extension UI                | `ServerConnection+Ask.swift`, `ServerConnection+MessageRouter.swift`, `clients/apple/OppiCore/Stores/AskRequestStore.swift`, `ExtensionSurfacePanel.swift`, `ExtensionUINativeSurface.swift` |
 | File browser and media      | `APIClient.swift`, `AuthenticatedMediaSource.swift`, `AuthenticatedMediaPlayback.swift`, `InlineMediaPlayback.swift`, `FileBrowserView.swift`, `RemoteFileView.swift` |
+| Quick Session intake        | Main app: `QuickSessionTrigger.swift`, `StartQuickSessionIntent.swift`, `QuickSessionSheet.swift`; share extension: `ShareViewController.swift`, `ShareQuickSessionComposerViewController.swift`, `ShareQuickSessionSender.swift` |
 | Protocol mirrors            | `clients/apple/OppiCore/Models/ClientMessage.swift`, `ServerMessage.swift`, `AppEventMessage.swift`                                                                   |
