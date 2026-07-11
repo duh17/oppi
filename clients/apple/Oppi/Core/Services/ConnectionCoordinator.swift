@@ -424,6 +424,28 @@ final class ConnectionCoordinator {
 
     // MARK: - Multi-Server Refresh
 
+    /// Refresh workspace + session data for one paired server.
+    ///
+    /// Server-scoped surfaces use this instead of waiting on every paired host.
+    /// A slow or outdated inactive server must not delay the selected server's inbox.
+    func refreshServer(_ serverId: String, force: Bool = true) async {
+        guard let server = serverStore.server(for: serverId) else {
+            logger.error("Cannot refresh unknown server \(serverId.prefix(16), privacy: .public)")
+            return
+        }
+
+        let connection = ensureConnection(for: server)
+        guard connection !== disconnectedSentinel, connection.apiClient != nil else {
+            logger.error("Cannot refresh server without a configured API client: \(serverId.prefix(16), privacy: .public)")
+            let failedConnection = connections[serverId] ?? connection
+            failedConnection.workspaceStore.markSyncFailed()
+            failedConnection.sessionStore.markSyncFailed()
+            return
+        }
+
+        await connection.refreshWorkspaceAndSessionLists(force: force)
+    }
+
     /// Refresh workspace + session data from ALL paired servers.
     ///
     /// Uses single-flight coalescing: concurrent callers share one refresh
@@ -447,32 +469,19 @@ final class ConnectionCoordinator {
     }
 
     private func _refreshAllServersImpl() async {
-        // Ensure connections exist for all paired servers before iterating.
-        // Handles the race where this runs before prepareAllConnections() during
-        // startup (WorkspaceHomeView .task vs OppiApp .task).
+        // Keep refresh order deterministic. `refreshServer` creates connections
+        // as needed, while selected-server callers avoid this fan-out entirely.
         for server in serverStore.servers {
-            ensureConnection(for: server)
-        }
-
-        for (serverId, conn) in connections {
-            guard let api = conn.apiClient else { continue }
-
-            // Workspace + skill catalogs
-            guard serverStore.server(for: serverId) != nil else { continue }
-            await conn.workspaceStore.loadServer(serverId: serverId, api: api)
-
-            // Sessions: use workspace-scoped snapshots instead of the legacy global `/sessions` endpoint.
-            await conn.refreshSessionList(force: true)
+            await refreshServer(server.id, force: true)
         }
     }
 
     /// Refresh non-focused servers (called on foreground recovery).
     /// The focused server is handled by `ServerConnection.reconnectIfNeeded()`.
     func refreshInactiveServers() async {
-        for (serverId, conn) in connections where serverId != activeServerId {
-            guard let api = conn.apiClient else { continue }
-            await conn.workspaceStore.loadServer(serverId: serverId, api: api)
-            await conn.refreshSessionList(force: true)
+        for (serverId, connection) in connections where serverId != activeServerId {
+            guard connection.apiClient != nil else { continue }
+            await connection.refreshWorkspaceAndSessionLists(force: true)
         }
     }
 

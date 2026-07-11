@@ -19,6 +19,7 @@ struct WorkspaceAdaptiveRootView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .modifier(WorkspaceCreationIntakeModifier())
             .onAppear {
                 applyPresentation(presentation)
             }
@@ -242,6 +243,135 @@ private struct WorkspaceUtilityDestinationView: View {
                 description: "This management screen is hidden in this build."
             )
         }
+    }
+}
+
+private struct WorkspaceCreationIntakeModifier: ViewModifier {
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(ServerStore.self) private var serverStore
+    @Environment(AppNavigation.self) private var navigation
+
+    @State private var createSheetContext: WorkspaceCreateSheetContext?
+    @State private var pendingCreatedWorkspaceTarget: WorkspaceNavTarget?
+    @State private var guidedCreateConsumed = false
+
+    private var servers: [PairedServer] {
+        serverStore.servers
+    }
+
+    private var selectedServer: PairedServer? {
+        if let activeServerId = coordinator.activeServerId,
+           let server = servers.first(where: { $0.id == activeServerId }) {
+            return server
+        }
+        return servers.first
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $createSheetContext, onDismiss: handleCreateSheetDismissed) { context in
+                WorkspaceCreateView(
+                    server: context.server,
+                    presentation: context.presentation,
+                    prefillName: context.prefillName,
+                    prefillPath: context.prefillPath,
+                    onCreate: { workspace in
+                        guard context.openWorkspaceAfterCreate else { return }
+                        pendingCreatedWorkspaceTarget = WorkspaceNavTarget(
+                            serverId: context.server.id,
+                            workspace: workspace
+                        )
+                    }
+                )
+            }
+            .task(id: coordinator.activeServerId) {
+                await processWorkspaceCreationIntake()
+            }
+            .onChange(of: navigation.pendingWorkspaceDeepLink != nil) { _, hasPending in
+                guard hasPending else { return }
+                consumeWorkspaceDeepLinkIfNeeded()
+            }
+            .onChange(of: navigation.shouldGuideWorkspaceCreation) { _, shouldGuide in
+                guard shouldGuide else { return }
+                Task { await presentGuidedWorkspaceCreationIfNeeded() }
+            }
+    }
+
+    @MainActor
+    private func processWorkspaceCreationIntake() async {
+        if consumeWorkspaceDeepLinkIfNeeded() {
+            return
+        }
+        await presentGuidedWorkspaceCreationIfNeeded()
+    }
+
+    @MainActor
+    @discardableResult
+    private func consumeWorkspaceDeepLinkIfNeeded() -> Bool {
+        guard let payload = navigation.pendingWorkspaceDeepLink else { return false }
+        navigation.pendingWorkspaceDeepLink = nil
+        navigation.shouldGuideWorkspaceCreation = false
+
+        let server: PairedServer?
+        if let fingerprint = payload.serverFingerprint {
+            server = servers.first { WorkspaceDeepLink.fingerprintsMatch($0.id, fingerprint) }
+        } else {
+            server = selectedServer ?? servers.first
+        }
+
+        guard let server else {
+            coordinator.activeConnection.extensionToast = "Server not found for this workspace link"
+            return true
+        }
+        guard coordinator.switchToServer(server) else {
+            coordinator.activeConnection.extensionToast = "Could not open the server for this workspace link"
+            return true
+        }
+
+        navigation.showAllWorkspaceSessions()
+        createSheetContext = WorkspaceCreateSheetContext(
+            server: server,
+            presentation: .standard,
+            openWorkspaceAfterCreate: false,
+            prefillName: payload.name,
+            prefillPath: payload.path
+        )
+        return true
+    }
+
+    @MainActor
+    private func presentGuidedWorkspaceCreationIfNeeded() async {
+        guard navigation.shouldGuideWorkspaceCreation, !guidedCreateConsumed else { return }
+        guard let server = selectedServer else { return }
+
+        await coordinator.refreshServer(server.id, force: true)
+
+        guard navigation.shouldGuideWorkspaceCreation, !guidedCreateConsumed else { return }
+        guard coordinator.activeServerId == server.id else { return }
+        guard let connection = coordinator.connection(for: server.id),
+              !connection.workspaceStore.lastSyncFailed else { return }
+        let workspaces = connection.workspaceStore.workspaces
+        guard workspaces.isEmpty else {
+            navigation.shouldGuideWorkspaceCreation = false
+            return
+        }
+
+        guidedCreateConsumed = true
+        navigation.shouldGuideWorkspaceCreation = false
+        navigation.showAllWorkspaceSessions()
+        createSheetContext = WorkspaceCreateSheetContext(
+            server: server,
+            presentation: .guidedFirstWorkspace,
+            openWorkspaceAfterCreate: true,
+            prefillName: nil,
+            prefillPath: nil
+        )
+    }
+
+    private func handleCreateSheetDismissed() {
+        guard let target = pendingCreatedWorkspaceTarget else { return }
+        pendingCreatedWorkspaceTarget = nil
+        navigation.openWorkspace(target)
     }
 }
 

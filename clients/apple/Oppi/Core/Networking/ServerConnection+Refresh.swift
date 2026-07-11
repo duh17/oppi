@@ -102,8 +102,10 @@ extension ServerConnection {
 
             self.sessionStore.markSyncStarted()
             do {
-                if !self.workspaceStore.isLoaded || self.workspaceStore.workspaces.isEmpty {
-                    await self.workspaceStore.load(api: apiClient)
+                // An authoritative empty catalog is still loaded. Retry only when
+                // no catalog has ever succeeded, and stay on the shared single-flight path.
+                if !self.workspaceStore.isLoaded {
+                    await self.refreshWorkspaceCatalog(force: true)
                 }
 
                 let workspaces = self.workspaceStore.workspaces

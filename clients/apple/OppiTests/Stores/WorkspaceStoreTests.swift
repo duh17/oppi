@@ -290,6 +290,18 @@ struct ServerBadgeConnectionStateTests {
 
         #expect(ServerBadgeConnectionState(presentation) == .disconnected)
     }
+
+    @Test func eitherCatalogOrSessionFailureMapsToUpdateFailedBadge() {
+        let presentation = WorkspaceServerStatusPresentation.derive(
+            freshnessState: .live,
+            freshnessLabel: "Updated now",
+            isTransportConnected: true,
+            hasCachedCatalog: true
+        )
+
+        #expect(ServerBadgeConnectionState(presentation, hasSyncFailure: true) == .syncFailed)
+        #expect(ServerBadgeConnectionState(presentation, hasSyncFailure: false) == .connected)
+    }
 }
 
 typealias WorkspaceStoreMockURLProtocol = TestURLProtocol

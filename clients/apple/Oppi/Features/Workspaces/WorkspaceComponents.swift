@@ -129,6 +129,7 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
     case connected
     case connecting
     case disconnected
+    case syncFailed
 
     init(_ transportStatus: WebSocketClient.Status?) {
         switch transportStatus {
@@ -141,7 +142,12 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
         }
     }
 
-    init(_ presentation: WorkspaceServerStatusPresentation) {
+    init(_ presentation: WorkspaceServerStatusPresentation, hasSyncFailure: Bool = false) {
+        if hasSyncFailure {
+            self = .syncFailed
+            return
+        }
+
         switch presentation.state {
         case .live, .stale:
             self = .connected
@@ -157,6 +163,7 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
         case .connected: return "Connected"
         case .connecting: return "Connecting"
         case .disconnected: return "Disconnected"
+        case .syncFailed: return "Update Failed"
         }
     }
 
@@ -164,7 +171,7 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
         switch self {
         case .connected: return .themeGreen
         case .connecting: return .themeBlue
-        case .disconnected: return .themeRed
+        case .disconnected, .syncFailed: return .themeRed
         }
     }
 }
