@@ -38,7 +38,35 @@ Example:
 
 ## [Unreleased]
 
-No unreleased public changes yet.
+### Added
+
+- **Client:** Work in progress: reworking the Mac app into an interactive Oppi client for browsing workspaces, running sessions, and reviewing changes. It is not ready for general use yet.
+
+## [0.44.0] - 2026-07-11
+
+### Notes
+
+- Coordinated release prep for iOS TestFlight build 41 and `oppi-server@0.44.0`.
+- Native Agent and Schedule management screens remain gated off in this build.
+
+### Added
+
+- **Client:** iPhone and iPad now open to a sessions-first inbox. Sessions needing attention and sessions still working stay prominent, recent stopped sessions remain available, and a workspace sidebar or drawer opens workspace-specific sessions, files, and settings without replacing the inbox.
+- **Server:** Expanded the `oppi` command line for session, workspace, and worktree operations. It can launch and manage sessions, steer or queue messages, abort turns, answer pending dialogs, watch multiple sessions, and progressively search or inspect history without loading the full trace.
+- **Client:** Quick Session intake now accepts text or images from Shortcuts, while the iOS share extension can send shared text, links, images, and files directly from its own composer.
+
+### Changed
+
+- **Client/Server:** Session working, waiting, finished, and failed states can be reconstructed after reconnects and server restarts instead of depending only on the live connection.
+- **Protocol/Client/Server:** Stored attachments and tool-reported files now load through the session that owns them, including exact external paths reported during that session. Apple clients and servers must be updated together for these routes.
+
+### Fixed
+
+- **Client/Server:** Mirrored terminal sessions recover the correct worktree and replay unanswered questions or approvals after reconnecting.
+- **Client:** Recovered prompt responses resume stopped sessions before sending, and deferred media rows populate when their workspace context arrives.
+- **Client:** Following the system appearance now loads the correct light or dark theme and recolors existing code, diffs, tool output, and session rows when appearance changes.
+- **Client:** Relative images and links in session file previews resolve from the file being viewed, including in full screen.
+- **Server:** Skill and extension toggles now respect Pi's workspace project settings, so changing a resource in one workspace no longer changes it globally for other workspaces.
 
 ## [0.43.1] - 2026-06-30
 
@@ -221,7 +249,8 @@ No unreleased public changes yet.
 
 - Last public GitHub release before adopting this changelog. See the GitHub release and commit history for details.
 
-[Unreleased]: https://github.com/duh17/oppi/compare/v0.43.1...HEAD
+[Unreleased]: https://github.com/duh17/oppi/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/duh17/oppi/compare/v0.43.1...v0.44.0
 [0.43.1]: https://github.com/duh17/oppi/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/duh17/oppi/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/duh17/oppi/compare/v0.41.0...v0.42.0
