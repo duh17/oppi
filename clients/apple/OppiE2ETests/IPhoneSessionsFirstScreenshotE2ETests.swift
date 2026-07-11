@@ -8,6 +8,7 @@ import XCTest
 @MainActor
 final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     private let anchorWorkspaceName = "e2e-workspace"
+    private let stoppedIncognitoSessionName = "Hidden Incognito Session"
 
     override var e2eLaunchesSessionsInboxOnly: Bool {
         true
@@ -24,6 +25,28 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             try createLabSessions(count: 1, workspaceId: anchorWorkspaceId, stopAfterCreate: false)
             let secondWorkspaceId = try createLabWorkspace(named: "Sidebar Review Queue")
             try createLabSessions(count: 1, workspaceId: secondWorkspaceId, stopAfterCreate: false)
+        } else if name.contains("testIPhoneRecentStoppedSessionsInboxScreenshot") {
+            try createLabSessions(count: 1, workspaceId: anchorWorkspaceId, stopAfterCreate: true)
+            let response = try e2eLabAPIJSON(
+                method: "POST",
+                path: "/workspaces/\(anchorWorkspaceId)/sessions",
+                body: [
+                    "name": stoppedIncognitoSessionName,
+                    "ephemeral": true,
+                ]
+            )
+            let session = try XCTUnwrap(
+                response["session"] as? [String: Any],
+                "Incognito session create response missing session"
+            )
+            let sessionId = try XCTUnwrap(
+                session["id"] as? String,
+                "Incognito session create response missing id"
+            )
+            _ = try e2eLabAPIJSON(
+                method: "POST",
+                path: "/workspaces/\(anchorWorkspaceId)/sessions/\(sessionId)/stop"
+            )
         } else if name.contains("testIPhoneAllSessionsSidebarEdgeSwipeScreenshot") {
             _ = try createLabWorkspace(named: "Sidebar Review Queue")
         } else if name.contains("testIPhoneWorkspaceScopedSeparateControlsScreenshot") {
@@ -57,6 +80,42 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
 
         try saveLabScreenshot(name: "iphone-all-active-sessions-inbox-e2e")
+    }
+
+    func testIPhoneRecentStoppedSessionsInboxScreenshot() throws {
+        XCUIDevice.shared.orientation = .portrait
+
+        let sessionList = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
+        sessionList.swipeDown()
+
+        let stoppedHeader = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "workspace.sessionList.stopped-day-")
+        ).firstMatch
+        XCTAssertTrue(stoppedHeader.waitForExistence(timeout: 15), "Recent stopped section did not appear")
+
+        let stoppedRowTitle = app.staticTexts.matching(identifier: "Screenshot Lab Session 1").firstMatch
+        XCTAssertTrue(stoppedRowTitle.waitForExistence(timeout: 10), "Today's stopped session was not expanded")
+        XCTAssertFalse(
+            app.staticTexts[stoppedIncognitoSessionName].exists,
+            "Stopped incognito session should disappear from All Sessions"
+        )
+        XCTAssertTrue(
+            waitForStableFrame(of: stoppedRowTitle, timeout: 2),
+            "Stopped session row did not settle before screenshot capture"
+        )
+        try saveLabScreenshot(name: "iphone-recent-stopped-sessions-inbox-e2e")
+
+        tap(stoppedHeader, named: "recent stopped section")
+        let rowCollapsed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: stoppedRowTitle
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [rowCollapsed], timeout: 5),
+            .completed,
+            "Recent stopped section did not collapse"
+        )
     }
 
     func testIPhoneAllSessionsSidebarEdgeSwipeScreenshot() throws {
@@ -170,6 +229,32 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         }
         XCTAssertTrue(lastWorkspace.isHittable, "Workspace sidebar did not scroll to the final workspace")
         tap(app.buttons["workspace.sidebar.close"], named: "workspace sidebar close button")
+    }
+
+    private func waitForStableFrame(of element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        var previousFrame: CGRect?
+        var stableSampleCount = 0
+
+        while Date() < deadline {
+            if element.exists {
+                let frame = element.frame
+                if !frame.isEmpty {
+                    if frame == previousFrame {
+                        stableSampleCount += 1
+                        if stableSampleCount >= 2 {
+                            return true
+                        }
+                    } else {
+                        previousFrame = frame
+                        stableSampleCount = 0
+                    }
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+
+        return false
     }
 
     private func openAnchorWorkspace() {
