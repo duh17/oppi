@@ -145,25 +145,23 @@ enum ServerMessageEffects {
 
         switch message {
         case .state(let session) where session.status.isTerminal:
-            let subjectSessionId = session.id
-            if isFocusedSession && subjectSessionId == sessionId {
+            if isFocusedSession && session.id == sessionId {
                 effects.stopSilenceWatchdog = true
             }
             if session.status != .ready {
-                effects.clearAskSessionIds.insert(subjectSessionId)
-                effects.clearExtensionDialogSessionIds.insert(subjectSessionId)
-                effects.clearExtensionSurfaceSessionIds.insert(subjectSessionId)
+                effects.clearAskSessionIds.insert(session.id)
+                effects.clearExtensionDialogSessionIds.insert(session.id)
+                effects.clearExtensionSurfaceSessionIds.insert(session.id)
             }
 
         case .sessionSummary(let summary) where summary.status.isTerminal:
-            let subjectSessionId = summary.id
-            if isFocusedSession && subjectSessionId == sessionId {
+            if isFocusedSession && summary.id == sessionId {
                 effects.stopSilenceWatchdog = true
             }
             if summary.status != .ready {
-                effects.clearAskSessionIds.insert(subjectSessionId)
-                effects.clearExtensionDialogSessionIds.insert(subjectSessionId)
-                effects.clearExtensionSurfaceSessionIds.insert(subjectSessionId)
+                effects.clearAskSessionIds.insert(summary.id)
+                effects.clearExtensionDialogSessionIds.insert(summary.id)
+                effects.clearExtensionSurfaceSessionIds.insert(summary.id)
             }
 
         case .sessionEnded:

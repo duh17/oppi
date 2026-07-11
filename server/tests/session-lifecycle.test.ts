@@ -1176,11 +1176,13 @@ describe("SessionManager event translation", () => {
     expect(session.status).toBe("busy");
   });
 
-  it("agent_end sets session status to ready", () => {
+  it("keeps the session busy at agent_end until agent_settled", () => {
     const { manager, session } = makeManagerHarness({ status: "busy" });
 
     feedEvent(manager, "s1", { type: "agent_end" });
+    expect(session.status).toBe("busy");
 
+    feedEvent(manager, "s1", { type: "agent_settled" });
     expect(session.status).toBe("ready");
   });
 
@@ -1888,13 +1890,16 @@ describe("handlePiEvent event translation", () => {
     expect(session.status).toBe("busy");
   });
 
-  it("updates session status to ready on agent_end", () => {
-    const { manager, session } = makeManagerHarness();
+  it("updates session status to ready on agent_settled", () => {
+    const { manager, session, events } = makeManagerHarness();
     session.status = "busy";
 
     feedEvent(manager, "s1", { type: "agent_end" });
+    expect(session.status).toBe("busy");
 
+    feedEvent(manager, "s1", { type: "agent_settled" });
     expect(session.status).toBe("ready");
+    expect(events.some((event) => event.type === "agent_settled")).toBe(true);
   });
 
   it("broadcasts session summary after status-changing events", () => {

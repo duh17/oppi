@@ -124,6 +124,7 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     // Agent lifecycle
     agent_start: { type: "agent_start" },
     agent_end: { type: "agent_end" },
+    agent_settled: { type: "agent_settled" },
     message_end: {
       type: "message_end",
       role: "assistant",
@@ -421,6 +422,7 @@ describe("protocol snapshots", () => {
       "error",
       "agent_start",
       "agent_end",
+      "agent_settled",
       "message_end",
       "text_delta",
       "thinking_delta",

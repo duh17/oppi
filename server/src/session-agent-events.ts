@@ -52,6 +52,7 @@ export class SessionAgentEventCoordinator {
   private static readonly INFO_LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
     "agent_start",
     "agent_end",
+    "agent_settled",
     "compaction_start",
     "compaction_end",
     "auto_retry_start",
@@ -69,6 +70,7 @@ export class SessionAgentEventCoordinator {
   private static readonly SUMMARY_BROADCAST_TYPES = new Set<AgentSessionEvent["type"]>([
     "agent_start",
     "agent_end",
+    "agent_settled",
     "session_info_changed",
   ]);
 

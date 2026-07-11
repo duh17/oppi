@@ -38,6 +38,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "./agent-launch-service.js";
 import { isDefaultAgentId } from "./default-agent.js";
 import { createDefaultAgentExtensionFactory } from "./default-agent-tool.js";
+import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -454,12 +455,17 @@ export class SdkBackend {
         agentDir: runtimeAgentDir,
         settingsManager,
         appendSystemPrompt: baseAppendSystemPrompt,
+        extensionFactories: [
+          createLifecycleJournalExtension(),
+          ...(isDefaultAgentSession
+            ? [createDefaultAgentExtensionFactory({ dataDir: config.dataDir })]
+            : []),
+        ],
         ...(isDefaultAgentSession
           ? {
               noExtensions: true,
               noSkills: true,
               noPromptTemplates: true,
-              extensionFactories: [createDefaultAgentExtensionFactory({ dataDir: config.dataDir })],
             }
           : { additionalSkillPaths }),
         ...(agentDefinition?.resources?.noContextFiles ? { noContextFiles: true } : {}),

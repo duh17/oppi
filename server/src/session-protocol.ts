@@ -792,6 +792,9 @@ export function translatePiEvent(
       ctx.streamingToolUpdatesSeen.clear();
       return [{ type: "agent_end" }];
 
+    case "agent_settled":
+      return [{ type: "agent_settled" }];
+
     case "turn_start":
       return EMPTY_MESSAGES;
 

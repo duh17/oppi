@@ -172,9 +172,11 @@ final class MacSessionTraceStore {
             session = page.session
             reducer.loadSession(
                 Self.timelineTrace(from: page.trace, session: page.session),
-                preserveOrphans: false,
-                finalizeOpenTools: !page.session.status.isRunning
+                preserveOrphans: false
             )
+            if !page.session.status.isRunning {
+                reducer.finalizeTerminalArtifactsAsInterrupted()
+            }
             lastLoadedAt = Date()
         } catch {
             macSessionTraceLogger.warning("Session trace load failed: \(error.localizedDescription, privacy: .public)")
@@ -880,8 +882,14 @@ final class MacSessionTraceStore {
             self.session = session
         case .state(let session) where session.id == target.sessionId:
             self.session = session
+            if !session.status.isRunning {
+                reducer.finalizeTerminalArtifactsAsInterrupted()
+            }
         case .sessionSummary(let summary) where summary.id == target.sessionId:
             session = summary.session
+            if !summary.status.isRunning {
+                reducer.finalizeTerminalArtifactsAsInterrupted()
+            }
         default:
             break
         }

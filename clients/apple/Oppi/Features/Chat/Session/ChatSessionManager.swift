@@ -485,8 +485,10 @@ final class ChatSessionManager {
             // the bottom. The scheduled fresh trace load will reconcile properly.
             if reducer.items.isEmpty {
                 let reducerLoadStartMs = ChatSessionTelemetry.nowMs()
-                let finalizeCachedOpenTools = !(sessionStore.session(id: sessionId)?.status.isRunning ?? true)
-                reducer.loadSession(cached.events, finalizeOpenTools: finalizeCachedOpenTools)
+                reducer.loadSession(cached.events)
+                if sessionStore.session(id: sessionId)?.status.isRunning == false {
+                    reducer.finalizeTerminalArtifactsAsInterrupted()
+                }
                 let reducerLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerLoadStartMs)
 
                 ChatSessionTelemetry.recordReducerLoad(
@@ -682,7 +684,7 @@ final class ChatSessionManager {
         }
 
         let storeResult = connection.applySharedStoreUpdate(for: message, sessionId: sessionId)
-        routeToTimeline(message, connection: connection, storeResult: storeResult)
+        routeToTimeline(message, connection: connection)
         if connection.isFocusedSession(sessionId) {
             connection.handleActiveSessionUI(message, sessionId: sessionId, storeResult: storeResult)
         }
@@ -856,7 +858,7 @@ final class ChatSessionManager {
     /// This handles all coalescer/reducer mutations for the active session.
     /// Each ChatSessionManager owns its own coalescer + reducer, so sessions
     /// maintain independent timelines across NavigationStack navigation.
-    private func routeToTimeline(_ message: ServerMessage, connection: ServerConnection, storeResult: ServerConnection.StoreUpdateResult = .notHandled) {
+    private func routeToTimeline(_ message: ServerMessage, connection: ServerConnection) {
         for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
             coalescer.receive(event)
         }
@@ -942,18 +944,16 @@ final class ChatSessionManager {
             reducer.appendSystemEvent(reason ?? "Stopping…")
 
         case .stopConfirmed(_, let reason):
-            coalescer.receive(.agentEnd(sessionId: sessionId))
+            coalescer.flushNow()
+            reducer.finalizeTerminalArtifactsAsInterrupted()
             reducer.appendSystemEvent(reason ?? "Stop confirmed")
+
+        case .state(let session) where !session.status.isRunning:
+            coalescer.flushNow()
+            reducer.finalizeTerminalArtifactsAsInterrupted()
 
         case .stopFailed(_, let reason):
             reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(reason)"))
-
-        case .state(let session):
-            // Recovery hardening: if server state says the session is no longer
-            // running but we never observed agentEnd/messageEnd, finalize artifacts.
-            if storeResult.didTransitionOutOfRunning {
-                coalescer.receive(.agentEnd(sessionId: session.id))
-            }
 
         default:
             break
@@ -1069,7 +1069,7 @@ final class ChatSessionManager {
                 guard accepted else { continue }
 
                 let eventStoreResult = connection.applySharedStoreUpdate(for: event.message, sessionId: sessionId)
-                routeToTimeline(event.message, connection: connection, storeResult: eventStoreResult)
+                routeToTimeline(event.message, connection: connection)
                 if connection.isFocusedSession(sessionId) {
                     connection.handleActiveSessionUI(event.message, sessionId: sessionId, storeResult: eventStoreResult)
                 }
@@ -1178,19 +1178,16 @@ final class ChatSessionManager {
             let timelineTrace = Self.timelineTrace(from: trace, session: session)
             let freshSignature = Self.traceSignature(for: timelineTrace)
             let usedFirstMessageFallback = trace.isEmpty && !timelineTrace.isEmpty
-            let finalizeOpenTools = !session.status.isRunning
             var freshnessReason = "history_empty"
 
             if !timelineTrace.isEmpty {
                 // Skip rebuild if the timeline projection hasn't changed since
-                // the cached/fallback version, unless the session terminal policy
-                // changed. Identical trace IDs still need a reducer pass when a
-                // running cache is reconciled with a stopped fresh session (or the
-                // reverse), because open tool rows are rendered differently.
+                // the cached/fallback version. Session summary/status never
+                // affects timeline reconciliation; persisted Pi lifecycle does.
                 if let cachedCount = cachedEventCount,
                    cachedCount == freshSignature.eventCount,
                    cachedLastEventId == freshSignature.lastEventId,
-                   !reducer.needsTraceProjectionRefresh(finalizeOpenTools: finalizeOpenTools) {
+                   reducer.traceEventsForCache() == timelineTrace {
                     log.info("Trace unchanged for \(self.sessionId) — skipping rebuild")
                     if let replayID {
                         reducer.discardHistoryReplayBuffer(id: replayID)
@@ -1205,8 +1202,7 @@ final class ChatSessionManager {
                     if usedReplay, let replayID {
                         reducer.applyTraceWithLiveReplay(
                             timelineTrace,
-                            replayID: replayID,
-                            finalizeOpenTools: finalizeOpenTools
+                            replayID: replayID
                         )
                     } else {
                         // Fresh trace is authoritative — don't preserve orphans.
@@ -1215,8 +1211,7 @@ final class ChatSessionManager {
                         // lags behind locally-appended items.
                         reducer.loadSession(
                             timelineTrace,
-                            preserveOrphans: false,
-                            finalizeOpenTools: finalizeOpenTools
+                            preserveOrphans: false
                         )
                     }
                     let reducerDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerStartMs)
@@ -1257,6 +1252,9 @@ final class ChatSessionManager {
 
             if timelineTrace.isEmpty, let replayID {
                 reducer.discardHistoryReplayBuffer(id: replayID)
+            }
+            if !session.status.isRunning {
+                reducer.finalizeTerminalArtifactsAsInterrupted()
             }
 
             telemetry.recordFreshContentLagIfNeeded(reason: freshnessReason, sessionId: sessionId, workspaceId: workspaceId)
@@ -1369,9 +1367,11 @@ final class ChatSessionManager {
         }
 
         sessionStore.upsert(response.session)
-        let finalizeOpenTools = !response.session.status.isRunning
-        let didPrepend = reducer.prependTracePage(response.trace, finalizeOpenTools: finalizeOpenTools)
+        let didPrepend = reducer.prependTracePage(response.trace)
         guard didPrepend else { return false }
+        if !response.session.status.isRunning {
+            reducer.finalizeTerminalArtifactsAsInterrupted()
+        }
         tracePage = response.page
         markSyncSucceeded()
 

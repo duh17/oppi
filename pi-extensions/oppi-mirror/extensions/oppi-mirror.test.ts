@@ -76,6 +76,7 @@ interface MockPi {
       handler: (args: string, ctx: MockExtensionContext) => Promise<void>;
     },
   ): void;
+  appendEntry: ReturnType<typeof vi.fn>;
   getThinkingLevel: ReturnType<typeof vi.fn>;
 }
 
@@ -125,6 +126,7 @@ function createMockPi(): MockPi {
     registerCommand(name, command) {
       commands.set(name, command);
     },
+    appendEntry: vi.fn(),
     getThinkingLevel: vi.fn(() => "medium"),
   };
 }
@@ -238,6 +240,41 @@ afterEach(() => {
 });
 
 describe("oppi mirror extension UI replay", () => {
+  it("persists Pi lifecycle evidence in TUI session entries", async () => {
+    vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+    const pi = createMockPi();
+    await oppiPiMirror(pi as never);
+    const ctx = createMockContext();
+
+    for (const handler of pi.handlers.get("tool_execution_end") ?? []) {
+      await handler(
+        {
+          type: "tool_execution_end",
+          toolCallId: "call-1",
+          toolName: "bash",
+          isError: false,
+          result: { content: "not duplicated" },
+        },
+        ctx,
+      );
+    }
+    for (const handler of pi.handlers.get("agent_settled") ?? []) {
+      await handler({ type: "agent_settled" }, ctx);
+    }
+
+    expect(pi.appendEntry).toHaveBeenCalledWith("oppi-lifecycle", {
+      version: 1,
+      event: "tool_execution_end",
+      toolCallId: "call-1",
+      toolName: "bash",
+      isError: false,
+    });
+    expect(pi.appendEntry).toHaveBeenCalledWith("oppi-lifecycle", {
+      version: 1,
+      event: "agent_settled",
+    });
+  });
+
   it("replays persistent status and widget state captured before bridge connect", async () => {
     await withInteractiveTerminal(async () => {
       vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");

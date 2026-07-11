@@ -51,7 +51,8 @@ final class TestEventPipeline {
             case .stopRequested(_, let reason):
                 reducer.appendSystemEvent(reason ?? "Stopping…")
             case .stopConfirmed(_, let reason):
-                coalescer.receive(.agentEnd(sessionId: sessionId))
+                coalescer.flushNow()
+                reducer.finalizeTerminalArtifactsAsInterrupted()
                 reducer.appendSystemEvent(reason ?? "Stop confirmed")
             case .stopFailed(_, let reason):
                 reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(reason)"))
@@ -69,6 +70,8 @@ final class TestEventPipeline {
             conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
             coalescer.receive(.agentEnd(sessionId: sessionId))
             conn.silenceWatchdog.stop()
+        case .agentSettled:
+            conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
         case .textDelta(let delta):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(.textDelta(sessionId: sessionId, delta: delta))
@@ -150,8 +153,9 @@ final class TestEventPipeline {
         case .state(let session):
             let result = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
             conn.handleActiveSessionUI(message, sessionId: sessionId, storeResult: result)
-            if result.didTransitionOutOfRunning {
-                coalescer.receive(.agentEnd(sessionId: session.id))
+            if !session.status.isRunning {
+                coalescer.flushNow()
+                reducer.finalizeTerminalArtifactsAsInterrupted()
             }
         default:
             let result = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)

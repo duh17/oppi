@@ -678,6 +678,24 @@ struct TraceEventCodableTests {
         #expect(event.type == .compaction)
     }
 
+    @Test func decodeCompatibleLifecycleMetadata() throws {
+        let json = """
+        {
+            "id":"result-1","type":"toolResult","timestamp":"2025-01-01T00:00:03Z",
+            "output":"done","toolCallId":"tc1","toolName":"bash","isError":false,
+            "lifecycleBefore":[
+                {"id":"start-1","event":"toolStart","timestamp":"2025-01-01T00:00:01Z","toolCallId":"tc1","toolName":"bash"},
+                {"id":"end-1","event":"toolEnd","timestamp":"2025-01-01T00:00:03Z","toolCallId":"tc1","toolName":"bash","isError":false}
+            ]
+        }
+        """
+        let event = try JSONDecoder().decode(TraceEvent.self, from: json.data(using: .utf8)!)
+
+        #expect(event.type == .toolResult)
+        #expect(event.lifecycleBefore?.map(\.event) == [.toolStart, .toolEnd])
+        #expect(event.lifecycleBefore?.allSatisfy { $0.toolCallId == "tc1" } == true)
+    }
+
     @Test func allEventTypes() throws {
         let types: [(String, TraceEventType)] = [
             ("user", .user),

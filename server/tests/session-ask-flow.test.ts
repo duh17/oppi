@@ -313,7 +313,7 @@ describe("direct ask flow", () => {
     expect(broadcast).not.toHaveBeenCalled();
   });
 
-  it("tracks the active turn start on agent_start and clears it on agent_end", () => {
+  it("tracks the active turn until agent_settled", () => {
     const { key, active, processor } = createHarness();
 
     processor.updateSessionFromEvent(key, active, {
@@ -328,7 +328,13 @@ describe("direct ask flow", () => {
       messages: [],
     } as never);
 
-    expect(active.session.status).toBe("ready");
+    expect(active.session.status).toBe("busy");
     expect(active.session.currentTurnStartedAt).toBeUndefined();
+
+    processor.updateSessionFromEvent(key, active, {
+      type: "agent_settled",
+    } as never);
+
+    expect(active.session.status).toBe("ready");
   });
 });

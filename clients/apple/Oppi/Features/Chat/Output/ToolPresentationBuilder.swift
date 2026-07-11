@@ -83,6 +83,7 @@ enum ToolPresentationBuilder {
         outputPreview: String,
         isError: Bool,
         isDone: Bool,
+        isInterrupted: Bool = false,
         context: Context
     ) -> ToolTimelineRowConfiguration {
         let normalizedTool = ToolCallFormatting.normalized(tool)
@@ -132,7 +133,9 @@ enum ToolPresentationBuilder {
 
         // Trailing (built-in tools only; extension tools use resultSegments)
         let trailing: String?
-        if let editTrailingFallback = collapsed.editTrailingFallback {
+        if isInterrupted {
+            trailing = String(localized: "Interrupted")
+        } else if let editTrailingFallback = collapsed.editTrailingFallback {
             trailing = editTrailingFallback
         } else {
             trailing = nil
@@ -180,7 +183,9 @@ enum ToolPresentationBuilder {
         }
 
         let segmentAttributedTrailing: NSAttributedString?
-        if let resultSegs = context.resultSegments, !resultSegs.isEmpty {
+        if isInterrupted {
+            segmentAttributedTrailing = nil
+        } else if let resultSegs = context.resultSegments, !resultSegs.isEmpty {
             segmentAttributedTrailing = SegmentRenderer.trailingAttributedString(from: resultSegs)
         } else {
             segmentAttributedTrailing = nil
@@ -205,13 +210,14 @@ enum ToolPresentationBuilder {
             toolNameColor: segmentAttributedTitle != nil
                 ? (segmentToolNameColor ?? collapsed.toolNameColor)
                 : collapsed.toolNameColor,
-            editAdded: collapsed.editAdded,
-            editRemoved: collapsed.editRemoved,
+            editAdded: isInterrupted ? nil : collapsed.editAdded,
+            editRemoved: isInterrupted ? nil : collapsed.editRemoved,
             collapsedImageBase64: nil,
             collapsedImageMimeType: nil,
             isExpanded: isExpanded,
             isDone: isDone,
             isError: isError,
+            isInterrupted: isInterrupted,
             startedAt: isVoicePresentationResult ? nil : context.startedAt,
             elapsedSeconds: isVoicePresentationResult ? nil : context.elapsedSeconds,
             segmentAttributedTitle: segmentAttributedTitle,

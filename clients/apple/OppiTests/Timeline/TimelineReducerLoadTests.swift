@@ -254,7 +254,7 @@ struct TimelineReducerLoadTests {
         ]
 
         reducer.loadSession(latest, preserveOrphans: false)
-        reducer.prependTracePage(older, finalizeOpenTools: true)
+        reducer.prependTracePage(older)
 
         #expect(reducer.items.count == 4)
         #expect(reducer.items.map(\.id) == ["u1", "a1", "u2", "a2"])
@@ -279,14 +279,14 @@ struct TimelineReducerLoadTests {
                        toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
         ]
 
-        reducer.loadSession(latest, preserveOrphans: false, finalizeOpenTools: false)
+        reducer.loadSession(latest, preserveOrphans: false)
         reducer.processBatch([
             .agentStart(sessionId: "s1"),
             .textDelta(sessionId: "s1", delta: "live tail"),
         ])
         let itemsBeforePrepend = reducer.items
 
-        let didPrepend = reducer.prependTracePage(older, finalizeOpenTools: false)
+        let didPrepend = reducer.prependTracePage(older)
 
         #expect(!didPrepend)
         #expect(reducer.items == itemsBeforePrepend)
@@ -469,6 +469,39 @@ struct TimelineReducerLoadTests {
         #expect(!reducer._lastLoadWasIncrementalForTesting,
             "Shorter trace should force full rebuild")
         #expect(reducer.items.count == 1)
+    }
+
+    @Test func lifecycleMetadataChangeWithSameEventIDForcesRebuild() {
+        let reducer = TimelineReducer()
+        let base = [
+            TraceEvent(
+                id: "tc1", type: .toolCall, timestamp: "2025-01-01T00:00:00Z",
+                tool: "read", args: ["path": .string("README.md")]
+            ),
+        ]
+        reducer.loadSession(base)
+
+        let withLifecycle = [
+            TraceEvent(
+                id: "tc1", type: .toolCall, timestamp: "2025-01-01T00:00:00Z",
+                tool: "read", args: ["path": .string("README.md")],
+                lifecycleAfter: [
+                    TraceLifecycleEvent(
+                        id: "start-1", event: .toolStart,
+                        timestamp: "2025-01-01T00:00:01Z", toolCallId: "tc1"
+                    ),
+                    TraceLifecycleEvent(
+                        id: "end-1", event: .toolEnd,
+                        timestamp: "2025-01-01T00:00:03Z", toolCallId: "tc1"
+                    ),
+                ]
+            ),
+        ]
+        reducer.loadSession(withLifecycle)
+
+        #expect(!reducer._lastLoadWasIncrementalForTesting)
+        #expect(reducer.toolElapsed(for: "tc1") == 2)
+        #expect(!reducer.isToolInterrupted("tc1"))
     }
 
     @Test func incrementalAppendWithToolCallAndResult() {

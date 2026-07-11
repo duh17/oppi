@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Fix 1: closeAllOrphanedTools — close ALL open tool rows, not just last
 /// Fix 2: agentStart finalizes stale state from previous turn
-/// Fix 3: sessionEnded finalizes thinking and tools
+/// Fix 3: sessionEnded finalizes text/thinking and interrupts unresolved tools
 /// Fix 4: Ping watchdog triggers reconnect after consecutive failures
 /// Fix 5: Silence watchdog detects stuck sessions
 @Suite("Stream Recovery")
@@ -33,8 +33,9 @@ struct StreamRecoveryTests {
         for item in tools {
             guard case .toolCall(let id, _, _, let preview, _, let isError, let isDone) = item else { continue }
             #expect(isDone, "Tool \(id) should be marked done after agentEnd")
-            #expect(isError, "Tool \(id) should not render as a green success without toolEnd")
-            #expect(preview.contains("stopped before returning"), "Tool \(id) should explain why no output/log is available")
+            #expect(!isError, "Interruption must remain distinct from tool error")
+            #expect(reducer.isToolInterrupted(id))
+            #expect(preview.isEmpty, "Lifecycle interruption must not become canonical tool output")
         }
     }
 
@@ -138,7 +139,7 @@ struct StreamRecoveryTests {
         #expect(thinking[0] == true, "Thinking should be finalized on sessionEnded")
     }
 
-    @Test func sessionEndedClosesOrphanedTools() {
+    @Test func sessionEndedInterruptsUnresolvedTool() {
         let reducer = TimelineReducer()
 
         reducer.process(.agentStart(sessionId: "s1"))
@@ -150,7 +151,8 @@ struct StreamRecoveryTests {
             return isDone
         }
         #expect(tools.count == 1)
-        #expect(tools[0] == true, "Tool should be closed on sessionEnded")
+        #expect(tools[0], "Terminal sessions must not leave unresolved tools spinning")
+        #expect(reducer.isToolInterrupted("t1"))
     }
 
     @Test func sessionEndedFinalizesAssistantText() {
@@ -189,8 +191,10 @@ struct StreamRecoveryTests {
             switch item {
             case .thinking(_, _, _, let isDone):
                 #expect(isDone, "Thinking should be done")
-            case .toolCall(_, _, _, _, _, _, let isDone):
-                #expect(isDone, "Tool should be done")
+            case .toolCall(let id, _, _, _, _, let isError, let isDone):
+                #expect(isDone, "Terminal sessions must stop unresolved tools")
+                #expect(!isError, "Interruption is not a canonical tool error")
+                #expect(reducer.isToolInterrupted(id))
             case .assistantMessage, .systemEvent:
                 break // expected
             default:
@@ -224,8 +228,8 @@ struct StreamRecoveryTests {
             return isDone
         })
         #expect(tools.allSatisfy {
-            guard case .toolCall(_, _, _, _, _, let isError, _) = $0 else { return false }
-            return isError
+            guard case .toolCall(let id, _, _, _, _, let isError, _) = $0 else { return false }
+            return !isError && reducer.isToolInterrupted(id)
         })
     }
 

@@ -33,6 +33,47 @@ struct TimelineReducerToolTests {
         #expect(isDone)
     }
 
+    @Test func completedToolDoesNotReopenOnDuplicateStartReplay() {
+        let reducer = TimelineReducer()
+        let toolId = "tool-replayed-after-result"
+        let completedTrace = [
+            TraceEvent(
+                id: toolId,
+                type: .toolCall,
+                timestamp: "2026-01-01T00:00:01Z",
+                tool: "read",
+                args: ["path": .string("README.md")]
+            ),
+            TraceEvent(
+                id: "result-tool-replayed-after-result",
+                type: .toolResult,
+                timestamp: "2026-01-01T00:00:02Z",
+                output: "README contents",
+                toolCallId: toolId,
+                toolName: "read",
+                isError: false
+            ),
+        ]
+
+        reducer.loadSession(completedTrace)
+        reducer.process(.toolStart(
+            sessionId: "s1",
+            toolEventId: toolId,
+            tool: "read",
+            args: ["path": .string("README.md")]
+        ))
+
+        guard case .toolCall(_, _, _, let preview, _, let isError, let isDone) = reducer.items.first else {
+            Issue.record("Expected completed toolCall")
+            return
+        }
+        #expect(isDone, "A duplicate start must not regress terminal state")
+        #expect(!isError)
+        #expect(preview == "README contents")
+        #expect(reducer.toolStartTime(for: toolId) == nil, "Stale replay must not restart elapsed timing")
+        #expect(reducer.toolElapsed(for: toolId) == nil)
+    }
+
     @Test func assistantTextIsSplitAroundToolCall() {
         let reducer = TimelineReducer()
         let toolId = "tool-1"
@@ -99,9 +140,11 @@ struct TimelineReducerToolTests {
             return
         }
         #expect(isDone, "Orphaned tool should be marked done on agentEnd")
-        #expect(isError, "Orphaned tool should not render as a green success")
-        #expect(preview.contains("stopped before returning"), "Orphaned tool should explain why no output/log is available")
-        #expect(reducer.toolOutputStore.fullOutput(for: "t1").contains("stopped before returning"))
+        #expect(!isError, "Interruption is distinct from a canonical tool error")
+        #expect(reducer.isToolInterrupted("t1"))
+        #expect(preview.isEmpty)
+        #expect(reducer.toolOutputStore.fullOutput(for: "t1").isEmpty,
+                "Lifecycle interruption must not be written into canonical tool output")
     }
 
     @Test func toolStartStoresArgs() {
@@ -236,9 +279,41 @@ struct TimelineReducerToolTests {
         #expect(reducer.items.isEmpty)
     }
 
-    @Test func loadSessionMarksToolCallWithoutResultAsErrorWithDiagnostic() {
+    @Test func loadSessionKeepsToolCallWithoutLifecycleEvidenceOpen() {
         let reducer = TimelineReducer()
-        let events = traceWithToolCallWithoutResult()
+
+        reducer.loadSession(traceWithToolCallWithoutResult())
+
+        guard case .toolCall(_, _, _, let preview, _, let isError, let isDone) = reducer.items.first else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(!isDone, "Missing trace events are not evidence of completion")
+        #expect(!isError)
+        #expect(preview.isEmpty)
+    }
+
+    @Test func loadSessionUsesPersistedToolEndWithoutInventingOutput() {
+        let reducer = TimelineReducer()
+        let events = [
+            TraceEvent(
+                id: "missing-result", type: .toolCall, timestamp: "2026-01-01T00:00:01Z",
+                tool: "web_search_read",
+                args: ["query": .string("Aristotle practice")],
+                lifecycleAfter: [
+                    TraceLifecycleEvent(
+                        id: "tool-start-missing-result", event: .toolStart,
+                        timestamp: "2026-01-01T00:00:02Z", toolCallId: "missing-result",
+                        toolName: "web_search_read"
+                    ),
+                    TraceLifecycleEvent(
+                        id: "tool-end-missing-result", event: .toolEnd,
+                        timestamp: "2026-01-01T00:00:04Z", toolCallId: "missing-result",
+                        toolName: "web_search_read", isError: false
+                    ),
+                ]
+            ),
+        ]
 
         reducer.loadSession(events)
 
@@ -246,40 +321,122 @@ struct TimelineReducerToolTests {
             Issue.record("Expected toolCall")
             return
         }
-        #expect(isDone, "Loaded orphaned tool should be closed")
-        #expect(isError, "Loaded orphaned tool should not render as a green success")
-        #expect(preview.contains("stopped before returning"), "Loaded orphaned tool should explain missing output")
+        #expect(isDone)
+        #expect(!isError)
+        #expect(preview.isEmpty)
+        #expect(reducer.toolElapsed(for: "missing-result") == 2)
     }
 
-    @Test func loadSessionCanKeepToolCallWithoutResultOpenWhileSessionIsRunning() {
+    @Test func loadSessionUsesPersistedAgentEndToInterruptOpenTool() {
         let reducer = TimelineReducer()
-        let events = traceWithToolCallWithoutResult()
+        let events = [
+            TraceEvent(
+                id: "missing-result", type: .toolCall, timestamp: "2026-01-01T00:00:01Z",
+                tool: "web_search_read",
+                args: ["query": .string("Aristotle practice")],
+                lifecycleAfter: [
+                    TraceLifecycleEvent(
+                        id: "tool-start-missing-result", event: .toolStart,
+                        timestamp: "2026-01-01T00:00:02Z", toolCallId: "missing-result",
+                        toolName: "web_search_read"
+                    ),
+                    TraceLifecycleEvent(
+                        id: "agent-end-1", event: .agentEnd,
+                        timestamp: "2026-01-01T00:00:03Z"
+                    ),
+                ]
+            ),
+        ]
 
-        reducer.loadSession(events, finalizeOpenTools: false)
+        reducer.loadSession(events)
 
         guard case .toolCall(_, _, _, let preview, _, let isError, let isDone) = reducer.items.first else {
             Issue.record("Expected toolCall")
             return
         }
-        #expect(!isDone, "Running session history should keep missing-result tools open")
-        #expect(!isError, "Running session history should not mark in-flight tools as failed")
+        #expect(isDone)
+        #expect(!isError)
+        #expect(reducer.isToolInterrupted("missing-result"))
         #expect(preview.isEmpty)
-        #expect(reducer.needsTraceProjectionRefresh(finalizeOpenTools: true))
+        #expect(reducer.toolOutputStore.fullOutput(for: "missing-result").isEmpty)
     }
 
-    @Test func realTraceResultReplacesSyntheticStoppedDiagnostic() {
+    @Test func duplicateToolEndDoesNotInflateFrozenElapsed() {
         let reducer = TimelineReducer()
-        let openTrace = traceWithToolCallWithoutResult()
-        let completedTrace = openTrace + [
+        let toolId = "duplicate-end"
+        reducer.loadSession([
+            TraceEvent(
+                id: toolId,
+                type: .toolCall,
+                timestamp: "2026-01-01T00:00:00Z",
+                tool: "read",
+                lifecycleAfter: [
+                    TraceLifecycleEvent(
+                        id: "start", event: .toolStart,
+                        timestamp: "2026-01-01T00:00:01Z", toolCallId: toolId
+                    ),
+                    TraceLifecycleEvent(
+                        id: "end", event: .toolEnd,
+                        timestamp: "2026-01-01T00:00:03Z", toolCallId: toolId
+                    ),
+                ]
+            ),
+        ])
+        #expect(reducer.toolElapsed(for: toolId) == 2)
+
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolId))
+
+        #expect(reducer.toolElapsed(for: toolId) == 2)
+    }
+
+    @Test func terminalFallbackInterruptsOldTraceWithoutInventingOutput() {
+        let reducer = TimelineReducer()
+        reducer.loadSession(traceWithToolCallWithoutResult())
+
+        reducer.finalizeTerminalArtifactsAsInterrupted()
+
+        guard case .toolCall(_, _, _, let preview, _, let isError, let isDone) = reducer.items.first else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(isDone)
+        #expect(!isError)
+        #expect(reducer.isToolInterrupted("missing-result"))
+        #expect(preview.isEmpty)
+        #expect(reducer.toolOutputStore.fullOutput(for: "missing-result").isEmpty)
+    }
+
+    @Test func realTraceResultSupersedesLifecycleInterruption() {
+        let reducer = TimelineReducer()
+        let interruptedTrace = [
+            TraceEvent(
+                id: "missing-result", type: .toolCall, timestamp: "2026-01-01T00:00:01Z",
+                tool: "web_search_read",
+                args: ["query": .string("Aristotle practice")],
+                lifecycleAfter: [
+                    TraceLifecycleEvent(
+                        id: "agent-end-1", event: .agentEnd,
+                        timestamp: "2026-01-01T00:00:02Z"
+                    ),
+                ]
+            ),
+        ]
+        let completedTrace = traceWithToolCallWithoutResult() + [
             TraceEvent(
                 id: "result-missing-result", type: .toolResult, timestamp: "2026-01-01T00:00:02Z",
                 output: "real output", toolCallId: "missing-result", toolName: "web_search_read",
-                isError: false
+                isError: false,
+                lifecycleAfter: [
+                    TraceLifecycleEvent(
+                        id: "agent-end-1", event: .agentEnd,
+                        timestamp: "2026-01-01T00:00:03Z"
+                    ),
+                ]
             ),
         ]
 
-        reducer.loadSession(openTrace)
-        #expect(reducer.toolOutputStore.fullOutput(for: "missing-result").contains("stopped before returning"))
+        reducer.loadSession(interruptedTrace)
+        #expect(reducer.toolOutputStore.fullOutput(for: "missing-result").isEmpty)
 
         reducer.loadSession(completedTrace)
 
@@ -290,6 +447,7 @@ struct TimelineReducerToolTests {
         }
         #expect(isDone)
         #expect(!isError)
+        #expect(!reducer.isToolInterrupted("missing-result"))
         #expect(preview == "real output")
     }
 

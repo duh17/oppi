@@ -18,6 +18,19 @@ struct ServerMessageEffectsTests {
         #expect(effects.clearMessageQueueSessionIds.isEmpty)
     }
 
+    @Test func errorStateClearsUnanswerableUI() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .state(session: makeTestSession(id: "s1", status: .error)),
+            routedSessionId: "s1",
+            isFocusedSession: true
+        )
+
+        #expect(effects.stopSilenceWatchdog)
+        #expect(effects.clearAskSessionIds == ["s1"])
+        #expect(effects.clearExtensionDialogSessionIds == ["s1"])
+        #expect(effects.clearExtensionSurfaceSessionIds == ["s1"])
+    }
+
     @Test func terminalStateForInactiveSessionDoesNotStopFocusedSilenceWatchdog() {
         let effects = ServerMessageEffects.cleanupEffects(
             for: .state(session: makeTestSession(id: "s2", status: .stopped)),

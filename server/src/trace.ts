@@ -18,6 +18,7 @@
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "./lifecycle-journal-extension.js";
 import { createLogger } from "./logger.js";
 import {
   sessionAttachmentDetailsForToolCall,
@@ -120,8 +121,28 @@ function normalizeTraceEventsForMobile(events: TraceEvent[]): TraceEvent[] {
 
 // ─── Trace Event Types ───
 
+export interface TraceLifecycleEvent {
+  id: string;
+  event:
+    | "agentStart"
+    | "agentEnd"
+    | "agentSettled"
+    | "turnStart"
+    | "turnEnd"
+    | "toolStart"
+    | "toolEnd";
+  timestamp: string;
+  turnIndex?: number;
+  toolCallId?: string;
+  toolName?: string;
+  isError?: boolean;
+}
+
 export interface TraceEvent {
   id: string;
+  // Keep this discriminator restricted to the original trace protocol. Older
+  // Apple clients synthesize Codable for this enum and reject unknown values.
+  // Lifecycle evidence therefore rides in optional fields they safely ignore.
   type: "user" | "assistant" | "toolCall" | "toolResult" | "thinking" | "system" | "compaction";
   timestamp: string;
   /** For user/assistant/system: the text content */
@@ -146,6 +167,9 @@ export interface TraceEvent {
   isError?: boolean;
   /** For toolResult: structured details (expandedText, presentationFormat, etc.) */
   details?: unknown;
+  /** Structural Pi lifecycle immediately before/after this renderable event. */
+  lifecycleBefore?: TraceLifecycleEvent[];
+  lifecycleAfter?: TraceLifecycleEvent[];
   /** For thinking: thinking content */
   thinking?: string;
   /** Optional semantic presentation for custom/system events. */
@@ -199,6 +223,9 @@ export interface SessionEntry {
   display?: boolean;
   // session_info entries
   name?: string;
+  // custom entries
+  customType?: string;
+  data?: unknown;
 }
 
 // ─── Session Context Builder ───
@@ -330,8 +357,11 @@ export function buildSessionContext(
 
   const visibleEntryById = new Map(visibleEntries.map((entry) => [entry.id, entry]));
 
-  // Convert visible entries to TraceEvents
+  // Convert visible entries to TraceEvents. Structural lifecycle is carried in
+  // optional metadata on the nearest renderable event so older Apple clients
+  // keep decoding the original TraceEvent.type discriminator unchanged.
   const events: TraceEvent[] = [];
+  let pendingLifecycle: TraceLifecycleEvent[] = [];
 
   // Context view preserves existing behavior: synthetic compaction summary first.
   if (view === "context" && compaction) {
@@ -340,6 +370,7 @@ export function buildSessionContext(
 
   for (const entry of visibleEntries) {
     const timestamp = entry.timestamp || new Date().toISOString();
+    const eventCountBeforeEntry = events.length;
 
     switch (entry.type) {
       case "message":
@@ -403,18 +434,92 @@ export function buildSessionContext(
         }
         break;
 
-      case "custom":
-        // Pi CustomEntry records are extension persistence state from appendEntry().
-        // They do not participate in LLM context and are not timeline presentation.
+      case "custom": {
+        const lifecycle = formatLifecycleEvent(entry, timestamp);
+        if (lifecycle) {
+          pendingLifecycle.push(lifecycle);
+        }
+        // Other Pi CustomEntry records are extension persistence state from
+        // appendEntry(). They do not participate in LLM context or timeline
+        // presentation.
         break;
+      }
 
       // Skip non-renderable types (session, label, etc.)
       default:
         break;
     }
+
+    if (events.length > eventCountBeforeEntry && pendingLifecycle.length > 0) {
+      const carrier = events[eventCountBeforeEntry];
+      if (carrier) {
+        carrier.lifecycleBefore = pendingLifecycle;
+        pendingLifecycle = [];
+      }
+    }
+  }
+
+  if (pendingLifecycle.length > 0) {
+    const carrier = events.at(-1);
+    if (carrier) {
+      carrier.lifecycleAfter = [...(carrier.lifecycleAfter ?? []), ...pendingLifecycle];
+    }
   }
 
   return normalizeTraceEventsForMobile(events);
+}
+
+function formatLifecycleEvent(entry: SessionEntry, timestamp: string): TraceLifecycleEvent | null {
+  if (entry.customType !== OPPI_LIFECYCLE_CUSTOM_TYPE) return null;
+  const data = asRecord(entry.data);
+  if (!data || data.version !== 1 || typeof data.event !== "string") return null;
+
+  const turnIndex = typeof data.turnIndex === "number" ? data.turnIndex : undefined;
+  const toolCallId = typeof data.toolCallId === "string" ? data.toolCallId : undefined;
+  const toolName = typeof data.toolName === "string" ? data.toolName : undefined;
+  const isError = typeof data.isError === "boolean" ? data.isError : undefined;
+
+  switch (data.event) {
+    case "agent_start":
+      return { id: entry.id, event: "agentStart", timestamp };
+    case "agent_end":
+      return { id: entry.id, event: "agentEnd", timestamp };
+    case "agent_settled":
+      return { id: entry.id, event: "agentSettled", timestamp };
+    case "turn_start":
+      return {
+        id: entry.id,
+        event: "turnStart",
+        timestamp,
+        ...(turnIndex !== undefined ? { turnIndex } : {}),
+      };
+    case "turn_end":
+      return {
+        id: entry.id,
+        event: "turnEnd",
+        timestamp,
+        ...(turnIndex !== undefined ? { turnIndex } : {}),
+      };
+    case "tool_execution_start":
+      return {
+        id: entry.id,
+        event: "toolStart",
+        timestamp,
+        ...(toolCallId ? { toolCallId } : {}),
+        ...(toolName ? { toolName } : {}),
+      };
+    case "tool_execution_end":
+      return {
+        id: entry.id,
+        event: "toolEnd",
+        timestamp,
+        ...(toolCallId ? { toolCallId } : {}),
+        ...(toolName ? { toolName } : {}),
+        ...(isError !== undefined ? { isError } : {}),
+      };
+    default:
+      return null;
+  }
 }
 
 function formatCompactionEvent(entry: SessionEntry): TraceEvent {

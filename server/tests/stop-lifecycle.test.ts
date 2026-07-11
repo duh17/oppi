@@ -244,6 +244,13 @@ describe("stop lifecycle", () => {
 
     const confirmed = events.filter((event) => event.type === "stop_confirmed");
     expect(confirmed).toHaveLength(1);
+    expect(session.status).toBe("stopping");
+
+    (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
+      key,
+      { type: "agent_settled" },
+    );
+
     expect(session.status).toBe("ready");
     expect(events.some((event) => event.type === "stop_failed")).toBe(false);
   });
