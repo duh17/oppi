@@ -18,7 +18,7 @@ The Apple client owns:
 - app-event stream consumption and HTTP snapshot repair,
 - per-session chat timeline state and rendering,
 - extension UI sheets, ask cards, status rows, widgets, and native surfaces,
-- voice input, audio playback, file previews, media playback, sharing, and settings.
+- voice input, audio playback, file previews, media playback, Quick Session intake, sharing, diagnostics, and settings.
 
 The client does not execute Pi sessions or mutate server read models directly. It sends commands and renders the server projection.
 
