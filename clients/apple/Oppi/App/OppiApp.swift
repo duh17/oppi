@@ -509,8 +509,7 @@ struct OppiApp: App {
         }
 
         navigation.pendingWorkspaceDeepLink = payload
-        navigation.selectedTab = .workspaces
-        navigation.workspacePath = NavigationPath()
+        navigation.showAllWorkspaceSessions()
         return true
     }
 
@@ -624,7 +623,7 @@ struct OppiApp: App {
             navigation.selectedTab = .workspaces
             if let api = connection.apiClient {
                 MetricKitService.shared.setUploadClient(api)
-                await connection.workspaceStore.load(api: api)
+                await connection.refreshWorkspaceCatalog(force: true)
             }
             if ReleaseFeatures.remotePushNotificationsEnabled {
                 await PushRegistration.shared.requestAndRegister()

@@ -1298,7 +1298,7 @@ final class ServerConnection {
         focusedSessionStreamEndpointKind = kind
     }
 
-    func setAPIClientForTesting(_ client: APIClient) {
+    func setAPIClientForTesting(_ client: APIClient?) {
         apiClient = client
     }
 

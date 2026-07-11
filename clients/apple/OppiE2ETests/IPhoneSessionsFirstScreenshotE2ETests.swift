@@ -132,6 +132,21 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertTrue(app.staticTexts["All Sessions"].waitForExistence(timeout: 10), "Workspace swipe did not return to All Sessions")
     }
 
+    func testIPhoneWorkspaceDeepLinkPresentsPrefilledCreate() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let url = try XCTUnwrap(
+            URL(string: "oppi://workspace?path=/tmp&name=Deep%20Link%20Workspace")
+        )
+        app.open(url)
+
+        let nameField = app.textFields["workspace.create.name"]
+        let pathField = app.textFields["workspace.create.hostMount"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 20), "Workspace deep link did not open the create form")
+        XCTAssertTrue(pathField.waitForExistence(timeout: 5), "Workspace deep link path field did not appear")
+        XCTAssertEqual(nameField.value as? String, "Deep Link Workspace")
+        XCTAssertEqual(pathField.value as? String, "/tmp")
+    }
+
     func testIPhoneWorkspaceSidebarScrolls() throws {
         XCUIDevice.shared.orientation = .portrait
 

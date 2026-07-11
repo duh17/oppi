@@ -2,6 +2,39 @@ import SwiftUI
 import Testing
 @testable import Oppi
 
+@Suite("Workspace catalog availability")
+struct WorkspaceCatalogAvailabilityTests {
+    @Test func authoritativeEmptyCatalogIsDistinctFromUnloadedAndFailedCatalogs() {
+        #expect(WorkspaceCatalogAvailability(
+            hasWorkspaces: false,
+            isLoaded: true,
+            isSyncing: false,
+            lastSyncFailed: false
+        ) == .empty)
+        #expect(WorkspaceCatalogAvailability(
+            hasWorkspaces: false,
+            isLoaded: false,
+            isSyncing: false,
+            lastSyncFailed: false
+        ) == .loading)
+        #expect(WorkspaceCatalogAvailability(
+            hasWorkspaces: false,
+            isLoaded: false,
+            isSyncing: false,
+            lastSyncFailed: true
+        ) == .unavailable)
+    }
+
+    @Test func cachedCatalogRemainsAvailableAfterRefreshFailure() {
+        #expect(WorkspaceCatalogAvailability(
+            hasWorkspaces: true,
+            isLoaded: true,
+            isSyncing: false,
+            lastSyncFailed: true
+        ) == .available)
+    }
+}
+
 @Suite("Workspace sidebar session status")
 struct WorkspaceSidebarSessionStatusTests {
     @Test func countsAttentionWorkingAndDoneUsingSessionRowSemantics() {

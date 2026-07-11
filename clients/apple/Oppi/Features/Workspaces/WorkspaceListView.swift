@@ -49,9 +49,8 @@ struct WorkspaceListView: View {
             WorkspaceCreateView(server: server)
         }
         .refreshable {
-            if let conn = coordinator.connection(for: server.id),
-               let api = conn.apiClient {
-                await conn.workspaceStore.loadServer(serverId: server.id, api: api)
+            if let connection = coordinator.connection(for: server.id) {
+                await connection.refreshWorkspaceCatalog(force: true)
             }
         }
         .overlay {

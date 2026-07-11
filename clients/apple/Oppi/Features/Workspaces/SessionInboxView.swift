@@ -24,6 +24,27 @@ private struct SessionInboxPendingDelete: Identifiable {
     var id: String { "\(serverId):\(workspaceId):\(session.id)" }
 }
 
+enum WorkspaceCatalogAvailability: Equatable {
+    case loading
+    case unavailable
+    case empty
+    case available
+
+    init(hasWorkspaces: Bool, isLoaded: Bool, isSyncing: Bool, lastSyncFailed: Bool) {
+        if hasWorkspaces {
+            self = .available
+        } else if isSyncing {
+            self = .loading
+        } else if lastSyncFailed {
+            self = .unavailable
+        } else if isLoaded {
+            self = .empty
+        } else {
+            self = .loading
+        }
+    }
+}
+
 /// Sessions-first home surface.
 ///
 /// The workspace sidebar owns project selection. This view keeps the main
@@ -129,6 +150,19 @@ struct SessionInboxView: View {
         let data = viewData
 
         List {
+            if selectedServerRefreshFailed, !data.isEmpty, let selectedServer {
+                Section {
+                    Label(
+                        "Showing cached server data for \(selectedServer.name). Pull to retry.",
+                        systemImage: "exclamationmark.arrow.triangle.2.circlepath"
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.themeOrange)
+                    .listRowBackground(Color.themeBg)
+                    .accessibilityIdentifier("workspace.sessionList.cachedWarning")
+                }
+            }
+
             if !data.yourTurn.isEmpty {
                 sessionSection("Your Turn", items: data.yourTurn)
             }
@@ -159,10 +193,13 @@ struct SessionInboxView: View {
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search sessions")
         .toolbar { toolbarContent }
         .refreshable {
-            await coordinator.refreshAllServers()
+            await refreshVisibleServer()
         }
-        .task(id: refreshTaskId) {
-            await coordinator.refreshAllServers()
+        .task(id: activeServerId) {
+            await refreshVisibleServer()
+            await applyE2ELaunchHintsIfNeeded()
+        }
+        .task(id: selectedWorkspace?.workspace.id) {
             await applyE2ELaunchHintsIfNeeded()
         }
         .overlay {
@@ -231,13 +268,6 @@ struct SessionInboxView: View {
                 EmptyView()
             }
         }
-    }
-
-    private var refreshTaskId: String {
-        [
-            activeServerId ?? "none",
-            selectedWorkspace?.workspace.id ?? "all"
-        ].joined(separator: ":")
     }
 
     private var inboxNavigationTitle: String {
@@ -318,10 +348,11 @@ struct SessionInboxView: View {
                     switchVisibleServer(to: server)
                 } label: {
                     Label(
-                        server.name,
+                        serverMenuTitle(server),
                         systemImage: server.id == current.id ? "checkmark.circle.fill" : server.resolvedBadgeIcon.symbolName
                     )
                 }
+                .accessibilityValue(serverBadgeConnectionState(for: server).title)
             }
 
             Divider()
@@ -349,14 +380,31 @@ struct SessionInboxView: View {
 
     private func switchVisibleServer(to server: PairedServer) {
         guard coordinator.switchToServer(server) else { return }
+        searchText = ""
+        error = nil
         navigation.showAllWorkspaceSessions()
-        Task { @MainActor in
-            await coordinator.refreshAllServers()
-        }
+    }
+
+    private func refreshVisibleServer() async {
+        guard let activeServerId else { return }
+        await coordinator.refreshServer(activeServerId, force: true)
+    }
+
+    private func serverMenuTitle(_ server: PairedServer) -> String {
+        let state = serverBadgeConnectionState(for: server)
+        guard state != .connected else { return server.name }
+        return "\(server.name) — \(state.title)"
     }
 
     private func serverBadgeConnectionState(for server: PairedServer) -> ServerBadgeConnectionState {
-        ServerBadgeConnectionState(serverStatusPresentation(for: server))
+        guard let connection = coordinator.connection(for: server.id) else {
+            return ServerBadgeConnectionState(serverStatusPresentation(for: server))
+        }
+        return ServerBadgeConnectionState(
+            serverStatusPresentation(for: server),
+            hasSyncFailure: connection.workspaceStore.lastSyncFailed
+                || connection.sessionStore.lastSyncFailed
+        )
     }
 
     private func serverStatusPresentation(for server: PairedServer) -> WorkspaceServerStatusPresentation {
@@ -376,6 +424,17 @@ struct SessionInboxView: View {
         )
     }
 
+    private var selectedServerRefreshFailed: Bool {
+        guard let activeConnection else { return false }
+        return activeConnection.workspaceStore.lastSyncFailed
+            || activeConnection.sessionStore.lastSyncFailed
+    }
+
+    private var selectedServerIsSyncing: Bool {
+        activeConnection?.workspaceStore.isSyncing == true
+            || activeConnection?.sessionStore.isSyncing == true
+    }
+
     @ViewBuilder
     private var emptyState: some View {
         if activeServerId == nil {
@@ -384,6 +443,23 @@ struct SessionInboxView: View {
                 systemImage: "server.rack",
                 description: Text("Pair with a server to get started.")
             )
+        } else if selectedServerIsSyncing, let selectedServer {
+            ContentUnavailableView(
+                "Loading Sessions",
+                systemImage: "arrow.triangle.2.circlepath",
+                description: Text("Refreshing \(selectedServer.name)…")
+            )
+        } else if selectedServerRefreshFailed, let selectedServer {
+            ContentUnavailableView {
+                Label("Server Data Unavailable", systemImage: "exclamationmark.triangle.fill")
+            } description: {
+                Text("\(selectedServer.name) couldn't refresh its workspace or session data.")
+            } actions: {
+                Button("Retry") {
+                    Task { await refreshVisibleServer() }
+                }
+                .buttonStyle(.borderedProminent)
+            }
         } else if let selectedWorkspace {
             ContentUnavailableView(
                 "No Sessions",
@@ -394,7 +470,7 @@ struct SessionInboxView: View {
             ContentUnavailableView(
                 "No Active Sessions",
                 systemImage: "text.bubble",
-                description: Text("Start a quick session or choose a workspace from the sidebar.")
+                description: Text("No active sessions on \(selectedServer?.name ?? "this server"). Start a quick session or choose a workspace from the sidebar.")
             )
         }
     }
@@ -860,17 +936,48 @@ struct WorkspaceSidebarView: View {
                     if let selectedServer {
                         let serverId = selectedServer.id
                         let connection = coordinator.connection(for: serverId)
-                        let summaries = connection?.workspaceStore.workspaceSummaries(forServer: serverId) ?? [:]
+                        let workspaceStore = connection?.workspaceStore
+                        let summaries = workspaceStore?.workspaceSummaries(forServer: serverId) ?? [:]
                         let workspaces = sortedWorkspaces(workspacesForServer(serverId), summaries: summaries)
+                        let availability = WorkspaceCatalogAvailability(
+                            hasWorkspaces: !workspaces.isEmpty,
+                            isLoaded: workspaceStore?.isLoaded ?? false,
+                            isSyncing: workspaceStore?.isSyncing ?? false,
+                            lastSyncFailed: workspaceStore?.lastSyncFailed ?? false
+                        )
 
-                        if workspaces.isEmpty {
+                        switch availability {
+                        case .loading:
+                            Label("Loading workspaces…", systemImage: "arrow.triangle.2.circlepath")
+                                .font(.subheadline)
+                                .foregroundStyle(.themeComment)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 8)
+
+                        case .unavailable:
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label("Workspaces unavailable", systemImage: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.themeOrange)
+                                Button("Retry") {
+                                    Task { await coordinator.refreshServer(serverId, force: true) }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 8)
+
+                        case .empty:
                             Text("No workspaces")
                                 .font(.subheadline)
                                 .foregroundStyle(.themeComment)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.vertical, 12)
                                 .padding(.horizontal, 8)
-                        } else {
+
+                        case .available:
                             ForEach(workspaces) { workspace in
                                 let target = WorkspaceNavTarget(serverId: serverId, workspace: workspace)
                                 let status = workspaceSessionStatus(
