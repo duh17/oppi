@@ -331,6 +331,10 @@ export class BoundSessionStreamMux {
     send(streamConnectedMessage(this.ctx, owner));
 
     try {
+      // Capture the durable cursor before session opening. Opening an already-running
+      // session can await long enough for tool completions to land before the live
+      // subscription exists. Replaying from this cursor closes that bootstrap gap.
+      const beforeOpenSeq = this.ctx.sessionRuntimes.getCurrentSeq(sessionId);
       const openResult = await this.lifecycle.openFocusedSession({
         session,
         workspace: this.ctx.resolveWorkspaceForSession(session),
@@ -338,12 +342,8 @@ export class BoundSessionStreamMux {
       if (connectionClosed || ws.readyState !== WebSocket.OPEN) return;
       const hydratedSession = openResult.session;
 
-      sendForSession({
-        type: "connected",
-        session: hydratedSession,
-        currentSeq: this.ctx.sessionRuntimes.getCurrentSeq(sessionId),
-      });
-
+      let bootstrapping = true;
+      const bootstrapLiveQueue: ServerMessage[] = [];
       const callback = (msg: ServerMessage): void => {
         const outbound =
           msg.type === "state"
@@ -352,10 +352,86 @@ export class BoundSessionStreamMux {
                 session: this.ctx.ensureSessionContextWindow(msg.session),
               }
             : msg;
+        if (bootstrapping) {
+          bootstrapLiveQueue.push(outbound);
+          return;
+        }
         sendForSession(outbound);
       };
       unsubscribeBoundSession = this.ctx.sessionRuntimes.subscribe(sessionId, callback);
       unsubscribed = false;
+
+      // A newly started runtime has no meaningful pre-open cursor. For an existing
+      // runtime, replay only events emitted while openFocusedSession was in flight.
+      const catchUpSinceSeq = openResult.startedSession
+        ? this.ctx.sessionRuntimes.getCurrentSeq(sessionId)
+        : beforeOpenSeq;
+      const catchUp = this.ctx.sessionRuntimes.getCatchUp(sessionId, catchUpSinceSeq);
+
+      // A temporarily disconnected terminal mirror intentionally remains terminal-owned,
+      // but has no active broadcaster or ring to query. Keep its focused stream open so
+      // the live bridge can resume instead of forcing an unproductive reconnect loop.
+      const unavailableDisconnectedMirror =
+        !catchUp &&
+        openResult.owner === "pi-tui" &&
+        !this.ctx.sessionRuntimes.isSessionConnected(sessionId);
+      if ((!catchUp || !catchUp.catchUpComplete) && !unavailableDisconnectedMirror) {
+        log.warn("ws.bound_session_stream_bootstrap_catchup_unavailable", {
+          connId,
+          sessionId,
+          fromSeq: catchUpSinceSeq,
+          currentSeq: catchUp?.currentSeq,
+          runtimeAvailable: Boolean(catchUp),
+        });
+        metrics?.record("server.session_subscribe_ms", Date.now() - connectedAt, {
+          level: "bound_session",
+          outcome: "error",
+          path: "bound_session_stream",
+          catchup_requested: "true",
+          catchup_complete: "false",
+          started_session: openResult.startedSession ? "true" : "false",
+          pending_permissions: "0",
+          pending_ui_requests: "0",
+        });
+        cleanupBoundConnection(1011);
+        ws.close(1011, "Session stream bootstrap retry required");
+        return;
+      }
+
+      const bootstrapCurrentSeq =
+        catchUp?.currentSeq ?? this.ctx.sessionRuntimes.getCurrentSeq(sessionId);
+      sendForSession({
+        type: "connected",
+        session: hydratedSession,
+        currentSeq: bootstrapCurrentSeq,
+      });
+
+      const catchUpEvents = catchUp?.events ?? [];
+      for (const event of catchUpEvents) {
+        sendForSession(event);
+      }
+
+      // Events emitted after subscribe may also be present in the ring snapshot. Drain
+      // them only after replay and discard sequenced overlap to preserve exactly-once,
+      // monotonically ordered delivery at the catch-up/live boundary. Keep buffering
+      // until the queue is empty so reentrant callbacks cannot overtake queued events.
+      for (let index = 0; index < bootstrapLiveQueue.length; index += 1) {
+        const event = bootstrapLiveQueue[index];
+        if (!event) continue;
+        if (typeof event.seq === "number" && event.seq <= bootstrapCurrentSeq) continue;
+        sendForSession(event);
+      }
+      bootstrapping = false;
+
+      if (catchUpEvents.length > 0) {
+        log.info("ws.bound_session_stream_bootstrap_replayed", {
+          connId,
+          sessionId,
+          fromSeq: catchUpSinceSeq,
+          currentSeq: bootstrapCurrentSeq,
+          eventCount: catchUpEvents.length,
+        });
+      }
 
       const activeSession = this.ctx.sessionRuntimes.getActiveSession(sessionId) ?? hydratedSession;
       sendForSession({
@@ -375,8 +451,8 @@ export class BoundSessionStreamMux {
         level: "bound_session",
         outcome: "success",
         path: "bound_session_stream",
-        catchup_requested: "false",
-        catchup_complete: "true",
+        catchup_requested: catchUpEvents.length > 0 ? "true" : "false",
+        catchup_complete: catchUp ? "true" : "false",
         started_session: openResult.startedSession ? "true" : "false",
         pending_permissions: countBucketForTag(0),
         pending_ui_requests: countBucketForTag(pendingUIDialogCount),
