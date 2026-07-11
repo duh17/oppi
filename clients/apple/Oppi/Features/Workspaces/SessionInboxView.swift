@@ -825,62 +825,74 @@ struct WorkspaceSessionInboxStackRootView: View {
     @State private var isSidebarOpen = false
 
     var body: some View {
-        let sidebarWidth = min(UIScreen.main.bounds.width * 0.86, 360)
+        GeometryReader { proxy in
+            let sidebarWidth = min(proxy.size.width * 0.86, 360)
 
-        ZStack(alignment: .leading) {
-            SessionInboxView(
-                onOpenSidebar: { isSidebarOpen = true },
-                isSidebarPresented: isSidebarOpen
-            )
-            .disabled(isSidebarOpen)
-            .accessibilityHidden(isSidebarOpen)
-            .navigationDestination(for: WorkspaceNavTarget.self) { target in
-                WorkspaceScopedDestinationView(target: target)
-            }
-
-            if !isSidebarOpen {
-                Color.clear
-                    .frame(width: 32)
-                    .frame(maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .gesture(sidebarOpenGesture)
-                    .accessibilityHidden(true)
-                    .zIndex(1)
-            }
-
-            if isSidebarOpen {
-                Color.black.opacity(0.30)
-                    .ignoresSafeArea()
-                    .onTapGesture { isSidebarOpen = false }
-                    .transition(.opacity)
-                    .accessibilityHidden(true)
-                    .accessibilityIdentifier("workspace.sidebar.scrim")
-                    .zIndex(1)
-
-                ZStack(alignment: .topLeading) {
-                    Rectangle()
-                        .fill(Color.themeBg)
-                        .ignoresSafeArea()
-
+            ZStack(alignment: .leading) {
+                if isSidebarOpen {
                     WorkspaceSidebarView(
                         onSelect: { isSidebarOpen = false },
                         onDismiss: { isSidebarOpen = false }
                     )
+                    .frame(width: sidebarWidth)
+                    .frame(maxHeight: .infinity)
+                    .accessibilityAddTraits(.isModal)
+                    .accessibilityAction(.escape) { isSidebarOpen = false }
+                    .simultaneousGesture(sidebarDismissGesture)
+                    .zIndex(0)
                 }
-                .frame(width: sidebarWidth)
-                .frame(maxHeight: .infinity)
-                .shadow(color: .black.opacity(0.35), radius: 24, x: 8, y: 0)
-                .transition(ThemeMotion.move(edge: .leading, reduceMotion: reduceMotion))
-                .simultaneousGesture(sidebarDismissGesture)
-                .accessibilityAddTraits(.isModal)
-                .accessibilityAction(.escape) { isSidebarOpen = false }
-                .zIndex(2)
+
+                SessionInboxView(
+                    onOpenSidebar: { isSidebarOpen = true },
+                    isSidebarPresented: isSidebarOpen
+                )
+                .background(Color.themeBg)
+                .clipShape(
+                    RoundedRectangle(
+                        cornerRadius: isSidebarOpen ? 28 : 0,
+                        style: .continuous
+                    )
+                )
+                .shadow(
+                    color: isSidebarOpen ? .black.opacity(0.35) : .clear,
+                    radius: 24,
+                    x: -8,
+                    y: 0
+                )
+                .offset(x: isSidebarOpen ? sidebarWidth : 0)
+                .disabled(isSidebarOpen)
+                .accessibilityHidden(isSidebarOpen)
+                .navigationDestination(for: WorkspaceNavTarget.self) { target in
+                    WorkspaceScopedDestinationView(target: target)
+                }
+                .zIndex(1)
+
+                if !isSidebarOpen {
+                    Color.clear
+                        .frame(width: 32)
+                        .frame(maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .gesture(sidebarOpenGesture)
+                        .accessibilityHidden(true)
+                        .zIndex(2)
+                } else {
+                    Color.clear
+                        .frame(width: proxy.size.width - sidebarWidth)
+                        .frame(maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .offset(x: sidebarWidth)
+                        .onTapGesture { isSidebarOpen = false }
+                        .gesture(sidebarDismissGesture)
+                        .accessibilityHidden(true)
+                        .accessibilityIdentifier("workspace.sidebar.scrim")
+                        .zIndex(2)
+                }
             }
+            .animation(
+                ThemeMotion.easeInOut(duration: 0.22, reduceMotion: reduceMotion),
+                value: isSidebarOpen
+            )
         }
-        .animation(
-            ThemeMotion.easeInOut(duration: 0.22, reduceMotion: reduceMotion),
-            value: isSidebarOpen
-        )
     }
 
     private var sidebarOpenGesture: some Gesture {
