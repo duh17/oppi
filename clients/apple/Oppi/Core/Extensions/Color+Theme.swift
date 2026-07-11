@@ -33,6 +33,15 @@ extension Color {
     // MARK: - Semantic UI Helpers
 
     static var themeScrim: Color { palette.bgDark.opacity(0.82) }
+
+    /// Fill for elevated glass panels floating over the timeline (extension
+    /// surfaces, drawers, message queue). Opacity tracks the fill luminance so
+    /// dark themes keep their translucent glass while light themes sit
+    /// near-opaque — otherwise timeline text ghosts through and reads as noise.
+    static var themeElevatedSurface: Color {
+        palette.bgDark.opacity(ThemeColorContrast.elevatedSurfaceOpacity(for: palette.bgDark))
+    }
+
     static var themeOnBlue: Color { ThemeColorContrast.foreground(for: palette.blue) }
     static var themeOnGreen: Color { ThemeColorContrast.foreground(for: palette.green) }
 
@@ -133,6 +142,16 @@ enum ThemeColorContrast {
             return .themeFg
         }
         return luminance > 0.55 ? .themeBgDark : .themeFg
+    }
+
+    /// Fill opacity for elevated glass panels so timeline content behind them
+    /// does not bleed through. Dark fills keep the established 0.78 glass;
+    /// light fills must sit near-opaque (~0.94) because a light panel
+    /// over a light timeline shows even faint text bleed as distracting noise.
+    static func elevatedSurfaceOpacity(for fill: Color) -> Double {
+        guard let luminance = relativeLuminance(of: fill) else { return 0.78 }
+        let clamped = min(max(Double(luminance), 0), 1)
+        return 0.78 + clamped * 0.20
     }
 
     private static func relativeLuminance(of color: Color) -> CGFloat? {

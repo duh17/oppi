@@ -6,7 +6,7 @@ private extension View {
     func extensionGlassPanel(cornerRadius: CGFloat = 18) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
-            .background(Color.themeBgDark.opacity(0.78), in: shape)
+            .background(Color.themeElevatedSurface, in: shape)
             .overlay {
                 shape.stroke(Color.themeFg.opacity(0.12), lineWidth: 0.5)
             }
