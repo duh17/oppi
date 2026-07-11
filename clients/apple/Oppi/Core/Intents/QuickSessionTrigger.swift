@@ -12,19 +12,15 @@ struct QuickSessionInitialPayload: Equatable, Sendable {
     let attachments: [Attachment]
 }
 
-enum QuickSessionPendingPayload: Equatable, Sendable {
-    case share(ShareQuickSessionPayload)
-    case initial(QuickSessionInitialPayload)
-}
-
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "QuickSessionTrigger")
 
 /// Lightweight trigger that bridges external intake with SwiftUI presentation.
 ///
-/// The Control widget and share extension write app-group state for the main app
-/// to consume on launch or foreground. Main-app App Intents, including Spotlight,
-/// Siri, and Shortcuts, call `requestPresentation` directly and can include an
-/// initial composer payload.
+/// The Control widget writes app-group state for the main app to consume on
+/// launch or foreground. Main-app App Intents, including Spotlight, Siri, and
+/// Shortcuts, call `requestPresentation` directly and can include an initial
+/// composer payload. The share extension sends directly and never hands a draft
+/// to the main app.
 @MainActor @Observable
 final class QuickSessionTrigger {
     static let shared = QuickSessionTrigger()
@@ -40,13 +36,13 @@ final class QuickSessionTrigger {
     /// Input owned by the latest accepted presentation request. Keeping the
     /// payload and request in one slot prevents separate intake paths from
     /// merging unrelated content into the same draft.
-    private var pendingPayload: QuickSessionPendingPayload?
+    private var pendingPayload: QuickSessionInitialPayload?
 
     private init() {}
 
     /// Called by presentation sources that do not carry initial content.
     func requestPresentation() {
-        requestPresentation(pendingPayload: nil)
+        requestPresentation(initialPayload: nil)
     }
 
     /// Check shared UserDefaults for a pending request from an extension.
@@ -56,51 +52,24 @@ final class QuickSessionTrigger {
         let pending = defaults.bool(forKey: SharedConstants.quickSessionPendingKey)
         guard pending else { return }
 
-        let payload: ShareQuickSessionPayload?
-        if let payloadId = defaults.string(forKey: ShareQuickSessionPayload.pendingPayloadIdKey) {
-            payload = ShareQuickSessionPayload.consume(id: payloadId)
-        } else {
-            defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
-            payload = nil
-        }
-
-        logger.notice("Found pending quick session request from extension")
-        let pendingPayload = payload.map(QuickSessionPendingPayload.share)
-        if !requestPresentation(pendingPayload: pendingPayload), let payload {
-            ShareQuickSessionPayload.removePayloadFiles(id: payload.id)
-        }
-    }
-
-    func requestPresentation(sharePayloadId: String) {
-        let payload = ShareQuickSessionPayload.consume(id: sharePayloadId)
-        let pendingPayload = payload.map(QuickSessionPendingPayload.share)
-        if !requestPresentation(pendingPayload: pendingPayload), let payload {
-            ShareQuickSessionPayload.removePayloadFiles(id: payload.id)
-        }
+        defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
+        logger.notice("Found pending quick session request from Control widget")
+        requestPresentation(initialPayload: nil)
     }
 
     func requestPresentation(initialPayload: QuickSessionInitialPayload?) {
-        requestPresentation(pendingPayload: initialPayload.map(QuickSessionPendingPayload.initial))
+        guard !isPresented else {
+            logger.debug("Quick session sheet already presented, ignoring duplicate request")
+            return
+        }
+        pendingPayload = initialPayload
+        presentationRequestID += 1
+        logger.notice("Quick session presentation requested (id=\(self.presentationRequestID, privacy: .public))")
     }
 
-    func consumePendingPayload() -> QuickSessionPendingPayload? {
+    func consumePendingPayload() -> QuickSessionInitialPayload? {
         defer { pendingPayload = nil }
         return pendingPayload
     }
 
-    @discardableResult
-    private func requestPresentation(pendingPayload newPayload: QuickSessionPendingPayload?) -> Bool {
-        guard !isPresented else {
-            logger.debug("Quick session sheet already presented, ignoring duplicate request")
-            return false
-        }
-
-        if case .share(let previousPayload) = pendingPayload {
-            ShareQuickSessionPayload.removePayloadFiles(id: previousPayload.id)
-        }
-        pendingPayload = newPayload
-        presentationRequestID += 1
-        logger.notice("Quick session presentation requested (id=\(self.presentationRequestID, privacy: .public))")
-        return true
-    }
 }

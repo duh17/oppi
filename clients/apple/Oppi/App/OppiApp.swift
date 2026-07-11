@@ -5,7 +5,6 @@ import UIKit
 private let appLog = Logger(subsystem: AppIdentifiers.subsystem, category: "App")
 #if DEBUG
 nonisolated(unsafe) private var e2eInviteProcessedThisProcess = false
-nonisolated(unsafe) private var e2ePendingQuickSessionShareSeededThisProcess = false
 #endif
 
 /// Gate reconnect work so foreground transitions only trigger recovery
@@ -300,7 +299,6 @@ struct OppiApp: App {
         await setupNotifications()
 #if DEBUG
         scheduleE2EInAppBrowserIfRequested()
-        seedE2EPendingQuickSessionShareIfRequested()
 
         // E2E test support: process invite URL from launch environment.
         // Must run BEFORE reconnectOnLaunch to prevent stale simulator
@@ -337,29 +335,6 @@ struct OppiApp: App {
     }
 
 #if DEBUG
-    @MainActor
-    private func seedE2EPendingQuickSessionShareIfRequested() {
-        guard !e2ePendingQuickSessionShareSeededThisProcess else { return }
-        guard let text = ProcessInfo.processInfo.environment["OPPI_E2E_PENDING_QUICK_SESSION_SHARE_TEXT"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !text.isEmpty else {
-            return
-        }
-
-        e2ePendingQuickSessionShareSeededThisProcess = true
-        let payload = ShareQuickSessionPayload(
-            id: "e2e-quick-session-share-\(UUID().uuidString)",
-            text: text,
-            files: [],
-            createdAt: Date()
-        )
-        do {
-            try ShareQuickSessionPayload.store(payload)
-        } catch {
-            appLog.error("Failed to seed E2E quick session share payload: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
     @MainActor
     private func scheduleE2EInAppBrowserIfRequested() {
         guard let url = Self.e2eInAppBrowserURL() else {
@@ -402,9 +377,6 @@ struct OppiApp: App {
             return
         }
         if handleIncomingWorkspaceURL(url) {
-            return
-        }
-        if handleIncomingQuickSessionShareURL(url) {
             return
         }
         await handleIncomingInviteURL(url)
@@ -477,24 +449,6 @@ struct OppiApp: App {
         // Session not found locally — just open the app to workspaces tab.
         navigation.selectedTab = .workspaces
         navigation.workspacePath = NavigationPath()
-        return true
-    }
-
-    @MainActor
-    private func handleIncomingQuickSessionShareURL(_ url: URL) -> Bool {
-        guard url.scheme?.lowercased() == "oppi",
-              url.host?.lowercased() == "quick-session-share" else {
-            return false
-        }
-        let payloadId = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-            .queryItems?
-            .first { $0.name.lowercased() == "id" }?
-            .value
-        guard let payloadId, !payloadId.isEmpty else {
-            connection.extensionToast = "Could not open the shared item"
-            return true
-        }
-        QuickSessionTrigger.shared.requestPresentation(sharePayloadId: payloadId)
         return true
     }
 

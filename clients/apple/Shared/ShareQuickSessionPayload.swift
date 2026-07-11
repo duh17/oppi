@@ -1,12 +1,11 @@
 import Foundation
 
-/// Payload written by the iOS Share extension and consumed by the main app.
+/// In-memory draft assembled by the iOS share extension.
 ///
-/// The extension cannot pass large files through a URL, so it copies shared
-/// items into the app-group container and stores this small manifest in shared
-/// defaults. The main app turns the files into normal composer attachments.
-struct ShareQuickSessionPayload: Codable, Equatable, Sendable {
-    struct SharedFile: Codable, Equatable, Sendable {
+/// Shared files are copied into the app-group inbox so the extension composer
+/// can upload them from stable file URLs without materializing them in memory.
+struct ShareQuickSessionPayload: Equatable, Sendable {
+    struct SharedFile: Equatable, Sendable {
         let name: String
         let relativePath: String
         let mimeType: String
@@ -15,15 +14,8 @@ struct ShareQuickSessionPayload: Codable, Equatable, Sendable {
     let id: String
     let text: String?
     let files: [SharedFile]
-    let createdAt: Date
 
-    static let defaultsPrefix = "quickSession.sharePayload."
-    static let pendingPayloadIdKey = "quickSession.sharePayload.pendingId"
     static let inboxDirectoryName = "QuickSessionShareInbox"
-
-    static func defaultsKey(for id: String) -> String {
-        defaultsPrefix + id
-    }
 
     static var appGroupContainerURL: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: SharedConstants.appGroupIdentifier)
@@ -37,67 +29,8 @@ struct ShareQuickSessionPayload: Codable, Equatable, Sendable {
         inboxURL?.appendingPathComponent(id, isDirectory: true)
     }
 
-    static func store(_ payload: ShareQuickSessionPayload) throws {
-        let data = try JSONEncoder().encode(payload)
-        let defaults = SharedConstants.sharedDefaults
-        defaults.set(data, forKey: defaultsKey(for: payload.id))
-        defaults.set(payload.id, forKey: pendingPayloadIdKey)
-        defaults.set(true, forKey: SharedConstants.quickSessionPendingKey)
-    }
-
-    static func load(id: String) -> ShareQuickSessionPayload? {
-        guard let data = SharedConstants.sharedDefaults.data(forKey: defaultsKey(for: id)) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(ShareQuickSessionPayload.self, from: data)
-    }
-
-    static func consume(id: String) -> ShareQuickSessionPayload? {
-        let defaults = SharedConstants.sharedDefaults
-        let payload = load(id: id)
-        defaults.removeObject(forKey: defaultsKey(for: id))
-        if defaults.string(forKey: pendingPayloadIdKey) == id {
-            defaults.removeObject(forKey: pendingPayloadIdKey)
-        }
-        defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
-        return payload
-    }
-
     static func removePayloadFiles(id: String) {
         guard let url = payloadDirectoryURL(id: id) else { return }
         try? FileManager.default.removeItem(at: url)
-    }
-}
-
-/// iOS support matrix for `NSExtensionContext.open(_:completionHandler:)`.
-///
-/// Apple documents that each extension point decides whether this API works.
-/// On iOS, the supported extension points are Today widgets and iMessage apps;
-/// share extensions should hand data through an app group and let the app consume
-/// it on its next launch or foreground transition.
-enum ExtensionContextOpenSupport {
-    static let shareServicesExtensionPointIdentifier = "com.apple.share-services"
-    static let todayExtensionPointIdentifier = "com.apple.widget-extension"
-    static let iMessageExtensionPointIdentifier = "com.apple.message-payload-provider"
-
-    static func extensionPointIdentifier(in bundle: Bundle = .main) -> String? {
-        guard let extensionInfo = bundle.object(forInfoDictionaryKey: "NSExtension") as? [String: Any] else {
-            return nil
-        }
-        return extensionInfo["NSExtensionPointIdentifier"] as? String
-    }
-
-    static func supportsOpeningContainingAppOnIOS(extensionPointIdentifier: String?) -> Bool {
-        guard let normalized = extensionPointIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-              !normalized.isEmpty else {
-            return false
-        }
-
-        switch normalized {
-        case Self.todayExtensionPointIdentifier, Self.iMessageExtensionPointIdentifier:
-            return true
-        default:
-            return false
-        }
     }
 }

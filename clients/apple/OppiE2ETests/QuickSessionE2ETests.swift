@@ -1,20 +1,8 @@
 import XCTest
 
-private let quickSessionShareText = "E2E quick share send 44B0A7"
-
 /// Focused Quick Session coverage kept outside the release gate.
 final class QuickSessionE2ETests: E2ETestCase {
     override var e2eLaunchesWorkspaceHomeOnly: Bool { true }
-    override var e2eRequiresFreshLaunch: Bool {
-        name.contains("testPendingSharePayloadSendsFromQuickSession")
-    }
-
-    override func configureE2ELaunch(_ application: XCUIApplication) {
-        guard name.contains("testPendingSharePayloadSendsFromQuickSession") else { return }
-        MainActor.assumeIsolated {
-            application.launchEnvironment["OPPI_E2E_PENDING_QUICK_SESSION_SHARE_TEXT"] = quickSessionShareText
-        }
-    }
 
     @MainActor
     func testQuickSessionChoosesWorkspaceModelThinkingAndSendsToChat() throws {
@@ -59,22 +47,6 @@ final class QuickSessionE2ETests: E2ETestCase {
     }
 
     @MainActor
-    func testPendingSharePayloadSendsFromQuickSession() throws {
-        let input = app.textViews["chat.input"]
-        XCTAssertTrue(waitForElementToExist(input, timeout: 20), "Pending share payload did not present Quick Session")
-        let value = waitForInputValue(input, containing: quickSessionShareText, timeout: 10)
-        XCTAssertTrue(value.contains(quickSessionShareText), "Quick Session did not preload share text. Last value: \(value)")
-
-        tap(app.buttons["chat.send"], named: "pending share quick session send button", timeout: 5)
-        XCTAssertTrue(waitForElementToExist(app.textViews["chat.input"], timeout: 30), "Created chat did not open for share payload")
-        _ = waitForFocusedSessionId(timeout: 30)
-        XCTAssertTrue(
-            waitForTimelineTextContaining(quickSessionShareText, timeout: 30),
-            "Share payload text did not appear in the created chat"
-        )
-    }
-
-    @MainActor
     private func typeIntoTextView(_ element: XCUIElement, text: String) {
         tap(element, named: "text input", timeout: 5)
         let focusPredicate = NSPredicate(format: "hasKeyboardFocus == true")
@@ -87,24 +59,6 @@ final class QuickSessionE2ETests: E2ETestCase {
         }
         XCTAssertTrue(focusPredicate.evaluate(with: element), "Text input did not gain keyboard focus")
         element.typeText(text)
-    }
-
-    @MainActor
-    private func waitForInputValue(
-        _ input: XCUIElement,
-        containing expected: String,
-        timeout: TimeInterval
-    ) -> String {
-        let deadline = Date().addingTimeInterval(timeout)
-        var latest = input.value as? String ?? input.label
-        while Date() < deadline {
-            latest = input.value as? String ?? input.label
-            if latest.contains(expected) {
-                return latest
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-        return latest
     }
 
     @MainActor
