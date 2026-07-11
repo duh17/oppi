@@ -347,7 +347,7 @@ struct ChatSessionManagerTests {
         await TimelineCache.shared.removeTrace(sessionId)
     }
 
-    @Test func unchangedStoppedFreshTraceFinalizesOpenToolLoadedFromRunningCache() async {
+    @Test func unchangedStoppedFreshTraceInterruptsOldOpenTool() async {
         let sessionId = "unchanged-stopped-tool-\(UUID().uuidString)"
         let workspaceId = "w1"
         let toolId = "tool-without-result"
@@ -388,7 +388,11 @@ struct ChatSessionManagerTests {
                 guard case .toolCall(let id, _, _, let preview, _, let isError, let isDone) = manager.reducer.items.first else {
                     return false
                 }
-                return id == toolId && isDone && isError && preview.contains("stopped before returning")
+                return id == toolId
+                    && isDone
+                    && !isError
+                    && manager.reducer.isToolInterrupted(toolId)
+                    && preview.isEmpty
             }
         })
 
@@ -828,7 +832,7 @@ struct ChatSessionManagerTests {
         #expect(snapshot.calls[1].cachedLastEventId == "evt-200")
     }
 
-    @Test func liveStateReadyRecoveryStopsWatchdogReleasesScreenAwakeAndFinalizesThinking() async {
+    @Test func liveStateReadyFinalizesTerminalTimelineArtifacts() async {
         let sessionId = "live-state-recovery-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
@@ -880,14 +884,14 @@ struct ChatSessionManagerTests {
         }
 
         #expect(thinkingStates.count == 1)
-        #expect(thinkingStates[0] == true)
+        #expect(thinkingStates[0], "Terminal recovery must stop unresolved timeline artifacts")
         #expect(updates().last == false)
 
         streams.finish(index: 0)
         await connectTask.value
     }
 
-    @Test func reconnectCatchUpStateReadyRecoveryStopsWatchdogReleasesScreenAwakeAndFinalizesThinking() async {
+    @Test func reconnectCatchUpStateReadyFinalizesTerminalTimelineArtifacts() async {
         let sessionId = "catchup-state-recovery-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
@@ -963,7 +967,7 @@ struct ChatSessionManagerTests {
         }
 
         #expect(thinkingStates.count == 1)
-        #expect(thinkingStates[0] == true)
+        #expect(thinkingStates[0], "Catch-up terminal recovery must stop unresolved artifacts")
         #expect(UserDefaults.standard.integer(forKey: "chat.lastSeenSeq.\(sessionId)") == 2)
         #expect(updates().last == false)
 

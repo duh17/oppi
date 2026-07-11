@@ -181,9 +181,10 @@ export class SessionEventProcessor {
       }
 
       case "agent_end":
-        session.status = pendingStopMode === "terminate" ? "stopping" : "ready";
+        // Pi may emit agent_end before scheduling an automatic retry. Keep the
+        // session busy until the corresponding agent_settled event proves that
+        // no more agent work remains.
         session.currentTurnStartedAt = undefined;
-        shouldFlushNow = true;
 
         // Turn duration
         if (metrics && active.turnStartedAt) {
@@ -210,6 +211,12 @@ export class SessionEventProcessor {
         }
 
         active.turnStartedAt = undefined;
+        break;
+
+      case "agent_settled":
+        session.status = pendingStopMode === "terminate" ? "stopping" : "ready";
+        session.currentTurnStartedAt = undefined;
+        shouldFlushNow = true;
         break;
 
       case "session_info_changed": {

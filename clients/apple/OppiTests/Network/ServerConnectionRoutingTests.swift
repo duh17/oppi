@@ -35,16 +35,21 @@ struct ServerConnectionRoutingTests {
         #expect(turnStartedAt != nil)
 
         pipe.handle(.agentEnd, sessionId: "s1")
+        #expect(conn.sessionStore.session(id: "s1")?.currentTurnStartedAt != nil)
+
+        pipe.handle(.agentSettled, sessionId: "s1")
         #expect(conn.sessionStore.session(id: "s1")?.currentTurnStartedAt == nil)
     }
 
-    @Test func inactiveAgentEndRecordsUnreadCompletion() {
+    @Test func inactiveAgentSettledRecordsUnreadCompletion() {
         let (conn, _) = makeTestConnection(sessionId: "focused")
         conn.sessionStore.switchServer(to: "srv1")
         conn.sessionStore.upsert(makeTestSession(id: "background", status: .busy))
 
         _ = conn.applySharedStoreUpdate(for: .agentEnd, sessionId: "background")
+        #expect(conn.sessionStore.unreadCompletionDate(for: "background") == nil)
 
+        _ = conn.applySharedStoreUpdate(for: .agentSettled, sessionId: "background")
         #expect(conn.sessionStore.unreadCompletionDate(for: "background") != nil)
     }
 
@@ -55,6 +60,7 @@ struct ServerConnectionRoutingTests {
 
         pipe.handle(.agentStart, sessionId: "focused")
         pipe.handle(.agentEnd, sessionId: "focused")
+        pipe.handle(.agentSettled, sessionId: "focused")
 
         #expect(conn.sessionStore.unreadCompletionDate(for: "focused") == nil)
     }
@@ -579,12 +585,14 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.sessions.first?.status == .busy)
     }
 
-    @Test func routeAgentEndSetsSessionReadyWithoutStateMessage() {
+    @Test func routeAgentSettledSetsSessionReadyWithoutStateMessage() {
         let (conn, pipe) = makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .busy))
 
         pipe.handle(.agentEnd, sessionId: "s1")
+        #expect(conn.sessionStore.sessions.first?.status == .busy)
 
+        pipe.handle(.agentSettled, sessionId: "s1")
         #expect(conn.sessionStore.sessions.first?.status == .ready)
     }
 

@@ -146,15 +146,22 @@ describe("LiveActivityBridge", () => {
       expect(push.updates[0].contentState.lastEvent).toBe("Agent started");
     });
 
-    it("maps agent_end to ready status with null activeTool", () => {
-      const { bridge, push } = makeBridge();
+    it("keeps agent_end busy until agent_settled", () => {
+      const storage = makeStorageStub("la-token", [makeSession({ status: "busy" })]);
+      const { bridge, push } = makeBridge({ storage });
 
       bridge.handleSessionEvent(event("agent_end"));
       vi.advanceTimersByTime(800);
 
-      expect(push.updates[0].contentState.status).toBe("ready");
+      expect(push.updates[0].contentState.status).toBe("busy");
       expect(push.updates[0].contentState.activeTool).toBeNull();
-      expect(push.updates[0].contentState.lastEvent).toBe("Agent finished");
+      expect(push.updates[0].contentState.lastEvent).toBe("Agent run finished");
+
+      bridge.handleSessionEvent(event("agent_settled"));
+      vi.advanceTimersByTime(800);
+
+      expect(push.updates[1].contentState.status).toBe("ready");
+      expect(push.updates[1].contentState.lastEvent).toBe("Agent finished");
     });
 
     it("maps tool_start to busy with tool name", () => {
@@ -326,7 +333,7 @@ describe("LiveActivityBridge", () => {
       bridge.handleSessionEvent(event("agent_start"));
       vi.advanceTimersByTime(800);
 
-      bridge.handleSessionEvent(event("agent_end"));
+      bridge.handleSessionEvent(event("agent_settled"));
       vi.advanceTimersByTime(800);
 
       expect(push.updates).toHaveLength(2);

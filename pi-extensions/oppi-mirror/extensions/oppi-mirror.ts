@@ -149,6 +149,7 @@ const QUEUE_UPDATE_BRIDGE_KEY = "__oppiMirrorQueueUpdateBridge";
 const EVENT_TYPES = [
   "agent_start",
   "agent_end",
+  "agent_settled",
   "turn_start",
   "turn_end",
   "message_start",
@@ -158,6 +159,67 @@ const EVENT_TYPES = [
   "tool_execution_update",
   "tool_execution_end",
 ] as const;
+
+const OPPI_LIFECYCLE_CUSTOM_TYPE = "oppi-lifecycle";
+
+type MirrorLifecycleEntryData = {
+  version: 1;
+  event:
+    | "agent_start"
+    | "agent_end"
+    | "agent_settled"
+    | "turn_start"
+    | "turn_end"
+    | "tool_execution_start"
+    | "tool_execution_end";
+  turnIndex?: number;
+  toolCallId?: string;
+  toolName?: string;
+  isError?: boolean;
+};
+
+function mirrorLifecycleEntryData(
+  eventType: (typeof EVENT_TYPES)[number],
+  event: unknown,
+): MirrorLifecycleEntryData | undefined {
+  const record = isRecord(event) ? event : {};
+  switch (eventType) {
+    case "agent_start":
+    case "agent_end":
+    case "agent_settled":
+      return { version: 1, event: eventType };
+    case "turn_start":
+    case "turn_end":
+      return {
+        version: 1,
+        event: eventType,
+        ...(typeof record.turnIndex === "number"
+          ? { turnIndex: record.turnIndex }
+          : {}),
+      };
+    case "tool_execution_start":
+    case "tool_execution_end":
+      return {
+        version: 1,
+        event: eventType,
+        ...(typeof record.toolCallId === "string"
+          ? { toolCallId: record.toolCallId }
+          : {}),
+        ...(typeof record.toolName === "string"
+          ? { toolName: record.toolName }
+          : {}),
+        ...(eventType === "tool_execution_end" &&
+        typeof record.isError === "boolean"
+          ? { isError: record.isError }
+          : {}),
+      };
+    case "message_start":
+    case "message_update":
+    case "message_end":
+    case "tool_execution_update":
+      return undefined;
+  }
+}
 
 const INTERNAL_AGENT_SESSION_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
   "compaction_start",
@@ -4304,6 +4366,10 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         `event:${eventType}`,
         (event: unknown, ctx: ExtensionContext) => {
           latestCtx = ctx;
+          const lifecycleEntry = mirrorLifecycleEntryData(eventType, event);
+          if (ctx.mode === "tui" && lifecycleEntry) {
+            pi.appendEntry(OPPI_LIFECYCLE_CUSTOM_TYPE, lifecycleEntry);
+          }
           if (eventType === "message_start") {
             markQueueItemStarted(
               textFromUserMessage((event as { message?: unknown }).message),
@@ -4313,6 +4379,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
           const includeState =
             eventType === "agent_start" ||
             eventType === "agent_end" ||
+            eventType === "agent_settled" ||
             eventType === "turn_start" ||
             eventType === "turn_end" ||
             eventType === "message_end";

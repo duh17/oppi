@@ -56,6 +56,7 @@ enum ServerMessage: Sendable, Equatable {
     // Agent streaming
     case agentStart
     case agentEnd
+    case agentSettled
     case messageEnd(role: String, content: String)
     case textDelta(delta: String)
     case thinkingDelta(delta: String, contentIndex: Int? = nil)
@@ -345,6 +346,9 @@ extension ServerMessage: Decodable {
 
         case "agent_end":
             self = .agentEnd
+
+        case "agent_settled":
+            self = .agentSettled
 
         case "message_end":
             let role = try c.decode(String.self, forKey: .role)
@@ -679,6 +683,7 @@ extension ServerMessage {
         case .stopFailed: "stopFailed"
         case .agentStart: "agentStart"
         case .agentEnd: "agentEnd"
+        case .agentSettled: "agentSettled"
         case .messageEnd: "messageEnd"
         case .textDelta: "textDelta"
         case .thinkingDelta: "thinkingDelta"

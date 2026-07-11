@@ -646,7 +646,7 @@ struct AskRequestTests {
         #expect(conn.askRequestStore.pending(for: "s2")?.id == "ask-state")
     }
 
-    @Test @MainActor func inactiveStoppedStateClearsPendingAskForInactiveSession() {
+    @Test @MainActor func inactiveStoppedStateClearsPendingAsk() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("active")
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .busy))

@@ -76,6 +76,11 @@ extension ServerConnection {
             return StoreUpdateResult(handled: true)
 
         case .agentEnd:
+            // agent_end closes one low-level Pi run, but an automatic retry may
+            // follow. agent_settled is the authoritative idle transition.
+            return StoreUpdateResult(handled: true)
+
+        case .agentSettled:
             let completedAt = Date()
             var didCompleteTurn = false
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
@@ -403,7 +408,7 @@ extension ServerConnection {
         switch message {
         case .agentStart:
             event = .agentStart(sessionId: sessionId)
-        case .agentEnd:
+        case .agentSettled:
             event = .agentEnd(sessionId: sessionId)
         case .stopConfirmed:
             event = .agentEnd(sessionId: sessionId)

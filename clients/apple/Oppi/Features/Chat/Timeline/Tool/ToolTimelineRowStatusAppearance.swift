@@ -7,13 +7,22 @@ struct ToolTimelineRowStatusAppearance {
     let borderBackgroundColor: UIColor
     let borderColor: CGColor
 
-    static func make(isDone: Bool, isError: Bool) -> Self {
+    static func make(isDone: Bool, isError: Bool, isInterrupted: Bool = false) -> Self {
         if !isDone {
             return .init(
                 symbolName: "play.circle.fill",
                 statusColor: UIColor(Color.themeBlue),
                 borderBackgroundColor: UIColor(Color.themeBgHighlight.opacity(0.75)),
                 borderColor: UIColor(Color.themeBlue.opacity(0.25)).cgColor
+            )
+        }
+
+        if isInterrupted {
+            return .init(
+                symbolName: "exclamationmark.circle.fill",
+                statusColor: UIColor(Color.themeOrange),
+                borderBackgroundColor: UIColor(Color.themeOrange.opacity(0.08)),
+                borderColor: UIColor(Color.themeOrange.opacity(0.25)).cgColor
             )
         }
 

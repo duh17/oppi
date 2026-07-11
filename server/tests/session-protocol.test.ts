@@ -603,6 +603,14 @@ describe("translatePiEvent", () => {
       expect(result).toEqual([{ type: "agent_end" }]);
       expect(ctx.streamedAssistantText).toBe("");
     });
+
+    it("emits agent_settled as the authoritative idle boundary", () => {
+      const result = translatePiEvent(
+        { type: "agent_settled" } as AgentSessionEvent,
+        makeCtx(),
+      );
+      expect(result).toEqual([{ type: "agent_settled" }]);
+    });
   });
 
   describe("turn_start / turn_end / message_start", () => {

@@ -70,6 +70,14 @@ export class LiveActivityBridge {
       case "agent_end":
         this.queue({
           sessionId,
+          activeTool: null,
+          lastEvent: "Agent run finished",
+          priority: 5,
+        });
+        return;
+      case "agent_settled":
+        this.queue({
+          sessionId,
           status: "ready",
           activeTool: null,
           lastEvent: "Agent finished",

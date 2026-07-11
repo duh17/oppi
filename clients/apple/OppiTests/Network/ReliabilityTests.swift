@@ -327,7 +327,7 @@ struct ReliabilityTests {
 
     // MARK: - Thinking lifecycle recovery
 
-    @Test func stopConfirmedWithoutAgentEndFinalizesThinking() {
+    @Test func stopConfirmedWithoutAgentEndFinalizesTerminalThinking() {
         let (conn, pipe) = makeTestConnection()
         pipe.handle(.connected(session: makeTestSession(status: .busy)), sessionId: "s1")
 
@@ -351,10 +351,10 @@ struct ReliabilityTests {
         }
 
         #expect(thinkingStates.count == 1)
-        #expect(thinkingStates[0] == true)
+        #expect(thinkingStates[0])
     }
 
-    @Test func stateReadyWithoutAgentEndFinalizesThinking() {
+    @Test func stateReadyWithoutAgentEndFinalizesTerminalThinking() {
         let (conn, pipe) = makeTestConnection()
         pipe.handle(.connected(session: makeTestSession(status: .busy)), sessionId: "s1")
 
@@ -370,7 +370,7 @@ struct ReliabilityTests {
         }
 
         #expect(thinkingStates.count == 1)
-        #expect(thinkingStates[0] == true)
+        #expect(thinkingStates[0])
     }
 
     // MARK: - Fix 5: Timeline preserves all items (no trimming)

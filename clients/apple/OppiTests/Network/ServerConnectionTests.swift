@@ -192,12 +192,14 @@ struct ServerConnectionTests {
         #expect(conn.sessionStore.sessions.first?.status == .busy)
     }
 
-    @Test func routeAgentEndSetsSessionReadyWithoutStateMessage() {
+    @Test func routeAgentSettledSetsSessionReadyWithoutStateMessage() {
         let (conn, pipe) = makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .busy))
 
         pipe.handle(.agentEnd, sessionId: "s1")
+        #expect(conn.sessionStore.sessions.first?.status == .busy)
 
+        pipe.handle(.agentSettled, sessionId: "s1")
         #expect(conn.sessionStore.sessions.first?.status == .ready)
     }
 

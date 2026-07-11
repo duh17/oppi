@@ -251,6 +251,7 @@ extension ChatTimelineCollectionHost.Controller {
             outputPreview: outputPreview,
             isError: isError,
             isDone: isDone,
+            isInterrupted: reducer?.isToolInterrupted(itemID) == true,
             context: context
         )
         configuration.expandedContent = AudioTimelinePresentationAdapter.expandedContent(

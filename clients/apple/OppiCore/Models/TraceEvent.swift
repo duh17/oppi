@@ -4,6 +4,44 @@ import Foundation
 ///
 /// Returned by `GET /workspaces/:workspaceId/sessions/:id` (`trace` payload).
 /// Contains the complete tool call history including tool calls and thinking.
+struct TraceLifecycleEvent: Codable, Equatable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case agentStart
+        case agentEnd
+        case agentSettled
+        case turnStart
+        case turnEnd
+        case toolStart
+        case toolEnd
+    }
+
+    let id: String
+    let event: Kind
+    let timestamp: String
+    let turnIndex: Int?
+    let toolCallId: String?
+    let toolName: String?
+    let isError: Bool?
+
+    init(
+        id: String,
+        event: Kind,
+        timestamp: String,
+        turnIndex: Int? = nil,
+        toolCallId: String? = nil,
+        toolName: String? = nil,
+        isError: Bool? = nil
+    ) {
+        self.id = id
+        self.event = event
+        self.timestamp = timestamp
+        self.turnIndex = turnIndex
+        self.toolCallId = toolCallId
+        self.toolName = toolName
+        self.isError = isError
+    }
+}
+
 struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
     let id: String
     let type: TraceEventType
@@ -24,6 +62,11 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
     let toolCallId: String?
     let toolName: String?
     let isError: Bool?
+
+    // Persisted lifecycle rides on original trace event types so older clients
+    // safely ignore these fields instead of rejecting new enum discriminators.
+    let lifecycleBefore: [TraceLifecycleEvent]?
+    let lifecycleAfter: [TraceLifecycleEvent]?
 
     // Tool result details (expandedText, presentationFormat, etc.)
     var details: JSONValue? = nil
@@ -48,6 +91,8 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         toolCallId: String? = nil,
         toolName: String? = nil,
         isError: Bool? = nil,
+        lifecycleBefore: [TraceLifecycleEvent]? = nil,
+        lifecycleAfter: [TraceLifecycleEvent]? = nil,
         details: JSONValue? = nil,
         thinking: String? = nil,
         presentation: TraceEventPresentation? = nil
@@ -65,6 +110,8 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.toolCallId = toolCallId
         self.toolName = toolName
         self.isError = isError
+        self.lifecycleBefore = lifecycleBefore
+        self.lifecycleAfter = lifecycleAfter
         self.details = details
         self.thinking = thinking
         self.presentation = presentation

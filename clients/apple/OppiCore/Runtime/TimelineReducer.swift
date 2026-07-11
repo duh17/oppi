@@ -45,8 +45,6 @@ struct TimelineReducerEnvironment {
 /// and produces the item array that drives the chat collection timeline.
 @MainActor @Observable
 final class TimelineReducer { // swiftlint:disable:this type_body_length
-    private static let stoppedToolMessage = "Tool stopped before returning a result. No tool_end event was received."
-
     // No timeline trimming — the full session history is always preserved.
     // The collection view uses lazy rendering so item count doesn't affect
     // frame rate, only memory. A 1000-event session ≈ ~2MB — fine on any device.
@@ -129,6 +127,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Computed once at tool_end so the displayed value doesn't drift on reconfiguration.
     private var toolElapsedSeconds: [String: Int] = [:]
 
+    /// Calls closed by an agent/terminal boundary without canonical tool completion.
+    /// Kept outside ToolOutputStore so interruption never becomes fabricated output.
+    private var interruptedToolIDs: Set<String> = []
+
     /// Tool event IDs for ask tool calls — suppressed from timeline as tool rows,
     /// converted to user messages when tool_end arrives with structured answers.
     private var askToolEventIDs: Set<String> = []
@@ -148,6 +150,24 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Frozen elapsed duration for a completed tool call.
     func toolElapsed(for id: String) -> Int? {
         toolElapsedSeconds[id]
+    }
+
+    func isToolInterrupted(_ id: String) -> Bool {
+        interruptedToolIDs.contains(id)
+    }
+
+    /// Reconcile a terminal session when canonical Pi lifecycle is unavailable
+    /// (pre-journal history, forced termination, or a missed live boundary).
+    func finalizeTerminalArtifactsAsInterrupted() {
+        let before = renderMutationCheckpoint()
+        turnInProgress = false
+        lastAssistantIDThisTurn = nil
+        finalizeAssistantMessage()
+        finalizeThinking()
+        let interruptedTools = closeAllOrphanedTools()
+        if interruptedTools || renderMutationCheckpoint() != before {
+            bumpRenderVersion()
+        }
     }
 
     func applyExtensionToolsExpanded(_ expanded: Bool) {
@@ -179,16 +199,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private var loadedTraceEventIDs: [String] = []
 
     /// True when current timeline rows are an exact projection of the last
-    /// loaded trace (no live/local mutations since then). Synthetic recovery
-    /// diagnostics intentionally make this false so the next changed trace
-    /// rebuilds from source instead of appending onto recovery text.
+    /// loaded trace (no live/local mutations since then).
     private var timelineMatchesTrace = false
-
-    /// Terminal rendering policy used for the current trace projection. A trace
-    /// with identical event IDs may still need a rebuild when the session moves
-    /// between running and stopped, because open tool rows are rendered
-    /// differently in those states.
-    private var loadedTraceFinalizeOpenTools: Bool?
 
     /// Test seam: true when the most recent `loadSession` used incremental
     /// append/no-op mode instead of a destructive full rebuild.
@@ -243,13 +255,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     ///
     /// Returns true if the trace was applied (false if no-op/skipped).
     @discardableResult
-    func applyTraceWithLiveReplay(_ events: [TraceEvent], replayID: UUID, finalizeOpenTools: Bool = true) -> Bool {
+    func applyTraceWithLiveReplay(_ events: [TraceEvent], replayID: UUID) -> Bool {
         let buffer = liveEventReplayBuffer?.id == replayID ? liveEventReplayBuffer?.events ?? [] : []
         discardHistoryReplayBuffer(id: replayID)
 
         // Fresh trace is authoritative — orphan detection disabled.
         // The replay buffer re-creates any live items on top.
-        loadSession(events, preserveOrphans: false, finalizeOpenTools: finalizeOpenTools)
+        loadSession(events, preserveOrphans: false)
 
         if !buffer.isEmpty {
             processBatch(buffer)
@@ -287,12 +299,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolDetailsStore.clearAll()
         toolStartTimes.removeAll()
         toolElapsedSeconds.removeAll()
+        interruptedToolIDs.removeAll()
         askToolEventIDs.removeAll()
         retryMergeCandidate = nil
         loadedTraceEvents.removeAll()
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
-        loadedTraceFinalizeOpenTools = nil
         _lastLoadWasIncrementalForTesting = false
         renderVersion &+= 1
     }
@@ -328,7 +340,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         loadedTraceEvents.removeAll()
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
-        loadedTraceFinalizeOpenTools = nil
 
         bumpRenderVersion()
 
@@ -354,21 +365,16 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     ///   not present in the trace are re-inserted after the rebuild. Set to
     ///   false when loading an authoritative fresh trace (e.g., from
     ///   `loadHistory`) to avoid "ghost" user messages at the bottom.
-    func loadSession(_ events: [TraceEvent], preserveOrphans: Bool = true, finalizeOpenTools: Bool = true) {
+    func loadSession(_ events: [TraceEvent], preserveOrphans: Bool = true) {
         environment.markdownPrewarmer.cancel()
 
         let dateFormatter = Self.makeTraceDateFormatter()
 
-        switch loadSessionMode(events: events, finalizeOpenTools: finalizeOpenTools) {
+        switch loadSessionMode(events: events) {
         case .noOp:
             _lastLoadWasIncrementalForTesting = true
             if loadedTraceEvents.isEmpty {
                 loadedTraceEvents = events
-            }
-            loadedTraceFinalizeOpenTools = finalizeOpenTools
-            if finalizeOpenTools, closeAllOrphanedTools() {
-                timelineMatchesTrace = false
-                bumpRenderVersion()
             }
             return
 
@@ -388,10 +394,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
             loadedTraceEvents.append(contentsOf: events[appendStart...])
             loadedTraceEventIDs.append(contentsOf: events[appendStart...].map(\.id))
-            let closedOpenTools = finalizeOpenTools && closeAllOrphanedTools()
-            loadedTraceFinalizeOpenTools = finalizeOpenTools
             bumpRenderVersion()
-            timelineMatchesTrace = !closedOpenTools
+            timelineMatchesTrace = true
 
             environment.logLoadSession("[loadSession] incremental: +\(events.count - appendStart) events → \(self.items.count) items")
 
@@ -447,6 +451,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolArgsStore.clearAll()
         toolSegmentStore.clearAll()
         toolDetailsStore.clearAll()
+        toolStartTimes.removeAll()
+        toolElapsedSeconds.removeAll()
+        interruptedToolIDs.removeAll()
 
         // Pre-size arrays to avoid reallocation during event processing.
         items.reserveCapacity(events.count)
@@ -465,9 +472,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
         }
 
-        let closedOpenTools = finalizeOpenTools && closeAllOrphanedTools()
-        loadedTraceFinalizeOpenTools = finalizeOpenTools
-
         // Re-insert orphaned user messages at their chronological position.
         for orphan in orphanedUserMessages {
             let insertIdx = Self.chronologicalInsertionIndex(for: orphan, in: items)
@@ -483,7 +487,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         // If we preserved orphans, the timeline no longer exactly matches the
         // trace — force a full rebuild on the next loadSession so the orphans
         // get reconciled once the trace catches up.
-        timelineMatchesTrace = orphanedUserMessages.isEmpty && !closedOpenTools
+        timelineMatchesTrace = orphanedUserMessages.isEmpty
 
         let orphanInfo = orphanedUserMessages.isEmpty ? "" : " (preserved \(orphanedUserMessages.count) local user msgs)"
         environment.logLoadSession("[loadSession] full rebuild: \(events.count) events → \(self.items.count) items\(orphanInfo)")
@@ -492,7 +496,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     @discardableResult
-    func prependTracePage(_ olderEvents: [TraceEvent], finalizeOpenTools: Bool = true) -> Bool {
+    func prependTracePage(_ olderEvents: [TraceEvent]) -> Bool {
         guard !olderEvents.isEmpty else { return false }
         guard canPrependTracePage else { return false }
 
@@ -501,7 +505,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         guard !dedupedOlderEvents.isEmpty else { return false }
 
         let combinedEvents = dedupedOlderEvents + loadedTraceEvents
-        loadSession(combinedEvents, preserveOrphans: false, finalizeOpenTools: finalizeOpenTools)
+        loadSession(combinedEvents, preserveOrphans: false)
         return true
     }
 
@@ -511,6 +515,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     @discardableResult
     private func applyTraceEvent(_ event: TraceEvent, dateFormatter: ISO8601DateFormatter, appendOnly: Bool = false) -> String? {
+        for lifecycle in event.lifecycleBefore ?? [] {
+            applyTraceLifecycleEvent(lifecycle, dateFormatter: dateFormatter)
+        }
+        let result = applyTraceEventBody(event, dateFormatter: dateFormatter, appendOnly: appendOnly)
+        for lifecycle in event.lifecycleAfter ?? [] {
+            applyTraceLifecycleEvent(lifecycle, dateFormatter: dateFormatter)
+        }
+        return result
+    }
+
+    private func applyTraceEventBody(_ event: TraceEvent, dateFormatter: ISO8601DateFormatter, appendOnly: Bool) -> String? {
         // Lazy date — only .user and .assistant actually need a parsed timestamp.
         // Avoids ~0.5μs of date parsing for thinking, toolCall, toolResult, system events.
         lazy var date = FastISO8601Parser.parse(event.timestamp, fallback: dateFormatter)
@@ -668,6 +683,38 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 message: message
             ), appendOnly: appendOnly)
             return nil
+
+        }
+    }
+
+    private func applyTraceLifecycleEvent(
+        _ lifecycle: TraceLifecycleEvent,
+        dateFormatter: ISO8601DateFormatter
+    ) {
+        switch lifecycle.event {
+        case .agentStart, .agentEnd:
+            closeAllOrphanedTools()
+
+        case .agentSettled, .turnStart, .turnEnd:
+            break
+
+        case .toolStart:
+            guard let toolCallID = lifecycle.toolCallId else { return }
+            if toolStartTimes[toolCallID] == nil, toolElapsedSeconds[toolCallID] == nil {
+                toolStartTimes[toolCallID] = FastISO8601Parser.parse(
+                    lifecycle.timestamp,
+                    fallback: dateFormatter
+                )
+            }
+
+        case .toolEnd:
+            guard let toolCallID = lifecycle.toolCallId else { return }
+            if toolElapsedSeconds[toolCallID] == nil,
+               let startedAt = toolStartTimes[toolCallID] {
+                let endedAt = FastISO8601Parser.parse(lifecycle.timestamp, fallback: dateFormatter)
+                toolElapsedSeconds[toolCallID] = max(0, Int(endedAt.timeIntervalSince(startedAt)))
+            }
+            updateToolCallDone(id: toolCallID, isError: lifecycle.isError ?? false)
         }
     }
 
@@ -714,18 +761,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         timelineMatchesTrace
     }
 
-    func needsTraceProjectionRefresh(finalizeOpenTools: Bool) -> Bool {
-        loadedTraceFinalizeOpenTools != finalizeOpenTools
-    }
-
-    private func loadSessionMode(events: [TraceEvent], finalizeOpenTools: Bool) -> HistoryLoadMode {
+    private func loadSessionMode(events: [TraceEvent]) -> HistoryLoadMode {
         guard timelineMatchesTrace else { return .fullRebuild }
         guard !loadedTraceEventIDs.isEmpty else { return .fullRebuild }
-        guard loadedTraceFinalizeOpenTools == finalizeOpenTools else { return .fullRebuild }
         guard events.count >= loadedTraceEventIDs.count else { return .fullRebuild }
 
         for (index, loadedID) in loadedTraceEventIDs.enumerated() {
-            guard events[index].id == loadedID else { return .fullRebuild }
+            guard events[index].id == loadedID,
+                  index < loadedTraceEvents.count,
+                  events[index] == loadedTraceEvents[index] else {
+                return .fullRebuild
+            }
         }
 
         let appendStart = loadedTraceEventIDs.count
@@ -1003,8 +1049,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         case .sessionEnded(_, let reason):
             let before = renderMutationCheckpoint()
-            // Session termination is terminal for the current turn.
-            // Clear streaming mode before finalizing buffered content.
+            // A forced termination may not produce Pi agent_end. Preserve real
+            // output, but stop unresolved rows in a distinct interrupted state.
             turnInProgress = false
             lastAssistantIDThisTurn = nil
             finalizeAssistantMessage()
@@ -1058,10 +1104,20 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let beforeExpandedItemIDs = expandedItemIDs
         let previousArgs = toolArgsStore.args(for: toolEventId)
         let previousCallSegments = toolSegmentStore.callSegments(for: toolEventId)
+        let existingToolState: (isError: Bool, isDone: Bool)?
+        if let idx = indexForID(toolEventId),
+           case .toolCall(_, _, _, _, _, let isError, let isDone) = items[idx] {
+            existingToolState = (isError, isDone)
+        } else {
+            existingToolState = nil
+        }
         finalizeAssistantMessage()
         // Record start time only once real execution begins. Streaming
-        // tool_update previews should not start the elapsed timer.
-        if startsExecution, toolStartTimes[toolEventId] == nil {
+        // tool_update previews should not start the elapsed timer. A duplicate
+        // start for a completed call is stale replay and must not restart timing.
+        if startsExecution,
+           existingToolState?.isDone != true,
+           toolStartTimes[toolEventId] == nil {
             toolStartTimes[toolEventId] = Date()
         }
         let argsSummary = args.map { "\($0.key): \($0.value.summary())" }
@@ -1071,18 +1127,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let outputByteCount = toolOutputStore.outputByteCount(for: toolEventId)
 
         if let idx = indexForID(toolEventId),
-           case .toolCall(_, _, _, _, _, let existingError, _) = items[idx] {
-            // Replay/reconnect can deliver duplicate tool_start for an
-            // existing tool call ID. Update in place instead of appending
-            // a second row with the same identifier.
+           let existingToolState {
+            // Tool call IDs are unique. Replay/reconnect may deliver a duplicate
+            // start, but terminal state is monotonic and must not regress.
             let newItem = TimelineTurnAssembler.makeToolCallItem(
                 id: toolEventId,
                 tool: tool,
                 argsSummary: argsSummary,
                 outputPreview: outputPreview,
                 outputByteCount: outputByteCount,
-                isError: existingError,
-                isDone: false
+                isError: existingToolState.isError,
+                isDone: existingToolState.isDone
             )
             if items[idx] != newItem {
                 items[idx] = newItem
@@ -1131,7 +1186,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         // Use contains (not remove) so the ID persists for reconnection suppression.
         if askToolEventIDs.contains(toolEventId) {
             // Freeze elapsed time and mark tool row done (with empty output).
-            if let startedAt = toolStartTimes[toolEventId] {
+            if toolElapsedSeconds[toolEventId] == nil,
+               let startedAt = toolStartTimes[toolEventId] {
                 toolElapsedSeconds[toolEventId] = max(0, Int(Date().timeIntervalSince(startedAt)))
             }
             if let details {
@@ -1171,7 +1227,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let previousDetails = toolDetailsStore.details(for: toolEventId)
         let previousResultSegments = toolSegmentStore.resultSegments(for: toolEventId)
         // Freeze elapsed seconds so the value doesn't drift on later reconfigurations.
-        if let startedAt = toolStartTimes[toolEventId] {
+        if toolElapsedSeconds[toolEventId] == nil,
+           let startedAt = toolStartTimes[toolEventId] {
             toolElapsedSeconds[toolEventId] = max(0, Int(Date().timeIntervalSince(startedAt)))
         }
         if let details {
@@ -1567,9 +1624,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         currentThinkingContentIndex = nil
     }
 
-    /// Close ALL in-progress tool call rows, not just the last one.
-    /// Handles cases where multiple tool calls are orphaned (e.g., missed
-    /// agentEnd during reconnect, or concurrent tool calls in future protocol).
+    /// Close every tool call left open at an explicit Pi agent boundary.
+    ///
+    /// Interruption is lifecycle state, not tool output: never write a
+    /// synthetic diagnostic into `ToolOutputStore`, whose contents must remain
+    /// a projection of canonical Pi tool results.
     @discardableResult
     private func closeAllOrphanedTools() -> Bool {
         var didChange = false
@@ -1578,29 +1637,22 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 let id,
                 let tool,
                 let argsSummary,
-                _,
-                _,
+                let outputPreview,
+                let outputByteCount,
                 _,
                 let isDone
             ) = items[idx], !isDone else { continue }
 
-            let currentOutput = toolOutputStore.fullOutput(for: id)
-            if currentOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                toolOutputStore.replace(Self.stoppedToolMessage, for: id)
-            } else if !currentOutput.contains(Self.stoppedToolMessage) {
-                toolOutputStore.append("\n\n\(Self.stoppedToolMessage)", to: id)
-            }
-
-            let fullOutput = toolOutputStore.fullOutput(for: id)
             let doneItem = ChatItem.toolCall(
                 id: id,
                 tool: tool,
                 argsSummary: argsSummary,
-                outputPreview: ChatItem.preview(fullOutput),
-                outputByteCount: toolOutputStore.outputByteCount(for: id),
-                isError: true,
+                outputPreview: outputPreview,
+                outputByteCount: outputByteCount,
+                isError: false,
                 isDone: true
             )
+            interruptedToolIDs.insert(id)
 
             if doneItem != items[idx] {
                 items[idx] = doneItem
@@ -1654,6 +1706,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     private func updateToolCallDone(id: String, isError: Bool = false) {
+        interruptedToolIDs.remove(id)
         guard let idx = indexForID(id),
               let doneItem = TimelineTurnAssembler.makeDoneToolCall(existing: items[idx], isError: isError)
         else {

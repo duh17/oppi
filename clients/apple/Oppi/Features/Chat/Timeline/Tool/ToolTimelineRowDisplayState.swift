@@ -261,12 +261,14 @@ enum ToolTimelineRowDisplayState {
     static func applyStatusAppearance(
         isDone: Bool,
         isError: Bool,
+        isInterrupted: Bool = false,
         statusImageView: UIImageView,
         borderView: UIView
     ) {
         let statusAppearance = ToolTimelineRowStatusAppearance.make(
             isDone: isDone,
-            isError: isError
+            isError: isError,
+            isInterrupted: isInterrupted
         )
 
         statusImageView.image = UIImage(systemName: statusAppearance.symbolName)

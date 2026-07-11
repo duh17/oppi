@@ -139,6 +139,40 @@ struct ToolElapsedTimeTests {
         #expect(reducer.toolElapsed(for: "e1") == nil)
     }
 
+    @Test("full history rebuild clears stale live timing state")
+    func fullHistoryRebuildClearsLiveTiming() {
+        let reducer = TimelineReducer()
+        let toolId = "t-rebuild"
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "read", args: [:]))
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolId))
+        #expect(reducer.toolStartTime(for: toolId) != nil)
+        #expect(reducer.toolElapsed(for: toolId) != nil)
+
+        reducer.loadSession([
+            TraceEvent(
+                id: toolId,
+                type: .toolCall,
+                timestamp: "2026-01-01T00:00:01Z",
+                tool: "read",
+                args: ["path": .string("README.md")]
+            ),
+            TraceEvent(
+                id: "result-t-rebuild",
+                type: .toolResult,
+                timestamp: "2026-01-01T00:00:02Z",
+                output: "done",
+                toolCallId: toolId,
+                toolName: "read",
+                isError: false
+            ),
+        ])
+
+        #expect(reducer.toolStartTime(for: toolId) == nil)
+        #expect(reducer.toolElapsed(for: toolId) == nil)
+    }
+
     @Test("reset clears timing state")
     func resetClearsTiming() {
         let reducer = TimelineReducer()

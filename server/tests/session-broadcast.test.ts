@@ -133,6 +133,7 @@ describe("SessionBroadcaster", () => {
     const expectedDurableTypes: ServerMessage["type"][] = [
       "agent_start",
       "agent_end",
+      "agent_settled",
       "message_end",
       "tool_start",
       "tool_end",

@@ -29,6 +29,8 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let isExpanded: Bool
     let isDone: Bool
     let isError: Bool
+    /// Terminal without canonical tool_end/toolResult (old trace or forced stop).
+    var isInterrupted: Bool = false
     /// When the tool call started (live sessions only). Used to tick elapsed time while running.
     let startedAt: Date?
     /// Frozen elapsed seconds for completed tool calls. Takes priority over startedAt.
@@ -1291,6 +1293,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         ToolTimelineRowDisplayState.applyStatusAppearance(
             isDone: configuration.isDone,
             isError: configuration.isError,
+            isInterrupted: configuration.isInterrupted,
             statusImageView: statusImageView,
             borderView: borderView
         )

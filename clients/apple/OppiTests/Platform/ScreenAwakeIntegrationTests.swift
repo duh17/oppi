@@ -65,18 +65,22 @@ struct ScreenAwakeIntegrationTests {
         #expect(updates().last == true)
     }
 
-    @Test("agentEnd on active session releases idle timer immediately (Off preset)")
-    func agentEndReleasesIdleTimer() {
+    @Test("agentSettled releases active-session idle timer (Off preset)")
+    func agentSettledReleasesIdleTimer() {
         let (ctrl, updates) = makeImmediateReleaseController()
         let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
 
         pipe.handle(.agentStart, sessionId: "s1")
         pipe.handle(.agentEnd, sessionId: "s1")
+        #expect(ctrl.isPreventingSleep, "agentEnd may be followed by an automatic retry")
+        #expect(conn.sessionStore.session(id: "s1")?.status == .busy)
 
+        pipe.handle(.agentSettled, sessionId: "s1")
         #expect(!ctrl.isPreventingSleep)
+        #expect(conn.sessionStore.session(id: "s1")?.status == .ready)
         #expect(updates().contains(true), "should have enabled sleep prevention first")
-        #expect(updates().last == false, "should have released after agentEnd")
+        #expect(updates().last == false, "should have released after agentSettled")
     }
 
     @Test("agentStart ignored for wrong sessionId")
@@ -179,15 +183,17 @@ struct ScreenAwakeIntegrationTests {
         #expect(updates().last == true)
     }
 
-    @Test("agentEnd on non-active session releases idle timer")
-    func crossSessionAgentEndReleasesIdleTimer() {
+    @Test("agentSettled on non-active session releases idle timer")
+    func crossSessionAgentSettledReleasesIdleTimer() {
         let (ctrl, updates) = makeImmediateReleaseController()
         let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .busy))
 
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentStart))
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentEnd))
+        #expect(ctrl.isPreventingSleep)
 
+        conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentSettled))
         #expect(!ctrl.isPreventingSleep)
         #expect(updates().last == false)
     }
@@ -246,12 +252,14 @@ struct ScreenAwakeIntegrationTests {
         pipe.handle(.agentStart, sessionId: "s1")
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentStart))
 
-        // s1 ends — s2 still active
+        // s1 settles — s2 still active
         pipe.handle(.agentEnd, sessionId: "s1")
+        pipe.handle(.agentSettled, sessionId: "s1")
         #expect(ctrl.isPreventingSleep, "s2 still active — screen must stay awake")
 
-        // s2 ends — all done
+        // s2 settles — all done
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentEnd))
+        conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentSettled))
         #expect(!ctrl.isPreventingSleep, "no active sessions — should release")
     }
 
@@ -269,8 +277,9 @@ struct ScreenAwakeIntegrationTests {
         conn.disconnectSession()
         #expect(ctrl.isPreventingSleep, "s2 still active after s1 disconnected")
 
-        // s2 ends — now both gone
+        // s2 settles — now both gone
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentEnd))
+        conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentSettled))
         #expect(!ctrl.isPreventingSleep)
     }
 

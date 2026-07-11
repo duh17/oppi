@@ -1,6 +1,7 @@
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "./lifecycle-journal-extension.js";
 import { buildSessionContext, type SessionEntry, type TraceEvent } from "./trace.js";
 
 export interface TracePageOptions {
@@ -729,7 +730,7 @@ function selectPageEntries(lines: ParsedLine[], targetEvents: number): ParsedLin
   const eligible = [...lines].sort(compareLines);
   if (eligible.length === 0) return [];
 
-  const byToolCallId = buildToolCallLineIndex(eligible);
+  const toolGroups = buildToolLineGroups(eligible);
   const selected = new Set<string>();
   let selectedTraceCount = 0;
 
@@ -737,7 +738,7 @@ function selectPageEntries(lines: ParsedLine[], targetEvents: number): ParsedLin
     const line = eligible[index];
     if (!line || selected.has(lineKey(line))) continue;
 
-    const group = groupForLine(line, byToolCallId).filter(
+    const group = groupForLine(line, toolGroups).filter(
       (grouped) => !selected.has(lineKey(grouped)),
     );
     if (group.length === 0) continue;
@@ -761,13 +762,13 @@ function selectAroundPageEntries(
   const eligible = uniqueLines(lines).sort(compareLines);
   if (eligible.length === 0) return [];
 
-  const byToolCallId = buildToolCallLineIndex(eligible);
+  const toolGroups = buildToolLineGroups(eligible);
   const selected = new Set<string>();
   let selectedTraceCount = 0;
 
   function addLine(line: ParsedLine | undefined): void {
     if (!line || selected.has(lineKey(line))) return;
-    const group = groupForLine(line, byToolCallId).filter(
+    const group = groupForLine(line, toolGroups).filter(
       (grouped) => !selected.has(lineKey(grouped)),
     );
     if (group.length === 0) return;
@@ -811,23 +812,51 @@ function selectedTraceEventEstimate(lines: ParsedLine[]): number {
   return lines.reduce((sum, line) => sum + estimateTraceEventCount(line.entry), 0);
 }
 
-function buildToolCallLineIndex(lines: ParsedLine[]): Map<string, ParsedLine> {
-  const byToolCallId = new Map<string, ParsedLine>();
-  for (const line of lines) {
-    for (const toolCallId of toolCallIdsInEntry(line.entry)) {
-      byToolCallId.set(toolCallId, line);
-    }
-  }
-  return byToolCallId;
+interface ToolLineGroup {
+  lines: ParsedLine[];
+  startIndex: number;
+  endIndex: number;
 }
 
-function groupForLine(line: ParsedLine, byToolCallId: Map<string, ParsedLine>): ParsedLine[] {
-  const toolResultId = toolResultCallId(line.entry);
-  if (!toolResultId) return [line];
+function buildToolLineGroups(lines: ParsedLine[]): Map<string, ToolLineGroup> {
+  const groups = new Map<string, { callIndex?: number; latestEvidenceIndex: number }>();
+  for (const [index, line] of lines.entries()) {
+    const callIds = toolCallIdsInEntry(line.entry);
+    const evidenceId = toolEvidenceCallId(line.entry);
+    for (const toolCallId of callIds) {
+      const group = groups.get(toolCallId) ?? { latestEvidenceIndex: index };
+      group.callIndex = index;
+      group.latestEvidenceIndex = Math.max(group.latestEvidenceIndex, index);
+      groups.set(toolCallId, group);
+    }
+    if (evidenceId) {
+      const group = groups.get(evidenceId) ?? { latestEvidenceIndex: index };
+      group.latestEvidenceIndex = Math.max(group.latestEvidenceIndex, index);
+      groups.set(evidenceId, group);
+    }
+  }
 
-  const callLine = byToolCallId.get(toolResultId);
-  if (!callLine) return [];
-  return compareLines(callLine, line) < 0 ? [callLine, line] : [];
+  const complete = new Map<string, ToolLineGroup>();
+  for (const [toolCallId, group] of groups) {
+    if (group.callIndex === undefined) continue;
+    complete.set(toolCallId, {
+      lines,
+      // Keep the entire parent-chain span. Concurrent tool lifecycle entries can
+      // sit between this call and result; omitting them breaks both tree walking
+      // and the next-page cursor boundary.
+      startIndex: group.callIndex,
+      endIndex: group.latestEvidenceIndex,
+    });
+  }
+  return complete;
+}
+
+function groupForLine(line: ParsedLine, toolGroups: Map<string, ToolLineGroup>): ParsedLine[] {
+  const toolCallId = toolCallIdsInEntry(line.entry)[0] ?? toolEvidenceCallId(line.entry);
+  if (!toolCallId) return [line];
+
+  const group = toolGroups.get(toolCallId);
+  return group ? group.lines.slice(group.startIndex, group.endIndex + 1) : [];
 }
 
 function estimateTraceEventCount(entry: SessionEntry): number {
@@ -844,6 +873,10 @@ function estimateTraceEventCount(entry: SessionEntry): number {
       return entry.summary ? 1 : 0;
     case "custom_message":
       return entry.content && entry.display !== false ? 1 : 0;
+    case "custom":
+      // Lifecycle is metadata on a nearby original trace event, not a standalone
+      // wire event, so it does not consume the page's renderable event budget.
+      return 0;
     default:
       return 0;
   }
@@ -895,10 +928,19 @@ function toolCallIdsInEntry(entry: SessionEntry): string[] {
   });
 }
 
-function toolResultCallId(entry: SessionEntry): string | undefined {
+function toolEvidenceCallId(entry: SessionEntry): string | undefined {
   const message = entry.message;
-  if (!message || message.role !== "toolResult") return undefined;
-  return typeof message.toolCallId === "string" ? message.toolCallId : undefined;
+  if (message?.role === "toolResult") {
+    return typeof message.toolCallId === "string" ? message.toolCallId : undefined;
+  }
+  if (entry.type !== "custom" || entry.customType !== OPPI_LIFECYCLE_CUSTOM_TYPE) {
+    return undefined;
+  }
+  const data = asRecord(entry.data);
+  if (data?.event !== "tool_execution_start" && data?.event !== "tool_execution_end") {
+    return undefined;
+  }
+  return typeof data.toolCallId === "string" ? data.toolCallId : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

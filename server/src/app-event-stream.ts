@@ -51,6 +51,7 @@ export const APP_EVENT_FORBIDDEN_SERVER_MESSAGE_TYPES = [
   "stream_connected",
   "agent_start",
   "agent_end",
+  "agent_settled",
   "text_delta",
   "thinking_delta",
   "message_end",

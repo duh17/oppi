@@ -394,6 +394,7 @@ export type ServerMessage = // ── Connection ──
     // ── Agent lifecycle ──
     | { type: "agent_start" }
     | { type: "agent_end" }
+    | { type: "agent_settled" }
     | { type: "message_end"; role: "user" | "assistant"; content: string }
     // ── Streaming ──
     | { type: "text_delta"; delta: string }

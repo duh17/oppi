@@ -125,6 +125,11 @@ struct ServerMessageTests {
         #expect(msg == .agentEnd)
     }
 
+    @Test func decodesAgentSettled() throws {
+        let msg = try ServerMessage.decode(from: #"{"type":"agent_settled"}"#)
+        #expect(msg == .agentSettled)
+    }
+
     @Test func decodesMessageEnd() throws {
         let msg = try ServerMessage.decode(from: #"{"type":"message_end","role":"assistant","content":"Done"}"#)
         guard case .messageEnd(let role, let content) = msg else {

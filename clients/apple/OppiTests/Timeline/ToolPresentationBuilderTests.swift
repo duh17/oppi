@@ -24,6 +24,28 @@ struct ToolPresentationBuilderTests {
         )
     }
 
+    @Test("interrupted tool has distinct terminal presentation")
+    func interruptedPresentation() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-interrupted", tool: "read",
+            argsSummary: "path: README.md",
+            outputPreview: "",
+            isError: false,
+            isDone: true,
+            isInterrupted: true,
+            context: emptyContext(args: ["path": .string("README.md")])
+        )
+        let appearance = ToolTimelineRowStatusAppearance.make(
+            isDone: true,
+            isError: false,
+            isInterrupted: true
+        )
+
+        #expect(config.isInterrupted)
+        #expect(config.trailing == "Interrupted")
+        #expect(appearance.symbolName == "exclamationmark.circle.fill")
+    }
+
     // MARK: - Bash
 
     @Test("bash collapsed shows command text")

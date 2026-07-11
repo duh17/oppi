@@ -37,6 +37,7 @@ export class SessionBroadcaster {
   private static readonly DURABLE_MESSAGE_TYPES = new Set<ServerMessage["type"]>([
     "agent_start",
     "agent_end",
+    "agent_settled",
     "message_end",
     "tool_start",
     "tool_end",
