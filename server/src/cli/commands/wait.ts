@@ -80,12 +80,15 @@ function sessionMatchesStatus(session: WaitSession, expectedStatus: string): boo
   return session.status === expectedStatus;
 }
 
-function parseDurationMs(value: string): number {
+export function parseDurationMs(value: string): number {
   const match = value.trim().match(/^(\d+)(ms|s|m|h|d)?$/);
   if (!match) throw new Error("Duration must look like 500ms, 15s, 5m, 1h, or 1d");
   const amountText = match[1];
   const unit = match[2] ?? "ms";
   const amount = Number.parseInt(amountText, 10);
+  if (!Number.isSafeInteger(amount)) {
+    throw new Error("Duration is too large");
+  }
   const multiplier =
     unit === "ms"
       ? 1
@@ -96,7 +99,11 @@ function parseDurationMs(value: string): number {
           : unit === "h"
             ? 3_600_000
             : 86_400_000;
-  return amount * multiplier;
+  const durationMs = amount * multiplier;
+  if (!Number.isSafeInteger(durationMs)) {
+    throw new Error("Duration is too large");
+  }
+  return durationMs;
 }
 
 async function sleep(ms: number): Promise<void> {

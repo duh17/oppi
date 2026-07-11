@@ -582,6 +582,13 @@ const rawApiRouteSpecs = [
     auth: "owner",
   },
   {
+    method: "GET",
+    path: "/sessions/{sessionId}/dialogs",
+    operationId: "getSessionDialogs",
+    surface: "internal",
+    auth: "owner",
+  },
+  {
     method: "POST",
     path: "/sessions/{sessionId}/command",
     operationId: "sendSessionCommand",

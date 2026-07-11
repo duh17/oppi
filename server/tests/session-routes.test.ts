@@ -928,6 +928,168 @@ describe("sessions module", () => {
     }
   });
 
+  it("lists pending user-reply dialogs on the generic session dialogs route", async () => {
+    const ctx = {
+      storage: {
+        getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
+      },
+      sessionRuntimes: {
+        getPendingUIRequestMessages: vi.fn(() => [
+          {
+            type: "extension_ui_notification",
+            method: "setStatus",
+            statusKey: "k",
+            statusText: "live",
+          },
+          {
+            type: "extension_ui_request",
+            id: "ask-1",
+            sessionId: "s1",
+            method: "ask",
+            questions: [{ id: "q", question: "Which?", options: [{ value: "a", label: "A" }] }],
+            allowCustom: false,
+            timeout: 1000,
+          },
+          {
+            type: "extension_ui_request",
+            id: "sel-1",
+            sessionId: "s1",
+            method: "select",
+            title: "Pick",
+            options: ["x", "y"],
+          },
+          // ask without questions is not a pending user-reply request
+          { type: "extension_ui_request", id: "ask-empty", sessionId: "s1", method: "ask" },
+        ]),
+      },
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+    const handled = await dispatch({
+      method: "GET",
+      path: "/sessions/s1/dialogs",
+      url: new URL("http://localhost/sessions/s1/dialogs"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      dialogs: Array<Record<string, unknown>>;
+    };
+    expect(body.dialogs.map((dialog) => [dialog.id, dialog.method])).toEqual([
+      ["ask-1", "ask"],
+      ["sel-1", "select"],
+    ]);
+    expect(body.dialogs[0]).toMatchObject({ method: "ask", allowCustom: false, timeout: 1000 });
+    expect(body.dialogs[1]).toMatchObject({ method: "select", title: "Pick", options: ["x", "y"] });
+  });
+
+  it("returns 404 for dialogs on a missing session", async () => {
+    const ctx = {
+      storage: { getSession: vi.fn(() => undefined) },
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+    await dispatch({
+      method: "GET",
+      path: "/sessions/missing/dialogs",
+      url: new URL("http://localhost/sessions/missing/dialogs"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "Session not found" });
+  });
+
+  it("maps follow_up and abort commands through the runtime transport", async () => {
+    const session = { id: "s1", workspaceId: "ws-1", status: "busy" };
+    const sendFollowUp = vi.fn(async () => undefined);
+    const sendAbort = vi.fn(async () => undefined);
+    const ctx = {
+      storage: { getSession: vi.fn(() => session) },
+      sessionRuntimes: { sendFollowUp, sendAbort },
+      ensureSessionContextWindow: vi.fn((s: unknown) => s),
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+
+    const followRes = makeResponse();
+    await dispatch({
+      method: "POST",
+      path: "/sessions/s1/command",
+      url: new URL("http://localhost/sessions/s1/command"),
+      req: makeRequest({ type: "follow_up", message: "later" }) as never,
+      res: followRes as never,
+    });
+    expect(sendFollowUp).toHaveBeenCalledWith("s1", "later", {
+      attachments: undefined,
+      clientTurnId: undefined,
+      requestId: undefined,
+    });
+
+    const abortRes = makeResponse();
+    await dispatch({
+      method: "POST",
+      path: "/sessions/s1/command",
+      url: new URL("http://localhost/sessions/s1/command"),
+      req: makeRequest({ type: "abort" }) as never,
+      res: abortRes as never,
+    });
+    expect(sendAbort).toHaveBeenCalledWith("s1");
+    expect(JSON.parse(abortRes.body)).toEqual({ messages: [] });
+  });
+
+  it("routes extension_ui_response through respondToUIRequest and reports not-found", async () => {
+    const session = { id: "s1", workspaceId: "ws-1", status: "busy" };
+    const respondToUIRequest = vi.fn(() => true);
+    const ctx = {
+      storage: { getSession: vi.fn(() => session) },
+      sessionRuntimes: { respondToUIRequest },
+      ensureSessionContextWindow: vi.fn((s: unknown) => s),
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+
+    const okRes = makeResponse();
+    await dispatch({
+      method: "POST",
+      path: "/sessions/s1/command",
+      url: new URL("http://localhost/sessions/s1/command"),
+      req: makeRequest({
+        type: "extension_ui_response",
+        id: "ask-1",
+        value: JSON.stringify({ approach: "unit" }),
+      }) as never,
+      res: okRes as never,
+    });
+    expect(respondToUIRequest).toHaveBeenCalledWith("s1", {
+      type: "extension_ui_response",
+      id: "ask-1",
+      value: JSON.stringify({ approach: "unit" }),
+      confirmed: undefined,
+      cancelled: undefined,
+    });
+    expect(JSON.parse(okRes.body)).toEqual({ messages: [] });
+
+    respondToUIRequest.mockReturnValueOnce(false);
+    const missRes = makeResponse();
+    await dispatch({
+      method: "POST",
+      path: "/sessions/s1/command",
+      url: new URL("http://localhost/sessions/s1/command"),
+      req: makeRequest({ type: "extension_ui_response", id: "ghost" }) as never,
+      res: missRes as never,
+    });
+    expect(JSON.parse(missRes.body)).toEqual({
+      messages: [{ type: "error", error: "UI request not found: ghost" }],
+    });
+  });
+
   it("returns false for unrelated routes", async () => {
     const dispatch = createSessionRoutes({} as RouteContext, createRouteHelpers());
 

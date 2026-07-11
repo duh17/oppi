@@ -16,7 +16,10 @@ import { getSessionAttachment, streamSessionAttachment } from "../session-attach
 import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
 import { createSessionFileHandlers } from "./session-files.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
-import { pendingAskSnapshots as collectPendingAskSnapshots } from "../session-attention.js";
+import {
+  pendingAskSnapshots as collectPendingAskSnapshots,
+  pendingDialogSnapshots,
+} from "../session-attention.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
 
@@ -1085,6 +1088,15 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.compressedJson(req, res, { ...result, trace });
   }
 
+  function handleGenericGetSessionDialogs(sessionId: string, res: ServerResponse): void {
+    if (!requireSession(sessionId, res)) return;
+
+    const dialogs = pendingDialogSnapshots(
+      ctx.sessionRuntimes.getPendingUIRequestMessages(sessionId),
+    );
+    helpers.json(res, { dialogs, serverNow: Date.now() });
+  }
+
   function handleGenericGetSessionEvents(sessionId: string, url: URL, res: ServerResponse): void {
     const session = requireSession(sessionId, res);
     if (!session) return;
@@ -1179,6 +1191,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const sessionEventsMatch = path.match(/^\/sessions\/([^/]+)\/events$/);
     if (sessionEventsMatch && method === "GET") {
       handleGenericGetSessionEvents(sessionEventsMatch[1], url, res);
+      return true;
+    }
+
+    const sessionDialogsMatch = path.match(/^\/sessions\/([^/]+)\/dialogs$/);
+    if (sessionDialogsMatch && method === "GET") {
+      handleGenericGetSessionDialogs(sessionDialogsMatch[1], res);
       return true;
     }
 
