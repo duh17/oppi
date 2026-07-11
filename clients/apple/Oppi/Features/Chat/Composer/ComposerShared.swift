@@ -257,6 +257,7 @@ enum ComposerShared {
                     ComposerAttachmentPill(name: attachment.displayName) {
                         removeAttachment(attachment.id, from: pendingAttachments)
                     }
+                    .accessibilityIdentifier("chat.attachment.file.\(attachment.id)")
                 }
             }
         }
