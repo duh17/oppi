@@ -130,26 +130,22 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
                 forDuration: 0.05,
                 thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.50))
             )
-        if !app.buttons["workspace.create.sidebar.open"].waitForExistence(timeout: 2) {
+        let createWorkspaceButton = app.buttons["workspace.create.sidebar.open"]
+        if !waitForHittable(createWorkspaceButton, timeout: 2) {
             tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar button")
         }
-        let createWorkspaceButton = app.buttons["workspace.create.sidebar.open"]
-        XCTAssertTrue(createWorkspaceButton.waitForExistence(timeout: 10), "Sidebar did not open")
+        XCTAssertTrue(waitForHittable(createWorkspaceButton, timeout: 10), "Sidebar did not open")
+        XCTAssertFalse(app.buttons["workspace.sidebar.close"].exists, "Sidebar should not show a redundant close button")
 
         try saveLabScreenshot(name: "iphone-workspace-sidebar-e2e")
 
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.50))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.96, dy: 0.50))
             .press(
                 forDuration: 0.05,
                 thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.50))
             )
-        let sidebarDismissed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"),
-            object: createWorkspaceButton
-        )
-        XCTAssertEqual(
-            XCTWaiter.wait(for: [sidebarDismissed], timeout: 5),
-            .completed,
+        XCTAssertTrue(
+            waitForNotHittable(createWorkspaceButton, timeout: 5),
             "Left swipe did not dismiss the workspace sidebar"
         )
     }
@@ -215,7 +211,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar button")
 
         XCTAssertTrue(
-            app.buttons["workspace.create.sidebar.open"].waitForExistence(timeout: 10),
+            waitForHittable(app.buttons["workspace.create.sidebar.open"], timeout: 10),
             "Workspace sidebar did not appear"
         )
 
@@ -228,7 +224,31 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
                 )
         }
         XCTAssertTrue(lastWorkspace.isHittable, "Workspace sidebar did not scroll to the final workspace")
-        tap(app.buttons["workspace.sidebar.close"], named: "workspace sidebar close button")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.50)).tap()
+        XCTAssertTrue(
+            waitForHittable(app.buttons["workspace.sidebar.open"], timeout: 5),
+            "Tapping the session card did not dismiss the workspace sidebar"
+        )
+    }
+
+    private func waitForHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        waitForHittableState(true, of: element, timeout: timeout)
+    }
+
+    private func waitForNotHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        waitForHittableState(false, of: element, timeout: timeout)
+    }
+
+    private func waitForHittableState(
+        _ isHittable: Bool,
+        of element: XCUIElement,
+        timeout: TimeInterval
+    ) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isHittable == %@", NSNumber(value: isHittable)),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
     private func waitForStableFrame(of element: XCUIElement, timeout: TimeInterval) -> Bool {

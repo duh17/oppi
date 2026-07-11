@@ -141,14 +141,14 @@ The global app event stream and focused session stream are intentionally separat
 
 ## Workspace navigation flow
 
-The Workspaces tab opens the global `SessionInboxView` for the active server. The root shows active sessions under **Your Turn** and **Working**, plus stopped sessions from the three most recent calendar days. Today's stopped group is expanded; earlier day groups are collapsed. Stopped incognito sessions are omitted because they have no resumable history. Rows include workspace context. Selecting a workspace from the sidebar opens `WorkspaceDetailView`; it does not filter or replace the global inbox. Selecting a session from either list opens focused chat without reading a Pi JSONL file.
+The Workspaces tab opens the global `SessionInboxView` for the active server. The root shows active sessions under **Your Turn** and **Working**, plus stopped sessions from the three most recent calendar days. Today's stopped group is expanded; earlier day groups are collapsed. Stopped incognito sessions are omitted because they have no resumable history. Rows include workspace context. Selecting a workspace from the sidebar opens `WorkspaceDetailView` over the global inbox, where older stopped history remains available. Selecting a session from either list opens focused chat without reading a Pi JSONL file.
 
 ```mermaid
 graph TD
   Sidebar[WorkspaceSidebarView] --> CatalogAPI[APIClient.listWorkspaceCatalog]
   CatalogAPI --> WorkspaceStore[WorkspaceStore<br/>catalog + summaries]
 
-  Inbox[Global SessionInboxView] --> Refresh[ConnectionCoordinator.refreshAllServers]
+  Inbox[Global SessionInboxView] --> Refresh[ConnectionCoordinator.refreshServer]
   Refresh --> RecentAPI[APIClient.listRecentWorkspaceSessionSummaries]
   RecentAPI --> SessionStore[SessionStore.applyRecentWorkspaceSummaryProjection]
   SessionStore --> Projection[SessionStore.listProjectionSessions]
@@ -167,7 +167,7 @@ graph TD
   Detail --> Chat
 ```
 
-`WorkspaceStore` owns the workspace catalog and sidebar summaries. `SessionStore` owns session rows and exposes `listProjectionSessions` for the global inbox, workspace detail, and quick-session lists. The global inbox reads the active server's projection, groups active rows by attention and execution state, and groups the already-fetched recent stopped projection by calendar day without another request. `WorkspaceDetailView` applies a workspace and worktree scope, refreshes the hot stopped range, exposes importable local sessions, and keeps older archive buckets in view state until loaded. List views must not read the full `SessionStore.sessions` array because hot timeline updates can change full session state without changing row-level summary data.
+`WorkspaceStore` owns the workspace catalog and sidebar summaries. `SessionStore` owns session rows and exposes `listProjectionSessions` for the global inbox, workspace detail, and quick-session lists. The global inbox reads the server selected in its toolbar, groups that server's active rows by attention and execution state, and groups the already-fetched recent stopped projection by calendar day without another request. View-driven refreshes target the selected server so an unavailable inactive host cannot delay the inbox; app launch and foreground recovery may still refresh the broader connection pool. `WorkspaceDetailView` applies a workspace and worktree scope, refreshes the hot stopped range, exposes importable local sessions, and keeps older archive buckets in view state until loaded. Stack navigation pushes workspace detail and chat over the inbox; split navigation keeps the workspace sidebar beside the selected detail and preserves the equivalent route when the layout changes. `WorkspaceAdaptiveRootView` consumes guided first-workspace requests and `oppi://workspace` payloads so both presentations open the same workspace creation sheet. List views must not read the full `SessionStore.sessions` array because hot timeline updates can change full session state without changing row-level summary data.
 
 ## Focused session flow
 

@@ -78,9 +78,6 @@ struct ContentView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            topInsetBanners
-        }
         .sheet(
             item: Binding<ExtensionUIRequest?>(
                 get: {
@@ -177,11 +174,6 @@ struct ContentView: View {
                 .allowsHitTesting(false)
         }
 #endif
-    }
-
-    @ViewBuilder
-    private var topInsetBanners: some View {
-        EmptyView()
     }
 
     private func presentQuickSessionIfPossible(requestID: Int) {

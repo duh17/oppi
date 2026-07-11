@@ -138,6 +138,10 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
                 || app.navigationBars["Edit Workspace"].waitForExistence(timeout: 2),
             "Workspace edit form did not appear"
         )
+        XCTAssertTrue(
+            app.buttons["workspace.edit.done"].waitForExistence(timeout: 5),
+            "Workspace edit form should expose the split-detail Done action"
+        )
     }
 
     private func dismissWorkspaceEditForm() {
@@ -147,13 +151,8 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         }
 
         let doneButton = app.buttons["workspace.edit.done"]
-        if doneButton.waitForExistence(timeout: 2) {
-            tap(doneButton, named: "workspace edit done button", timeout: 1)
-        } else {
-            let backButton = app.navigationBars["Edit Workspace"].buttons["Back"]
-            XCTAssertTrue(backButton.waitForExistence(timeout: 5), "Workspace edit back button missing")
-            tap(backButton, named: "workspace edit back button", timeout: 1)
-        }
+        XCTAssertTrue(doneButton.waitForExistence(timeout: 5), "Workspace edit Done button missing")
+        tap(doneButton, named: "workspace edit done button", timeout: 1)
 
         XCTAssertTrue(
             sessionList.waitForExistence(timeout: 10),

@@ -127,6 +127,37 @@ Use the Oppi workflow wrapper. It starts a paired E2E server, writes invite/devi
 
 `sim-test` writes E2E run artifacts under `.internal/reports/e2e-runs/<timestamp>/` by default. Set `E2E_ARTIFACT_DIR` or `E2E_DOCKER_LOG_DIR` to an absolute or repo-relative path when a release lane needs repeatable artifact collection. `OPPI_E2E_GROUP` and the release wrapper's `OPPI_RELEASE_E2E_GROUP` select the same groups. `gate`/`release-gate`/`smoke` run `ReleaseGateE2ETests` as the preferred blocking lane. `extended` runs the gate plus recovery, history, quick-session, and extension-attention batches for deeper pre-release coverage. `all` still means the historical broad `OppiE2ETests` suite, and `full-regression` keeps broad coverage for explicit slower checks.
 
+Focused checks for the sessions-first root and direct share-extension send:
+
+```bash
+# All Sessions root, workspace drawer, workspace deep-link intake, scoped controls, and back navigation
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native \
+  --only-testing OppiE2ETests/IPhoneSessionsFirstScreenshotE2ETests
+
+# Safari share sheet → in-extension workspace selection and direct session send
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native \
+  --only-testing OppiE2ETests/ShareSheetQuickSessionE2ETests
+
+# Main-app Quick Session workspace/model/send flow
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group quick-session
+```
+
+Focused unit coverage for navigation routing, Shortcuts text/image intake, direct share sending, credential migration, MetricKit previous-process context, and the main-thread watchdog:
+
+```bash
+cd clients/apple
+bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- \
+  xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test \
+  -only-testing:OppiTests/AppNavigationShellRoutingTests \
+  -only-testing:OppiTests/WorkspaceDeepLinkTests \
+  -only-testing:OppiTests/QuickSessionTriggerTests \
+  -only-testing:OppiTests/StartQuickSessionIntentTests \
+  -only-testing:OppiTests/ShareQuickSessionSenderTests \
+  -only-testing:OppiTests/KeychainServiceTests \
+  -only-testing:OppiTests/MetricKitSerializerTests \
+  -only-testing:OppiTests/MainThreadLagWatchdogTests
+```
+
 Prerequisites:
 
 - oMLX/OpenAI-compatible model endpoint on `http://localhost:8400`
@@ -134,7 +165,7 @@ Prerequisites:
 
 ### Paired-server simulator labs
 
-Use paired-server simulator labs when the UI depends on pairing, server toolbar state, workspace catalog refresh, session counts, auth, model-backed sessions, or any real server state. Use `--screenshot-preview` only for isolated mock component visuals.
+Use paired-server simulator labs when the UI depends on pairing, server toolbar state, workspace catalog refresh, session counts, auth, model-backed sessions, or any real server state. Use `IPhoneSessionsFirstScreenshotE2ETests` for the All Sessions root and workspace drawer. The existing `workspace-home/*` lab scenarios open one workspace's scoped detail. Use `--screenshot-preview` only for isolated mock component visuals.
 
 The lab wrapper can run one-shot XCUITest scenarios, record simulator video, or boot a persistent simulator/server pair for manual driving:
 
@@ -155,7 +186,7 @@ The lab wrapper can run one-shot XCUITest scenarios, record simulator video, or 
 ~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-lab teardown
 ```
 
-Workspace-home lab files:
+Workspace-scoped lab files:
 
 - Lab wrapper: `~/.pi/agent/skills/oppi-dev/scripts/apple/sim-lab.sh`
 - Shared lab fixture/API/screenshot helpers: `clients/apple/OppiE2ETests/E2ELabFixtures.swift`
