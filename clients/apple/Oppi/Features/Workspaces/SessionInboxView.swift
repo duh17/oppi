@@ -9,10 +9,73 @@ private struct SessionInboxItem: Identifiable {
     var id: String { "\(serverId):\(session.id)" }
 }
 
+struct SessionInboxStoppedDayGroup<Item>: Identifiable {
+    let day: Date
+    let items: [Item]
+
+    var id: String { SessionInboxStoppedDayPolicy.groupID(for: day) }
+}
+
+struct SessionInboxStoppedDayPolicy {
+    static let visibleDayCount = 3
+
+    static func includesStoppedSession(_ session: Session) -> Bool {
+        session.ephemeral != true
+    }
+
+    static func visibleRangeStart(now: Date, calendar: Calendar) -> Date {
+        let today = calendar.startOfDay(for: now)
+        return calendar.date(byAdding: .day, value: -(visibleDayCount - 1), to: today) ?? today
+    }
+
+    static func groups<Item>(
+        _ items: [Item],
+        now: Date,
+        calendar: Calendar,
+        activityDate: (Item) -> Date
+    ) -> [SessionInboxStoppedDayGroup<Item>] {
+        let rangeStart = visibleRangeStart(now: now, calendar: calendar)
+        var itemsByDay: [Date: [Item]] = [:]
+        itemsByDay.reserveCapacity(visibleDayCount)
+
+        for item in items {
+            let date = activityDate(item)
+            guard date >= rangeStart else { continue }
+            let day = calendar.startOfDay(for: date)
+            itemsByDay[day, default: []].append(item)
+        }
+
+        return itemsByDay.keys.sorted(by: >).map { day in
+            SessionInboxStoppedDayGroup(day: day, items: itemsByDay[day] ?? [])
+        }
+    }
+
+    static func groupID(for day: Date) -> String {
+        "stopped-day-\(Int(day.timeIntervalSince1970))"
+    }
+
+    static func title(for day: Date, now: Date, calendar: Calendar) -> String {
+        if calendar.isDate(day, inSameDayAs: now) {
+            return "Today"
+        }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now)),
+           calendar.isDate(day, inSameDayAs: yesterday) {
+            return "Yesterday"
+        }
+        return day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+    }
+
+    static func isExpandedByDefault(day: Date, now: Date, calendar: Calendar) -> Bool {
+        calendar.isDate(day, inSameDayAs: now)
+    }
+}
+
+private typealias SessionInboxStoppedGroup = SessionInboxStoppedDayGroup<SessionInboxItem>
+
 private struct SessionInboxViewData {
     let yourTurn: [SessionInboxItem]
     let working: [SessionInboxItem]
-    let done: [SessionInboxItem]
+    let stoppedGroups: [SessionInboxStoppedGroup]
     let isEmpty: Bool
 }
 
@@ -62,6 +125,8 @@ struct SessionInboxView: View {
     @State private var error: String?
     @State private var isCreating = false
     @State private var pendingDelete: SessionInboxPendingDelete?
+    @State private var expandedStoppedGroupIDs: Set<String> = []
+    @State private var collapsedStoppedGroupIDs: Set<String> = []
     @State private var hasAutoOpenedE2EWorkspace = false
     @State private var hasAutoCreatedE2ESession = false
     @State private var hasAutoOpenedE2ESession = false
@@ -107,7 +172,7 @@ struct SessionInboxView: View {
         let items = sessionItems().filter(matchesSearch)
         var yourTurn: [SessionInboxItem] = []
         var working: [SessionInboxItem] = []
-        var done: [SessionInboxItem] = []
+        var stopped: [SessionInboxItem] = []
 
         for item in items {
             let attention = attentionCounts(for: item)
@@ -117,7 +182,9 @@ struct SessionInboxView: View {
             case .working:
                 working.append(item)
             case nil:
-                done.append(item)
+                if SessionInboxStoppedDayPolicy.includesStoppedSession(item.session) {
+                    stopped.append(item)
+                }
             }
         }
 
@@ -130,19 +197,19 @@ struct SessionInboxView: View {
             )
         }
         working.sort { SessionListPresentation.compareWorking($0.session, $1.session) }
-        done.sort {
+        stopped.sort {
             if $0.session.lastActivity != $1.session.lastActivity {
                 return $0.session.lastActivity > $1.session.lastActivity
             }
             return $0.session.id < $1.session.id
         }
 
-        let visibleDone = selectedWorkspace == nil ? [] : done
+        let stoppedGroups = recentStoppedGroups(stopped)
         return SessionInboxViewData(
             yourTurn: yourTurn,
             working: working,
-            done: visibleDone,
-            isEmpty: yourTurn.isEmpty && working.isEmpty && visibleDone.isEmpty
+            stoppedGroups: stoppedGroups,
+            isEmpty: yourTurn.isEmpty && working.isEmpty && stoppedGroups.isEmpty
         )
     }
 
@@ -171,8 +238,8 @@ struct SessionInboxView: View {
                 sessionSection("Working", items: data.working)
             }
 
-            if !data.done.isEmpty {
-                sessionSection("Done", items: data.done)
+            ForEach(data.stoppedGroups) { group in
+                stoppedSessionSection(group)
             }
 
             if data.isEmpty {
@@ -382,6 +449,8 @@ struct SessionInboxView: View {
         guard coordinator.switchToServer(server) else { return }
         searchText = ""
         error = nil
+        expandedStoppedGroupIDs.removeAll()
+        collapsedStoppedGroupIDs.removeAll()
         navigation.showAllWorkspaceSessions()
     }
 
@@ -478,19 +547,93 @@ struct SessionInboxView: View {
     private func sessionSection(_ title: String, items: [SessionInboxItem]) -> some View {
         Section(title) {
             ForEach(items) { item in
-                Button {
-                    openSession(item)
-                } label: {
-                    SessionRow(presentation: rowPresentation(for: item))
-                }
-                .accessibilityIdentifier("session.nav.\(item.session.id)")
-                .accessibilityValue(sessionRowAccessibilityValue(for: item))
-                .buttonStyle(.plain)
-                .listRowBackground(Color.themeBg)
-                .swipeActions(edge: .trailing) {
-                    sessionSwipeActions(for: item)
+                sessionRow(item)
+            }
+        }
+    }
+
+    private func stoppedSessionSection(_ group: SessionInboxStoppedGroup) -> some View {
+        Section {
+            if isStoppedGroupExpanded(group) {
+                ForEach(group.items) { item in
+                    sessionRow(item)
                 }
             }
+        } header: {
+            Button {
+                toggleStoppedGroupExpansion(group)
+            } label: {
+                HStack(spacing: 8) {
+                    Text("Stopped · \(stoppedGroupTitle(group))")
+                    Spacer()
+                    Image(systemName: isStoppedGroupExpanded(group) ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("workspace.sessionList.\(group.id)")
+            .accessibilityValue(isStoppedGroupExpanded(group) ? "Expanded" : "Collapsed")
+        }
+    }
+
+    private func sessionRow(_ item: SessionInboxItem) -> some View {
+        Button {
+            openSession(item)
+        } label: {
+            SessionRow(presentation: rowPresentation(for: item))
+        }
+        .accessibilityIdentifier("session.nav.\(item.session.id)")
+        .accessibilityValue(sessionRowAccessibilityValue(for: item))
+        .buttonStyle(.plain)
+        .listRowBackground(Color.themeBg)
+        .swipeActions(edge: .trailing) {
+            sessionSwipeActions(for: item)
+        }
+    }
+
+    private func recentStoppedGroups(_ items: [SessionInboxItem]) -> [SessionInboxStoppedGroup] {
+        SessionInboxStoppedDayPolicy.groups(
+            items,
+            now: Date(),
+            calendar: Calendar.current,
+            activityDate: { $0.session.lastActivity }
+        )
+    }
+
+    private func stoppedGroupTitle(_ group: SessionInboxStoppedGroup) -> String {
+        SessionInboxStoppedDayPolicy.title(
+            for: group.day,
+            now: Date(),
+            calendar: Calendar.current
+        )
+    }
+
+    private func isStoppedGroupExpanded(_ group: SessionInboxStoppedGroup) -> Bool {
+        if !normalizedSearchText.isEmpty {
+            return true
+        }
+        if expandedStoppedGroupIDs.contains(group.id) {
+            return true
+        }
+        if collapsedStoppedGroupIDs.contains(group.id) {
+            return false
+        }
+        return SessionInboxStoppedDayPolicy.isExpandedByDefault(
+            day: group.day,
+            now: Date(),
+            calendar: Calendar.current
+        )
+    }
+
+    private func toggleStoppedGroupExpansion(_ group: SessionInboxStoppedGroup) {
+        if isStoppedGroupExpanded(group) {
+            expandedStoppedGroupIDs.remove(group.id)
+            collapsedStoppedGroupIDs.insert(group.id)
+        } else {
+            collapsedStoppedGroupIDs.remove(group.id)
+            expandedStoppedGroupIDs.insert(group.id)
         }
     }
 
