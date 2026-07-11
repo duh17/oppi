@@ -298,6 +298,13 @@ targets:
         CFBundleDisplayName: Oppi
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSLocalNetworkUsageDescription: "Oppi needs local network access to start a shared Quick Session on your paired server."
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            ts.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
@@ -442,6 +449,7 @@ targets:
           - "LiveActivityPresentation.swift"
           - "SharedConstants.swift"
           - "ShareQuickSessionPayload.swift"
+          - "ShareQuickSessionSender.swift"
     dependencies:
       - package: Sparkle
     settings:
