@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "events";
 import { WebSocket } from "ws";
 import { BoundSessionStreamMux, DictationStreamMux, type StreamContext } from "../src/stream.js";
+import type { SessionCatchUpResponse } from "../src/session-broadcast.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "../src/types.js";
 
 function makeSession(id: string, workspaceId?: string): Session {
@@ -21,9 +22,12 @@ class FakeWebSocket extends EventEmitter {
   readyState: number = WebSocket.OPEN;
   sent: ServerMessage[] = [];
   closeCode?: number;
+  onSend?: (message: ServerMessage) => void;
 
   send(data: string): void {
-    this.sent.push(JSON.parse(data) as ServerMessage);
+    const message = JSON.parse(data) as ServerMessage;
+    this.sent.push(message);
+    this.onSend?.(message);
   }
 
   ping(): void {}
@@ -59,6 +63,7 @@ type RuntimeOverride = {
   getSessionSnapshot?: (id: string) => Session | undefined;
   getActiveSession?: (id: string) => Session | undefined;
   getCurrentSeq?: (id: string) => number;
+  getCatchUp?: (id: string, sinceSeq: number) => SessionCatchUpResponse | null;
   subscribe?: (id: string, cb: (msg: ServerMessage) => void) => () => void;
   getPendingUIRequestMessages?: (id: string) => ServerMessage[];
 };
@@ -114,6 +119,12 @@ function createMockContext(sessions: Session[]): {
     },
     getCurrentSeq: (id: string) =>
       runtimeOverride(id).getCurrentSeq?.(id) ?? ctx.sessions.getCurrentSeq(id),
+    getCatchUp: (id: string, sinceSeq: number) => {
+      const override = runtimeOverride(id);
+      return override.getCatchUp
+        ? override.getCatchUp(id, sinceSeq)
+        : ctx.sessions.getCatchUp(id, sinceSeq);
+    },
     subscribe: (id: string, cb: (msg: ServerMessage) => void) => {
       const override = runtimeOverride(id);
       if (override.subscribe) return override.subscribe(id, cb);
@@ -143,7 +154,10 @@ function createMockContext(sessions: Session[]): {
       },
       getActiveSession: (id: string) => sessionMap.get(id) ?? null,
       getCurrentSeq: () => 0,
-      getCatchUp: () => null,
+      getCatchUp: (id: string) => {
+        const session = sessionMap.get(id);
+        return session ? { events: [], currentSeq: 0, session, catchUpComplete: true } : null;
+      },
       getPendingUIRequestMessages: () => [],
     } as unknown as StreamContext["sessions"],
     sessionRuntimes,
@@ -163,8 +177,14 @@ async function drain(): Promise<void> {
   await Promise.resolve();
 }
 
-function mirrorPendingStubs() {
+function mirrorRuntimeStubs(
+  session: Session,
+  currentSeq: number,
+  catchUpAvailable = true,
+): RuntimeOverride {
   return {
+    getCatchUp: () =>
+      catchUpAvailable ? { events: [], currentSeq, session, catchUpComplete: true } : null,
     getPendingUIRequestMessages: () => [],
   };
 }
@@ -208,6 +228,144 @@ describe("BoundSessionStreamMux", () => {
     );
   });
 
+  it("replays the opening gap exactly once before queued live delivery", async () => {
+    const session = makeSession("sess-bootstrap-gap", "w1");
+    const { ctx, subscribers, broadcastTo } = createMockContext([session]);
+    const gapEvents: ServerMessage[] = [];
+    let currentSeq = 10;
+    let finishOpen: ((session: Session) => void) | undefined;
+    const getCurrentSeq = vi.fn(() => currentSeq);
+    const getCatchUp = vi.fn((_id: string, sinceSeq: number): SessionCatchUpResponse => {
+      expect(sinceSeq).toBe(10);
+      expect(subscribers.get(session.id)?.size).toBe(1);
+      // seq 12 is both observed live and included in the ring snapshot. Bootstrap
+      // must suppress that overlap while retaining post-snapshot live seq 13.
+      broadcastTo(session.id, gapEvents[1]!);
+      return {
+        events: gapEvents,
+        currentSeq,
+        session,
+        catchUpComplete: true,
+      };
+    });
+    vi.mocked(ctx.sessions.startSession).mockImplementation(
+      () =>
+        new Promise<Session>((resolve) => {
+          finishOpen = resolve;
+        }),
+    );
+    (ctx.sessions as unknown as { getCurrentSeq: typeof getCurrentSeq }).getCurrentSeq =
+      getCurrentSeq;
+    (ctx.sessions as unknown as { getCatchUp: typeof getCatchUp }).getCatchUp = getCatchUp;
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    ws.onSend = (message) => {
+      if (message.type !== "connected") return;
+      broadcastTo(session.id, { type: "agent_end", seq: 13 } as ServerMessage);
+    };
+    const connect = mux.handleWebSocket("w1", session.id, ws as unknown as WebSocket);
+    await drain();
+
+    currentSeq = 12;
+    gapEvents.push(
+      {
+        type: "tool_start",
+        tool: "read",
+        args: { path: "README.md" },
+        toolCallId: "tool-gap",
+        seq: 11,
+      } as ServerMessage,
+      {
+        type: "tool_end",
+        tool: "read",
+        toolCallId: "tool-gap",
+        seq: 12,
+      } as ServerMessage,
+    );
+    finishOpen?.(session);
+    await connect;
+
+    const orderedSequenced = ws.sent
+      .filter((message) => typeof (message as { seq?: number }).seq === "number")
+      .map((message) => (message as { seq: number }).seq);
+
+    expect(ws.sentOfType("connected", session.id)[0]).toMatchObject({ currentSeq: 12 });
+    expect(ws.sentOfType("tool_start", session.id)).toHaveLength(1);
+    expect(ws.sentOfType("tool_end", session.id)).toHaveLength(1);
+    expect(ws.sentOfType("agent_end", session.id)).toHaveLength(1);
+    expect(orderedSequenced).toEqual([11, 12, 13]);
+    expect(getCurrentSeq).toHaveBeenCalledTimes(1);
+    expect(getCatchUp).toHaveBeenCalledWith(session.id, 10);
+  });
+
+  it("uses the started runtime head and delivers post-subscribe events once", async () => {
+    const session = makeSession("sess-bootstrap-started", "w1");
+    const { ctx, broadcastTo } = createMockContext([session]);
+    let active = false;
+    const getCurrentSeq = vi.fn(() => (active ? 4 : 0));
+    const getCatchUp = vi.fn((_id: string, sinceSeq: number): SessionCatchUpResponse => {
+      expect(sinceSeq).toBe(4);
+      return { events: [], currentSeq: 4, session, catchUpComplete: true };
+    });
+    (ctx.sessions as unknown as { getActiveSession: () => Session | undefined }).getActiveSession =
+      () => (active ? session : undefined);
+    vi.mocked(ctx.sessions.startSession).mockImplementation(async () => {
+      active = true;
+      return session;
+    });
+    (ctx.sessions as unknown as { getCurrentSeq: typeof getCurrentSeq }).getCurrentSeq =
+      getCurrentSeq;
+    (ctx.sessions as unknown as { getCatchUp: typeof getCatchUp }).getCatchUp = getCatchUp;
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    ws.onSend = (message) => {
+      if (message.type !== "connected") return;
+      broadcastTo(session.id, { type: "agent_start", seq: 5 } as ServerMessage);
+    };
+    await mux.handleWebSocket("w1", session.id, ws as unknown as WebSocket);
+
+    expect(ws.sentOfType("connected", session.id)[0]).toMatchObject({ currentSeq: 4 });
+    expect(ws.sentOfType("agent_start", session.id)).toHaveLength(1);
+    expect(getCurrentSeq.mock.calls).toEqual([[session.id], [session.id]]);
+    expect(getCatchUp).toHaveBeenCalledWith(session.id, 4);
+  });
+
+  it("closes on a ring miss and recovers from the new head on reconnect", async () => {
+    const session = makeSession("sess-bootstrap-ring-miss", "w1");
+    const { ctx, subscribers } = createMockContext([session]);
+    let currentSeq = 10;
+    const getCatchUp = vi.fn((_id: string, sinceSeq: number): SessionCatchUpResponse => {
+      if (sinceSeq === 10) {
+        currentSeq = 600;
+        return { events: [], currentSeq, session, catchUpComplete: false };
+      }
+      return { events: [], currentSeq, session, catchUpComplete: true };
+    });
+    (ctx.sessions as unknown as { getCurrentSeq: () => number }).getCurrentSeq = () => currentSeq;
+    (ctx.sessions as unknown as { getCatchUp: typeof getCatchUp }).getCatchUp = getCatchUp;
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const missed = new FakeWebSocket();
+    await mux.handleWebSocket("w1", session.id, missed as unknown as WebSocket);
+
+    expect(missed.sentOfType("connected", session.id)).toHaveLength(0);
+    expect(missed.closeCode).toBe(1011);
+    expect(subscribers.get(session.id)?.size ?? 0).toBe(0);
+
+    const recovered = new FakeWebSocket();
+    await mux.handleWebSocket("w1", session.id, recovered as unknown as WebSocket);
+
+    expect(recovered.closeCode).toBeUndefined();
+    expect(recovered.sentOfType("connected", session.id)[0]).toMatchObject({ currentSeq: 600 });
+    expect(subscribers.get(session.id)?.size).toBe(1);
+    expect(getCatchUp.mock.calls).toEqual([
+      [session.id, 10],
+      [session.id, 600],
+    ]);
+  });
+
   it("tags replayed extension UI notifications with the bound session id", async () => {
     const session = makeSession("sess-bound", "w1");
     const { ctx } = createMockContext([session]);
@@ -249,7 +407,7 @@ describe("BoundSessionStreamMux", () => {
       getCurrentSeq: () => 7,
       isSessionConnected: () => true,
       subscribe: mirrorSubscribe,
-      ...mirrorPendingStubs(),
+      ...mirrorRuntimeStubs(session, 7),
     });
 
     const mux = new BoundSessionStreamMux(ctx);
@@ -279,7 +437,7 @@ describe("BoundSessionStreamMux", () => {
       getCurrentSeq: () => 9,
       isSessionConnected: () => false,
       subscribe: mirrorSubscribe,
-      ...mirrorPendingStubs(),
+      ...mirrorRuntimeStubs(session, 9, false),
     });
 
     const mux = new BoundSessionStreamMux(ctx);
@@ -292,6 +450,8 @@ describe("BoundSessionStreamMux", () => {
     expect(ws.sentOfType("connected", "sess-reloading-mirror")[0]).toMatchObject({
       currentSeq: 9,
     });
+    expect(ws.closeCode).toBeUndefined();
+    expect(ws.readyState).toBe(WebSocket.OPEN);
   });
 
   it("keeps a stale terminal mirror session bound to mirror ownership", async () => {
@@ -308,7 +468,7 @@ describe("BoundSessionStreamMux", () => {
       getCurrentSeq: () => 7,
       isSessionConnected: () => false,
       subscribe: mirrorSubscribe,
-      ...mirrorPendingStubs(),
+      ...mirrorRuntimeStubs(session, 7, false),
     });
 
     const mux = new BoundSessionStreamMux(ctx);
@@ -320,6 +480,7 @@ describe("BoundSessionStreamMux", () => {
     expect(mirrorSubscribe).toHaveBeenCalledWith("sess-stale-mirror", expect.any(Function));
     expect(sessionMap.get("sess-stale-mirror")?.runtime).toBe("pi-tui");
     expect(ws.sentOfType("connected", "sess-stale-mirror")[0]).toMatchObject({ currentSeq: 7 });
+    expect(ws.closeCode).toBeUndefined();
   });
 
   it("resumes a stopped disconnected mirror session as an oppi imported session", async () => {
@@ -390,7 +551,7 @@ describe("BoundSessionStreamMux", () => {
         mirrorCallback = cb;
         return () => {};
       },
-      ...mirrorPendingStubs(),
+      ...mirrorRuntimeStubs(session, 7),
     });
 
     const mux = new BoundSessionStreamMux(ctx);
