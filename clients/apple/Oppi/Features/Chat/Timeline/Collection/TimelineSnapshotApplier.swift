@@ -139,13 +139,7 @@ enum TimelineSnapshotApplier {
             changedCount: dedupedChangedIDs.count,
             sessionId: sessionId
         )
-        if shouldAnimate {
-            FrameBudgetMonitor.shared.beginSection("structural_apply", sessionId: sessionId)
-        }
         dataSource?.apply(snapshot, animatingDifferences: shouldAnimate)
-        if shouldAnimate {
-            FrameBudgetMonitor.shared.endSection()
-        }
         ChatTimelinePerf.endCollectionApply(applyToken)
     }
 

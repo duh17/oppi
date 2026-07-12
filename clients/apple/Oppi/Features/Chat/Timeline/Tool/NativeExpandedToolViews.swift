@@ -597,8 +597,10 @@ final class NativeExpandedAudioAttachmentView: UIView {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            self.updateButton(palette: ThemeRuntimeState.currentPalette())
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.updateButton(palette: ThemeRuntimeState.currentPalette())
+            }
         }
     }
 
@@ -897,10 +899,10 @@ private enum ToolImageAttachmentDataCache {
         let task = Task<Data, Error> {
             do {
                 let data = try await fetch()
-                await store(data, for: key)
+                store(data, for: key)
                 return data
             } catch {
-                await removeInFlight(for: key)
+                removeInFlight(for: key)
                 throw error
             }
         }
@@ -944,10 +946,7 @@ private enum ToolImageAttachmentDataCache {
 }
 
 final class NativeExpandedInlineImageView: UIView {
-    private static let minPreviewHeight = ImageViewportSizing.policy(
-        for: .primaryMedia,
-        screenHeight: UIScreen.main.bounds.height
-    ).placeholderHeight
+    private static let minPreviewHeight = ImageViewportSizing.defaultPlaceholderHeight
 
     private enum AttachmentDataValidationError: Error {
         case sizeMismatch(expected: Int, actual: Int)
@@ -1281,7 +1280,7 @@ final class NativeExpandedInlineImageView: UIView {
 
         let availableWidth = bounds.width > 1
             ? bounds.width
-            : (superview?.bounds.width ?? UIScreen.main.bounds.width)
+            : (window?.windowScene?.screen.bounds.width ?? superview?.bounds.width ?? 375)
         let width = max(1, availableWidth)
         let naturalHeight = ImageViewportSizing.naturalHeight(
             forWidth: width,

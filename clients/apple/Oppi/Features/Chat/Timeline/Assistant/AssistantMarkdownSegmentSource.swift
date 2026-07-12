@@ -374,32 +374,26 @@ final class AssistantMarkdownSegmentSource {
         to text: AttributedString,
         preferences: FullScreenReaderPreferences
     ) -> AttributedString {
-        var result = text
         let scale = preferences.textScale
         let lineSpacing = preferences.spacing.markdownLineSpacing
+        let mutable = NSMutableAttributedString(text)
+        let fullRange = NSRange(location: 0, length: mutable.length)
 
-        for run in result.runs {
-            if let font = run.uiKit.font {
-                result[run.range].uiKit.font = FullScreenCodeTypography.scaledFont(font, scale: scale)
-            } else {
-                result[run.range].uiKit.font = FullScreenCodeTypography.scaledFont(
-                    AppFont.messageBody,
-                    scale: scale
-                )
-            }
+        mutable.enumerateAttributes(in: fullRange) { attributes, range, _ in
+            let font = (attributes[.font] as? UIFont) ?? AppFont.messageBody
+            mutable.addAttribute(
+                .font,
+                value: FullScreenCodeTypography.scaledFont(font, scale: scale),
+                range: range
+            )
 
-            let paragraph: NSMutableParagraphStyle
-            if let existing = run.uiKit.paragraphStyle as? NSParagraphStyle,
-               let mutable = existing.mutableCopy() as? NSMutableParagraphStyle {
-                paragraph = mutable
-            } else {
-                paragraph = NSMutableParagraphStyle()
-            }
+            let paragraph = ((attributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle)
+                ?? NSMutableParagraphStyle()
             paragraph.lineSpacing = lineSpacing
-            result[run.range].uiKit.paragraphStyle = paragraph
+            mutable.addAttribute(.paragraphStyle, value: paragraph, range: range)
         }
 
-        return result
+        return AttributedString(mutable)
     }
 
     // MARK: - Helpers

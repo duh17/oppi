@@ -63,6 +63,12 @@ struct RemoteFileView: View {
     @State private var loadedServerBaseURL: URL?
     @State private var fetchSessionFileData: ((String) async throws -> Data)?
     @State private var resolvedWorkspaceId: String?
+    @State private var screenHeight: CGFloat = 0
+
+    private var resolvedScreenHeight: CGFloat {
+        let height = screenHeight
+        return (height.isFinite && height > 0) ? height : 800
+    }
 
     private var filename: String {
         (path as NSString).lastPathComponent
@@ -161,7 +167,7 @@ struct RemoteFileView: View {
                 NavigationStack {
                     AuthenticatedMediaPlayerView(
                         source: videoSource,
-                        height: min(max(UIScreen.main.bounds.height * 0.34, 220), 420),
+                        height: min(max(resolvedScreenHeight * 0.34, 220), 420),
                         unavailableTitle: "Video preview unavailable",
                         unavailableSystemImage: "film.slash"
                     )
@@ -205,6 +211,12 @@ struct RemoteFileView: View {
                         }
                     }
                 }
+            }
+        }
+        .background {
+            WindowScreenHeightProbe { height in
+                guard abs(height - screenHeight) > 0.5 else { return }
+                screenHeight = height
             }
         }
         .task {
@@ -274,5 +286,23 @@ struct RemoteFileView: View {
         }
 
         isLoading = false
+    }
+}
+
+private struct WindowScreenHeightProbe: UIViewRepresentable {
+    let onChange: (CGFloat) -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        DispatchQueue.main.async {
+            let height = uiView.window?.windowScene?.screen.bounds.height ?? uiView.bounds.height
+            guard height.isFinite, height > 0 else { return }
+            onChange(height)
+        }
     }
 }

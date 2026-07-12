@@ -136,7 +136,10 @@ final class ThemeStore {
     }
 
     private static func currentSystemColorScheme(fallback: ColorScheme = .dark) -> ColorScheme {
-        switch UIScreen.main.traitCollection.userInterfaceStyle {
+        guard let userInterfaceStyle = currentForegroundWindowScene()?.screen.traitCollection.userInterfaceStyle else {
+            return fallback
+        }
+        switch userInterfaceStyle {
         case .light:
             return .light
         case .dark:
@@ -146,6 +149,14 @@ final class ThemeStore {
         @unknown default:
             return fallback
         }
+    }
+
+    /// Foreground-active window scene, used to resolve system appearance
+    /// without the deprecated `UIScreen.main` singleton (iOS 26).
+    private static func currentForegroundWindowScene() -> UIWindowScene? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
     }
 
     private func refreshSystemColorSchemeFromSystemTraits() {

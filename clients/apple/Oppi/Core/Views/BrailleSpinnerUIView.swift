@@ -75,11 +75,18 @@ final class BrailleSpinnerUIView: UIView {
 
     private func startAnimation() {
         guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.frameIndex = (self.frameIndex + 1) % Self.brailleFrames.count
-            self.label.text = Self.brailleFrames[self.frameIndex]
-        }
+        timer = Timer.scheduledTimer(
+            timeInterval: Self.tickInterval,
+            target: self,
+            selector: #selector(handleTimerTick),
+            userInfo: nil,
+            repeats: true
+        )
+    }
+
+    @objc private func handleTimerTick() {
+        frameIndex = (frameIndex + 1) % Self.brailleFrames.count
+        label.text = Self.brailleFrames[frameIndex]
     }
 
     private func stopAnimation() {

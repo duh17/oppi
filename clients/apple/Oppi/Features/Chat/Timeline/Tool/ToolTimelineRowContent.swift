@@ -63,7 +63,6 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
         return copy
     }
 
-
     func withAudioPlayer(_ audioPlayer: AudioPlayerService?) -> Self {
         var copy = self
         copy.audioPlayer = audioPlayer
@@ -279,9 +278,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         imagePreviewDecodeTask?.cancel()
         expandedCodeDeferredHighlightTask?.cancel()
         if let featureTipID {
-            Self.activeInlineFeatureTipIDs.remove(featureTipID)
             let ownerID = featureTipPresentationOwnerID
             Task { @MainActor in
+                Self.activeInlineFeatureTipIDs.remove(featureTipID)
                 FeatureEducationTipPresentationCoordinator.shared.release(
                     tipID: featureTipID,
                     ownerID: ownerID
@@ -517,7 +516,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         guard case .compactMeasured(let minHeight, let maxHeight) = policy.heightBehavior else {
             return 1
         }
-        let width = max(1, bounds.width > 0 ? bounds.width - 16 : UIScreen.main.bounds.width - 48)
+        let fallbackWidth = window?.windowScene?.screen.bounds.width ?? superview?.bounds.width ?? 375
+        let width = max(1, bounds.width > 0 ? bounds.width - 16 : fallbackWidth - 48)
         let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
             for: expandedReadMediaContentView ?? expandedReadMediaContainer,
             width: width
@@ -1390,7 +1390,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
-
     private func scheduleFeatureEducationTipIfNeeded(
         configuration: ToolTimelineRowConfiguration,
         showExpanded: Bool,
@@ -1622,13 +1621,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             // Captures startedAt by value — stable for the lifetime of this tool call.
             // Timer fires on main RunLoop; [weak self] ensures no work after dealloc.
             elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                ToolTimelineRowDisplayState.applyElapsed(
-                    startedAt: startedAt,
-                    elapsedSeconds: nil,
-                    isDone: false,
-                    elapsedLabel: self.elapsedLabel
-                )
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    ToolTimelineRowDisplayState.applyElapsed(
+                        startedAt: startedAt,
+                        elapsedSeconds: nil,
+                        isDone: false,
+                        elapsedLabel: self.elapsedLabel
+                    )
+                }
             }
         } else {
             elapsedTimer?.invalidate()
@@ -1933,7 +1934,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
     }
 
-
     private func resolveReviewCommentSourceContext(for textView: UITextView) -> ReviewCommentSourceContext? {
         guard let sessionId = reviewCommentSessionId,
               reviewCommentSelectionRouter != nil else {
@@ -1964,8 +1964,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedLabelText: expandedLabelText
         )
     }
-
-
 
     private func applyInteractionPolicy(
         _ policy: ToolTimelineRowInteractionPolicy,

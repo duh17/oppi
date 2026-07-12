@@ -51,7 +51,6 @@ private struct RenderContext: @unchecked Sendable {
     // Resolved platform colors from theme CGColors.
     let foreground: PlatformColor
     let foregroundDim: PlatformColor
-    let background: PlatformColor
     let linkColor: PlatformColor
     let headingColor: PlatformColor
     let keywordColor: PlatformColor
@@ -68,17 +67,14 @@ private struct RenderContext: @unchecked Sendable {
         let theme = configuration.theme
         let size = configuration.fontSize
 
-        foreground = PlatformColor(cgColor: theme.foreground) ?? PlatformColor.white
-        foregroundDim = PlatformColor(cgColor: theme.foregroundDim) ?? PlatformColor.gray
-        background = PlatformColor(cgColor: theme.background) ?? PlatformColor.black
-        linkColor = PlatformColor(cgColor: theme.link) ?? PlatformColor.systemBlue
-        headingColor = PlatformColor(cgColor: theme.heading) ?? PlatformColor.white
-        keywordColor = PlatformColor(cgColor: theme.keyword) ?? PlatformColor.purple
-        commentColor = PlatformColor(cgColor: theme.comment) ?? PlatformColor.gray
-        stringColor = PlatformColor(cgColor: theme.string) ?? PlatformColor.green
-
+        foreground = PlatformColor(cgColor: theme.foreground)
+        foregroundDim = PlatformColor(cgColor: theme.foregroundDim)
+        linkColor = PlatformColor(cgColor: theme.link)
+        headingColor = PlatformColor(cgColor: theme.heading)
+        keywordColor = PlatformColor(cgColor: theme.keyword)
+        commentColor = PlatformColor(cgColor: theme.comment)
+        stringColor = PlatformColor(cgColor: theme.string)
         codeBackground = PlatformColor(cgColor: theme.backgroundDark)
-            ?? background
 
         #if canImport(UIKit)
         bodyFont = PlatformFont.systemFont(ofSize: size)

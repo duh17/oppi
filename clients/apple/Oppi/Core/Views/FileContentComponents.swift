@@ -203,7 +203,9 @@ struct NativeCodeBodyView: UIViewRepresentable {
         guard let maxHeight else { return nil }
         let lineCount = content.split(separator: "\n", omittingEmptySubsequences: false).count
         let naturalHeight = CGFloat(lineCount) * Self.estimatedLineHeight + Self.estimatedVerticalPadding
-        let width = proposal.width ?? UIScreen.main.bounds.width
+        let fallbackWidth = uiView.window?.windowScene?.screen.bounds.width ?? uiView.bounds.width
+        let widthCandidate = proposal.width ?? fallbackWidth
+        let width = (widthCandidate.isFinite && widthCandidate > 0) ? widthCandidate : 320
         return CGSize(width: width, height: min(naturalHeight, maxHeight))
     }
 

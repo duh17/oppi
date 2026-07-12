@@ -1252,8 +1252,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
         }
 
-
-
         func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {
             TimelineSnapshotApplier.reconfigureItems(
                 itemIDs,
@@ -1446,7 +1444,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             cell.performNavigationHighlight(token: token)
             scrollController.clearNavigationHighlightIfNeeded(for: itemID, token: token)
 
-            let refreshZOrder = { [weak collectionView] in
+            let refreshZOrder: @MainActor @Sendable () -> Void = { [weak collectionView] in
                 guard let collectionView,
                       let cell = collectionView.cellForItem(at: indexPath) as? SafeSizingCell else {
                     return
