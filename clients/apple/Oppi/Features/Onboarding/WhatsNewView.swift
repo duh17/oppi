@@ -57,28 +57,28 @@ struct WhatsNewView: View {
 
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            icon: "arrow.triangle.branch",
+            icon: "rectangle.split.2x1",
             iconColor: .themeGreen,
-            title: String(localized: "First Worktree Support"),
-            description: String(localized: "Selected worktrees now appear on session rows, and workspace quick actions use that worktree when starting a run.")
+            title: String(localized: "Sessions First"),
+            description: String(localized: "All Sessions now keeps Your Turn and Working up top, with recent stopped sessions grouped by day and workspace browsing in the sidebar.")
         ),
         WhatsNewFeature(
-            icon: "doc.text.magnifyingglass",
+            icon: "square.and.arrow.up",
             iconColor: .themeOrange,
-            title: String(localized: "Lighter Long Session Loading"),
-            description: String(localized: "Very long or goal-based sessions load trace history in chunks. Session Outline and Session Files now live in separate panels.")
+            title: String(localized: "Quick Session Sharing"),
+            description: String(localized: "Start a Quick Session directly from shared text, links, images, or files in the share sheet. Shortcuts can also preload text or one image into the composer.")
         ),
         WhatsNewFeature(
-            icon: "rectangle.stack",
+            icon: "circle.lefthalf.filled",
             iconColor: .themePurple,
-            title: String(localized: "Extension Widget Cleanup"),
-            description: String(localized: "Widgets, status rows, and working messages group together, replay after reconnects, and render styled terminal output more clearly.")
+            title: String(localized: "System Theme Fixes"),
+            description: String(localized: "Match System now loads the correct light or dark theme and recolors session rows, code, diffs, and tool output when appearance changes.")
         ),
         WhatsNewFeature(
-            icon: "photo.on.rectangle.angled",
+            icon: "arrow.clockwise",
             iconColor: .themeCyan,
-            title: String(localized: "Markdown and Diagram Fixes"),
-            description: String(localized: "Images, SVGs, lists, code blocks, review comments, and Mermaid diagrams stay readable when sessions mix media and code.")
+            title: String(localized: "Stronger Session Recovery"),
+            description: String(localized: "Working and waiting states recover after reconnects or server restarts, and pending questions or approvals return instead of disappearing.")
         ),
     ]
 
@@ -114,7 +114,7 @@ struct WhatsNewView: View {
                 .font(.largeTitle.bold())
                 .foregroundStyle(.themeFg)
 
-            Text("Build 40")
+            Text("Build 41")
                 .font(.title2)
                 .foregroundStyle(.themeComment)
         }

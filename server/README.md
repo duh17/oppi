@@ -150,31 +150,19 @@ Use `oppi ...` for npm/global installs. In a source checkout before linking, use
 ```bash
 oppi serve [--host <h>]      # start server
 oppi init                    # interactive first-time setup
-oppi pair [--host <h>]       # regenerate pairing QR
-oppi status                  # server config overview
-oppi doctor                  # check prerequisites
+oppi pair [--host <h>]       # regenerate pairing QR + invite link
+oppi status                  # server, network, and pairing status
+oppi doctor                  # security and environment diagnostics
+oppi workspace ...           # list/inspect/create/update/delete workspaces
+oppi worktree ...            # list/create/open/preview/remove worktrees
+oppi session ...             # create/send/watch/wait/inspect/resume/fork/delete sessions
+oppi agent ...               # manage saved Agents
+oppi schedule ...            # manage schedules and run history
+oppi server ...              # install/status/restart/stop/uninstall launchd service
+oppi config ...              # show/get/set/validate config
+oppi token rotate            # rotate owner bearer token
 oppi update                  # update mutable runtime dependencies only
 oppi update --self           # show how to update the server install
-oppi config show             # show config
-oppi config get <key>        # get a config value, including nested paths
-oppi config set <key> <val>  # update config, e.g. asr.sttEndpoint
-oppi config validate         # validate config file
-oppi token rotate            # rotate owner bearer token
-oppi agent list              # list saved Agent definitions
-oppi agent create            # create a saved Agent from flags or JSON
-oppi session create --agent  # launch a saved Agent into a workspace
-oppi session search          # search indexed session content (cwd workspace by default)
-oppi session inspect         # inspect a compact turn outline by default
-oppi session inspect --view response  # print the latest assistant response
-oppi schedule list           # list saved schedules
-oppi schedule create         # create an at/every/cron schedule
-oppi schedule run <id>       # run a schedule now
-oppi schedule runs <id>      # inspect schedule run history
-oppi server install          # install LaunchAgent (macOS)
-oppi server uninstall        # remove LaunchAgent
-oppi server status           # check background service
-oppi server restart          # restart background server
-oppi server stop             # stop background server
 ```
 
 Session history reads are consolidated under `oppi session inspect`. Start with its default turn outline, use `--view summary` for counts, and request `--turns <spec> --view messages|tools` only for the smallest relevant turn set.

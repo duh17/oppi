@@ -40,25 +40,24 @@ Example:
 
 ### Added
 
-- **Client:** Work in progress: reworking the Mac app into an interactive Oppi client for browsing workspaces, running sessions, and reviewing changes. It is not ready for general use yet.
+- **Client:** WIP: reworking the Mac app into an interactive Oppi client for browsing workspaces, running sessions, and reviewing changes. It is not ready for general use yet.
 
 ## [0.44.0] - 2026-07-11
 
 ### Notes
 
-- Coordinated release prep for iOS TestFlight build 41 and `oppi-server@0.44.0`.
-- Native Agent and Schedule management screens remain gated off in this build.
+- Coordinated release for iOS `1.1.0` (build `41`) and `oppi-server@0.44.0`.
 
 ### Added
 
 - **Client:** iPhone and iPad now open to a sessions-first inbox. Sessions needing attention and sessions still working stay prominent, recent stopped sessions remain available, and a workspace sidebar or drawer opens workspace-specific sessions, files, and settings without replacing the inbox.
-- **Server:** Expanded the `oppi` command line for session, workspace, and worktree operations. It can launch and manage sessions, steer or queue messages, abort turns, answer pending dialogs, watch multiple sessions, and progressively search or inspect history without loading the full trace.
-- **Client:** Quick Session intake now accepts text or images from Shortcuts, while the iOS share extension can send shared text, links, images, and files directly from its own composer.
+- **Server:** Expanded the `oppi` CLI for workspace, worktree, and session orchestration. It can create and manage workspaces and worktrees, launch sessions, send or queue messages, answer pending dialogs, watch or wait on session state, and inspect history progressively without loading a full trace.
+- **Client:** Quick Session now accepts optional text or one image from Shortcuts, while the iOS share extension can send shared text, links, images, and files directly from its own Quick Session composer.
 
 ### Changed
 
 - **Client/Server:** Session working, waiting, finished, and failed states can be reconstructed after reconnects and server restarts instead of depending only on the live connection.
-- **Protocol/Client/Server:** Stored attachments and tool-reported files now load through the session that owns them, including exact external paths reported during that session. Apple clients and servers must be updated together for these routes.
+- **Protocol/Client/Server:** Stored attachments and tool-reported external files now load through session-scoped authenticated routes, including exact external paths reported during that session. Apple clients and servers must be updated together for these routes.
 
 ### Fixed
 
@@ -66,7 +65,7 @@ Example:
 - **Client:** Recovered prompt responses resume stopped sessions before sending, and deferred media rows populate when their workspace context arrives.
 - **Client:** Following the system appearance now loads the correct light or dark theme and recolors existing code, diffs, tool output, and session rows when appearance changes.
 - **Client:** Relative images and links in session file previews resolve from the file being viewed, including in full screen.
-- **Server:** Skill and extension toggles now respect Pi's workspace project settings, so changing a resource in one workspace no longer changes it globally for other workspaces.
+- **Server:** Skill and extension toggles now write Pi project settings for that workspace, so changing a resource in one workspace no longer mutates global settings for other workspaces.
 
 ## [0.43.1] - 2026-06-30
 
@@ -88,7 +87,7 @@ Example:
 
 - Release prep for iOS TestFlight build 40 and npm `oppi-server@0.43.0`.
 - This release focuses on a first pass at worktree-aware sessions, lower-resource long-session trace loading, extension widget and working-message rendering, Markdown/Mermaid reliability, and a Pi runtime refresh to `0.80.2`.
-- Saved-agent and schedule foundations are included for server/CLI work, including approved automatic schedule runs. Native Apple management screens are gated off in build 40.
+- Saved-agent and schedule foundations are included for server/CLI work, including approved automatic schedule runs.
 - This release also prepares `oppi-mirror@0.43.0` so mirrored working-message forwarding can ship through the Pi extension package.
 
 ### Added
@@ -98,7 +97,7 @@ Example:
 - **Client:** Added separate Session Outline and Session Files panels, inline file-browser back controls, optional haptic feedback controls, the Icon Composer app icon, and an Oppi docs prompt toggle.
 - **Client:** Expanded Mermaid rendering coverage for flowcharts, sequence diagrams, state diagrams, mindmaps, and Gantt charts.
 - **Mirror extension:** Added forwarding for extension working messages, working indicators, hidden-thinking labels, and tool-expanded state from terminal Pi sessions.
-- **Server:** Added saved-agent, schedule, background schedule-runner, and commit-review launch foundations for CLI/API use. Native Apple management screens are hidden in build 40 until they are ready for TestFlight.
+- **Server:** Added saved-agent, schedule, background schedule-runner, and commit-review launch foundations for CLI/API use.
 
 ### Changed
 
