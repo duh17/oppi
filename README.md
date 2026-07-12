@@ -42,11 +42,11 @@ Extension prompts, confirmations, editor requests, status, and widgets render as
 
 ## Using Oppi
 
-The Workspaces tab opens **All Sessions** for the active server. It groups active work under **Your Turn** and **Working**, with workspace names on rows. Open the workspace sidebar to browse one workspace's sessions, files, and settings.
+The Workspaces tab opens **All Sessions** for the active server. It keeps **Your Turn** and **Working** up top, groups recent stopped sessions by day, and shows workspace names on rows. Open the workspace sidebar or drawer to browse one workspace's sessions, files, and settings.
 
 **Quick Session** starts a session without navigating into a workspace first. Open it from Oppi, Control Center, the Action Button, Spotlight, Siri, or Shortcuts. The Shortcuts **New Session** action can preload optional text and one image into the composer.
 
-The iOS share extension accepts shared text, URLs, images, and files. iOS does not let a share extension launch its containing app, so the extension confirms **Saved to Oppi**. Open Oppi to continue with the saved content preloaded in Quick Session.
+The iOS share extension accepts shared text, URLs, images, and files. Pick a paired-server workspace in the extension's Quick Session composer and start the session directly from the share sheet.
 
 ## Quick start
 
@@ -117,43 +117,26 @@ oppi server uninstall  # remove
 
 ## Commands
 
-Use `oppi ...` after installing `oppi-server` from npm.
+Use `oppi ...` after installing `oppi-server` from npm. Common entry points:
 
-```
-oppi serve [--host <h>]      start server
-oppi pair [--host <h>]       regenerate pairing QR
-oppi status                  server config overview
-oppi doctor                  check prerequisites
-oppi update                  update mutable runtime dependencies
-oppi update --self           update the global npm server install
-oppi init                    interactive first-time setup
-oppi config show             current config
-oppi config set <k> <v>      update config value
-oppi config validate         validate config file
-oppi token rotate            rotate owner auth token
-oppi workspace create        create a workspace from flags or JSON
-oppi workspace update        update workspace metadata
-oppi workspace delete        remove a workspace from the catalog
-oppi agent list              list saved Agent definitions
-oppi agent create            create a saved Agent from flags or JSON
-oppi session create --agent  launch a saved Agent in a workspace
-oppi session search          search indexed session content (cwd workspace by default)
-oppi session inspect         inspect summaries, responses, turns, and tools
-oppi session resume          resume a stopped workspace session
-oppi session fork            fork a session from a trace entry
-oppi session delete          delete a workspace session
-oppi schedule list           list saved schedules
-oppi schedule create --agent create an at/every/cron saved-Agent schedule
-oppi schedule run <id>       run a schedule now
-oppi schedule runs <id>      inspect schedule run history
-oppi server install          install LaunchAgent (macOS)
-oppi server uninstall        remove LaunchAgent
-oppi server status           check background service
-oppi server restart          restart background server
-oppi server stop             stop background server
+```bash
+oppi serve [--host <h>]      # start server
+oppi pair [--host <h>]       # regenerate pairing QR + invite link
+oppi status                  # server, network, and pairing status
+oppi doctor                  # security and environment diagnostics
+oppi workspace ...           # list/create/update/delete workspaces
+oppi worktree ...            # list/create/open/preview/remove worktrees
+oppi session ...             # create/send/watch/wait/inspect/resume/fork/delete sessions
+oppi agent ...               # manage saved Agents
+oppi schedule ...            # manage schedules and run history
+oppi server ...              # install/status/restart/stop/uninstall launchd service
+oppi config ...              # show/get/set/validate config
+oppi token rotate            # rotate owner auth token
+oppi update                  # update mutable runtime dependencies
+oppi update --self           # show how to update the server install
 ```
 
-Saved Agents and schedules are server CLI/API features. Saved Agents hold reusable Agent definitions; schedules store at/every/cron triggers plus a workspace, saved-Agent, or existing-session action and keep run history for manual or approved automatic runs.
+Saved Agents and schedules are server CLI/API features. Saved Agents hold reusable Agent definitions. Schedules store at/every/cron triggers plus a workspace, saved Agent, or existing-session action and keep run history for manual or approved automatic runs. For the full CLI surface, run `oppi --help` or see [server/README.md](server/README.md).
 
 ## Mac app shell (experimental)
 
