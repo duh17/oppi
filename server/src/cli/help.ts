@@ -981,6 +981,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
+      "Pass @- to --text to read the message from stdin.",
       "A plain prompt needs an idle session; on a busy session it errors with a steer/follow-up hint.",
     ],
     examples: [
@@ -1082,10 +1083,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--poll", value: "<s>", summary: "poll interval; defaults to 1s" },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    notes: [
-      "A single-session subset of 'session watch'; use watch for multiple ids or live transitions.",
-      "--until is accepted as an alias for --for; supplying both is an error.",
-    ],
+    notes: ["Use watch for multiple sessions or live state transitions."],
     examples: [{ command: "oppi session wait sess_123 --for idle --json" }],
   },
   {
@@ -1139,7 +1137,7 @@ const HELP_TOPICS: HelpTopic[] = [
     summary: "Search indexed session content.",
     usage:
       "oppi session search [query] [--workspace <workspace>|--all] [--since <time>] [--until <time>] [--limit <count>] [--json]",
-    arguments: [{ name: "[query]", summary: "search query text; --query is also accepted" }],
+    arguments: [{ name: "[query]", summary: "search query text" }],
     flags: [
       { name: "--query", value: "<text>", summary: "search query text" },
       {
@@ -1173,9 +1171,8 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["session", "inspect"],
     title: "Inspect session",
-    summary: "Inspect selected turns from the canonical Oppi session trace API.",
-    usage:
-      "oppi session inspect <id> [--turns <spec>] [--view overview|outline|response|messages|summary|tools] [--json]",
+    summary: "Inspect selected turns without dumping the full session trace.",
+    usage: "oppi session inspect <id> [--turns <spec>] [--view <view>] [--json]",
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [
       {
@@ -1191,12 +1188,8 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
-      "This command reads through the Oppi server and does not accept direct JSONL paths.",
-      "Use 'oppi session search' first, then inspect the returned session id.",
-      "Without --view, inspect defaults to outline so bare inspection stays compact.",
-      "For progressive disclosure, start with the default outline; use summary for counts, then request messages or tools for the smallest relevant turn set.",
-      "Response returns the latest non-empty assistant response in the selected turns; outline shows clipped messages and activity counts per turn.",
-      "--turn is accepted as an alias for --turns; supplying both is an error.",
+      "Without --view, inspect shows a compact outline.",
+      "Use summary for counts, response for the latest assistant response, or messages/tools for selected turns.",
     ],
     examples: [
       { command: "oppi session inspect sess_123 --view summary --json" },
@@ -1442,6 +1435,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
+      "Pass @- to --prompt to read the first prompt from stdin.",
       "JSON output is compact and returns the launch id as data.session_id.",
       "With --idempotency-key, retrying the same create request reuses the existing launch instead of creating a duplicate session.",
       "If another launcher still owns the active lease for that key, the server can report launch_in_progress; retry with the same key.",

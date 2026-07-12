@@ -44,6 +44,11 @@ export interface ServerConfig {
     enabled: boolean;
   };
 
+  /** Experimental one-line Oppi CLI management hint for Oppi-owned sessions. */
+  oppiCliPrompt?: {
+    enabled: boolean;
+  };
+
   /** Transport security (HTTPS/WSS). */
   tls?: TlsConfig;
 

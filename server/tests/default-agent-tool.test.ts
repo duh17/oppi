@@ -35,10 +35,10 @@ describe("Default Agent Oppi tool command runner", () => {
       expect(result.ok).toBe(true);
       expect(result.data).toMatchObject({
         help: {
-          usage: expect.stringContaining("overview|outline|response|messages|summary|tools"),
+          usage: expect.stringContaining("--view <view>"),
           notes: expect.arrayContaining([
-            expect.stringContaining("defaults to outline"),
-            expect.stringContaining("outline shows clipped messages and activity counts"),
+            expect.stringContaining("compact outline"),
+            expect.stringContaining("messages/tools"),
           ]),
           examples: expect.arrayContaining([
             expect.objectContaining({

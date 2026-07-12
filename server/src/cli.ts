@@ -821,6 +821,11 @@ const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
     type: "boolean",
     desc: "Append packaged Oppi docs hint to Oppi sessions",
   },
+  oppiCliPrompt: { type: "json", desc: "Oppi CLI prompt experiment JSON object" },
+  "oppiCliPrompt.enabled": {
+    type: "boolean",
+    desc: "Append a concise Oppi CLI management hint to Oppi sessions",
+  },
   tls: { type: "json", desc: "TLS config JSON object" },
   "tls.mode": { type: "string", desc: "TLS mode" },
   "tls.certPath": { type: "string", desc: "Manual TLS certificate path" },

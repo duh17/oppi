@@ -1,4 +1,5 @@
 /* eslint-disable no-console */
+import { readFileSync } from "node:fs";
 import * as c from "../../ansi.js";
 import type { Session } from "../../types.js";
 import {
@@ -163,8 +164,7 @@ export async function cmdSession(
 
     if (mode === "send") {
       const id = requirePositional(positional, "session id is required");
-      const text = flags.text;
-      if (!text?.trim()) throw new Error("--text is required");
+      const text = resolvePromptInput(flags.text, "--text");
       const commandType = resolveSendStreamingKind(flags) ?? "prompt";
       const result = await sendSessionInput(id, commandType, text, call);
       assertNoCommandError(result, commandType === "prompt");
@@ -563,8 +563,9 @@ async function createSession(
   hostResolvers: LocalApiHostResolvers,
 ): Promise<void> {
   const workspaceRef = flags.workspace?.trim();
-  const promptText = flags.prompt;
-  if (!workspaceRef || promptText === undefined || promptText.trim() === "") {
+  const promptText =
+    flags.prompt === undefined ? undefined : resolvePromptInput(flags.prompt, "--prompt");
+  if (!workspaceRef || promptText === undefined) {
     const message = "--workspace and --prompt are required";
     if (jsonOutput) writeJsonEnvelope({ ok: false, error: { message } });
     else {
@@ -625,6 +626,13 @@ async function createSession(
   }
 
   printSessionNotice(`session ${result.session.id} created in ${workspaceId}`);
+}
+
+function resolvePromptInput(value: string | undefined, flag: "--prompt" | "--text"): string {
+  if (value === undefined) throw new Error(`${flag} is required`);
+  const text = value === "@-" ? readFileSync(0, "utf-8") : value;
+  if (!text.trim()) throw new Error(`${flag} must not be empty`);
+  return text;
 }
 
 const SESSION_FLAGS: Record<string, readonly string[]> = {

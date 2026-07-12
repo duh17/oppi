@@ -26,6 +26,7 @@ describe("Storage config validation", () => {
     expect(result.config?.maxSessionsGlobal).toBe(200);
     expect(result.config?.runtimePathEntries?.length).toBeGreaterThan(0);
     expect(result.config?.oppiDocsPrompt?.enabled).toBe(true);
+    expect(result.config?.oppiCliPrompt?.enabled).toBe(true);
     expect(result.config?.tls?.mode).toBe("self-signed");
     expect(result.config?.images?.autoResize).toBe(false);
   });
@@ -210,6 +211,28 @@ describe("Storage config validation", () => {
     expect(result.valid).toBe(false);
     expect(result.errors).toContain("config.oppiDocsPrompt.enabled: expected boolean");
     expect(result.errors).toContain("config.oppiDocsPrompt.unknownField: unknown key");
+  });
+
+  it("preserves and validates the Oppi CLI prompt experiment", () => {
+    const enabled = Storage.validateConfig(
+      { ...Storage.getDefaultConfig(dir), oppiCliPrompt: { enabled: true } },
+      dir,
+      true,
+    );
+    expect(enabled.valid).toBe(true);
+    expect(enabled.config?.oppiCliPrompt?.enabled).toBe(true);
+
+    const invalid = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        oppiCliPrompt: { enabled: "yes", unknownField: true },
+      },
+      dir,
+      true,
+    );
+    expect(invalid.valid).toBe(false);
+    expect(invalid.errors).toContain("config.oppiCliPrompt.enabled: expected boolean");
+    expect(invalid.errors).toContain("config.oppiCliPrompt.unknownField: unknown key");
   });
 
   it("preserves image auto-resize config", () => {
