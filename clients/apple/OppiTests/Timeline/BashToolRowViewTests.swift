@@ -133,6 +133,24 @@ struct BashToolRowViewTests {
         #expect(view.outputContainer.backgroundColor == UIColor(Color.themeBgDark))
     }
 
+    @Test("applyTheme refreshes persistent UIKit surfaces")
+    func applyThemeRefreshesSurfaces() throws {
+        let view = BashToolRowView()
+
+        view.applyTheme(ThemePalettes.dark)
+        let darkCommand = try #require(view.commandContainer.backgroundColor)
+        let darkOutput = try #require(view.outputContainer.backgroundColor)
+
+        view.applyTheme(ThemePalettes.light)
+        let lightCommand = try #require(view.commandContainer.backgroundColor)
+        let lightOutput = try #require(view.outputContainer.backgroundColor)
+
+        #expect(lightCommand == UIColor(ThemePalettes.light.bgHighlight))
+        #expect(lightOutput == UIColor(ThemePalettes.light.bgDark))
+        #expect(lightCommand != darkCommand)
+        #expect(lightOutput != darkOutput)
+    }
+
     // MARK: - resetOutputState
 
     @Test("resetOutputState clears output render state")

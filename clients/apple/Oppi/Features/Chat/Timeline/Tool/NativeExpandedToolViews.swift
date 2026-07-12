@@ -1233,7 +1233,7 @@ final class NativeExpandedInlineImageView: UIView {
         overflowLabel.text = "Tap to open full image"
         overflowLabel.font = ToolFont.small
         overflowLabel.textColor = UIColor(Color.themeFg)
-        overflowLabel.backgroundColor = UIColor(Color.themeBgDark).withAlphaComponent(0.82)
+        overflowLabel.backgroundColor = UIColor(ThemeSurfaceStyle.resolve(.opaqueCard).fill)
         overflowLabel.layer.cornerRadius = 6
         overflowLabel.layer.masksToBounds = true
         overflowLabel.textAlignment = .center

@@ -125,6 +125,29 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("fullscreen image theme notification updates navigation controller chrome")
+    func fullscreenImageThemeNotificationUpdatesNavigationController() throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+
+        ThemeRuntimeState.setThemeID(.dark)
+        let navigation = try #require(
+            FullScreenImageViewController.makeSlideDownController(image: makeTestImage())
+                as? UINavigationController
+        )
+        navigation.loadViewIfNeeded()
+        let viewer = try #require(navigation.viewControllers.first as? FullScreenImageViewController)
+        viewer.loadViewIfNeeded()
+        #expect(navigation.overrideUserInterfaceStyle == .dark)
+
+        ThemeRuntimeState.setThemeID(.light)
+        NotificationCenter.default.post(name: .oppiThemeDidChange, object: nil)
+
+        #expect(navigation.overrideUserInterfaceStyle == .light)
+        #expect(color(navigation.view.backgroundColor, approximatelyEquals: UIColor(ThemePalettes.light.bgDark)))
+    }
+
+    @MainActor
     @Test("tool timeline image presentation uses page-sheet swipe dismiss")
     func toolTimelineImagePresentationUsesPageSheet() throws {
         let window = UIWindow()

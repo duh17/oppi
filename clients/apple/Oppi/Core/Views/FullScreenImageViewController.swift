@@ -6,8 +6,9 @@ import UIKit
 /// dismissal behavior used by other "full-screen" previews.
 final class FullScreenImageViewController: UIViewController {
     private let image: UIImage
-    private let palette: ThemePalette
+    private var palette: ThemePalette
     private let scrollView = UIScrollView()
+    private let toolbar = UIToolbar()
     private let imageView: UIImageView
     private var swipeDismissHandler: HorizontalBackSwipeGestureInstaller?
     private var savedFeedbackLabel: UILabel?
@@ -22,9 +23,19 @@ final class FullScreenImageViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: .oppiThemeDidChange, object: nil)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(palette.bgDark)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleThemeChangeNotification),
+            name: .oppiThemeDidChange,
+            object: nil
+        )
 
         setupNavigationChrome()
         setupSwipeDismiss()
@@ -108,17 +119,8 @@ final class FullScreenImageViewController: UIViewController {
     }
 
     private func setupBottomToolbar() {
-        let toolbar = UIToolbar()
         toolbar.translatesAutoresizingMaskIntoConstraints = false
-        toolbar.tintColor = UIColor(palette.cyan)
-
-        let appearance = UIToolbarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor(palette.bgHighlight)
-        appearance.shadowColor = UIColor(palette.comment).withAlphaComponent(0.2)
-        toolbar.standardAppearance = appearance
-        toolbar.scrollEdgeAppearance = appearance
-        toolbar.compactAppearance = appearance
+        applyToolbarTheme()
 
         view.addSubview(toolbar)
 
@@ -142,6 +144,39 @@ final class FullScreenImageViewController: UIViewController {
             action: #selector(saveTapped(_:))
         )
         toolbar.items = [shareButton, flexSpace, saveButton]
+    }
+
+    private func applyToolbarTheme() {
+        toolbar.tintColor = UIColor(palette.cyan)
+        let appearance = UIToolbarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(palette.bgHighlight)
+        appearance.shadowColor = UIColor(palette.comment).withAlphaComponent(0.2)
+        toolbar.standardAppearance = appearance
+        toolbar.scrollEdgeAppearance = appearance
+        toolbar.compactAppearance = appearance
+    }
+
+    @objc private func handleThemeChangeNotification(_: Notification) {
+        let themeID = ThemeRuntimeState.currentThemeID()
+        palette = themeID.palette
+        let interfaceStyle: UIUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
+        overrideUserInterfaceStyle = interfaceStyle
+        navigationController?.overrideUserInterfaceStyle = interfaceStyle
+        navigationController?.view.backgroundColor = UIColor(palette.bgDark)
+        view.backgroundColor = UIColor(palette.bgDark)
+        scrollView.backgroundColor = UIColor(palette.bgDark)
+        applyToolbarTheme()
+        setupNavigationChrome()
+
+        if let savedFeedbackLabel {
+            savedFeedbackLabel.textColor = UIColor(palette.fg)
+            savedFeedbackLabel.backgroundColor = UIColor(
+                ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
+            )
+            savedFeedbackLabel.layer.borderColor = UIColor(palette.comment)
+                .withAlphaComponent(0.25).cgColor
+        }
     }
 
     // MARK: - Actions
@@ -186,7 +221,9 @@ final class FullScreenImageViewController: UIViewController {
         label.font = AppFont.systemFeedbackMedium
         label.textColor = UIColor(palette.fg)
         label.textAlignment = .center
-        label.backgroundColor = UIColor(palette.bgHighlight).withAlphaComponent(0.9)
+        label.backgroundColor = UIColor(
+            ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
+        )
         label.layer.cornerRadius = 8
         label.layer.borderWidth = 1
         label.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor

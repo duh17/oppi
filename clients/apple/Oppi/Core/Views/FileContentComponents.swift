@@ -105,7 +105,7 @@ struct TruncationNotice: View {
             .foregroundStyle(.themeComment)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
-            .background(Color.themeBgHighlight.opacity(0.5))
+            .background(Color.themeRecessedInset)
     }
 }
 

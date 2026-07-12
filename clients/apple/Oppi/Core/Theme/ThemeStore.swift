@@ -2,6 +2,12 @@ import Foundation
 import SwiftUI
 import UIKit
 
+extension Notification.Name {
+    /// Main-actor notification for persistent UIKit surfaces that are not
+    /// recreated by SwiftUI when the active Oppi theme changes.
+    static let oppiThemeDidChange = Notification.Name("dev.chenda.oppi.themeDidChange")
+}
+
 enum ThemeMode: String, CaseIterable, Identifiable {
     case manual
     case system
@@ -160,6 +166,11 @@ final class ThemeStore {
         guard activeThemeID != nextThemeID else { return }
         activeThemeID = nextThemeID
         ThemeRuntimeState.setThemeID(nextThemeID)
+        NotificationCenter.default.post(
+            name: .oppiThemeDidChange,
+            object: self,
+            userInfo: ["themeID": nextThemeID.rawValue]
+        )
         if evictCaches {
             ToolRowRenderCache.evictAll()
         }

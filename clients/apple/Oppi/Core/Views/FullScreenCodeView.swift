@@ -398,6 +398,7 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
     let reviewCommentSourceLabel: String?
 
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+    @Environment(\.themeID) private var themeID
 
     /// Effective action context for this fullscreen presentation.
     private var effectiveReviewCommentSelectionContext: ReviewCommentSelectionContext? {
@@ -431,6 +432,8 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: FullScreenCodeViewController, context: Context) {
-        // Content is immutable — nothing to update.
+        // Content is immutable, but the UIKit body and chrome persist across
+        // SwiftUI updates and must explicitly follow a live theme change.
+        uiViewController.applyThemeIfNeeded(themeID)
     }
 }

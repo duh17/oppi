@@ -138,6 +138,18 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
     // MARK: - Apply
 
+    /// Refresh persistent UIKit chrome before rendering or revealing the row.
+    /// The view can be reused across a live system appearance change.
+    func applyTheme(_ palette: ThemePalette) {
+        commandContainer.backgroundColor = UIColor(palette.bgHighlight)
+        commandContainer.layer.borderColor = UIColor(palette.blue.opacity(0.35)).cgColor
+        commandLabel.textColor = UIColor(palette.fg)
+
+        outputContainer.backgroundColor = UIColor(palette.bgDark)
+        outputContainer.layer.borderColor = UIColor(palette.comment.opacity(0.2)).cgColor
+        outputLabel.textColor = UIColor(palette.fg)
+    }
+
     /// Render bash content.
     ///
     /// Returns which surfaces should be visible. The parent is responsible
@@ -587,7 +599,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
         commandContainer.translatesAutoresizingMaskIntoConstraints = false
         commandContainer.layer.cornerRadius = 6
-        commandContainer.backgroundColor = UIColor(Color.themeBgHighlight.opacity(0.9))
+        commandContainer.backgroundColor = UIColor(Color.themeBgHighlight)
         commandContainer.layer.borderWidth = 1
         commandContainer.layer.borderColor = UIColor(Color.themeBlue.opacity(0.35)).cgColor
         commandContainer.isHidden = true
