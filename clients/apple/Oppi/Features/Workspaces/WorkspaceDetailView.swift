@@ -514,7 +514,7 @@ struct WorkspaceDetailView: View {
         .contentMargins(.top, contextBarHeight, for: .scrollContent)
         .overlay {
             if contextBarExpanded {
-                Color.themeBg.opacity(0.5)
+                Color.themeDimScrim
                     .onTapGesture { contextBarCollapseToken &+= 1 }
             }
         }
@@ -607,8 +607,10 @@ struct WorkspaceDetailView: View {
         .overlay {
             if isCreating || isImportingLocal {
                 ProgressView(isImportingLocal ? "Resuming session..." : "Creating session...")
+                    .tint(.themeCyan)
+                    .foregroundStyle(.themeFg)
                     .padding()
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .themedFloatingPanel()
             }
         }
         .alert("Error", isPresented: Binding(

@@ -1021,7 +1021,9 @@ private final class CopiedPillView: UIView {
         stack.alignment = .center
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        backgroundColor = UIColor(palette.bgDark).withAlphaComponent(0.85)
+        // Transient pill over code content with no blur behind it, so it
+        // takes the near-opaque card role.
+        backgroundColor = UIColor(ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill)
         layer.cornerRadius = 16
         isUserInteractionEnabled = false
 

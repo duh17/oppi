@@ -383,7 +383,7 @@ private struct ExtensionDialogSheet: View {
             if let timeoutSummary {
                 Section {
                     Label(timeoutSummary, systemImage: "timer")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                 }
             }
         }
@@ -510,7 +510,7 @@ private struct ExtensionToastSheet: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(line.label)
                                     .font(.subheadline)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.themeComment)
                                 HStack(spacing: 12) {
                                     Button(action: { UIApplication.shared.open(url) }) {
                                         Text(url.absoluteString)
@@ -518,7 +518,7 @@ private struct ExtensionToastSheet: View {
                                             .lineLimit(1)
                                     }
                                     .buttonStyle(.plain)
-                                    .foregroundStyle(.blue)
+                                    .foregroundStyle(.themeBlue)
 
                                     Spacer()
 
@@ -528,17 +528,20 @@ private struct ExtensionToastSheet: View {
                                     } label: {
                                         Image(systemName: "doc.on.doc")
                                             .imageScale(.medium)
+                                            .foregroundStyle(.themeFgDim)
                                     }
                                 }
                             }
                         } else {
                             Text(line.text)
                                 .font(.body)
+                                .foregroundStyle(.themeFg)
                         }
                     }
                 }
                 .padding()
             }
+            .background(Color.themeBg)
             .navigationTitle("Extension")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

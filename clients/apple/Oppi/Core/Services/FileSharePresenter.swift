@@ -298,26 +298,29 @@ struct FileShareButton: View {
                     Text("Exporting")
                         .font(.caption2.bold())
                 }
+                .foregroundStyle(.themeFg)
+                .tint(.themeCyan)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(.ultraThinMaterial)
-                .clipShape(Capsule())
+                .themedSurface(.floatingControl, in: Capsule())
             case .icon:
                 ProgressView()
                     .controlSize(.regular)
+                    .tint(.themeCyan)
             }
         } else {
             switch style {
             case .capsule:
                 Label("Share", systemImage: "square.and.arrow.up")
                     .font(.caption2.bold())
+                    .foregroundStyle(.themeFg)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(.ultraThinMaterial)
-                    .clipShape(Capsule())
+                    .themedSurface(.floatingControl, in: Capsule())
             case .icon:
                 Label("Share", systemImage: "square.and.arrow.up")
                     .labelStyle(.iconOnly)
+                    .foregroundStyle(.themeFgDim)
             }
         }
     }

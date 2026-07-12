@@ -20,7 +20,7 @@ struct ElevatedSurfaceOpacityTests {
         let surface = try rgb(of: palette.bgDark)
         let timelineBackground = try rgb(of: palette.bg)
         let timelineText = try rgb(of: palette.fg)
-        let opacity = ThemeColorContrast.elevatedSurfaceOpacity(for: palette.bgDark)
+        let opacity = try roleOpacity(.elevatedPanel, palette: palette)
 
         let formerContrast = contrastRatio(
             composite(surface, over: timelineText, opacity: 0.78),
@@ -41,7 +41,7 @@ struct ElevatedSurfaceOpacityTests {
     @MainActor
     @Test func panelContentRetainsAccessibleContrastAcrossBuiltInThemes() throws {
         for palette in [ThemePalettes.dark, ThemePalettes.oled, ThemePalettes.night, ThemePalettes.light] {
-            let opacity = ThemeColorContrast.elevatedSurfaceOpacity(for: palette.bgDark)
+            let opacity = try roleOpacity(.elevatedPanel, palette: palette)
             let panelBackground = composite(
                 try rgb(of: palette.bgDark),
                 over: try rgb(of: palette.bg),
@@ -53,11 +53,79 @@ struct ElevatedSurfaceOpacityTests {
         }
     }
 
-    @Test func darkPalettesKeepEstablishedTranslucency() {
+    @MainActor
+    @Test func darkPalettesKeepEstablishedTranslucency() throws {
         for palette in [ThemePalettes.dark, ThemePalettes.oled, ThemePalettes.night] {
-            let opacity = ThemeColorContrast.elevatedSurfaceOpacity(for: palette.bgDark)
+            let opacity = try roleOpacity(.elevatedPanel, palette: palette)
             #expect(abs(opacity - 0.78) < 0.005)
         }
+    }
+
+    /// Every role must stay readable on every builtin palette: on the theme's
+    /// own background and composited over worst-case light/dark backdrops (a
+    /// white document or black media scrolling behind a floating panel).
+    @MainActor
+    @Test func everyRoleKeepsReadableContrastOverWorstCaseBackdrops() throws {
+        let white = RGB(red: 1, green: 1, blue: 1)
+        let black = RGB(red: 0, green: 0, blue: 0)
+
+        for palette in [ThemePalettes.dark, ThemePalettes.oled, ThemePalettes.night, ThemePalettes.light] {
+            let foreground = try rgb(of: palette.fg)
+            let themeBackground = try rgb(of: palette.bg)
+
+            for role in ThemeSurfaceRole.allCases {
+                let style = ThemeSurfaceStyle.resolve(role, palette: palette)
+                let fill = try rgba(of: style.fill)
+                let fillColor = RGB(red: fill.red, green: fill.green, blue: fill.blue)
+                let opacity = Double(fill.alpha)
+
+                let onOwnBackground = composite(fillColor, over: themeBackground, opacity: opacity)
+                #expect(contrastRatio(foreground, onOwnBackground) >= 4.5)
+
+                // Blur roles put a glass blur behind the fill, which softens
+                // extreme backdrops, so their bare-compositing floor is lower;
+                // blur-free roles must clear the full threshold on fill alone.
+                let worstCaseFloor: CGFloat = style.wantsGlassBlur ? 3.0 : 4.5
+                for backdrop in [white, black] {
+                    let panel = composite(fillColor, over: backdrop, opacity: opacity)
+                    #expect(contrastRatio(foreground, panel) >= worstCaseFloor)
+                }
+            }
+        }
+    }
+
+    /// The design rule the resolver encodes: a translucent dark fill is only
+    /// safe when paired with a glass blur, and blur-free roles must resolve
+    /// near-opaque regardless of palette luminance.
+    @MainActor
+    @Test func translucentFillsPairWithBlurAndBlurFreeRolesResolveNearOpaque() throws {
+        for palette in [ThemePalettes.dark, ThemePalettes.oled, ThemePalettes.night, ThemePalettes.light] {
+            for role in ThemeSurfaceRole.allCases {
+                let style = ThemeSurfaceStyle.resolve(role, palette: palette)
+                let opacity = try roleOpacity(role, palette: palette)
+                if !style.wantsGlassBlur {
+                    #expect(opacity >= 0.90)
+                }
+                if opacity < 0.90 {
+                    #expect(style.wantsGlassBlur)
+                }
+            }
+        }
+    }
+
+    @Test func adaptiveSurfaceOpacityPreservesDarkBaselineAndBoostsLight() {
+        let darkControlOpacity = ThemeColorContrast.adaptiveSurfaceOpacity(
+            for: ThemePalettes.dark.bgDark,
+            darkOpacity: 0.64
+        )
+        let lightControlOpacity = ThemeColorContrast.adaptiveSurfaceOpacity(
+            for: ThemePalettes.light.bgDark,
+            darkOpacity: 0.64
+        )
+
+        #expect(abs(darkControlOpacity - 0.64) < 0.005)
+        #expect(lightControlOpacity > 0.88)
+        #expect(lightControlOpacity > darkControlOpacity)
     }
 
     @MainActor
@@ -66,10 +134,10 @@ struct ElevatedSurfaceOpacityTests {
         defer { ThemeRuntimeState.setThemeID(original) }
 
         ThemeRuntimeState.setThemeID(.dark)
-        let dark = try rgba(of: Color.themeElevatedSurface)
+        let dark = try rgba(of: ThemeSurfaceStyle.resolve(.elevatedPanel).fill)
 
         ThemeRuntimeState.setThemeID(.light)
-        let light = try rgba(of: Color.themeElevatedSurface)
+        let light = try rgba(of: ThemeSurfaceStyle.resolve(.elevatedPanel).fill)
 
         #expect(dark.alpha < 0.79)
         #expect(light.alpha > 0.90)
@@ -88,6 +156,11 @@ struct ElevatedSurfaceOpacityTests {
         let green: CGFloat
         let blue: CGFloat
         let alpha: CGFloat
+    }
+
+    @MainActor
+    private func roleOpacity(_ role: ThemeSurfaceRole, palette: ThemePalette) throws -> Double {
+        Double(try rgba(of: ThemeSurfaceStyle.resolve(role, palette: palette).fill).alpha)
     }
 
     @MainActor

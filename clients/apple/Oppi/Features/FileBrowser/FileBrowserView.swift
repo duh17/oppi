@@ -1148,13 +1148,10 @@ private extension View {
     }
 
     func fileTreeGlassPanel(cornerRadius: CGFloat) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return self
-            .background(Color.themeBgDark.opacity(0.58), in: shape)
-            .glassEffect(.regular, in: shape)
-            .overlay {
-                shape.stroke(Color.themeFg.opacity(0.10), lineWidth: 1)
-            }
+        themedSurface(
+            .floatingControl,
+            in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        )
     }
 }
 
@@ -1186,7 +1183,7 @@ private struct FileBrowserBreadcrumb: View {
                         } label: {
                             Text(segment.label)
                                 .font(.caption.weight(segment.depth == currentDepth ? .semibold : .medium))
-                                .foregroundStyle(segment.depth == currentDepth ? Color.accentColor : .themeComment)
+                                .foregroundStyle(segment.depth == currentDepth ? Color.themeBlue : .themeComment)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 4)
                                 .contentShape(Rectangle())

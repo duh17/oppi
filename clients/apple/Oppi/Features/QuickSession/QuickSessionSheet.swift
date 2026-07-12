@@ -219,7 +219,7 @@ struct QuickSessionSheet: View {
                 onSelect: selectWorkspace
             )
             .presentationCompactAdaptation(.popover)
-            .presentationBackground(.regularMaterial)
+            .presentationBackground(Color.themeSurfaceFill(.popover))
         }
         .accessibilityLabel(selectedWorkspace.map { "Workspace picker, current workspace \($0.name)" } ?? "Workspace picker")
         .accessibilityIdentifier("quickSession.workspacePicker")

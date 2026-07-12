@@ -94,7 +94,9 @@ enum ToolTimelineRowViewStyler {
     ) {
         expandedContainer.layer.cornerRadius = 6
         expandedContainer.layer.masksToBounds = true
-        expandedContainer.backgroundColor = UIColor(Color.themeBgDark.opacity(0.9))
+        // Expanded body sits inline in the timeline row with no blur behind
+        // it, so it takes the near-opaque card role.
+        expandedContainer.backgroundColor = UIColor(ThemeSurfaceStyle.resolve(.opaqueCard).fill)
 
         expandedScrollView.translatesAutoresizingMaskIntoConstraints = false
         expandedScrollView.alwaysBounceVertical = false

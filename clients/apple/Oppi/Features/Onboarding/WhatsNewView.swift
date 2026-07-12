@@ -178,7 +178,7 @@ struct WhatsNewView: View {
             .padding(.bottom, 8)
         }
         .padding(.top, 12)
-        .background(.ultraThinMaterial)
+        .background(Color.themeSurfaceFill(.opaqueCard).ignoresSafeArea(edges: .bottom))
         .opacity(appeared ? 1 : 0)
         .animation(.easeOut(duration: 0.4).delay(0.6), value: appeared)
     }

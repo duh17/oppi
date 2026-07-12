@@ -829,7 +829,7 @@ private struct WorkspaceSystemPromptEditorView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(.ultraThinMaterial)
+            .background(Color.themeSurfaceFill(.opaqueCard).ignoresSafeArea(edges: .bottom))
         }
     }
 }

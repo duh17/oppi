@@ -267,8 +267,10 @@ struct SessionInboxView: View {
         .overlay {
             if isCreating {
                 ProgressView("Creating session…")
+                    .tint(.themeCyan)
+                    .foregroundStyle(.themeFg)
                     .padding()
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .themedFloatingPanel()
             }
         }
         .alert("Error", isPresented: Binding(
