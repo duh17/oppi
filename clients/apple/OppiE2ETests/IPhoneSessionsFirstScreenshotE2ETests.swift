@@ -9,6 +9,8 @@ import XCTest
 final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     private let anchorWorkspaceName = "e2e-workspace"
     private let stoppedIncognitoSessionName = "Hidden Incognito Session"
+    nonisolated(unsafe) private var swipeRegressionSessionId: String?
+    nonisolated(unsafe) private var swipeRegressionStoppedSessionId: String?
 
     override var e2eLaunchesSessionsInboxOnly: Bool {
         true
@@ -21,7 +23,18 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     override func seedE2EFixtures() throws {
         let anchorWorkspaceId = try e2eWorkspaceId(named: anchorWorkspaceName)
 
-        if name.contains("testIPhoneAllActiveSessionsInboxScreenshot") {
+        if name.contains("testSessionRowLeadingSwipeDoesNotNavigate") {
+            swipeRegressionSessionId = try createLabSessions(
+                count: 1,
+                workspaceId: anchorWorkspaceId,
+                stopAfterCreate: false
+            ).first
+            swipeRegressionStoppedSessionId = try createLabSessions(
+                count: 1,
+                workspaceId: anchorWorkspaceId,
+                stopAfterCreate: true
+            ).first
+        } else if name.contains("testIPhoneAllActiveSessionsInboxScreenshot") {
             try createLabSessions(count: 1, workspaceId: anchorWorkspaceId, stopAfterCreate: false)
             let secondWorkspaceId = try createLabWorkspace(named: "Sidebar Review Queue")
             try createLabSessions(count: 1, workspaceId: secondWorkspaceId, stopAfterCreate: false)
@@ -59,6 +72,57 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
                 _ = try createLabWorkspace(named: "Scroll Workspace \(index)")
             }
         }
+    }
+
+    func testSessionRowLeadingSwipeDoesNotNavigate() throws {
+        XCUIDevice.shared.orientation = .portrait
+
+        let sessionId = try XCTUnwrap(swipeRegressionSessionId, "Swipe regression session was not seeded")
+        let stoppedSessionId = try XCTUnwrap(
+            swipeRegressionStoppedSessionId,
+            "Stopped swipe regression session was not seeded"
+        )
+        let sessionList = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
+        sessionList.swipeDown()
+
+        let row = app.buttons["session.nav.\(sessionId)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "Seeded session row did not appear")
+
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.50))
+            .press(
+                forDuration: 0.05,
+                thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.50))
+            )
+
+        XCTAssertTrue(sessionList.exists, "Leading session-row swipe navigated away from All Sessions")
+        XCTAssertFalse(app.collectionViews["chat.timeline"].exists, "Leading session-row swipe opened chat")
+
+        row.swipeLeft()
+        XCTAssertTrue(
+            app.buttons["session.stop.\(sessionId)"].waitForExistence(timeout: 5),
+            "Trailing session-row swipe did not expose Stop"
+        )
+        row.swipeRight()
+
+        let stoppedRow = app.buttons["session.nav.\(stoppedSessionId)"]
+        XCTAssertTrue(stoppedRow.waitForExistence(timeout: 10), "Seeded stopped session row did not appear")
+        stoppedRow.swipeLeft()
+        XCTAssertTrue(
+            app.buttons["session.resume.\(stoppedSessionId)"].waitForExistence(timeout: 5),
+            "Trailing stopped-session swipe did not expose Resume"
+        )
+        XCTAssertTrue(
+            app.buttons["session.delete.\(stoppedSessionId)"].waitForExistence(timeout: 5),
+            "Trailing stopped-session swipe did not expose Delete"
+        )
+        stoppedRow.swipeRight()
+
+        tap(row, named: "session row")
+        XCTAssertTrue(
+            app.collectionViews["chat.timeline"].waitForExistence(timeout: 15),
+            "Tapping the session row did not open chat"
+        )
     }
 
     func testIPhoneAllActiveSessionsInboxScreenshot() throws {

@@ -574,18 +574,25 @@ struct SessionInboxView: View {
     }
 
     private func sessionRow(_ item: SessionInboxItem) -> some View {
-        Button {
-            openSession(item)
-        } label: {
-            SessionRow(presentation: rowPresentation(for: item))
-        }
-        .accessibilityIdentifier("session.nav.\(item.session.id)")
-        .accessibilityValue(sessionRowAccessibilityValue(for: item))
-        .buttonStyle(.plain)
-        .listRowBackground(Color.themeBg)
-        .swipeActions(edge: .trailing) {
-            sessionSwipeActions(for: item)
-        }
+        SessionRow(presentation: rowPresentation(for: item))
+            .contentShape(Rectangle())
+            // A plain Button can still commit after a horizontal drag loses to
+            // the List's swipe recognizer. Use an actual tap recognizer so row
+            // navigation fails as soon as either swipe direction becomes a drag.
+            .onTapGesture {
+                openSession(item)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                openSession(item)
+            }
+            .accessibilityIdentifier("session.nav.\(item.session.id)")
+            .accessibilityValue(sessionRowAccessibilityValue(for: item))
+            .listRowBackground(Color.themeBg)
+            .swipeActions(edge: .trailing) {
+                sessionSwipeActions(for: item)
+            }
     }
 
     private func recentStoppedGroups(_ items: [SessionInboxItem]) -> [SessionInboxStoppedGroup] {
@@ -641,6 +648,7 @@ struct SessionInboxView: View {
                 Label("Resume", systemImage: "play.fill")
             }
             .tint(.themeGreen)
+            .accessibilityIdentifier("session.resume.\(item.session.id)")
 
             if let workspaceId = item.session.workspaceId, !workspaceId.isEmpty {
                 Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
@@ -653,6 +661,7 @@ struct SessionInboxView: View {
                     Label("Delete", systemImage: "trash")
                 }
                 .tint(.themeRed)
+                .accessibilityIdentifier("session.delete.\(item.session.id)")
             }
         } else {
             Button {
@@ -661,6 +670,7 @@ struct SessionInboxView: View {
                 Label("Stop", systemImage: "stop.fill")
             }
             .tint(.themeOrange)
+            .accessibilityIdentifier("session.stop.\(item.session.id)")
         }
     }
 
