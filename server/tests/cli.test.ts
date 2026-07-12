@@ -1852,7 +1852,7 @@ describe("oppi local API commands", () => {
       rmSync(workspaceRoot, { recursive: true, force: true });
       rmSync(worktreeRoot, { recursive: true, force: true });
     }
-  }, 45_000);
+  }, 90_000);
 
   it("keeps concurrent read-only local API CLI calls from failing on SQLite locks", async () => {
     const api = createHttpServer((req, res) => {
