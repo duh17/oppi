@@ -146,7 +146,6 @@ extension ServerConnection {
                 current.lastActivity = completedAt
                 sessionStore.upsert(current)
             }
-            recordUnreadCompletionIfNeeded(sessionId: sessionId, at: completedAt)
             if let workspaceId {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             }
@@ -210,8 +209,10 @@ extension ServerConnection {
         if currentSession.status.isRunning {
             screenAwakeController.setSessionActivity(true, sessionId: currentSession.id)
         } else if stateContext.didTransitionOutOfRunning {
-            let completedAt = currentSession.lastAgentReplyAt ?? currentSession.lastActivity
-            recordUnreadCompletionIfNeeded(sessionId: currentSession.id, at: completedAt)
+            if let completedAt = currentSession.lastAgentReplyAt,
+               completedAt != previousSession?.lastAgentReplyAt {
+                recordUnreadCompletionIfNeeded(sessionId: currentSession.id, at: completedAt)
+            }
             screenAwakeController.setSessionActivity(false, sessionId: currentSession.id)
         }
 

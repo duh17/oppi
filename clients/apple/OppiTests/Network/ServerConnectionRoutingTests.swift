@@ -53,6 +53,23 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.unreadCompletionDate(for: "background") != nil)
     }
 
+    @Test func stoppingPreviouslyReadIdleSessionDoesNotRecordUnreadCompletion() {
+        let (conn, _) = makeTestConnection(sessionId: "focused")
+        conn.sessionStore.switchServer(to: "srv1")
+        var previouslyRead = makeTestSession(id: "read", status: .ready, messageCount: 2)
+        previouslyRead.lastAgentReplyAt = Date(timeIntervalSince1970: 1_700_000_000)
+        conn.sessionStore.upsert(previouslyRead)
+        conn.sessionStore.recordUnreadCompletion(sessionId: "read")
+        conn.sessionStore.markSessionRead(sessionId: "read")
+
+        _ = conn.applySharedStoreUpdate(
+            for: .sessionEnded(reason: "stopped"),
+            sessionId: "read"
+        )
+
+        #expect(conn.sessionStore.unreadCompletionDate(for: "read") == nil)
+    }
+
     @Test func focusedAgentEndDoesNotRecordUnreadCompletion() {
         let (conn, pipe) = makeTestConnection(sessionId: "focused")
         conn.sessionStore.switchServer(to: "srv1")
