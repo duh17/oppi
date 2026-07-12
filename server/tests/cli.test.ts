@@ -443,10 +443,9 @@ describe("oppi help", () => {
         expected: [
           "Usage: oppi session inspect <id>",
           "--turns <spec>",
-          "overview|outline|response|messages|summary|tools",
-          "progressive disclosure",
-          "defaults to outline",
-          "canonical Oppi session trace API",
+          "--view <view>",
+          "compact outline",
+          "messages/tools",
         ],
       },
       {
@@ -586,10 +585,12 @@ describe("oppi config", () => {
     expect(stdout.trim()).toBe("http://127.0.0.1:7936");
   });
 
-  it("config set/get supports the Oppi docs prompt toggle", () => {
+  it("config set/get supports Oppi prompt toggles", () => {
     run(["config", "set", "oppiDocsPrompt.enabled", "false"]);
-    const { stdout } = run(["config", "get", "oppiDocsPrompt.enabled"]);
-    expect(stdout.trim()).toBe("false");
+    expect(run(["config", "get", "oppiDocsPrompt.enabled"]).stdout.trim()).toBe("false");
+
+    run(["config", "set", "oppiCliPrompt.enabled", "true"]);
+    expect(run(["config", "get", "oppiCliPrompt.enabled"]).stdout.trim()).toBe("true");
   });
 
   it("config set supports nested extension config paths", () => {

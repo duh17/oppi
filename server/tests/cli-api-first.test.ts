@@ -115,9 +115,10 @@ function stripAnsi(text: string): string {
 function runCliResult(
   args: string[],
   cliDataDir: string,
+  stdin?: string,
 ): Promise<{ stdout: string; code: number }> {
   return new Promise((resolveRun) => {
-    execFile(
+    const child = execFile(
       "node",
       [CLI, ...args],
       { encoding: "utf-8", env: { ...process.env, OPPI_DATA_DIR: cliDataDir } },
@@ -131,6 +132,7 @@ function runCliResult(
         resolveRun({ stdout: stdout ?? "", code });
       },
     );
+    if (stdin !== undefined) child.stdin?.end(stdin);
   });
 }
 
@@ -394,6 +396,50 @@ describe("CLI app-state API boundary", () => {
         );
         expect(code).toBe(0);
         expect(JSON.parse(stdout)).toEqual({ ok: true, data: { session_id: "created-1" } });
+      },
+    );
+  });
+
+  it("reads create prompts from stdin when --prompt is @-", async () => {
+    await withOrchApi(
+      (res, ctx) => {
+        if (ctx.path === "/workspaces/ws-1") {
+          sendJson(res, { workspace: { id: "ws-1", name: "Oppi" } });
+          return;
+        }
+        if (ctx.path === "/workspaces/ws-1/sessions") {
+          sendJson(res, { session: { id: "created-stdin", workspaceId: "ws-1" } });
+          return;
+        }
+        sendJson(res, { error: "unexpected route" }, 404);
+      },
+      async ({ dataDir, requests }) => {
+        const { code } = await runCliResult(
+          ["session", "create", "--workspace", "ws-1", "--prompt", "@-", "--json"],
+          dataDir,
+          "prompt piped over stdin\n",
+        );
+        expect(code).toBe(0);
+        expect(requests.find((request) => request.path === "/workspaces/ws-1/sessions")?.body)
+          .toMatchObject({ prompt: "prompt piped over stdin\n" });
+      },
+    );
+  });
+
+  it("reads sent text from stdin when --text is @-", async () => {
+    await withOrchApi(
+      (res) => sendJson(res, { messages: [] }),
+      async ({ dataDir, requests }) => {
+        const { code } = await runCliResult(
+          ["session", "send", "sess-1", "--text", "@-", "--json"],
+          dataDir,
+          "message piped over stdin\n",
+        );
+        expect(code).toBe(0);
+        expect(requests[0]?.body).toMatchObject({
+          type: "prompt",
+          message: "message piped over stdin\n",
+        });
       },
     );
   });

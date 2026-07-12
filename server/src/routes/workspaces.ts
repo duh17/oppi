@@ -17,7 +17,12 @@ import {
 } from "../git-commits.js";
 import { getGitStatus } from "../git-status.js";
 import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "../local-sessions.js";
-import { isOppiDocsPromptEnabled, resolveSdkSessionCwd } from "../sdk-backend.js";
+import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "../oppi-cli-prompt.js";
+import {
+  isOppiCliPromptEnabled,
+  isOppiDocsPromptEnabled,
+  resolveSdkSessionCwd,
+} from "../sdk-backend.js";
 import { appendOppiSystemPromptHint, buildOppiSystemPromptAppend } from "../oppi-docs.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
 import { isPiTuiTaskRecordSession } from "../pi-tui-session-classification.js";
@@ -88,11 +93,16 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     });
     await loader.reload();
 
-    const includeOppiDocsHint = isOppiDocsPromptEnabled(ctx.storage.getConfig());
+    const config = ctx.storage.getConfig();
+    const includeOppiDocsHint = isOppiDocsPromptEnabled(config);
+    const includeOppiCliHint = isOppiCliPromptEnabled(config);
 
     // If a custom SYSTEM.md exists, return that.
     const custom = loader.getSystemPrompt();
-    if (custom) return includeOppiDocsHint ? appendOppiSystemPromptHint(custom) : custom;
+    if (custom) {
+      const prompt = includeOppiDocsHint ? appendOppiSystemPromptHint(custom) : custom;
+      return includeOppiCliHint ? `${prompt}\n\n${OPPI_CLI_SYSTEM_PROMPT_HINT}` : prompt;
+    }
 
     // Otherwise, generate the built-in Pi base system prompt.
     // buildSystemPrompt isn't in the package's exports map, so import via
@@ -115,9 +125,13 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const { buildSystemPrompt } = (await import(`file://${modFile}`)) as {
       buildSystemPrompt: (opts?: { cwd?: string; appendSystemPrompt?: string }) => string;
     };
+    const promptAppends = [
+      includeOppiDocsHint ? buildOppiSystemPromptAppend() : undefined,
+      includeOppiCliHint ? OPPI_CLI_SYSTEM_PROMPT_HINT : undefined,
+    ].filter((value): value is string => value !== undefined);
     return buildSystemPrompt({
       cwd,
-      appendSystemPrompt: includeOppiDocsHint ? buildOppiSystemPromptAppend() : undefined,
+      appendSystemPrompt: promptAppends.length > 0 ? promptAppends.join("\n\n") : undefined,
     });
   }
 

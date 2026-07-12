@@ -51,6 +51,9 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     oppiDocsPrompt: {
       enabled: true,
     },
+    oppiCliPrompt: {
+      enabled: true,
+    },
     tls: { mode: "self-signed" },
     images: {
       autoResize: false,
@@ -98,6 +101,7 @@ function normalizeConfig(
     "runtimePathEntries",
     "runtimeEnv",
     "oppiDocsPrompt",
+    "oppiCliPrompt",
     "tls",
 
     "token",
@@ -274,6 +278,33 @@ function normalizeConfig(
     }
   } else {
     errors.push("config.oppiDocsPrompt: expected object");
+    changed = true;
+  }
+
+  if (!("oppiCliPrompt" in obj)) {
+    changed = true;
+  } else if (isRecord(obj.oppiCliPrompt)) {
+    const cliPrompt = obj.oppiCliPrompt;
+    const allowedCliPromptKeys = new Set(["enabled"]);
+
+    if (strictUnknown) {
+      for (const key of Object.keys(cliPrompt)) {
+        if (!allowedCliPromptKeys.has(key)) {
+          errors.push(`config.oppiCliPrompt.${key}: unknown key`);
+        }
+      }
+    }
+
+    if ("enabled" in cliPrompt) {
+      if (typeof cliPrompt.enabled === "boolean") {
+        config.oppiCliPrompt = { enabled: cliPrompt.enabled };
+      } else {
+        errors.push("config.oppiCliPrompt.enabled: expected boolean");
+        changed = true;
+      }
+    }
+  } else {
+    errors.push("config.oppiCliPrompt: expected object");
     changed = true;
   }
 

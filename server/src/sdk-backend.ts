@@ -50,6 +50,7 @@ import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
+import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
@@ -227,9 +228,15 @@ export function isOppiDocsPromptEnabled(
   return config?.oppiDocsPrompt?.enabled !== false;
 }
 
+export function isOppiCliPromptEnabled(
+  config: Pick<ServerConfig, "oppiCliPrompt"> | undefined,
+): boolean {
+  return config?.oppiCliPrompt?.enabled === true;
+}
+
 function buildSdkAppendSystemPrompt(
   workspace: Workspace | undefined,
-  options: { includeOppiDocsHint: boolean },
+  options: { includeOppiDocsHint: boolean; includeOppiCliHint: boolean },
 ): string[] | undefined {
   const prompts: string[] = [];
 
@@ -238,6 +245,9 @@ function buildSdkAppendSystemPrompt(
   const oppiDocsHint = options.includeOppiDocsHint ? buildOppiSystemPromptAppend() : undefined;
   if (oppiDocsHint) {
     prompts.push(oppiDocsHint);
+  }
+  if (options.includeOppiCliHint) {
+    prompts.push(OPPI_CLI_SYSTEM_PROMPT_HINT);
   }
 
   if (workspace?.systemPrompt) {
@@ -273,7 +283,7 @@ export interface SdkBackendConfig {
   /** Saved Agent definition used to configure this runtime. */
   agentDefinition?: AgentDefinition;
   /** Server settings that affect Oppi-owned SDK sessions. */
-  serverConfig?: Pick<ServerConfig, "oppiDocsPrompt">;
+  serverConfig?: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
 }
 
 const log = createLogger({ base: { component: "sdk_backend" } });
@@ -439,11 +449,10 @@ export class SdkBackend {
       // Resource loader: follow Pi's normal cwd/settings/package discovery.
       // Oppi no longer applies a workspace-level skills/extensions policy for
       // host sessions. Project/user Pi settings remain the source of truth.
+      const isOppiOwnedHostSession = !sandboxMode && (session.runtime ?? "oppi") !== "pi-tui";
       const baseAppendSystemPrompt = buildSdkAppendSystemPrompt(workspace, {
-        includeOppiDocsHint:
-          !sandboxMode &&
-          (session.runtime ?? "oppi") !== "pi-tui" &&
-          isOppiDocsPromptEnabled(config.serverConfig),
+        includeOppiDocsHint: isOppiOwnedHostSession && isOppiDocsPromptEnabled(config.serverConfig),
+        includeOppiCliHint: isOppiOwnedHostSession && isOppiCliPromptEnabled(config.serverConfig),
       });
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,

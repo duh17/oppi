@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import * as PiSdk from "@earendil-works/pi-coding-agent";
 
+import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "../src/oppi-cli-prompt.js";
 import {
   appendOppiSystemPromptHint,
   buildOppiSystemPromptAppend,
@@ -93,6 +94,37 @@ describe("Oppi documentation prompt hint", () => {
         "Oppi documentation (read only when asked about Oppi mobile/runtime behavior):",
       );
       expect(appendPrompts[1]).toBe("Workspace-specific note.");
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  it("adds the concise CLI hint only when its experiment is enabled", async () => {
+    cwd = mkdtempSync(join(tmpdir(), "oppi-cli-prompt-"));
+    mkdirSync(cwd, { recursive: true });
+
+    const backend = await SdkBackend.create({
+      session: makeSession(),
+      workspace: {
+        id: "w1",
+        name: "CLI Prompt Test",
+        runtime: "host",
+        hostMount: cwd,
+      } as Workspace,
+      onEvent: () => {},
+      onEnd: () => {},
+      serverConfig: { oppiDocsPrompt: { enabled: false }, oppiCliPrompt: { enabled: true } },
+    });
+
+    try {
+      const resourceLoader = (
+        backend as unknown as {
+          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
+        }
+      ).runtime.services.resourceLoader;
+
+      expect(resourceLoader.getAppendSystemPrompt()).toEqual([OPPI_CLI_SYSTEM_PROMPT_HINT]);
+      expect(OPPI_CLI_SYSTEM_PROMPT_HINT).not.toContain("alias");
     } finally {
       await backend.dispose();
     }
