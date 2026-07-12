@@ -10,6 +10,8 @@ export interface TracePageOptions {
   targetEvents?: number;
   previewBytes?: number;
   maxInitialReadBytes?: number;
+  attachmentDataDir?: string;
+  attachmentSessionId?: string;
 }
 
 export interface TracePageMetadata {
@@ -109,6 +111,8 @@ export function readSessionTracePageFromFiles(
       targetEvents,
       previewBytes,
       maxInitialReadBytes,
+      attachmentDataDir: options.attachmentDataDir,
+      attachmentSessionId: options.attachmentSessionId,
     });
   }
 
@@ -202,7 +206,7 @@ export function readSessionTracePageFromFiles(
   const prepared = prepareEntriesForFormatting(selected, previewBytes);
   const previewMs = elapsed(previewStart);
   const formatStart = performance.now();
-  const formattedTrace = formatEntries(prepared.entries);
+  const formattedTrace = formatEntries(prepared.entries, options);
   const formatMs = elapsed(formatStart);
   const trace = applyToolOutputPreviews(formattedTrace, previewBytes, prepared.previews);
   const firstSelected = selected[0];
@@ -277,6 +281,8 @@ function readAroundTracePage(
     targetEvents: number;
     previewBytes: number;
     maxInitialReadBytes: number;
+    attachmentDataDir?: string;
+    attachmentSessionId?: string;
   },
 ): TracePageResult {
   const readStart = performance.now();
@@ -315,7 +321,7 @@ function readAroundTracePage(
   const prepared = prepareEntriesForFormatting(selected, params.previewBytes);
   const previewMs = elapsed(previewStart);
   const formatStart = performance.now();
-  const formattedTrace = formatEntries(prepared.entries);
+  const formattedTrace = formatEntries(prepared.entries, params);
   const formatMs = elapsed(formatStart);
   const trace = applyToolOutputPreviews(formattedTrace, params.previewBytes, prepared.previews);
   const firstSelected = selected[0];
@@ -949,8 +955,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function formatEntries(entries: SessionEntry[]): TraceEvent[] {
-  return buildSessionContext(entries, { view: "full" });
+function formatEntries(
+  entries: SessionEntry[],
+  options: Pick<TracePageOptions, "attachmentDataDir" | "attachmentSessionId">,
+): TraceEvent[] {
+  return buildSessionContext(entries, {
+    view: "full",
+    attachmentDataDir: options.attachmentDataDir,
+    attachmentSessionId: options.attachmentSessionId,
+  });
 }
 
 function prepareEntriesForFormatting(

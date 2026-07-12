@@ -5,6 +5,7 @@ import { join, relative } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { materializeToolMediaContentBlocks } from "../src/session-attachments.js";
 import { SessionTraceService, type SessionTraceServiceDeps } from "../src/session-trace-service.js";
 import type { Session, Workspace } from "../src/types.js";
 import { createWorkspaceWorktree } from "../src/worktrees.js";
@@ -149,6 +150,89 @@ describe("SessionTraceService", () => {
     expect(result.trace.map((event) => [event.type, event.text])).toEqual([
       ["user", "hello live"],
       ["assistant", "hello back"],
+    ]);
+  });
+
+  it("returns stored image metadata instead of truncated inline image bytes in trace pages", async () => {
+    const dataDir = tempDir("oppi-session-trace-page-image-");
+    const traceDir = join(dataDir, "ws-1", "sessions", "sess-1", "agent", "sessions", "--work--");
+    mkdirSync(traceDir, { recursive: true });
+    const imageBytes = Buffer.alloc(8_192, 0x5a);
+    const imageBlock = {
+      type: "image",
+      data: imageBytes.toString("base64"),
+      mimeType: "image/png",
+    };
+    materializeToolMediaContentBlocks({
+      dataDir,
+      sessionId: "sess-1",
+      toolCallId: "tc-image",
+      contents: [imageBlock],
+      fallbackFileName: "screenshot.png",
+    });
+    writeJsonl(join(traceDir, "2026-05-03T000000Z_pi-1.jsonl"), [
+      {
+        type: "message",
+        id: "u1",
+        parentId: null,
+        timestamp: "2026-05-03T00:00:00.000Z",
+        message: { role: "user", content: "show me a screenshot" },
+      },
+      {
+        type: "message",
+        id: "a1",
+        parentId: "u1",
+        timestamp: "2026-05-03T00:00:01.000Z",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-image",
+              name: "read",
+              arguments: { path: "/tmp/screenshot.png" },
+            },
+          ],
+        },
+      },
+      {
+        type: "message",
+        id: "r1",
+        parentId: "a1",
+        timestamp: "2026-05-03T00:00:02.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: "tc-image",
+          toolName: "read",
+          content: [
+            { type: "text", text: "Read image file [image/png]" },
+            imageBlock,
+          ],
+        },
+      },
+    ]);
+    const session = makeSession({ id: "sess-1", workspaceId: "ws-1" });
+    const { service } = makeService({ dataDir, storedSession: session });
+
+    const result = await service.getSessionTracePage({
+      session,
+      targetEvents: 10,
+      previewBytes: 64,
+    });
+    const toolResult = result?.trace.find((event) => event.type === "toolResult");
+    const details = toolResult?.details as
+      | { media?: Array<{ id?: string; kind?: string; mimeType?: string }> }
+      | undefined;
+
+    expect(toolResult?.output).toBe("Read image file [image/png]");
+    expect(toolResult?.output).not.toContain("data:image/");
+    expect(toolResult?.outputTruncated).toBeUndefined();
+    expect(details?.media).toEqual([
+      expect.objectContaining({
+        id: expect.stringMatching(/^att_/),
+        kind: "image",
+        mimeType: "image/png",
+      }),
     ]);
   });
 
