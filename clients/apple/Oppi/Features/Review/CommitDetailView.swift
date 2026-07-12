@@ -1,5 +1,21 @@
 import SwiftUI
 
+struct CommitDetailActionMenuState: Equatable {
+    let menuDisabled: Bool
+    let promptTemplatesDisabled: Bool
+
+    static func make(
+        workspaceId: String,
+        detail: GitCommitDetail?,
+        launchActionInFlightTitle: String?
+    ) -> Self {
+        Self(
+            menuDisabled: launchActionInFlightTitle != nil || workspaceId.isEmpty,
+            promptTemplatesDisabled: launchActionInFlightTitle != nil || (detail?.files.isEmpty ?? true)
+        )
+    }
+}
+
 /// Sheet view showing commit metadata and a tappable file list.
 /// Tapping a file opens a diff view for that file in that commit.
 struct CommitDetailView: View {
@@ -26,6 +42,14 @@ struct CommitDetailView: View {
             }
             return left.commandName.localizedCaseInsensitiveCompare(right.commandName) == .orderedAscending
         }
+    }
+
+    private var actionMenuState: CommitDetailActionMenuState {
+        CommitDetailActionMenuState.make(
+            workspaceId: workspaceId,
+            detail: detail,
+            launchActionInFlightTitle: launchActionInFlightTitle
+        )
     }
 
     var body: some View {
@@ -65,17 +89,19 @@ struct CommitDetailView: View {
         .overlay {
             if let launchActionInFlightTitle {
                 ProgressView(launchActionInFlightTitle)
+                    .tint(.themeCyan)
+                    .foregroundStyle(.themeFg)
                     .padding()
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .themedFloatingPanel()
             }
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                quickActionMenu
+                actionMenu
             }
         }
         .alert(
-            "Unable to start quick action",
+            "Unable to start action",
             isPresented: launchErrorPresented
         ) {
             Button("OK", role: .cancel) { launchError = nil }
@@ -109,8 +135,16 @@ struct CommitDetailView: View {
         )
     }
 
-    private var quickActionMenu: some View {
+    private var actionMenu: some View {
         Menu {
+            Button {
+                Task {
+                    await startEmptySession()
+                }
+            } label: {
+                Label("New Session", systemImage: "square.and.pencil")
+            }
+
             Section("Prompt Templates") {
                 if isLoadingQuickActions && quickActionOptions.isEmpty {
                     Button("Loading templates…") {}
@@ -127,14 +161,15 @@ struct CommitDetailView: View {
                         } label: {
                             Label("/\(option.commandName)", systemImage: SlashCommand.Source.prompt.iconName)
                         }
+                        .disabled(actionMenuState.promptTemplatesDisabled)
                     }
                 }
             }
         } label: {
             Image(systemName: "ellipsis.circle")
         }
-        .disabled(launchActionInFlightTitle != nil || (detail?.files.isEmpty ?? true))
-        .accessibilityLabel("Prompt templates")
+        .disabled(actionMenuState.menuDisabled)
+        .accessibilityLabel("Actions")
     }
 
     // MARK: - Loaded Content
@@ -316,6 +351,30 @@ struct CommitDetailView: View {
             quickActionOptions = try await api.getWorkspaceQuickActions(workspaceId: workspaceId).actions
         } catch {
             quickActionOptions = []
+        }
+    }
+
+    private func startEmptySession() async {
+        guard launchActionInFlightTitle == nil else { return }
+        guard !workspaceId.isEmpty else {
+            launchError = "Workspace is unavailable."
+            return
+        }
+        guard let api = apiClient else {
+            launchError = "Server is offline."
+            return
+        }
+
+        launchActionInFlightTitle = "Starting new session…"
+        defer { launchActionInFlightTitle = nil }
+
+        do {
+            let response = try await api.createWorkspaceSession(workspaceId: workspaceId)
+            sessionStore.upsert(response.session)
+            launchError = nil
+            navigateToQuickAction = QuickActionSessionNavDestination.empty(sessionId: response.session.id)
+        } catch {
+            launchError = error.localizedDescription
         }
     }
 

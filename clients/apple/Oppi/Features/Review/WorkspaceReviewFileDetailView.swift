@@ -22,9 +22,9 @@ enum WorkspaceReviewFileDetailPhase: Equatable {
 
 struct WorkspaceReviewFileDetailToolbarState: Equatable {
     let showsShare: Bool
-    let showsPromptTemplates: Bool
-    let promptTemplatesDisabled: Bool
-    let promptTemplatesAccessibilityLabel: String
+    let showsActionMenu: Bool
+    let actionMenuDisabled: Bool
+    let actionMenuAccessibilityLabel: String
 
     static func make(
         hasShareableContent: Bool,
@@ -32,9 +32,9 @@ struct WorkspaceReviewFileDetailToolbarState: Equatable {
     ) -> Self {
         Self(
             showsShare: hasShareableContent,
-            showsPromptTemplates: true,
-            promptTemplatesDisabled: launchActionInFlightTitle != nil,
-            promptTemplatesAccessibilityLabel: String(localized: "Prompt templates")
+            showsActionMenu: true,
+            actionMenuDisabled: launchActionInFlightTitle != nil,
+            actionMenuAccessibilityLabel: String(localized: "Actions")
         )
     }
 }
@@ -164,8 +164,10 @@ struct WorkspaceReviewFileDetailView: View {
         .overlay {
             if let launchActionInFlightTitle {
                 ProgressView(launchActionInFlightTitle)
+                    .tint(.themeCyan)
+                    .foregroundStyle(.themeFg)
                     .padding()
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .themedFloatingPanel()
             }
         }
         .toolbar {
@@ -174,13 +176,13 @@ struct WorkspaceReviewFileDetailView: View {
                     FileShareButton(content: shareable, style: .icon)
                 }
 
-                if toolbarState.showsPromptTemplates {
-                    quickActionMenu
+                if toolbarState.showsActionMenu {
+                    actionMenu
                 }
             }
         }
         .alert(
-            "Unable to start quick action",
+            "Unable to start action",
             isPresented: launchErrorPresented
         ) {
             Button("OK", role: .cancel) { launchError = nil }
@@ -210,8 +212,16 @@ struct WorkspaceReviewFileDetailView: View {
         )
     }
 
-    private var quickActionMenu: some View {
+    private var actionMenu: some View {
         Menu {
+            Button {
+                Task {
+                    await startEmptySession()
+                }
+            } label: {
+                Label("New Session", systemImage: "square.and.pencil")
+            }
+
             Section("Prompt Templates") {
                 if isLoadingQuickActions && quickActionOptions.isEmpty {
                     Button("Loading templates…") {}
@@ -234,8 +244,8 @@ struct WorkspaceReviewFileDetailView: View {
         } label: {
             Image(systemName: "ellipsis.circle")
         }
-        .disabled(toolbarState.promptTemplatesDisabled)
-        .accessibilityLabel(toolbarState.promptTemplatesAccessibilityLabel)
+        .disabled(toolbarState.actionMenuDisabled)
+        .accessibilityLabel(toolbarState.actionMenuAccessibilityLabel)
         .accessibilityIdentifier("review-file.prompt-templates")
     }
 
@@ -366,6 +376,29 @@ struct WorkspaceReviewFileDetailView: View {
             presentation: .document
         )
         .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
+    }
+
+    private func startEmptySession() async {
+        guard launchActionInFlightTitle == nil else { return }
+        guard let api = apiClient else {
+            launchError = "Server is offline."
+            return
+        }
+
+        launchActionInFlightTitle = "Starting new session…"
+        defer { launchActionInFlightTitle = nil }
+
+        do {
+            let response = try await api.createWorkspaceSession(
+                workspaceId: workspaceId,
+                worktreeId: worktreeId
+            )
+            sessionStore.upsert(response.session)
+            launchError = nil
+            navigateToQuickAction = QuickActionSessionNavDestination.empty(sessionId: response.session.id)
+        } catch {
+            launchError = error.localizedDescription
+        }
     }
 
     private func createQuickActionSession(option: WorkspaceQuickActionOption) async {
