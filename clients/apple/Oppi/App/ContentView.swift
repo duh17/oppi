@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 import UIKit
 
@@ -142,6 +143,9 @@ struct ContentView: View {
             )
             .presentationCornerRadius(24)
         })
+        .onAppIntentExecution(QuickSessionOpenIntent.self) { intent in
+            quickSessionTrigger.requestPresentation(for: intent)
+        }
         .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
             presentQuickSessionIfPossible(requestID: newValue)
         }

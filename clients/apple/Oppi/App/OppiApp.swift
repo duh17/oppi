@@ -331,7 +331,6 @@ struct OppiApp: App {
 #else
         await reconnectOnLaunch()
 #endif
-        QuickSessionTrigger.shared.checkForPendingRequest()
     }
 
 #if DEBUG
@@ -752,9 +751,6 @@ struct OppiApp: App {
             if ReleaseFeatures.liveActivitiesEnabled {
                 LiveActivityManager.shared.recoverIfNeeded()
             }
-
-            // Check for pending quick session request from widget extension.
-            QuickSessionTrigger.shared.checkForPendingRequest()
 
             backgroundKeepAlive.end()
 

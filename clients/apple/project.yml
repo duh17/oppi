@@ -330,6 +330,9 @@ targets:
     sources:
       - path: OppiControlWidget
         type: group
+      # Apple requires control-opening intents in both the app and widget targets.
+      - path: Oppi/Core/Intents/QuickSessionOpenIntent.swift
+        type: file
       - path: Shared
         type: group
         excludes:

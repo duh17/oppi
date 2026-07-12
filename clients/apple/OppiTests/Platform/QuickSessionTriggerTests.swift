@@ -81,79 +81,6 @@ struct QuickSessionTriggerTests {
         trigger.isPresented = false
     }
 
-    // MARK: - checkForPendingRequest
-
-    @Test func checkForPendingRequestWhenNoPending() {
-        let trigger = QuickSessionTrigger.shared
-        trigger.isPresented = false
-
-        let before = trigger.presentationRequestID
-
-        // Ensure no pending flag
-        SharedConstants.sharedDefaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
-
-        trigger.checkForPendingRequest()
-        #expect(trigger.presentationRequestID == before) // No change
-    }
-
-    @Test func checkForPendingRequestWhenPending() {
-        let trigger = QuickSessionTrigger.shared
-        trigger.isPresented = false
-
-        let before = trigger.presentationRequestID
-
-        // Set the pending flag (simulating widget extension writing it)
-        SharedConstants.sharedDefaults.set(true, forKey: SharedConstants.quickSessionPendingKey)
-
-        trigger.checkForPendingRequest()
-        #expect(trigger.presentationRequestID == before + 1)
-
-        // Flag should be cleared
-        let stillPending = SharedConstants.sharedDefaults.bool(forKey: SharedConstants.quickSessionPendingKey)
-        #expect(stillPending == false)
-
-        trigger.isPresented = false
-    }
-
-    @Test func checkForPendingRequestClearsFlagEvenWhenPresented() {
-        let trigger = QuickSessionTrigger.shared
-        trigger.isPresented = true
-
-        let before = trigger.presentationRequestID
-
-        SharedConstants.sharedDefaults.set(true, forKey: SharedConstants.quickSessionPendingKey)
-
-        trigger.checkForPendingRequest()
-
-        // requestPresentation is guarded by isPresented, so ID should NOT increment
-        #expect(trigger.presentationRequestID == before)
-
-        // But the flag SHOULD still be cleared (checkForPendingRequest calls
-        // removeObject before requestPresentation)
-        let stillPending = SharedConstants.sharedDefaults.bool(forKey: SharedConstants.quickSessionPendingKey)
-        #expect(stillPending == false)
-
-        trigger.isPresented = false
-    }
-
-    @Test func checkForPendingRequestCalledTwiceOnlyTriggersOnce() {
-        let trigger = QuickSessionTrigger.shared
-        trigger.isPresented = false
-
-        let before = trigger.presentationRequestID
-
-        SharedConstants.sharedDefaults.set(true, forKey: SharedConstants.quickSessionPendingKey)
-
-        trigger.checkForPendingRequest()
-        #expect(trigger.presentationRequestID == before + 1)
-
-        // Second call — flag already cleared
-        trigger.checkForPendingRequest()
-        #expect(trigger.presentationRequestID == before + 1) // No second bump
-
-        trigger.isPresented = false
-    }
-
     @Test func requestPresentationStoresInitialPayload() {
         let trigger = QuickSessionTrigger.shared
         trigger.isPresented = false
@@ -219,6 +146,39 @@ struct QuickSessionTriggerTests {
         trigger.isPresented = false
     }
 
+}
+
+// MARK: - Quick session control intent
+
+@Suite("QuickSessionOpenIntent")
+@MainActor
+struct QuickSessionOpenIntentTests {
+
+    @Test func defaultsToQuickSessionTarget() {
+        #expect(QuickSessionOpenIntent().target == .quickSession)
+    }
+
+    @Test func targetHasDisplayRepresentation() {
+        #expect(QuickSessionOpenTarget.caseDisplayRepresentations[.quickSession] != nil)
+    }
+
+    @Test func routesIntentToPresentationRequest() {
+        let trigger = QuickSessionTrigger.shared
+        trigger.isPresented = false
+        let before = trigger.presentationRequestID
+
+        trigger.requestPresentation(for: QuickSessionOpenIntent())
+
+        #expect(trigger.presentationRequestID == before + 1)
+        trigger.isPresented = false
+    }
+
+#if compiler(>=6.4)
+    @available(iOS 27.0, *)
+    @Test func targetsMainAppOnIOS27() {
+        #expect(QuickSessionOpenIntent.allowedExecutionTargets == .main)
+    }
+#endif
 }
 
 // MARK: - ThinkingLevelEnum (Intent type)
