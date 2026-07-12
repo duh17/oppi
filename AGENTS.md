@@ -12,6 +12,7 @@ Oppi is an iPhone/iPad client and self-hosted server for [Pi](https://github.com
 - Keep durable repo-private working artifacts in `.internal/` (`reports/`, `research/`, `diagrams/`). Keep `.pi/` for runtime/session state and reusable local agent inputs such as todos, attachments, prompts, worktrees, and temporary caches. Reserve `docs/` for curated public docs.
 - Preserve unrelated changes from other sessions. If overlapping edits cannot be safely separated, stop and ask the user.
 - Do not commit unless explicitly asked. Stage only paths/hunks changed in this session unless the user explicitly asks for broader scope; never use `git add .` or `git add -A`.
+- After a work item is committed and local checks are green (`server npm run check` + relevant tests), ask to push. Prefer one push per completed work item over multi-day batches; small pushes keep CI runs self-locating.
 
 ### TypeScript
 
