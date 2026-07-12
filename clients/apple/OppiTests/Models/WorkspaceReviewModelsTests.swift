@@ -245,6 +245,30 @@ struct WorkspaceReviewModelsTests {
         ))
     }
 
+    @Test func newSessionNavigationAttachesBrowsedFile() {
+        #expect(QuickActionSessionNavDestination.attaching(
+            sessionId: "session-1",
+            filePath: "CHANGELOG.md"
+        ) == QuickActionSessionNavDestination(
+            id: "session-1",
+            inputText: "",
+            filePaths: ["CHANGELOG.md"],
+            fileDisplayPrefix: ""
+        ))
+    }
+
+    @Test func newSessionNavigationAttachesSelectedFilesInDisplayOrder() {
+        #expect(QuickActionSessionNavDestination.attaching(
+            sessionId: "session-1",
+            filePaths: ["Sources/App.swift", "README.md"]
+        ) == QuickActionSessionNavDestination(
+            id: "session-1",
+            inputText: "",
+            filePaths: ["Sources/App.swift", "README.md"],
+            fileDisplayPrefix: ""
+        ))
+    }
+
     private func makeReviewDiff(
         addedLines: Int,
         removedLines: Int,

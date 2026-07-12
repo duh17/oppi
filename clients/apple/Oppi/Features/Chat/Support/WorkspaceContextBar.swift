@@ -924,7 +924,7 @@ struct WorkspaceContextBar: View {
         }
         .buttonStyle(.plain)
         .disabled(launchActionInFlightTitle != nil)
-        .accessibilityLabel("Start new empty session")
+        .accessibilityLabel("Start new session with selected files")
     }
 
     private func quickActionSourceLabel(_ sourceScope: String?) -> String {
@@ -1084,6 +1084,7 @@ struct WorkspaceContextBar: View {
         defer { launchActionInFlightTitle = nil }
 
         do {
+            let paths = displayFiles.filter { selectedPaths.contains($0.path) }.map(\.path)
             let response = try await api.createWorkspaceSession(
                 workspaceId: workspaceId,
                 worktreeId: worktreeId
@@ -1091,7 +1092,10 @@ struct WorkspaceContextBar: View {
             sessionStore.upsert(response.session)
             selectedPaths.removeAll()
             isSelecting = false
-            navigateToQuickAction = QuickActionSessionNavDestination.empty(sessionId: response.session.id)
+            navigateToQuickAction = QuickActionSessionNavDestination.attaching(
+                sessionId: response.session.id,
+                filePaths: paths
+            )
         } catch {
             launchError = error.localizedDescription
         }
