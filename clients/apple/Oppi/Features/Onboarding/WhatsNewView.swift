@@ -59,26 +59,20 @@ struct WhatsNewView: View {
         WhatsNewFeature(
             icon: "rectangle.split.2x1",
             iconColor: .themeGreen,
-            title: String(localized: "Sessions First"),
-            description: String(localized: "All Sessions now keeps Your Turn and Working up top, with recent stopped sessions grouped by day and workspace browsing in the sidebar.")
-        ),
-        WhatsNewFeature(
-            icon: "square.and.arrow.up",
-            iconColor: .themeOrange,
-            title: String(localized: "Quick Session Sharing"),
-            description: String(localized: "Start a Quick Session directly from shared text, links, images, or files in the share sheet. Shortcuts can also preload text or one image into the composer.")
+            title: String(localized: "All Sessions Inbox"),
+            description: String(localized: "Open Oppi to Your Turn and Working sessions, followed by recent sessions grouped by day. Browse workspaces from the sidebar.")
         ),
         WhatsNewFeature(
             icon: "circle.lefthalf.filled",
             iconColor: .themePurple,
             title: String(localized: "System Theme Fixes"),
-            description: String(localized: "Match System now loads the correct light or dark theme and recolors session rows, code, diffs, and tool output when appearance changes.")
+            description: String(localized: "Match System now opens with the correct light or dark theme and updates existing screens when your device appearance changes.")
         ),
         WhatsNewFeature(
-            icon: "arrow.clockwise",
+            icon: "terminal",
             iconColor: .themeCyan,
-            title: String(localized: "Stronger Session Recovery"),
-            description: String(localized: "Working and waiting states recover after reconnects or server restarts, and pending questions or approvals return instead of disappearing.")
+            title: String(localized: "Clearer Tool Rows"),
+            description: String(localized: "Tool rows now use consistent backgrounds, borders, text colors, and status colors across light and dark themes.")
         ),
     ]
 

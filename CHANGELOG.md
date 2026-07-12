@@ -52,18 +52,15 @@ Example:
 
 - **Client:** iPhone and iPad now open to a sessions-first inbox. Sessions needing attention and sessions still working stay prominent, recent stopped sessions remain available, and a workspace sidebar or drawer opens workspace-specific sessions, files, and settings without replacing the inbox.
 - **Server:** Expanded the `oppi` CLI for workspace, worktree, and session orchestration. It can create and manage workspaces and worktrees, launch sessions, send or queue messages, answer pending dialogs, watch or wait on session state, and inspect history progressively without loading a full trace.
-- **Client:** Quick Session now accepts optional text or one image from Shortcuts, while the iOS share extension can send shared text, links, images, and files directly from its own Quick Session composer.
 
 ### Changed
 
-- **Client/Server:** Session working, waiting, finished, and failed states can be reconstructed after reconnects and server restarts instead of depending only on the live connection.
 - **Protocol/Client/Server:** Stored attachments and tool-reported external files now load through session-scoped authenticated routes, including exact external paths reported during that session. Apple clients and servers must be updated together for these routes.
 
 ### Fixed
 
-- **Client/Server:** Mirrored terminal sessions recover the correct worktree and replay unanswered questions or approvals after reconnecting.
-- **Client:** Recovered prompt responses resume stopped sessions before sending, and deferred media rows populate when their workspace context arrives.
 - **Client:** Collapsed file tool rows now prioritize showing the full filename before shortening directory paths, including when badges, edit stats, or first-pass layout reduce the available width.
+- **Client:** Tool rows now use consistent backgrounds, borders, text colors, and status colors across light and dark themes.
 - **Client:** Following the system appearance now loads the correct light or dark theme and recolors existing code, diffs, tool output, and session rows when appearance changes.
 - **Client:** Relative images and links in session file previews resolve from the file being viewed, including in full screen.
 - **Server:** Skill and extension toggles now write Pi project settings for that workspace, so changing a resource in one workspace no longer mutates global settings for other workspaces.
@@ -125,11 +122,10 @@ Example:
 ### Notes
 
 - Coordinated release prep for iOS TestFlight build 39 plus npm `oppi-server@0.42.0` and `oppi-mirror@0.42.0` after the `0.41.0` compatibility release.
-- This release focuses on share-sheet Quick Sessions, grouped session files, extension UI stability, large-output/timeline reliability, and a Pi runtime refresh to `0.79.10`.
+- This release focuses on grouped session files, extension UI stability, large-output/timeline reliability, and a Pi runtime refresh to `0.79.10`.
 
 ### Added
 
-- **Client:** Added the iOS share extension for starting Quick Sessions from shared text, URLs, images, and files.
 - **Client:** Added directory grouping in Session Files so touched files are easier to scan in large sessions.
 - **Client/Server:** Added a redacted app event stream and UX telemetry coverage for live client/session events.
 - **Client/Server:** Added extension-surface viewport entry points and replay coverage for scoped widget/status UI.
@@ -147,7 +143,6 @@ Example:
 
 ### Fixed
 
-- **Client:** Fixed Quick Session share presentation timing, shared-payload cleanup, and empty Quick Session creation.
 - **Client:** Fixed busy timeline anchoring, top-scroll edge cases, streaming markdown rendering, markdown code-block sizing, escaped inline LaTeX delimiters, and full-screen code font metrics.
 - **Client:** Fixed workspace directory listings for dot/generated folders and safe reads for session-created workspace files.
 - **Client:** Fixed disabled biometric gates, nearby-pairing callback safety, and redacted push/session event payloads.
@@ -168,7 +163,7 @@ Example:
 
 - Public server and Pi extension compatibility release for npm `oppi-server@0.41.0` and `oppi-mirror@0.41.0`.
 - This release focuses on Pi extension compatibility, mirrored terminal sessions, media playback, long tool output, review tools, and safer server packaging.
-- iOS TestFlight build 38 covers the main compatibility release. The build 39 candidate adds share-sheet Quick Sessions, grouped Session Files, and targeted stability fixes on top of build 38.
+- iOS TestFlight build 38 covers the main compatibility release. The build 39 candidate adds grouped Session Files and targeted stability fixes on top of build 38.
 
 ### Added
 
@@ -178,7 +173,7 @@ Example:
 - **Client/Server:** Added video playback from workspace files, session attachments, and expanded tool rows with authenticated byte-range streaming and system controls.
 - **Client:** Added reader controls for text size, line spacing, wrapping, Mermaid state diagrams, markdown code-block wrapping, and full-output viewers for large tool results.
 - **Client:** Added review-comment drafts for selected code and tool output, with composer draft restoration before sending.
-- **Client:** Added share-sheet Quick Sessions and directory-grouped Session Files in the build 39 candidate.
+- **Client:** Added directory-grouped Session Files in the build 39 candidate.
 
 ### Changed
 
@@ -197,7 +192,7 @@ Example:
 - **Client/Server:** Fixed mirrored terminal widget replay, takeover prompts, stale contexts after compaction, concurrent forwarded dialogs, dead `pi-tui` session cleanup, and heartbeat-driven session-row timestamp churn.
 - **Client:** Fixed long tool output truncation and timeline instability by loading full output on demand and evicting older cached output under memory pressure.
 - **Client:** Fixed review-comment controls hiding behind the keyboard on iPad and duplicate selection actions.
-- **Client:** Fixed split file navigation after compact-width rotation, escaped inline LaTeX delimiter rendering, full-screen code font metrics, and Quick Session share presentation timing.
+- **Client:** Fixed split file navigation after compact-width rotation, escaped inline LaTeX delimiter rendering, and full-screen code font metrics.
 - **Dependencies:** Updated Vite/esbuild/tsx lockfile entries and duplication-scan CLI compatibility.
 
 ### Migration notes
