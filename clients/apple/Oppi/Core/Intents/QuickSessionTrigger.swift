@@ -16,11 +16,9 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Quic
 
 /// Lightweight trigger that bridges external intake with SwiftUI presentation.
 ///
-/// The Control widget writes app-group state for the main app to consume on
-/// launch or foreground. Main-app App Intents, including Spotlight, Siri, and
-/// Shortcuts, call `requestPresentation` directly and can include an initial
-/// composer payload. The share extension sends directly and never hands a draft
-/// to the main app.
+/// Control and main-app App Intents request presentation directly and may
+/// include an initial composer payload. The share extension sends directly and
+/// never hands a draft to the main app.
 @MainActor @Observable
 final class QuickSessionTrigger {
     static let shared = QuickSessionTrigger()
@@ -45,16 +43,12 @@ final class QuickSessionTrigger {
         requestPresentation(initialPayload: nil)
     }
 
-    /// Check shared UserDefaults for a pending request from an extension.
-    /// Called on app foreground.
-    func checkForPendingRequest() {
-        let defaults = SharedConstants.sharedDefaults
-        let pending = defaults.bool(forKey: SharedConstants.quickSessionPendingKey)
-        guard pending else { return }
-
-        defaults.removeObject(forKey: SharedConstants.quickSessionPendingKey)
-        logger.notice("Found pending quick session request from Control widget")
-        requestPresentation(initialPayload: nil)
+    /// Routes a system control's resolved destination into SwiftUI presentation.
+    func requestPresentation(for intent: QuickSessionOpenIntent) {
+        switch intent.target {
+        case .quickSession:
+            requestPresentation()
+        }
     }
 
     func requestPresentation(initialPayload: QuickSessionInitialPayload?) {
