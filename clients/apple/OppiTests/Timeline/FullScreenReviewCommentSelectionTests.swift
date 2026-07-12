@@ -907,6 +907,41 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(scaledPointSize > initialPointSize)
     }
 
+    @Test func fullscreenThemeNotificationPreservesCodeViewportAndSelection() throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+
+        ThemeRuntimeState.setThemeID(.dark)
+        let content = (0..<300).map { "let value\($0) = \($0)" }.joined(separator: "\n")
+        let controller = makeController(
+            content: .code(content: content, language: "swift", filePath: "Long.swift", startLine: 1)
+        )
+        let originalTextView = try #require(timelineAllTextViews(in: controller.view).first {
+            timelineRenderedText(of: $0).contains("let value299")
+        })
+        controller.view.layoutIfNeeded()
+        let originalScrollView = try #require(timelineAllScrollViews(in: controller.view).first {
+            !($0 is UITextView) && $0.contentSize.height > $0.bounds.height
+        })
+        originalScrollView.setContentOffset(CGPoint(x: 0, y: 420), animated: false)
+        originalTextView.selectedRange = NSRange(location: 24, length: 12)
+        let expectedOffset = originalScrollView.contentOffset
+        let expectedSelection = originalTextView.selectedRange
+
+        ThemeRuntimeState.setThemeID(.light)
+        NotificationCenter.default.post(name: .oppiThemeDidChange, object: nil)
+        controller.view.layoutIfNeeded()
+
+        let updatedTextView = try #require(timelineAllTextViews(in: controller.view).first {
+            timelineRenderedText(of: $0).contains("let value299")
+        })
+        let updatedScrollView = try #require(timelineAllScrollViews(in: controller.view).first {
+            !($0 is UITextView) && $0.contentSize.height > $0.bounds.height
+        })
+        #expect(abs(updatedScrollView.contentOffset.y - expectedOffset.y) <= 1)
+        #expect(updatedTextView.selectedRange == expectedSelection)
+    }
+
     @Test func sourceBodyPrependsCommentAction() throws {
         let controller = makeController(
             content: .plainText(content: "raw source", filePath: "Notes.txt")

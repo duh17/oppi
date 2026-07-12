@@ -195,6 +195,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     var expandedUsesMarkdownLayout = false
     var expandedUsesReadMediaLayout = false
     private var expandedReadMediaContentView: UIView?
+    /// Theme captured by the reusable markdown viewport. Unlike label-based
+    /// renderers, NativeFullScreenMarkdownBody owns palette-colored UIKit
+    /// subviews and must be recreated when the active theme changes.
+    private var expandedMarkdownViewportThemeID: ThemeID?
     private var activeExpandedViewportPolicy: ToolRowViewportPolicy?
     private var expandedReadMediaViewportHeightConstraint: NSLayoutConstraint?
     private var expandedMarkdownViewportDoubleTapGesture: UITapGestureRecognizer?
@@ -724,8 +728,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         textSelectionEnabled: Bool
     ) {
+        let themeID = ThemeRuntimeState.currentThemeID()
         let native: NativeFullScreenMarkdownBody
-        if let existing = expandedReadMediaContentView as? NativeFullScreenMarkdownBody {
+        if expandedMarkdownViewportThemeID == themeID,
+           let existing = expandedReadMediaContentView as? NativeFullScreenMarkdownBody {
             native = existing
         } else {
             clearExpandedReadMediaView()
@@ -733,7 +739,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 content: text,
                 stream: nil,
                 isStreaming: isStreaming,
-                palette: ThemeRuntimeState.currentPalette(),
+                palette: themeID.palette,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 reviewCommentSourceContext: reviewCommentSourceContext,
                 textSelectionEnabled: textSelectionEnabled,
@@ -742,6 +748,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 allowsVerticalBounce: false,
                 allowsVerticalScrolling: false
             )
+            expandedMarkdownViewportThemeID = themeID
             installExpandedEmbeddedView(native)
         }
 
@@ -912,6 +919,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func clearExpandedReadMediaView() {
         expandedReadMediaViewportHeightConstraint?.isActive = false
+        expandedMarkdownViewportThemeID = nil
         expandedReadMediaViewportHeightConstraint = nil
         if let gesture = expandedMarkdownViewportDoubleTapGesture {
             gesture.view?.removeGestureRecognizer(gesture)
@@ -1190,6 +1198,21 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let previousConfiguration = currentConfiguration
         let isExpandingTransition = !previousConfiguration.isExpanded && configuration.isExpanded
         currentConfiguration = configuration
+
+        let palette = ThemeRuntimeState.currentPalette()
+        ToolTimelineRowViewStyler.applyTheme(
+            statusImageView: statusImageView,
+            toolImageView: toolImageView,
+            titleLabel: titleLabel,
+            languageBadgeIconView: languageBadgeIconView,
+            addedLabel: addedLabel,
+            removedLabel: removedLabel,
+            trailingLabel: trailingLabel,
+            elapsedLabel: elapsedLabel,
+            previewLabel: previewLabel,
+            expandedContainer: expandedContainer
+        )
+        bashToolRowView.applyTheme(palette)
 
         fullScreenTerminalStream.update(
             output: configuration.copyOutputText ?? "",
@@ -2006,6 +2029,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         default:
             .none
         }
+    }
+
+    // periphery:ignore - used by ToolExpandedSurfaceHostTests via @testable import
+    var expandedMarkdownViewportThemeIDForTesting: ThemeID? {
+        expandedMarkdownViewportThemeID
     }
     #endif
 

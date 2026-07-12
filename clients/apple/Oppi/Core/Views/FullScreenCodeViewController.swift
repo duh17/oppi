@@ -39,6 +39,15 @@ final class FullScreenCodeViewController: UIViewController {
         let readerPreferences: FullScreenReaderPreferences?
     }
 
+    /// Interaction state owned by a palette-capturing UIKit body. Views are
+    /// rebuilt for a theme change, so preserve equivalent descendant state by
+    /// stable traversal order before replacing the hierarchy.
+    private struct BodyInteractionState {
+        let scrollOffsets: [CGPoint]
+        let selections: [NSRange]
+        let firstResponderTextViewIndex: Int?
+    }
+
     private struct NavigationPresentation: Equatable {
         let sourceToggleTitle: String?
         let readerFamily: FullScreenReaderContentFamily?
@@ -79,6 +88,7 @@ final class FullScreenCodeViewController: UIViewController {
     private var liveSourceObserverCleanup: LiveSourceObserverCleanup?
     private var liveSourceCurrentSnapshot: SourceTraceStream.Snapshot?
     private var lastNavigationPresentation: NavigationPresentation?
+    private var appliedThemeID: ThemeID?
 
     init(
         content: FullScreenCodeContent,
@@ -143,13 +153,23 @@ final class FullScreenCodeViewController: UIViewController {
 
     deinit {
         liveSourceObserverCleanup?.cancel()
+        NotificationCenter.default.removeObserver(self, name: .oppiThemeDidChange, object: nil)
     }
 
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        let palette = ThemeRuntimeState.currentThemeID().palette
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleThemeChangeNotification),
+            name: .oppiThemeDidChange,
+            object: nil
+        )
+
+        let themeID = ThemeRuntimeState.currentThemeID()
+        appliedThemeID = themeID
+        let palette = themeID.palette
         view.backgroundColor = UIColor(palette.bgDark)
         setupBackSwipeDismissIfNeeded()
 
@@ -171,6 +191,97 @@ final class FullScreenCodeViewController: UIViewController {
             nav.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         nav.didMove(toParent: self)
+    }
+
+    @objc private func handleThemeChangeNotification(_: Notification) {
+        applyThemeIfNeeded(ThemeRuntimeState.currentThemeID())
+    }
+
+    /// Rebuild persistent UIKit content and chrome when SwiftUI's active theme
+    /// changes. Full-screen bodies capture a palette at construction time, so
+    /// merely invalidating the representable leaves code, markdown, diff,
+    /// terminal, and rendered-document viewers in the previous appearance.
+    func applyThemeIfNeeded(_ themeID: ThemeID) {
+        guard isViewLoaded, appliedThemeID != themeID,
+              let viewController = contentHostController else { return }
+
+        appliedThemeID = themeID
+        let palette = themeID.palette
+        overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
+        view.backgroundColor = UIColor(palette.bgDark)
+        viewController.view.backgroundColor = UIColor(palette.bgDark)
+
+        let interactionState = installedBodyView.map(captureInteractionState)
+        clearLiveSourceBodyReferences()
+        let presentation = makePresentation()
+        let themedBody = makeBodyView(for: presentation.bodyContent, palette: palette)
+        installBodyView(themedBody, on: viewController)
+        if let interactionState {
+            restoreInteractionState(interactionState, in: themedBody, host: viewController.view)
+        }
+
+        // Force navigation items to be rebuilt because their tint colors are
+        // also captured UIKit values rather than dynamic SwiftUI styles.
+        lastNavigationPresentation = nil
+        configureNavigation(on: viewController, palette: palette)
+    }
+
+    private func captureInteractionState(in body: UIView) -> BodyInteractionState {
+        let scrollViews = descendantViews(of: UIScrollView.self, in: body)
+        let textViews = descendantViews(of: UITextView.self, in: body)
+        return BodyInteractionState(
+            scrollOffsets: scrollViews.map(\.contentOffset),
+            selections: textViews.map(\.selectedRange),
+            firstResponderTextViewIndex: textViews.firstIndex(where: \.isFirstResponder)
+        )
+    }
+
+    private func restoreInteractionState(
+        _ state: BodyInteractionState,
+        in body: UIView,
+        host: UIView
+    ) {
+        host.setNeedsLayout()
+        host.layoutIfNeeded()
+
+        let scrollViews = descendantViews(of: UIScrollView.self, in: body)
+        for (scrollView, offset) in zip(scrollViews, state.scrollOffsets) {
+            scrollView.setContentOffset(offset, animated: false)
+        }
+
+        let textViews = descendantViews(of: UITextView.self, in: body)
+        for (textView, selection) in zip(textViews, state.selections) {
+            let textLength = (textView.attributedText?.length) ?? (textView.text as NSString?)?.length ?? 0
+            let location = min(selection.location, textLength)
+            let length = min(selection.length, max(0, textLength - location))
+            textView.selectedRange = NSRange(location: location, length: length)
+        }
+        if let index = state.firstResponderTextViewIndex,
+           textViews.indices.contains(index) {
+            textViews[index].becomeFirstResponder()
+        }
+
+        // Some bodies complete TextKit/WebKit layout on the next run-loop turn.
+        // Reapply to the same new body without retaining the retired hierarchy.
+        DispatchQueue.main.async { [weak body, weak host] in
+            guard let body, let host else { return }
+            host.layoutIfNeeded()
+            let deferredScrollViews = self.descendantViews(of: UIScrollView.self, in: body)
+            for (scrollView, offset) in zip(deferredScrollViews, state.scrollOffsets) {
+                scrollView.setContentOffset(offset, animated: false)
+            }
+        }
+    }
+
+    private func descendantViews<T: UIView>(of type: T.Type, in root: UIView) -> [T] {
+        var matches: [T] = []
+        if let match = root as? T {
+            matches.append(match)
+        }
+        for child in root.subviews {
+            matches.append(contentsOf: descendantViews(of: type, in: child))
+        }
+        return matches
     }
 
     private func setupBackSwipeDismissIfNeeded() {

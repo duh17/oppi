@@ -36,6 +36,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+    @Environment(\.themeID) private var themeID
 
     /// Effective action context for this embedded fullscreen presentation.
     private var effectiveReviewCommentSelectionContext: ReviewCommentSelectionContext? {
@@ -67,6 +68,6 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
         _ uiViewController: FullScreenCodeViewController,
         context: Context
     ) {
-        // Content is immutable — nothing to update.
+        uiViewController.applyThemeIfNeeded(themeID)
     }
 }

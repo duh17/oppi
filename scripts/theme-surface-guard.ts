@@ -18,6 +18,8 @@ import { fileURLToPath } from "node:url";
  *  4. themeBg/themeBgDark.opacity(...) outside Color+Theme.swift — ad-hoc
  *     surface opacity; use a ThemeSurfaceRole via View.themedSurface(_:in:)
  *     or add a semantic accessor in Color+Theme.swift.
+ *  5. Fixed black/white SwiftUI backgrounds and UIKit theme-background alpha
+ *     re-derivations — common escape hatches that fail under light themes.
  *
  * Preview/screenshot harnesses are allowlisted: they intentionally freeze
  * styling for marketing shots and stress fixtures.
@@ -78,6 +80,18 @@ const checks: GuardCheck[] = [
     pattern: String.raw`themeBg(Dark)?\.opacity\(`,
     fix: "Pick a ThemeSurfaceRole via View.themedSurface(_:in:) or add a semantic accessor in Color+Theme.swift — surface opacity math lives in ThemeSurfaceStyle.resolve",
     excludeGlobs: ["**/Core/Extensions/Color+Theme.swift"],
+  },
+  {
+    id: "fixed-monochrome-background",
+    title: "Fixed black/white background",
+    pattern: String.raw`\.background\(\s*Color\.(black|white)(\.opacity\([^)]*\))?\s*\)`,
+    fix: "Use Color.themeBg/themeBgDark for content canvases or a ThemeSurfaceRole for floating chrome",
+  },
+  {
+    id: "uikit-ad-hoc-theme-surface-opacity",
+    title: "UIKit theme surface alpha re-derived at the call site",
+    pattern: String.raw`UIColor\(\s*(Color\.)?themeBg(Dark|Highlight)?\s*\)\.withAlphaComponent\(`,
+    fix: "Use UIColor(ThemeSurfaceStyle.resolve(role).fill) or an opaque semantic theme color",
   },
 ];
 

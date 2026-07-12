@@ -84,6 +84,38 @@ enum ToolTimelineRowViewStyler {
         previewLabel.numberOfLines = 3
     }
 
+    /// Refresh fixed UIKit colors whenever a reusable row configuration is
+    /// applied. SwiftUI invalidates the timeline for theme changes, but these
+    /// UIKit views outlive a single body evaluation and must be recolored.
+    static func applyTheme(
+        statusImageView: UIImageView,
+        toolImageView: UIImageView,
+        titleLabel: UILabel,
+        languageBadgeIconView: UIImageView,
+        addedLabel: UILabel,
+        removedLabel: UILabel,
+        trailingLabel: UILabel,
+        elapsedLabel: UILabel,
+        previewLabel: UILabel,
+        expandedContainer: UIView
+    ) {
+        let palette = ThemeRuntimeState.currentPalette()
+        toolImageView.tintColor = UIColor(palette.cyan)
+        titleLabel.textColor = UIColor(palette.fg)
+        languageBadgeIconView.tintColor = UIColor(palette.blue)
+        addedLabel.textColor = UIColor(palette.toolDiffAdded)
+        removedLabel.textColor = UIColor(palette.toolDiffRemoved)
+        trailingLabel.textColor = UIColor(palette.comment)
+        elapsedLabel.textColor = UIColor(palette.comment)
+        previewLabel.textColor = UIColor(palette.fgDim)
+        expandedContainer.backgroundColor = UIColor(
+            ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
+        )
+
+        // Status is assigned after rendering from the current configuration.
+        statusImageView.tintColor = UIColor(palette.comment)
+    }
+
     static func styleExpanded(
         expandedContainer: UIView,
         expandedScrollView: UIScrollView,
@@ -95,7 +127,8 @@ enum ToolTimelineRowViewStyler {
         expandedContainer.layer.cornerRadius = 6
         expandedContainer.layer.masksToBounds = true
         // Expanded body sits inline in the timeline row with no blur behind
-        // it, so it takes the near-opaque card role.
+        // it, so it takes the near-opaque card role. `applyTheme` refreshes the
+        // fill when a reusable row crosses a live theme change.
         expandedContainer.backgroundColor = UIColor(ThemeSurfaceStyle.resolve(.opaqueCard).fill)
 
         expandedScrollView.translatesAutoresizingMaskIntoConstraints = false

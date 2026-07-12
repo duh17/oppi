@@ -762,6 +762,28 @@ struct ToolExpandedSurfaceHostTests {
         #expect(!webView.isUserInteractionEnabled, "The nested WKWebView should not swallow taps meant for the preview card")
     }
 
+    @Test func expandedMarkdownViewportRebuildsForThemeChange() {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+
+        let configuration = makeTimelineToolConfiguration(
+            expandedContent: .markdown(text: "# Header\n\nBody"),
+            isExpanded: true
+        )
+
+        ThemeRuntimeState.setThemeID(.light)
+        let view = ToolTimelineRowContentView(configuration: configuration)
+        _ = fittedTimelineSize(for: view, width: 360)
+        #expect(view.expandedMarkdownViewportThemeIDForTesting == .light)
+
+        ThemeRuntimeState.setThemeID(.dark)
+        view.configuration = configuration
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        #expect(view.activeExpandedSurfaceKindForTesting == .markdown)
+        #expect(view.expandedMarkdownViewportThemeIDForTesting == .dark)
+    }
+
     @Test func expandedSurfaceHostSwitchesActiveSurfaceOnReuse() {
         let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
             expandedContent: .markdown(text: "# Header\n\nBody"),

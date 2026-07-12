@@ -167,7 +167,7 @@ struct RemoteFileView: View {
                     )
                     .padding(.horizontal, 16)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black.opacity(0.92))
+                    .background(Color.themeBgDark)
                     .navigationTitle(filename)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
