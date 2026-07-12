@@ -218,6 +218,8 @@ export class SessionTraceService {
       aroundEntryId: params.aroundEntryId,
       targetEvents: params.targetEvents,
       previewBytes: params.previewBytes,
+      attachmentDataDir: this.traceBaseDir(),
+      attachmentSessionId: params.session.id,
     });
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
     return {
