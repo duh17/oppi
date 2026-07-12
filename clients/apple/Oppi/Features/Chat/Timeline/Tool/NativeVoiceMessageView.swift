@@ -34,7 +34,8 @@ final class NativeAudioMessageView: UIView {
     required init?(coder: NSCoder) { nil }
 
     override var intrinsicContentSize: CGSize {
-        let targetWidth = max(1, bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 48)
+        let fallbackWidth = window?.windowScene?.screen.bounds.width ?? superview?.bounds.width ?? 375
+        let targetWidth = max(1, bounds.width > 0 ? bounds.width : fallbackWidth - 48)
         return CGSize(width: UIView.noIntrinsicMetric, height: fittedSize(forWidth: targetWidth).height)
     }
 
@@ -267,8 +268,10 @@ final class NativeAudioMessageView: UIView {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            self.updateButton(palette: ThemeRuntimeState.currentPalette())
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.updateButton(palette: ThemeRuntimeState.currentPalette())
+            }
         }
     }
 

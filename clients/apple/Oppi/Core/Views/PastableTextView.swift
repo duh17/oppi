@@ -381,7 +381,9 @@ struct PastableTextView: UIViewRepresentable {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.updateKeyboardLanguage()
+                Task { @MainActor [weak self] in
+                    self?.updateKeyboardLanguage()
+                }
             }
         }
 
@@ -639,7 +641,9 @@ struct FullSizeTextView: UIViewRepresentable {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.updateKeyboardLanguageFromObservedTextView()
+                Task { @MainActor [weak self] in
+                    self?.updateKeyboardLanguageFromObservedTextView()
+                }
             }
         }
 
@@ -872,20 +876,13 @@ class PastableUITextView: UITextView {
     }
 
     override var keyCommands: [UIKeyCommand]? {
-        [
-            UIKeyCommand(
-                input: "\r",
-                modifierFlags: .command,
-                action: #selector(handleCommandReturn),
-                discoverabilityTitle: "Send"
-            ),
-            UIKeyCommand(
-                input: "\r",
-                modifierFlags: .alternate,
-                action: #selector(handleAlternateReturn),
-                discoverabilityTitle: "Queue Follow-up"
-            ),
-        ]
+        let send = UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(handleCommandReturn))
+        send.discoverabilityTitle = "Send"
+
+        let queueFollowUp = UIKeyCommand(input: "\r", modifierFlags: .alternate, action: #selector(handleAlternateReturn))
+        queueFollowUp.discoverabilityTitle = "Queue Follow-up"
+
+        return [send, queueFollowUp]
     }
 
     @objc private func handleCommandReturn() {

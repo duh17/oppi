@@ -210,7 +210,7 @@ func inferContextWindow(from model: String) -> Int? {
                 if isAlnum { i -= 1; continue }
             }
             // Collect 2-4 digits before k/K
-            var digitEnd = i
+            let digitEnd = i
             var j = i - 1
             while j >= 0 && utf8[j] >= UInt8(ascii: "0") && utf8[j] <= UInt8(ascii: "9") {
                 j -= 1

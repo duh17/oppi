@@ -91,7 +91,7 @@ enum AssistantAvatarRenderer {
 
     @available(iOS 18.0, *)
     private static func renderGenmoji(data: Data, size: CGFloat) -> UIImage? {
-        guard let glyph = try? NSAdaptiveImageGlyph(imageContent: data) else { return nil }
+        let glyph = NSAdaptiveImageGlyph(imageContent: data)
 
         // Render via UITextView which has native Genmoji support
         let textView = UITextView()

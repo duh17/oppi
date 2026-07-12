@@ -38,6 +38,7 @@ enum ImageViewportSizing {
     static let maxPrimaryTimelineHeight: CGFloat = 10_000
     private static let maxScreenFraction: CGFloat = 0.66
     private static let maxPrimaryScreenMultiplier: CGFloat = 1.2
+    private static let fallbackScreenHeight: CGFloat = 844
     private static let minimumValidHeightToWidthRatio: CGFloat = 1.0 / 50.0
     private static let maximumValidHeightToWidthRatio: CGFloat = 50.0
 
@@ -135,10 +136,10 @@ enum ImageViewportSizing {
     static func maxHeight(for mode: HeightMode, screenHeight: CGFloat?) -> CGFloat? {
         switch mode {
         case .singleScreenFit:
-            let height = max(320, screenHeight ?? UIScreen.main.bounds.height)
+            let height = max(320, screenHeight ?? fallbackScreenHeight)
             return max(minInlineHeight, floor(height * maxScreenFraction))
         case .primaryMedia:
-            let height = max(320, screenHeight ?? UIScreen.main.bounds.height)
+            let height = max(320, screenHeight ?? fallbackScreenHeight)
             return min(maxPrimaryTimelineHeight, max(minInlineHeight, floor(height * maxPrimaryScreenMultiplier)))
         case .unrestricted:
             return nil
@@ -303,8 +304,7 @@ enum MediaMimeType {
 
         let scanner = Scanner(string: trimmed)
         scanner.locale = Locale(identifier: "en_US_POSIX")
-        var value = 0.0
-        guard scanner.scanDouble(&value), value > 0 else { return nil }
+        guard let value = scanner.scanDouble(), value > 0 else { return nil }
         return CGFloat(value)
     }
 
@@ -509,6 +509,7 @@ enum ImageMediaInspector {
 enum ImagePreviewWebSecurity {
     static let contentSecurityPolicy = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; media-src data:"
 
+    @MainActor
     static func makeConfiguration() -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
@@ -527,7 +528,7 @@ final class ImagePreviewNavigationBlocker: NSObject, WKNavigationDelegate {
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
         decisionHandler(navigationAction.navigationType == .other ? .allow : .cancel)
     }
@@ -953,12 +954,8 @@ struct DataImagePreviewView: View {
         switch heightMode {
         case .fixed(let value):
             return max(1, value)
-        case .singleScreenFit:
-            return ImageViewportSizing.policy(for: .inlineProse, screenHeight: UIScreen.main.bounds.height).placeholderHeight
-        case .primaryMedia:
-            return ImageViewportSizing.policy(for: .primaryMedia, screenHeight: UIScreen.main.bounds.height).placeholderHeight
-        case .unrestricted:
-            return ImageViewportSizing.policy(for: .fullscreen, screenHeight: UIScreen.main.bounds.height).placeholderHeight
+        case .singleScreenFit, .primaryMedia, .unrestricted:
+            return ImageViewportSizing.defaultPlaceholderHeight
         }
     }
 
@@ -981,7 +978,7 @@ struct DataImagePreviewView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .frame(maxWidth: .infinity)
 
-        let maxHeight = ImageViewportSizing.maxHeight(for: heightMode, screenHeight: UIScreen.main.bounds.height)
+        let maxHeight = ImageViewportSizing.maxHeight(for: heightMode, screenHeight: nil)
         if let aspectRatio {
             if let maxHeight {
                 base

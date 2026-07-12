@@ -929,7 +929,7 @@ enum FileShareService {
         // Optional page hooks:
         // - window.__oppiReadyForCapture: Bool | () -> Bool
         // - window.__oppiPrepareForCapture: () -> Void
-        try? await webView.evaluateJavaScript("""
+        _ = try? await webView.evaluateJavaScript("""
             (function() {
                 try {
                     if (typeof window.__oppiReadyForCapture === 'function') {
@@ -1213,7 +1213,7 @@ private final class PDFNavigationDelegate: NSObject, WKNavigationDelegate {
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
         decisionHandler(HTMLContentSecurity.allowsEmbeddedNavigation(to: navigationAction.request.url) ? .allow : .cancel)
     }

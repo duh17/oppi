@@ -1329,17 +1329,25 @@ enum FlatSegment: Sendable {
 
             // Fast path: single text inline heading (common for simple headings).
             if inlines.count == 1, case .text(let string) = inlines[0] {
-                var container = AttributeContainer()
-                container.uiKit.font = font
-                container.uiKit.foregroundColor = color
-                container.uiKit.paragraphStyle = paragraphStyle
-                return AttributedString(string, attributes: container)
+                let heading = NSAttributedString(string: string, attributes: [
+                    .font: font,
+                    .foregroundColor: color,
+                    .paragraphStyle: paragraphStyle,
+                ])
+                return AttributedString(heading)
             }
-            var result = renderInlines(inlines, palette: palette)
-            result.uiKit.font = font
-            result.uiKit.foregroundColor = color
-            result.uiKit.paragraphStyle = paragraphStyle
-            return result
+
+            let renderedInlines = renderInlines(inlines, palette: palette)
+            let mutable = NSMutableAttributedString(attributedString: NSAttributedString(renderedInlines))
+            mutable.addAttributes(
+                [
+                    .font: font,
+                    .foregroundColor: color,
+                    .paragraphStyle: paragraphStyle,
+                ],
+                range: NSRange(location: 0, length: mutable.length)
+            )
+            return AttributedString(mutable)
 
         case .paragraph(let inlines):
             let bodyFont = AppFont.messageBody

@@ -108,6 +108,7 @@ extension ToolRowViewportCalculator {
     ///
     /// `cacheKey` and `perfName` are extended in `ToolTimelineRowLayoutPerformance`
     /// via the `ToolTimelineRowContentView.ViewportMode` typealias.
+    @MainActor
     enum ViewportMode: Equatable {
         case output
         case expandedDiff

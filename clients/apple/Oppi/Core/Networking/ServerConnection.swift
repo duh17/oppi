@@ -716,7 +716,7 @@ final class ServerConnection {
                 metadata["hadLoadedCapabilities"] = hadLoadedCapabilities ? "true" : "false"
                 metadata["capabilityStatus"] = self.requiredSplitStreamCapabilitiesStatusForDiagnostics
                 metadata["transport"] = self.transportPath.rawValue
-                let apiBaseURL = await apiClient.baseURL
+                let apiBaseURL = apiClient.baseURL
                 metadata.merge(ClientLog.endpointMetadata(apiBaseURL, prefix: "api")) { current, _ in current }
                 ClientLog.warning("Network", "Stream capability refresh failed", metadata: metadata)
             }

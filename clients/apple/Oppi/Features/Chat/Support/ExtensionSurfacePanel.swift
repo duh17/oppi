@@ -427,7 +427,7 @@ private final class NativeSurfaceViewportContainerView<Content: View>: UIView, U
     }
 
     override var intrinsicContentSize: CGSize {
-        let width = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width
+        let width = bounds.width > 0 ? bounds.width : (window?.windowScene?.screen.bounds.width ?? 390)
         return CGSize(width: UIView.noIntrinsicMetric, height: viewportHeight(for: width))
     }
 

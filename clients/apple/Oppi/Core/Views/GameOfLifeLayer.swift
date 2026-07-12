@@ -87,7 +87,7 @@ final class GameOfLifeLayer: CALayer {
         self.ages = [UInt8](repeating: 0, count: count)
         self.nextAges = [UInt8](repeating: 0, count: count)
         super.init()
-        self.contentsScale = UIScreen.main.scale
+        self.contentsScale = 1
         self.isOpaque = false
         self.needsDisplayOnBoundsChange = true
         rebuildColorPalette()

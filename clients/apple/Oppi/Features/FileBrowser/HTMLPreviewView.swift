@@ -79,6 +79,7 @@ final class HTMLContentTracker {
 enum HTMLContentSecurity {
     static let contentSecurityPolicy = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src data: blob:; media-src data: blob:; font-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; child-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'"
 
+    @MainActor
     static func makeConfiguration() -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
@@ -235,7 +236,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
         if HTMLContentSecurity.allowsEmbeddedNavigation(to: navigationAction.request.url) {
             decisionHandler(.allow)
