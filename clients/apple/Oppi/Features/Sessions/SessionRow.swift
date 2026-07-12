@@ -76,7 +76,7 @@ struct SessionWorktreeIndicatorPresentation: Equatable, Sendable {
 ///
 /// Three-line layout:
 /// ```
-/// Title (bold if needs attention)                [time]
+/// ◉ Title                                      [time]
 /// model summary [compactions] [worktree] question prompt
 /// ▬ 25% · $27.45 · [doc] 4  [status pill]
 /// ```
@@ -170,16 +170,20 @@ struct SessionRow: View {
         unreadCompletionAt ?? session.lastAgentReplyAt ?? session.lastActivity
     }
 
+    private var isUnread: Bool {
+        unreadCompletionAt != nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             // Row 1: title + time
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(title)
                     .font(.body)
-                    .fontWeight(pendingAskCount > 0 || unreadCompletionAt != nil ? .semibold : .regular)
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
                     .layoutPriority(1)
+                    .accessibilityLabel(isUnread ? Text("Unread, \(title)") : Text(verbatim: title))
 
                 Spacer(minLength: 4)
 
@@ -271,6 +275,17 @@ struct SessionRow: View {
             .font(.caption)
             .foregroundStyle(.themeFgDim)
             .lineLimit(1)
+        }
+        .padding(.leading, 12)
+        .overlay(alignment: .topLeading) {
+            if isUnread {
+                Circle()
+                    .fill(.themeBlue)
+                    .frame(width: 6, height: 6)
+                    .padding(.top, 7)
+                    .padding(.leading, 1)
+                    .accessibilityHidden(true)
+            }
         }
         .id(themeID)
         .frame(maxWidth: .infinity, alignment: .leading)
