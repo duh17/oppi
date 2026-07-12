@@ -4,12 +4,11 @@ import UIKit
 
 private extension View {
     func extensionGlassPanel(cornerRadius: CGFloat = 18) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return self
-            .background(Color.themeElevatedSurface, in: shape)
-            .overlay {
-                shape.stroke(Color.themeFg.opacity(0.12), lineWidth: 0.5)
-            }
+        self
+            .themedSurface(
+                .elevatedPanel,
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
             .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 2)
     }
 

@@ -2,12 +2,11 @@ import SwiftUI
 
 private extension View {
     func messageQueuePanelChrome(cornerRadius: CGFloat = 18) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return self
-            .background(Color.themeElevatedSurface, in: shape)
-            .overlay {
-                shape.stroke(Color.themeFg.opacity(0.12), lineWidth: 0.5)
-            }
+        self
+            .themedSurface(
+                .elevatedPanel,
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
             .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 2)
     }
 }
@@ -272,7 +271,7 @@ struct MessageQueueContainer: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.themeBg.opacity(0.30))
+                .fill(Color.themeRecessedInset)
         )
     }
 
@@ -312,7 +311,7 @@ struct MessageQueueContainer: View {
                 .padding(.vertical, 7)
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.themeBg.opacity(0.30))
+                        .fill(Color.themeRecessedInset)
                 )
 
             rowActions(kind: kind, index: index)
@@ -530,7 +529,7 @@ private struct IconActionButton: View {
                 .frame(width: 24, height: 24)
                 .background(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Color.themeBg.opacity(0.30))
+                        .fill(Color.themeRecessedInset)
                 )
         }
         .buttonStyle(.plain)

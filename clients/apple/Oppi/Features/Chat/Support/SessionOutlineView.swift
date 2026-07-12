@@ -734,7 +734,7 @@ struct SessionOutlineView: View {
                 isSelected ? Color.themeBlue : Color.themeBgHighlight,
                 in: Capsule()
             )
-            .foregroundStyle(isSelected ? .white : .themeFgDim)
+            .foregroundStyle(isSelected ? .themeOnBlue : .themeFgDim)
     }
 
     @ViewBuilder

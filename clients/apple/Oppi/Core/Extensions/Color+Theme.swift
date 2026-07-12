@@ -34,12 +34,37 @@ extension Color {
 
     static var themeScrim: Color { palette.bgDark.opacity(0.82) }
 
-    /// Fill for elevated glass panels floating over the timeline (extension
-    /// surfaces, drawers, message queue). Opacity tracks the fill luminance so
-    /// dark themes keep their translucent glass while light themes sit
-    /// near-opaque — otherwise timeline text ghosts through and reads as noise.
-    static var themeElevatedSurface: Color {
-        palette.bgDark.opacity(ThemeColorContrast.elevatedSurfaceOpacity(for: palette.bgDark))
+    /// Half scrim that dims content behind an expanded overlay bar (context
+    /// bar) without fully hiding it. Pairs with tap-to-collapse.
+    static var themeDimScrim: Color { palette.bg.opacity(0.5) }
+
+    /// Recessed fill for text fields, status banners, and icon wells inset
+    /// into an elevated panel. Reads as a subtle well against the panel fill.
+    static var themeRecessedInset: Color { palette.bg.opacity(0.30) }
+
+    /// Fill for a semantic surface role where only a `Color` fits the API
+    /// (footer `ignoresSafeArea` backgrounds, `presentationBackground`).
+    /// Prefer `View.themedSurface(_:in:)` for shaped panels.
+    static func themeSurfaceFill(_ role: ThemeSurfaceRole) -> Color {
+        ThemeSurfaceStyle.resolve(role).fill
+    }
+
+    /// Themed surface fill math: opacity keeps dark palettes glassy and raises
+    /// light palettes toward opaque so content behind the panel does not ghost
+    /// through. File-private so UI code picks a `ThemeSurfaceRole` instead of
+    /// ad-hoc opacity values — `ThemeSurfaceStyle.resolve` is the only caller.
+    fileprivate static func themeSurface(
+        darkOpacity: Double,
+        lightOpacity: Double = 0.98,
+        palette: ThemePalette
+    ) -> Color {
+        palette.bgDark.opacity(
+            ThemeColorContrast.adaptiveSurfaceOpacity(
+                for: palette.bgDark,
+                darkOpacity: darkOpacity,
+                lightOpacity: lightOpacity
+            )
+        )
     }
 
     static var themeOnBlue: Color { ThemeColorContrast.foreground(for: palette.blue) }
@@ -95,9 +120,107 @@ extension ShapeStyle where Self == Color {
     static var themeDiffRemoved: Color { Color.themeDiffRemoved }
 }
 
+// MARK: - Themed Surface Roles
+
+/// Semantic roles for themed panels that float over app content.
+///
+/// Roles replace ad-hoc `darkOpacity` values at call sites. The compositing
+/// contract (checked by ElevatedSurfaceOpacityTests):
+/// - Translucent roles keep dark palettes glassy, so they REQUIRE a glass blur
+///   behind the fill (`wantsGlassBlur`); without blur, timeline text ghosts
+///   through a low-opacity fill.
+/// - Blur-free roles resolve near-opaque regardless of fill luminance.
+/// - Light palettes always resolve near-opaque via
+///   `ThemeColorContrast.adaptiveSurfaceOpacity`.
+enum ThemeSurfaceRole: CaseIterable {
+    /// Panels floating over the chat timeline: extension surfaces, message
+    /// queue, floating busy/status panels.
+    case elevatedPanel
+    /// Small floating controls over full-bleed content: full-screen viewer
+    /// buttons, the file tree glass panel, share capsules, tip banners.
+    case floatingControl
+    /// Cards and bars over scrolling content with no blur available: expanded
+    /// tool bodies, context bar capsules, pinned footers.
+    case opaqueCard
+    /// System-presented popovers and sheets that replace the default material.
+    case popover
+}
+
+/// Resolved chrome for a `ThemeSurfaceRole`: fill, optional hairline stroke,
+/// and whether the fill must pair with a glass blur. SwiftUI call sites use
+/// `View.themedSurface(_:in:)`; UIKit paths consume `UIColor(style.fill)`.
+struct ThemeSurfaceStyle {
+    let fill: Color
+    let stroke: Color?
+    let strokeLineWidth: CGFloat
+    let wantsGlassBlur: Bool
+
+    /// The single place where per-role surface opacity is chosen.
+    static func resolve(
+        _ role: ThemeSurfaceRole,
+        palette: ThemePalette = ThemeRuntimeState.currentPalette()
+    ) -> ThemeSurfaceStyle {
+        switch role {
+        case .elevatedPanel:
+            // 0.78 is the established elevated-glass translucency on dark
+            // palettes; it is safe only because the role pairs with blur.
+            return ThemeSurfaceStyle(
+                fill: .themeSurface(darkOpacity: 0.78, palette: palette),
+                stroke: palette.fg.opacity(0.12),
+                strokeLineWidth: 0.5,
+                wantsGlassBlur: true
+            )
+        case .floatingControl:
+            return ThemeSurfaceStyle(
+                fill: .themeSurface(darkOpacity: 0.64, palette: palette),
+                stroke: palette.fg.opacity(0.10),
+                strokeLineWidth: 1,
+                wantsGlassBlur: true
+            )
+        case .opaqueCard:
+            return ThemeSurfaceStyle(
+                fill: .themeSurface(darkOpacity: 0.92, palette: palette),
+                stroke: palette.comment.opacity(0.22),
+                strokeLineWidth: 1,
+                wantsGlassBlur: false
+            )
+        case .popover:
+            return ThemeSurfaceStyle(
+                fill: .themeSurface(darkOpacity: 0.96, palette: palette),
+                stroke: nil,
+                strokeLineWidth: 0,
+                wantsGlassBlur: false
+            )
+        }
+    }
+}
+
+@ViewBuilder
+private func themedSurfaceStroke<S: Shape>(_ style: ThemeSurfaceStyle, in shape: S) -> some View {
+    if let stroke = style.stroke {
+        shape.stroke(stroke, lineWidth: style.strokeLineWidth)
+    }
+}
+
 // MARK: - Themed Surface Modifiers
 
 extension View {
+    /// Apply a semantic themed surface behind this view, clipped to `shape`:
+    /// role-resolved fill, glass blur pairing for translucent roles, and the
+    /// role's hairline stroke. This is the sanctioned way to put a themed
+    /// panel fill behind content — roles resolve opacity in one place.
+    @ViewBuilder
+    func themedSurface<S: Shape>(_ role: ThemeSurfaceRole, in shape: S) -> some View {
+        let style = ThemeSurfaceStyle.resolve(role)
+        if style.wantsGlassBlur {
+            background(style.fill, in: shape)
+                .glassEffect(.regular, in: shape)
+                .overlay { themedSurfaceStroke(style, in: shape) }
+        } else {
+            background(style.fill, in: shape)
+                .overlay { themedSurfaceStroke(style, in: shape) }
+        }
+    }
     /// Use for List/Form screens. Replaces native list chrome with theme background.
     /// Section "cards" keep their system appearance (matches Dark/Light perfectly,
     /// near-match for Night/custom).
@@ -132,6 +255,15 @@ extension View {
                     .stroke(Color.themeComment.opacity(strokeOpacity), lineWidth: 1)
             )
     }
+
+    /// Use for small floating busy/status panels that sit above app content.
+    /// Sugar for the `.elevatedPanel` surface role.
+    func themedFloatingPanel(cornerRadius: CGFloat = 12) -> some View {
+        themedSurface(
+            .elevatedPanel,
+            in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        )
+    }
 }
 
 // MARK: - Theme Contrast Helpers
@@ -144,14 +276,24 @@ enum ThemeColorContrast {
         return luminance > 0.55 ? .themeBgDark : .themeFg
     }
 
-    /// Fill opacity for elevated glass panels so timeline content behind them
-    /// does not bleed through. Dark fills keep the established 0.78 glass;
-    /// light fills must sit near-opaque (~0.94) because a light panel
-    /// over a light timeline shows even faint text bleed as distracting noise.
-    static func elevatedSurfaceOpacity(for fill: Color) -> Double {
-        guard let luminance = relativeLuminance(of: fill) else { return 0.78 }
-        let clamped = min(max(Double(luminance), 0), 1)
-        return 0.78 + clamped * 0.20
+    /// Adaptive opacity for themed glass/surface fills. Production code
+    /// reaches this only through `ThemeSurfaceStyle.resolve` — this is the one
+    /// function that owns themed surface opacity math.
+    ///
+    /// The `darkOpacity` is the visual baseline for dark palettes. As the fill
+    /// luminance increases, the opacity moves toward `lightOpacity`, preventing
+    /// low-contrast text or rows behind a light themed panel from bleeding
+    /// through while preserving the intended glassiness on dark palettes.
+    static func adaptiveSurfaceOpacity(
+        for fill: Color,
+        darkOpacity: Double,
+        lightOpacity: Double = 0.98
+    ) -> Double {
+        guard let luminance = relativeLuminance(of: fill) else { return darkOpacity }
+        let clampedLuminance = min(max(Double(luminance), 0), 1)
+        let clampedDarkOpacity = min(max(darkOpacity, 0), 1)
+        let clampedLightOpacity = min(max(lightOpacity, 0), 1)
+        return clampedDarkOpacity + clampedLuminance * (clampedLightOpacity - clampedDarkOpacity)
     }
 
     private static func relativeLuminance(of color: Color) -> CGFloat? {

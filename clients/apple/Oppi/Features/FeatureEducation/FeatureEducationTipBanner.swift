@@ -146,8 +146,19 @@ final class FeatureEducationTipBannerView: UIView {
     }
 
     private func applyThemeColors() {
-        let accent = UIColor(Color.themeCyan)
-        iconContainer.backgroundColor = UIColor(Color.themeCyan.opacity(0.16))
+        let palette = ThemeRuntimeState.currentPalette()
+        let accent = UIColor(palette.cyan)
+
+        // The banner fill sits on a UIVisualEffectView blur, satisfying the
+        // floating-control role's blur pairing.
+        blurView.contentView.backgroundColor = UIColor(
+            ThemeSurfaceStyle.resolve(.floatingControl, palette: palette).fill
+        )
+        layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.22).cgColor
+        titleLabel.textColor = UIColor(palette.fg)
+        messageLabel.textColor = UIColor(palette.fgDim)
+        closeButton.tintColor = UIColor(palette.fgDim)
+        iconContainer.backgroundColor = UIColor(palette.cyan).withAlphaComponent(0.16)
         iconView.tintColor = accent
     }
 
@@ -159,7 +170,6 @@ final class FeatureEducationTipBannerView: UIView {
         layer.cornerCurve = .continuous
         layer.masksToBounds = true
         layer.borderWidth = 1
-        layer.borderColor = UIColor.separator.withAlphaComponent(0.22).cgColor
 
         blurView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(blurView)
@@ -177,20 +187,17 @@ final class FeatureEducationTipBannerView: UIView {
             for: .systemFont(ofSize: 15, weight: .semibold)
         )
         titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.textColor = .label
         titleLabel.numberOfLines = 1
         titleLabel.accessibilityIdentifier = "feature-tip.title"
 
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         messageLabel.font = .preferredFont(forTextStyle: .caption1)
         messageLabel.adjustsFontForContentSizeCategory = true
-        messageLabel.textColor = .secondaryLabel
         messageLabel.numberOfLines = 2
         messageLabel.accessibilityIdentifier = "feature-tip.message"
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
-        closeButton.tintColor = .secondaryLabel
         closeButton.accessibilityLabel = "Dismiss tip"
         closeButton.accessibilityIdentifier = "feature-tip.dismiss"
         closeButton.addTarget(self, action: #selector(handleClose), for: .touchUpInside)
@@ -206,6 +213,8 @@ final class FeatureEducationTipBannerView: UIView {
         contentStack.alignment = .center
         contentStack.spacing = 10
         addSubview(contentStack)
+
+        applyThemeColors()
 
         NSLayoutConstraint.activate([
             blurView.leadingAnchor.constraint(equalTo: leadingAnchor),

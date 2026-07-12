@@ -13,6 +13,7 @@ clients/apple/*.xcodeproj/
 scripts/*
 !scripts/duplication-scan.ts
 !scripts/scroll-offset-guard.ts
+!scripts/theme-surface-guard.ts
 clients/apple/scripts/*
 !clients/apple/scripts/release-mac.sh
 !clients/apple/scripts/periphery-scan.ts

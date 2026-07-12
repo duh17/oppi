@@ -38,25 +38,24 @@ enum FullScreenFloatingControlChrome {
     static let groupVerticalPadding: CGFloat = (controlSize - groupedButtonSize) / 2
     static let symbolPointSize: CGFloat = 20
     static let standaloneContentPadding: CGFloat = (controlSize - symbolPointSize) / 2
-    static let backgroundOpacity: CGFloat = 0.64
 
     static func applyGlassBackground(
         to config: inout UIButton.Configuration,
         palette: ThemePalette
     ) {
         config.cornerStyle = .capsule
-        config.background.backgroundColor = UIColor(palette.bgDark).withAlphaComponent(backgroundOpacity)
+        // Fill comes from the shared surface resolver so the floating-control
+        // opacity is chosen in exactly one place (ThemeSurfaceStyle.resolve).
+        config.background.backgroundColor = UIColor(
+            ThemeSurfaceStyle.resolve(.floatingControl, palette: palette).fill
+        )
         config.baseForegroundColor = UIColor(palette.fg)
     }
 }
 
 extension View {
     func fullScreenFloatingControlGlass<S: Shape>(in shape: S) -> some View {
-        background(
-            Color.themeBgDark.opacity(Double(FullScreenFloatingControlChrome.backgroundOpacity)),
-            in: shape
-        )
-        .glassEffect(.regular, in: shape)
+        themedSurface(.floatingControl, in: shape)
     }
 }
 

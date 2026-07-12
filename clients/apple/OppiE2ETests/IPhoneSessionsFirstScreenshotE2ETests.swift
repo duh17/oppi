@@ -20,6 +20,12 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         false
     }
 
+    override func configureE2ELaunch(_ application: XCUIApplication) {
+        application.launchArguments += [
+            "-dev.chenda.Oppi.theme.id", "light",
+        ]
+    }
+
     override func seedE2EFixtures() throws {
         let anchorWorkspaceId = try e2eWorkspaceId(named: anchorWorkspaceName)
 

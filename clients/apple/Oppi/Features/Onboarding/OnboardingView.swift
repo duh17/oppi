@@ -232,9 +232,9 @@ private struct NearbyPairingSheet: View {
                     Text(browser.state.statusText ?? "Looking for nearby Macs…")
                         .foregroundStyle({
                             if case .failed = browser.state {
-                                return AnyShapeStyle(.red)
+                                return AnyShapeStyle(.themeRed)
                             }
-                            return AnyShapeStyle(.secondary)
+                            return AnyShapeStyle(.themeComment)
                         }())
                 }
 
@@ -254,11 +254,11 @@ private struct NearbyPairingSheet: View {
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(candidate.displayName)
-                                        .foregroundStyle(.primary)
+                                        .foregroundStyle(.themeFg)
                                     if let detailText = candidate.detailText {
                                         Text(detailText)
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(.themeComment)
                                     }
                                 }
                             }
@@ -269,6 +269,7 @@ private struct NearbyPairingSheet: View {
             }
             .navigationTitle("Pair Nearby Mac")
             .navigationBarTitleDisplayMode(.inline)
+            .themedListSurface()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

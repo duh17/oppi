@@ -33,6 +33,12 @@ struct FeatureEducationToolRowTipTests {
             $0.image != nil && !timelineColor($0.tintColor, approximatelyEquals: .secondaryLabel)
         })
         #expect(timelineColor(iconView.tintColor, approximatelyEquals: UIColor(Color.themeCyan)))
+        #expect(timelineColor(dismissButton.tintColor, approximatelyEquals: UIColor(Color.themeFgDim)))
+
+        let titleLabel = try #require(timelineAllLabels(in: view).first { $0.text == FeatureEducationTips.openToolDetails.title })
+        let messageLabel = try #require(timelineAllLabels(in: view).first { $0.text == FeatureEducationTips.openToolDetails.message })
+        #expect(timelineColor(titleLabel.textColor, approximatelyEquals: UIColor(Color.themeFg)))
+        #expect(timelineColor(messageLabel.textColor, approximatelyEquals: UIColor(Color.themeFgDim)))
     }
 
     @Test func inlineToolTipInsertionInvalidatesEnclosingCollectionLayout() throws {
