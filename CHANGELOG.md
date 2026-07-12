@@ -63,6 +63,7 @@ Example:
 
 - **Client/Server:** Mirrored terminal sessions recover the correct worktree and replay unanswered questions or approvals after reconnecting.
 - **Client:** Recovered prompt responses resume stopped sessions before sending, and deferred media rows populate when their workspace context arrives.
+- **Client:** Collapsed file tool rows now prioritize showing the full filename before shortening directory paths, including when badges, edit stats, or first-pass layout reduce the available width.
 - **Client:** Following the system appearance now loads the correct light or dark theme and recolors existing code, diffs, tool output, and session rows when appearance changes.
 - **Client:** Relative images and links in session file previews resolve from the file being viewed, including in full screen.
 - **Server:** Skill and extension toggles now write Pi project settings for that workspace, so changing a resource in one workspace no longer mutates global settings for other workspaces.
