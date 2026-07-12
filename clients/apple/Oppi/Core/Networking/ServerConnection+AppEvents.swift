@@ -122,8 +122,10 @@ extension ServerConnection {
         let previousSession = sessionStore.session(id: normalized.id)
         let previousWorkspaceId = previousSession?.workspaceId
         sessionStore.applySummary(normalized)
-        if previousSession?.status.isRunning == true, normalized.status.isTerminal {
-            let completedAt = normalized.lastAgentReplyAt ?? normalized.lastActivity
+        if previousSession?.status.isRunning == true,
+           normalized.status.isTerminal,
+           let completedAt = normalized.lastAgentReplyAt,
+           completedAt != previousSession?.lastAgentReplyAt {
             recordUnreadCompletionIfNeeded(sessionId: normalized.id, at: completedAt)
         }
         if let previousWorkspaceId, previousWorkspaceId != normalized.workspaceId {
@@ -143,7 +145,6 @@ extension ServerConnection {
     ) {
         guard var current = sessionStore.session(id: sessionId) else { return }
         if let onlyFrom, current.status != onlyFrom { return }
-        let previousStatus = current.status
         let completedAt = Date()
         current.status = status
         if status == .ready || status == .stopped || status == .error {
@@ -160,9 +161,6 @@ extension ServerConnection {
         if status.isRunning {
             screenAwakeController.setSessionActivity(true, sessionId: sessionId)
         } else {
-            if previousStatus.isRunning {
-                recordUnreadCompletionIfNeeded(sessionId: sessionId, at: completedAt)
-            }
             screenAwakeController.clearSessionActivity(sessionId: sessionId)
         }
         syncLiveActivityState()
