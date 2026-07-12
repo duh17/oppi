@@ -1,14 +1,14 @@
-import { execFile, execSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createServer as createHttpServer, type ServerResponse } from "node:http";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { ConfigStore } from "../src/storage/config-store.js";
 
-const CLI = resolve(__dirname, "../dist/src/cli.js");
+const CLI = process.env.OPPI_TEST_CLI ?? resolve(__dirname, "../dist/src/cli.js");
 
 function writeCliConfig(dataDir: string, port: number): void {
   mkdirSync(dataDir, { recursive: true });
@@ -174,10 +174,6 @@ async function withOrchApi<T>(
 }
 
 describe("CLI app-state API boundary", () => {
-  beforeAll(() => {
-    execSync("npm run build", { cwd: resolve(__dirname, ".."), stdio: "pipe" });
-  }, 30_000);
-
   it("prints help without the decorative banner", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-help-"));
     try {
@@ -324,7 +320,7 @@ describe("CLI app-state API boundary", () => {
         }
       },
     );
-  });
+  }, 20_000);
 
   it("renders trace outline messages and tool activity from the API snapshot", async () => {
     const stdout = await runTraceOutlineCli([
