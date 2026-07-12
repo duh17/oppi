@@ -1003,7 +1003,7 @@ struct WorkspaceSessionInboxStackRootView: View {
         @Bindable var nav = navigation
 
         GeometryReader { proxy in
-            let sidebarWidth = min(proxy.size.width * 0.86, 360)
+            let sidebarWidth = min(proxy.size.width * 0.80, 320)
             let dragProgress = sidebarDrag.horizontalTranslation / sidebarWidth
             let sidebarProgress = min(1, max(0, sidebarRestingProgress + dragProgress))
             let sidebarOffset = sidebarWidth * sidebarProgress
@@ -1013,6 +1013,14 @@ struct WorkspaceSessionInboxStackRootView: View {
             let edgePanEnabled = nav.workspacePath.isEmpty && !isSidebarPresented
 
             ZStack(alignment: .topLeading) {
+                // Base backdrop: the corner cutouts and safe-area strips revealed
+                // by the foreground mask must show theme color, never the bare
+                // white window background.
+                Color.themeBg
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+
                 WorkspaceSidebarView(
                     onSelect: { settleSidebar(open: false) }
                 )
@@ -1034,12 +1042,19 @@ struct WorkspaceSessionInboxStackRootView: View {
                     }
                 }
                 .background(Color.themeBg)
-                .clipShape(
+                // Mask in screen space, not the safe-area frame: `.clipShape`
+                // sizes to the layout bounds, which puts the rounded corners
+                // under the status bar / home indicator and amputates the nav
+                // bar's safe-area bleed. `ignoresSafeArea` extends the mask to
+                // the device corners so the rounding is concentric with the
+                // bezel, like the system drawer look this mimics.
+                .mask {
                     RoundedRectangle(
                         cornerRadius: Self.foregroundCornerRadius * sidebarProgress,
                         style: .continuous
                     )
-                )
+                    .ignoresSafeArea()
+                }
                 .shadow(
                     color: .black.opacity(Self.foregroundShadowOpacity * Double(sidebarProgress)),
                     radius: Self.foregroundShadowRadius * sidebarProgress,
