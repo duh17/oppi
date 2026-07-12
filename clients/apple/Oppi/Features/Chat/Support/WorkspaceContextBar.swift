@@ -379,7 +379,7 @@ struct WorkspaceContextBar: View {
                     }
                 }
                 .alert(
-                    "Quick Action Error",
+                    "Unable to start action",
                     isPresented: Binding(
                         get: { launchError != nil },
                         set: { if !$0 { launchError = nil } }
@@ -834,22 +834,26 @@ struct WorkspaceContextBar: View {
 
                     Spacer()
 
-                    if selectedFileQuickActions.isEmpty {
-                        Text(isLoadingQuickActions ? "Loading templates…" : "No prompt templates")
-                            .font(gitBarFont(compact: .caption2, iPad: .caption))
-                            .foregroundStyle(.themeComment)
-                    } else {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(selectedFileQuickActions) { option in
-                                    quickActionButton(option: option)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            newSessionButton
+
+                            if selectedFileQuickActions.isEmpty {
+                                Text(isLoadingQuickActions ? "Loading templates…" : "No prompt templates")
+                                    .font(gitBarFont(compact: .caption2, iPad: .caption))
+                                    .foregroundStyle(.themeComment)
+                            } else {
+                                HStack(spacing: 8) {
+                                    ForEach(selectedFileQuickActions) { option in
+                                        quickActionButton(option: option)
+                                    }
                                 }
+                                .disabled(!canLaunch)
+                                .opacity(canLaunch ? 1 : 0.4)
                             }
                         }
-                        .frame(maxWidth: 240, alignment: .trailing)
-                        .disabled(!canLaunch)
-                        .opacity(canLaunch ? 1 : 0.4)
                     }
+                    .frame(maxWidth: 280, alignment: .trailing)
                 }
             }
             .padding(.horizontal, 12)
@@ -898,6 +902,29 @@ struct WorkspaceContextBar: View {
         } else {
             selectedPaths.insert(file.path)
         }
+    }
+
+    private var newSessionButton: some View {
+        Button {
+            Task { await launchEmptySession() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "square.and.pencil")
+                    .font(gitBarFont(compact: .caption2, iPad: .caption))
+                    .foregroundStyle(.themePurple)
+                    .frame(width: 13)
+
+                Text("New Session")
+                    .font(gitBarFont(compact: .caption2.monospaced().weight(.medium), iPad: .caption.monospaced().weight(.medium)))
+                    .foregroundStyle(.themeFg)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .themedSurface(.opaqueCard, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(launchActionInFlightTitle != nil)
+        .accessibilityLabel("Start new empty session")
     }
 
     private func quickActionSourceLabel(_ sourceScope: String?) -> String {
@@ -968,11 +995,7 @@ struct WorkspaceContextBar: View {
         .accessibilityLabel(option.title)
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .background(Color.themeBgDark.opacity(0.92), in: Capsule())
-        .overlay(
-            Capsule()
-                .stroke(Color.themeComment.opacity(0.22), lineWidth: 1)
-        )
+        .themedSurface(.opaqueCard, in: Capsule())
     }
 
     private func resetQuickActionCache() {
@@ -1044,6 +1067,31 @@ struct WorkspaceContextBar: View {
                     PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile, displayPrefix: option.title)
                 }
             )
+        } catch {
+            launchError = error.localizedDescription
+        }
+    }
+
+    private func launchEmptySession() async {
+        guard let workspaceId else { return }
+        guard let api = apiClient else {
+            launchError = "Server is offline."
+            return
+        }
+        guard launchActionInFlightTitle == nil else { return }
+
+        launchActionInFlightTitle = "Starting new session…"
+        defer { launchActionInFlightTitle = nil }
+
+        do {
+            let response = try await api.createWorkspaceSession(
+                workspaceId: workspaceId,
+                worktreeId: worktreeId
+            )
+            sessionStore.upsert(response.session)
+            selectedPaths.removeAll()
+            isSelecting = false
+            navigateToQuickAction = QuickActionSessionNavDestination.empty(sessionId: response.session.id)
         } catch {
             launchError = error.localizedDescription
         }

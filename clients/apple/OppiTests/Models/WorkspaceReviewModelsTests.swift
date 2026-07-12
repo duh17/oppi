@@ -146,7 +146,7 @@ struct WorkspaceReviewModelsTests {
         #expect(WorkspaceReviewFileDetailPhase.resolve(diff: diff, error: "boom") == .loaded(diff))
     }
 
-    @Test func fileDetailToolbarKeepsPromptTemplateActionWhileAdjacentFileLoads() {
+    @Test func fileDetailToolbarKeepsActionMenuWhileAdjacentFileLoads() {
         let loaded = WorkspaceReviewFileDetailToolbarState.make(
             hasShareableContent: true,
             launchActionInFlightTitle: nil
@@ -157,20 +157,50 @@ struct WorkspaceReviewModelsTests {
         )
 
         #expect(loaded.showsShare)
-        #expect(loaded.showsPromptTemplates)
+        #expect(loaded.showsActionMenu)
         #expect(reloadingAfterNavigation.showsShare == false)
-        #expect(reloadingAfterNavigation.showsPromptTemplates)
-        #expect(reloadingAfterNavigation.promptTemplatesAccessibilityLabel == "Prompt templates")
+        #expect(reloadingAfterNavigation.showsActionMenu)
+        #expect(reloadingAfterNavigation.actionMenuAccessibilityLabel == "Actions")
     }
 
-    @Test func fileDetailToolbarDisablesPromptTemplatesOnlyDuringLaunch() {
+    @Test func fileDetailToolbarDisablesActionMenuOnlyDuringLaunch() {
         let launching = WorkspaceReviewFileDetailToolbarState.make(
             hasShareableContent: true,
             launchActionInFlightTitle: "Starting /review…"
         )
 
-        #expect(launching.showsPromptTemplates)
-        #expect(launching.promptTemplatesDisabled)
+        #expect(launching.showsActionMenu)
+        #expect(launching.actionMenuDisabled)
+    }
+
+    @Test func commitDetailActionMenuKeepsNewSessionEnabledWhileCommitLoads() {
+        let loading = CommitDetailActionMenuState.make(
+            workspaceId: "w1",
+            detail: nil,
+            launchActionInFlightTitle: nil
+        )
+
+        #expect(loading.menuDisabled == false)
+        #expect(loading.promptTemplatesDisabled)
+    }
+
+    @Test func commitDetailActionMenuEnablesPromptTemplatesAfterDetailLoads() {
+        let loaded = CommitDetailActionMenuState.make(
+            workspaceId: "w1",
+            detail: GitCommitDetail(
+                sha: "abc1234",
+                message: "Test commit",
+                date: "2026-07-11T00:00:00Z",
+                author: "Chen",
+                files: [GitCommitFileInfo(path: "Sources/App.swift", status: "M", addedLines: 1, removedLines: 0)],
+                addedLines: 1,
+                removedLines: 0
+            ),
+            launchActionInFlightTitle: nil
+        )
+
+        #expect(loaded.menuDisabled == false)
+        #expect(loaded.promptTemplatesDisabled == false)
     }
 
     @Test func fileDetailFallsBackWhenSessionDiffIsEmptyButGitShowsLineChanges() {
@@ -204,6 +234,15 @@ struct WorkspaceReviewModelsTests {
             isUntracked: false,
             selectedSessionTouched: true
         )
+    }
+
+    @Test func quickActionNavigationCanBuildEmptySessionDestination() {
+        #expect(QuickActionSessionNavDestination.empty(sessionId: "session-1") == QuickActionSessionNavDestination(
+            id: "session-1",
+            inputText: "",
+            filePaths: [],
+            fileDisplayPrefix: ""
+        ))
     }
 
     private func makeReviewDiff(

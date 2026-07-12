@@ -89,13 +89,19 @@ struct WorkspaceQuickActionSessionResponse: Codable, Sendable, Equatable {
     let filePaths: [String]
 }
 
-/// Navigation destination for a created quick-action session.
-/// Carries repo file pointers so the destination ChatView can populate review-file context.
+/// Navigation destination for a launched session.
+/// Carries optional repo file pointers so the destination ChatView can populate review-file context.
 struct QuickActionSessionNavDestination: Identifiable, Hashable {
     let id: String
     let inputText: String
     let filePaths: [String]
     let fileDisplayPrefix: String
+}
+
+extension QuickActionSessionNavDestination {
+    static func empty(sessionId: String) -> Self {
+        Self(id: sessionId, inputText: "", filePaths: [], fileDisplayPrefix: "")
+    }
 }
 
 // MARK: - Review Comments
