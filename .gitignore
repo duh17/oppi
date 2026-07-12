@@ -27,7 +27,10 @@ server/scripts/manual/*
 !server/scripts/manual/telemetry-import-sqlite.mjs
 
 # Local/private workspace data
-.github/
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/server.yml
 .reviews/
 .internal/
 .pi/
