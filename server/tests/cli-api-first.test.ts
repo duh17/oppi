@@ -571,6 +571,24 @@ describe("CLI app-state API boundary", () => {
     );
   });
 
+  it("rejects conflicting inspect aliases before making an API request", async () => {
+    await withOrchApi(
+      (res) => sendJson(res, { error: "should not be called" }, 500),
+      async ({ dataDir, requests }) => {
+        const { stdout, code } = await runCliResult(
+          ["session", "inspect", "sess-1", "--turn", "1", "--turns", "2", "--json"],
+          dataDir,
+        );
+        expect(code).toBe(1);
+        expect(JSON.parse(stdout)).toEqual({
+          ok: false,
+          error: { message: "Conflicting flags: --turn and --turns" },
+        });
+        expect(requests).toEqual([]);
+      },
+    );
+  });
+
   it("emits compact inspect JSON without redundant turn or session aliases", async () => {
     await withOrchApi(
       (res, ctx) => {

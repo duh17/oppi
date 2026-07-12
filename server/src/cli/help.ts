@@ -1084,6 +1084,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "A single-session subset of 'session watch'; use watch for multiple ids or live transitions.",
+      "--until is accepted as an alias for --for; supplying both is an error.",
     ],
     examples: [{ command: "oppi session wait sess_123 --for idle --json" }],
   },
@@ -1195,6 +1196,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "Without --view, inspect defaults to outline so bare inspection stays compact.",
       "For progressive disclosure, start with the default outline; use summary for counts, then request messages or tools for the smallest relevant turn set.",
       "Response returns the latest non-empty assistant response in the selected turns; outline shows clipped messages and activity counts per turn.",
+      "--turn is accepted as an alias for --turns; supplying both is an error.",
     ],
     examples: [
       { command: "oppi session inspect sess_123 --view summary --json" },
@@ -1252,7 +1254,7 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["session", "diff"],
     title: "Session diff",
     summary: "Show the overall diff for one changed file in a session.",
-    usage: "oppi session diff <id> --path <path> [--json]",
+    usage: "oppi session diff <id> (--path <path> | -- <path>) [--json]",
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [
       {
@@ -1263,7 +1265,11 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi session diff sess_123 --path server/src/cli.ts --json" }],
+    notes: ["Use -- before paths that begin with a dash."],
+    examples: [
+      { command: "oppi session diff sess_123 --path server/src/cli.ts --json" },
+      { command: "oppi session diff sess_123 -- server/src/cli.ts" },
+    ],
   },
   {
     path: ["session", "tool-output"],

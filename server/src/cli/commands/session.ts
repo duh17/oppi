@@ -97,7 +97,8 @@ export async function cmdSession(
   hostResolvers: LocalApiHostResolvers = {},
   cwd = process.cwd(),
 ): Promise<void> {
-  const mode = action || "list";
+  const requestedMode = action || "list";
+  const mode = requestedMode === "start" ? "create" : requestedMode;
   const jsonOutput = flags.json === "true";
 
   async function call<T>(path: string, options?: LocalApiRequestOptions): Promise<T> {
@@ -110,6 +111,7 @@ export async function cmdSession(
   }
 
   try {
+    flags = normalizeSessionFlagAliases(mode, flags);
     assertSessionFlags(mode, flags);
 
     if (mode === "list") {
@@ -468,8 +470,12 @@ export async function cmdSession(
 
     if (mode === "diff") {
       const id = requirePositional(positional, "session id is required");
-      const path = flags.path?.trim();
-      if (!path) throw new Error("--path is required");
+      const positionalPath = positional[1]?.trim();
+      if (flags.path && positionalPath) {
+        throw new Error("Conflicting path inputs: use --path or -- <path>, not both");
+      }
+      const path = flags.path?.trim() || positionalPath;
+      if (!path) throw new Error("--path or -- <path> is required");
       const workspaceId = await resolveSessionWorkspaceId(id, call);
       const params = new URLSearchParams();
       params.set("path", path);
@@ -656,6 +662,30 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
   "trace-page": ["around-entry", "cursor", "json", "preview-bytes", "target-events"],
   "trace-outline": ["json"],
 };
+
+function normalizeSessionFlagAliases(
+  mode: string,
+  flags: Record<string, string>,
+): Record<string, string> {
+  const aliases =
+    mode === "inspect"
+      ? ([["turn", "turns"]] as const)
+      : mode === "wait"
+        ? ([["until", "for"]] as const)
+        : [];
+  if (aliases.length === 0) return flags;
+
+  const normalized = { ...flags };
+  for (const [alias, canonical] of aliases) {
+    if (!Object.hasOwn(normalized, alias)) continue;
+    if (Object.hasOwn(normalized, canonical)) {
+      throw new Error(`Conflicting flags: --${alias} and --${canonical}`);
+    }
+    normalized[canonical] = normalized[alias] ?? "true";
+    delete normalized[alias];
+  }
+  return normalized;
+}
 
 function assertSessionFlags(mode: string, flags: Record<string, string>): void {
   const allowed = SESSION_FLAGS[mode];
