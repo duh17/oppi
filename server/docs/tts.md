@@ -176,15 +176,9 @@ oppi config validate
 
 Then restart Oppi server.
 
-### Install and enable the extension
+### Enable the extension
 
-The sample extension lives at `server/extensions/voice.ts` in this repo. Oppi server does not load it automatically, and it imports `../src/tts-provider.js`, so install it from a checkout of this repo by symlinking the file (do not copy it, or the relative import breaks) into Pi's auto-discovered extension directory:
-
-```bash
-ln -sfn "$PWD/server/extensions/voice.ts" ~/.pi/agent/extensions/voice.ts
-```
-
-New Oppi sessions then load it through Pi's normal extension loader. To enable or disable it per workspace, use the workspace editor's extension toggles, which write Pi resource settings for the workspace cwd.
+The sample extension ships with the server at `server/extensions/voice.ts`. Enable or disable `voice` per workspace with the workspace editor's extension toggles, which write Pi resource settings for the workspace cwd.
 
 After that, ask the agent to create or use a voice. Example:
 
