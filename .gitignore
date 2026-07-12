@@ -6,6 +6,11 @@ clients/apple/build/
 clients/apple/.build/
 clients/apple/docs/
 clients/apple/*.xcodeproj/
+# Xcode Cloud must discover the configured project before post-clone scripts run.
+!clients/apple/Oppi.xcodeproj/
+!clients/apple/Oppi.xcodeproj/**
+clients/apple/Oppi.xcodeproj/**/xcuserdata/
+*.xcuserstate
 *.tsbuildinfo
 *.tgz
 
