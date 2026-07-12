@@ -5,7 +5,7 @@ Oppi itself only defines a **generic audio reply contract**. It does not require
 This document covers both:
 
 1. the shared Oppi audio contract that any extension can target
-2. the sample `voice` workspace extension shipped in this repo, which uses local [Yuwp](https://github.com/duh17/yuwp) TTS as one concrete implementation
+2. the sample `voice` Pi extension shipped in this repo, which uses local [Yuwp](https://github.com/duh17/yuwp) TTS as one concrete implementation
 
 For extension authors, the shared contract lives in `server/src/tts-provider.ts`.
 
@@ -92,7 +92,7 @@ Notes:
 
 ## Sample `voice` extension
 
-The repository also ships a sample `voice` workspace extension. It is not the core protocol; it is one example of how to implement voice creation, synthesis, and playback on top of Oppi's generic audio contract.
+The repository also ships a sample `voice` Pi extension at `server/extensions/voice.ts`. It is not the core protocol; it is one example of how to implement voice creation, synthesis, and playback on top of Oppi's generic audio contract.
 
 ### What the sample extension adds
 
@@ -176,13 +176,15 @@ oppi config validate
 
 Then restart Oppi server.
 
-### Enable the workspace extension
+### Install and enable the extension
 
-In the workspace extension list, enable:
+The sample extension lives at `server/extensions/voice.ts` in this repo. Oppi server does not load it automatically, and it imports `../src/tts-provider.js`, so install it from a checkout of this repo by symlinking the file (do not copy it, or the relative import breaks) into Pi's auto-discovered extension directory:
 
-```text
-voice
+```bash
+ln -sfn "$PWD/server/extensions/voice.ts" ~/.pi/agent/extensions/voice.ts
 ```
+
+New Oppi sessions then load it through Pi's normal extension loader. To enable or disable it per workspace, use the workspace editor's extension toggles, which write Pi resource settings for the workspace cwd.
 
 After that, ask the agent to create or use a voice. Example:
 
@@ -210,4 +212,4 @@ The agent can still change the behavior for the current session with `voice_repl
 - Oppi only allows local TTS URLs by default.
 - To use a remote TTS URL, set `TTS_ALLOW_REMOTE=1` deliberately.
 - Generated audio is saved under `~/Library/Application Support/Yuwp/Audio/pi-voice`.
-- TTS setup is per workspace because it is provided by the `voice` extension.
+- The TTS tools come from the `voice` extension, and enablement is per workspace through Pi resource settings for the workspace cwd.

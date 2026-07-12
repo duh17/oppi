@@ -8,6 +8,8 @@ Oppi is an iPhone/iPad client and self-hosted server for [Pi](https://github.com
 - Do not default to backward compatibility or add the prefix "legacy". If a change may break behavior, ask first.
 - Do not add a new abstraction when a small function or local type will do.
 - Keep contextual knowledge in comments close to the code.
+- Before changing server or Apple client structure, transports, stores, or extension UI surfaces, read `docs/architecture.md` and the relevant split page (`docs/architecture-server.md`, `docs/architecture-client.md`). The boundary rules there are enforced by `server/scripts/check-architecture-boundaries.ts` and ESLint local rules.
+- Protocol changes must update `server/src/types/protocol.ts`, the Apple mirrors in `clients/apple/OppiCore/Models/`, and `protocol/*.json` snapshots together, with tests on both sides; partial updates are invalid. See "Protocol boundary" in `docs/architecture-server.md` for the checklist.
 - Extension UI translation, dedupe, and rendering must stay extension-agnostic. Never branch on concrete tool, extension, status, widget, or display names in generic extension-surface code; add or consume semantic protocol metadata instead.
 - Keep durable repo-private working artifacts in `.internal/` (`reports/`, `research/`, `diagrams/`). Keep `.pi/` for runtime/session state and reusable local agent inputs such as todos, attachments, prompts, worktrees, and temporary caches. Reserve `docs/` for curated public docs.
 - Preserve unrelated changes from other sessions. If overlapping edits cannot be safely separated, stop and ask the user.
@@ -29,7 +31,7 @@ Oppi is an iPhone/iPad client and self-hosted server for [Pi](https://github.com
 ## Build and Test Rules
 
 - `Oppi.xcodeproj` is generated. Change `project.yml`, put plist keys under `info.properties`, and run `xcodegen generate`.
-- Always use `sim-pool.sh` for simulator builds and tests. Do not run bare `xcodebuild` unless you also set a unique `-derivedDataPath`.
+- Always use `sim-pool.sh` for simulator builds and tests. Do not run bare `xcodebuild` unless you also set a unique `-derivedDataPath`. The pool wrapper is a maintainer-local skill; when unavailable, the public fallback is a unique `-derivedDataPath` per `docs/testing/README.md`.
 - Do not pipe `sim-pool.sh` output through `grep`, `tail`, or `head`. Read the summary and inspect the printed log path.
 - Investigate Apple build failures or apparent hangs by reading the `sim-pool.sh` log path and checking for active `xcodebuild`/sim-pool processes before rerunning.
 - Use `-scheme OppiUnitTests` for `OppiTests`. The full `Oppi` scheme also builds UI, E2E, and perf bundles.
@@ -44,6 +46,7 @@ Oppi is an iPhone/iPad client and self-hosted server for [Pi](https://github.com
 # Server
 cd server && npm test
 cd server && npm run check
+cd server && npm run test:gate:pr-fast
 
 # Apple
 cd clients/apple && xcodegen generate

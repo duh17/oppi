@@ -24,7 +24,7 @@ From the Oppi repo root:
 ln -sfn "$PWD/pi-extensions/browser-automation-video" ~/.pi/agent/extensions/browser-automation-video
 ```
 
-Then enable `browser-automation-video` in the workspace extension allowlist. Oppi loads it through Pi's normal extension loader, filters it through the workspace allowlist, and renders the returned `details.media[]` video attachment.
+Pi auto-discovers extensions in `~/.pi/agent/extensions/`, so new Oppi sessions load `browser-automation-video` automatically; enable or disable it per workspace with the workspace editor's extension toggles, which write Pi resource settings. Oppi loads it through Pi's normal extension loader and renders the returned `details.media[]` video attachment.
 
 ## Example tool call
 

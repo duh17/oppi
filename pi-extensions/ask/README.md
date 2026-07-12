@@ -21,7 +21,7 @@ Install it like any other local Pi extension. From the Oppi repo root:
 ln -sfn "$PWD/pi-extensions/ask" ~/.pi/agent/extensions/ask
 ```
 
-Then enable `ask` in the workspace extension allowlist.
+Pi auto-discovers extensions in `~/.pi/agent/extensions/`, so new Oppi sessions load `ask` automatically. To enable or disable it per workspace, use the workspace editor's extension toggles, which write Pi resource settings for the workspace cwd.
 
 ## Example tool call
 
