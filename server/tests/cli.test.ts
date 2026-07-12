@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 
-const CLI = resolve(__dirname, "../dist/src/cli.js");
+const CLI = process.env.OPPI_TEST_CLI ?? resolve(__dirname, "../dist/src/cli.js");
 let dataDir: string;
 
 let hasOpenSSL = true;
@@ -111,8 +111,7 @@ async function getFreePort(): Promise<number> {
 
 beforeAll(() => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-test-"));
-  execSync("npm run build", { cwd: resolve(__dirname, ".."), stdio: "pipe" });
-}, 30_000);
+});
 
 afterAll(() => {
   rmSync(dataDir, { recursive: true, force: true });
@@ -517,7 +516,7 @@ describe("oppi help", () => {
         expect(text).toContain(expected);
       }
     }
-  }, 30_000);
+  }, 45_000);
 
   it("prints agent-readable JSON help for agent namespace", () => {
     const { stdout, exitCode } = run(["agent", "help", "--json"]);

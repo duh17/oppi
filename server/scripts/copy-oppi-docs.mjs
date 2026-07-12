@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(serverRoot, "..");
 const sourceDocs = join(repoRoot, "docs");
-const targetDocs = join(serverRoot, "dist", "docs", "oppi");
+const buildRoot = process.env.OPPI_BUILD_DIR
+  ? resolve(process.env.OPPI_BUILD_DIR)
+  : join(serverRoot, "dist");
+const targetDocs = join(buildRoot, "docs", "oppi");
 
 if (!existsSync(sourceDocs)) {
   console.warn(`Oppi docs source directory not found: ${sourceDocs}`);

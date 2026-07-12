@@ -3,6 +3,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     testTimeout: 10_000,
+    // Build the CLI once in an invocation-local directory so parallel test files or
+    // external release builds cannot mutate the executable and docs under test.
+    globalSetup: ["./vitest.global-setup.ts"],
     exclude: ["dist/**", "node_modules/**", "e2e/**"],
     coverage: {
       provider: "v8",
