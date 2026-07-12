@@ -593,12 +593,28 @@ describe("SdkBackend prompt templates", () => {
 });
 
 describe("SdkBackend.setModel", () => {
-  function makeSetModelHarness() {
+  type HarnessModel = {
+    provider: string;
+    id: string;
+    name: string;
+    contextWindow: number;
+    baseUrl?: string;
+  };
+
+  function makeSetModelHarness(options: { models?: HarnessModel[]; oauthIds?: string[]; enabledModels?: string[] } = {}) {
     const backend = Object.create(SdkBackend.prototype) as SdkBackend;
+    const models = options.models ?? [];
+    const oauthIds = new Set(options.oauthIds ?? []);
 
     const modelRegistry = {
       refresh: vi.fn(),
-      find: vi.fn(),
+      getAvailable: vi.fn(() => models),
+      getAll: vi.fn(() => models),
+      isUsingOAuth: vi.fn((model: HarnessModel) => oauthIds.has(`${model.provider}/${model.id}`)),
+    };
+
+    const settingsManager = {
+      getEnabledModels: vi.fn(() => options.enabledModels),
     };
 
     const piSession = {
@@ -617,6 +633,7 @@ describe("SdkBackend.setModel", () => {
       session: piSession,
       services: {
         modelRegistry,
+        settingsManager,
       },
     };
 
@@ -626,62 +643,67 @@ describe("SdkBackend.setModel", () => {
 
     mutableBackend.runtime = runtime;
 
-    return { backend, modelRegistry, piSession };
+    return { backend, modelRegistry, settingsManager, piSession };
   }
 
-  it("rejects invalid model IDs", async () => {
-    const { backend, modelRegistry, piSession } = makeSetModelHarness();
+  it("rejects blank model IDs", async () => {
+    const { backend, piSession } = makeSetModelHarness();
 
-    const result = await backend.setModel("claude-sonnet-4-5");
+    const result = await backend.setModel("   ");
 
-    expect(result).toEqual({ success: false, error: "Invalid model ID: claude-sonnet-4-5" });
-    expect(modelRegistry.find).not.toHaveBeenCalled();
+    expect(result).toEqual({ success: false, error: "Model cannot be empty." });
     expect(piSession.setModel).not.toHaveBeenCalled();
   });
 
-  it("returns unknown model instead of throwing on missing provider/model", async () => {
-    const { backend, modelRegistry, piSession } = makeSetModelHarness();
-    modelRegistry.find.mockReturnValue(undefined);
+  it("returns available models instead of throwing on missing provider/model", async () => {
+    const model = {
+      provider: "studio",
+      id: "qwen3-coder",
+      name: "Qwen3 Coder",
+      contextWindow: 262_144,
+    };
+    const { backend, piSession } = makeSetModelHarness({ models: [model] });
 
-    const result = await backend.setModel("studio/qwen3-coder");
+    const result = await backend.setModel("studio/nope");
 
-    expect(result).toEqual({ success: false, error: "Unknown model: studio/qwen3-coder" });
-    expect(modelRegistry.find).toHaveBeenCalledWith("studio", "qwen3-coder");
+    expect(result).toEqual({
+      success: false,
+      error: "Model \"studio/nope\" is not available. Available models: studio/qwen3-coder",
+    });
     expect(piSession.setModel).not.toHaveBeenCalled();
   });
 
   it("refreshes the runtime model registry before resolving a requested model", async () => {
-    const { backend, modelRegistry, piSession } = makeSetModelHarness();
     const model = {
       provider: "omlx",
       id: "gemma-4-31b-bf16",
       name: "Gemma 4 31B",
+      contextWindow: 262_144,
     };
-    modelRegistry.find.mockReturnValue(model);
+    const { backend, modelRegistry, piSession } = makeSetModelHarness({ models: [model] });
     piSession.model = model;
 
     await backend.setModel("omlx/gemma-4-31b-bf16");
 
     expect(modelRegistry.refresh).toHaveBeenCalledTimes(1);
-    expect(modelRegistry.find).toHaveBeenCalledWith("omlx", "gemma-4-31b-bf16");
+    expect(modelRegistry.getAvailable).toHaveBeenCalled();
     expect(modelRegistry.refresh.mock.invocationCallOrder[0]).toBeLessThan(
-      modelRegistry.find.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+      modelRegistry.getAvailable.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
   });
 
-  it("sets models resolved from ModelRegistry (including custom providers)", async () => {
-    const { backend, modelRegistry, piSession } = makeSetModelHarness();
+  it("sets exact models resolved from ModelRegistry (including custom providers)", async () => {
     const model = {
       provider: "studio",
       id: "qwen3-coder",
       name: "Qwen3 Coder",
+      contextWindow: 262_144,
     };
-    modelRegistry.find.mockReturnValue(model);
+    const { backend, piSession } = makeSetModelHarness({ models: [model] });
     piSession.model = model;
 
     const result = await backend.setModel("studio/qwen3-coder");
 
-    expect(modelRegistry.find).toHaveBeenCalledWith("studio", "qwen3-coder");
     expect(piSession.setModel).toHaveBeenCalledWith(model);
     expect(result).toEqual({
       success: true,
@@ -690,6 +712,63 @@ describe("SdkBackend.setModel", () => {
       name: "Qwen3 Coder",
       thinkingLevel: "medium",
     });
+  });
+
+  it("fuzzy-matches model names and prefers subscription-backed providers", async () => {
+    const apiKeyModel = {
+      provider: "openrouter",
+      id: "anthropic/claude-sonnet-4-20250514",
+      name: "Claude Sonnet 4 via OpenRouter",
+      contextWindow: 200_000,
+    };
+    const subscriptionModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-20250514",
+      name: "Claude Sonnet 4",
+      contextWindow: 200_000,
+    };
+    const { backend, piSession } = makeSetModelHarness({
+      models: [apiKeyModel, subscriptionModel],
+      oauthIds: ["anthropic/claude-sonnet-4-20250514"],
+    });
+    piSession.model = subscriptionModel;
+
+    const result = await backend.setModel("sonet");
+
+    expect(piSession.setModel).toHaveBeenCalledWith(subscriptionModel);
+    expect(result).toMatchObject({
+      success: true,
+      provider: "anthropic",
+      id: "claude-sonnet-4-20250514",
+    });
+  });
+
+  it("limits set_model fuzzy matching to Pi enabledModels", async () => {
+    const sonnet = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-20250514",
+      name: "Claude Sonnet 4",
+      contextWindow: 200_000,
+    };
+    const gpt = {
+      provider: "openai",
+      id: "gpt-5.3-codex",
+      name: "GPT-5.3 Codex",
+      contextWindow: 272_000,
+    };
+    const { backend, piSession } = makeSetModelHarness({
+      models: [sonnet, gpt],
+      enabledModels: ["anthropic/*"],
+    });
+
+    const result = await backend.setModel("gpt");
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        "Model \"gpt\" is not available. Available models: anthropic/claude-sonnet-4-20250514",
+    });
+    expect(piSession.setModel).not.toHaveBeenCalled();
   });
 });
 

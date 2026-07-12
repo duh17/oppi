@@ -23,6 +23,8 @@ New Oppi-created chat sessions resolve their initial model in one shared helper,
 
 Model IDs stored in Oppi workspace defaults should use canonical `provider/model-id` form, such as `ds4/deepseek-v4-flash`.
 
+The Oppi CLI resolves `--model` for `session create` and new-session `schedule create` through the server `/models` catalog before it submits the request. That catalog is filtered by Pi `enabledModels`, accepts fuzzy text such as `sonnet`, prefers subscription/OAuth-backed matches over API-key matches, and sends the canonical `provider/model-id` to the server. If no match is found, the CLI error includes the exact available model IDs so an agent can retry with a valid value.
+
 ## Flow notes
 
 - Workspace “New Session” uses an explicit request model, then the workspace default, then Pi settings.

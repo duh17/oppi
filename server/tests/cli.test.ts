@@ -682,6 +682,31 @@ describe("oppi local API commands", () => {
           json({ workspace: { id: "ws-1", name: "Oppi", hostMount: workspaceRoot } });
           return;
         }
+        if (method === "GET" && url.pathname === "/models") {
+          json({
+            models: [
+              {
+                id: "openrouter/anthropic/claude-sonnet-4-20250514",
+                name: "Claude Sonnet 4 via OpenRouter",
+                provider: "openrouter",
+                authKind: "apiKey",
+              },
+              {
+                id: "anthropic/claude-sonnet-4-20250514",
+                name: "Claude Sonnet 4",
+                provider: "anthropic",
+                authKind: "subscription",
+              },
+              {
+                id: "openai/gpt-5.3-codex",
+                name: "GPT-5.3 Codex",
+                provider: "openai",
+                authKind: "apiKey",
+              },
+            ],
+          });
+          return;
+        }
         if (method === "POST" && url.pathname === "/workspaces") {
           json({
             workspace: {
@@ -839,6 +864,18 @@ describe("oppi local API commands", () => {
                 piSessionId: "pi-1",
               },
             ],
+          });
+          return;
+        }
+        if (method === "POST" && url.pathname === "/workspaces/ws-1/sessions") {
+          json({
+            session: {
+              id: "sess-created",
+              workspaceId: "ws-1",
+              status: "ready",
+              model: body?.model,
+            },
+            prompted: true,
           });
           return;
         }
@@ -1264,6 +1301,20 @@ describe("oppi local API commands", () => {
         },
         { args: ["session", "get", "sess-1", "--json"], expected: ["GET /sessions/sess-1"] },
         {
+          args: [
+            "session",
+            "create",
+            "--workspace",
+            "ws-1",
+            "--prompt",
+            "hello from model fuzz",
+            "--model",
+            "sonet",
+            "--json",
+          ],
+          expected: ["GET /workspaces/ws-1", "GET /models", "POST /workspaces/ws-1/sessions"],
+        },
+        {
           args: ["session", "read", "sess-1", "--tail", "1", "--json"],
           expected: ["GET /sessions/sess-1/read?tail=1"],
         },
@@ -1411,6 +1462,22 @@ describe("oppi local API commands", () => {
           expected: ["GET /workspaces/ws-1", "POST /schedules"],
         },
         {
+          args: [
+            "schedule",
+            "create",
+            "--workspace",
+            "ws-1",
+            "--prompt",
+            "gpt daily check",
+            "--every",
+            "1d",
+            "--model",
+            "gpt codex",
+            "--json",
+          ],
+          expected: ["GET /workspaces/ws-1", "GET /models", "POST /schedules"],
+        },
+        {
           args: ["schedule", "list", "--agent", "agent-1", "--json"],
           expected: ["GET /schedules?agentId=agent-1"],
         },
@@ -1444,6 +1511,39 @@ describe("oppi local API commands", () => {
           expect(seen, testCase.args.join(" ")).toEqual(testCase.expected);
         }
       }
+
+      const beforeBadModel = requests.length;
+      const badModel = await runAsync(
+        [
+          "session",
+          "create",
+          "--workspace",
+          "ws-1",
+          "--prompt",
+          "hello",
+          "--model",
+          "not-a-model",
+          "--json",
+        ],
+        { OPPI_DATA_DIR: cliDir },
+      );
+      expect(badModel.exitCode).toBe(1);
+      expect(JSON.parse(badModel.stdout)).toEqual({
+        ok: false,
+        error: {
+          message:
+            'Model "not-a-model" is not available. Available models: openrouter/anthropic/claude-sonnet-4-20250514, anthropic/claude-sonnet-4-20250514, openai/gpt-5.3-codex',
+          available_models: [
+            "openrouter/anthropic/claude-sonnet-4-20250514",
+            "anthropic/claude-sonnet-4-20250514",
+            "openai/gpt-5.3-codex",
+          ],
+        },
+      });
+      const badModelSeen = requests
+        .slice(beforeBadModel)
+        .map((request) => `${request.method} ${request.path}`);
+      expect(badModelSeen).toEqual(["GET /workspaces/ws-1", "GET /models"]);
 
       const beforeInferredSearch = requests.length;
       const inferredSearch = await runAsync(
@@ -1637,6 +1737,13 @@ describe("oppi local API commands", () => {
         name: "Updated Oppi",
         defaultModel: "updated-model",
       });
+      const sessionCreateRequest = requests.find(
+        (request) => request.method === "POST" && request.path === "/workspaces/ws-1/sessions",
+      );
+      expect(sessionCreateRequest?.body).toMatchObject({
+        prompt: "hello from model fuzz",
+        model: "anthropic/claude-sonnet-4-20250514",
+      });
       const forkRequest = requests.find(
         (request) =>
           request.method === "POST" && request.path === "/workspaces/ws-1/sessions/sess-1/fork",
@@ -1697,6 +1804,15 @@ describe("oppi local API commands", () => {
           workspaceId: "ws-1",
           agentId: "agent-1",
           prompt: "agent daily check",
+        },
+      });
+      expect(scheduleCreateRequests[2]?.body).toMatchObject({
+        trigger: { type: "every", intervalMs: 86_400_000 },
+        action: {
+          type: "new_session",
+          workspaceId: "ws-1",
+          prompt: "gpt daily check",
+          model: "openai/gpt-5.3-codex",
         },
       });
       const updateRequest = requests.find(

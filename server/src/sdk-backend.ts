@@ -37,6 +37,11 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { AgentDefinition } from "./agent-launch-service.js";
 import { isDefaultAgentId } from "./default-agent.js";
+import {
+  modelCandidatesFromRegistry,
+  modelUnavailableMessage,
+  resolveModelRequest,
+} from "./model-resolution.js";
 import { createDefaultAgentExtensionFactory } from "./default-agent-tool.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
@@ -87,23 +92,13 @@ function normalizeThinkingLevel(level: string | undefined): PiThinkingLevel | un
   }
 }
 
-/** Parse an oppi model string like "anthropic/claude-sonnet-4-20250514" into { provider, model }. */
-function parseModelId(modelId: string): { provider: string; model: string } | null {
-  const slash = modelId.indexOf("/");
-  if (slash <= 0) return null;
-  return { provider: modelId.substring(0, slash), model: modelId.substring(slash + 1) };
-}
-
 function resolveRegistryModel(
-  modelRegistry: Pick<ModelRegistry, "find">,
+  modelRegistry: ModelRegistry,
   modelId: string,
+  enabledModels?: string[],
 ): ReturnType<ModelRegistry["find"]> {
-  const parsed = parseModelId(modelId);
-  if (!parsed) {
-    return undefined;
-  }
-
-  return modelRegistry.find(parsed.provider, parsed.model);
+  const candidates = modelCandidatesFromRegistry(modelRegistry, enabledModels);
+  return resolveModelRequest(modelId, candidates)?.candidate.model;
 }
 
 /**
@@ -433,7 +428,7 @@ export class SdkBackend {
       const shouldSeedFromSessionState = !sessionStartEvent;
       const model =
         shouldSeedFromSessionState && session.model
-          ? resolveRegistryModel(modelRegistry, session.model)
+          ? resolveRegistryModel(modelRegistry, session.model, settingsManager.getEnabledModels())
           : undefined;
       if (shouldSeedFromSessionState && session.model && !model) {
         log.warn("sdk.model_resolve_defaulted", {
@@ -902,19 +897,18 @@ export class SdkBackend {
     thinkingLevel?: string;
     error?: string;
   }> {
-    const parsed = parseModelId(modelId);
-    if (!parsed) {
-      return { success: false, error: `Invalid model ID: ${modelId}` };
-    }
-
     this.modelRegistry.refresh();
-    const model = this.modelRegistry.find(parsed.provider, parsed.model);
-    if (!model) {
-      return { success: false, error: `Unknown model: ${modelId}` };
+    const candidates = modelCandidatesFromRegistry(
+      this.modelRegistry,
+      this.runtime.services.settingsManager.getEnabledModels(),
+    );
+    const resolution = resolveModelRequest(modelId, candidates);
+    if (!resolution) {
+      return { success: false, error: modelUnavailableMessage(modelId, candidates) };
     }
 
     try {
-      await this.piSession.setModel(model);
+      await this.piSession.setModel(resolution.candidate.model);
 
       const activeModel = this.piSession.model;
       return {

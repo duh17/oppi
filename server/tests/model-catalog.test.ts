@@ -14,11 +14,17 @@ type TestModel = {
   baseUrl?: string;
 };
 
-function makeRegistry(available: TestModel[] = [], all?: TestModel[]): ModelRegistry {
+function makeRegistry(
+  available: TestModel[] = [],
+  all?: TestModel[],
+  oauthModelIds: string[] = [],
+): ModelRegistry {
+  const oauth = new Set(oauthModelIds);
   return {
     refresh: vi.fn(),
     getAvailable: vi.fn(() => available),
     getAll: vi.fn(() => all ?? available),
+    isUsingOAuth: vi.fn((model: TestModel) => oauth.has(`${model.provider}/${model.id}`)),
   } as unknown as ModelRegistry;
 }
 
@@ -173,6 +179,25 @@ describe("ModelCatalog", () => {
       catalog.refresh();
 
       expect(catalog.getAll()[0].name).toBe("claude-sonnet-4-20250514");
+    });
+
+    it("marks OAuth-backed models as subscription auth", () => {
+      const catalog = new ModelCatalog(
+        makeRegistry([SONNET, GPT], undefined, ["anthropic/claude-sonnet-4-20250514"]),
+        makeStorage(),
+      );
+
+      catalog.refresh();
+
+      expect(catalog.getAll()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "anthropic/claude-sonnet-4-20250514",
+            authKind: "subscription",
+          }),
+          expect.objectContaining({ id: "openai/gpt-5.3-codex", authKind: "apiKey" }),
+        ]),
+      );
     });
   });
 

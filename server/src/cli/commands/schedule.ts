@@ -16,6 +16,12 @@ import {
   printNextCommands,
   writeJsonEnvelope,
 } from "../output.js";
+import {
+  isCliModelResolutionError,
+  modelResolutionErrorEnvelope,
+  printModelResolutionError,
+  resolveModelFlagForCli,
+} from "../model-resolution.js";
 import { apiStatus, resolveWorkspaceIdForCli } from "../resources.js";
 
 function parseDurationMs(value: string): number {
@@ -64,12 +70,13 @@ async function newSessionAction(
   if (!workspaceRef) throw new Error("--workspace or --session is required");
   const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef, hostResolvers);
   const agentId = savedAgentReference(flags.agent);
+  const resolvedModel = await resolveModelFlagForCli(storage, flags.model, hostResolvers);
   return {
     type: "new_session",
     workspaceId,
     prompt,
     ...(agentId ? { agentId } : {}),
-    ...(flags.model ? { model: flags.model } : {}),
+    ...(resolvedModel ? { model: resolvedModel } : {}),
     ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
     ...(flags.name ? { name: flags.name } : {}),
   };
@@ -282,11 +289,20 @@ export async function cmdSchedule(
     const status = apiStatus(err);
     const message = err instanceof Error ? err.message : String(err);
     if (jsonOutput) {
-      writeJsonEnvelope({ ok: false, error: { message, ...(status ? { status } : {}) } });
+      writeJsonEnvelope({
+        ok: false,
+        error: isCliModelResolutionError(err)
+          ? modelResolutionErrorEnvelope(err)
+          : { message, ...(status ? { status } : {}) },
+      });
       process.exitCode = 1;
       return;
     }
-    console.log(c.red(`  Error: ${message}`));
+    if (isCliModelResolutionError(err)) {
+      printModelResolutionError(err);
+    } else {
+      console.log(c.red(`  Error: ${message}`));
+    }
     process.exit(1);
   }
 }

@@ -756,7 +756,11 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--cron", value: "<expr>", summary: "cron expression for repeated runs" },
       { name: "--tz", value: "<zone>", summary: "IANA time zone; defaults to the local zone" },
       { name: "--name", value: "<text>", summary: "schedule and launched-session name" },
-      { name: "--model", value: "<model>", summary: "model override for launched sessions" },
+      {
+        name: "--model",
+        value: "<model>",
+        summary: "model override; fuzzy-matched against enabled Pi models",
+      },
       {
         name: "--agent",
         value: "<agent>",
@@ -771,6 +775,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "Use --agent only with --workspace; existing-session schedules send prompts to the selected session.",
       "Run history is available with 'oppi schedule runs <id>'.",
       "Manual runs are idempotent when you reuse 'oppi schedule run <id> --request-id <key>'; automatic runs use their schedule slot as the idempotency key.",
+      "--model accepts exact provider/model IDs or fuzzy text like sonnet; it resolves against /models, which is filtered by Pi enabledModels.",
     ],
     examples: [
       {
@@ -1411,7 +1416,11 @@ const HELP_TOPICS: HelpTopic[] = [
         required: true,
       },
       { name: "--name", value: "<text>", summary: "session name" },
-      { name: "--model", value: "<model>", summary: "model override" },
+      {
+        name: "--model",
+        value: "<model>",
+        summary: "model override; fuzzy-matched against enabled Pi models",
+      },
       { name: "--thinking", value: "<level>", summary: "thinking level override" },
       { name: "--worktree", value: "<id>", summary: "workspace worktree id" },
       {
@@ -1430,6 +1439,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "JSON output is compact and returns the launch id as data.session_id.",
       "With --idempotency-key, retrying the same create request reuses the existing launch instead of creating a duplicate session.",
       "If another launcher still owns the active lease for that key, the server can report launch_in_progress; retry with the same key.",
+      "--model accepts exact provider/model IDs or fuzzy text like sonnet; it resolves against /models, which is filtered by Pi enabledModels.",
     ],
     examples: [
       {

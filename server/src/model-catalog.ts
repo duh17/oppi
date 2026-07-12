@@ -11,6 +11,11 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Storage } from "./storage.js";
 import type { Session } from "./types.js";
 import { createLogger } from "./logger.js";
+import {
+  modelCandidatesFromRegistry,
+  type ModelAuthKind,
+  type ModelResolutionCandidate,
+} from "./model-resolution.js";
 
 // ─── Types ───
 
@@ -21,15 +26,8 @@ export interface ModelInfo {
   name: string;
   provider: string;
   contextWindow?: number;
+  authKind?: ModelAuthKind;
 }
-
-type SdkModelInfo = {
-  id: string;
-  name: string;
-  provider: string;
-  contextWindow: number;
-  baseUrl?: string;
-};
 
 type ModelAllowlist = string[] | (() => string[] | undefined);
 
@@ -40,71 +38,14 @@ function normalizeModelToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/**
- * Map SDK Model objects to the simplified ModelInfo shape for REST responses.
- * Deduplicates by canonical `provider/modelId`.
- */
-function sdkModelsToModelInfo(sdkModels: SdkModelInfo[]): ModelInfo[] {
-  const seen = new Set<string>();
-  const result: ModelInfo[] = [];
-  for (const m of sdkModels) {
-    const id = `${m.provider}/${m.id}`;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    result.push({
-      id,
-      name: m.name || m.id,
-      provider: m.provider,
-      contextWindow: m.contextWindow || 200000,
-    });
-  }
-  return result;
-}
-
-function isLocalModel(model: SdkModelInfo): boolean {
-  if (!model.baseUrl) return false;
-
-  try {
-    const hostname = new URL(model.baseUrl).hostname.toLowerCase();
-    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-  } catch {
-    return false;
-  }
-}
-
-function stripThinkingLevel(pattern: string): string {
-  const colonIndex = pattern.lastIndexOf(":");
-  if (colonIndex === -1) return pattern;
-  const suffix = pattern.substring(colonIndex + 1);
-  return ["off", "minimal", "low", "medium", "high", "xhigh"].includes(suffix)
-    ? pattern.substring(0, colonIndex)
-    : pattern;
-}
-
-function globToRegExp(pattern: string): RegExp {
-  let source = "^";
-  for (const char of pattern) {
-    if (char === "*") {
-      source += ".*";
-    } else if (char === "?") {
-      source += ".";
-    } else {
-      source += char.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
-    }
-  }
-  return new RegExp(`${source}$`, "i");
-}
-
-function modelMatchesPattern(model: ModelInfo, rawPattern: string): boolean {
-  const pattern = stripThinkingLevel(rawPattern.trim());
-  if (!pattern) return false;
-  const modelId = model.id.substring(model.id.indexOf("/") + 1);
-  const hasGlob = /[*?[]/.test(pattern);
-  if (hasGlob) {
-    const regex = globToRegExp(pattern);
-    return regex.test(model.id) || regex.test(modelId);
-  }
-  return model.id === pattern || modelId === pattern;
+function candidateToModelInfo(candidate: ModelResolutionCandidate): ModelInfo {
+  return {
+    id: candidate.canonicalId,
+    name: candidate.name,
+    provider: candidate.provider,
+    contextWindow: candidate.contextWindow || 200000,
+    ...(candidate.authKind ? { authKind: candidate.authKind } : {}),
+  };
 }
 
 // ─── ModelCatalog ───
@@ -126,18 +67,9 @@ export class ModelCatalog {
   refresh(): void {
     try {
       this.registry.refresh();
-      const available = this.registry.getAvailable() as SdkModelInfo[];
-      const availableIds = new Set(available.map((model) => `${model.provider}/${model.id}`));
-      const localModels = (this.registry.getAll() as SdkModelInfo[]).filter(
-        (model) => isLocalModel(model) && !availableIds.has(`${model.provider}/${model.id}`),
+      this.catalog = modelCandidatesFromRegistry(this.registry, this.getAllowlist()).map(
+        candidateToModelInfo,
       );
-      const allModels = sdkModelsToModelInfo([...available, ...localModels]);
-      const allowlist = this.getAllowlist();
-      this.catalog = allowlist?.length
-        ? allModels.filter((model) =>
-            allowlist.some((pattern) => modelMatchesPattern(model, pattern)),
-          )
-        : allModels;
       this.updatedAt = Date.now();
 
       if (this.catalog.length > 0) {
