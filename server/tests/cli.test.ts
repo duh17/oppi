@@ -1315,6 +1315,18 @@ describe("oppi local API commands", () => {
           expected: ["GET /workspaces/ws-1", "GET /models", "POST /workspaces/ws-1/sessions"],
         },
         {
+          args: [
+            "session",
+            "start",
+            "--workspace",
+            "ws-1",
+            "--prompt",
+            "hello from start alias",
+            "--json",
+          ],
+          expected: ["GET /workspaces/ws-1", "POST /workspaces/ws-1/sessions"],
+        },
+        {
           args: ["session", "read", "sess-1", "--tail", "1", "--json"],
           expected: ["GET /sessions/sess-1/read?tail=1"],
         },
@@ -1358,6 +1370,10 @@ describe("oppi local API commands", () => {
           expected: ["GET /sessions/sess-1/trace"],
         },
         {
+          args: ["session", "inspect", "sess-1", "--turn", "1", "--view", "messages", "--json"],
+          expected: ["GET /sessions/sess-1/trace"],
+        },
+        {
           args: ["session", "inspect", "sess-1", "--view", "response", "--json"],
           expected: ["GET /sessions/sess-1/trace?include=messages"],
           exact: true,
@@ -1390,6 +1406,13 @@ describe("oppi local API commands", () => {
         },
         {
           args: ["session", "diff", "sess-1", "--path", "server/src/cli.ts", "--json"],
+          expected: [
+            "GET /sessions/sess-1",
+            "GET /workspaces/ws-1/sessions/sess-1/diff?path=server%2Fsrc%2Fcli.ts",
+          ],
+        },
+        {
+          args: ["session", "diff", "sess-1", "--json", "--", "server/src/cli.ts"],
           expected: [
             "GET /sessions/sess-1",
             "GET /workspaces/ws-1/sessions/sess-1/diff?path=server%2Fsrc%2Fcli.ts",
@@ -1495,6 +1518,7 @@ describe("oppi local API commands", () => {
         const before = requests.length;
         const { stdout, exitCode } = await runAsync(testCase.args, { OPPI_DATA_DIR: cliDir });
         expect(exitCode, testCase.args.join(" ")).toBe(0);
+        expect(stdout, testCase.args.join(" ")).not.toBe("");
         expect(JSON.parse(stdout), testCase.args.join(" ")).toMatchObject({ ok: true });
         const seen = requests.slice(before).map((request) => `${request.method} ${request.path}`);
         for (const expected of testCase.expected) {

@@ -9,15 +9,22 @@ export function parseCliArgs(args: string[]): ParsedCliArgs {
   const flags: Record<string, string> = {};
   const positional: string[] = [];
 
+  let parseFlags = true;
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
     if (!arg) continue;
-    if (arg === "-h") {
+    if (parseFlags && arg === "--") {
+      parseFlags = false;
+    } else if (parseFlags && arg === "-h") {
+      if (Object.hasOwn(flags, "help")) throw new Error("Duplicate flag: --help");
       flags.help = "true";
-    } else if (arg.startsWith("--")) {
+    } else if (parseFlags && arg.startsWith("--")) {
       const key = arg.slice(2);
+      if (!key) throw new Error("Flag name cannot be empty");
+      if (Object.hasOwn(flags, key)) throw new Error(`Duplicate flag: --${key}`);
       const next = args[i + 1];
-      const value = next && !next.startsWith("--") ? (args[++i] ?? "true") : "true";
+      const value =
+        next && next !== "--" && !next.startsWith("--") ? (args[++i] ?? "true") : "true";
       flags[key] = value;
     } else {
       positional.push(arg);
