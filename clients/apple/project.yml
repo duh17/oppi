@@ -172,7 +172,7 @@ targets:
             swiftlint lint --config "$SRCROOT/.swiftlint.yml" --quiet
             touch "$STAMP_FILE"
           else
-            echo "warning: SwiftLint not installed — brew install swiftlint"
+            echo "note: SwiftLint not installed — skipping lint (brew install swiftlint)"
             touch "$STAMP_FILE"
           fi
         name: SwiftLint
@@ -218,7 +218,7 @@ targets:
             bun "$CHECK_SCRIPT" --scope ios --format xcode
             touch "$STAMP_FILE"
           else
-            echo "warning: Bun is unavailable — skipping architecture boundary checks (run server npm test in CI to enforce them)"
+            echo "note: Bun is unavailable — skipping architecture boundary checks (run server npm test in CI to enforce them)"
             touch "$STAMP_FILE"
           fi
         name: ArchitectureBoundaries
