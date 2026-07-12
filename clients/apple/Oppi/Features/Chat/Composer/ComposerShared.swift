@@ -13,6 +13,9 @@ import UniformTypeIdentifiers
 enum ComposerShared {
     private static let attachmentThumbnailSize: CGFloat = 56
     private static let attachmentTileSize: CGFloat = 64
+    /// Picker UX limit only. Server-side chat attachments are constrained by byte budgets,
+    /// not by a small fixed image count, so keep this comfortably above the old 5-item cap.
+    static let maxPhotoSelectionCount = 10
 
     enum VoiceInputOwner: String, Sendable {
         case inlineComposer = "inline_mic_tap"

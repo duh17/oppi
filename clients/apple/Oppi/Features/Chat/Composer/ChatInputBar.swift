@@ -538,7 +538,7 @@ struct ChatInputBar<ActionRow: View>: View {
         .photosPicker(
             isPresented: $showPhotoPicker,
             selection: $photoSelection,
-            maxSelectionCount: 5,
+            maxSelectionCount: ComposerShared.maxPhotoSelectionCount,
             matching: .images,
             preferredItemEncoding: .current
         )
