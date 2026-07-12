@@ -994,6 +994,10 @@ struct WorkspaceSessionInboxStackRootView: View {
     @GestureState private var sidebarDrag = WorkspaceSidebarDragState()
 
     private static let edgePanWidth: CGFloat = 32
+    private static let foregroundCornerRadius: CGFloat = 40
+    private static let foregroundShadowOpacity = 0.14
+    private static let foregroundShadowRadius: CGFloat = 22
+    private static let foregroundShadowOffsetX: CGFloat = -5
 
     var body: some View {
         @Bindable var nav = navigation
@@ -1030,6 +1034,17 @@ struct WorkspaceSessionInboxStackRootView: View {
                     }
                 }
                 .background(Color.themeBg)
+                .clipShape(
+                    RoundedRectangle(
+                        cornerRadius: Self.foregroundCornerRadius * sidebarProgress,
+                        style: .continuous
+                    )
+                )
+                .shadow(
+                    color: .black.opacity(Self.foregroundShadowOpacity * Double(sidebarProgress)),
+                    radius: Self.foregroundShadowRadius * sidebarProgress,
+                    x: Self.foregroundShadowOffsetX * sidebarProgress
+                )
                 .offset(x: sidebarOffset)
                 .accessibilityHidden(isSidebarPresented)
                 .simultaneousGesture(
