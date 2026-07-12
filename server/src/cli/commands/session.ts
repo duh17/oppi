@@ -19,6 +19,12 @@ import {
   inferWorkspaceIdFromCwdForCli,
   resolveWorkspaceIdForCli,
 } from "../resources.js";
+import {
+  isCliModelResolutionError,
+  modelResolutionErrorEnvelope,
+  printModelResolutionError,
+  resolveModelFlagForCli,
+} from "../model-resolution.js";
 import { parseDurationMs } from "./wait.js";
 
 type SessionTraceEvent = {
@@ -526,11 +532,20 @@ export async function cmdSession(
     const status = apiStatus(err);
     const message = err instanceof Error ? err.message : String(err);
     if (jsonOutput) {
-      writeJsonEnvelope({ ok: false, error: { message, ...(status ? { status } : {}) } });
+      writeJsonEnvelope({
+        ok: false,
+        error: isCliModelResolutionError(err)
+          ? modelResolutionErrorEnvelope(err)
+          : { message, ...(status ? { status } : {}) },
+      });
       process.exitCode = 1;
       return;
     }
-    console.log(c.red(`  Error: ${message}`));
+    if (isCliModelResolutionError(err)) {
+      printModelResolutionError(err);
+    } else {
+      console.log(c.red(`  Error: ${message}`));
+    }
     process.exit(1);
   }
 }
@@ -554,6 +569,7 @@ async function createSession(
     return;
   }
   const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef, hostResolvers);
+  const resolvedModel = await resolveModelFlagForCli(storage, flags.model, hostResolvers);
   const savedAgent = savedAgentReference(flags.agent);
   const result = savedAgent
     ? await localApiRequest<{ session: Session; receipt?: Record<string, unknown> }>(
@@ -568,10 +584,10 @@ async function createSession(
               ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
             },
             ...(flags.name ? { sessionName: flags.name } : {}),
-            ...(flags.model || flags.thinking
+            ...(resolvedModel || flags.thinking
               ? {
                   overrides: {
-                    ...(flags.model ? { model: flags.model } : {}),
+                    ...(resolvedModel ? { model: resolvedModel } : {}),
                     ...(flags.thinking ? { thinkingLevel: flags.thinking } : {}),
                   },
                 }
@@ -589,7 +605,7 @@ async function createSession(
           body: {
             prompt: promptText,
             ...(flags.name ? { name: flags.name } : {}),
-            ...(flags.model ? { model: flags.model } : {}),
+            ...(resolvedModel ? { model: resolvedModel } : {}),
             ...(flags.thinking ? { thinking: flags.thinking } : {}),
             ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
             ...(flags["idempotency-key"] ? { launchIdempotencyKey: flags["idempotency-key"] } : {}),
