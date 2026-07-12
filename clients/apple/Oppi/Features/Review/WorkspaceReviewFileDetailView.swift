@@ -395,7 +395,10 @@ struct WorkspaceReviewFileDetailView: View {
             )
             sessionStore.upsert(response.session)
             launchError = nil
-            navigateToQuickAction = QuickActionSessionNavDestination.empty(sessionId: response.session.id)
+            navigateToQuickAction = QuickActionSessionNavDestination.attaching(
+                sessionId: response.session.id,
+                filePath: currentFile.path
+            )
         } catch {
             launchError = error.localizedDescription
         }

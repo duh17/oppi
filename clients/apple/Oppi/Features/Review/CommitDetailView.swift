@@ -372,7 +372,10 @@ struct CommitDetailView: View {
             let response = try await api.createWorkspaceSession(workspaceId: workspaceId)
             sessionStore.upsert(response.session)
             launchError = nil
-            navigateToQuickAction = QuickActionSessionNavDestination.empty(sessionId: response.session.id)
+            navigateToQuickAction = QuickActionSessionNavDestination.attaching(
+                sessionId: response.session.id,
+                filePaths: detail?.files.map(\.path) ?? []
+            )
         } catch {
             launchError = error.localizedDescription
         }

@@ -102,6 +102,14 @@ extension QuickActionSessionNavDestination {
     static func empty(sessionId: String) -> Self {
         Self(id: sessionId, inputText: "", filePaths: [], fileDisplayPrefix: "")
     }
+
+    static func attaching(sessionId: String, filePath: String) -> Self {
+        attaching(sessionId: sessionId, filePaths: [filePath])
+    }
+
+    static func attaching(sessionId: String, filePaths: [String]) -> Self {
+        Self(id: sessionId, inputText: "", filePaths: filePaths, fileDisplayPrefix: "")
+    }
 }
 
 // MARK: - Review Comments
