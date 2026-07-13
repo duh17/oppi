@@ -195,6 +195,24 @@ struct SessionStreamCoordinatorConsumeSeqTests {
         let consumed = coordinator.consumeLiveSeq(sessionId: "s1", seq: 5)
         #expect(consumed, "After regression, seq 5 should be accepted (above new baseline 3)")
     }
+
+    @Test func duplicateAndOutOfOrderSequencesAcceptOnlyMonotonicFrontier() {
+        let scenarios: [(name: String, input: [Int], accepted: [Int], final: Int)] = [
+            ("duplicates", [1, 1, 2, 2, 3], [1, 2, 3], 3),
+            ("out of order", [4, 2, 5, 3, 6], [4, 5, 6], 6),
+            ("gaps then stale", [2, 10, 7, 10, 11], [2, 10, 11], 11),
+        ]
+
+        for scenario in scenarios {
+            let coordinator = SessionStreamCoordinator()
+            let accepted = scenario.input.filter {
+                coordinator.consumeLiveSeq(sessionId: scenario.name, seq: $0)
+            }
+
+            #expect(accepted == scenario.accepted, "\(scenario.name): accepted frontier")
+            #expect(coordinator.lastSeenSeq(sessionId: scenario.name) == scenario.final)
+        }
+    }
 }
 
 // MARK: - Seq State Management
@@ -313,6 +331,56 @@ struct SSCStateMachineTests {
         coordinator.noteStreamDisconnected()
 
         #expect(coordinator.state == .idle)
+    }
+
+    @Test func staleContinuationTerminationCannotRemoveReplacementForSameSession() async throws {
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        connection.wsClient?._setStatusForTesting(.connected)
+        connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
+        connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        connection._sendMessageForTesting = { _ in }
+        let coordinator = connection.sessionStreamCoordinator
+
+        let firstStream = try #require(await coordinator.streamSession(
+            connection: connection,
+            sessionId: "s1",
+            workspaceId: "w1"
+        ))
+        let firstConsumer = Task {
+            for await _ in firstStream {}
+        }
+        let secondStream = try #require(await coordinator.streamSession(
+            connection: connection,
+            sessionId: "s1",
+            workspaceId: "w1"
+        ))
+        var replacementEvents: [SessionStreamEvent] = []
+        let secondConsumer = Task { @MainActor in
+            for await event in secondStream {
+                replacementEvents.append(event)
+            }
+        }
+
+        firstConsumer.cancel()
+        await firstConsumer.value
+        for _ in 0..<5 { await Task.yield() }
+
+        connection.routeStreamMessage(StreamMessage(
+            sessionId: "s1",
+            seq: 1,
+            currentSeq: 1,
+            message: .agentStart
+        ))
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            replacementEvents.count == 1
+        })
+        #expect(replacementEvents.first?.message == .agentStart)
+        #expect(connection.sessionEventContinuations["s1"] != nil)
+
+        secondConsumer.cancel()
+        connection.disconnectSession()
     }
 }
 

@@ -10,6 +10,15 @@ final class AppEventStreamCoordinator {
     private var client: AppEventStreamClient?
     private var streamURL: URL?
     private var generation: UInt64 = 0
+    private let refreshSnapshot: (ServerConnection) async -> Void
+
+    init(
+        refreshSnapshot: @escaping (ServerConnection) async -> Void = { connection in
+            await connection.refreshSessionList(force: true)
+        }
+    ) {
+        self.refreshSnapshot = refreshSnapshot
+    }
 
     var isRunning: Bool {
         guard let consumptionTask else { return false }
@@ -35,11 +44,15 @@ final class AppEventStreamCoordinator {
 
         consumptionTask = Task { @MainActor [weak self, weak connection] in
             for await event in stream {
-                guard let connection, !Task.isCancelled else { break }
+                guard let self,
+                      let connection,
+                      self.generation == activeGeneration,
+                      !Task.isCancelled else { break }
                 if case .connected(_, let snapshotRequired) = event {
                     connection.setAppEventStreamTransportState(.connected)
                     if snapshotRequired {
-                        await connection.refreshSessionList(force: true)
+                        await self.refreshSnapshot(connection)
+                        guard self.generation == activeGeneration, !Task.isCancelled else { break }
                     }
                 }
                 connection.handleAppEvent(event)

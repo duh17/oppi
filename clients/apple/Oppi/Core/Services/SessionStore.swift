@@ -405,7 +405,11 @@ final class SessionStore {
         var backing = sessions
         var didMutateBacking = false
         for session in incomingForWorkspaces {
-            didMutateBacking = merge(session, into: &backing) || didMutateBacking
+            didMutateBacking = merge(
+                session,
+                into: &backing,
+                preserveNewerLifecycle: true
+            ) || didMutateBacking
         }
         if didMutateBacking {
             serverSessions[activeServerKey] = backing
@@ -491,10 +495,16 @@ final class SessionStore {
         for incomingId in incomingOrder {
             guard let incomingSession = incomingById[incomingId] else { continue }
             if let existing = currentById[incomingSession.id] {
-                nextById[incomingSession.id] = mergePreservingContext(
+                var merged = mergePreservingContext(
                     existing: existing,
                     incoming: incomingSession
                 )
+                if existing.lastActivity > incomingSession.lastActivity {
+                    merged.status = existing.status
+                    merged.currentTurnStartedAt = existing.currentTurnStartedAt
+                    merged.lastActivity = existing.lastActivity
+                }
+                nextById[incomingSession.id] = merged
             } else {
                 nextById[incomingSession.id] = incomingSession
             }
