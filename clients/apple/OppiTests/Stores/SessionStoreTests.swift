@@ -590,6 +590,58 @@ struct SessionStorePartitioningTests {
         #expect(store.activeSessionId == "open-archive")
     }
 
+    @Test func recentWorkspaceSummaryProjectionDropsForeignAndNilWorkspaceRows() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let now = Date(timeIntervalSince1970: 1_700_100_000)
+        store.upsert(makeTestSession(id: "foreign-server-row", workspaceId: "w-studio", status: .ready, lastActivity: now.addingTimeInterval(-120)))
+        store.upsert(makeTestSession(id: "missing-workspace-row", workspaceId: nil, status: .ready, lastActivity: now.addingTimeInterval(-60)))
+
+        store.applyRecentWorkspaceSummaryProjection(
+            workspaceIds: Set(["w-mini"]),
+            summaries: [
+                SessionSummary(from: makeTestSession(id: "mini-row", workspaceId: "w-mini", status: .ready, lastActivity: now))
+            ],
+            requestStartedAt: now
+        )
+
+        #expect(store.listProjectionSessions.map(\.id) == ["mini-row"])
+    }
+
+    @Test func recentWorkspaceSummaryProjectionClearsProjectionForAuthoritativeEmptyCatalog() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        var cached = SessionSummary(from: makeTestSession(id: "contaminated", workspaceId: "w-studio", status: .ready))
+        cached.pendingAskCount = 2
+        store.upsertManySummaries([cached])
+
+        store.applyRecentWorkspaceSummaryProjection(
+            workspaceIds: [],
+            summaries: [],
+            requestStartedAt: Date(timeIntervalSince1970: 1_700_100_000)
+        )
+
+        #expect(store.listProjectionSessions.isEmpty)
+        #expect(store.listPendingAskCount(for: "contaminated") == 0)
+        #expect(store.sessions.map(\.id) == ["contaminated"])
+    }
+
+    @Test func recentWorkspaceSummaryProjectionPreservesRecentOptimisticRows() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let now = Date(timeIntervalSince1970: 1_700_100_000)
+        let justCreated = now.addingTimeInterval(10)
+        store.upsert(makeTestSession(id: "optimistic", workspaceId: "w1", status: .ready, createdAt: justCreated, lastActivity: justCreated))
+
+        store.applyRecentWorkspaceSummaryProjection(
+            workspaceIds: Set(["w1"]),
+            summaries: [],
+            requestStartedAt: now
+        )
+
+        #expect(store.listProjectionSessions.map(\.id) == ["optimistic"])
+    }
+
     @Test func workspaceRecentSnapshotPreservesRecentOptimisticLocalRows() {
         let store = SessionStore()
         store.switchServer(to: "srv1")

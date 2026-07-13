@@ -12,6 +12,58 @@ struct TimelineCacheTests {
         #expect(!metrics.rootPath.contains("Application Support"))
     }
 
+    @Test func missingSchemaMarkerPurgesExistingCacheOnce() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+        let traces = root.appending(path: "traces", directoryHint: .isDirectory)
+        let staleTrace = traces.appending(path: "session-old.json")
+
+        defer { try? fileManager.removeItem(at: base) }
+
+        try fileManager.createDirectory(at: traces, withIntermediateDirectories: true)
+        try Data("old-cache".utf8).write(to: staleTrace, options: .atomic)
+
+        _ = TimelineCache(rootURL: root)
+
+        #expect(!fileManager.fileExists(atPath: staleTrace.path))
+        #expect(fileManager.fileExists(atPath: schemaMarkerURL(root).path))
+    }
+
+    @Test func matchingSchemaPreservesCacheAcrossRelaunch() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+
+        defer { try? fileManager.removeItem(at: base) }
+
+        let first = TimelineCache(rootURL: root)
+        await first.saveTrace("session-1", events: [makeTraceEvent(id: "evt-1")])
+
+        let second = TimelineCache(rootURL: root)
+        let loaded = await second.loadTrace("session-1")
+
+        #expect(loaded?.events.map(\.id) == ["evt-1"])
+    }
+
+    @Test func clearRecreatesCurrentSchemaMarker() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+
+        defer { try? fileManager.removeItem(at: base) }
+
+        let cache = TimelineCache(rootURL: root)
+        await cache.clear()
+
+        #expect(fileManager.fileExists(atPath: schemaMarkerURL(root).path))
+
+        let relaunched = TimelineCache(rootURL: root)
+        await relaunched.saveTrace("session-1", events: [makeTraceEvent(id: "evt-1")])
+        let loaded = await relaunched.loadTrace("session-1")
+        #expect(loaded?.events.map(\.id) == ["evt-1"])
+    }
+
     @Test func initPrunesExpiredTraceFilesBeforeFirstSave() async throws {
         let fileManager = FileManager.default
         let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
@@ -78,6 +130,26 @@ struct TimelineCacheTests {
         #expect(loadedStudio?.map(\.id) == ["studio-session"])
         #expect(loadedMini?.map(\.id) == ["mini-session"])
         #expect(loadedGlobal == nil)
+    }
+
+    @Test func traceNamespacingIsolatesServersWithIdenticalSessionIds() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+
+        defer { try? fileManager.removeItem(at: base) }
+
+        let cache = TimelineCache(rootURL: root)
+        await cache.saveTrace("shared-session", serverId: "sha256:studio", events: [makeTraceEvent(id: "studio")])
+        await cache.saveTrace("shared-session", serverId: "sha256:mini", events: [makeTraceEvent(id: "mini")])
+
+        let studio = await cache.loadTrace("shared-session", serverId: "sha256:studio")
+        let mini = await cache.loadTrace("shared-session", serverId: "sha256:mini")
+        let legacy = await cache.loadTrace("shared-session")
+
+        #expect(studio?.events.map(\.id) == ["studio"])
+        #expect(mini?.events.map(\.id) == ["mini"])
+        #expect(legacy == nil)
     }
 
     @Test func saveTraceSkipsIdenticalRewrite() async throws {
@@ -222,6 +294,10 @@ struct TimelineCacheTests {
 
         #expect(old == nil)
         #expect(new?.events.map(\.id) == ["new"])
+    }
+
+    private func schemaMarkerURL(_ root: URL) -> URL {
+        root.appending(path: "timeline-cache-schema.json")
     }
 
     private func makeTraceEvent(id: String, text: String = "cached") -> TraceEvent {

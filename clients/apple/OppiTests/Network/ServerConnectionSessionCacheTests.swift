@@ -50,6 +50,54 @@ struct ServerConnectionSessionCacheTests {
         #expect(connection.sessionStore.lastSyncFailed)
     }
 
+    @Test func refreshSessionListClearsContaminatedProjectionAndPersistsEmptyScopedCache() async throws {
+        defer { TestURLProtocol.handler = nil }
+
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "server-connection-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "cache-root")
+        defer { try? fileManager.removeItem(at: base) }
+
+        let cache = TimelineCache(rootURL: root)
+        let serverId = "sha256:mini"
+        await cache.saveSessionList(
+            [makeTestSession(id: "studio-session", workspaceId: "w-studio")],
+            serverId: serverId
+        )
+
+        let connection = ServerConnection()
+        let configured = connection.configure(credentials: ServerCredentials(
+            host: "127.0.0.1",
+            port: 7749,
+            token: "sk_test",
+            name: "Mac Mini",
+            serverFingerprint: serverId
+        ))
+        #expect(configured)
+
+        connection.sessionStore.switchServer(to: serverId)
+        connection.workspaceStore.switchServer(to: serverId)
+        connection.workspaceStore.workspaces = []
+        connection.workspaceStore.isLoaded = true
+        connection._cacheForTesting = cache
+        connection.setAPIClientForTesting(makeMockAPIClient())
+
+        TestURLProtocol.handler = { request in
+            if request.url?.path == "/sessions/recent" {
+                let body = try JSONEncoder().encode(["sessions": [String]()] as [String: [String]])
+                return (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+            throw URLError(.unsupportedURL)
+        }
+
+        await connection.refreshSessionList(force: true)
+
+        let persisted = await cache.loadSessionList(serverId: serverId)
+        #expect(connection.sessionStore.listProjectionSessions.isEmpty)
+        #expect(connection.sessionStore.sessions.map(\.id) == ["studio-session"])
+        #expect(persisted == [])
+    }
+
     private func makeMockAPIClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [TestURLProtocol.self]

@@ -29,18 +29,27 @@ struct TimelineCacheMetrics: Sendable {
 
 /// Local disk cache for server responses.
 ///
-/// Stores session traces, server-scoped session lists, workspaces, and skills
-/// under `Library/Caches/`. Session traces are plaintext JSON copies of server
-/// history, so this cache is sandbox-private but intentionally disposable.
+/// Stores session traces, server-scoped session lists, workspaces, skills, and
+/// skill details under `Library/Caches/`. Session traces are plaintext JSON
+/// copies of server history, so this cache is sandbox-private but intentionally
+/// disposable.
 ///
 /// All disk I/O runs on the actor's serial executor, off the main thread.
 /// Decode failures return nil (cache miss), never crash.
 actor TimelineCache {
+    private struct CacheSchemaMarker: Codable, Equatable {
+        let generation: Int
+    }
+
+    private static let currentSchemaGeneration = 2
+    private static let schemaMarkerFilename = "timeline-cache-schema.json"
+
     static let shared = TimelineCache()
 
     private let fileManager: FileManager
     private let root: URL
     private let tracesDir: URL
+    private let schemaMarkerURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let maxDiskBytes: Int64
@@ -70,6 +79,7 @@ actor TimelineCache {
         let resolvedMaxDiskBytes = max(0, maxDiskBytes)
         root = resolvedRoot
         tracesDir = resolvedTracesDir
+        schemaMarkerURL = resolvedRoot.appending(path: Self.schemaMarkerFilename)
         self.maxDiskBytes = resolvedMaxDiskBytes
         self.maxTraceAge = maxTraceAge
         self.now = now
@@ -80,7 +90,13 @@ actor TimelineCache {
         if usesDefaultRoot {
             Self.removeApplicationSupportCacheRoot(fileManager: fileManager)
         }
-        Self.prepareStorageDirectories(fileManager: fileManager, root: resolvedRoot, tracesDir: resolvedTracesDir)
+        Self.prepareRootForCurrentSchema(
+            fileManager: fileManager,
+            root: resolvedRoot,
+            tracesDir: resolvedTracesDir,
+            schemaMarkerURL: schemaMarkerURL,
+            schemaMarker: Self.currentSchemaMarker
+        )
         Self.pruneIfNeeded(
             fileManager: fileManager,
             root: resolvedRoot,
@@ -95,61 +111,74 @@ actor TimelineCache {
 
     // MARK: - Trace (per session)
 
+    /// Legacy unscoped trace cache.
     func loadTrace(_ sessionId: String) -> CachedTrace? {
         let startedAt = Date()
         var hit = false
         defer { recordLoad(startedAt: startedAt, hit: hit) }
 
-        let url = traceURL(sessionId)
+        let url = legacyTraceURL(sessionId)
         guard let data = try? Data(contentsOf: url) else { return nil }
         do {
             let cached = try decoder.decode(CachedTrace.self, from: data)
             hit = true
-            logger.debug("Cache hit: trace for \(sessionId) (\(cached.eventCount) events)")
+            logger.debug("Cache hit: legacy trace for \(sessionId)")
             return cached
         } catch {
             decodeFailureCount += 1
-            logger.warning("Cache decode failed for trace \(sessionId): \(error.localizedDescription)")
+            logger.warning("Cache decode failed for legacy trace \(sessionId): \(error.localizedDescription)")
             try? fileManager.removeItem(at: url)
             return nil
         }
     }
 
-    func saveTrace(_ sessionId: String, events: [TraceEvent], page: TracePageMetadata? = nil) {
+    func loadTrace(_ sessionId: String, serverId: String) -> CachedTrace? {
+        let startedAt = Date()
+        var hit = false
+        defer { recordLoad(startedAt: startedAt, hit: hit) }
+
+        ensureTraceServerDir(serverId)
+        let url = traceURL(sessionId, serverId: serverId)
+        guard let data = try? Data(contentsOf: url) else { return nil }
         do {
-            let url = traceURL(sessionId)
-            if let existingData = try? Data(contentsOf: url),
-               let existing = try? decoder.decode(CachedTrace.self, from: existingData),
-               existing.events == events,
-               existing.page == page {
-                logger.debug("Cache unchanged: trace for \(sessionId) (\(events.count) events, \(existingData.count) bytes)")
-                return
-            }
-
-            let cached = CachedTrace(
-                sessionId: sessionId,
-                eventCount: events.count,
-                lastEventId: events.last?.id,
-                savedAt: Date(),
-                events: events,
-                page: page
-            )
-            let data = try encoder.encode(cached)
-
-            try data.write(to: url, options: .atomic)
-            applyFileProtection(to: url)
-            writeCount += 1
-            pruneIfNeeded()
-            logger.debug("Cache saved: trace for \(sessionId) (\(events.count) events, \(data.count) bytes)")
+            let cached = try decoder.decode(CachedTrace.self, from: data)
+            hit = true
+            logger.debug("Cache hit: trace for \(sessionId) on \(serverId, privacy: .public) (\(cached.eventCount) events)")
+            return cached
         } catch {
-            logger.warning("Cache write failed for trace \(sessionId): \(error.localizedDescription)")
+            decodeFailureCount += 1
+            logger.warning("Cache decode failed for trace \(sessionId) on \(serverId, privacy: .public): \(error.localizedDescription)")
+            try? fileManager.removeItem(at: url)
+            return nil
         }
     }
 
+    /// Legacy unscoped trace cache.
+    func saveTrace(_ sessionId: String, events: [TraceEvent], page: TracePageMetadata? = nil) {
+        saveTrace(to: legacyTraceURL(sessionId), sessionId: sessionId, scopeDescription: "legacy", events: events, page: page)
+    }
+
+    func saveTrace(_ sessionId: String, serverId: String, events: [TraceEvent], page: TracePageMetadata? = nil) {
+        ensureTraceServerDir(serverId)
+        saveTrace(
+            to: traceURL(sessionId, serverId: serverId),
+            sessionId: sessionId,
+            scopeDescription: serverId,
+            events: events,
+            page: page
+        )
+    }
+
     // periphery:ignore - used by ChatSessionManagerTests via @testable import
+    /// Legacy unscoped trace cache.
     func removeTrace(_ sessionId: String) {
-        try? fileManager.removeItem(at: traceURL(sessionId))
-        logger.debug("Cache removed: trace for \(sessionId)")
+        try? fileManager.removeItem(at: legacyTraceURL(sessionId))
+        logger.debug("Cache removed: legacy trace for \(sessionId)")
+    }
+
+    func removeTrace(_ sessionId: String, serverId: String) {
+        try? fileManager.removeItem(at: traceURL(sessionId, serverId: serverId))
+        logger.debug("Cache removed: trace for \(sessionId) on \(serverId, privacy: .public)")
     }
 
     // MARK: - Session List
@@ -217,14 +246,26 @@ actor TimelineCache {
 
     // MARK: - Skill Detail
 
+    /// Legacy unscoped skill-detail cache.
     func loadSkillDetail(_ name: String) -> SkillDetail? {
         load(SkillDetail.self, from: "skills/\(name).json")
     }
 
+    /// Legacy unscoped skill-detail cache.
     func saveSkillDetail(_ name: String, detail: SkillDetail) {
-        let dir = root.appending(path: "skills")
+        let dir = root.appending(path: "skills", directoryHint: .isDirectory)
         try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         save(detail, to: "skills/\(name).json")
+    }
+
+    func loadSkillDetail(_ name: String, serverId: String) -> SkillDetail? {
+        ensureSkillDetailServerDir(serverId)
+        return load(SkillDetail.self, from: skillDetailPath(serverId: serverId, name: name))
+    }
+
+    func saveSkillDetail(_ name: String, detail: SkillDetail, serverId: String) {
+        ensureSkillDetailServerDir(serverId)
+        save(detail, to: skillDetailPath(serverId: serverId, name: name))
     }
 
     // MARK: - Telemetry
@@ -254,6 +295,7 @@ actor TimelineCache {
     func clear() {
         try? fileManager.removeItem(at: root)
         prepareStorageDirectories()
+        writeSchemaMarker()
 
         hitCount = 0
         missCount = 0
@@ -266,6 +308,10 @@ actor TimelineCache {
     }
 
     // MARK: - Private
+
+    private static var currentSchemaMarker: CacheSchemaMarker {
+        CacheSchemaMarker(generation: currentSchemaGeneration)
+    }
 
     private static func defaultRootURL(fileManager: FileManager) -> URL {
         let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -286,8 +332,16 @@ actor TimelineCache {
         logger.notice("Removed previous Application Support timeline cache")
     }
 
-    private func traceURL(_ sessionId: String) -> URL {
+    private func legacyTraceURL(_ sessionId: String) -> URL {
         tracesDir.appending(path: "\(sessionId).json")
+    }
+
+    private func traceURL(_ sessionId: String, serverId: String) -> URL {
+        traceServerDir(serverId).appending(path: "\(sessionId).json")
+    }
+
+    private func traceServerDir(_ serverId: String) -> URL {
+        tracesDir.appending(path: serverId, directoryHint: .isDirectory)
     }
 
     /// Path for a server-namespaced file: `servers/<id>/<filename>`.
@@ -295,9 +349,23 @@ actor TimelineCache {
         "servers/\(serverId)/\(filename)"
     }
 
+    private func skillDetailPath(serverId: String, name: String) -> String {
+        serverPath(serverId, "skill-details/\(name).json")
+    }
+
     /// Ensure the server subdirectory exists.
     private func ensureServerDir(_ serverId: String) {
         let dir = root.appending(path: "servers/\(serverId)", directoryHint: .isDirectory)
+        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    private func ensureTraceServerDir(_ serverId: String) {
+        let dir = traceServerDir(serverId)
+        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    private func ensureSkillDetailServerDir(_ serverId: String) {
+        let dir = root.appending(path: "servers/\(serverId)/skill-details", directoryHint: .isDirectory)
         try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
@@ -335,6 +403,42 @@ actor TimelineCache {
         }
     }
 
+    private func saveTrace(
+        to url: URL,
+        sessionId: String,
+        scopeDescription: String,
+        events: [TraceEvent],
+        page: TracePageMetadata?
+    ) {
+        do {
+            if let existingData = try? Data(contentsOf: url),
+               let existing = try? decoder.decode(CachedTrace.self, from: existingData),
+               existing.events == events,
+               existing.page == page {
+                logger.debug("Cache unchanged: trace for \(sessionId) [\(scopeDescription, privacy: .public)] (\(events.count) events, \(existingData.count) bytes)")
+                return
+            }
+
+            let cached = CachedTrace(
+                sessionId: sessionId,
+                eventCount: events.count,
+                lastEventId: events.last?.id,
+                savedAt: Date(),
+                events: events,
+                page: page
+            )
+            let data = try encoder.encode(cached)
+
+            try data.write(to: url, options: .atomic)
+            applyFileProtection(to: url)
+            writeCount += 1
+            pruneIfNeeded()
+            logger.debug("Cache saved: trace for \(sessionId) [\(scopeDescription, privacy: .public)] (\(events.count) events, \(data.count) bytes)")
+        } catch {
+            logger.warning("Cache write failed for trace \(sessionId) [\(scopeDescription, privacy: .public)]: \(error.localizedDescription)")
+        }
+    }
+
     private struct CacheFileEntry {
         let url: URL
         let size: Int64
@@ -350,6 +454,87 @@ actor TimelineCache {
         excludeFromBackup(root)
         applyFileProtection(fileManager: fileManager, to: root)
         applyFileProtection(fileManager: fileManager, to: tracesDir)
+    }
+
+    private func writeSchemaMarker() {
+        Self.writeSchemaMarker(
+            fileManager: fileManager,
+            schemaMarkerURL: schemaMarkerURL,
+            schemaMarker: Self.currentSchemaMarker
+        )
+    }
+
+    private static func prepareRootForCurrentSchema(
+        fileManager: FileManager,
+        root: URL,
+        tracesDir: URL,
+        schemaMarkerURL: URL,
+        schemaMarker: CacheSchemaMarker
+    ) {
+        if shouldInvalidateRootForSchema(
+            fileManager: fileManager,
+            root: root,
+            schemaMarkerURL: schemaMarkerURL,
+            schemaMarker: schemaMarker
+        ) {
+            invalidateRoot(fileManager: fileManager, root: root)
+        }
+
+        prepareStorageDirectories(fileManager: fileManager, root: root, tracesDir: tracesDir)
+        writeSchemaMarker(fileManager: fileManager, schemaMarkerURL: schemaMarkerURL, schemaMarker: schemaMarker)
+    }
+
+    private static func shouldInvalidateRootForSchema(
+        fileManager: FileManager,
+        root: URL,
+        schemaMarkerURL: URL,
+        schemaMarker: CacheSchemaMarker
+    ) -> Bool {
+        guard fileManager.fileExists(atPath: root.path) else { return false }
+        guard let data = try? Data(contentsOf: schemaMarkerURL),
+              let stored = try? JSONDecoder().decode(CacheSchemaMarker.self, from: data) else {
+            logger.notice("Invalidating timeline cache: missing schema marker")
+            return true
+        }
+        guard stored == schemaMarker else {
+            logger.notice(
+                "Invalidating timeline cache: schema \(stored.generation, privacy: .public) -> \(schemaMarker.generation, privacy: .public)"
+            )
+            return true
+        }
+        return false
+    }
+
+    private static func invalidateRoot(fileManager: FileManager, root: URL) {
+        guard fileManager.fileExists(atPath: root.path) else { return }
+
+        let parent = root.deletingLastPathComponent()
+        let invalidatedRoot = parent.appending(
+            path: "\(root.lastPathComponent)-invalidated-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+
+        do {
+            try fileManager.moveItem(at: root, to: invalidatedRoot)
+            try? fileManager.removeItem(at: invalidatedRoot)
+        } catch {
+            try? fileManager.removeItem(at: root)
+            logger.warning("Timeline cache root move failed during invalidation: \(error.localizedDescription)")
+        }
+    }
+
+    private static func writeSchemaMarker(
+        fileManager: FileManager,
+        schemaMarkerURL: URL,
+        schemaMarker: CacheSchemaMarker
+    ) {
+        do {
+            let data = try JSONEncoder().encode(schemaMarker)
+            try data.write(to: schemaMarkerURL, options: .atomic)
+            applyFileProtection(fileManager: fileManager, to: schemaMarkerURL)
+        } catch {
+            logger.warning("Failed to write timeline cache schema marker: \(error.localizedDescription)")
+        }
     }
 
     private func pruneIfNeeded() {

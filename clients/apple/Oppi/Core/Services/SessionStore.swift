@@ -360,7 +360,8 @@ final class SessionStore {
             targetWorkspaceIds: targetWorkspaceIds,
             incomingForWorkspaces: incomingForWorkspaces,
             requestStartedAt: requestStartedAt,
-            preserveRecentWindow: preserveRecentWindow
+            preserveRecentWindow: preserveRecentWindow,
+            keepUntargetedRows: true
         )
         let didMutateAttention = applyListAttentionCounts(
             from: incomingSummaries,
@@ -395,7 +396,6 @@ final class SessionStore {
         preserveRecentWindow: TimeInterval = 180
     ) -> Bool {
         let targetWorkspaceIds = workspaceIds.filter { !$0.isEmpty }
-        guard !targetWorkspaceIds.isEmpty else { return upsertManySummaries(incomingSummaries) }
 
         let incomingForWorkspaces = normalizedRecentWorkspaceSessions(
             targetWorkspaceIds: targetWorkspaceIds,
@@ -421,18 +421,23 @@ final class SessionStore {
             targetWorkspaceIds: targetWorkspaceIds,
             incomingForWorkspaces: incomingForWorkspaces,
             requestStartedAt: requestStartedAt,
-            preserveRecentWindow: preserveRecentWindow
+            preserveRecentWindow: preserveRecentWindow,
+            keepUntargetedRows: false
         )
         let didMutateAttention = applyListAttentionCounts(
             from: incomingSummaries,
             replacingWorkspaceIds: targetWorkspaceIds
         )
 
-        guard nextProjection != currentProjection else {
-            return didMutateBacking || didMutateAttention
+        if nextProjection != currentProjection {
+            serverListProjectionSessions[activeServerKey] = nextProjection
         }
-        serverListProjectionSessions[activeServerKey] = nextProjection
-        return true
+
+        let didPruneAttention = pruneListAttentionCounts(
+            key: activeServerKey,
+            keepingSessionIds: Set(nextProjection.map(\.id))
+        )
+        return didMutateBacking || didMutateAttention || didPruneAttention || nextProjection != currentProjection
     }
 
     private func normalizedRecentWorkspaceSessions(
@@ -457,7 +462,8 @@ final class SessionStore {
         targetWorkspaceIds: Set<String>,
         incomingForWorkspaces: [Session],
         requestStartedAt: Date,
-        preserveRecentWindow: TimeInterval
+        preserveRecentWindow: TimeInterval,
+        keepUntargetedRows: Bool
     ) -> [Session] {
         var incomingById: [String: Session] = [:]
         var incomingOrder: [String] = []
@@ -475,7 +481,9 @@ final class SessionStore {
         for existing in current {
             guard let workspaceId = existing.workspaceId,
                   targetWorkspaceIds.contains(workspaceId) else {
-                nextById[existing.id] = existing
+                if keepUntargetedRows {
+                    nextById[existing.id] = existing
+                }
                 continue
             }
 
@@ -641,15 +649,17 @@ final class SessionStore {
         pruneListAttentionCounts(key: key, keepingSessionIds: Set(list.map(\.id)))
     }
 
-    private func pruneListAttentionCounts(key: String, keepingSessionIds ids: Set<String>) {
-        guard let current = serverListAttentionCounts[key] else { return }
+    @discardableResult
+    private func pruneListAttentionCounts(key: String, keepingSessionIds ids: Set<String>) -> Bool {
+        guard let current = serverListAttentionCounts[key] else { return false }
         let next = current.filter { ids.contains($0.key) }
-        guard next != current else { return }
+        guard next != current else { return false }
         if next.isEmpty {
             serverListAttentionCounts.removeValue(forKey: key)
         } else {
             serverListAttentionCounts[key] = next
         }
+        return true
     }
 
     private func listProjectionChanged(key: String, newSessions: [Session]) -> Bool {

@@ -330,6 +330,7 @@ final class ChatSessionManager {
         telemetry.beginFreshContentLagMeasurement(hadCache: false)
 
         latestTraceSignature = await loadCachedTimeline(
+            connection: connection,
             sessionStore: sessionStore
         )
 
@@ -450,12 +451,19 @@ final class ChatSessionManager {
     /// the background trace fetch runs. The fresh trace replaces the cache
     /// data when it arrives (via `loadSession(preserveOrphans: false)`).
     private func loadCachedTimeline(
+        connection: ServerConnection,
         sessionStore: SessionStore
     ) async -> TraceSignature? {
         transitionTo(.loadingCache)
 
         let cacheLoadStartMs = ChatSessionTelemetry.nowMs()
-        let cached = await TimelineCache.shared.loadTrace(sessionId)
+        let cacheServerId = connection.currentServerId ?? sessionStore.activeServerId
+        let cached: CachedTrace?
+        if let cacheServerId {
+            cached = await TimelineCache.shared.loadTrace(sessionId, serverId: cacheServerId)
+        } else {
+            cached = await TimelineCache.shared.loadTrace(sessionId)
+        }
         let cacheLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - cacheLoadStartMs)
 
         let signature: TraceSignature?
@@ -832,6 +840,8 @@ final class ChatSessionManager {
 
         if let saveHook = _saveTraceSnapshotForTesting {
             await saveHook(trace)
+        } else if let cacheServerId = connection.currentServerId ?? connection.sessionStore.activeServerId {
+            await TimelineCache.shared.saveTrace(sessionId, serverId: cacheServerId, events: trace, page: page)
         } else {
             await TimelineCache.shared.saveTrace(sessionId, events: trace, page: page)
         }
@@ -1260,8 +1270,13 @@ final class ChatSessionManager {
             telemetry.recordFreshContentLagIfNeeded(reason: freshnessReason, sessionId: sessionId, workspaceId: workspaceId)
 
             // Always update cache with fresh data
+            let cacheServerId = sessionStore.activeServerId
             Task.detached {
-                await TimelineCache.shared.saveTrace(self.sessionId, events: trace, page: page)
+                if let cacheServerId {
+                    await TimelineCache.shared.saveTrace(self.sessionId, serverId: cacheServerId, events: trace, page: page)
+                } else {
+                    await TimelineCache.shared.saveTrace(self.sessionId, events: trace, page: page)
+                }
             }
 
             let durationMs = max(0, ChatSessionTelemetry.nowMs() - loadStartedMs)
@@ -1376,8 +1391,13 @@ final class ChatSessionManager {
         markSyncSucceeded()
 
         let cacheEvents = reducer.traceEventsForCache()
+        let cacheServerId = connection.currentServerId ?? sessionStore.activeServerId
         Task.detached {
-            await TimelineCache.shared.saveTrace(self.sessionId, events: cacheEvents, page: response.page)
+            if let cacheServerId {
+                await TimelineCache.shared.saveTrace(self.sessionId, serverId: cacheServerId, events: cacheEvents, page: response.page)
+            } else {
+                await TimelineCache.shared.saveTrace(self.sessionId, events: cacheEvents, page: response.page)
+            }
         }
         return didPrepend
     }
