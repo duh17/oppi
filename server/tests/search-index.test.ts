@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { SearchIndex } from "../src/search-index.js";
+import { openDatabase } from "../src/sqlite-compat.js";
 import type { Session } from "../src/types.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -513,6 +514,108 @@ describe("SearchIndex indexes transcript content only", () => {
       expect(results.map((r) => r.sessionId)).toEqual(["sess-new", "sess-old"]);
     } finally {
       index.close();
+    }
+  });
+
+  it("reopens an intact index and skips unchanged transcript work", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-reopen-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeJsonl(jsonlPath, "durable reopen token", "durable assistant token");
+    const session = makeSession({ id: "sess-reopen", piSessionFile: jsonlPath });
+    const sessions = new Map([[session.id, session]]);
+
+    const firstIndex = new SearchIndex(dataDir, (id) => sessions.get(id));
+    expect(firstIndex.sync([session])).toMatchObject({ added: 1, transcriptsRead: 1 });
+    firstIndex.close();
+
+    const reopened = new SearchIndex(dataDir, (id) => sessions.get(id));
+    try {
+      expect(reopened.search("durable reopen token", "ws-1", 10)).toHaveLength(1);
+      expect(reopened.sync([session])).toMatchObject({
+        added: 0,
+        reindexed: 0,
+        skipped: 1,
+        transcriptsRead: 0,
+        transcriptBytesRead: 0,
+      });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it("rebuilds an interrupted schema upgrade and repopulates idempotently", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-schema-rebuild-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeJsonl(jsonlPath, "schema rebuild token", "recovered index content");
+    const session = makeSession({ id: "sess-schema-rebuild", piSessionFile: jsonlPath });
+    const sessions = new Map([[session.id, session]]);
+
+    const firstIndex = new SearchIndex(dataDir, (id) => sessions.get(id));
+    firstIndex.sync([session]);
+    firstIndex.close();
+
+    const db = openDatabase(join(dataDir, "session-search.db"));
+    try {
+      db.prepare("UPDATE fts_schema SET value = ? WHERE key = 'version'").run("2");
+    } finally {
+      db.close();
+    }
+
+    const rebuilt = new SearchIndex(dataDir, (id) => sessions.get(id));
+    expect(rebuilt.search("schema rebuild token", "ws-1", 10)).toEqual([]);
+    expect(rebuilt.sync([session])).toMatchObject({ added: 1, reindexed: 0 });
+    expect(rebuilt.search("schema rebuild token", "ws-1", 10)).toHaveLength(1);
+    rebuilt.close();
+
+    const reopened = new SearchIndex(dataDir, (id) => sessions.get(id));
+    try {
+      expect(reopened.sync([session])).toMatchObject({ added: 0, reindexed: 0, skipped: 1 });
+      expect(reopened.search("schema rebuild token", "ws-1", 10)).toHaveLength(1);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it("repairs interrupted FTS/meta pairs and removes orphan rows", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-pair-repair-"));
+    cleanupPaths.add(dataDir);
+    const firstPath = join(dataDir, "first.jsonl");
+    const secondPath = join(dataDir, "second.jsonl");
+    writeJsonl(firstPath, "meta-only repair token", "first");
+    writeJsonl(secondPath, "fts-only repair token", "second");
+    const first = makeSession({ id: "sess-meta-only", piSessionFile: firstPath });
+    const second = makeSession({ id: "sess-fts-only", piSessionFile: secondPath });
+    const orphan = makeSession({ id: "sess-orphan", name: "orphan cleanup token" });
+    const sessions = new Map([
+      [first.id, first],
+      [second.id, second],
+      [orphan.id, orphan],
+    ]);
+
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+    index.sync([first, second, orphan]);
+    index.close();
+
+    const db = openDatabase(join(dataDir, "session-search.db"));
+    try {
+      db.prepare("DELETE FROM session_fts WHERE session_id = ?").run(first.id);
+      db.prepare("DELETE FROM fts_meta WHERE session_id = ?").run(second.id);
+    } finally {
+      db.close();
+    }
+    sessions.delete(orphan.id);
+
+    const repaired = new SearchIndex(dataDir, (id) => sessions.get(id));
+    try {
+      const result = repaired.sync([first, second]);
+      expect(result).toMatchObject({ added: 1, reindexed: 1, removed: 1 });
+      expect(repaired.search("meta-only repair token", "ws-1", 10)).toHaveLength(1);
+      expect(repaired.search("fts-only repair token", "ws-1", 10)).toHaveLength(1);
+      expect(repaired.search("orphan cleanup token", "ws-1", 10)).toEqual([]);
+    } finally {
+      repaired.close();
     }
   });
 

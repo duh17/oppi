@@ -172,6 +172,164 @@ describe("session sqlite store", () => {
     }
   });
 
+  it("keeps the prior durable row after a conflicting upsert fails", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-failed-upsert-"));
+    let sqliteStore: SessionSqliteStore | undefined;
+
+    try {
+      sqliteStore = new SessionSqliteStore(dataDir);
+      const original: Session = {
+        id: "sess-original",
+        workspaceId: "ws-1",
+        name: "original",
+        status: "ready",
+        createdAt: 1,
+        lastActivity: 2,
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        launch: {
+          idempotencyKey: "same-launch",
+          status: "created",
+          requestedAt: 1,
+          completedAt: 2,
+        },
+      };
+      sqliteStore.upsertSession(original);
+      expect(sqliteStore.getSession(original.id)?.name).toBe("original");
+
+      expect(() =>
+        sqliteStore?.upsertSession({
+          ...original,
+          id: "sess-conflict",
+          name: "must-not-persist",
+          lastActivity: 3,
+        }),
+      ).toThrow();
+      sqliteStore.close();
+      sqliteStore = undefined;
+
+      const db = openDatabase(join(dataDir, "session-state.db"));
+      try {
+        expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+      } finally {
+        db.close();
+      }
+
+      sqliteStore = new SessionSqliteStore(dataDir);
+      expect(sqliteStore.listSessions().map((session) => [session.id, session.name])).toEqual([
+        ["sess-original", "original"],
+      ]);
+      expect(sqliteStore.getSession("sess-conflict")).toBeUndefined();
+    } finally {
+      sqliteStore?.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("isolates corrupt session JSON while preserving projected recovery", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-corrupt-json-"));
+    let sqliteStore: SessionSqliteStore | undefined;
+
+    try {
+      sqliteStore = new SessionSqliteStore(dataDir);
+      for (const [id, name] of [
+        ["sess-good", "good"],
+        ["sess-corrupt", "corrupt"],
+      ] as const) {
+        sqliteStore.upsertSession({
+          id,
+          workspaceId: "ws-1",
+          name,
+          status: "stopped",
+          createdAt: 1,
+          lastActivity: id === "sess-good" ? 3 : 2,
+          messageCount: 0,
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          cost: 0,
+        });
+      }
+      sqliteStore.close();
+      sqliteStore = undefined;
+
+      const db = openDatabase(join(dataDir, "session-state.db"));
+      try {
+        db.prepare("UPDATE session_state_sessions SET session_json = ? WHERE id = ?").run(
+          '{"id":',
+          "sess-corrupt",
+        );
+      } finally {
+        db.close();
+      }
+
+      sqliteStore = new SessionSqliteStore(dataDir);
+      expect(sqliteStore.getSession("sess-corrupt")).toBeUndefined();
+      expect(sqliteStore.listSessions().map((session) => session.id)).toEqual(["sess-good"]);
+      expect(
+        sqliteStore
+          .listAllWorkspaceSessionSnapshots("ws-1")
+          .map((session) => [session.id, session.name]),
+      ).toEqual([
+        ["sess-good", "good"],
+        ["sess-corrupt", "corrupt"],
+      ]);
+    } finally {
+      sqliteStore?.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes a partial schema migration and remains idempotent on reopen", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-migration-"));
+    let sqliteStore: SessionSqliteStore | undefined;
+
+    try {
+      const db = openDatabase(join(dataDir, "session-state.db"));
+      try {
+        db.exec(`
+          CREATE TABLE session_state_sessions (id TEXT PRIMARY KEY);
+          INSERT INTO session_state_sessions (id) VALUES ('sess-partial');
+        `);
+      } finally {
+        db.close();
+      }
+
+      sqliteStore = new SessionSqliteStore(dataDir);
+      expect(sqliteStore.getSession("sess-partial")).toMatchObject({
+        id: "sess-partial",
+        status: "stopped",
+        runtime: "oppi",
+      });
+      sqliteStore.close();
+      sqliteStore = new SessionSqliteStore(dataDir);
+      expect(sqliteStore.listSessions()).toHaveLength(1);
+      sqliteStore.close();
+      sqliteStore = undefined;
+
+      const migratedDb = openDatabase(join(dataDir, "session-state.db"));
+      try {
+        expect(
+          migratedDb.prepare("SELECT value FROM session_state_schema WHERE key = 'version'").get(),
+        ).toEqual({ value: "8" });
+        expect(
+          migratedDb.prepare("SELECT COUNT(*) AS count FROM session_state_sessions").get(),
+        ).toEqual({ count: 1 });
+        const row = migratedDb
+          .prepare("SELECT session_json FROM session_state_sessions WHERE id = ?")
+          .get("sess-partial") as { session_json: string };
+        expect(JSON.parse(row.session_json)).toMatchObject({
+          id: "sess-partial",
+          status: "stopped",
+        });
+      } finally {
+        migratedDb.close();
+      }
+    } finally {
+      sqliteStore?.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("lists workspace snapshots from projected columns without parsing session_json", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-snapshot-"));
     let sqliteStore: SessionSqliteStore | undefined;
@@ -430,6 +588,10 @@ describe("legacy workspace session migration", () => {
       const reloaded = new Storage(dataDir).getSession("legacy-1");
       expect(reloaded?.workspaceId).toBe(workspace.id);
       expect(reloaded?.workspaceName).toBe("project");
+
+      const reopenedAgain = new Storage(dataDir);
+      expect(reopenedAgain.getSession("legacy-1")?.workspaceId).toBe(workspace.id);
+      expect(reopenedAgain.listSessions().filter((item) => item.id === "legacy-1")).toHaveLength(1);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

@@ -30,6 +30,14 @@ function makeRequest(body: Buffer): IncomingMessage {
   return stream as unknown as IncomingMessage;
 }
 
+async function waitForFile(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (existsSync(path)) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`Timed out waiting for file: ${path}`);
+}
+
 function pngBytes(): Buffer {
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -237,6 +245,219 @@ describe("local upload store", () => {
     ).rejects.toMatchObject({
       status: 415,
     });
+  });
+
+  it("cleans a failed size-mismatch write and allows an exact retry", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-upload-store-size-retry-"));
+    const config: UploadStoreConfigResolved = {
+      rootPath: root,
+      maxFileBytes: 32,
+      maxTurnBytes: 64,
+      unusedTtlMs: 60_000,
+      retainedTtlMs: 120_000,
+      allowedMimeTypes: [],
+    };
+    const record = await createUploadRecord({
+      config,
+      workspaceId: "ws-1",
+      sessionId: "sess-1",
+      name: "note.txt",
+      mimeType: "text/plain",
+      sizeBytes: 5,
+      purpose: "chat_attachment",
+    });
+
+    await expect(
+      writeUploadContent({
+        config,
+        workspaceId: "ws-1",
+        sessionId: "sess-1",
+        uploadId: record.id,
+        req: makeRequest(Buffer.from("four")),
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: "Upload size mismatch: expected 5, got 4",
+    });
+    expect(existsSync(join(root, "tmp", `${record.id}.part`))).toBe(false);
+    expect(
+      JSON.parse(readFileSync(join(root, "records", `${record.id}.json`), "utf8")),
+    ).toMatchObject({ status: "created", declaredSizeBytes: 5 });
+
+    const completed = await writeUploadContent({
+      config,
+      workspaceId: "ws-1",
+      sessionId: "sess-1",
+      uploadId: record.id,
+      req: makeRequest(Buffer.from("hello")),
+    });
+    expect(completed).toMatchObject({ status: "complete", sizeBytes: 5 });
+    expect(existsSync(completed.blobPath ?? "")).toBe(true);
+  });
+
+  it("cancels and cleans an oversized streaming upload before it becomes durable", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-upload-store-stream-limit-"));
+    const config: UploadStoreConfigResolved = {
+      rootPath: root,
+      maxFileBytes: 5,
+      maxTurnBytes: 10,
+      unusedTtlMs: 60_000,
+      retainedTtlMs: 120_000,
+      allowedMimeTypes: [],
+    };
+    const record = await createUploadRecord({
+      config,
+      workspaceId: "ws-1",
+      name: "payload.bin",
+      mimeType: "application/octet-stream",
+      sizeBytes: 5,
+      purpose: "chat_attachment",
+    });
+    const request = new PassThrough() as unknown as IncomingMessage;
+    const tmpPath = join(root, "tmp", `${record.id}.part`);
+    const write = writeUploadContent({
+      config,
+      workspaceId: "ws-1",
+      uploadId: record.id,
+      req: request,
+    });
+
+    await waitForFile(tmpPath);
+    request.write(Buffer.from("123456"));
+    await expect(write).rejects.toMatchObject({
+      status: 413,
+      message: "Upload exceeds max file size",
+    });
+    expect(request.destroyed).toBe(true);
+    expect(existsSync(tmpPath)).toBe(false);
+    expect(
+      JSON.parse(readFileSync(join(root, "records", `${record.id}.json`), "utf8")),
+    ).toMatchObject({ status: "created" });
+  });
+
+  it("deduplicates identical blobs, rejects duplicate writes, and validates attachment integrity", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-upload-store-dedupe-"));
+    const config: UploadStoreConfigResolved = {
+      rootPath: root,
+      maxFileBytes: 1024,
+      maxTurnBytes: 2048,
+      unusedTtlMs: 60_000,
+      retainedTtlMs: 120_000,
+      allowedMimeTypes: [],
+    };
+    const body = Buffer.from("same bytes", "utf8");
+    const create = (name: string) =>
+      createUploadRecord({
+        config,
+        workspaceId: "ws-1",
+        sessionId: "sess-1",
+        name,
+        mimeType: "text/plain",
+        sizeBytes: body.length,
+        purpose: "chat_attachment",
+      });
+    const firstRecord = await create("first.txt");
+    const secondRecord = await create("second.txt");
+    const first = await writeUploadContent({
+      config,
+      workspaceId: "ws-1",
+      sessionId: "sess-1",
+      uploadId: firstRecord.id,
+      req: makeRequest(body),
+    });
+    const second = await writeUploadContent({
+      config,
+      workspaceId: "ws-1",
+      sessionId: "sess-1",
+      uploadId: secondRecord.id,
+      req: makeRequest(body),
+    });
+
+    expect(first.blobPath).toBe(second.blobPath);
+    await expect(
+      writeUploadContent({
+        config,
+        workspaceId: "ws-1",
+        sessionId: "sess-1",
+        uploadId: first.id,
+        req: makeRequest(body),
+      }),
+    ).rejects.toMatchObject({ status: 409, message: "Upload is not in created state" });
+
+    const ref = {
+      type: "attachment" as const,
+      id: first.id,
+      source: "upload" as const,
+      name: first.safeName,
+      mimeType: first.mimeType,
+      sizeBytes: first.sizeBytes ?? 0,
+      sha256: first.sha256,
+    };
+    await expect(
+      resolveUploadAttachment({
+        config,
+        workspaceId: "ws-1",
+        sessionId: "sess-1",
+        ref: { ...ref, sizeBytes: ref.sizeBytes + 1 },
+      }),
+    ).rejects.toMatchObject({ status: 409, message: "Upload size mismatch" });
+    await expect(
+      resolveUploadAttachment({
+        config,
+        workspaceId: "ws-1",
+        sessionId: "sess-1",
+        ref: { ...ref, sha256: "0".repeat(64) },
+      }),
+    ).rejects.toMatchObject({ status: 409, message: "Upload hash mismatch" });
+
+    const firstFetch = await resolveUploadAttachment({
+      config,
+      workspaceId: "ws-1",
+      sessionId: "sess-1",
+      ref,
+    });
+    const duplicateFetch = await resolveUploadAttachment({
+      config,
+      workspaceId: "ws-1",
+      sessionId: "sess-1",
+      ref,
+    });
+    expect(firstFetch.usedAt).toBeTypeOf("number");
+    expect(duplicateFetch.usedAt).toBe(firstFetch.usedAt);
+  });
+
+  it("rejects expired uploads without creating partial content", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-upload-store-expired-"));
+    const config: UploadStoreConfigResolved = {
+      rootPath: root,
+      maxFileBytes: 1024,
+      maxTurnBytes: 2048,
+      unusedTtlMs: 60_000,
+      retainedTtlMs: 120_000,
+      allowedMimeTypes: [],
+    };
+    const record = await createUploadRecord({
+      config,
+      workspaceId: "ws-1",
+      name: "expired.txt",
+      mimeType: "text/plain",
+      sizeBytes: 5,
+      purpose: "chat_attachment",
+    });
+    writeFileSync(
+      join(root, "records", `${record.id}.json`),
+      `${JSON.stringify({ ...record, expiresAt: 0 }, null, 2)}\n`,
+    );
+
+    await expect(
+      writeUploadContent({
+        config,
+        workspaceId: "ws-1",
+        uploadId: record.id,
+        req: makeRequest(Buffer.from("hello")),
+      }),
+    ).rejects.toMatchObject({ status: 409, message: "Upload has expired" });
+    expect(existsSync(join(root, "tmp", `${record.id}.part`))).toBe(false);
   });
 
   it("garbage-collects expired records plus orphan tmp files and blobs without breaking dedupe", async () => {
