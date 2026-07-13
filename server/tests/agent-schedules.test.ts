@@ -140,6 +140,76 @@ describe("agent schedule durable core", () => {
     ]);
   });
 
+  it("reclaims a claimed run after process restart only when its lease expires", () => {
+    const schedule = createSchedule();
+    const run = store.createDueRun(schedule.id, "at:1000", 1_000);
+    store.claimReadyRuns({
+      now: 1_000,
+      ownerId: "worker-a",
+      leaseMs: 500,
+      limit: 1,
+      runIds: [run.id],
+    });
+
+    store.close();
+    store = new AgentScheduleStore(dataDir);
+
+    expect(
+      store.claimReadyRuns({
+        now: 1_499,
+        ownerId: "worker-b",
+        leaseMs: 10_000,
+        limit: 1,
+        runIds: [run.id],
+      }),
+    ).toEqual([]);
+    expect(
+      store.claimReadyRuns({
+        now: 1_500,
+        ownerId: "worker-b",
+        leaseMs: 10_000,
+        limit: 1,
+        runIds: [run.id],
+      }),
+    ).toEqual([expect.objectContaining({ id: run.id, status: "claimed", leaseOwner: "worker-b" })]);
+  });
+
+  it.each(["paused", "archived"] as const)(
+    "dispatches a frozen claimed run when its schedule becomes %s",
+    async (nextStatus) => {
+      const schedule = createSchedule();
+      const run = store.claimReadyRuns({
+        now: 1_000,
+        ownerId: "worker",
+        leaseMs: 10_000,
+        limit: 1,
+        runIds: [store.createDueRun(schedule.id, "at:1000", 1_000).id],
+      })[0];
+      if (nextStatus === "paused") store.pauseSchedule(schedule.id, 1_100);
+      else store.archiveSchedule(schedule.id, 1_100);
+      const launch = vi.fn(async () => ({ sessionId: "created-session" }));
+
+      await store.dispatchClaimedRun(
+        run.id,
+        {
+          launchNewSession: launch,
+          sendExistingSessionInput: async () => {
+            throw new Error("unexpected existing-session hook");
+          },
+        },
+        { leaseOwner: "worker", now: 1_200 },
+      );
+
+      expect(launch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: expect.objectContaining({ prompt: "Run the checks" }),
+          schedule: expect.objectContaining({ status: nextStatus }),
+        }),
+      );
+      expect(store.getRun(run.id)?.status).toBe("completed");
+    },
+  );
+
   it("stores frozen action snapshots on runs", () => {
     const schedule = createSchedule();
     const run = store.createManualRun(schedule.id, "snap-1");
@@ -424,6 +494,38 @@ describe("agent schedule durable core", () => {
     ).rejects.toThrow("lease was lost");
 
     expect(store.getRun(runId)).toMatchObject({ status: "claimed", leaseOwner: "worker-b" });
+  });
+
+  it("records a deterministic history-write serialization failure after dispatch succeeds", async () => {
+    const schedule = createSchedule();
+    const run = store.claimReadyRuns({
+      now: 1_000,
+      ownerId: "worker",
+      leaseMs: 10_000,
+      limit: 1,
+      runIds: [store.createDueRun(schedule.id, "at:1000", 1_000).id],
+    })[0];
+    const launch = vi.fn(async () => ({ nonSerializable: 1n }));
+
+    await expect(
+      store.dispatchClaimedRun(
+        run.id,
+        {
+          launchNewSession: launch,
+          sendExistingSessionInput: async () => {
+            throw new Error("unexpected existing-session hook");
+          },
+        },
+        { leaseOwner: "worker", now: 1_000 },
+      ),
+    ).rejects.toThrow(/BigInt/);
+
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(store.getRun(run.id)).toMatchObject({
+      status: "failed",
+      completedAt: 1_000,
+    });
+    expect(store.getRun(run.id)?.error).toMatch(/BigInt/);
   });
 
   it("reclaims running runs after their lease expires", () => {

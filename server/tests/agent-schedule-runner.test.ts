@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createAgentScheduleDispatchHooks } from "../src/agent-schedule-dispatch.js";
 import { AgentScheduleRunner, dueSlotKeysForSchedule } from "../src/agent-schedule-runner.js";
 import { AgentScheduleStore } from "../src/agent-schedules.js";
 import type { AgentScheduleAction } from "../src/agent-schedules.js";
@@ -67,6 +68,9 @@ describe("agent schedule runner", () => {
         sessions.find((session) => session.launch?.idempotencyKey === key),
       ),
       claimSessionLaunchRecovery: vi.fn(() => undefined),
+      getAgentDefinitionStore: vi.fn(() => ({
+        resolveAgent: vi.fn(() => undefined),
+      })),
     };
   }
 
@@ -156,6 +160,124 @@ describe("agent schedule runner", () => {
       `cron:${Date.parse("2026-06-29T14:00:00Z")}`,
     ]);
     expect(dueSlotKeysForSchedule(schedule, notDue)).toEqual([]);
+  });
+
+  it("materializes both repeated fall-back cron slots and skips a spring-forward gap", () => {
+    const fallBack = store.createSchedule(
+      {
+        name: "Repeated local time",
+        trigger: {
+          type: "cron",
+          expression: "30 1 * * *",
+          timeZone: "America/New_York",
+        },
+        action: action(),
+      },
+      Date.parse("2026-10-31T00:00:00Z"),
+    );
+    const firstOccurrence = Date.parse("2026-11-01T05:30:00Z");
+    const secondOccurrence = Date.parse("2026-11-01T06:30:00Z");
+
+    expect(dueSlotKeysForSchedule(fallBack, firstOccurrence)).toEqual([`cron:${firstOccurrence}`]);
+    expect(dueSlotKeysForSchedule(fallBack, secondOccurrence)).toEqual([
+      `cron:${secondOccurrence}`,
+    ]);
+
+    const springForward = store.createSchedule(
+      {
+        name: "Missing local time",
+        trigger: {
+          type: "cron",
+          expression: "30 2 * * *",
+          timeZone: "America/New_York",
+        },
+        action: action(),
+      },
+      Date.parse("2026-03-07T00:00:00Z"),
+    );
+
+    expect(dueSlotKeysForSchedule(springForward, Date.parse("2026-03-08T06:30:00Z"))).toEqual([]);
+    expect(dueSlotKeysForSchedule(springForward, Date.parse("2026-03-08T07:30:00Z"))).toEqual([]);
+  });
+
+  it("recovers after dispatch succeeds but run completion loses its lease", async () => {
+    const schedule = store.createSchedule(
+      {
+        name: "Recover dispatched launch",
+        trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+        action: action("Send exactly once"),
+      },
+      500,
+    );
+    const run = store.createDueRun(schedule.id, "at:1000", 1_000);
+    const firstClaim = store.claimReadyRuns({
+      now: 1_000,
+      ownerId: "worker-a",
+      leaseMs: 500,
+      limit: 1,
+      runIds: [run.id],
+    })[0];
+    let recoveredClaimId: string | undefined;
+    sendPrompt.mockImplementationOnce(async () => {
+      const recovered = store.claimReadyRuns({
+        now: 2_000,
+        ownerId: "worker-b",
+        leaseMs: 10_000,
+        limit: 1,
+        runIds: [run.id],
+      });
+      expect(recovered).toEqual([
+        expect.objectContaining({ id: run.id, status: "claimed", leaseOwner: "worker-b" }),
+      ]);
+      recoveredClaimId = recovered[0]?.id;
+    });
+    const dispatchStorage = storage();
+
+    await expect(
+      store.dispatchClaimedRun(
+        firstClaim.id,
+        createAgentScheduleDispatchHooks(
+          {
+            storage: dispatchStorage,
+            sessions: { startSession, sendPrompt },
+            ensureSessionContextWindow: (session) => session,
+          },
+          "worker-a",
+        ),
+        { leaseOwner: "worker-a", now: 1_000 },
+      ),
+    ).rejects.toThrow("lease was lost");
+
+    expect(recoveredClaimId).toBe(run.id);
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(sendPrompt).toHaveBeenCalledTimes(1);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.launch?.promptDispatch).toBe("delivered");
+
+    store.close();
+    store = new AgentScheduleStore(dataDir);
+    const recoveredRun = store.getRun(run.id);
+    expect(recoveredRun).toMatchObject({ status: "claimed", leaseOwner: "worker-b" });
+
+    await store.dispatchClaimedRun(
+      recoveredRun?.id ?? "missing",
+      createAgentScheduleDispatchHooks(
+        {
+          storage: dispatchStorage,
+          sessions: { startSession, sendPrompt },
+          ensureSessionContextWindow: (session) => session,
+        },
+        "worker-b",
+      ),
+      { leaseOwner: "worker-b", now: 2_000 },
+    );
+
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(sendPrompt).toHaveBeenCalledTimes(1);
+    expect(store.getRun(run.id)).toMatchObject({
+      status: "completed",
+      result: { existing: true, promptDispatch: "delivered", sessionId: sessions[0]?.id },
+    });
   });
 
   it("does not materialize the current cron minute when created after the slot started", () => {

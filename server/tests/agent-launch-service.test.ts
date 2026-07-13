@@ -160,6 +160,92 @@ describe("AgentLaunchService", () => {
     expect(startSession).not.toHaveBeenCalled();
   });
 
+  it("returns the original launch for a conflicting prompt on the same idempotency key", async () => {
+    const existing = makeSession({
+      id: "existing-1",
+      firstMessage: "original prompt",
+      workspaceId: "ws-1",
+      launch: {
+        idempotencyKey: "launch-1",
+        status: "accepted",
+        requestedAt: 900,
+        completedAt: 950,
+        promptDispatch: "delivered",
+        target: { workspaceId: "ws-1", runtime: "host" },
+      },
+    });
+    const { service, createSession, startSession, sendPrompt } = makeService({
+      sessions: [existing],
+    });
+
+    const result = await service.launch({
+      agent: { name: "Conflicting launch" },
+      target: { workspace: makeWorkspace() },
+      prompt: "different prompt",
+      idempotencyKey: "launch-1",
+    });
+
+    expect(result).toMatchObject({
+      kind: "existing",
+      session: { id: "existing-1", firstMessage: "original prompt" },
+      promptDispatch: "delivered",
+    });
+    expect(createSession).not.toHaveBeenCalled();
+    expect(startSession).not.toHaveBeenCalled();
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("recovers the winning session when initial idempotent persistence loses a race", async () => {
+    const winner = makeSession({
+      id: "winner-1",
+      workspaceId: "ws-1",
+      launch: {
+        idempotencyKey: "launch-race",
+        status: "launching",
+        requestedAt: 1_000,
+        lease: { owner: "other-worker", acquiredAt: 1_000, expiresAt: 61_000 },
+      },
+    });
+    let persistedWinner: Session | undefined;
+    const saveSession = vi.fn(() => {
+      persistedWinner = winner;
+      throw new Error("UNIQUE constraint failed: launch.idempotency_key");
+    });
+    const startSession = vi.fn(async (sessionId: string) => makeSession({ id: sessionId }));
+    const sendPrompt = vi.fn(async () => undefined);
+    const service = new AgentLaunchService({
+      storage: {
+        createSession: vi.fn(),
+        saveSession,
+        listSessions: vi.fn(() => (persistedWinner ? [persistedWinner] : [])),
+        findSessionByLaunchIdempotencyKey: vi.fn(() => persistedWinner),
+        claimSessionLaunchRecovery: vi.fn(() => undefined),
+      },
+      sessions: { startSession, sendPrompt },
+      ensureSessionContextWindow: (session) => session,
+      nowMs: () => 2_000,
+      leaseTtlMs: 60_000,
+    });
+
+    const result = await service.launch({
+      agent: { name: "Race loser" },
+      target: { workspace: makeWorkspace() },
+      prompt: "must be sent by the winner",
+      idempotencyKey: "launch-race",
+      leaseOwner: "this-worker",
+    });
+
+    expect(result).toMatchObject({
+      kind: "launch_in_progress",
+      retryable: true,
+      session: { id: "winner-1" },
+      retryAfterMs: 59_000,
+    });
+    expect(saveSession).toHaveBeenCalledTimes(1);
+    expect(startSession).not.toHaveBeenCalled();
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
+
   it("returns retryable launch_in_progress for an unexpired lease owned by another launcher", async () => {
     const launching = makeSession({
       id: "launching-1",
