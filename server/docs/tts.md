@@ -5,7 +5,7 @@ Oppi itself only defines a **generic audio reply contract**. It does not require
 This document covers both:
 
 1. the shared Oppi audio contract that any extension can target
-2. the sample `voice` Pi extension shipped in this repo, which uses local [Yuwp](https://github.com/duh17/yuwp) TTS as one concrete implementation
+2. the sample `voice` extension implementation in this repo, which uses local [Yuwp](https://github.com/duh17/yuwp) TTS as one concrete implementation
 
 For extension authors, the shared contract lives in `server/src/tts-provider.ts`.
 
@@ -92,11 +92,11 @@ Notes:
 
 ## Sample `voice` extension
 
-The repository also ships a sample `voice` Pi extension at `server/extensions/voice.ts`. It is not the core protocol; it is one example of how to implement voice creation, synthesis, and playback on top of Oppi's generic audio contract.
+The repository contains a sample `voice` extension implementation at `server/extensions/voice.ts`. It is not the core protocol or an installed Pi resource; it is one example of how to implement voice creation, synthesis, and playback on top of Oppi's generic audio contract.
 
-### What the sample extension adds
+### What the sample implementation adds
 
-Enable `voice` on a workspace to expose these tools:
+When registered by an embedding host or packaged as a Pi resource, the implementation exposes these tools:
 
 - `voice_create` — create or update a saved Yuwp voice from a VoiceDesign prompt.
 - `voice_speak` — generate a spoken reply and attach the audio to the timeline.
@@ -176,11 +176,11 @@ oppi config validate
 
 Then restart Oppi server.
 
-### Enable the extension
+### Availability
 
-The sample extension ships with the server at `server/extensions/voice.ts`. Enable or disable `voice` per workspace with the workspace editor's extension toggles, which write Pi resource settings for the workspace cwd.
+The current server does not register the sample factory, and Pi's resource loader does not auto-discover `server/extensions/voice.ts`. It therefore does not appear in the workspace editor's extension toggles or load in sessions by default. A separately packaged Pi extension can use this implementation and the generic audio contract above.
 
-After that, ask the agent to create or use a voice. Example:
+Once such an extension is installed and enabled, ask the agent to create or use a voice. Example:
 
 ```text
 Create a warm technical teammate voice and save it as my default.
@@ -206,4 +206,4 @@ The agent can still change the behavior for the current session with `voice_repl
 - Oppi only allows local TTS URLs by default.
 - To use a remote TTS URL, set `TTS_ALLOW_REMOTE=1` deliberately.
 - Generated audio is saved under `~/Library/Application Support/Yuwp/Audio/pi-voice`.
-- The TTS tools come from the `voice` extension, and enablement is per workspace through Pi resource settings for the workspace cwd.
+- The sample source does not become a loadable extension until it is packaged or registered by a host.

@@ -32,7 +32,7 @@ Oppi is an iPhone/iPad client and self-hosted server for [Pi](https://github.com
 ## Build and Test Rules
 
 - `Oppi.xcodeproj` is generated. Change `project.yml`, put plist keys under `info.properties`, and run `xcodegen generate`.
-- Always use `sim-pool.sh` for simulator builds and tests. Do not run bare `xcodebuild` unless you also set a unique `-derivedDataPath`. The pool wrapper is a maintainer-local skill; when unavailable, the public fallback is a unique `-derivedDataPath` per `docs/testing/README.md`.
+- Always use the repository-owned `clients/apple/scripts/sim-pool.sh` for simulator builds and tests. Do not run bare `xcodebuild` unless you also set a unique `-derivedDataPath`; see `docs/testing/README.md`.
 - Do not pipe `sim-pool.sh` output through `grep`, `tail`, or `head`. Read the summary and inspect the printed log path.
 - Investigate Apple build failures or apparent hangs by reading the `sim-pool.sh` log path and checking for active `xcodebuild`/sim-pool processes before rerunning.
 - Use `-scheme OppiUnitTests` for `OppiTests`. The full `Oppi` scheme also builds UI, E2E, and perf bundles.
