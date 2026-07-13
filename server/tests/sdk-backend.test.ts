@@ -467,7 +467,7 @@ describe("SdkBackend session state seeding", () => {
   it("seeds the pi session thinking level from stored Oppi session state", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-thinking-seed-"));
     const backend = await SdkBackend.create({
-      session: makeSession({ thinkingLevel: "high" }),
+      session: makeSession({ model: "openai/gpt-5.5", thinkingLevel: "high" }),
       workspace: {
         id: "w1",
         name: "Thinking Seed Test",
