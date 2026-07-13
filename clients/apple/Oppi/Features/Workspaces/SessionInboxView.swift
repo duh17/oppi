@@ -794,7 +794,7 @@ struct SessionInboxView: View {
         guard let connection = coordinator.connection(for: pending.serverId),
               let api = connection.apiClient else { return }
         connection.sessionStore.remove(id: pending.session.id)
-        await TimelineCache.shared.removeTrace(pending.session.id)
+        await TimelineCache.shared.removeTrace(pending.session.id, serverId: pending.serverId)
         do {
             try await api.deleteWorkspaceSession(workspaceId: pending.workspaceId, sessionId: pending.session.id)
         } catch let apiError as APIError {

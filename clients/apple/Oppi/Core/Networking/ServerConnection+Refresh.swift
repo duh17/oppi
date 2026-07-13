@@ -120,7 +120,7 @@ extension ServerConnection {
                 self.syncAllWorkspaceSummariesFromLocalState()
                 self.sessionStore.markSyncSucceeded()
                 self.syncLiveActivityState()
-                let cachedSessions = self.sessionStore.sessions
+                let cachedSessions = self.sessionStore.listProjectionSessions
                 let serverId = self.currentServerId
                 Task.detached {
                     guard let serverId else { return }

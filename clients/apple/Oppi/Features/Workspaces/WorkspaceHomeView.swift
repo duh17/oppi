@@ -1115,7 +1115,7 @@ struct WorkspaceHomeView: View {
         }
 
         connection.sessionStore.remove(id: pending.session.id)
-        await TimelineCache.shared.removeTrace(pending.session.id)
+        await TimelineCache.shared.removeTrace(pending.session.id, serverId: pending.serverId)
         do {
             try await api.deleteWorkspaceSession(
                 workspaceId: pending.workspaceId,

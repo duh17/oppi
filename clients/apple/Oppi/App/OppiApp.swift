@@ -1014,8 +1014,7 @@ struct OppiApp: App {
         let cache = TimelineCache.shared
         if let cachedSessions = await loadLaunchSessionCache(
             cache: cache,
-            serverId: server.id,
-            pairedServerCount: serverStore.servers.count
+            serverId: server.id
         ) {
             usedCachedSessions = true
             connection.sessionStore.applyServerSnapshot(cachedSessions)
@@ -1048,21 +1047,14 @@ struct OppiApp: App {
         }
     }
 
-    private func loadLaunchSessionCache(
+    func loadLaunchSessionCache(
         cache: TimelineCache,
-        serverId: String,
-        pairedServerCount: Int
+        serverId: String
     ) async -> [Session]? {
         if let cached = await cache.loadSessionList(serverId: serverId) {
             return cached
         }
 
-        guard pairedServerCount == 1,
-              let legacyCached = await cache.loadSessionList() else {
-            return nil
-        }
-
-        await cache.saveSessionList(legacyCached, serverId: serverId)
-        return legacyCached
+        return nil
     }
 }

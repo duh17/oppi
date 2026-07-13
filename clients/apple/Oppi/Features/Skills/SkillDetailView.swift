@@ -18,6 +18,7 @@ struct SkillDetailView: View {
     }
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(ServerConnection.self) private var connection
     @State private var detail: SkillDetail?
     @State private var isLoading = true
     @State private var error: String?
@@ -123,7 +124,12 @@ struct SkillDetailView: View {
         // Stale-while-revalidate for global skill details. Project-local
         // details are scoped by cwd and fetched directly to avoid stale matches.
         if cwd == nil {
-            let cached = await TimelineCache.shared.loadSkillDetail(skillName)
+            let cached: SkillDetail?
+            if let cacheServerId = connection.currentServerId {
+                cached = await TimelineCache.shared.loadSkillDetail(skillName, serverId: cacheServerId)
+            } else {
+                cached = await TimelineCache.shared.loadSkillDetail(skillName)
+            }
             if let cached {
                 detail = cached
                 isLoading = false
@@ -143,7 +149,11 @@ struct SkillDetailView: View {
             let fresh = try await api.getSkillDetail(name: skillName, cwd: cwd)
             detail = fresh
             if cwd == nil {
-                await TimelineCache.shared.saveSkillDetail(skillName, detail: fresh)
+                if let cacheServerId = connection.currentServerId {
+                    await TimelineCache.shared.saveSkillDetail(skillName, detail: fresh, serverId: cacheServerId)
+                } else {
+                    await TimelineCache.shared.saveSkillDetail(skillName, detail: fresh)
+                }
             }
             logger.debug("Loaded skill detail: \(skillName) (\(fresh.files.count) files)")
         } catch {

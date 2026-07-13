@@ -939,7 +939,11 @@ struct WorkspaceDetailView: View {
         guard let api = apiClient else { return }
         sessionStore.remove(id: session.id)
         removeArchiveSession(session.id)
-        await TimelineCache.shared.removeTrace(session.id)
+        if let currentServerId {
+            await TimelineCache.shared.removeTrace(session.id, serverId: currentServerId)
+        } else {
+            await TimelineCache.shared.removeTrace(session.id)
+        }
         do {
             try await api.deleteWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
         } catch let apiError as APIError {

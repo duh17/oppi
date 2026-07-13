@@ -350,12 +350,12 @@ struct QuickSessionSheet: View {
                 sessionId: cleanup.sessionId
             )
             connection.sessionStore.remove(id: cleanup.sessionId)
-            await TimelineCache.shared.removeTrace(cleanup.sessionId)
+            await TimelineCache.shared.removeTrace(cleanup.sessionId, serverId: cleanup.serverId)
             AppPreferences.QuickSession.removePendingDictationCleanup(cleanup)
         } catch let apiError as APIError {
             if case .server(let status, _) = apiError, status == 404 {
                 connection.sessionStore.remove(id: cleanup.sessionId)
-                await TimelineCache.shared.removeTrace(cleanup.sessionId)
+                await TimelineCache.shared.removeTrace(cleanup.sessionId, serverId: cleanup.serverId)
                 AppPreferences.QuickSession.removePendingDictationCleanup(cleanup)
             } else {
                 logger.warning("Failed to delete queued quick dictation session \(cleanup.sessionId, privacy: .public): \(apiError.localizedDescription, privacy: .public)")
