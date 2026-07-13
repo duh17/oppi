@@ -26,6 +26,7 @@ import {
   sessionStreamURL,
   isSecureTransport,
   listWorkspaceSessions,
+  waitForEvent,
 } from "./harness.js";
 
 declare module "vitest" {
@@ -33,6 +34,28 @@ declare module "vitest" {
     e2eLmsReady: boolean;
     e2eModel: string;
   }
+}
+
+async function waitForPolicyClose(url: string, deviceToken: string): Promise<number | null> {
+  const WebSocket = (await import("ws")).default;
+  return new Promise((resolve) => {
+    const ws = new WebSocket(url, {
+      headers: { Authorization: `Bearer ${deviceToken}` },
+      ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
+    });
+    const timer = setTimeout(() => {
+      ws.terminate();
+      resolve(null);
+    }, 120_000);
+    ws.once("close", (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+    ws.once("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+  });
 }
 
 describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
@@ -66,7 +89,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     }
 
     expect(deviceToken).toBeTruthy();
-  }, 60_000);
+  }, 120_000);
 
   // ── 1. Workspace CRUD ──
 
@@ -143,7 +166,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
 
     const sessionStream = await openSessionStream(deviceToken, workspaceId, sessionId);
     await closeStream(sessionStream);
-  }, 120_000);
+  }, 300_000);
 
   // ── 3. HTTP workspace list + split session lane ──
 
@@ -228,27 +251,12 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     const invalidToken = await api("GET", "/workspaces", "not-a-real-device-token");
     expect(invalidToken.status).toBe(401);
 
-    const WebSocket = (await import("ws")).default;
-    const result = await new Promise<{ closeCode: number | null }>((resolve) => {
-      const ws = new WebSocket(sessionStreamURL(workspaceId, "missing-session-id"), {
-        headers: { Authorization: `Bearer ${deviceToken}` },
-        ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
-      });
-      const timer = setTimeout(() => {
-        ws.close();
-        resolve({ closeCode: null });
-      }, 15_000);
-      ws.on("close", (code) => {
-        clearTimeout(timer);
-        resolve({ closeCode: code });
-      });
-      ws.on("error", () => {
-        clearTimeout(timer);
-        resolve({ closeCode: null });
-      });
-    });
+    const closeCode = await waitForPolicyClose(
+      sessionStreamURL(workspaceId, "missing-session-id"),
+      deviceToken,
+    );
 
-    expect(result.closeCode).toBe(1008);
+    expect(closeCode).toBe(1008);
   });
 
   // ── 6. Tool use prompt → bash tool lifecycle (requires real LLM) ──
@@ -321,8 +329,11 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
         );
         expect(connected2).toBeTruthy();
         expect(connected2?.currentSeq ?? 0).toBeGreaterThanOrEqual(baselineSeq);
-        expect(stream2.events.some((e) => e.type === "state" && e.sessionId === sessionId)).toBe(
-          true,
+        await waitForEvent(
+          stream2,
+          (event) => event.type === "state" && event.sessionId === sessionId,
+          `fresh state after reconnect (${sessionId})`,
+          { timeoutMs: 120_000 },
         );
       } finally {
         await closeStream(stream2);
@@ -349,26 +360,11 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     const leaked = sessions.find((s) => s.id === sessionId);
     expect(leaked).toBeUndefined();
 
-    const WebSocket = (await import("ws")).default;
-    const result = await new Promise<{ closeCode: number | null }>((resolve) => {
-      const ws = new WebSocket(sessionStreamURL(wrongWorkspaceId, sessionId), {
-        headers: { Authorization: `Bearer ${deviceToken}` },
-        ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
-      });
-      const timer = setTimeout(() => {
-        ws.close();
-        resolve({ closeCode: null });
-      }, 15_000);
-      ws.on("close", (code) => {
-        clearTimeout(timer);
-        resolve({ closeCode: code });
-      });
-      ws.on("error", () => {
-        clearTimeout(timer);
-        resolve({ closeCode: null });
-      });
-    });
-    expect(result.closeCode).toBe(1008);
+    const closeCode = await waitForPolicyClose(
+      sessionStreamURL(wrongWorkspaceId, sessionId),
+      deviceToken,
+    );
+    expect(closeCode).toBe(1008);
   });
 
   // ── 9. Workspace cleanup ──

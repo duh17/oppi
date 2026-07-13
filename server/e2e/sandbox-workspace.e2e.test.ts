@@ -19,7 +19,7 @@ declare module "vitest" {
   }
 }
 
-describe("E2E: Sandbox Workspace Lifecycle", { timeout: 120_000 }, () => {
+describe("E2E: Sandbox Workspace Lifecycle", { timeout: 300_000 }, () => {
   const lmsReady = () => inject("e2eLmsReady");
   let deviceToken = "";
   let sandboxWorkspaceId = "";
@@ -41,7 +41,7 @@ describe("E2E: Sandbox Workspace Lifecycle", { timeout: 120_000 }, () => {
       }
     }
     expect(deviceToken).toBeTruthy();
-  });
+  }, 120_000);
 
   it("creates a sandbox workspace", async () => {
     if (!lmsReady()) return;

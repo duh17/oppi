@@ -46,6 +46,11 @@ try {
   hasZbar = false;
 }
 
+function logSkip(unavailable: boolean, suite: string, reason: string): boolean {
+  if (unavailable) console.warn(`[test] Skipping ${suite}: ${reason}`);
+  return unavailable;
+}
+
 describe("QR encoder", () => {
   it("encodes short string as version 1 (21×21)", () => {
     const matrix = encode("Hello");
@@ -120,7 +125,9 @@ describe("QR encoder", () => {
   });
 });
 
-describe.skipIf(!hasZbar)("QR encoder conformance (zbar)", () => {
+describe.skipIf(
+  logSkip(!hasZbar, "QR encoder conformance (zbar)", "zbarimg executable is unavailable"),
+)("QR encoder conformance (zbar)", () => {
   it("decodes short string", () => {
     expect(zbarDecode(encode("HELLO"))).toBe("HELLO");
   });

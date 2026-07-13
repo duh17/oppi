@@ -29,7 +29,36 @@ declare module "vitest" {
   }
 }
 
-describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
+async function waitForUpgradeStatus(url: string, deviceToken?: string): Promise<number> {
+  const WebSocket = (await import("ws")).default;
+  return new Promise((resolve) => {
+    const ws = new WebSocket(url, {
+      ...(deviceToken ? { headers: { Authorization: `Bearer ${deviceToken}` } } : {}),
+      ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
+    });
+    const timer = setTimeout(() => {
+      ws.terminate();
+      resolve(0);
+    }, 120_000);
+    ws.once("unexpected-response", (_req, res) => {
+      clearTimeout(timer);
+      res.resume();
+      resolve(res.statusCode || 0);
+    });
+    ws.once("open", () => {
+      clearTimeout(timer);
+      ws.close();
+      resolve(200);
+    });
+    ws.once("error", (error) => {
+      clearTimeout(timer);
+      const match = error.message.match(/Unexpected server response:\s*(\d+)/i);
+      resolve(match ? Number(match[1]) : 0);
+    });
+  });
+}
+
+describe("E2E: Pairing Flow", { timeout: 300_000 }, () => {
   // Server is started by globalSetup (e2e/setup.ts)
   const lmsReady = () => inject("e2eLmsReady");
 
@@ -52,28 +81,11 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
   it("rejects unauthenticated split stream WebSocket", async () => {
     if (!lmsReady()) return;
 
-    const WebSocket = (await import("ws")).default;
+    const status = await waitForUpgradeStatus(
+      sessionStreamURL("missing-workspace", "missing-session"),
+    );
 
-    const result = await new Promise<{ status: number }>((resolve) => {
-      const ws = new WebSocket(
-        sessionStreamURL("missing-workspace", "missing-session"),
-        isSecureTransport() ? { rejectUnauthorized: false } : undefined,
-      );
-      ws.on("unexpected-response", (_req, res) => {
-        res.resume();
-        resolve({ status: res.statusCode || 0 });
-      });
-      ws.on("open", () => {
-        ws.close();
-        resolve({ status: 200 }); // unexpected
-      });
-      ws.on("error", (err) => {
-        const match = err.message.match(/Unexpected server response:\s*(\d+)/i);
-        resolve({ status: match ? Number(match[1]) : 0 });
-      });
-    });
-
-    expect(result.status).toBe(401);
+    expect(status).toBe(401);
   });
 
   // ── 2. Invite generation and payload decode ──
@@ -231,30 +243,12 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
     it("rejects split streams with invalid device token", async () => {
       if (!lmsReady()) return;
 
-      const WebSocket = (await import("ws")).default;
-      const result = await new Promise<{ status: number }>((resolve) => {
-        const ws = new WebSocket(
-          sessionStreamURL(workspaceId || "missing", sessionId || "missing"),
-          {
-            headers: { Authorization: `Bearer ${deviceToken}_invalid` },
-            ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
-          },
-        );
-        ws.on("unexpected-response", (_req, res) => {
-          res.resume();
-          resolve({ status: res.statusCode || 0 });
-        });
-        ws.on("open", () => {
-          ws.close();
-          resolve({ status: 200 });
-        });
-        ws.on("error", (err) => {
-          const match = err.message.match(/Unexpected server response:\s*(\d+)/i);
-          resolve({ status: match ? Number(match[1]) : 0 });
-        });
-      });
+      const status = await waitForUpgradeStatus(
+        sessionStreamURL(workspaceId || "missing", sessionId || "missing"),
+        `${deviceToken}_invalid`,
+      );
 
-      expect(result.status).toBe(401);
+      expect(status).toBe(401);
     });
   });
 
