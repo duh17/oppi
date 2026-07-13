@@ -264,7 +264,8 @@ extension ServerConnection {
                 stoppedCount: storedSummary.stoppedCount,
                 hasAttention: hasAttention,
                 hasErrorRoot: hasErrorRoot,
-                latestActivity: latestActivity
+                latestActivity: latestActivity,
+                gitSummary: storedSummary.gitSummary
             )
         } else if let fallbackSummary {
             nextSummary = fallbackSummary

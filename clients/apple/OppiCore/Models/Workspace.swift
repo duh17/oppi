@@ -46,6 +46,13 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
 
 }
 
+struct WorkspaceGitSummary: Codable, Sendable, Equatable {
+    let isGitRepo: Bool
+    let changedCount: Int
+    let ahead: Int?
+    let behind: Int?
+}
+
 struct WorkspaceListSummary: Codable, Sendable, Equatable {
     let workspaceId: String
     var activeCount: Int
@@ -53,9 +60,11 @@ struct WorkspaceListSummary: Codable, Sendable, Equatable {
     var hasAttention: Bool
     var hasErrorRoot: Bool
     var latestActivity: Date?
+    var gitSummary: WorkspaceGitSummary?
+    private(set) var hasGitSummarySnapshot: Bool
 
     enum CodingKeys: String, CodingKey {
-        case workspaceId, activeCount, stoppedCount, hasAttention, hasErrorRoot, latestActivity
+        case workspaceId, activeCount, stoppedCount, hasAttention, hasErrorRoot, latestActivity, gitSummary
     }
 
     init(
@@ -64,7 +73,9 @@ struct WorkspaceListSummary: Codable, Sendable, Equatable {
         stoppedCount: Int,
         hasAttention: Bool,
         hasErrorRoot: Bool = false,
-        latestActivity: Date? = nil
+        latestActivity: Date? = nil,
+        gitSummary: WorkspaceGitSummary? = nil,
+        hasGitSummarySnapshot: Bool? = nil
     ) {
         self.workspaceId = workspaceId
         self.activeCount = activeCount
@@ -72,6 +83,8 @@ struct WorkspaceListSummary: Codable, Sendable, Equatable {
         self.hasAttention = hasAttention
         self.hasErrorRoot = hasErrorRoot
         self.latestActivity = latestActivity
+        self.gitSummary = gitSummary
+        self.hasGitSummarySnapshot = hasGitSummarySnapshot ?? (gitSummary != nil)
     }
 
     init(from decoder: Decoder) throws {
@@ -81,6 +94,8 @@ struct WorkspaceListSummary: Codable, Sendable, Equatable {
         stoppedCount = try c.decode(Int.self, forKey: .stoppedCount)
         hasAttention = try c.decode(Bool.self, forKey: .hasAttention)
         hasErrorRoot = try c.decodeIfPresent(Bool.self, forKey: .hasErrorRoot) ?? false
+        hasGitSummarySnapshot = c.contains(.gitSummary)
+        gitSummary = try c.decodeIfPresent(WorkspaceGitSummary.self, forKey: .gitSummary)
 
         if let latestActivityMs = try c.decodeIfPresent(Double.self, forKey: .latestActivity) {
             latestActivity = Date(timeIntervalSince1970: latestActivityMs / 1000)
@@ -97,6 +112,7 @@ struct WorkspaceListSummary: Codable, Sendable, Equatable {
         try c.encode(hasAttention, forKey: .hasAttention)
         try c.encode(hasErrorRoot, forKey: .hasErrorRoot)
         try c.encodeIfPresent(latestActivity.map { $0.timeIntervalSince1970 * 1000 }, forKey: .latestActivity)
+        try c.encodeIfPresent(gitSummary, forKey: .gitSummary)
     }
 }
 

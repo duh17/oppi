@@ -189,7 +189,7 @@ Mirror sessions are terminal-owned. If the bridge disconnects, the stored sessio
 
 ## Session list and history read models
 
-Workspace navigation uses `SessionListService` over SQLite-backed snapshots and the local-session catalog instead of reading full JSONL traces on the hot path.
+Workspace navigation uses `SessionListService` over SQLite-backed snapshots and the local-session catalog instead of reading full JSONL traces on the hot path. The workspace catalog can opt into compact Git summaries (`changedCount`, `ahead`, and `behind`); this uses a lightweight status probe rather than the full review-oriented Git status payload.
 
 ```mermaid
 graph TD

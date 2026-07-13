@@ -515,14 +515,15 @@ actor APIClient: ClientLogUploading {
     }
 
     /// List workspace cards, including optional list summaries for catalog/home UI.
-    func listWorkspaceCatalog() async throws -> WorkspaceCatalogResponse {
-        let data = try await get("/workspaces")
+    func listWorkspaceCatalog(includeGitSummary: Bool = true) async throws -> WorkspaceCatalogResponse {
+        let query = includeGitSummary ? "?includeGitSummary=true" : ""
+        let data = try await get("/workspaces\(query)")
         return try JSONDecoder().decode(WorkspaceCatalogResponse.self, from: data)
     }
 
     /// List all workspaces for the authenticated user.
     func listWorkspaces() async throws -> [Workspace] {
-        try await listWorkspaceCatalog().workspaces
+        try await listWorkspaceCatalog(includeGitSummary: false).workspaces
     }
 
     // periphery:ignore - used by APIClientTests via @testable import
@@ -581,6 +582,12 @@ actor APIClient: ClientLogUploading {
     }
 
     // MARK: - Git Status
+
+    /// Fetch the lightweight Git state used by workspace catalog rows.
+    func getWorkspaceGitSummary(workspaceId: String) async throws -> WorkspaceGitSummary {
+        let data = try await get("/workspaces/\(workspaceId)/git/summary")
+        return try JSONDecoder().decode(WorkspaceGitSummary.self, from: data)
+    }
 
     /// Fetch git status for a workspace checkout.
     func getGitStatus(workspaceId: String, worktreeId: String? = nil) async throws -> GitStatus {

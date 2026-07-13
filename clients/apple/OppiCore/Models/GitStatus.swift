@@ -53,7 +53,7 @@ struct GitStatus: Codable, Sendable, Equatable {
     /// Recent commits (newest first, capped at 5 by server)
     var recentCommits: [GitCommitSummary]
 
-    /// Total uncommitted files (dirty + untracked + staged).
+    /// Total unique uncommitted file paths.
     var uncommittedCount: Int {
         totalFiles
     }

@@ -101,7 +101,7 @@ Oppi keeps workspace navigation HTTP-first. WebSockets carry live state where st
 | Lane                                        | Transport                   | Carries                                                                                                  |
 | ------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------- |
 | Global sessions inbox                       | HTTP                        | Recent session summaries across workspaces; the root groups active rows by attention and execution state |
-| Workspace catalog summaries                 | HTTP                        | Workspace rows, active/stopped counts, attention and error flags                                         |
+| Workspace catalog summaries                 | HTTP                        | Workspace rows, active/stopped counts, attention/error flags, and optional compact Git summaries          |
 | Workspace detail recent list                | HTTP                        | Recent active/stopped session summaries, attention snapshot, importable local sessions                   |
 | Workspace archive bucket                    | HTTP                        | Older stopped/importable rows for one lazy-loaded time bucket                                            |
 | Workspace files and media                   | HTTP GET/HEAD               | Directory listings, raw bytes, uploads, attachments, byte-range media                                    |
@@ -158,7 +158,7 @@ Durable session events get per-session sequence numbers and can be replayed thro
 
 ## Cross-system invariants
 
-- Workspace navigation is HTTP-first. `/app/events/stream` keeps visible rows and attention state fresh between snapshots.
+- Workspace navigation is HTTP-first. `/app/events/stream` keeps visible rows and attention state fresh between snapshots; compact sidebar Git state comes from the workspace catalog snapshot, never raw Git payloads on the app-event stream.
 - The Workspaces root is a server-scoped active-session inbox. Workspace selection opens the workspace-scoped recent list, files, and configuration.
 - The hot workspace recent list is time-bounded. Older stopped/importable history belongs in archive buckets.
 - Workspace session-list endpoints return session summaries, not full `Session` payloads.

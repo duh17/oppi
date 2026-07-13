@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { getGitStatus } from "../src/git-status.js";
+import { getGitStatus, getWorkspaceGitSummary } from "../src/git-status.js";
 
 // ─── Helpers ───
 
@@ -50,6 +50,43 @@ afterAll(() => {
 });
 
 // ─── Tests ───
+
+describe("getWorkspaceGitSummary", () => {
+  it("returns a compact non-repo result", async () => {
+    await expect(getWorkspaceGitSummary(nonGitDir)).resolves.toEqual({
+      isGitRepo: false,
+      changedCount: 0,
+      ahead: null,
+      behind: null,
+    });
+  });
+
+  it("omits failed probes instead of reporting a false clean tree", async () => {
+    const brokenRepo = mkdtempSync(join(tmpdir(), "git-status-summary-broken-"));
+    mkdirSync(join(brokenRepo, ".git"));
+    try {
+      await expect(getWorkspaceGitSummary(brokenRepo)).resolves.toBeUndefined();
+    } finally {
+      rmSync(brokenRepo, { recursive: true, force: true });
+    }
+  });
+
+  it("counts changed paths without loading full file details", async () => {
+    writeFileSync(join(repoDir, "file1.txt"), "modified\n");
+    writeFileSync(join(repoDir, "summary-untracked.txt"), "new\n");
+    try {
+      await expect(getWorkspaceGitSummary(repoDir)).resolves.toEqual({
+        isGitRepo: true,
+        changedCount: 2,
+        ahead: null,
+        behind: null,
+      });
+    } finally {
+      gitIn(repoDir, "checkout -- file1.txt");
+      rmSync(join(repoDir, "summary-untracked.txt"));
+    }
+  });
+});
 
 describe("getGitStatus", () => {
   it("returns isGitRepo false for non-git directory", async () => {
@@ -132,6 +169,21 @@ describe("getGitStatus", () => {
     } finally {
       gitIn(repoDir, "reset HEAD staged.txt");
       rmSync(join(repoDir, "staged.txt"));
+    }
+  });
+
+  it("counts a file with staged and unstaged changes once", async () => {
+    writeFileSync(join(repoDir, "file1.txt"), "staged\n");
+    gitIn(repoDir, "add file1.txt");
+    writeFileSync(join(repoDir, "file1.txt"), "staged and dirty\n");
+    try {
+      const status = await getGitStatus(repoDir);
+      expect(status.stagedCount).toBe(1);
+      expect(status.dirtyCount).toBe(1);
+      expect(status.totalFiles).toBe(1);
+    } finally {
+      gitIn(repoDir, "reset HEAD file1.txt");
+      gitIn(repoDir, "checkout -- file1.txt");
     }
   });
 
