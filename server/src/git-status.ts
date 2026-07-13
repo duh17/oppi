@@ -12,17 +12,22 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveHomePath } from "./git-utils.js";
-import type { GitCommitSummary, GitFileStatus, GitStatus } from "./types.js";
+import type { GitCommitSummary, GitFileStatus, GitStatus, WorkspaceGitSummary } from "./types.js";
 
 const FILE_CAP = 500;
 const GIT_TIMEOUT_MS = 5000;
+const SUMMARY_GIT_TIMEOUT_MS = 1500;
 
 /**
  * Run a git command and return stdout. Returns null on any error.
  */
-function git(cwd: string, args: string[]): Promise<string | null> {
+function git(
+  cwd: string,
+  args: string[],
+  timeoutMs: number = GIT_TIMEOUT_MS,
+): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile("git", args, { cwd, timeout: GIT_TIMEOUT_MS }, (err, stdout) => {
+    execFile("git", args, { cwd, timeout: timeoutMs }, (err, stdout) => {
       if (err) {
         resolve(null);
       } else {
@@ -33,6 +38,48 @@ function git(cwd: string, args: string[]): Promise<string | null> {
 }
 
 // ─── Main ───
+
+/**
+ * Read only the status fields needed by workspace catalog rows.
+ *
+ * This avoids the commit log, numstat, stash, and untracked-file reads used by
+ * the full review surface. Catalog callers can fan this out across workspaces
+ * without turning one navigation refresh into eight git commands per repo.
+ */
+export async function getWorkspaceGitSummary(
+  dir: string,
+): Promise<WorkspaceGitSummary | undefined> {
+  const resolved = resolveHomePath(dir);
+  if (!existsSync(join(resolved, ".git"))) {
+    return { isGitRepo: false, changedCount: 0, ahead: null, behind: null };
+  }
+
+  const [statusOut, upstreamOut] = await Promise.all([
+    git(resolved, ["status", "--porcelain"], SUMMARY_GIT_TIMEOUT_MS),
+    git(resolved, ["rev-list", "--left-right", "--count", "@{u}...HEAD"], SUMMARY_GIT_TIMEOUT_MS),
+  ]);
+  // A missing upstream is valid and leaves ahead/behind unknown. A failed
+  // status probe is not a clean tree: omit the summary so clients preserve
+  // their last trustworthy value instead of displaying a false zero.
+  if (statusOut === null) {
+    return undefined;
+  }
+
+  const changedCount = statusOut
+    ? statusOut.split("\n").filter((line) => line.length > 0).length
+    : 0;
+  let ahead: number | null = null;
+  let behind: number | null = null;
+  if (upstreamOut) {
+    const parts = upstreamOut.trim().split(/\s+/);
+    if (parts.length === 2) {
+      behind = Number.parseInt(parts[0], 10);
+      ahead = Number.parseInt(parts[1], 10);
+    }
+  }
+
+  return { isGitRepo: true, changedCount, ahead, behind };
+}
 
 /**
  * Get git status for a directory. Returns a complete GitStatus object.
@@ -93,9 +140,11 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
   let dirtyCount = 0;
   let untrackedCount = 0;
   let stagedCount = 0;
+  let totalFiles = 0;
 
   if (statusOut) {
     const lines = statusOut.split("\n").filter((l) => l.length > 0);
+    totalFiles = lines.length;
     for (const line of lines) {
       const statusCode = line.slice(0, 2);
       const filePath = line.slice(3);
@@ -122,8 +171,6 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
       }
     }
   }
-
-  const totalFiles = dirtyCount + untrackedCount + stagedCount;
 
   // Parse git diff HEAD --numstat for per-file +/- lines
   // Format: "added\tremoved\tpath" (binary files show "-\t-\tpath")

@@ -1258,6 +1258,9 @@ struct WorkspaceSidebarView: View {
                                     workspaceId: workspace.id,
                                     connection: connection
                                 )
+                                let gitSummary = workspaceGitSummary(
+                                    summaries[workspace.id]?.gitSummary
+                                )
                                 Button {
                                     navigation.openWorkspace(target)
                                     onSelect?()
@@ -1265,13 +1268,14 @@ struct WorkspaceSidebarView: View {
                                     WorkspaceSidebarRow(
                                         workspace: workspace,
                                         status: status,
+                                        gitSummary: gitSummary,
                                         isSelected: navigation.selectedWorkspaceFilter == target
                                     )
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityIdentifier(WorkspaceHomeView.workspaceOpenAccessibilityIdentifier(workspaceName: workspace.name))
                                 .accessibilityLabel("Open \(workspace.name)")
-                                .accessibilityValue(status.accessibilityValue)
+                                .accessibilityValue(workspaceAccessibilityValue(status: status, gitSummary: gitSummary))
                             }
                         }
                     } else {
@@ -1392,6 +1396,28 @@ struct WorkspaceSidebarView: View {
         )
     }
 
+    private func workspaceGitSummary(_ summary: WorkspaceGitSummary?) -> WorkspaceSidebarGitSummary? {
+        guard let summary, summary.isGitRepo else { return nil }
+        let sidebarSummary = WorkspaceSidebarGitSummary(
+            changedCount: summary.changedCount,
+            aheadCount: summary.ahead ?? 0,
+            behindCount: summary.behind ?? 0
+        )
+        return sidebarSummary.isVisible ? sidebarSummary : nil
+    }
+
+    private func workspaceAccessibilityValue(
+        status: WorkspaceSidebarSessionStatus,
+        gitSummary: WorkspaceSidebarGitSummary?
+    ) -> String {
+        [status.accessibilityValue, gitSummary?.accessibilityValue]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: ", ")
+    }
+
     private func presentCreateWorkspace(
         on server: PairedServer,
         presentation: WorkspaceCreatePresentation = .standard,
@@ -1422,6 +1448,18 @@ struct WorkspaceSidebarSessionStatus: Equatable {
     let errorCount: Int
     let workingCount: Int
     let doneCount: Int
+
+    init(
+        questionCount: Int = 0,
+        errorCount: Int = 0,
+        workingCount: Int = 0,
+        doneCount: Int = 0
+    ) {
+        self.questionCount = questionCount
+        self.errorCount = errorCount
+        self.workingCount = workingCount
+        self.doneCount = doneCount
+    }
 
     init(
         sessions: [Session],
@@ -1495,39 +1533,87 @@ struct WorkspaceSidebarSessionStatus: Equatable {
     }
 }
 
-private struct WorkspaceSidebarRow: View {
+/// Compact git state for a workspace catalog row.
+struct WorkspaceSidebarGitSummary: Equatable {
+    let changedCount: Int
+    let aheadCount: Int
+    let behindCount: Int
+
+    var isVisible: Bool {
+        changedCount > 0 || aheadCount > 0 || behindCount > 0
+    }
+
+    var accessibilityValue: String {
+        [
+            countLabel(changedCount, singular: "changed file", plural: "changed files"),
+            countLabel(aheadCount, singular: "commit not pushed", plural: "commits not pushed"),
+            countLabel(behindCount, singular: "commit behind", plural: "commits behind"),
+        ]
+        .compactMap { $0 }
+        .joined(separator: ", ")
+    }
+
+    private func countLabel(_ count: Int, singular: String, plural: String) -> String? {
+        guard count > 0 else { return nil }
+        return "\(count) \(count == 1 ? singular : plural)"
+    }
+}
+
+struct WorkspaceSidebarRow: View {
     @Environment(\.theme) private var theme
 
     let workspace: Workspace
     let status: WorkspaceSidebarSessionStatus
+    let gitSummary: WorkspaceSidebarGitSummary?
     let isSelected: Bool
 
+    init(
+        workspace: Workspace,
+        status: WorkspaceSidebarSessionStatus,
+        gitSummary: WorkspaceSidebarGitSummary? = nil,
+        isSelected: Bool
+    ) {
+        self.workspace = workspace
+        self.status = status
+        self.gitSummary = gitSummary
+        self.isSelected = isSelected
+    }
+
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
             WorkspaceRuntimeIcon(workspace: workspace, size: 26, frameSize: 32)
+                .padding(.top, 1)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(workspace.name)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(workspace.name)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                if let desc = workspace.description, !desc.isEmpty {
-                    Text(desc)
+                    if status.isVisible {
+                        WorkspaceSidebarSessionStatusIndicator(status: status)
+                    }
+                }
+
+                if let description = workspace.description, !description.isEmpty {
+                    Text(description)
                         .font(.caption)
                         .foregroundStyle(.themeComment)
                         .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let gitSummary, gitSummary.isVisible {
+                    WorkspaceSidebarGitStatusLine(summary: gitSummary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
-
-            if status.isVisible {
-                WorkspaceSidebarSessionStatusIndicator(status: status)
-            }
         }
         .frame(minHeight: 44)
-        .padding(.vertical, 4)
+        .padding(.vertical, 5)
         .padding(.horizontal, 8)
         .background {
             if isSelected {
@@ -1536,6 +1622,59 @@ private struct WorkspaceSidebarRow: View {
             }
         }
         .contentShape(Rectangle())
+    }
+}
+
+struct WorkspaceSidebarGitStatusLine: View {
+    let summary: WorkspaceSidebarGitSummary
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            if summary.changedCount > 0 {
+                metric(
+                    text: "\(SessionFormatting.compactCount(summary.changedCount)) changes",
+                    symbol: "circle.fill",
+                    tint: .themeOrange,
+                    symbolScale: .small
+                )
+            }
+
+            if summary.aheadCount > 0 {
+                metric(
+                    text: "\(SessionFormatting.compactCount(summary.aheadCount))",
+                    symbol: "arrow.up",
+                    tint: .themeBlue
+                )
+            }
+
+            if summary.behindCount > 0 {
+                metric(
+                    text: "\(SessionFormatting.compactCount(summary.behindCount))",
+                    symbol: "arrow.down",
+                    tint: .themeOrange
+                )
+            }
+        }
+        .font(.caption2.weight(.medium))
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(summary.accessibilityValue)
+    }
+
+    private func metric(
+        text: String,
+        symbol: String,
+        tint: Color,
+        symbolScale: Image.Scale = .medium
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Image(systemName: symbol)
+                .imageScale(symbolScale)
+            Text(text)
+                .monospacedDigit()
+        }
+        .foregroundStyle(tint)
     }
 }
 

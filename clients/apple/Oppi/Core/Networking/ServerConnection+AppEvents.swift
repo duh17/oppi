@@ -91,6 +91,7 @@ extension ServerConnection {
 
         case .workspaceGitChanged(let workspaceId, let worktreeId, _, _, _):
             invalidateWorkspaceCaches(workspaceId: workspaceId, worktreeId: worktreeId)
+            refreshWorkspaceSidebarGitSummary(workspaceId: workspaceId, worktreeId: worktreeId)
 
         case .ignored:
             break
@@ -184,6 +185,67 @@ extension ServerConnection {
         screenAwakeController.clearSessionActivity(sessionId: sessionId)
         sessionUsageMetricSnapshots.removeValue(forKey: sessionId)
         sessionUsageMetricLastEmittedAt.removeValue(forKey: sessionId)
+    }
+
+    private func refreshWorkspaceSidebarGitSummary(
+        workspaceId: String,
+        worktreeId: String?
+    ) {
+        let normalizedWorktreeId = worktreeId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedWorktreeId == nil || normalizedWorktreeId == WorkspaceWorktree.mainId else {
+            return
+        }
+        let testFetch = _getWorkspaceGitSummaryForTesting
+        guard testFetch != nil || apiClient != nil else { return }
+
+        let generation = (workspaceGitSummaryRefreshGeneration[workspaceId] ?? 0) &+ 1
+        workspaceGitSummaryRefreshGeneration[workspaceId] = generation
+        workspaceGitSummaryRefreshTasks[workspaceId]?.cancel()
+        let debounce = workspaceGitSummaryRefreshDebounce
+
+        workspaceGitSummaryRefreshTasks[workspaceId] = Task { @MainActor [weak self, apiClient, testFetch] in
+            do {
+                try await Task.sleep(for: debounce)
+                guard let self,
+                      !Task.isCancelled,
+                      self.workspaceGitSummaryRefreshGeneration[workspaceId] == generation else {
+                    return
+                }
+                let fetched: WorkspaceGitSummary
+                if let testFetch {
+                    fetched = try await testFetch(workspaceId)
+                } else if let apiClient {
+                    fetched = try await apiClient.getWorkspaceGitSummary(workspaceId: workspaceId)
+                } else {
+                    return
+                }
+                guard !Task.isCancelled,
+                      self.workspaceGitSummaryRefreshGeneration[workspaceId] == generation else {
+                    return
+                }
+                self.workspaceStore.updateGitSummary(
+                    fetched.isGitRepo ? fetched : nil,
+                    workspaceId: workspaceId
+                )
+                self.workspaceGitSummaryRefreshTasks.removeValue(forKey: workspaceId)
+            } catch is CancellationError {
+                // A newer invalidation owns the next compact refresh.
+            } catch {
+                guard let self,
+                      self.workspaceGitSummaryRefreshGeneration[workspaceId] == generation else {
+                    return
+                }
+                self.workspaceGitSummaryRefreshTasks.removeValue(forKey: workspaceId)
+                self.recordRefreshEvent(
+                    "workspace_git_summary.refresh_failed",
+                    level: .warning,
+                    metadata: [
+                        "workspaceId": workspaceId,
+                        "error": Self.compactError(error),
+                    ]
+                )
+            }
+        }
     }
 
     private func invalidateWorkspaceCaches(workspaceId: String, worktreeId: String? = nil) {

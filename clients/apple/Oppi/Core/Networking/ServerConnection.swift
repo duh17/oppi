@@ -211,6 +211,9 @@ final class ServerConnection {
     /// Test seam: observe view-driven session re-entry preparation.
     var _onPrepareForSessionReentryForTesting: ((String) -> Void)?
 
+    /// Test seam: replace compact sidebar Git summary HTTP fetches.
+    var _getWorkspaceGitSummaryForTesting: ((String) async throws -> WorkspaceGitSummary)?
+
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest? {
         get {
@@ -310,6 +313,9 @@ final class ServerConnection {
         disconnectAppEventStream()
         streamCapabilitiesRefreshTask?.cancel()
         streamCapabilitiesRefreshTask = nil
+        workspaceGitSummaryRefreshTasks.values.forEach { $0.cancel() }
+        workspaceGitSummaryRefreshTasks.removeAll()
+        workspaceGitSummaryRefreshGeneration.removeAll()
         streamCapabilitiesGeneration &+= 1
 
         self.credentials = credentials
@@ -1370,6 +1376,9 @@ final class ServerConnection {
     /// Shared in-flight tasks to coalesce overlapping refresh requests.
     var sessionListRefreshTask: Task<Void, Never>?
     var workspaceCatalogRefreshTask: Task<Void, Never>?
+    var workspaceGitSummaryRefreshTasks: [String: Task<Void, Never>] = [:]
+    var workspaceGitSummaryRefreshGeneration: [String: UInt64] = [:]
+    var workspaceGitSummaryRefreshDebounce: Duration = .seconds(2)
 
 #if DEBUG
     /// Set the server ID for screenshot preview harness (no real credentials needed).

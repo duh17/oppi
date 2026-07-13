@@ -15,7 +15,7 @@ import {
   getCommitFileDiff,
   getCommitLog,
 } from "../git-commits.js";
-import { getGitStatus } from "../git-status.js";
+import { getGitStatus, getWorkspaceGitSummary } from "../git-status.js";
 import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "../local-sessions.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "../oppi-cli-prompt.js";
 import {
@@ -44,6 +44,7 @@ import type {
   Session,
   UpdateWorkspaceRequest,
   Workspace,
+  WorkspaceGitSummary,
   WorkspaceListSummary,
   WorkspaceQuickActionsResponse,
   WorkspaceQuickActionSelectionResponse,
@@ -147,10 +148,37 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return ctx.sessionRuntimes;
   }
 
-  function handleListWorkspaces(res: ServerResponse): void {
+  async function handleListWorkspaces(url: URL, res: ServerResponse): Promise<void> {
     const workspaces = ctx.storage.listWorkspaces();
     const { serverNow, summaries } = buildWorkspaceListSummarySnapshot(workspaces);
-    helpers.json(res, { serverNow, workspaces, summaries });
+    if (url.searchParams.get("includeGitSummary") !== "true") {
+      helpers.json(res, { serverNow, workspaces, summaries });
+      return;
+    }
+
+    const gitSummaries: Array<WorkspaceGitSummary | undefined> = [];
+    const concurrency = 4;
+    for (let index = 0; index < workspaces.length; index += concurrency) {
+      const batch = workspaces.slice(index, index + concurrency);
+      const batchSummaries = await Promise.all(
+        batch.map(async (workspace) => {
+          if (workspace.gitStatusEnabled === false || !workspace.hostMount) {
+            return { isGitRepo: false, changedCount: 0, ahead: null, behind: null };
+          }
+          return getWorkspaceGitSummary(workspace.hostMount);
+        }),
+      );
+      gitSummaries.push(...batchSummaries);
+    }
+
+    helpers.json(res, {
+      serverNow,
+      workspaces,
+      summaries: summaries.map((summary, index) => ({
+        ...summary,
+        ...(gitSummaries[index] ? { gitSummary: gitSummaries[index] } : {}),
+      })),
+    });
   }
 
   function buildWorkspaceListSummarySnapshot(workspaces: Workspace[]): {
@@ -580,6 +608,26 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return { path: worktree.path, selectedSession: selected.selectedSession };
   }
 
+  async function handleGetWorkspaceGitSummary(wsId: string, res: ServerResponse): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    if (workspace.gitStatusEnabled === false || !workspace.hostMount) {
+      helpers.json(res, { isGitRepo: false, changedCount: 0, ahead: null, behind: null });
+      return;
+    }
+
+    const summary = await getWorkspaceGitSummary(workspace.hostMount);
+    if (!summary) {
+      helpers.error(res, 503, "Workspace Git summary unavailable");
+      return;
+    }
+    helpers.json(res, summary);
+  }
+
   async function handleGetWorkspaceGitStatus(
     wsId: string,
     url: URL,
@@ -978,7 +1026,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
 
     if (path === "/workspaces" && method === "GET") {
-      handleListWorkspaces(res);
+      await handleListWorkspaces(url, res);
       return true;
     }
 
@@ -1058,6 +1106,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         url,
         res,
       );
+      return true;
+    }
+
+    const wsGitSummaryMatch = path.match(/^\/workspaces\/([^/]+)\/git\/summary$/);
+    if (wsGitSummaryMatch && method === "GET") {
+      await handleGetWorkspaceGitSummary(wsGitSummaryMatch[1], res);
       return true;
     }
 

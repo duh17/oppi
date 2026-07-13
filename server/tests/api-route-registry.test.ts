@@ -73,6 +73,7 @@ const sessionOperationIds = [
   "sendSessionCommand",
   "stopSession",
   "listRecentSessions",
+  "getWorkspaceGitSummary",
   "getWorkspaceGitStatus",
   "listWorkspaceGitChanges",
   "getWorkspaceGitDiff",
@@ -188,6 +189,9 @@ describe("api route registry", () => {
     );
     expect(normalizeRegisteredPathPattern("/workspaces/ws-1/worktrees/wt_feature")).toBe(
       "/workspaces/:workspaceId/worktrees/:worktreeId",
+    );
+    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/git/summary")).toBe(
+      "/workspaces/:workspaceId/git/summary",
     );
     expect(normalizeRegisteredPathPattern("/workspaces/ws-1/git/status")).toBe(
       "/workspaces/:workspaceId/git/status",

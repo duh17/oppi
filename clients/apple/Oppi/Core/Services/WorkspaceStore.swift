@@ -254,6 +254,25 @@ final class WorkspaceStore {
         workspacesByServer[serverId] = list
     }
 
+    /// Replace the compact Git state without disturbing live session overlays.
+    /// A failed refresh passes nil only when the server authoritatively reports
+    /// that the workspace is not a repository; transport failures keep stale data.
+    func updateGitSummary(
+        _ gitSummary: WorkspaceGitSummary?,
+        workspaceId: String,
+        serverId: String? = nil
+    ) {
+        let key = serverId ?? activeKey
+        if var stored = storedWorkspaceSummariesByServer[key]?[workspaceId] {
+            stored.gitSummary = gitSummary
+            storedWorkspaceSummariesByServer[key]?[workspaceId] = stored
+        }
+        if var visible = workspaceSummariesByServer[key]?[workspaceId] {
+            visible.gitSummary = gitSummary
+            workspaceSummariesByServer[key]?[workspaceId] = visible
+        }
+    }
+
     // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// Remove a workspace by ID from active-server partition.
     func remove(id: String) {
@@ -361,8 +380,17 @@ final class WorkspaceStore {
             workspacesByServer[serverId] = ws
             skillsByServer[serverId] = sk
             if let responseSummaries = catalog.summaries {
+                let mergedResponseSummaries = responseSummaries.map { response in
+                    guard !response.hasGitSummarySnapshot,
+                          let previousGitSummary = storedWorkspaceSummariesByServer[serverId]?[response.workspaceId]?.gitSummary else {
+                        return response
+                    }
+                    var merged = response
+                    merged.gitSummary = previousGitSummary
+                    return merged
+                }
                 let summaries = Dictionary(
-                    uniqueKeysWithValues: responseSummaries.map { ($0.workspaceId, $0) }
+                    uniqueKeysWithValues: mergedResponseSummaries.map { ($0.workspaceId, $0) }
                 )
                 storedWorkspaceSummariesByServer[serverId] = summaries
                 workspaceSummariesByServer[serverId] = summaries

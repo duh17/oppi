@@ -42,6 +42,55 @@ struct AppEventRoutingTests {
         #expect(appEventBadgeCount(connection, sessionId: "s2") == 0)
     }
 
+    @Test func gitInvalidationsCoalesceIntoOneCompactSidebarRefresh() async throws {
+        let connection = ServerConnection()
+        connection.setPreviewServerId("server-1")
+        connection.workspaceGitSummaryRefreshDebounce = .milliseconds(10)
+        let initial = WorkspaceListSummary(
+            workspaceId: "w1",
+            activeCount: 1,
+            stoppedCount: 0,
+            hasAttention: false,
+            gitSummary: WorkspaceGitSummary(
+                isGitRepo: true,
+                changedCount: 1,
+                ahead: 0,
+                behind: 0
+            )
+        )
+        connection.workspaceStore.setStoredWorkspaceSummariesForTesting(["w1": initial])
+        connection.workspaceStore.workspaceSummaries = ["w1": initial]
+
+        var requestCount = 0
+        connection._getWorkspaceGitSummaryForTesting = { workspaceId in
+            #expect(workspaceId == "w1")
+            requestCount += 1
+            return WorkspaceGitSummary(
+                isGitRepo: true,
+                changedCount: 14,
+                ahead: 3,
+                behind: 1
+            )
+        }
+
+        for emittedAt in 1...3 {
+            connection.handleAppEvent(.workspaceGitChanged(
+                workspaceId: "w1",
+                worktreeId: nil,
+                emittedAt: Int64(emittedAt),
+                sessionId: nil,
+                reason: "tool_mutation"
+            ))
+        }
+
+        for _ in 0..<50 where connection.workspaceStore.workspaceSummaries["w1"]?.gitSummary?.changedCount != 14 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(connection.workspaceStore.workspaceSummaries["w1"]?.gitSummary?.changedCount == 14)
+        #expect(requestCount == 1)
+    }
+
     @Test func followingSummaryWithPendingAskCountZeroClearsListBadge() {
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("focused")

@@ -40,6 +40,13 @@ export interface Workspace extends WorkspaceMutableConfig {
   updatedAt: number;
 }
 
+export interface WorkspaceGitSummary {
+  isGitRepo: boolean;
+  changedCount: number;
+  ahead: number | null;
+  behind: number | null;
+}
+
 export interface WorkspaceListSummary {
   workspaceId: string;
   activeCount: number;
@@ -47,4 +54,5 @@ export interface WorkspaceListSummary {
   hasAttention: boolean;
   hasErrorRoot: boolean;
   latestActivity?: number;
+  gitSummary?: WorkspaceGitSummary;
 }

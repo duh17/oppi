@@ -16,6 +16,20 @@ final class ScreenshotPreviewUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testWorkspaceSidebarGitStatusPreview() throws {
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "workspace-sidebar-git-status")
+
+        let longWorkspace = app.staticTexts["Oppi Mobile Client and Self-Hosted Server"]
+        XCTAssertTrue(longWorkspace.waitForExistence(timeout: 5), "Long workspace name not visible")
+        XCTAssertTrue(app.staticTexts["14 changes"].waitForExistence(timeout: 5), "Dirty file count not visible")
+        XCTAssertTrue(app.staticTexts["3"].waitForExistence(timeout: 5), "Unpushed commit count not visible")
+        XCTAssertTrue(app.staticTexts["Native client and server runtime"].waitForExistence(timeout: 5), "Dirty workspace description should remain visible")
+        XCTAssertTrue(app.staticTexts["Blog and long-form writing"].waitForExistence(timeout: 5), "Clean workspace description should remain visible")
+
+        saveScreenshot(name: "workspace-sidebar-git-status")
+    }
+
     func testWorkspaceEditSkillGrouping() throws {
         launchPreview(screen: "workspace-edit")
 

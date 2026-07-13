@@ -23,6 +23,8 @@ struct ScreenshotPreviewView: View {
         switch ScreenshotPreviewConfig.screen {
         case "workspace-edit":
             WorkspaceEditPreview()
+        case "workspace-sidebar-git-status":
+            WorkspaceSidebarGitStatusPreview()
         case "session-timeline":
             SessionTimelinePreview()
         case "chat-file-panel":

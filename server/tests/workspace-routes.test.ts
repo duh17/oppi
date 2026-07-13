@@ -84,6 +84,82 @@ describe("workspaces module", () => {
     ]);
   });
 
+  it("includes compact git summaries only when requested", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-workspace-catalog-git-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "initial\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+      writeFileSync(join(root, "README.md"), "changed\n");
+
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const ctx = {
+        storage: {
+          listWorkspaces: vi.fn(() => [workspace]),
+          listWorkspaceSessionSummarySnapshots: vi.fn(() => []),
+          getWorkspace: vi.fn(() => workspace),
+        },
+        sessionRuntimes: {
+          getActiveSessionIds: vi.fn(() => new Set<string>()),
+          getActiveSession: vi.fn(() => undefined),
+        },
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+
+      const defaultRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/workspaces",
+        url: new URL("http://localhost/workspaces"),
+        req: {} as never,
+        res: defaultRes as never,
+      });
+      expect(JSON.parse(defaultRes.body).summaries[0].gitSummary).toBeUndefined();
+
+      const gitRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/workspaces",
+        url: new URL("http://localhost/workspaces?includeGitSummary=true"),
+        req: {} as never,
+        res: gitRes as never,
+      });
+      expect(JSON.parse(gitRes.body).summaries[0].gitSummary).toEqual({
+        isGitRepo: true,
+        changedCount: 1,
+        ahead: null,
+        behind: null,
+      });
+
+      const compactRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/git/summary",
+        url: new URL("http://localhost/workspaces/ws-1/git/summary"),
+        req: {} as never,
+        res: compactRes as never,
+      });
+      expect(JSON.parse(compactRes.body)).toEqual({
+        isGitRepo: true,
+        changedCount: 1,
+        ahead: null,
+        behind: null,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("marks workspace summaries with pending mirror extension UI requests", async () => {
     const workspace = { id: "ws-1", name: "Default" };
     const session = {
