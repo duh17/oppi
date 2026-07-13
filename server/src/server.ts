@@ -66,7 +66,6 @@ import {
 } from "./bonjour-advertiser.js";
 import { DnsSdBonjourPublisher, isDnsSdAvailable } from "./bonjour-dns-sd.js";
 import { prepareTlsForServer, readCertificateFingerprint, tlsSchemeForConfig } from "./tls.js";
-import { RuntimeUpdateManager } from "./runtime-update.js";
 import { getPackageInfo } from "./version.js";
 import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
@@ -372,7 +371,6 @@ export class Server {
   private modelRegistry: ModelRegistry;
   private models: ModelCatalog;
   private providerAuth: ProviderAuthManager;
-  private runtimeUpdates: RuntimeUpdateManager;
   private titleGenerator: SessionTitleGenerator;
 
   // Track all WebSocket connections for lifecycle/resource accounting.
@@ -450,11 +448,6 @@ export class Server {
         this.models.refresh();
       },
     });
-    // Runtime version reporter — updates are managed by the Mac app via Sparkle.
-    this.runtimeUpdates = new RuntimeUpdateManager({
-      currentVersion: Server.detectPiAgentVersion(),
-    });
-
     const dataDir = storage.getDataDir();
     const config = storage.getConfig();
     const identity = ensureIdentityMaterial(identityConfigForDataDir(dataDir));
@@ -631,8 +624,6 @@ export class Server {
         return Promise.resolve();
       },
       getModelCatalog: () => this.models.getAll(),
-      getRuntimeUpdateStatus: (options) => this.runtimeUpdates.getStatus(options),
-      runRuntimeUpdate: () => this.runtimeUpdates.updateRuntime(),
       getCodexUsageStatus: () => fetchCodexUsageStatus(),
       searchIndex: this.searchIndex ?? undefined,
       appEvents: this.appEventStreamMux,

@@ -46,6 +46,23 @@ enum MacServerLifecycle {
         launchAgentPlistPaths.contains(where: fileExists)
     }
 
+    static func launchAgentNeedsMigration(
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+        readContents: (String) -> String? = { try? String(contentsOfFile: $0, encoding: .utf8) }
+    ) -> Bool {
+        let currentPath = launchAgentPlistPaths[0]
+        let oldLabelPath = launchAgentPlistPaths[1]
+        if fileExists(oldLabelPath) {
+            return true
+        }
+        guard fileExists(currentPath) else { return false }
+        guard let plist = readContents(currentPath) else { return true }
+
+        let usesNpmBin = plist.contains("/oppi</string>")
+        let usesNpmPackage = plist.contains("/node_modules/oppi-server/dist/src/cli.js</string>")
+        return !usesNpmBin && !usesNpmPackage
+    }
+
     @discardableResult
     static func startOrAttachFromLocalConfig(
         processManager: ServerProcessManager,
@@ -60,7 +77,7 @@ enum MacServerLifecycle {
         }
 
         let client = MacAPIClient(baseURL: baseURL, token: token)
-        await startOrAttach(
+        return await startOrAttach(
             processManager: processManager,
             healthMonitor: healthMonitor,
             sessionMonitor: sessionMonitor,
@@ -69,7 +86,6 @@ enum MacServerLifecycle {
             client: client,
             allowKillingExistingServer: allowKillingExistingServer
         )
-        return true
     }
 
     static func restartFromLocalConfig(
@@ -120,6 +136,7 @@ enum MacServerLifecycle {
         processManager.detachExternalServer()
     }
 
+    @discardableResult
     static func startOrAttach(
         processManager: ServerProcessManager,
         healthMonitor: ServerHealthMonitor,
@@ -128,7 +145,22 @@ enum MacServerLifecycle {
         token: String,
         client: MacAPIClient,
         allowKillingExistingServer: Bool
-    ) async {
+    ) async -> Bool {
+        if launchAgentNeedsMigration() {
+            macServerLifecycleLogger.info("Migrating LaunchAgent to the npm-installed Oppi CLI")
+            do {
+                try await runServerCommand("install")
+            } catch {
+                processManager.markFailed(
+                    "LaunchAgent migration failed: \(error.localizedDescription). Run npm install -g oppi-server, then oppi server install."
+                )
+                return false
+            }
+        } else if allowKillingExistingServer, ServerProcessManager.retiredRuntimeServerIsRunning() {
+            macServerLifecycleLogger.info("Stopping server process from a retired mutable runtime")
+            ServerProcessManager.killExistingServer()
+        }
+
         let launchdInstalled = launchAgentInstalled()
         let probe = MacAPIClient(
             baseURL: baseURL,
@@ -154,6 +186,7 @@ enum MacServerLifecycle {
                 client: client,
                 processManager: processManager
             )
+            return true
 
         case .waitForLaunchAgent:
             macServerLifecycleLogger.info("LaunchAgent installed; waiting for local server health")
@@ -165,6 +198,7 @@ enum MacServerLifecycle {
                 client: client,
                 processManager: processManager
             )
+            return true
 
         case .spawnChildProcess:
             macServerLifecycleLogger.info("Starting Mac app-managed server child process")
@@ -172,6 +206,9 @@ enum MacServerLifecycle {
                 ServerProcessManager.killExistingServer()
             }
             processManager.startWithDefaults()
+            if case .failed = processManager.state {
+                return false
+            }
             startMonitoring(
                 healthMonitor: healthMonitor,
                 sessionMonitor: sessionMonitor,
@@ -180,11 +217,11 @@ enum MacServerLifecycle {
                 client: client,
                 processManager: processManager
             )
+            return true
         }
     }
 
     private static func runServerCommand(_ action: String) async throws {
-        ServerProcessManager.seedServerRuntimeIfNeeded()
         guard let runtimePath = ServerProcessManager.resolveRuntimePath() else {
             throw MacServerLifecycleError.runtimeUnavailable(ServerProcessManager.runtimeFailureReason())
         }
@@ -194,7 +231,6 @@ enum MacServerLifecycle {
 
         var environment = ProcessRunner.augmentedEnvironment
         environment["OPPI_DATA_DIR"] = ServerProcessManager.serverDataDir
-        environment["OPPI_RUNTIME_BIN"] = runtimePath
 
         let result = try await ProcessRunner.runCapturingStderr(
             executable: runtimePath,

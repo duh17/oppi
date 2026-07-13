@@ -122,20 +122,6 @@ struct MacAPIClientTests {
         #expect(info == nil)
     }
 
-    // MARK: - Runtime update decoding
-
-    @Test func runtimeUpdateResponseDecodesServerShape() throws {
-        let json = """
-        {"ok":true,"result":{"ok":true,"message":"Updated","latestVersion":"1.2.3","pendingVersion":"1.2.3","restartRequired":true,"updatedPackages":[{"name":"@earendil-works/pi-coding-agent","from":"1.0.0","to":"1.2.3"}]},"status":{"restartRequired":true}}
-        """
-
-        let response = try JSONDecoder().decode(RuntimeUpdateResponse.self, from: Data(json.utf8))
-        #expect(response.ok)
-        #expect(response.result.ok)
-        #expect(response.result.latestVersion == "1.2.3")
-        #expect(response.result.updatedPackages?.first?.to == "1.2.3")
-    }
-
     // MARK: - URL construction
 
     @Test func baseURLPreserved() {

@@ -186,12 +186,53 @@ struct PathResolutionTests {
         }
     }
 
-    @Test func resolveServerCLIPathFindsRepoCLI() {
-        let path = ServerProcessManager.resolveServerCLIPath()
-        #expect(path != nil, "Server CLI should be found on the build machine")
-        if let path {
-            #expect(path.hasSuffix("cli.js"))
-        }
+    @Test func resolveServerCLIPathUsesExplicitSourceOverride() {
+        let path = ServerProcessManager.resolveServerCLIPath(environment: [
+            "OPPI_SERVER_PATH": "/bin/sh",
+            "PATH": "",
+        ])
+        #expect(path == "/bin/sh")
+    }
+
+    @Test func resolveServerCLIPathFindsValidatedNpmBinaryOnPath() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("oppi-npm-prefix-\(UUID().uuidString)")
+        let bin = root.appendingPathComponent("bin")
+        let package = root.appendingPathComponent("lib/node_modules/oppi-server")
+        let cli = package.appendingPathComponent("dist/src/cli.js")
+        try FileManager.default.createDirectory(
+            at: cli.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try "#!/usr/bin/env node\n".write(to: cli, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cli.path)
+        try #"{"name":"oppi-server","bin":{"oppi":"dist/src/cli.js"},"engines":{"node":">=24.0.0"}}"#
+            .write(to: package.appendingPathComponent("package.json"), atomically: true, encoding: .utf8)
+        let executable = bin.appendingPathComponent("oppi")
+        try FileManager.default.createSymbolicLink(at: executable, withDestinationURL: cli)
+
+        let path = ServerProcessManager.resolveServerCLIPath(environment: [
+            "PATH": bin.path,
+        ])
+        #expect(path == executable.path)
+    }
+
+    @Test func resolveServerCLIPathRejectsUnrelatedExecutableNamedOppi() throws {
+        let bin = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unrelated-oppi-bin-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: bin) }
+        let executable = bin.appendingPathComponent("oppi")
+        try "#!/bin/sh\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+
+        let path = ServerProcessManager.resolveServerCLIPath(environment: [
+            "PATH": bin.path,
+        ])
+        #expect(path == nil)
     }
 
     @Test func logFilePathEndsWithServerLog() {
@@ -200,75 +241,6 @@ struct PathResolutionTests {
         #expect(path.contains("oppi"))
     }
 
-    /// Validates that the CLI subpath hardcoded in resolveServerCLIPath() matches
-    /// the actual server build output. Catches tsconfig rootDir changes that shift
-    /// the output directory structure without updating the Swift code.
-    @Test func serverCLISubpathMatchesBuildOutput() throws {
-        // Derive the repo root from the test file's location.
-        // Test file lives at: <repo>/clients/apple/OppiMacTests/ServerProcessManagerTests.swift
-        let testFile = #filePath
-        let repoRoot = URL(fileURLWithPath: testFile)
-            .deletingLastPathComponent()  // OppiMacTests/
-            .deletingLastPathComponent()  // apple/
-            .deletingLastPathComponent()  // clients/
-            .deletingLastPathComponent()  // repo root
-
-        // The relative subpath used by resolveServerCLIPath() for the seed and runtime dir.
-        // If you change this, also update ServerProcessManager.resolveServerCLIPath().
-        let cliSubpath = "dist/src/cli.js"
-
-        let serverCLI = repoRoot.appendingPathComponent("server/\(cliSubpath)")
-        #expect(
-            FileManager.default.fileExists(atPath: serverCLI.path),
-            """
-            Server CLI not found at expected path: \(serverCLI.path)
-            The subpath '\(cliSubpath)' must match the server's tsc output.
-            Check server/tsconfig.json rootDir and update ServerProcessManager.resolveServerCLIPath() if it changed.
-            """
-        )
-    }
-
-    @Test func seedDependencyComparisonIgnoresNonDependencyMetadata() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("oppi-seed-deps-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let seedPackage = root.appendingPathComponent("seed-package.json")
-        let runtimePackage = root.appendingPathComponent("runtime-package.json")
-        try """
-        {"name":"seed","version":"2.0.0","dependencies":{"oppi-server-core":"1.0.0"}}
-        """.write(to: seedPackage, atomically: true, encoding: .utf8)
-        try """
-        {"name":"runtime","version":"1.0.0","dependencies":{"oppi-server-core":"1.0.0"}}
-        """.write(to: runtimePackage, atomically: true, encoding: .utf8)
-
-        #expect(!ServerProcessManager.serverSeedDependenciesChanged(
-            seedPackagePath: seedPackage.path,
-            runtimePackagePath: runtimePackage.path
-        ))
-    }
-
-    @Test func seedDependencyComparisonDetectsDependencyChanges() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("oppi-seed-deps-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let seedPackage = root.appendingPathComponent("seed-package.json")
-        let runtimePackage = root.appendingPathComponent("runtime-package.json")
-        try """
-        {"dependencies":{"@earendil-works/pi-coding-agent":"0.74.0"}}
-        """.write(to: seedPackage, atomically: true, encoding: .utf8)
-        try """
-        {"dependencies":{"@mariozechner/pi-coding-agent":"0.70.2"}}
-        """.write(to: runtimePackage, atomically: true, encoding: .utf8)
-
-        #expect(ServerProcessManager.serverSeedDependenciesChanged(
-            seedPackagePath: seedPackage.path,
-            runtimePackagePath: runtimePackage.path
-        ))
-    }
 }
 
 // MARK: - Crash classification

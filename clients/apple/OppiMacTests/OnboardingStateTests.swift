@@ -58,6 +58,21 @@ struct OnboardingStateTests {
         #expect(state.currentStep == .prerequisites)
     }
 
+    // MARK: - First-run detection
+
+    @Test func firstRunRequiresBothConfigAndNpmCLI() {
+        let state = OnboardingState()
+
+        state.checkFirstRun(fileExists: { _ in true }, cliAvailable: { false })
+        #expect(state.needsOnboarding)
+
+        state.checkFirstRun(fileExists: { _ in false }, cliAvailable: { true })
+        #expect(state.needsOnboarding)
+
+        state.checkFirstRun(fileExists: { _ in true }, cliAvailable: { true })
+        #expect(!state.needsOnboarding)
+    }
+
     // MARK: - Complete / reset
 
     @Test func completeOnboardingSetsStateCorrectly() {

@@ -76,7 +76,7 @@ struct ServerDetailView: View {
                 workspaceManagementSection
 
                 Section("Runtime") {
-                    LabeledContent("Agent", value: info.runtimeUpdate?.currentVersion ?? "n/a")
+                    LabeledContent("Agent", value: info.agentVersionLabel)
                     LabeledContent("Server", value: info.version)
                 }
             }

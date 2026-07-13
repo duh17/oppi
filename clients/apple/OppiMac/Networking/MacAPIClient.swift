@@ -166,29 +166,6 @@ final class MacAPIClient: Sendable {
         }
     }
 
-    // MARK: - Runtime update
-
-    /// Trigger `POST /server/runtime/update` to update server dependencies.
-    nonisolated func updateDependencies() async -> RuntimeUpdateResult? {
-        let url = baseURL.appendingPathComponent("server/runtime/update")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 120 // dep install can be slow
-        addAuth(&request)
-
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode) else {
-                return nil
-            }
-            return try JSONDecoder().decode(RuntimeUpdateResponse.self, from: data).result
-        } catch {
-            logger.error("Runtime update failed: \(error.localizedDescription)")
-            return nil
-        }
-    }
-
     // MARK: - Private
 
     private nonisolated func addAuth(_ request: inout URLRequest) {
@@ -239,27 +216,4 @@ final class MacAPIClient: Sendable {
 private struct ConfigFile: Decodable {
     let token: String?
     let authDeviceTokens: [String]?
-}
-
-// MARK: - Runtime update model
-
-struct RuntimeUpdateResponse: Decodable {
-    let ok: Bool
-    let result: RuntimeUpdateResult
-}
-
-struct RuntimeUpdateResult: Decodable {
-    let ok: Bool
-    let message: String
-    let latestVersion: String?
-    let pendingVersion: String?
-    let restartRequired: Bool
-    let error: String?
-    let updatedPackages: [UpdatedPackage]?
-
-    struct UpdatedPackage: Decodable {
-        let name: String
-        let from: String
-        let to: String
-    }
 }

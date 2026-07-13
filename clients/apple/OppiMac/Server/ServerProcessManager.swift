@@ -96,52 +96,58 @@ final class ServerProcessManager {
 
     // MARK: - Path resolution
 
-    /// Mutable runtime directory — server code + node_modules live here.
-    /// Seeded from the app bundle on first launch (or version bump).
-    static let serverRuntimeDir: String = {
-        NSString("~/.config/oppi/server-runtime").expandingTildeInPath
-    }()
-
-    /// Shared server data directory used by the Mac app and the CLI runtime.
+    /// Shared server data directory used by the Mac app and the npm-installed CLI.
     static let serverDataDir: String = {
         NSString("~/.config/oppi").expandingTildeInPath
     }()
 
-    /// Resolves the server CLI path.
+    /// Resolves the single npm-installed `oppi` CLI.
     ///
-    /// Search order:
-    /// 1. `OPPI_SERVER_PATH` environment variable
-    /// 2. Mutable runtime dir (seeded from app bundle)
-    /// 3. App bundle seed directly (fallback during seeding)
-    /// 4. Homebrew npm global
-    static func resolveServerCLIPath() -> String? {
-        if let envPath = ProcessInfo.processInfo.environment["OPPI_SERVER_PATH"],
-           FileManager.default.fileExists(atPath: envPath) {
+    /// `OPPI_SERVER_PATH` remains an explicit source-checkout override for local
+    /// development. Production app launches otherwise use the same global CLI
+    /// that a human gets from `npm install -g oppi-server`.
+    static func resolveServerCLIPath(
+        environment: [String: String] = ProcessRunner.augmentedEnvironment
+    ) -> String? {
+        if let envPath = environment["OPPI_SERVER_PATH"],
+           FileManager.default.isExecutableFile(atPath: envPath) {
             return envPath
         }
 
-        // Mutable runtime dir (normal path after seeding)
-        let runtimeCLI = (serverRuntimeDir as NSString).appendingPathComponent("dist/src/cli.js")
-        if FileManager.default.fileExists(atPath: runtimeCLI) {
-            return runtimeCLI
-        }
-
-        // App bundle seed (fallback — used before first seed completes)
-        if let resourcePath = Bundle.main.resourcePath {
-            let seedPath = (resourcePath as NSString).appendingPathComponent("server-seed/dist/src/cli.js")
-            if FileManager.default.fileExists(atPath: seedPath) {
-                return seedPath
+        let pathEntries = (environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map(String.init)
+        for directory in pathEntries {
+            let candidate = (directory as NSString).appendingPathComponent("oppi")
+            if FileManager.default.isExecutableFile(atPath: candidate),
+               isNpmOppiCLI(candidate) {
+                return candidate
             }
         }
 
-        // Homebrew npm global
-        let candidates = [
-            "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js",
-            "/usr/local/lib/node_modules/oppi-server/dist/src/cli.js",
-            NSString("~/.npm/lib/node_modules/oppi-server/dist/src/cli.js").expandingTildeInPath,
-        ]
+        return nil
+    }
 
-        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+    private static func isNpmOppiCLI(_ path: String) -> Bool {
+        guard let package = npmPackageMetadata(forCLIPath: path) else { return false }
+        return package.name == "oppi-server" && package.bin?["oppi"] == "dist/src/cli.js"
+    }
+
+    private static func npmPackageMetadata(forCLIPath path: String) -> NpmPackageMetadata? {
+        let packageURL = URL(fileURLWithPath: path)
+            .resolvingSymlinksInPath()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("package.json")
+        guard let data = try? Data(contentsOf: packageURL) else { return nil }
+        return try? JSONDecoder().decode(NpmPackageMetadata.self, from: data)
+    }
+
+    private struct NpmPackageMetadata: Decodable {
+        let name: String
+        let bin: [String: String]?
+        let engines: [String: String]?
     }
 
     /// Resolves the Node.js runtime binary path.
@@ -198,16 +204,8 @@ final class ServerProcessManager {
     }
 
     private static func minimumRequiredNodeVersion() -> SemanticVersion? {
-        guard let cliPath = resolveServerCLIPath() else { return nil }
-        let packageURL = URL(fileURLWithPath: cliPath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("package.json")
-        guard let data = try? Data(contentsOf: packageURL),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let engines = object["engines"] as? [String: Any],
-              let nodeRange = engines["node"] as? String else {
+        guard let cliPath = resolveServerCLIPath(),
+              let nodeRange = npmPackageMetadata(forCLIPath: cliPath)?.engines?["node"] else {
             return nil
         }
         return SemanticVersion.minimumVersion(in: nodeRange)
@@ -272,106 +270,6 @@ final class ServerProcessManager {
         }
     }
 
-    /// True if the app bundle contains a server seed.
-    static var hasSeed: Bool {
-        guard let resourcePath = Bundle.main.resourcePath else { return false }
-        let seedVersion = (resourcePath as NSString).appendingPathComponent("server-seed/.seed-version")
-        return FileManager.default.fileExists(atPath: seedVersion)
-    }
-
-    // MARK: - Server runtime seeding
-
-    /// Seed the mutable server runtime from the app bundle if needed.
-    ///
-    /// Copies `Resources/server-seed/` → `~/.config/oppi/server-runtime/` when:
-    /// - The runtime dir doesn't exist (first launch)
-    /// - The seed version doesn't match (app was updated)
-    ///
-    /// Preserves user-modified node_modules when only dist/ changed.
-    static func seedServerRuntimeIfNeeded() {
-        guard let resourcePath = Bundle.main.resourcePath else { return }
-
-        let seedDir = (resourcePath as NSString).appendingPathComponent("server-seed")
-        let seedVersionFile = (seedDir as NSString).appendingPathComponent(".seed-version")
-
-        guard FileManager.default.fileExists(atPath: seedVersionFile),
-              let seedVersion = try? String(contentsOfFile: seedVersionFile, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines) else {
-            // No seed in bundle (dev build) — skip
-            return
-        }
-
-        let runtimeDir = serverRuntimeDir
-        let runtimeVersionFile = (runtimeDir as NSString).appendingPathComponent(".seed-version")
-        let currentVersion = (try? String(contentsOfFile: runtimeVersionFile, encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if currentVersion == seedVersion {
-            logger.info("Server runtime up to date (v\(seedVersion))")
-            return
-        }
-
-        logger.warning("Seeding server runtime: \(currentVersion ?? "none") -> \(seedVersion)")
-
-        let fm = FileManager.default
-        do {
-            // Create runtime dir if needed
-            try fm.createDirectory(atPath: runtimeDir, withIntermediateDirectories: true)
-
-            // Always replace dist/ and package.json (our code, changes with app version)
-            let seedDist = (seedDir as NSString).appendingPathComponent("dist")
-            let runtimeDist = (runtimeDir as NSString).appendingPathComponent("dist")
-            if fm.fileExists(atPath: runtimeDist) {
-                try fm.removeItem(atPath: runtimeDist)
-            }
-            try fm.copyItem(atPath: seedDist, toPath: runtimeDist)
-
-            let seedPkg = (seedDir as NSString).appendingPathComponent("package.json")
-            let runtimePkg = (runtimeDir as NSString).appendingPathComponent("package.json")
-            let dependenciesChanged = Self.serverSeedDependenciesChanged(
-                seedPackagePath: seedPkg,
-                runtimePackagePath: runtimePkg
-            )
-
-            if fm.fileExists(atPath: runtimePkg) {
-                try fm.removeItem(atPath: runtimePkg)
-            }
-            try fm.copyItem(atPath: seedPkg, toPath: runtimePkg)
-
-            let seedLock = (seedDir as NSString).appendingPathComponent("package-lock.json")
-            let runtimeLock = (runtimeDir as NSString).appendingPathComponent("package-lock.json")
-            if fm.fileExists(atPath: seedLock) {
-                if fm.fileExists(atPath: runtimeLock) {
-                    try fm.removeItem(atPath: runtimeLock)
-                }
-                try fm.copyItem(atPath: seedLock, toPath: runtimeLock)
-            } else if dependenciesChanged, fm.fileExists(atPath: runtimeLock) {
-                try fm.removeItem(atPath: runtimeLock)
-            }
-
-            // Keep user-updated dependencies across dist-only app updates, but
-            // replace node_modules when the seed manifest changes. A newer
-            // server build can depend on packages the previous runtime never had.
-            let runtimeNM = (runtimeDir as NSString).appendingPathComponent("node_modules")
-            let seedNM = (seedDir as NSString).appendingPathComponent("node_modules")
-            if (!fm.fileExists(atPath: runtimeNM) || dependenciesChanged), fm.fileExists(atPath: seedNM) {
-                if fm.fileExists(atPath: runtimeNM) {
-                    try fm.removeItem(atPath: runtimeNM)
-                }
-                logger.warning("Copying seed node_modules")
-                try fm.copyItem(atPath: seedNM, toPath: runtimeNM)
-            } else if dependenciesChanged {
-                logger.error("Server seed dependencies changed, but seed node_modules is missing")
-            }
-
-            // Write version marker
-            try seedVersion.write(toFile: runtimeVersionFile, atomically: true, encoding: .utf8)
-            logger.warning("Server runtime seeded (v\(seedVersion))")
-        } catch {
-            logger.error("Failed to seed server runtime: \(error.localizedDescription)")
-        }
-    }
-
     // MARK: - Lifecycle
 
     /// Kill any existing server process and stale Bonjour advertisements.
@@ -381,7 +279,7 @@ final class ServerProcessManager {
     /// a fresh server with full lifecycle control (termination handler, pipes, logs).
     static func killExistingServer() {
         // Find server processes matching our CLI pattern.
-        let serverPids = pidsMatching(pattern: "node.*cli\\.js.*serve")
+        let serverPids = pidsMatching(pattern: "(node|bun).*cli\\.js.*serve")
         for pid in serverPids {
             logger.warning("Killing existing server process (pid \(pid))")
             kill(pid, SIGTERM)
@@ -405,6 +303,10 @@ final class ServerProcessManager {
                 }
             }
         }
+    }
+
+    static func retiredRuntimeServerIsRunning() -> Bool {
+        !pidsMatching(pattern: "(node|bun).*(server-runtime|server-seed).*cli\\.js.*serve").isEmpty
     }
 
     /// Find PIDs matching a grep pattern via pgrep.
@@ -431,14 +333,8 @@ final class ServerProcessManager {
             .filter { $0 != ProcessInfo.processInfo.processIdentifier } // exclude self
     }
 
-    /// Start the server using default resolved paths.
-    ///
-    /// Seeds the mutable runtime directory from the app bundle if needed
-    /// (first launch or app version bump), then starts the server from there.
+    /// Start the npm-installed server using default resolved paths.
     func startWithDefaults() {
-        // Seed runtime dir before resolving paths
-        Self.seedServerRuntimeIfNeeded()
-
         guard let runtimePath = Self.resolveRuntimePath() else {
             let reason = Self.runtimeFailureReason()
             state = .failed(reason)
@@ -447,7 +343,7 @@ final class ServerProcessManager {
         }
         guard let cliPath = Self.resolveServerCLIPath() else {
             state = .failed("Server CLI not found")
-            logger.error("Server CLI not found — set OPPI_SERVER_PATH or install the server")
+            logger.error("Oppi CLI not found — run npm install -g oppi-server")
             return
         }
         let dataDir = Self.serverDataDir
@@ -480,10 +376,6 @@ final class ServerProcessManager {
         // Ensure homebrew paths are available for git, pi, etc.
         var env = ProcessRunner.augmentedEnvironment
         env["OPPI_DATA_DIR"] = dataDir
-        // Tell the server which runtime binary to use for dependency update checks/installs.
-        // Without this the server falls back to process.argv[0], which can be a volatile
-        // Homebrew Cellar path that changes across upgrades.
-        env["OPPI_RUNTIME_BIN"] = nodePath
         proc.environment = env
 
         let stdout = Pipe()
@@ -809,36 +701,4 @@ final class ServerProcessManager {
         }
     }
 
-    static func serverSeedDependenciesChanged(
-        seedPackagePath: String,
-        runtimePackagePath: String
-    ) -> Bool {
-        guard let seedFingerprint = packageDependencyFingerprint(packagePath: seedPackagePath),
-              let runtimeFingerprint = packageDependencyFingerprint(packagePath: runtimePackagePath) else {
-            return true
-        }
-        return seedFingerprint != runtimeFingerprint
-    }
-
-    private static func packageDependencyFingerprint(packagePath: String) -> String? {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: packagePath)),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-
-        var dependencies: [String: Any] = [:]
-        for key in ["dependencies", "optionalDependencies"] {
-            if let value = object[key] as? [String: Any] {
-                dependencies[key] = value
-            }
-        }
-
-        guard let fingerprintData = try? JSONSerialization.data(
-            withJSONObject: dependencies,
-            options: [.sortedKeys]
-        ) else {
-            return nil
-        }
-        return String(data: fingerprintData, encoding: .utf8)
-    }
 }

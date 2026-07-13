@@ -91,7 +91,6 @@ const settingsOperationIds = [
   "getCodexUsage",
   "getServerStats",
   "getDailyServerStats",
-  "updateServerRuntime",
   "getAutoTitleConfig",
   "setAutoTitleConfig",
   "createWorkspace",
@@ -276,6 +275,7 @@ describe("api route registry", () => {
     expect(paths.has("/workspaces/{workspaceId}/home")).toBe(false);
     expect(paths.has("/provider-auth/providers")).toBe(false);
     expect(paths.has("/server/runtime/status")).toBe(false);
+    expect(paths.has("/server/runtime/update")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/prompt-templates")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/review/comments/attach-to-turn")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/sessions/{sessionId}/audio/stream")).toBe(false);

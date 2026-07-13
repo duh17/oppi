@@ -26,7 +26,6 @@ struct PairingInvite: Decodable {
 enum PairingInviteService {
     static func generate() async throws -> PairingInvite {
         let paths = await MainActor.run {
-            ServerProcessManager.seedServerRuntimeIfNeeded()
             return (
                 runtimePath: ServerProcessManager.resolveRuntimePath(),
                 runtimeFailure: ServerProcessManager.runtimeFailureReason(),
@@ -44,7 +43,6 @@ enum PairingInviteService {
 
         var environment = ProcessRunner.augmentedEnvironment
         environment["OPPI_DATA_DIR"] = paths.dataDir
-        environment["OPPI_RUNTIME_BIN"] = runtimePath
 
         let result = try await ProcessRunner.runCapturingStderr(
             executable: runtimePath,

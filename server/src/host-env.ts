@@ -114,6 +114,14 @@ export function applyHostEnv(
   return resolved;
 }
 
+/** Prepend an internal executable directory without duplicating PATH entries. */
+export function prependPathEntry(pathValue: string | undefined, entry: string): string {
+  const normalized = entry.trim();
+  const entries = (pathValue ?? "").split(":").filter(Boolean);
+  if (!normalized) return entries.join(":");
+  return [normalized, ...entries.filter((candidate) => candidate !== normalized)].join(":");
+}
+
 /** Resolve a binary from a PATH string. Returns absolute path if found. */
 export function resolveExecutableOnPath(executable: string, pathValue?: string): string | null {
   const path = pathValue || process.env.PATH || "";

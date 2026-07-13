@@ -14,6 +14,7 @@
     "!dist/**/*.test.js",
     "!dist/**/*.test.d.ts",
     "!dist/**/*.d.ts",
+    "!dist/src/runtime-update.js",
     "themes/",
     "docs/",
     "LICENSE",

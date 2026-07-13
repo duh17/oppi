@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   applyHostEnv,
   buildHostEnv,
+  prependPathEntry,
   resolveExecutableOnPath,
   resolveHostEnv,
 } from "../src/host-env.js";
@@ -120,6 +121,18 @@ describe("applyHostEnv", () => {
     expect(process.env.PATH).toBe("/other/bin");
     expect(process.env.RUNTIME_ONLY).toBeUndefined();
     expect(process.env.RUNTIME_OVERRIDE).toBe("base");
+  });
+});
+
+describe("prependPathEntry", () => {
+  it("keeps the npm CLI directory first without duplication", () => {
+    expect(prependPathEntry("/usr/bin:/opt/npm/bin:/bin", "/opt/npm/bin")).toBe(
+      "/opt/npm/bin:/usr/bin:/bin",
+    );
+  });
+
+  it("ignores an empty internal entry", () => {
+    expect(prependPathEntry("/usr/bin:/bin", " ")).toBe("/usr/bin:/bin");
   });
 });
 

@@ -65,7 +65,7 @@ Create a workspace in the app and start a session.
 
 ## Requirements
 
-- Node.js 23.6+
+- Node.js 24+
 - [Pi](https://github.com/badlogic/pi-mono) runtime dependency, installed automatically with the npm package
 - At least one Pi provider configured with `pi auth` or an API key such as `ANTHROPIC_API_KEY`
 - macOS or Linux
@@ -161,8 +161,7 @@ oppi schedule ...            # manage schedules and run history
 oppi server ...              # install/status/restart/stop/uninstall launchd service
 oppi config ...              # show/get/set/validate config
 oppi token rotate            # rotate owner bearer token
-oppi update                  # update mutable runtime dependencies only
-oppi update --self           # show how to update the server install
+oppi update                  # update the npm-installed server and CLI
 ```
 
 Session history reads are consolidated under `oppi session inspect`. Start with its default turn outline, use `--view summary` for counts, and request `--turns <spec> --view messages|tools` only for the smallest relevant turn set.
@@ -175,15 +174,9 @@ Schedules store a trigger plus an action. `oppi schedule create` accepts `--at`,
 
 ### Install and update modes
 
-- **App-managed runtime:** Oppi.app owns server code and seeds
-  `~/.config/oppi/server-runtime`. `oppi update` updates mutable runtime
-  dependencies only; update Oppi.app to update server code.
-- **npm global install:** npm owns server code. Use `oppi update --self` for
-  upgrade instructions, `npm install -g oppi-server@latest` to upgrade, and
-  `npm uninstall -g oppi-server` to remove. `oppi update` updates mutable
-  runtime dependencies only.
-- **Git/bootstrap install:** git owns server code. Use
-  `git pull && npm install && npm run build` to upgrade a checkout.
+- **npm global install:** npm owns both server code and the `oppi` executable used by humans, the Mac app, and managed host sessions. Use `oppi update` or `npm install -g oppi-server@latest` to upgrade, and `npm uninstall -g oppi-server` to remove it.
+- **Mac app:** requires the npm global install and does not bundle or seed another server runtime.
+- **Git/bootstrap install:** git owns server code. Use `git pull && npm install && npm run build` to upgrade a checkout; `OPPI_SERVER_PATH` remains available for explicit Mac development launches.
 
 ## Extensions
 

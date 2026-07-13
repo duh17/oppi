@@ -35,4 +35,30 @@ struct MacServerLifecycleTests {
     @Test func launchAgentDetectionReturnsFalseWhenNoKnownPathExists() {
         #expect(!MacServerLifecycle.launchAgentInstalled { _ in false })
     }
+
+    @Test func staleMutableRuntimeLaunchAgentNeedsMigration() {
+        let currentPath = MacServerLifecycle.launchAgentPlistPaths[0]
+        #expect(MacServerLifecycle.launchAgentNeedsMigration(
+            fileExists: { $0 == currentPath },
+            readContents: { _ in
+                "<string>/Users/test/.config/oppi/server-runtime/dist/src/cli.js</string>"
+            }
+        ))
+    }
+
+    @Test func npmLaunchAgentDoesNotNeedMigration() {
+        let currentPath = MacServerLifecycle.launchAgentPlistPaths[0]
+        #expect(!MacServerLifecycle.launchAgentNeedsMigration(
+            fileExists: { $0 == currentPath },
+            readContents: { _ in "<string>/opt/homebrew/bin/oppi</string>" }
+        ))
+    }
+
+    @Test func oldLaunchAgentLabelNeedsMigration() {
+        let oldPath = MacServerLifecycle.launchAgentPlistPaths[1]
+        #expect(MacServerLifecycle.launchAgentNeedsMigration(
+            fileExists: { $0 == oldPath },
+            readContents: { _ in nil }
+        ))
+    }
 }

@@ -5,7 +5,6 @@ import type { SessionManager } from "../sessions.js";
 import type { SkillRegistry } from "../skills.js";
 import type { Session, Workspace } from "../types.js";
 import type { ModelInfo } from "../model-catalog.js";
-import type { RuntimeUpdateResult, RuntimeUpdateStatus } from "../runtime-update.js";
 import type { SearchIndex } from "../search-index.js";
 import type { ProviderAuthManager } from "../provider-auth/provider-auth-manager.js";
 import type { CodexUsageStatus } from "../codex-usage.js";
@@ -23,8 +22,6 @@ export interface RouteContext {
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
   refreshModelCatalog: () => Promise<void>;
   getModelCatalog: () => ModelInfo[];
-  getRuntimeUpdateStatus: (options?: { force?: boolean }) => Promise<RuntimeUpdateStatus>;
-  runRuntimeUpdate: () => Promise<RuntimeUpdateResult>;
   getCodexUsageStatus?: () => Promise<CodexUsageStatus>;
   searchIndex?: SearchIndex;
   appEvents?: AppEventEmitter;

@@ -102,8 +102,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const activeSessions = sessions.filter(
       (s) => s.status !== "stopped" && s.status !== "error" && activeIds.has(s.id),
     );
-    const runtimeUpdate = await ctx.getRuntimeUpdateStatus();
-
     const uptimeSeconds = Math.floor((Date.now() - ctx.serverStartedAt) / 1000);
 
     let identity: { fingerprint: string; keyId: string; algorithm: "ed25519" } | null = null;
@@ -129,7 +127,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       piVersion: ctx.piVersion,
       configVersion: config.configVersion ?? 1,
       identity,
-      runtimeUpdate,
       uploadProtocol: {
         version: 1,
         maxFileBytes: config.uploadStore?.maxFileBytes ?? 50 * 1024 * 1024,
@@ -181,23 +178,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
 
     helpers.json(res, await getter());
-  }
-
-  async function handleRuntimeUpdate(res: ServerResponse): Promise<void> {
-    const result = await ctx.runRuntimeUpdate();
-    const status = await ctx.getRuntimeUpdateStatus({ force: true });
-    helpers.json(res, { ok: result.ok, result, status });
-
-    // Auto-restart after successful update so the new runtime loads.
-    // ServerProcessManager detects the exit and auto-restarts.
-    if (result.ok) {
-      setTimeout(() => {
-        log.info("identity.runtime_update.restart_scheduled", {
-          delayMs: 1_000,
-        });
-        process.exit(0);
-      }, 1_000);
-    }
   }
 
   async function handleRegisterDeviceToken(
@@ -289,10 +269,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
     if (path === "/server/stats" && method === "GET") {
       handleGetServerStats(url, res);
-      return true;
-    }
-    if (path === "/server/runtime/update" && method === "POST") {
-      await handleRuntimeUpdate(res);
       return true;
     }
     if (path === "/models" && method === "GET") {

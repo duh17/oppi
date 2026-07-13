@@ -202,7 +202,7 @@ describe("GET /server/info", () => {
     expect(body.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(body.uptime).toBeTypeOf("number");
     expect(body.os).toBeTypeOf("string");
-    expect(body.runtimeUpdate).toBeTypeOf("object");
+    expect(body.runtimeUpdate).toBeUndefined();
     expect(body.capabilities?.sessionStream?.version).toBe(1);
     expect(body.capabilities?.appEventStream?.version).toBe(1);
     expect(body.capabilities?.extensionNativeUI).toEqual({

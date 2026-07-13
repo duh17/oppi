@@ -3,17 +3,18 @@ import OSLog
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "PrerequisitesView")
 
-/// Step 1: Check that Node.js, pi CLI, and port 7749 are available.
+/// Step 1: Check that Node.js, the npm-installed CLIs, and port 7749 are available.
 struct PrerequisitesView: View {
 
     let onContinue: () -> Void
 
     @State private var nodeStatus = PrereqStatus.checking
+    @State private var oppiStatus = PrereqStatus.checking
     @State private var piStatus = PrereqStatus.checking
     @State private var portStatus = PrereqStatus.checking
 
     private var allPassed: Bool {
-        nodeStatus.passed && piStatus.passed && portStatus.passed
+        nodeStatus.passed && oppiStatus.passed && piStatus.passed && portStatus.passed
     }
 
     var body: some View {
@@ -32,7 +33,8 @@ struct PrerequisitesView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 PrereqRow(label: "Node.js", status: nodeStatus)
-                PrereqRow(label: "pi CLI", status: piStatus)
+                PrereqRow(label: "Oppi CLI", status: oppiStatus)
+                PrereqRow(label: "Pi CLI", status: piStatus)
                 PrereqRow(label: "Port 7749", status: portStatus)
             }
             .frame(maxWidth: 320)
@@ -60,23 +62,31 @@ struct PrerequisitesView: View {
     }
 
     private var isChecking: Bool {
-        nodeStatus == .checking || piStatus == .checking || portStatus == .checking
+        nodeStatus == .checking || oppiStatus == .checking
+            || piStatus == .checking || portStatus == .checking
     }
 
     private func runChecks() {
         nodeStatus = .checking
+        oppiStatus = .checking
         piStatus = .checking
         portStatus = .checking
 
         Task.detached {
-            let node = await PrerequisitesView.checkNode()
-            let pi = await PrerequisitesView.checkPi()
-            let port = PrerequisitesView.checkPort(7749)
+            async let node = PrerequisitesView.checkNode()
+            async let oppi = PrerequisitesView.checkOppiCLI()
+            async let pi = PrerequisitesView.checkCLI(
+                named: "pi",
+                installCommand: "npm install -g @earendil-works/pi-coding-agent"
+            )
+            async let port = PrerequisitesView.checkPort(7749)
+            let results = await (node, oppi, pi, port)
 
             await MainActor.run {
-                nodeStatus = node
-                piStatus = pi
-                portStatus = port
+                nodeStatus = results.0
+                oppiStatus = results.1
+                piStatus = results.2
+                portStatus = results.3
             }
         }
     }
@@ -92,9 +102,9 @@ struct PrerequisitesView: View {
         return .failed(reason)
     }
 
-    private static func checkPi() async -> PrereqStatus {
-        guard let path = await ProcessRunner.which("pi") else {
-            return .failed("Not found — npm install -g @anthropic-ai/claude-code")
+    private static func checkOppiCLI() async -> PrereqStatus {
+        guard let path = await MainActor.run(body: { ServerProcessManager.resolveServerCLIPath() }) else {
+            return .failed("Not found — npm install -g oppi-server")
         }
         guard let version = await ProcessRunner.version(path) else {
             return .failed("Found at \(path) but could not get version")
@@ -102,7 +112,33 @@ struct PrerequisitesView: View {
         return .passed(version)
     }
 
-    private nonisolated static func checkPort(_ port: UInt16) -> PrereqStatus {
+    private static func checkCLI(named name: String, installCommand: String) async -> PrereqStatus {
+        guard let path = await ProcessRunner.which(name) else {
+            return .failed("Not found — \(installCommand)")
+        }
+        guard let version = await ProcessRunner.version(path) else {
+            return .failed("Found at \(path) but could not get version")
+        }
+        return .passed(version)
+    }
+
+    private nonisolated static func checkPort(_ port: UInt16) async -> PrereqStatus {
+        let local = await MainActor.run {
+            (dataDir: ServerProcessManager.serverDataDir, baseURL: MacServerLifecycle.defaultBaseURL)
+        }
+        if let token = MacAPIClient.readOwnerToken(dataDir: local.dataDir),
+           let baseURL = local.baseURL {
+            let client = MacAPIClient(
+                baseURL: baseURL,
+                token: token,
+                timeoutIntervalForRequest: 1,
+                timeoutIntervalForResource: 2
+            )
+            if await client.checkHealth() {
+                return .passed("Oppi server running")
+            }
+        }
+
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else {
             return .failed("Could not create socket")

@@ -24,7 +24,7 @@ import {
 } from "node:fs";
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 const LABEL = "dev.chaosdonkey.oppi";
 const LEGACY_LABELS = ["dev.chenda.oppi"] as const;
@@ -116,7 +116,13 @@ function formatSemanticVersion(version: SemanticVersion): string {
 }
 
 function packageJsonPathForCli(cliPath: string): string {
-  return resolve(cliPath, "..", "..", "..", "package.json");
+  let packageCliPath = cliPath;
+  try {
+    packageCliPath = realpathSync(cliPath);
+  } catch {
+    // Keep the original path when it is not a symlink or cannot be resolved.
+  }
+  return resolve(packageCliPath, "..", "..", "..", "package.json");
 }
 
 function minimumRequiredNodeVersion(cliPath?: string | null): SemanticVersion | null {
@@ -200,42 +206,36 @@ function runtimeResolutionFailureMessage(cliPath?: string | null): string {
  * Resolve the absolute path to the server CLI entry point.
  *
  * Search order:
- * 1. Mutable runtime dir (seeded from DMG)
- * 2. The CLI that's currently running, including npm bin symlinks
- * 3. App bundle seed (direct)
- * 4. npm global
+ * 1. The CLI that's currently running, including npm bin symlinks
+ * 2. npm global fallback locations
  */
 function resolveCurrentCLIAbsolute(): string | null {
   const selfCLI = process.argv[1];
   if (!selfCLI || !existsSync(selfCLI)) return null;
 
-  const candidates = [selfCLI];
+  // Preserve npm's public bin path instead of collapsing it to node_modules.
+  // The server then knows the exact directory that supplies `oppi` to humans
+  // and can keep that directory first for managed host-session tools.
+  if (basename(selfCLI) === "oppi" || selfCLI.endsWith("cli.js")) {
+    return resolve(selfCLI);
+  }
+
   try {
-    candidates.push(realpathSync(selfCLI));
+    const resolvedCLI = realpathSync(selfCLI);
+    return resolvedCLI.endsWith("cli.js") ? resolve(resolvedCLI) : null;
   } catch {
-    // Keep the unresolved path as the fallback candidate.
+    return null;
   }
-
-  for (const candidate of candidates) {
-    if (candidate.endsWith("cli.js") && existsSync(candidate)) {
-      return resolve(candidate);
-    }
-  }
-
-  return null;
 }
 
 function resolveCLIAbsolute(): string | null {
-  const runtimeCLI = join(homedir(), ".config", "oppi", "server-runtime", "dist", "src", "cli.js");
-  if (existsSync(runtimeCLI)) return runtimeCLI;
-
   const currentCLI = resolveCurrentCLIAbsolute();
   if (currentCLI) return currentCLI;
 
-  const seedCLI = "/Applications/Oppi.app/Contents/Resources/server-seed/dist/src/cli.js";
-  if (existsSync(seedCLI)) return seedCLI;
-
   const globalCandidates = [
+    "/opt/homebrew/bin/oppi",
+    "/usr/local/bin/oppi",
+    join(homedir(), ".npm", "bin", "oppi"),
     "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js",
     "/usr/local/lib/node_modules/oppi-server/dist/src/cli.js",
     join(homedir(), ".npm", "lib", "node_modules", "oppi-server", "dist", "src", "cli.js"),
@@ -272,8 +272,6 @@ function buildPlistXML(runtimePath: string, cliPath: string, dataDir: string): s
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>OPPI_DATA_DIR</key>
         <string>${dataDir}</string>
-        <key>OPPI_RUNTIME_BIN</key>
-        <string>${runtimePath}</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -318,8 +316,7 @@ export function installService(dataDir?: string): {
   if (!cliPath) {
     return {
       ok: false,
-      message:
-        "Server CLI not found. Install the Mac app (DMG) or run 'oppi init' from the repo first.",
+      message: "Oppi CLI not found. Run 'npm install -g oppi-server' and try again.",
     };
   }
 

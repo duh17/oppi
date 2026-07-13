@@ -210,6 +210,10 @@ extension ServerInfo.Capabilities {
 }
 
 extension ServerInfo {
+    var agentVersionLabel: String {
+        runtimeUpdate?.currentVersion ?? piVersion
+    }
+
     /// Human-readable uptime (e.g. "2d 14h", "3h 25m", "45s").
     var uptimeLabel: String {
         let days = uptime / 86400

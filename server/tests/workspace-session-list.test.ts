@@ -140,8 +140,6 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
     resolveWorkspaceForSession: () => workspace,
     refreshModelCatalog: vi.fn().mockResolvedValue(undefined),
     getModelCatalog: vi.fn().mockReturnValue([]),
-    getRuntimeUpdateStatus: vi.fn().mockResolvedValue({ upToDate: true }),
-    runRuntimeUpdate: vi.fn().mockResolvedValue({ success: true }),
     serverStartedAt: Date.now(),
     serverVersion: "test",
     piVersion: "test",
