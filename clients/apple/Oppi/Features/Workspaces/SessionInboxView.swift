@@ -1205,7 +1205,10 @@ struct WorkspaceSidebarView: View {
                         let connection = coordinator.connection(for: serverId)
                         let workspaceStore = connection?.workspaceStore
                         let summaries = workspaceStore?.workspaceSummaries(forServer: serverId) ?? [:]
-                        let workspaces = sortedWorkspaces(workspacesForServer(serverId), summaries: summaries)
+                        let workspaces = sortedWorkspacesForList(
+                            workspacesForServer(serverId),
+                            summaries: summaries
+                        )
                         let availability = WorkspaceCatalogAvailability(
                             hasWorkspaces: !workspaces.isEmpty,
                             isLoaded: workspaceStore?.isLoaded ?? false,
@@ -1382,47 +1385,6 @@ struct WorkspaceSidebarView: View {
                     hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
                 )
             }
-        )
-    }
-
-    private func sortedWorkspaces(
-        _ workspaces: [Workspace],
-        summaries: [String: WorkspaceListSummary]
-    ) -> [Workspace] {
-        workspaces.sorted { lhs, rhs in
-            let lhsSummary = summaryForWorkspace(lhs.id, in: summaries)
-            let rhsSummary = summaryForWorkspace(rhs.id, in: summaries)
-
-            if lhsSummary.hasAttention != rhsSummary.hasAttention {
-                return lhsSummary.hasAttention
-            }
-            if (lhsSummary.activeCount > 0) != (rhsSummary.activeCount > 0) {
-                return lhsSummary.activeCount > 0
-            }
-
-            let lhsLatest = lhsSummary.latestActivity ?? .distantPast
-            let rhsLatest = rhsSummary.latestActivity ?? .distantPast
-            if lhsLatest != rhsLatest {
-                return lhsLatest > rhsLatest
-            }
-
-            let nameOrder = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
-            if nameOrder != .orderedSame {
-                return nameOrder == .orderedAscending
-            }
-            return lhs.id < rhs.id
-        }
-    }
-
-    private func summaryForWorkspace(
-        _ workspaceId: String,
-        in summaries: [String: WorkspaceListSummary]
-    ) -> WorkspaceListSummary {
-        summaries[workspaceId] ?? WorkspaceListSummary(
-            workspaceId: workspaceId,
-            activeCount: 0,
-            stoppedCount: 0,
-            hasAttention: false
         )
     }
 

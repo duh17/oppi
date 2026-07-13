@@ -1965,6 +1965,28 @@ extension NativeFullScreenMarkdownBody {
 extension NativeFullScreenMarkdownBody: UITextViewDelegate {
     func textView(
         _ textView: UITextView,
+        menuConfigurationFor textItem: UITextItem,
+        defaultMenu: UIMenu
+    ) -> UITextItem.MenuConfiguration? {
+        guard case let .link(url) = textItem.content else {
+            return UITextItem.MenuConfiguration(menu: defaultMenu)
+        }
+
+        let action = MarkdownLinkInteractionSupport.classify(
+            url,
+            workspaceID: currentConfig?.workspaceID
+        )
+        return MarkdownLinkInteractionSupport.menuConfiguration(
+            for: action,
+            defaultMenu: defaultMenu,
+            textView: textView
+        ) { normalizedURL, sourceView in
+            FileSharePresenter.share(normalizedURL, sourceView: sourceView)
+        }
+    }
+
+    func textView(
+        _ textView: UITextView,
         editMenuForTextIn range: NSRange,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
@@ -1987,114 +2009,13 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
             return defaultAction
         }
 
-        switch classifyLink(url) {
-        case .deepLink(let normalizedURL):
-            return UIAction { _ in
-                NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
-            }
-        case .webLink(let normalizedURL):
-            return UIAction { _ in
-                NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
-            }
-        case .fileLink(let payload):
-            return UIAction { _ in
-                NotificationCenter.default.post(name: .fileLinkTapped, object: payload)
-            }
-        case .systemDefault:
-            return defaultAction
-        }
-    }
-
-    func textView(
-        _ textView: UITextView,
-        menuConfigurationFor textItem: UITextItem,
-        defaultMenu: UIMenu
-    ) -> UITextItem.MenuConfiguration? {
-        guard case let .link(url) = textItem.content else {
-            return UITextItem.MenuConfiguration(menu: defaultMenu)
-        }
-
-        switch classifyLink(url) {
-        case .webLink(let normalizedURL):
-            let copyAction = UIAction(
-                title: "Copy Link",
-                image: UIImage(systemName: "doc.on.doc")
-            ) { _ in
-                UIPasteboard.general.string = normalizedURL.absoluteString
-            }
-
-            let openAction = UIAction(
-                title: AppPreferences.Browser.linkOpeningMode.openActionTitle,
-                image: UIImage(systemName: "safari")
-            ) { _ in
-                NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
-            }
-
-            let shareAction = UIAction(
-                title: "Share...",
-                image: UIImage(systemName: "square.and.arrow.up")
-            ) { [weak textView] _ in
-                FileSharePresenter.share(normalizedURL, sourceView: textView)
-            }
-
-            return UITextItem.MenuConfiguration(menu: UIMenu(children: [openAction, copyAction, shareAction]))
-
-        case .fileLink, .deepLink, .systemDefault:
-            return UITextItem.MenuConfiguration(menu: defaultMenu)
-        }
-    }
-
-    private func classifyLink(_ url: URL) -> LinkAction {
-        let normalizedURL = AssistantMarkdownContentView.normalizedInteractionURL(url)
-        guard let scheme = normalizedURL.scheme?.lowercased() else {
-            return .systemDefault
-        }
-        if scheme == "oppi" {
-            return .deepLink(normalizedURL)
-        }
-        if scheme == "http" || scheme == "https" {
-            return .webLink(normalizedURL)
-        }
-        if scheme == WorkspaceWikiLinkURL.scheme,
-           let payload = workspaceWikiLinkPayload(for: normalizedURL) {
-            return .fileLink(payload)
-        }
-        if scheme == "file",
-           let payload = fileLinkPayload(for: normalizedURL) {
-            return .fileLink(payload)
-        }
-        return .systemDefault
-    }
-
-    private func workspaceWikiLinkPayload(for url: URL) -> FileLinkPayload? {
-        guard let parsed = WorkspaceWikiLinkURL.parse(url),
-              let config = currentConfig,
-              parsed.workspaceID == config.workspaceID else {
-            return nil
-        }
-
-        return FileLinkPayload(
-            workspaceID: parsed.workspaceID,
-            filePath: parsed.filePath,
-            originalURL: url
+        let action = MarkdownLinkInteractionSupport.classify(
+            url,
+            workspaceID: currentConfig?.workspaceID
         )
-    }
-
-    private func fileLinkPayload(for url: URL) -> FileLinkPayload? {
-        guard url.isFileURL,
-              let config = currentConfig,
-              let workspaceID = config.workspaceID,
-              !workspaceID.isEmpty else {
-            return nil
-        }
-
-        let filePath = url.path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !filePath.isEmpty else { return nil }
-
-        return FileLinkPayload(
-            workspaceID: workspaceID,
-            filePath: filePath,
-            originalURL: url
+        return MarkdownLinkInteractionSupport.primaryAction(
+            for: action,
+            defaultAction: defaultAction
         )
     }
 }
