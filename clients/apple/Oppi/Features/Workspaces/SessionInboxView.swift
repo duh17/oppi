@@ -117,6 +117,7 @@ struct SessionInboxView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.theme) private var theme
 
     let onOpenSidebar: (() -> Void)?
 
@@ -223,7 +224,7 @@ struct SessionInboxView: View {
                     )
                     .font(.subheadline)
                     .foregroundStyle(.themeOrange)
-                    .listRowBackground(Color.themeBg)
+                    .listRowBackground(theme.bg.primary)
                     .accessibilityIdentifier("workspace.sessionList.cachedWarning")
                 }
             }
@@ -243,7 +244,7 @@ struct SessionInboxView: View {
             if data.isEmpty {
                 Section {
                     emptyState
-                        .listRowBackground(Color.themeBg)
+                        .listRowBackground(theme.bg.primary)
                 }
             }
         }
@@ -591,7 +592,7 @@ struct SessionInboxView: View {
             }
             .accessibilityIdentifier("session.nav.\(item.session.id)")
             .accessibilityValue(sessionRowAccessibilityValue(for: item))
-            .listRowBackground(Color.themeBg)
+            .listRowBackground(theme.bg.primary)
             .swipeActions(edge: .trailing) {
                 sessionSwipeActions(for: item)
             }
@@ -991,6 +992,7 @@ private struct WorkspaceSidebarDragState {
 struct WorkspaceSessionInboxStackRootView: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.theme) private var theme
     @State private var sidebarRestingProgress: CGFloat = 0
     @State private var isSidebarPresented = false
     @GestureState private var sidebarDrag = WorkspaceSidebarDragState()
@@ -1018,7 +1020,7 @@ struct WorkspaceSessionInboxStackRootView: View {
                 // Base backdrop: the corner cutouts and safe-area strips revealed
                 // by the foreground mask must show theme color, never the bare
                 // white window background.
-                Color.themeBg
+                theme.bg.primary
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -1043,7 +1045,7 @@ struct WorkspaceSessionInboxStackRootView: View {
                         WorkspaceScopedDestinationView(target: target)
                     }
                 }
-                .background(Color.themeBg)
+                .background(theme.bg.primary)
                 // Mask in screen space, not the safe-area frame: `.clipShape`
                 // sizes to the layout bounds, which puts the rounded corners
                 // under the status bar / home indicator and amputates the nav
@@ -1175,6 +1177,7 @@ struct WorkspaceSidebarView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.theme) private var theme
 
     var onSelect: (() -> Void)? = nil
     var onDismiss: (() -> Void)? = nil
@@ -1294,7 +1297,7 @@ struct WorkspaceSidebarView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.themeBg.ignoresSafeArea())
+        .background(theme.bg.primary.ignoresSafeArea())
         .sheet(item: $createSheetContext, onDismiss: handleCreateSheetDismissed) { context in
             WorkspaceCreateView(
                 server: context.server,
@@ -1492,6 +1495,8 @@ struct WorkspaceSidebarSessionStatus: Equatable {
 }
 
 private struct WorkspaceSidebarRow: View {
+    @Environment(\.theme) private var theme
+
     let workspace: Workspace
     let status: WorkspaceSidebarSessionStatus
     let isSelected: Bool
@@ -1526,7 +1531,7 @@ private struct WorkspaceSidebarRow: View {
         .background {
             if isSelected {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.themeFg.opacity(0.08))
+                    .fill(theme.text.primary.opacity(0.08))
             }
         }
         .contentShape(Rectangle())

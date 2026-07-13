@@ -5,10 +5,10 @@ import UIKit
 import AppKit
 #endif
 
-/// Static theme color accessors resolved from the active runtime theme.
-///
-/// All views use `.theme*` accessors instead of hardcoded colors.
-/// Values change dynamically when the user switches themes.
+/// Snapshot theme colors for APIs that require a concrete `Color` or bridge
+/// into UIKit/AppKit. SwiftUI foreground/fill/stroke call sites should use the
+/// contextual `.theme*` shorthand backed by `ThemeShapeStyle` below; explicit
+/// `Color.theme*` values do not themselves register an environment dependency.
 extension Color {
     private static var palette: ThemePalette {
         ThemeRuntimeState.currentPalette()
@@ -95,29 +95,128 @@ extension Color {
     static var themeDiffContext: Color { palette.toolDiffContext }
 }
 
-extension ShapeStyle where Self == Color {
-    static var themeBg: Color { Color.themeBg }
-    static var themeBgHighlight: Color { Color.themeBgHighlight }
-    static var themeFg: Color { Color.themeFg }
-    static var themeFgDim: Color { Color.themeFgDim }
-    static var themeComment: Color { Color.themeComment }
-    static var themeBlue: Color { Color.themeBlue }
-    static var themeCyan: Color { Color.themeCyan }
-    static var themeGreen: Color { Color.themeGreen }
-    static var themeOrange: Color { Color.themeOrange }
-    static var themePurple: Color { Color.themePurple }
-    static var themeRed: Color { Color.themeRed }
-    static var themeYellow: Color { Color.themeYellow }
+/// Environment-resolved theme style for SwiftUI foregrounds, fills, strokes,
+/// and style-based backgrounds. Unlike `Color.theme*`, this registers a real
+/// `EnvironmentValues.theme` dependency, so persistent List/LazyVStack cells
+/// repaint when the active theme changes instead of retaining captured colors.
+struct ThemeShapeStyle: ShapeStyle {
+    enum Role: Sendable {
+        case background
+        case backgroundDark
+        case backgroundHighlight
+        case foreground
+        case foregroundDim
+        case comment
+        case blue
+        case cyan
+        case green
+        case orange
+        case purple
+        case red
+        case yellow
+        case scrim
+        case onBlue
+        case onGreen
+        case syntaxComment
+        case syntaxKeyword
+        case syntaxFunction
+        case syntaxVariable
+        case syntaxString
+        case syntaxNumber
+        case syntaxType
+        case syntaxOperator
+        case syntaxPunctuation
+        case markdownHeading
+        case diffAdded
+        case diffRemoved
+        case diffContext
+    }
 
-    static var themeScrim: Color { Color.themeScrim }
-    static var themeOnBlue: Color { Color.themeOnBlue }
+    let role: Role
+
+    func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
+        color(in: environment)
+    }
+
+    func color(in environment: EnvironmentValues) -> Color {
+        let theme = environment.theme
+        return switch role {
+        case .background: theme.bg.primary
+        case .backgroundDark: theme.bg.secondary
+        case .backgroundHighlight: theme.bg.highlight
+        case .foreground: theme.text.primary
+        case .foregroundDim: theme.text.secondary
+        case .comment: theme.text.tertiary
+        case .blue: theme.accent.blue
+        case .cyan: theme.accent.cyan
+        case .green: theme.accent.green
+        case .orange: theme.accent.orange
+        case .purple: theme.accent.purple
+        case .red: theme.accent.red
+        case .yellow: theme.accent.yellow
+        case .scrim: theme.bg.secondary.opacity(0.82)
+        case .onBlue:
+            ThemeColorContrast.foreground(
+                for: theme.accent.blue,
+                highLuminanceForeground: theme.bg.secondary,
+                lowLuminanceForeground: theme.text.primary
+            )
+        case .onGreen:
+            ThemeColorContrast.foreground(
+                for: theme.accent.green,
+                highLuminanceForeground: theme.bg.secondary,
+                lowLuminanceForeground: theme.text.primary
+            )
+        case .syntaxComment: theme.syntax.comment
+        case .syntaxKeyword: theme.syntax.keyword
+        case .syntaxFunction: theme.syntax.function
+        case .syntaxVariable: theme.syntax.variable
+        case .syntaxString: theme.syntax.string
+        case .syntaxNumber: theme.syntax.number
+        case .syntaxType: theme.syntax.type
+        case .syntaxOperator: theme.syntax.operator
+        case .syntaxPunctuation: theme.syntax.punctuation
+        case .markdownHeading: theme.markdown.heading
+        case .diffAdded: theme.diff.addedAccent
+        case .diffRemoved: theme.diff.removedAccent
+        case .diffContext: theme.diff.contextFg
+        }
+    }
+}
+
+extension ShapeStyle where Self == ThemeShapeStyle {
+    static var themeBg: ThemeShapeStyle { ThemeShapeStyle(role: .background) }
+    static var themeBgDark: ThemeShapeStyle { ThemeShapeStyle(role: .backgroundDark) }
+    static var themeBgHighlight: ThemeShapeStyle { ThemeShapeStyle(role: .backgroundHighlight) }
+    static var themeFg: ThemeShapeStyle { ThemeShapeStyle(role: .foreground) }
+    static var themeFgDim: ThemeShapeStyle { ThemeShapeStyle(role: .foregroundDim) }
+    static var themeComment: ThemeShapeStyle { ThemeShapeStyle(role: .comment) }
+    static var themeBlue: ThemeShapeStyle { ThemeShapeStyle(role: .blue) }
+    static var themeCyan: ThemeShapeStyle { ThemeShapeStyle(role: .cyan) }
+    static var themeGreen: ThemeShapeStyle { ThemeShapeStyle(role: .green) }
+    static var themeOrange: ThemeShapeStyle { ThemeShapeStyle(role: .orange) }
+    static var themePurple: ThemeShapeStyle { ThemeShapeStyle(role: .purple) }
+    static var themeRed: ThemeShapeStyle { ThemeShapeStyle(role: .red) }
+    static var themeYellow: ThemeShapeStyle { ThemeShapeStyle(role: .yellow) }
+
+    static var themeScrim: ThemeShapeStyle { ThemeShapeStyle(role: .scrim) }
+    static var themeOnBlue: ThemeShapeStyle { ThemeShapeStyle(role: .onBlue) }
     // periphery:ignore - used by ChatSubviews through SwiftUI contextual static member lookup
-    static var themeOnGreen: Color { Color.themeOnGreen }
+    static var themeOnGreen: ThemeShapeStyle { ThemeShapeStyle(role: .onGreen) }
 
-    // Semantic
-    static var themeSyntaxKeyword: Color { Color.themeSyntaxKeyword }
-    static var themeDiffAdded: Color { Color.themeDiffAdded }
-    static var themeDiffRemoved: Color { Color.themeDiffRemoved }
+    static var themeSyntaxComment: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxComment) }
+    static var themeSyntaxKeyword: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxKeyword) }
+    static var themeSyntaxFunction: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxFunction) }
+    static var themeSyntaxVariable: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxVariable) }
+    static var themeSyntaxString: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxString) }
+    static var themeSyntaxNumber: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxNumber) }
+    static var themeSyntaxType: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxType) }
+    static var themeSyntaxOperator: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxOperator) }
+    static var themeSyntaxPunctuation: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxPunctuation) }
+    static var themeMdHeading: ThemeShapeStyle { ThemeShapeStyle(role: .markdownHeading) }
+    static var themeDiffAdded: ThemeShapeStyle { ThemeShapeStyle(role: .diffAdded) }
+    static var themeDiffRemoved: ThemeShapeStyle { ThemeShapeStyle(role: .diffRemoved) }
+    static var themeDiffContext: ThemeShapeStyle { ThemeShapeStyle(role: .diffContext) }
 }
 
 // MARK: - Themed Surface Roles
@@ -204,56 +303,103 @@ private func themedSurfaceStroke<S: Shape>(_ style: ThemeSurfaceStyle, in shape:
 
 // MARK: - Themed Surface Modifiers
 
+private struct ThemedSurfaceModifier<S: Shape>: ViewModifier {
+    @Environment(\.themeID) private var themeID
+
+    let role: ThemeSurfaceRole
+    let shape: S
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let style = ThemeSurfaceStyle.resolve(role, palette: themeID.palette)
+        if style.wantsGlassBlur {
+            content
+                .background(style.fill, in: shape)
+                .glassEffect(.regular, in: shape)
+                .overlay { themedSurfaceStroke(style, in: shape) }
+        } else {
+            content
+                .background(style.fill, in: shape)
+                .overlay { themedSurfaceStroke(style, in: shape) }
+        }
+    }
+}
+
+private struct ThemedListSurfaceModifier: ViewModifier {
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)
+            .background(theme.bg.primary.ignoresSafeArea())
+    }
+}
+
+private struct ThemedScrollSurfaceModifier: ViewModifier {
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content.background(theme.bg.primary.ignoresSafeArea())
+    }
+}
+
+private struct ThemedTextInputCardModifier: ViewModifier {
+    @Environment(\.theme) private var theme
+
+    let backgroundOverride: Color?
+    let cornerRadius: CGFloat
+    let contentPadding: CGFloat
+    let strokeOpacity: Double
+
+    func body(content: Content) -> some View {
+        content
+            .padding(contentPadding)
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(backgroundOverride ?? theme.bg.secondary)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(theme.text.tertiary.opacity(strokeOpacity), lineWidth: 1)
+            )
+    }
+}
+
 extension View {
     /// Apply a semantic themed surface behind this view, clipped to `shape`:
     /// role-resolved fill, glass blur pairing for translucent roles, and the
     /// role's hairline stroke. This is the sanctioned way to put a themed
     /// panel fill behind content — roles resolve opacity in one place.
-    @ViewBuilder
     func themedSurface<S: Shape>(_ role: ThemeSurfaceRole, in shape: S) -> some View {
-        let style = ThemeSurfaceStyle.resolve(role)
-        if style.wantsGlassBlur {
-            background(style.fill, in: shape)
-                .glassEffect(.regular, in: shape)
-                .overlay { themedSurfaceStroke(style, in: shape) }
-        } else {
-            background(style.fill, in: shape)
-                .overlay { themedSurfaceStroke(style, in: shape) }
-        }
+        modifier(ThemedSurfaceModifier(role: role, shape: shape))
     }
+
     /// Use for List/Form screens. Replaces native list chrome with theme background.
     /// Section "cards" keep their system appearance (matches Dark/Light perfectly,
     /// near-match for Night/custom).
     func themedListSurface() -> some View {
-        self
-            .scrollContentBackground(.hidden)
-            .background(Color.themeBg.ignoresSafeArea())
+        modifier(ThemedListSurfaceModifier())
     }
 
     /// Use for custom ScrollView/VStack screens (dashboards, charts).
     func themedScrollSurface() -> some View {
-        self
-            .background(Color.themeBg.ignoresSafeArea())
+        modifier(ThemedScrollSurfaceModifier())
     }
 
     /// Use for freeform text entry surfaces that need stable contrast and a
     /// consistent inset card shape across editors and multiline inputs.
     func themedTextInputCard(
-        background: Color = .themeBgDark,
+        background: Color? = nil,
         cornerRadius: CGFloat = 14,
         contentPadding: CGFloat = 10,
         strokeOpacity: Double = 0.18
     ) -> some View {
-        self
-            .padding(contentPadding)
-            .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(background)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(Color.themeComment.opacity(strokeOpacity), lineWidth: 1)
-            )
+        modifier(ThemedTextInputCardModifier(
+            backgroundOverride: background,
+            cornerRadius: cornerRadius,
+            contentPadding: contentPadding,
+            strokeOpacity: strokeOpacity
+        ))
     }
 
     /// Use for small floating busy/status panels that sit above app content.
@@ -270,10 +416,22 @@ extension View {
 
 enum ThemeColorContrast {
     static func foreground(for fill: Color) -> Color {
+        foreground(
+            for: fill,
+            highLuminanceForeground: .themeBgDark,
+            lowLuminanceForeground: .themeFg
+        )
+    }
+
+    static func foreground(
+        for fill: Color,
+        highLuminanceForeground: Color,
+        lowLuminanceForeground: Color
+    ) -> Color {
         guard let luminance = relativeLuminance(of: fill) else {
-            return .themeFg
+            return lowLuminanceForeground
         }
-        return luminance > 0.55 ? .themeBgDark : .themeFg
+        return luminance > 0.55 ? highLuminanceForeground : lowLuminanceForeground
     }
 
     /// Adaptive opacity for themed glass/surface fills. Production code

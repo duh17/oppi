@@ -20,6 +20,9 @@ import { fileURLToPath } from "node:url";
  *     or add a semantic accessor in Color+Theme.swift.
  *  5. Fixed black/white SwiftUI backgrounds and UIKit theme-background alpha
  *     re-derivations — common escape hatches that fail under light themes.
+ *  6. Theme shorthand backed by static Color, or explicit snapshot colors in
+ *     foregroundStyle — SwiftUI styles must resolve from the environment so
+ *     persistent views repaint.
  *
  * Preview/screenshot harnesses are allowlisted: they intentionally freeze
  * styling for marketing shots and stress fixtures.
@@ -92,6 +95,18 @@ const checks: GuardCheck[] = [
     title: "UIKit theme surface alpha re-derived at the call site",
     pattern: String.raw`UIColor\(\s*(Color\.)?themeBg(Dark|Highlight)?\s*\)\.withAlphaComponent\(`,
     fix: "Use UIColor(ThemeSurfaceStyle.resolve(role).fill) or an opaque semantic theme color",
+  },
+  {
+    id: "nonreactive-theme-shape-style",
+    title: "Theme shorthand backed by static Color",
+    pattern: String.raw`extension\s+ShapeStyle\s+where\s+Self\s*==\s*Color`,
+    fix: "Back .theme* SwiftUI shorthand with ThemeShapeStyle so it resolves from EnvironmentValues.theme on every render",
+  },
+  {
+    id: "snapshot-theme-foreground-style",
+    title: "Explicit snapshot theme color in foregroundStyle",
+    pattern: String.raw`\.foregroundStyle\(\s*Color\.theme`,
+    fix: "Use contextual .foregroundStyle(.theme*) shorthand so ThemeShapeStyle resolves from the current SwiftUI environment",
   },
 ];
 

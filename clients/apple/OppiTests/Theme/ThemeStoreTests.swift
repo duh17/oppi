@@ -1,5 +1,6 @@
 import SwiftUI
 import Testing
+import UIKit
 @testable import Oppi
 
 @MainActor
@@ -101,6 +102,25 @@ struct ThemeStoreTests {
             #expect(store.activeThemeID == .light)
             #expect(ThemeRuntimeState.currentThemeID() == .light)
         }
+    }
+
+    @Test func swiftUIThemeShapeStylesResolveFromTheirEnvironment() {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+        ThemeRuntimeState.setThemeID(.dark)
+
+        var lightEnvironment = EnvironmentValues()
+        lightEnvironment.theme = .light
+        var oledEnvironment = EnvironmentValues()
+        oledEnvironment.theme = .oled
+
+        let foreground = ThemeShapeStyle(role: .foreground)
+        let background = ThemeShapeStyle(role: .background)
+
+        #expect(UIColor(foreground.color(in: lightEnvironment)) == UIColor(ThemePalettes.light.fg))
+        #expect(UIColor(foreground.color(in: oledEnvironment)) == UIColor(ThemePalettes.oled.fg))
+        #expect(UIColor(background.color(in: lightEnvironment)) == UIColor(ThemePalettes.light.bg))
+        #expect(UIColor(background.color(in: oledEnvironment)) == UIColor(ThemePalettes.oled.bg))
     }
 
     private func withCleanThemeDefaults(_ body: () -> Void) {

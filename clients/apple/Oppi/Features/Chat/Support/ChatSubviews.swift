@@ -183,7 +183,7 @@ struct SessionEndedFooter: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
                     .background(Color.themeGreen)
-                    .foregroundStyle(Color.themeOnGreen)
+                    .foregroundStyle(.themeOnGreen)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 .disabled(isResuming)
