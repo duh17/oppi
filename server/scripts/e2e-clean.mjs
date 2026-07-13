@@ -62,15 +62,19 @@ for (const port of ports) {
   }
 }
 
-const docker = spawnSync("docker", ["ps", "-aq", "--filter", "name=^/oppi-e2e$"], {
-  encoding: "utf-8",
-});
-const containerIds = docker.status === 0 ? docker.stdout.split(/\s+/).filter(Boolean) : [];
-for (const id of containerIds) {
-  try {
-    execFileSync("docker", ["rm", "-f", id], { stdio: "inherit" });
-    console.log(`[e2e-clean] removed docker container ${id}`);
-  } catch (error) {
-    console.warn(`[e2e-clean] could not remove docker container ${id}: ${error.message}`);
+if (process.env.E2E_NATIVE === "1" || process.env.E2E_SKIP_DOCKER_CLEAN === "1") {
+  console.log("[e2e-clean] skipped Docker cleanup for native mode");
+} else {
+  const docker = spawnSync("docker", ["ps", "-aq", "--filter", "name=^/oppi-e2e$"], {
+    encoding: "utf-8",
+  });
+  const containerIds = docker.status === 0 ? docker.stdout.split(/\s+/).filter(Boolean) : [];
+  for (const id of containerIds) {
+    try {
+      execFileSync("docker", ["rm", "-f", id], { stdio: "inherit" });
+      console.log(`[e2e-clean] removed docker container ${id}`);
+    } catch (error) {
+      console.warn(`[e2e-clean] could not remove docker container ${id}: ${error.message}`);
+    }
   }
 }
