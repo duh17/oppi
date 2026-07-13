@@ -93,8 +93,13 @@ struct ServerInitView: View {
 
         Task {
             do {
-                // Step 1: Run `oppi init --yes`
-                try await runServerInit()
+                // Step 1: Initialize only when this is a new server. Existing
+                // bundled-runtime users already have config and only need the npm CLI.
+                let configPath = (ServerProcessManager.serverDataDir as NSString)
+                    .appendingPathComponent("config.json")
+                if !FileManager.default.fileExists(atPath: configPath) {
+                    try await runServerInit()
+                }
 
                 // Step 2: Start or attach to the local server. A LaunchAgent or
                 // prior debug app may already own port 7749, so probe health

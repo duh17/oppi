@@ -330,7 +330,7 @@ describe("oppi help", () => {
       { args: ["pair", "--help"], expected: ["Usage: oppi pair", "--show-token"] },
       { args: ["status", "--help"], expected: ["Usage: oppi status", "Local Network"] },
       { args: ["doctor", "--help"], expected: ["Usage: oppi doctor", "diagnostics"] },
-      { args: ["update", "--help"], expected: ["Usage: oppi update", "--self"] },
+      { args: ["update", "--help"], expected: ["Usage: oppi update", "npm-installed"] },
       { args: ["token", "help"], expected: ["Usage: oppi token rotate", "Existing clients"] },
       { args: ["config", "help"], expected: ["Usage: oppi config", "Subcommands"] },
       { args: ["server", "help"], expected: ["Usage: oppi server", "LaunchAgent"] },
@@ -1979,6 +1979,52 @@ describe("oppi local API commands", () => {
         api.close((error) => (error ? rejectClose(error) : resolveClose())),
       );
       rmSync(cliDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Local orchestration authorization ──
+
+describe("local orchestration prerequisites", () => {
+  it("requires local owner credentials before calling orchestration APIs", () => {
+    const freshDir = mkdtempSync(join(tmpdir(), "oppi-cli-no-owner-"));
+    try {
+      const { stdout, exitCode } = run(["workspace", "list", "--json"], {
+        OPPI_DATA_DIR: freshDir,
+      });
+      expect(exitCode).toBe(1);
+      expect(JSON.parse(stdout)).toEqual({
+        ok: false,
+        error: {
+          message: "No owner bearer token configured. Run 'oppi init' or 'oppi pair' first.",
+        },
+      });
+    } finally {
+      rmSync(freshDir, { recursive: true, force: true });
+    }
+  });
+
+  it("requires a running local server after setup", async () => {
+    const configuredDir = mkdtempSync(join(tmpdir(), "oppi-cli-server-required-"));
+    const port = await getFreePort();
+    try {
+      expect(run(["init", "--yes", "--data-dir", configuredDir]).exitCode).toBe(0);
+      expect(
+        run(["config", "set", "tls", '{"mode":"disabled"}'], {
+          OPPI_DATA_DIR: configuredDir,
+        }).exitCode,
+      ).toBe(0);
+      expect(
+        run(["config", "set", "port", String(port)], { OPPI_DATA_DIR: configuredDir }).exitCode,
+      ).toBe(0);
+
+      const { stdout, exitCode } = await runAsync(["workspace", "list", "--json"], {
+        OPPI_DATA_DIR: configuredDir,
+      });
+      expect(exitCode).toBe(1);
+      expect(JSON.parse(stdout).error.message).toMatch(/ECONNREFUSED|connect/i);
+    } finally {
+      rmSync(configuredDir, { recursive: true, force: true });
     }
   });
 });

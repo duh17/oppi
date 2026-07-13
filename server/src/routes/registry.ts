@@ -182,13 +182,6 @@ const rawApiRouteSpecs = [
     auth: "owner",
   },
   {
-    method: "POST",
-    path: "/server/runtime/update",
-    operationId: "updateServerRuntime",
-    surface: "admin",
-    auth: "owner",
-  },
-  {
     method: "GET",
     path: "/server/auto-title",
     operationId: "getAutoTitleConfig",

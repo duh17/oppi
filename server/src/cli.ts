@@ -12,12 +12,17 @@ import { renderTerminal as renderQR } from "./qr.js";
 import { readFileSync, existsSync, statSync, realpathSync } from "node:fs";
 import { execSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir, hostname as osHostname, networkInterfaces } from "node:os";
+import { hostname as osHostname, networkInterfaces } from "node:os";
 import { Storage } from "./storage.js";
 import { Server } from "./server.js";
-import { applyHostEnv, resolveExecutableOnPath, resolveHostEnv } from "./host-env.js";
+import {
+  applyHostEnv,
+  prependPathEntry,
+  resolveExecutableOnPath,
+  resolveHostEnv,
+} from "./host-env.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import type { APNsConfig } from "./push.js";
 import {
@@ -28,7 +33,6 @@ import {
 } from "./tls.js";
 import type { ServerConfig } from "./types.js";
 import { generateInvite } from "./invite.js";
-import { RuntimeUpdateManager } from "./runtime-update.js";
 import { getPackageInfo } from "./version.js";
 import {
   getServiceStatus,
@@ -47,6 +51,7 @@ import { cmdWorkspace } from "./cli/commands/workspace.js";
 import { cmdWorktree } from "./cli/commands/worktree.js";
 import { createCliConnectionConfig, type CliConnectionConfig } from "./cli/connection-config.js";
 import { helpTopicToJson, renderHelpTopic, resolveHelpTopic } from "./cli/help.js";
+import { isNpmVersionNewer } from "./cli/npm-version.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   const dataDir = storage.getDataDir();
@@ -166,8 +171,13 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
 
   const config = storage.getConfig();
 
-  // Apply runtime environment from config.json (explicit configuration only).
+  // Apply the explicit host environment, then keep the npm bin directory that
+  // supplied this `oppi` executable first for managed host-session tools.
   applyHostEnv(config);
+  const invokedCli = process.argv[1];
+  if (invokedCli && basename(invokedCli) === "oppi") {
+    process.env.PATH = prependPathEntry(process.env.PATH, dirname(invokedCli));
+  }
   const tailscaleHostname = getTailscaleHostname();
   const tailscaleIp = getTailscaleIp();
   const localHostname = getLocalHostname();
@@ -557,55 +567,11 @@ function cmdDoctor(storage: CliConnectionConfig): void {
     }
   }
 
-  // ── Runtime directory checks ──
-
-  const runtimeDir = join(homedir(), ".config", "oppi", "server-runtime");
-
-  if (existsSync(runtimeDir)) {
-    checks.push({ level: "pass", message: `runtime dir exists (${runtimeDir})` });
-
-    const seedVersionFile = join(runtimeDir, ".seed-version");
-    if (existsSync(seedVersionFile)) {
-      const seedVersion = readFileSync(seedVersionFile, "utf-8").trim();
-      checks.push({ level: "pass", message: `seed version: ${seedVersion}` });
-    } else {
-      checks.push({
-        level: "warn",
-        message: "no .seed-version in runtime dir (manually deployed?)",
-      });
-    }
-
-    // Check key dep versions
-    const piPkgPath = join(
-      runtimeDir,
-      "node_modules",
-      "@mariozechner",
-      "pi-coding-agent",
-      "package.json",
-    );
-    if (existsSync(piPkgPath)) {
-      try {
-        const piPkg = JSON.parse(readFileSync(piPkgPath, "utf-8"));
-        checks.push({ level: "pass", message: `pi-coding-agent: v${piPkg.version}` });
-      } catch {
-        checks.push({ level: "warn", message: "could not read pi-coding-agent version" });
-      }
-    } else {
-      checks.push({ level: "fail", message: "pi-coding-agent not installed in runtime dir" });
-    }
-
-    // Check if package.json exists for updates
-    if (existsSync(join(runtimeDir, "package.json"))) {
-      checks.push({ level: "pass", message: "package.json present (oppi update available)" });
-    } else {
-      checks.push({
-        level: "warn",
-        message: "no package.json in runtime dir (oppi update unavailable)",
-      });
-    }
-  } else {
-    checks.push({ level: "warn", message: `runtime dir not found (${runtimeDir})` });
-  }
+  const packageInfo = getPackageInfo();
+  checks.push({
+    level: "pass",
+    message: `Oppi CLI: ${packageInfo.name}@${packageInfo.version}`,
+  });
 
   // ── LaunchAgent checks ──
 
@@ -1169,27 +1135,6 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
   process.exit(1);
 }
 
-function parseVersionParts(version: string): number[] {
-  return version
-    .replace(/^v/, "")
-    .split(/[.-]/)
-    .map((part) => Number.parseInt(part, 10))
-    .map((part) => (Number.isFinite(part) ? part : 0));
-}
-
-function isVersionNewer(candidate: string, current: string): boolean {
-  const a = parseVersionParts(candidate);
-  const b = parseVersionParts(current);
-  const len = Math.max(a.length, b.length);
-  for (let i = 0; i < len; i++) {
-    const av = a[i] ?? 0;
-    const bv = b[i] ?? 0;
-    if (av > bv) return true;
-    if (av < bv) return false;
-  }
-  return false;
-}
-
 function currentPackageDir(): string | undefined {
   let dir = dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 5; i++) {
@@ -1242,20 +1187,21 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
 
   let latest = "latest";
   try {
-    latest = execSync(`npm view ${info.name} version`, {
+    const registryLatest = execSync(`npm view ${info.name} version`, {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    if (latest) {
-      const newer = isVersionNewer(latest, info.version);
-      const currentAhead = isVersionNewer(info.version, latest);
-      const label = newer
-        ? `${c.green(latest)} ${c.yellow("(update available)")}`
-        : currentAhead
-          ? `${c.dim(latest)} ${c.yellow("(registry is behind this install)")}`
-          : c.dim(`${latest} (current)`);
-      console.log(`  Latest:  ${label}`);
-    }
+    if (!registryLatest) throw new Error("npm returned an empty version");
+
+    const newer = isNpmVersionNewer(registryLatest, info.version);
+    const currentAhead = isNpmVersionNewer(info.version, registryLatest);
+    latest = registryLatest;
+    const label = newer
+      ? `${c.green(latest)} ${c.yellow("(update available)")}`
+      : currentAhead
+        ? `${c.dim(latest)} ${c.yellow("(registry is behind this install)")}`
+        : c.dim(`${latest} (current)`);
+    console.log(`  Latest:  ${label}`);
   } catch {
     console.log(c.yellow("  Could not check npm for the latest version."));
     console.log(c.dim("  Continuing with npm install -g oppi-server@latest."));
@@ -1263,7 +1209,7 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
   console.log("");
 
   if (flags.check === "true" || flags.dry === "true") {
-    if (latest !== "latest" && !isVersionNewer(latest, info.version)) {
+    if (latest !== "latest" && !isNpmVersionNewer(latest, info.version)) {
       console.log(c.green("  Oppi server is already current."));
     } else {
       console.log(c.yellow("  Update available."));
@@ -1278,7 +1224,7 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
     console.log(c.dim("  npm global:   npm install -g oppi-server@latest"));
     console.log(c.dim("  git checkout: git pull && npm install && npm run build"));
     console.log(
-      c.dim("  Mac app:      update Oppi.app; the app manages its bundled server runtime"),
+      c.dim("  Mac app:      install the shared CLI with npm install -g oppi-server@latest"),
     );
     console.log("");
     process.exit(1);
@@ -1292,110 +1238,7 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
 }
 
 async function cmdUpdate(flags: Record<string, string>): Promise<void> {
-  const mode = flags.self === "true" ? "self" : "runtime";
-  if (mode === "self") {
-    await cmdSelfUpdate(flags);
-    return;
-  }
-
-  console.log("  " + c.bold("Checking server runtime dependency updates"));
-  console.log("");
-
-  let piVersion = "unknown";
-  try {
-    const runtimeDir = join(homedir(), ".config", "oppi", "server-runtime");
-    const piPkgPath = join(
-      runtimeDir,
-      "node_modules",
-      "@mariozechner",
-      "pi-coding-agent",
-      "package.json",
-    );
-    if (existsSync(piPkgPath)) {
-      piVersion = JSON.parse(readFileSync(piPkgPath, "utf-8")).version;
-    }
-  } catch {
-    // Ignore
-  }
-
-  const manager = new RuntimeUpdateManager({ currentVersion: piVersion });
-  const status = await manager.getStatus({ force: true });
-
-  if (!status.runtimeDir) {
-    console.log(c.red("  Runtime directory not found."));
-    console.log(c.dim("  The server may be running from source or not yet initialized."));
-    console.log(
-      c.dim("  Run the Mac app once to seed the runtime, or use 'oppi serve' from the repo."),
-    );
-    console.log("");
-    process.exit(1);
-  }
-
-  if (!status.canUpdate) {
-    console.log(c.red("  No npm executable found. Install Node.js and try again."));
-    console.log("");
-    process.exit(1);
-  }
-
-  console.log(`  Runtime dir: ${c.dim(status.runtimeDir)}`);
-  if (status.seedVersion) {
-    console.log(`  Seed version: ${c.dim(status.seedVersion)}`);
-  }
-  console.log(`  Current pi:  ${c.dim(status.currentVersion)}`);
-  if (status.latestVersion) {
-    const latestLabel = status.updateAvailable
-      ? `${c.green(status.latestVersion)} ${c.yellow("(update available)")}`
-      : c.dim(`${status.latestVersion} (current)`);
-    console.log(`  Latest pi:   ${latestLabel}`);
-  }
-  if (status.checkError) {
-    console.log(`  ${c.yellow("Registry check failed:")} ${c.dim(status.checkError)}`);
-  }
-  console.log("");
-
-  if (flags.check === "true" || flags.dry === "true") {
-    if (flags.dry === "true") {
-      console.log(
-        c.dim("  Dry run — would update the runtime manifest if needed, then run install."),
-      );
-      console.log("");
-      return;
-    }
-
-    console.log(
-      status.updateAvailable
-        ? c.yellow("  Update available.")
-        : c.green("  Runtime dependencies are already current."),
-    );
-    console.log("");
-    return;
-  }
-
-  console.log(c.dim("  Updating runtime..."));
-  console.log("");
-
-  const result = await manager.updateRuntime();
-
-  if (!result.ok) {
-    console.log(c.red(`  ${result.message}`));
-    console.log("");
-    process.exit(1);
-  }
-
-  if (result.updatedPackages && result.updatedPackages.length > 0) {
-    console.log(c.green("  Updated packages:"));
-    console.log("");
-    for (const pkg of result.updatedPackages) {
-      console.log(`    ${pkg.name}: ${c.dim(pkg.from)} ${c.cyan("→")} ${c.green(pkg.to)}`);
-    }
-    console.log("");
-    console.log(c.yellow("  Restart the server to apply changes."));
-    console.log(c.dim("  If running via the Mac app, restart from the menu bar."));
-    console.log(c.dim("  If running via CLI, stop and re-run 'oppi serve'."));
-  } else {
-    console.log(c.green(`  ${result.message}`));
-  }
-  console.log("");
+  await cmdSelfUpdate(flags);
 }
 
 function cmdHelp(path: string[] = [], jsonOutput = false): void {

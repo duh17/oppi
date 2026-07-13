@@ -352,8 +352,7 @@ struct MainWindowView: View {
         case .settings:
             SettingsView(
                 processManager: processManager,
-                checkForUpdates: checkForUpdates,
-                apiClient: makeAPIClient()
+                checkForUpdates: checkForUpdates
             )
         }
     }
@@ -432,14 +431,5 @@ struct MainWindowView: View {
     private func refreshWorkspaceCatalogAndSessions() async {
         await workspaceStore.loadFromLocalConfig()
         await workspaceStore.loadRecentSessionsForLoadedWorkspacesFromLocalConfig()
-    }
-}
-
-extension MainWindowView {
-    /// Construct an API client for local server administration if a token is available.
-    private func makeAPIClient() -> MacAPIClient? {
-        let dataDir = NSString("~/.config/oppi").expandingTildeInPath
-        guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else { return nil }
-        return MacAPIClient(baseURL: URL(string: "https://localhost:7749")!, token: token)
     }
 }

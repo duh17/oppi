@@ -77,11 +77,12 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "agent", summary: "create, inspect, update, archive, and launch saved Agents" },
       { name: "wait", summary: "poll session state until a condition is true" },
       { name: "token", summary: "rotate the owner bearer token" },
-      { name: "update", summary: "check or install runtime dependency updates" },
+      { name: "update", summary: "check or update the npm-installed server and CLI" },
       { name: "version", summary: "print the installed package version" },
     ],
     notes: [
       "Default output is terminal-friendly for humans and agents; use '--json' for strict machine parsing.",
+      "Help, version, init, serve, pair, status, doctor, config, server, and update are available during setup; workspace, worktree, session, Agent, schedule, and wait commands require local owner credentials and a running server.",
       "Use '<noun> help' or '<command> --help' for flags and deeper examples.",
       "Use '--json' with help for an agent-readable description of the same topic.",
     ],
@@ -180,22 +181,17 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["update"],
     title: "Update",
-    summary: "Check or install Oppi server runtime dependency updates.",
+    summary: "Check or update the npm-installed Oppi server and CLI.",
     usage: "oppi update [flags]",
     flags: [
       { name: "--check", summary: "check update status without installing" },
-      { name: "--dry", summary: "show what would happen without installing" },
-      { name: "--self", summary: "check/update the globally installed oppi-server package" },
+      { name: "--dry", summary: "show the npm update command without installing" },
     ],
     notes: [
-      "Without --self, update targets the server runtime under ~/.config/oppi/server-runtime.",
-      "After installing runtime updates, restart the running server process.",
+      "Oppi server and CLI versions are installed together as the oppi-server npm package.",
+      "Restart the running server after an update.",
     ],
-    examples: [
-      { command: "oppi update --check" },
-      { command: "oppi update" },
-      { command: "oppi update --self --check" },
-    ],
+    examples: [{ command: "oppi update --check" }, { command: "oppi update" }],
   },
   {
     path: ["token"],

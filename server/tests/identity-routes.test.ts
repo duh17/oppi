@@ -77,7 +77,6 @@ describe("identity module", () => {
       skillRegistry: {
         list: vi.fn(() => []),
       },
-      getRuntimeUpdateStatus: vi.fn().mockResolvedValue({ upToDate: true }),
       getModelCatalog: vi.fn(() => []),
       serverStartedAt: Date.now(),
       serverVersion: "test",

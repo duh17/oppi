@@ -50,7 +50,7 @@ The iOS share extension accepts shared text, URLs, images, and files. Pick a pai
 
 ## Quick start
 
-Requires Node.js 23.6+ and at least one Pi provider configured (`pi auth`, or an API key such as `ANTHROPIC_API_KEY`). Linux self-signed TLS also requires `openssl` on PATH.
+Requires Node.js 24+ and at least one Pi provider configured (`pi auth`, or an API key such as `ANTHROPIC_API_KEY`). Linux self-signed TLS also requires `openssl` on PATH.
 
 Install and start:
 
@@ -133,17 +133,20 @@ oppi schedule ...            # manage schedules and run history
 oppi server ...              # install/status/restart/stop/uninstall launchd service
 oppi config ...              # show/get/set/validate config
 oppi token rotate            # rotate owner bearer token
-oppi update                  # update mutable runtime dependencies
-oppi update --self           # show how to update the server install
+oppi update                  # update the npm-installed server and CLI
 ```
 
 Saved Agents and schedules are server CLI/API features. Saved Agents hold reusable Agent definitions. Schedules store at/every/cron triggers plus a workspace, saved Agent, or existing-session action and keep run history for manual or approved automatic runs. For the full CLI surface, run `oppi --help` or see [server/README.md](server/README.md).
 
 ## Mac app shell (experimental)
 
-The macOS app is an experimental shell with early configuration views. It is not a supported Pi session UI yet.
+The macOS app uses the same globally installed `oppi` executable as humans and managed agents. Install or update it first:
 
-For normal use, run the server with the CLI above and pair from the iPhone/iPad app.
+```bash
+npm install -g oppi-server@latest
+```
+
+The app does not bundle a second server runtime. `oppi init`, local status and pairing setup work before a phone is paired; authenticated workspace, session, Agent, and schedule commands require the local owner credentials created during setup.
 
 ## Docs
 

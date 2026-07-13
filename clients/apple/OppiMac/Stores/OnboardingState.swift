@@ -42,12 +42,18 @@ final class OnboardingState {
 
     // MARK: - First-run detection
 
-    /// Check if onboarding is needed. Returns true if no server config exists.
-    func checkFirstRun() {
+    /// Check whether local configuration or the npm-installed CLI still needs setup.
+    func checkFirstRun(
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+        cliAvailable: () -> Bool = { ServerProcessManager.resolveServerCLIPath() != nil }
+    ) {
         let configPath = NSString("~/.config/oppi/config.json").expandingTildeInPath
-        let configExists = FileManager.default.fileExists(atPath: configPath)
-        needsOnboarding = !configExists
-        logger.info("First-run check: config exists=\(configExists), needs onboarding=\(self.needsOnboarding)")
+        let configExists = fileExists(configPath)
+        let hasCLI = cliAvailable()
+        needsOnboarding = !configExists || !hasCLI
+        logger.info(
+            "First-run check: config exists=\(configExists), CLI available=\(hasCLI), needs onboarding=\(self.needsOnboarding)"
+        )
     }
 
     // MARK: - Navigation
