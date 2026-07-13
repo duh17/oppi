@@ -189,7 +189,7 @@ Schedules store a trigger plus an action. `oppi schedule create` accepts `--at`,
 
 Oppi uses Pi's extension system and adds mobile rendering for standard extension UI requests. Extension approval behavior lives in Pi extensions, not in server config.
 
-See [Oppi extension behavior](../docs/extensions.md) for workspace allowlists and mobile rendering. Use [Oppi Mirror mode](../docs/oppi-mirror.md) for terminal-owned sessions.
+See [Oppi extension behavior](../docs/extensions.md) for extension loading, per-workspace Pi resource toggles, and mobile rendering. Use [Oppi Mirror mode](../docs/oppi-mirror.md) for terminal-owned sessions.
 
 ## Server stats API
 
@@ -221,10 +221,11 @@ Quick inspection:
 ```bash
 cat ~/.config/oppi/config.json | jq .          # raw config
 cat ~/.config/oppi/config.json | jq '.asr'     # single section
-node dist/src/cli.js config show                # formatted overview
-node dist/src/cli.js config get asr             # top-level key
-node dist/src/cli.js config set images.autoResize false
-node dist/src/cli.js config set tls '{"mode":"self-signed"}'
+oppi config show                                # formatted overview
+oppi config get asr                             # top-level key
+oppi config set images.autoResize false
+oppi config set tls '{"mode":"self-signed"}'
+# Source checkouts: use `node dist/src/cli.js` instead of `oppi`.
 ```
 
 For unsupported nested keys, edit `config.json` directly and restart the server.

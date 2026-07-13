@@ -152,7 +152,7 @@ Still terminal-only:
 | Oppi AskCard multi-select | Native AskCard, with first response winning | Terminal fallback |
 | Custom terminal components, headers, footers, raw TUI layouts | Terminal-owned unless bridged as a semantic widget or future snapshot | Terminal-owned |
 
-## Known Limitations
+## Known limitations
 
 - Mirror supports standard semantic Pi extension UI. Custom terminal component trees and raw ANSI/TUI layouts require an explicit bridge-forwarded snapshot or native-snapshot capability; otherwise they remain terminal-owned.
 - Session-file replacement commands such as new session, fork, and switch session remain terminal-only.

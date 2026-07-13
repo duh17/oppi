@@ -121,6 +121,7 @@ Use `oppi ...` after installing `oppi-server` from npm. Common entry points:
 
 ```bash
 oppi serve [--host <h>]      # start server
+oppi init                    # interactive first-time setup
 oppi pair [--host <h>]       # regenerate pairing QR + invite link
 oppi status                  # server, network, and pairing status
 oppi doctor                  # security and environment diagnostics
@@ -131,7 +132,7 @@ oppi agent ...               # manage saved Agents
 oppi schedule ...            # manage schedules and run history
 oppi server ...              # install/status/restart/stop/uninstall launchd service
 oppi config ...              # show/get/set/validate config
-oppi token rotate            # rotate owner auth token
+oppi token rotate            # rotate owner bearer token
 oppi update                  # update mutable runtime dependencies
 oppi update --self           # show how to update the server install
 ```
@@ -161,6 +162,17 @@ For normal use, run the server with the CLI above and pair from the iPhone/iPad 
 - [Custom themes](server/docs/themes.md) - creating color themes for the iOS app
 - [Telemetry and diagnostics](docs/telemetry.md) - privacy controls, storage paths, latency, and reliability metrics
 - [Security](SECURITY.md) - security model and privacy
+
+### Development docs
+
+- [Architecture](docs/architecture.md) - cross-system architecture map
+- [Server architecture](docs/architecture-server.md) - routes, streams, runtime ownership, and storage
+- [Client architecture](docs/architecture-client.md) - Apple stores, transports, and the chat timeline pipeline
+- [Extension native UI](docs/extension-native-ui.md) - native extension UI contract
+- [Testing](docs/testing/README.md) - canonical test commands
+- [Model selection](server/docs/model-selection.md) - chat model selection precedence
+- [Session tree semantics](server/docs/session-tree-semantics.md) - session tree and fork semantics
+- [Protocol snapshots](protocol/README.md) - canonical wire fixtures and stream topology
 
 ## License
 

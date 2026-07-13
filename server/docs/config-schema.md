@@ -9,7 +9,7 @@ Oppi server uses a JSON config file with validated fields and sensible defaults.
 
 Auto-created on first `oppi serve`, or manually via `oppi init`. Validated on load — invalid fields fall back to defaults with warnings. New fields are backfilled automatically on startup.
 
-## All Settings
+## All settings
 
 Settings are listed in the order they appear in the config file. Auth state is documented separately — it lives in the same file but is managed by CLI commands, not edited by hand.
 
@@ -38,7 +38,7 @@ Configure the machine-wide fallback in Pi settings, for example `~/.pi/agent/set
 
 Workspace defaults are stored on each workspace as `defaultModel` in canonical `"provider/model-id"` form.
 
-### Session Lifecycle
+### Session lifecycle
 
 | Setting                   | Type   | Default   | Description                                                                                   |
 | ------------------------- | ------ | --------- | --------------------------------------------------------------------------------------------- |
@@ -49,15 +49,7 @@ Workspace defaults are stored on each workspace as `defaultModel` in canonical `
 
 Use `sessionIdleTimeoutMs` in config files.
 
-### Extension UI Compatibility
-
-Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
-
-Approval behavior is extension-owned. If a session needs approval before an action, install or enable a Pi extension that asks through `ctx.ui`, such as the `pi-extensions/ask` example. No Oppi-specific approval config is required.
-
-Unknown config keys are ignored on startup and reported by `oppi config validate`.
-
-### Oppi Docs Prompt
+### Oppi docs prompt
 
 | Setting                  | Type    | Default | Description                                                                                                                                            |
 | ------------------------ | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -68,7 +60,7 @@ oppi config set oppiDocsPrompt.enabled false
 oppi config set oppiDocsPrompt.enabled true
 ```
 
-### Runtime Environment
+### Runtime environment
 
 | Setting              | Type     | Default   | Description                                                                                                                                |
 | -------------------- | -------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -128,7 +120,7 @@ oppi config set tls '{"mode":"self-signed"}'
 oppi config set tls '{"mode":"disabled","allowInsecureNetworkHttp":true}'
 ```
 
-### Auto Title
+### Auto title
 
 | Setting             | Type    | Default | Description                                                                                                                                                              |
 | ------------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -144,7 +136,7 @@ oppi config set tls '{"mode":"disabled","allowInsecureNetworkHttp":true}'
 }
 ```
 
-### ASR / Dictation
+### ASR / dictation
 
 Configures server-side dictation routing to an external STT backend.
 
@@ -160,7 +152,19 @@ Controls client-side preprocessing for image attachments before upload.
 | ------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `images.autoResize` | boolean | `false` | When `true`, clients resize oversized image attachments before upload to fit a 2000 px max dimension and about a 4.5 MB base64 budget. When `false`, clients upload original image bytes where possible. |
 
-## Full Example
+### Extensions
+
+| Setting                           | Type   | Default | Description                                                                          |
+| --------------------------------- | ------ | ------- | ------------------------------------------------------------------------------------ |
+| `extensions.voice.defaultVoiceId` | string | -       | Default saved voice ID used by the sample voice extension. See [`tts.md`](./tts.md). |
+
+## Extension UI compatibility
+
+Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
+
+Approval behavior is extension-owned. If a session needs approval before an action, install or enable a Pi extension that asks through `ctx.ui`, such as the `pi-extensions/ask` example. No Oppi-specific approval config is required.
+
+## Full example
 
 ```json
 {
