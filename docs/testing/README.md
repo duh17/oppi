@@ -18,12 +18,46 @@ npm run check
 npm test
 ```
 
-Server E2E coverage is documented in `server/e2e/README.md`:
+### One-shot Linux validation on macOS
+
+Use Apple `container` copy-in mode for a clean Linux check without exposing the checkout through a host bind mount. This command streams the working tree into the container, so it includes uncommitted files while excluding local build products.
+
+```bash
+container system start
+
+./scripts/apple-container-copy-run.sh \
+  --source . \
+  --workdir /work/server \
+  --exclude .git \
+  --exclude .pi \
+  --exclude .internal \
+  --exclude clients \
+  --exclude server/node_modules \
+  --exclude server/dist \
+  --exclude server/coverage \
+  -- bash -lc '
+    set -euo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates git openssl
+    rm -rf /var/lib/apt/lists/*
+    npm install -g bun@1.3.11
+    npm ci --no-audit --no-fund
+    npm run check
+    npm test
+  '
+```
+
+To support Apple `container` installations without the `container cp` plugin, including 0.9, the helper uses `tar` over `container exec -i` for copy-in and optional copy-out, then deletes the ephemeral container. It does not pass `--volume` or `--mount`.
+
+On Mac Studio, do not replace this with an OrbStack/Docker command that bind-mounts the repo or an output directory writable.
+
+Server E2E coverage is documented in `server/e2e/README.md`. Prefer native mode for local work; `E2E_NATIVE=1` also suppresses Docker cleanup:
 
 ```bash
 cd server
-npm run test:e2e
 E2E_NATIVE=1 npm run test:e2e
+npm run test:e2e # Docker Compose mode when that environment is explicitly needed
 ```
 
 ## Apple

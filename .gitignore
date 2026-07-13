@@ -16,6 +16,7 @@ clients/apple/Oppi.xcodeproj/**/xcuserdata/
 
 # Tracked script allowlists
 scripts/*
+!scripts/apple-container-copy-run.sh
 !scripts/duplication-scan.ts
 !scripts/scroll-offset-guard.ts
 !scripts/theme-surface-guard.ts
