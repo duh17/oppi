@@ -240,7 +240,7 @@ describe("workspace session list routes", () => {
   });
 
   it("returns sectioned active and stopped workspace session rows", async () => {
-    const mock = createMockContext(makeWorkspace({ hostMount: "~/workspace/oppi" }));
+    const mock = createMockContext(makeWorkspace({ hostMount: "/tmp" }));
     const sinceMs = Date.parse("2026-05-13T00:00:00Z");
     const untilMs = Date.parse("2026-05-14T00:00:00Z");
 
@@ -319,7 +319,7 @@ describe("workspace session list routes", () => {
   });
 
   it("returns stopped session bucket summaries from the bucket resource", async () => {
-    const mock = createMockContext(makeWorkspace({ hostMount: "~/workspace/oppi" }));
+    const mock = createMockContext(makeWorkspace({ hostMount: "/tmp" }));
     const beforeMs = Date.parse("2026-05-13T00:00:00Z");
 
     mock.storage.listWorkspaceStoppedTimeBuckets.mockReturnValue([
@@ -525,7 +525,7 @@ describe("workspace session list routes", () => {
   });
 
   it("returns only the requested stopped bucket contents", async () => {
-    const mock = createMockContext(makeWorkspace({ hostMount: "~/workspace/oppi" }));
+    const mock = createMockContext(makeWorkspace({ hostMount: "/tmp" }));
     const sinceMs = Date.parse("2026-05-10T00:00:00Z");
     const untilMs = Date.parse("2026-05-11T00:00:00Z");
 

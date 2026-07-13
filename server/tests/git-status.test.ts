@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { getGitStatus } from "../src/git-status.js";
 
 // ─── Helpers ───
@@ -15,6 +15,7 @@ function gitIn(dir: string, cmd: string): string {
 
 let repoDir: string;
 let nonGitDir: string;
+let tildeRepoDir: string;
 
 beforeAll(() => {
   // Create a real git repo with commits
@@ -30,11 +31,22 @@ beforeAll(() => {
   // Create a non-git directory
   nonGitDir = mkdtempSync(join(tmpdir(), "git-status-test-noGit-"));
   writeFileSync(join(nonGitDir, "readme.txt"), "not a repo\n");
+
+  // Keep one fixture under HOME so tilde expansion is tested without assuming
+  // a developer-specific checkout path exists on the runner.
+  tildeRepoDir = mkdtempSync(join(homedir(), ".oppi-git-status-test-"));
+  gitIn(tildeRepoDir, "init -b main");
+  gitIn(tildeRepoDir, 'config user.email "test@test.com"');
+  gitIn(tildeRepoDir, 'config user.name "Test"');
+  writeFileSync(join(tildeRepoDir, "README.md"), "fixture\n");
+  gitIn(tildeRepoDir, "add README.md");
+  gitIn(tildeRepoDir, 'commit -m "fixture"');
 });
 
 afterAll(() => {
   rmSync(repoDir, { recursive: true, force: true });
   rmSync(nonGitDir, { recursive: true, force: true });
+  rmSync(tildeRepoDir, { recursive: true, force: true });
 });
 
 // ─── Tests ───
@@ -180,10 +192,10 @@ describe("getGitStatus", () => {
   });
 
   it("resolves tilde paths", async () => {
-    // This test runs against the actual oppi repo
-    const status = await getGitStatus("~/workspace/oppi");
+    const homeRelativePath = `~/${tildeRepoDir.slice(homedir().length + 1)}`;
+    const status = await getGitStatus(homeRelativePath);
     expect(status.isGitRepo).toBe(true);
-    expect(status.branch).toBeTruthy();
+    expect(status.branch).toBe("main");
   });
 
   it("handles mixed status (staged + dirty + untracked)", async () => {

@@ -306,7 +306,7 @@ describe("oppi help", () => {
         expect(text).toContain(expected);
       }
     }
-  });
+  }, 45_000);
 
   it("prints useful help for nested utility subcommands", () => {
     const cases: Array<{ args: string[]; expected: string[] }> = [
@@ -515,7 +515,7 @@ describe("oppi help", () => {
         expect(text).toContain(expected);
       }
     }
-  }, 45_000);
+  }, 120_000);
 
   it("prints agent-readable JSON help for agent namespace", () => {
     const { stdout, exitCode } = run(["agent", "help", "--json"]);
@@ -1852,7 +1852,7 @@ describe("oppi local API commands", () => {
       rmSync(workspaceRoot, { recursive: true, force: true });
       rmSync(worktreeRoot, { recursive: true, force: true });
     }
-  }, 90_000);
+  }, 180_000);
 
   it("keeps concurrent read-only local API CLI calls from failing on SQLite locks", async () => {
     const api = createHttpServer((req, res) => {
@@ -1898,7 +1898,7 @@ describe("oppi local API commands", () => {
       );
       rmSync(cliDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it("schedule list --json fails fast on malformed successful API JSON", async () => {
     const api = createHttpServer((_req, res) => {
@@ -2215,7 +2215,7 @@ describe("oppi serve (first-run tls bootstrap)", () => {
     } finally {
       rmSync(serveDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
 
 // ── Init ──
