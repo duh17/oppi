@@ -19,7 +19,7 @@ flowchart TD
   Persist --> Widget[Render goal widget and status]
   Persist --> IdleCheck{Agent idle and no queued messages?}
 
-  IdleCheck -- no --> Wait[Wait for agent_end or session_compact]
+  IdleCheck -- no --> Wait[Wait for agent_settled or session_compact]
   Wait --> IdleCheck
 
   IdleCheck -- yes --> Budget{Continuation budget left?}
@@ -33,6 +33,7 @@ flowchart TD
 
   Context -- yes --> Continue[Append updated goal with continuationCount + 1]
   Continue --> Send[Send oppi-goal-continuation follow-up]
+  Send -- dispatch failed --> Block
   Send --> Agent[Agent works next step]
   Agent --> Tool[Agent calls update_goal]
   Tool --> Persist
@@ -57,6 +58,6 @@ Useful commands:
 
 The widget updates periodically while a goal is active, so mobile surfaces can show timer-like elapsed durations. Task timing is inferred from task status transitions: `in_progress` starts a timer, and `completed` records the elapsed duration.
 
-The continuation budget is a safety cap, not a target to spend. Continuation prompts ask the model to audit completion against real evidence and avoid stopping on weak proxy signals. If the model tries to mark a goal complete while listed tasks are still pending or in progress, the extension keeps the goal active and records the unfinished tasks in the summary.
+The continuation budget is a safety cap, not a target to spend. Continuation prompts ask the model to audit completion against real evidence and avoid stopping on weak proxy signals. Every completion path, including `/goal complete`, model tool updates, and loaded snapshots, keeps the goal active when listed tasks are still pending or in progress and records the unfinished tasks in the summary.
 
-The loop stops when the goal is complete, blocked, paused, cleared, reaches its continuation budget, or reaches the configured context-usage limit.
+The loop waits for Pi's `agent_settled` event before queuing the next turn. It stops when the goal is complete, blocked, paused, or cleared. Budget exhaustion and continuation dispatch failures preserve the goal as blocked; context pressure waits for compaction and blocks only if compaction fails.

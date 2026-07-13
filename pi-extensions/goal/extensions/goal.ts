@@ -259,7 +259,7 @@ function normalizeLoadedGoal(value: unknown): SessionGoal | undefined {
     value.maxContinuations,
     DEFAULT_MAX_CONTINUATIONS,
   );
-  return {
+  const normalized: SessionGoal = {
     id,
     status: value.status,
     objective,
@@ -277,6 +277,8 @@ function normalizeLoadedGoal(value: unknown): SessionGoal | undefined {
     continuationCount,
     maxContinuations,
   };
+  enforceCompletionInvariant(normalized);
+  return normalized;
 }
 
 function goalFromSnapshot(value: unknown): SessionGoal | undefined {
@@ -580,6 +582,26 @@ function appendSummaryNote(summary: string | undefined, note: string): string {
   return `${normalized}\n\n${note}`;
 }
 
+function enforceCompletionInvariant(goal: SessionGoal): void {
+  if (goal.status !== "complete") return;
+  const remainingTasks = unfinishedTasks(goal);
+  if (remainingTasks.length === 0) return;
+
+  goal.status = "active";
+  goal.blocker = undefined;
+  goal.completedAt = undefined;
+  const taskList = remainingTasks
+    .slice(0, 5)
+    .map((task) => task.title)
+    .join(", ");
+  const suffix =
+    remainingTasks.length > 5 ? `, +${remainingTasks.length - 5} more` : "";
+  goal.summary = appendSummaryNote(
+    goal.summary,
+    `Completion deferred: unfinished tasks remain (${taskList}${suffix}).`,
+  );
+}
+
 function updateGoalFromParams(
   goal: SessionGoal,
   params: Static<typeof UpdateGoalParams>,
@@ -607,24 +629,7 @@ function updateGoalFromParams(
   if (next.status === "blocked" && !next.blocker) {
     next.blocker = normalizeText(params.note) ?? "Goal is blocked.";
   }
-  if (next.status === "complete") {
-    const remainingTasks = unfinishedTasks(next);
-    if (remainingTasks.length > 0) {
-      next.status = "active";
-      next.blocker = undefined;
-      next.completedAt = undefined;
-      const taskList = remainingTasks
-        .slice(0, 5)
-        .map((task) => task.title)
-        .join(", ");
-      const suffix =
-        remainingTasks.length > 5 ? `, +${remainingTasks.length - 5} more` : "";
-      next.summary = appendSummaryNote(
-        next.summary,
-        `Completion deferred: unfinished tasks remain (${taskList}${suffix}).`,
-      );
-    }
-  }
+  enforceCompletionInvariant(next);
   if (next.status === "complete" && !next.summary) {
     next.summary = normalizeText(params.note) ?? "Goal completed.";
   }
@@ -813,20 +818,22 @@ export function createGoalExtension(
       goal: SessionGoal,
       status: Exclude<GoalStatus, "active">,
       note?: string,
-    ): void {
+    ): SessionGoal {
       const next = cloneGoal(goal);
       next.status = status;
       if (status === "blocked")
         next.blocker = normalizeText(note) ?? next.blocker;
       if (status === "complete")
         next.summary = normalizeText(note) ?? next.summary;
+      enforceCompletionInvariant(next);
       next.updatedAt = nowIso();
       next.completedAt =
-        status === "complete"
+        next.status === "complete"
           ? (next.completedAt ?? next.updatedAt)
           : undefined;
       next.revision += 1;
       persistGoal(next);
+      return next;
     }
 
     function maybeStopForBudget(
@@ -927,10 +934,16 @@ export function createGoalExtension(
           continuationQueued = true;
         } catch (error) {
           continuationQueued = false;
-          activeCtx.ui.notify(
-            `Goal continuation failed: ${error instanceof Error ? error.message : String(error)}`,
-            "error",
-          );
+          const message =
+            error instanceof Error ? error.message : String(error);
+          if (currentGoal?.status === "active") {
+            stopGoal(
+              currentGoal,
+              "blocked",
+              `Continuation launch failed: ${message}`,
+            );
+          }
+          activeCtx.ui.notify(`Goal continuation failed: ${message}`, "error");
         }
       }, continuationDelayMs);
     }
@@ -990,10 +1003,14 @@ export function createGoalExtension(
       };
     });
 
-    pi.on("agent_end", (_event, ctx) => {
-      // Extension-triggered continuations can run without a matching agent_start
-      // event, so clear the queued marker here before deciding whether to loop.
+    pi.on("agent_end", () => {
+      // Extension-triggered continuations can run without a matching agent_start.
+      // Clear the marker here, but wait for agent_settled: agent_end can still be
+      // followed by an automatic retry or compaction retry.
       continuationQueued = false;
+    });
+
+    pi.on("agent_settled", (_event, ctx) => {
       if (currentGoal?.status === "active") scheduleContinuation(ctx);
     });
 
@@ -1084,8 +1101,16 @@ export function createGoalExtension(
             ctx.ui.notify("No active goal to complete.", "info");
             return;
           }
-          stopGoal(currentGoal, "complete", restText);
-          ctx.ui.notify("Goal complete.", "info");
+          const next = stopGoal(currentGoal, "complete", restText);
+          if (next.status === "complete") {
+            ctx.ui.notify("Goal complete.", "info");
+          } else {
+            ctx.ui.notify(
+              "Goal remains active: unfinished tasks must be completed first.",
+              "warning",
+            );
+            scheduleContinuation(ctx);
+          }
           return;
         }
 

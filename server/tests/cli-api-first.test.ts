@@ -420,8 +420,48 @@ describe("CLI app-state API boundary", () => {
           "prompt piped over stdin\n",
         );
         expect(code).toBe(0);
-        expect(requests.find((request) => request.path === "/workspaces/ws-1/sessions")?.body)
-          .toMatchObject({ prompt: "prompt piped over stdin\n" });
+        expect(
+          requests.find((request) => request.path === "/workspaces/ws-1/sessions")?.body,
+        ).toMatchObject({ prompt: "prompt piped over stdin\n" });
+      },
+    );
+  });
+
+  it("resolves create stdin before the saved-Agent launch boundary", async () => {
+    await withOrchApi(
+      (res, ctx) => {
+        if (ctx.path === "/workspaces/ws-1") {
+          sendJson(res, { workspace: { id: "ws-1", name: "Oppi" } });
+          return;
+        }
+        if (ctx.path === "/agents/reviewer/sessions") {
+          sendJson(res, {
+            session: { id: "created-agent-stdin", workspaceId: "ws-1" },
+          });
+          return;
+        }
+        sendJson(res, { error: "unexpected route" }, 404);
+      },
+      async ({ dataDir, requests }) => {
+        const { code } = await runCliResult(
+          [
+            "session",
+            "create",
+            "--agent",
+            "reviewer",
+            "--workspace",
+            "ws-1",
+            "--prompt",
+            "@-",
+            "--json",
+          ],
+          dataDir,
+          "saved-Agent prompt from stdin\n",
+        );
+        expect(code).toBe(0);
+        expect(
+          requests.find((request) => request.path === "/agents/reviewer/sessions")?.body,
+        ).toMatchObject({ prompt: { text: "saved-Agent prompt from stdin\n" } });
       },
     );
   });
