@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -86,6 +87,27 @@ function formatXcode(violations, repoRoot) {
   }
 }
 
+function runThemeSurfaceGuard(repoRoot) {
+  const guardPath = path.join(repoRoot, "scripts/theme-surface-guard.ts");
+  const result = spawnSync("bun", [guardPath], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+  if (result.status !== 0) {
+    process.exit(1);
+  }
+}
+
 function run(options) {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = path.resolve(scriptDir, "../..");
@@ -116,6 +138,9 @@ function run(options) {
   });
 
   if (violations.length === 0) {
+    if (options.scope === "all" || options.scope === "ios") {
+      runThemeSurfaceGuard(repoRoot);
+    }
     console.log(`Architecture boundary checks passed (scope: ${options.scope}).`);
     return;
   }

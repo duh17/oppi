@@ -274,14 +274,14 @@ private struct OrgNativeHeadingView: View {
     private func buildHeadingText(keyword: String?, title: [OrgInline], tags: [String]) -> Text {
         var text = Text("\(bullet) ")
             .font(.system(size: fontSize, weight: .bold))
-            .foregroundStyle(Color.themeMdHeading)
+            .foregroundStyle(.themeMdHeading)
 
         if let kw = keyword {
             text = concatenate(
                 text,
                 Text("\(kw) ")
                     .font(.system(size: fontSize, weight: .heavy))
-                    .foregroundStyle(kw == "DONE" ? Color.themeGreen : Color.themeOrange)
+                    .foregroundStyle(kw == "DONE" ? ThemeShapeStyle(role: .green) : ThemeShapeStyle(role: .orange))
             )
         }
 
@@ -295,7 +295,7 @@ private struct OrgNativeHeadingView: View {
                 text,
                 Text(":" + tags.joined(separator: ":") + ":")
                     .font(.system(size: max(fontSize - 4, 11), design: .monospaced))
-                    .foregroundStyle(Color.themeComment)
+                    .foregroundStyle(.themeComment)
             )
         }
 
@@ -307,7 +307,7 @@ private struct OrgNativeHeadingView: View {
         case .text(let str):
             return Text(str)
                 .font(.system(size: baseSize, weight: .bold))
-                .foregroundStyle(Color.themeMdHeading)
+                .foregroundStyle(.themeMdHeading)
         case .bold(let children):
             return children.reduce(Text("")) { concatenate($0, renderInline($1, baseSize: baseSize)) }
         case .italic(let children):
@@ -316,7 +316,7 @@ private struct OrgNativeHeadingView: View {
         case .code(let str), .verbatim(let str):
             return Text(str)
                 .font(.system(size: max(baseSize - 2, 11), design: .monospaced))
-                .foregroundStyle(Color.themeFg)
+                .foregroundStyle(.themeFg)
         case .underline(let children):
             let inner = children.reduce(Text("")) { concatenate($0, renderInline($1, baseSize: baseSize)) }
             return inner.underline()
@@ -327,7 +327,7 @@ private struct OrgNativeHeadingView: View {
             let label = description?.map { inlineToString($0) }.joined() ?? "link"
             return Text(label)
                 .font(.system(size: baseSize, weight: .bold))
-                .foregroundStyle(Color.themeBlue)
+                .foregroundStyle(.themeBlue)
         }
     }
 

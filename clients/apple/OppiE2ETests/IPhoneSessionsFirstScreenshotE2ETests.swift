@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// iPhone screenshot lab for the sessions-first inbox.
@@ -11,6 +12,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     private let stoppedIncognitoSessionName = "Hidden Incognito Session"
     nonisolated(unsafe) private var swipeRegressionSessionId: String?
     nonisolated(unsafe) private var swipeRegressionStoppedSessionId: String?
+    nonisolated(unsafe) private var themeSwitchSessionId: String?
 
     override var e2eLaunchesSessionsInboxOnly: Bool {
         true
@@ -29,7 +31,14 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     override func seedE2EFixtures() throws {
         let anchorWorkspaceId = try e2eWorkspaceId(named: anchorWorkspaceName)
 
-        if name.contains("testSessionRowLeadingSwipeDoesNotNavigate") {
+        if name.contains("testThemeSwitchRefreshesMountedInboxAndSidebar") {
+            themeSwitchSessionId = try createLabSessions(
+                count: 1,
+                workspaceId: anchorWorkspaceId,
+                stopAfterCreate: false
+            ).first
+            _ = try createLabWorkspace(named: "Theme Switch Workspace")
+        } else if name.contains("testSessionRowLeadingSwipeDoesNotNavigate") {
             swipeRegressionSessionId = try createLabSessions(
                 count: 1,
                 workspaceId: anchorWorkspaceId,
@@ -150,6 +159,41 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
 
         try saveLabScreenshot(name: "iphone-all-active-sessions-inbox-e2e")
+    }
+
+    func testThemeSwitchRefreshesMountedInboxAndSidebar() throws {
+        XCUIDevice.shared.orientation = .portrait
+
+        let sessionId = try XCTUnwrap(themeSwitchSessionId, "Theme-switch session was not seeded")
+        let sessionRow = app.buttons["session.nav.\(sessionId)"]
+        XCTAssertTrue(sessionRow.waitForExistence(timeout: 15), "Theme-switch session row did not appear")
+
+        selectManualTheme("OLED")
+        openWorkspaceSidebar()
+
+        let workspaceRow = app.buttons["workspace.open.Theme Switch Workspace"]
+        XCTAssertTrue(workspaceRow.waitForExistence(timeout: 10), "Theme-switch workspace row did not appear")
+        XCTAssertGreaterThan(
+            pixelFraction(in: workspaceRow.screenshot().image, crop: CGRect(x: 0.20, y: 0, width: 0.58, height: 1)) { $0 > 0.35 },
+            0.005,
+            "Sidebar text retained low-luminance Light theme colors after switching to OLED"
+        )
+        try saveLabScreenshot(name: "iphone-theme-switch-oled-sidebar-e2e")
+
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.50)).tap()
+        XCTAssertTrue(
+            waitForHittable(app.buttons["workspace.sidebar.open"], timeout: 5),
+            "Sidebar did not close before switching back to Light"
+        )
+
+        selectManualTheme("Light")
+        XCTAssertTrue(sessionRow.waitForExistence(timeout: 10), "Session row did not return after theme switch")
+        XCTAssertGreaterThan(
+            pixelFraction(in: sessionRow.screenshot().image, crop: CGRect(x: 0.03, y: 0, width: 0.70, height: 0.42)) { $0 < 0.35 },
+            0.005,
+            "Session text retained high-luminance OLED colors after switching to Light"
+        )
+        try saveLabScreenshot(name: "iphone-theme-switch-light-inbox-e2e")
     }
 
     func testIPhoneRecentStoppedSessionsInboxScreenshot() throws {
@@ -299,6 +343,77 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             waitForHittable(app.buttons["workspace.sidebar.open"], timeout: 5),
             "Tapping the session card did not dismiss the workspace sidebar"
         )
+    }
+
+    private func selectManualTheme(_ themeName: String) {
+        let serverSwitcher = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Current server:")
+        ).firstMatch
+        tap(serverSwitcher, named: "server switcher", timeout: 10)
+        tap(app.buttons["App Settings"], named: "app settings", timeout: 5)
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10), "Settings did not open")
+
+        let themePicker = app.buttons.matching(
+            NSPredicate(format: "label == %@ OR label BEGINSWITH %@", "Theme", "Theme,")
+        ).firstMatch
+        tap(themePicker, named: "manual theme picker", timeout: 5)
+        tap(app.buttons[themeName], named: "\(themeName) theme", timeout: 5)
+
+        let backButton = app.navigationBars["Settings"].buttons.firstMatch
+        tap(backButton, named: "settings back button", timeout: 5)
+        XCTAssertTrue(
+            app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 10),
+            "Sessions inbox did not return after selecting \(themeName)"
+        )
+    }
+
+    private func openWorkspaceSidebar() {
+        tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar button", timeout: 5)
+        XCTAssertTrue(
+            waitForHittable(app.buttons["workspace.create.sidebar.open"], timeout: 10),
+            "Workspace sidebar did not open"
+        )
+    }
+
+    private func pixelFraction(
+        in image: UIImage,
+        crop normalizedCrop: CGRect,
+        matches: (CGFloat) -> Bool
+    ) -> Double {
+        guard let source = image.cgImage else { return 0 }
+        let crop = CGRect(
+            x: CGFloat(source.width) * normalizedCrop.minX,
+            y: CGFloat(source.height) * normalizedCrop.minY,
+            width: CGFloat(source.width) * normalizedCrop.width,
+            height: CGFloat(source.height) * normalizedCrop.height
+        ).integral
+        guard let cropped = source.cropping(to: crop), cropped.width > 0, cropped.height > 0 else { return 0 }
+
+        let bytesPerRow = cropped.width * 4
+        var pixels = [UInt8](repeating: 0, count: bytesPerRow * cropped.height)
+        guard let context = CGContext(
+            data: &pixels,
+            width: cropped.width,
+            height: cropped.height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return 0 }
+        context.draw(cropped, in: CGRect(x: 0, y: 0, width: cropped.width, height: cropped.height))
+
+        var matchingPixels = 0
+        let pixelCount = cropped.width * cropped.height
+        for offset in stride(from: 0, to: pixels.count, by: 4) {
+            let red = CGFloat(pixels[offset]) / 255
+            let green = CGFloat(pixels[offset + 1]) / 255
+            let blue = CGFloat(pixels[offset + 2]) / 255
+            let luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+            if matches(luminance) {
+                matchingPixels += 1
+            }
+        }
+        return pixelCount > 0 ? Double(matchingPixels) / Double(pixelCount) : 0
     }
 
     private func waitForHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
