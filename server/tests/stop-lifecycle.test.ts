@@ -32,10 +32,11 @@ function makeSession(status: Session["status"] = "busy"): Session {
 }
 
 function makeManagerHarness(status: Session["status"] = "busy") {
+  const saveSession = vi.fn();
   const storage = {
     getConfig: () => TEST_CONFIG,
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
-    saveSession: vi.fn(),
+    saveSession,
     getWorkspace: vi.fn(() => undefined),
   } as unknown as Storage;
 
@@ -43,7 +44,7 @@ function makeManagerHarness(status: Session["status"] = "busy") {
 
   (manager as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
 
-  const { sdkBackend, abort, dispose } = makeSdkBackendStub();
+  const { sdkBackend, abort, dispose, prompt } = makeSdkBackendStub();
   const session = makeSession(status);
 
   const active = {
@@ -74,7 +75,7 @@ function makeManagerHarness(status: Session["status"] = "busy") {
     events.push(msg);
   });
 
-  return { manager, events, session, sdkBackend, abort, dispose };
+  return { manager, events, session, sdkBackend, abort, dispose, prompt, saveSession };
 }
 
 describe("stop lifecycle", () => {
@@ -287,6 +288,64 @@ describe("stop lifecycle", () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+
+  it("coalesces duplicate terminate requests behind one active stop", async () => {
+    const { manager, events, sdkBackend, abort, dispose } = makeManagerHarness("busy");
+    const key = "s1";
+
+    const firstStop = manager.stopSession(key);
+    await Promise.resolve();
+    await Promise.resolve();
+    const duplicateStop = manager.stopSession(key);
+
+    expect(abort).toHaveBeenCalledOnce();
+    expect(sdkBackend.session.abortBash).toHaveBeenCalledOnce();
+
+    (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
+      key,
+      { type: "agent_end" },
+    );
+    await Promise.all([firstStop, duplicateStop]);
+
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(manager.isActive(key)).toBe(false);
+    expect(events.filter((event) => event.type === "stop_requested")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "stop_confirmed")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "session_ended")).toHaveLength(1);
+  });
+
+  it("ignores late runtime events after stop wins against a subsequent prompt", async () => {
+    const { manager, events, session, prompt, saveSession } = makeManagerHarness("busy");
+    const key = "s1";
+
+    const stop = manager.stopSession(key);
+    await Promise.resolve();
+    await Promise.resolve();
+    (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
+      key,
+      { type: "agent_end" },
+    );
+    await stop;
+
+    const persistedAfterStop = saveSession.mock.calls.length;
+    const eventsAfterStop = events.length;
+    await expect(manager.sendPrompt(key, "too late")).rejects.toThrow("Session not active: s1");
+
+    (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
+      key,
+      { type: "agent_start" },
+    );
+    (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
+      key,
+      { type: "message_end", message: { role: "assistant", content: "late output" } },
+    );
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(manager.isActive(key)).toBe(false);
+    expect(session.status).toBe("stopped");
+    expect(saveSession).toHaveBeenCalledTimes(persistedAfterStop);
+    expect(events).toHaveLength(eventsAfterStop);
   });
 
   it("stopSession force terminates after timeout when agent_end never arrives", async () => {

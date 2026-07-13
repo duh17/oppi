@@ -228,6 +228,49 @@ describe("BoundSessionStreamMux", () => {
     );
   });
 
+  it("serializes commands that arrive while an earlier stream command is in flight", async () => {
+    const session = makeSession("sess-command-race", "w1");
+    const { ctx } = createMockContext([session]);
+    let finishFirst: (() => void) | undefined;
+    vi.mocked(ctx.handleClientMessage).mockImplementation(async (_session, msg, send) => {
+      if (msg.requestId === "reload-1") {
+        await new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        });
+      }
+      send({
+        type: "command_result",
+        command: msg.type,
+        requestId: msg.requestId,
+        success: true,
+      });
+    });
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", session.id, ws as unknown as WebSocket);
+
+    ws.receive({ type: "reload", sessionId: session.id, requestId: "reload-1" } as ClientMessage);
+    await drain();
+    ws.receive({ type: "reload", sessionId: session.id, requestId: "reload-2" } as ClientMessage);
+    await drain();
+
+    expect(ctx.handleClientMessage).toHaveBeenCalledTimes(1);
+    expect(finishFirst).toBeDefined();
+    expect(ws.sentOfType("command_result", session.id)).toHaveLength(0);
+
+    finishFirst?.();
+    await drain();
+    await drain();
+
+    expect(ctx.handleClientMessage).toHaveBeenCalledTimes(2);
+    expect(
+      ws
+        .sentOfType("command_result", session.id)
+        .map((message) => (message as { requestId?: string }).requestId),
+    ).toEqual(["reload-1", "reload-2"]);
+  });
+
   it("replays the opening gap exactly once before queued live delivery", async () => {
     const session = makeSession("sess-bootstrap-gap", "w1");
     const { ctx, subscribers, broadcastTo } = createMockContext([session]);
