@@ -79,7 +79,7 @@ type ExtensionContextWithAttachments = ExtensionContext & {
   };
 };
 
-function normalizeThinkingLevel(level: string | undefined): PiThinkingLevel | undefined {
+export function normalizeThinkingLevel(level: string | undefined): PiThinkingLevel | undefined {
   switch (level) {
     case "off":
     case "minimal":
