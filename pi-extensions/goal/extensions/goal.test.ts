@@ -207,7 +207,7 @@ describe("goal extension", () => {
     );
   });
 
-  it("queues another continuation after an extension-triggered turn ends", async () => {
+  it("queues another continuation only after an extension-triggered turn settles", async () => {
     vi.useFakeTimers();
     const pi = createMockPi();
     createGoalExtension({ continuationDelayMs: 1 })(pi as never);
@@ -218,9 +218,12 @@ describe("goal extension", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(pi.sendMessage).toHaveBeenCalledTimes(1);
 
-    // Extension-triggered turns may not emit agent_start, so agent_end must clear
-    // the queued marker before scheduling the next continuation.
+    // agent_end is not authoritative: Pi may still retry or compact and retry.
     await emit(pi, "agent_end", ctx);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+
+    await emit(pi, "agent_settled", ctx);
     await vi.advanceTimersByTimeAsync(1);
 
     expect(pi.sendMessage).toHaveBeenCalledTimes(2);
@@ -425,6 +428,66 @@ describe("goal extension", () => {
     expect(nextGoal).toMatchObject({ status: "active", continuationCount: 1 });
   });
 
+  it("preserves an active checklist across session stop and resumes continuation later", async () => {
+    vi.useFakeTimers();
+    const branch = [
+      customGoalEntry(
+        activeGoal({
+          tasks: [
+            { id: "task-1", title: "Run validation", status: "in_progress" },
+          ],
+        }),
+      ),
+    ];
+    const stoppedPi = createMockPi();
+    createGoalExtension({ continuationDelayMs: 10 })(stoppedPi as never);
+    const stoppedCtx = createMockContext({ branch });
+
+    await startSession(stoppedPi, stoppedCtx);
+    await emit(stoppedPi, "session_shutdown", stoppedCtx);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(stoppedPi.appendEntry).not.toHaveBeenCalled();
+    expect(stoppedPi.sendMessage).not.toHaveBeenCalled();
+
+    const resumedPi = createMockPi();
+    createGoalExtension({ continuationDelayMs: 1 })(resumedPi as never);
+    const resumedCtx = createMockContext({ branch });
+    await startSession(resumedPi, resumedCtx);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(resumedPi.sendMessage).toHaveBeenCalledTimes(1);
+    expect(resumedPi.appendEntry.mock.calls[0]?.[1].goal).toMatchObject({
+      status: "active",
+      tasks: [{ title: "Run validation", status: "in_progress" }],
+    });
+  });
+
+  it("blocks instead of reporting success when continuation launch fails", async () => {
+    vi.useFakeTimers();
+    const pi = createMockPi();
+    pi.sendMessage.mockImplementation(() => {
+      throw new Error("prompt dispatch unavailable");
+    });
+    createGoalExtension({ continuationDelayMs: 1 })(pi as never);
+    const ctx = createMockContext();
+    await startSession(pi, ctx);
+
+    await pi.commands.get("goal")?.handler("Keep working", ctx);
+    await vi.advanceTimersByTimeAsync(1);
+
+    const failedGoal = pi.appendEntry.mock.calls.at(-1)?.[1].goal;
+    expect(failedGoal).toMatchObject({
+      status: "blocked",
+      blocker: "Continuation launch failed: prompt dispatch unavailable",
+    });
+    expect(failedGoal.completedAt).toBeUndefined();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Goal continuation failed: prompt dispatch unavailable",
+      "error",
+    );
+  });
+
   it("blocks instead of continuing when the continuation budget is exhausted", async () => {
     vi.useFakeTimers();
     const pi = createMockPi();
@@ -532,6 +595,72 @@ describe("goal extension", () => {
     const updatedGoal = pi.appendEntry.mock.calls.at(-1)?.[1].goal;
     expect(updatedGoal.status).toBe("complete");
     expect(updatedGoal.completedAt).toBeDefined();
+  });
+
+  it("keeps a slash-command completion active while tasks are unfinished", async () => {
+    vi.useFakeTimers();
+    const pi = createMockPi();
+    createGoalExtension({ continuationDelayMs: 1 })(pi as never);
+    const ctx = createMockContext({
+      branch: [
+        customGoalEntry(
+          activeGoal({
+            tasks: [
+              { id: "task-1", title: "Run validation", status: "pending" },
+            ],
+          }),
+        ),
+      ],
+      pending: true,
+    });
+    await startSession(pi, ctx);
+
+    await pi.commands.get("goal")?.handler("complete Looks done", ctx);
+
+    const updatedGoal = pi.appendEntry.mock.calls.at(-1)?.[1].goal;
+    expect(updatedGoal).toMatchObject({
+      status: "active",
+      completedAt: undefined,
+    });
+    expect(updatedGoal.summary).toContain(
+      "Completion deferred: unfinished tasks remain (Run validation).",
+    );
+    expect(ctx.ui.notify).toHaveBeenLastCalledWith(
+      "Goal remains active: unfinished tasks must be completed first.",
+      "warning",
+    );
+  });
+
+  it("repairs an invalid loaded completion with unfinished tasks", async () => {
+    vi.useFakeTimers();
+    const pi = createMockPi();
+    createGoalExtension({ continuationDelayMs: 1 })(pi as never);
+    const ctx = createMockContext({
+      branch: [
+        customGoalEntry(
+          activeGoal({
+            status: "complete",
+            completedAt: "2026-06-18T00:01:00.000Z",
+            tasks: [
+              { id: "task-1", title: "Run validation", status: "pending" },
+            ],
+          }),
+        ),
+      ],
+    });
+
+    await startSession(pi, ctx);
+    await vi.advanceTimersByTimeAsync(1);
+
+    const repairedGoal = pi.appendEntry.mock.calls.at(-1)?.[1].goal;
+    expect(repairedGoal).toMatchObject({
+      status: "active",
+      completedAt: undefined,
+    });
+    expect(repairedGoal.summary).toContain(
+      "Completion deferred: unfinished tasks remain (Run validation).",
+    );
+    expect(pi.sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it("keeps going when completion leaves unfinished tasks", async () => {
