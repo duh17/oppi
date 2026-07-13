@@ -242,6 +242,72 @@ describe("session attachments", () => {
     expect(replayed.audio.path).toBeUndefined();
   });
 
+  it("drops malformed base64 media without persisting attachment bytes", () => {
+    const details = materializeToolMediaDetails({
+      dataDir: root,
+      sessionId: "s-malformed-base64",
+      toolCallId: "tool-malformed",
+      details: {
+        audio: {
+          kind: "audio",
+          mimeType: "text/html",
+          base64: "!!!!",
+          path: "/tmp/must-not-be-read.wav",
+        },
+        image: {
+          kind: "image",
+          mimeType: "text/html",
+          data: "!!!!",
+          path: "/tmp/must-not-be-read.png",
+        },
+      },
+    }) as {
+      audio: { base64?: string; path?: string };
+      image: { data?: string; path?: string };
+    };
+
+    expect(details.audio).toEqual({ kind: "audio", mimeType: "text/html" });
+    expect(details.image).toEqual({ kind: "image", mimeType: "text/html" });
+    expect(
+      sessionAttachmentMediaDetailsForToolCall(root, "s-malformed-base64", "tool-malformed"),
+    ).toEqual([]);
+  });
+
+  it("replays duplicate media materialization as one durable attachment record", async () => {
+    const contents = [
+      {
+        type: "image",
+        data: Buffer.from("same-image-bytes").toString("base64"),
+        mimeType: "image/png",
+        fileName: "same.png",
+      },
+    ];
+
+    const first = materializeToolMediaContentBlocks({
+      dataDir: root,
+      sessionId: "s-duplicate",
+      toolCallId: "tool-duplicate",
+      contents,
+    }) as Array<{ id: string }>;
+    const second = materializeToolMediaContentBlocks({
+      dataDir: root,
+      sessionId: "s-duplicate",
+      toolCallId: "tool-duplicate",
+      contents,
+    }) as Array<{ id: string }>;
+
+    expect(second[0]?.id).toBe(first[0]?.id);
+    expect(
+      sessionAttachmentMediaDetailsForToolCall(root, "s-duplicate", "tool-duplicate"),
+    ).toHaveLength(1);
+    const attachment = first[0]
+      ? await getSessionAttachment(root, "s-duplicate", first[0].id)
+      : null;
+    expect(attachment ? await readFile(attachment.path) : null).toEqual(
+      Buffer.from("same-image-bytes"),
+    );
+  });
+
   it("materializes image content blocks and exposes dimensions", async () => {
     const png = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAYAAACZFr56AAAADElEQVR42mP8z8AARQAIMQH+6k9QbQAAAABJRU5ErkJggg==",
