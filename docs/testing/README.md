@@ -78,7 +78,7 @@ For Oppi maintainer/agent work, use the simulator pool so parallel runs do not c
 
 ```bash
 cd clients/apple
-bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- \
+./scripts/sim-pool.sh run -- \
   xcodebuild -project Oppi.xcodeproj -scheme Oppi build
 ```
 
@@ -96,7 +96,7 @@ Use the dedicated `OppiUnitTests` scheme for `OppiTests`.
 
 ```bash
 cd clients/apple
-bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- \
+./scripts/sim-pool.sh run -- \
   xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
 ```
 
@@ -107,6 +107,29 @@ xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test \
   -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
   -derivedDataPath .build/derived-data-tests \
   -only-testing:OppiTests
+```
+
+### iOS coverage gate
+
+The repository owns the simulator and coverage scripts used by the pre-push gate. First run the focused harness self-test. It verifies retry result-bundle paths and failure classification without launching a simulator:
+
+```bash
+./.githooks/pre-push --self-test
+```
+
+Then run the real unit-test coverage gate through the simulator pool:
+
+```bash
+cd clients/apple
+./scripts/check-coverage.sh
+```
+
+`check-coverage.sh` returns `2` only when collected coverage is below an enforced logic-layer threshold. Test, simulator, result-bundle, `xccov`, and report-analysis failures use other nonzero statuses. A failed collection is not a coverage shortfall.
+
+The tracked pre-push hook is `.githooks/pre-push`. Install it into a clone's configured hook directory after reviewing any existing local hook:
+
+```bash
+install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"
 ```
 
 ### Swift Testing filters
@@ -180,7 +203,7 @@ Focused unit coverage for navigation routing, Shortcuts text/image intake, direc
 
 ```bash
 cd clients/apple
-bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- \
+./scripts/sim-pool.sh run -- \
   xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test \
   -only-testing:OppiTests/AppNavigationShellRoutingTests \
   -only-testing:OppiTests/WorkspaceDeepLinkTests \

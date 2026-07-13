@@ -21,6 +21,8 @@ scripts/*
 !scripts/scroll-offset-guard.ts
 !scripts/theme-surface-guard.ts
 clients/apple/scripts/*
+!clients/apple/scripts/check-coverage.sh
+!clients/apple/scripts/sim-pool.sh
 !clients/apple/scripts/release-mac.sh
 !clients/apple/scripts/periphery-scan.ts
 !clients/apple/scripts/ipad-shell-diagnostic.sh
