@@ -20,12 +20,8 @@ import {
   inferWorkspaceIdFromCwdForCli,
   resolveWorkspaceIdForCli,
 } from "../resources.js";
-import {
-  isCliModelResolutionError,
-  modelResolutionErrorEnvelope,
-  printModelResolutionError,
-  resolveModelFlagForCli,
-} from "../model-resolution.js";
+import { resolveModelFlagForCli } from "../model-resolution.js";
+import { createLocalApiCommandContext, handleModelResolvingCliError } from "../command-support.js";
 import { parseDurationMs } from "./wait.js";
 
 type SessionTraceEvent = {
@@ -102,14 +98,7 @@ export async function cmdSession(
   const mode = requestedMode === "start" ? "create" : requestedMode;
   const jsonOutput = flags.json === "true";
 
-  async function call<T>(path: string, options?: LocalApiRequestOptions): Promise<T> {
-    return localApiRequest<T>(storage, path, options, hostResolvers);
-  }
-
-  function output(data: Record<string, unknown>, human: () => void): void {
-    if (jsonOutput) writeJsonEnvelope({ ok: true, data });
-    else human();
-  }
+  const { call, output } = createLocalApiCommandContext(storage, jsonOutput, hostResolvers);
 
   try {
     flags = normalizeSessionFlagAliases(mode, flags);
@@ -535,24 +524,7 @@ export async function cmdSession(
       "Usage: oppi session list|get|create|send|abort|dialogs|respond|watch|wait|read|events|trace|search|inspect|stop|resume|fork|delete|changes|diff|tool-output|trace-page|trace-outline",
     );
   } catch (err: unknown) {
-    const status = apiStatus(err);
-    const message = err instanceof Error ? err.message : String(err);
-    if (jsonOutput) {
-      writeJsonEnvelope({
-        ok: false,
-        error: isCliModelResolutionError(err)
-          ? modelResolutionErrorEnvelope(err)
-          : { message, ...(status ? { status } : {}) },
-      });
-      process.exitCode = 1;
-      return;
-    }
-    if (isCliModelResolutionError(err)) {
-      printModelResolutionError(err);
-    } else {
-      console.log(c.red(`  Error: ${message}`));
-    }
-    process.exit(1);
+    handleModelResolvingCliError(err, jsonOutput);
   }
 }
 
