@@ -96,6 +96,7 @@ private struct WorkspaceSplitSidebarToggleButton: View {
         } label: {
             Image(systemName: "sidebar.left")
         }
+        .foregroundStyle(.themeFg)
         .accessibilityLabel(isSidebarVisible ? "Hide sidebar" : "Show sidebar")
         .accessibilityIdentifier("workspace.split.sidebarToggle")
     }

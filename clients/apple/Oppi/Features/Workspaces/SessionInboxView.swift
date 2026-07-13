@@ -378,6 +378,7 @@ struct SessionInboxView: View {
                 } label: {
                     Image(systemName: "sidebar.left")
                 }
+                .foregroundStyle(.themeFg)
                 .accessibilityLabel("Show workspaces")
                 .accessibilityIdentifier("workspace.sidebar.open")
             }
@@ -1350,7 +1351,7 @@ struct WorkspaceSidebarView: View {
                 Image(systemName: "folder.badge.plus")
                     .font(.body.weight(.semibold))
                     .frame(width: 32, height: 32)
-                    .foregroundStyle(.themeBlue)
+                    .foregroundStyle(.themeFg)
 
                 Text("New Workspace")
                     .font(.body.weight(.semibold))
