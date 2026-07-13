@@ -197,10 +197,17 @@ struct SessionStreamCoordinatorConsumeSeqTests {
     }
 
     @Test func duplicateAndOutOfOrderSequencesAcceptOnlyMonotonicFrontier() {
-        let scenarios: [(name: String, input: [Int], accepted: [Int], final: Int)] = [
-            ("duplicates", [1, 1, 2, 2, 3], [1, 2, 3], 3),
-            ("out of order", [4, 2, 5, 3, 6], [4, 5, 6], 6),
-            ("gaps then stale", [2, 10, 7, 10, 11], [2, 10, 11], 11),
+        struct Scenario {
+            let name: String
+            let input: [Int]
+            let accepted: [Int]
+            let finalSeq: Int
+        }
+
+        let scenarios = [
+            Scenario(name: "duplicates", input: [1, 1, 2, 2, 3], accepted: [1, 2, 3], finalSeq: 3),
+            Scenario(name: "out of order", input: [4, 2, 5, 3, 6], accepted: [4, 5, 6], finalSeq: 6),
+            Scenario(name: "gaps then stale", input: [2, 10, 7, 10, 11], accepted: [2, 10, 11], finalSeq: 11),
         ]
 
         for scenario in scenarios {
@@ -210,7 +217,7 @@ struct SessionStreamCoordinatorConsumeSeqTests {
             }
 
             #expect(accepted == scenario.accepted, "\(scenario.name): accepted frontier")
-            #expect(coordinator.lastSeenSeq(sessionId: scenario.name) == scenario.final)
+            #expect(coordinator.lastSeenSeq(sessionId: scenario.name) == scenario.finalSeq)
         }
     }
 }
