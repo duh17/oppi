@@ -12,6 +12,7 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { ServerMessage, Session, SessionMessage } from "./types.js";
+import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { PiMessage } from "./pi-events.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
@@ -553,32 +554,6 @@ function extractMediaOutputs(
  * the content in real time instead of stuffing it into the title bar.
  */
 const STREAMING_ARG_PREVIEW_THRESHOLD = 200;
-
-function audioPresentationText(root: Record<string, unknown>): string | undefined {
-  const candidates = [root.text, root.message, root.transcript];
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string") continue;
-    const text = candidate.trim();
-    if (text) return text;
-  }
-  return undefined;
-}
-
-function normalizeAudioPresentationDetails(details: unknown): unknown {
-  const root = asRecord(details);
-  if (!root || Array.isArray(root)) return details;
-  if (root.kind === "audio_presentation") return details;
-
-  const audio = asRecord(root.audio);
-  if (!audio || Array.isArray(audio) || audio.kind !== "audio") return details;
-
-  const text = audioPresentationText(root);
-  return {
-    ...root,
-    kind: "audio_presentation",
-    ...(text ? { text } : {}),
-  };
-}
 
 function audioPresentationDetails(
   details: unknown,

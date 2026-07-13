@@ -796,14 +796,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
   }
 
-  function handleGetSessionEvents(
-    workspaceId: string,
-    sessionId: string,
-    url: URL,
-    res: ServerResponse,
-  ): void {
-    if (!requireWorkspaceSession(workspaceId, sessionId, res)) return;
-
+  function writeSessionEvents(sessionId: string, url: URL, res: ServerResponse): void {
     const sinceParam = url.searchParams.get("since");
     const sinceSeq = sinceParam ? Number.parseInt(sinceParam, 10) : 0;
     if (!Number.isFinite(sinceSeq) || sinceSeq < 0) {
@@ -823,6 +816,16 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       session: ctx.ensureSessionContextWindow(catchUp.session),
       catchUpComplete: catchUp.catchUpComplete,
     });
+  }
+
+  function handleGetSessionEvents(
+    workspaceId: string,
+    sessionId: string,
+    url: URL,
+    res: ServerResponse,
+  ): void {
+    if (!requireWorkspaceSession(workspaceId, sessionId, res)) return;
+    writeSessionEvents(sessionId, url, res);
   }
 
   function resolveTraceView(url: URL): SessionTraceViewMode {
@@ -1093,28 +1096,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   }
 
   function handleGenericGetSessionEvents(sessionId: string, url: URL, res: ServerResponse): void {
-    const session = requireSession(sessionId, res);
-    if (!session) return;
-
-    const sinceParam = url.searchParams.get("since");
-    const sinceSeq = sinceParam ? Number.parseInt(sinceParam, 10) : 0;
-    if (!Number.isFinite(sinceSeq) || sinceSeq < 0) {
-      helpers.error(res, 400, "since must be a non-negative integer");
-      return;
-    }
-
-    const catchUp = ctx.sessionRuntimes.getCatchUp(sessionId, sinceSeq);
-    if (!catchUp) {
-      helpers.error(res, 404, "Session not active");
-      return;
-    }
-
-    helpers.json(res, {
-      events: catchUp.events,
-      currentSeq: catchUp.currentSeq,
-      session: ctx.ensureSessionContextWindow(catchUp.session),
-      catchUpComplete: catchUp.catchUpComplete,
-    });
+    if (!requireSession(sessionId, res)) return;
+    writeSessionEvents(sessionId, url, res);
   }
 
   async function handleGenericSessionCommand(

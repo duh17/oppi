@@ -2,12 +2,8 @@
 import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
-import {
-  localApiRequest,
-  type LocalApiConnection,
-  type LocalApiHostResolvers,
-  type LocalApiRequestOptions,
-} from "../local-api-client.js";
+import type { LocalApiConnection, LocalApiHostResolvers } from "../local-api-client.js";
+import { createLocalApiCommandContext } from "../command-support.js";
 import {
   codeValue,
   printDetails,
@@ -35,14 +31,7 @@ export async function cmdAgent(
   const mode = action || "list";
   const jsonOutput = flags.json === "true";
 
-  async function call<T>(path: string, options?: LocalApiRequestOptions): Promise<T> {
-    return localApiRequest<T>(storage, path, options, hostResolvers);
-  }
-
-  function output(data: Record<string, unknown>, human: () => void): void {
-    if (jsonOutput) writeJsonEnvelope({ ok: true, data });
-    else human();
-  }
+  const { call, output } = createLocalApiCommandContext(storage, jsonOutput, hostResolvers);
 
   try {
     if (mode === "list") {

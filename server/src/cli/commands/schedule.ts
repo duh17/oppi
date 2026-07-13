@@ -1,28 +1,20 @@
-/* eslint-disable no-console */
 import { readFileSync } from "node:fs";
 
-import * as c from "../../ansi.js";
 import {
   localApiRequest,
   type LocalApiConnection,
   type LocalApiHostResolvers,
-  type LocalApiRequestOptions,
 } from "../local-api-client.js";
+import { createLocalApiCommandContext, handleModelResolvingCliError } from "../command-support.js";
 import {
   codeValue,
   nonEmptyDetails,
   printDetails,
   printList,
   printNextCommands,
-  writeJsonEnvelope,
 } from "../output.js";
-import {
-  isCliModelResolutionError,
-  modelResolutionErrorEnvelope,
-  printModelResolutionError,
-  resolveModelFlagForCli,
-} from "../model-resolution.js";
-import { apiStatus, resolveWorkspaceIdForCli } from "../resources.js";
+import { resolveModelFlagForCli } from "../model-resolution.js";
+import { resolveWorkspaceIdForCli } from "../resources.js";
 
 function parseDurationMs(value: string): number {
   const match = value.trim().match(/^(\d+)(ms|s|m|h|d)$/);
@@ -137,14 +129,7 @@ export async function cmdSchedule(
   const mode = action || "list";
   const jsonOutput = flags.json === "true";
 
-  async function call<T>(path: string, options?: LocalApiRequestOptions): Promise<T> {
-    return localApiRequest<T>(storage, path, options, hostResolvers);
-  }
-
-  function output(data: Record<string, unknown>, human: () => void): void {
-    if (jsonOutput) writeJsonEnvelope({ ok: true, data });
-    else human();
-  }
+  const { call, output } = createLocalApiCommandContext(storage, jsonOutput, hostResolvers);
 
   try {
     if (mode === "list") {
@@ -286,23 +271,6 @@ export async function cmdSchedule(
 
     throw new Error("Usage: oppi schedule list|get|create|update|run|runs|pause|resume|archive");
   } catch (err: unknown) {
-    const status = apiStatus(err);
-    const message = err instanceof Error ? err.message : String(err);
-    if (jsonOutput) {
-      writeJsonEnvelope({
-        ok: false,
-        error: isCliModelResolutionError(err)
-          ? modelResolutionErrorEnvelope(err)
-          : { message, ...(status ? { status } : {}) },
-      });
-      process.exitCode = 1;
-      return;
-    }
-    if (isCliModelResolutionError(err)) {
-      printModelResolutionError(err);
-    } else {
-      console.log(c.red(`  Error: ${message}`));
-    }
-    process.exit(1);
+    handleModelResolvingCliError(err, jsonOutput);
   }
 }
