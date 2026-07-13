@@ -369,7 +369,7 @@ struct VoiceInputManagerTests {
         #expect(locale.language.languageCode?.identifier == "ko")
     }
 
-    @Test func preferredEngineUsesClassicForAllLocales() {
+    @Test func preferredEngineUsesModernSpeechForAllLocales() {
         #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "en-US")) == .modernSpeech)
         #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "zh-Hans")) == .modernSpeech)
         #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "ja-JP")) == .modernSpeech)

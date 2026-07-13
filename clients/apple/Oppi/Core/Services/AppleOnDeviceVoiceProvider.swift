@@ -47,7 +47,7 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
     }
 
     func prewarm(context: VoiceProviderContext) async throws {
-        let locale = context.locale
+        let locale = try await Self.resolvedLocale(for: engine, requestedLocale: context.locale)
         let key = Self.modelKey(engine: engine, localeID: locale.identifier(.bcp47))
 
         if modelReady, cachedModelKey == nil || cachedModelKey == key {
@@ -90,7 +90,7 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
     }
 
     func prepareSession(context: VoiceProviderContext) async throws -> VoiceProviderPreparation {
-        let locale = context.locale
+        let locale = try await Self.resolvedLocale(for: engine, requestedLocale: context.locale)
         let key = Self.modelKey(engine: engine, localeID: locale.identifier(.bcp47))
 
         if let inflight = prewarmTask {
@@ -103,8 +103,9 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
                 prewarmModelKey = nil
                 return VoiceProviderPreparation(
                     audioFormat: format,
+                    transcriptionLocale: locale,
                     pathTag: "join_prewarm",
-                    setupMetricTags: Self.metricTags(for: engine)
+                    setupMetricTags: Self.metricTags(for: engine, locale: locale)
                 )
             }
 
@@ -116,8 +117,9 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
         if modelReady, cachedModelKey == nil || cachedModelKey == key {
             return VoiceProviderPreparation(
                 audioFormat: cachedFormat,
+                transcriptionLocale: locale,
                 pathTag: "warm_cache",
-                setupMetricTags: Self.metricTags(for: engine)
+                setupMetricTags: Self.metricTags(for: engine, locale: locale)
             )
         }
 
@@ -139,8 +141,9 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
             prewarmModelKey = nil
             return VoiceProviderPreparation(
                 audioFormat: format,
+                transcriptionLocale: locale,
                 pathTag: "cold",
-                setupMetricTags: Self.metricTags(for: engine)
+                setupMetricTags: Self.metricTags(for: engine, locale: locale)
             )
         } catch {
             if prewarmModelKey == key {
@@ -156,7 +159,10 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
         preparation: VoiceProviderPreparation
     ) throws -> any VoiceTranscriptionSession {
         AppleOnDeviceVoiceSession(
-            transcriber: Self.makeTranscriber(engine: engine, locale: context.locale),
+            transcriber: Self.makeTranscriber(
+                engine: engine,
+                locale: preparation.transcriptionLocale ?? context.locale
+            ),
             preferredAudioFormat: preparation.audioFormat
         )
     }
@@ -165,14 +171,12 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
         for engine: VoiceInputManager.TranscriptionEngine,
         locale: Locale
     ) async -> Bool {
-        let localeID = locale.identifier(.bcp47)
         switch engine {
         case .modernSpeech:
-            let supported = await SpeechTranscriber.supportedLocales
-            return supported.contains { $0.identifier(.bcp47) == localeID }
+            guard SpeechTranscriber.isAvailable else { return false }
+            return await SpeechTranscriber.supportedLocale(equivalentTo: locale) != nil
         case .classicDictation:
-            let supported = await DictationTranscriber.supportedLocales
-            return supported.contains { $0.identifier(.bcp47) == localeID }
+            return await DictationTranscriber.supportedLocale(equivalentTo: locale) != nil
         case .serverDictation:
             return true
         }
@@ -182,14 +186,20 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
         for engine: VoiceInputManager.TranscriptionEngine,
         locale: Locale
     ) async -> Bool {
-        let localeID = locale.identifier(.bcp47)
         switch engine {
         case .modernSpeech:
+            guard SpeechTranscriber.isAvailable,
+                  let supportedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
+                return false
+            }
             let installed = await SpeechTranscriber.installedLocales
-            return installed.contains { $0.identifier(.bcp47) == localeID }
+            return installed.contains { $0.identifier(.bcp47) == supportedLocale.identifier(.bcp47) }
         case .classicDictation:
+            guard let supportedLocale = await DictationTranscriber.supportedLocale(equivalentTo: locale) else {
+                return false
+            }
             let installed = await DictationTranscriber.installedLocales
-            return installed.contains { $0.identifier(.bcp47) == localeID }
+            return installed.contains { $0.identifier(.bcp47) == supportedLocale.identifier(.bcp47) }
         case .serverDictation:
             return true
         }
@@ -203,7 +213,8 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
     }
 
     private static func metricTags(
-        for engine: VoiceInputManager.TranscriptionEngine
+        for engine: VoiceInputManager.TranscriptionEngine,
+        locale: Locale
     ) -> [String: String] {
         switch engine {
         case .modernSpeech:
@@ -214,6 +225,7 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
                 "model": "SpeechTranscriber",
                 "transport": "local",
                 "live_preview": "1",
+                "transcription_locale": locale.identifier(.bcp47),
             ]
         case .classicDictation:
             return [
@@ -223,10 +235,34 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
                 "model": "DictationTranscriber",
                 "transport": "local",
                 "live_preview": "1",
+                "transcription_locale": locale.identifier(.bcp47),
             ]
         case .serverDictation:
             return [:]
         }
+    }
+
+    private static func resolvedLocale(
+        for engine: VoiceInputManager.TranscriptionEngine,
+        requestedLocale: Locale
+    ) async throws -> Locale {
+        let supportedLocale: Locale?
+        switch engine {
+        case .modernSpeech:
+            guard SpeechTranscriber.isAvailable else {
+                throw VoiceInputError.localeNotSupported(requestedLocale.identifier(.bcp47))
+            }
+            supportedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: requestedLocale)
+        case .classicDictation:
+            supportedLocale = await DictationTranscriber.supportedLocale(equivalentTo: requestedLocale)
+        case .serverDictation:
+            return requestedLocale
+        }
+
+        guard let supportedLocale else {
+            throw VoiceInputError.localeNotSupported(requestedLocale.identifier(.bcp47))
+        }
+        return supportedLocale
     }
 
     nonisolated private static func warmModel(

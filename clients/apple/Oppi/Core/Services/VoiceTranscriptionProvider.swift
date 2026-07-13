@@ -39,8 +39,23 @@ struct VoiceProviderContext {
 /// Cached preparation output used to create a recording session quickly.
 struct VoiceProviderPreparation {
     let audioFormat: AVAudioFormat?
+    /// Concrete locale selected by a provider after matching the requested locale
+    /// against its supported model inventory.
+    let transcriptionLocale: Locale?
     let pathTag: String
     let setupMetricTags: [String: String]
+
+    init(
+        audioFormat: AVAudioFormat?,
+        transcriptionLocale: Locale? = nil,
+        pathTag: String,
+        setupMetricTags: [String: String]
+    ) {
+        self.audioFormat = audioFormat
+        self.transcriptionLocale = transcriptionLocale
+        self.pathTag = pathTag
+        self.setupMetricTags = setupMetricTags
+    }
 }
 
 /// Timing breakdown reported by provider-owned recording sessions.

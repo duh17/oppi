@@ -4,11 +4,11 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "VoiceInput")
 
-/// On-device speech-to-text using `DictationTranscriber` (iOS 26+).
+/// On-device speech-to-text using `SpeechAnalyzer` (iOS 26+).
 ///
-/// Uses Apple's system dictation model — the same engine that powers
-/// keyboard dictation. Adds punctuation automatically and has strong
-/// multilingual support including Chinese, Japanese, and Korean.
+/// Prefers Apple's general-purpose `SpeechTranscriber` and falls back to
+/// `DictationTranscriber` when the newer model is unavailable for the current
+/// device or locale. Both engines run locally and stream progressive results.
 ///
 /// **Language detection:** By default, follows the active keyboard language
 /// at mic-tap time (Chinese keyboard → Chinese model, English keyboard →
@@ -19,7 +19,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Voic
 /// The manager accumulates finalized text and replaces the volatile
 /// portion on each update, exposing a combined `currentTranscript`.
 ///
-/// **Key design: transcribers are never reused.** A `DictationTranscriber`
+/// **Key design: transcribers are never reused.** A speech transcriber
 /// becomes invalid after its analyzer is finalized. We create a fresh
 /// pair for each recording session. Pre-warming only checks model
 /// availability and caches the audio format.
@@ -627,17 +627,25 @@ final class VoiceInputManager {
         let resolved = await routeResolver.resolveEngine(
             mode: engineMode,
             fallback: fallback,
+            locale: locale,
             serverCredentials: serverCredentials,
             serverDictationAvailable: serverConnection?.serverDictationAvailable ?? false
         )
 
         // Tests and previews often register only one on-device provider. Keep
-        // production routing on modern SpeechTranscriber while still allowing
-        // narrow registries to exercise on-device startup behavior.
+        // capability-aware production routing while allowing narrow registries
+        // to exercise startup behavior with their registered fallback provider.
         if providerRegistry.provider(for: resolved) == nil,
-           resolved == .modernSpeech,
-           providerRegistry.provider(for: .classicDictation) != nil {
-            return .classicDictation
+           resolved != .serverDictation {
+            if providerRegistry.provider(for: fallback) != nil {
+                return fallback
+            }
+            let alternative: TranscriptionEngine = fallback == .modernSpeech
+                ? .classicDictation
+                : .modernSpeech
+            if providerRegistry.provider(for: alternative) != nil {
+                return alternative
+            }
         }
 
         return resolved

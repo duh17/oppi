@@ -13,40 +13,36 @@ extension VoiceInputManager {
         return Locale.current
     }
 
-    /// On-device engine routing.
-    ///
-    /// Prefer `SpeechTranscriber` for the in-app mic path. Recent device runs
-    /// show `DictationTranscriber` pre-warming successfully, then failing during
-    /// session activation with a generic `NSError`; `SpeechTranscriber` uses the
-    /// same on-device framework but has been more reliable for app-owned audio
-    /// capture.
+    /// Preferred on-device engine before device and locale capabilities are checked.
+    /// Runtime routing falls back to `DictationTranscriber` when the newer
+    /// `SpeechTranscriber` model is unavailable.
     static func preferredEngine(for locale: Locale) -> TranscriptionEngine {
         _ = locale
         return .modernSpeech
     }
 
     // periphery:ignore - API surface for voice availability checks
-    /// Whether the preferred engine for `locale` supports that locale.
+    /// Whether either on-device engine supports a locale equivalent to `locale`.
     static func isAvailable(for locale: Locale = .current) async -> Bool {
-        let engine = preferredEngine(for: locale)
-        switch engine {
-        case .serverDictation:
+        if await AppleOnDeviceVoiceProvider.isAvailable(for: .modernSpeech, locale: locale) {
             return true
-        case .modernSpeech, .classicDictation:
-            return await AppleOnDeviceVoiceProvider.isAvailable(for: engine, locale: locale)
         }
+        return await AppleOnDeviceVoiceProvider.isAvailable(for: .classicDictation, locale: locale)
     }
 
     // periphery:ignore - API surface for voice model availability checks
-    /// Whether the preferred engine model for `locale` is installed.
+    /// Whether the model selected by capability-aware on-device routing is installed.
     static func isModelInstalled(for locale: Locale) async -> Bool {
-        let engine = preferredEngine(for: locale)
-        switch engine {
-        case .serverDictation:
-            return true
-        case .modernSpeech, .classicDictation:
-            return await AppleOnDeviceVoiceProvider.isModelInstalled(for: engine, locale: locale)
+        if await AppleOnDeviceVoiceProvider.isAvailable(for: .modernSpeech, locale: locale) {
+            return await AppleOnDeviceVoiceProvider.isModelInstalled(
+                for: .modernSpeech,
+                locale: locale
+            )
         }
+        return await AppleOnDeviceVoiceProvider.isModelInstalled(
+            for: .classicDictation,
+            locale: locale
+        )
     }
 
     /// Compact language label for display in the mic button.
