@@ -30,6 +30,8 @@ const SERVER_ROUTE_TO_ROUTE_ALLOWED_TARGETS = new Set([
   "server/src/routes/http.ts",
   "server/src/routes/server-stats.ts",
   "server/src/routes/session-files.ts",
+  "server/src/routes/session-list-handlers.ts",
+  "server/src/routes/session-trace-handlers.ts",
   "server/src/routes/theme-convert.ts",
   "server/src/routes/types.ts",
 ]);
