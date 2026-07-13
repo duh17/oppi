@@ -48,8 +48,8 @@ cd server && npm run check
 
 # Apple
 cd clients/apple && xcodegen generate
-cd clients/apple && bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh \
+cd clients/apple && ./scripts/sim-pool.sh \
   run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
-cd clients/apple && bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh \
+cd clients/apple && ./scripts/sim-pool.sh \
   run -- xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
 ```
