@@ -77,6 +77,73 @@ struct AppEventRoutingTests {
         #expect(connection.sessionStore.session(id: "s2")?.firstMessage == "Background work")
         #expect(connection.sessionEventContinuations["s2"] == nil)
     }
+
+    @Test func duplicateAndOutOfOrderSummariesConvergeOnNewestLifecycleOnce() {
+        let connection = ServerConnection()
+        let olderDate = Date(timeIntervalSince1970: 100)
+        let newerDate = Date(timeIntervalSince1970: 200)
+        let newer = SessionSummary(from: makeTestSession(
+            id: "s2",
+            workspaceId: "w1",
+            status: .busy,
+            lastActivity: newerDate,
+            firstMessage: "newest"
+        ))
+        let older = SessionSummary(from: makeTestSession(
+            id: "s2",
+            workspaceId: "w1",
+            status: .ready,
+            lastActivity: olderDate,
+            firstMessage: "older"
+        ))
+
+        for (emittedAt, summary) in [(200, newer), (200, newer), (100, older)] {
+            connection.handleAppEvent(
+                .sessionSummary(
+                    sessionId: "s2",
+                    workspaceId: "w1",
+                    emittedAt: Int64(emittedAt),
+                    summary: summary
+                )
+            )
+        }
+
+        #expect(connection.sessionStore.sessions.map(\.id) == ["s2"])
+        #expect(connection.sessionStore.session(id: "s2")?.status == .busy)
+        #expect(connection.sessionStore.session(id: "s2")?.lastActivity == newerDate)
+    }
+
+    @Test func reconnectSnapshotCannotOverwriteNewerLiveLifecycle() {
+        let connection = ServerConnection()
+        let requestStartedAt = Date(timeIntervalSince1970: 150)
+        let liveDate = Date(timeIntervalSince1970: 200)
+        let staleSnapshot = SessionSummary(from: makeTestSession(
+            id: "s2",
+            workspaceId: "w1",
+            status: .ready,
+            lastActivity: Date(timeIntervalSince1970: 100)
+        ))
+        let liveSummary = SessionSummary(from: makeTestSession(
+            id: "s2",
+            workspaceId: "w1",
+            status: .busy,
+            lastActivity: liveDate
+        ))
+
+        connection.handleAppEvent(
+            .sessionSummary(sessionId: "s2", workspaceId: "w1", emittedAt: 200, summary: liveSummary)
+        )
+        connection.sessionStore.applyRecentWorkspaceSummaryProjection(
+            workspaceIds: ["w1"],
+            summaries: [staleSnapshot],
+            requestStartedAt: requestStartedAt,
+            preserveRecentWindow: 0
+        )
+
+        #expect(connection.sessionStore.session(id: "s2")?.status == .busy)
+        #expect(connection.sessionStore.session(id: "s2")?.lastActivity == liveDate)
+        #expect(connection.sessionStore.listProjectionSessions(workspaceId: "w1").first?.status == .busy)
+    }
 }
 
 @MainActor

@@ -40,6 +40,8 @@ final class SessionStreamCoordinator {
     private(set) var state: StreamState = .idle
     private var catchUpTracker = SessionStreamCatchUpTracker()
     private var activeWorkspaceId: String?
+    private var nextContinuationGeneration: UInt64 = 0
+    private var continuationGenerationBySession: [String: UInt64] = [:]
 
     func hasFullSubscription(sessionId: String) -> Bool {
         switch state {
@@ -70,11 +72,20 @@ final class SessionStreamCoordinator {
         connection.focusSession(sessionId)
         connection.chatState.thinkingLevel = .medium
 
+        nextContinuationGeneration &+= 1
+        let continuationGeneration = nextContinuationGeneration
+        continuationGenerationBySession[sessionId] = continuationGeneration
+
         let perSessionStream = AsyncStream<SessionStreamEvent> { continuation in
             connection.sessionEventContinuations[sessionId] = continuation
 
-            continuation.onTermination = { [weak connection] _ in
+            continuation.onTermination = { [weak self, weak connection] _ in
                 Task { @MainActor in
+                    guard let self,
+                          self.continuationGenerationBySession[sessionId] == continuationGeneration else {
+                        return
+                    }
+                    self.continuationGenerationBySession.removeValue(forKey: sessionId)
                     connection?.sessionEventContinuations.removeValue(forKey: sessionId)
                 }
             }

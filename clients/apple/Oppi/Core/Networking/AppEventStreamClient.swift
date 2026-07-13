@@ -3,6 +3,54 @@ import OSLog
 
 private let appEventClientLogger = Logger(subsystem: AppIdentifiers.subsystem, category: "AppEventStreamClient")
 
+/// Narrow transport seam for deterministic app-event reconnect tests.
+/// Production still delegates every operation to `URLSessionWebSocketTask`.
+@MainActor
+struct AppEventWebSocketTransport {
+    typealias Message = URLSessionWebSocketTask.Message
+    typealias CloseCode = URLSessionWebSocketTask.CloseCode
+
+    let identity: ObjectIdentifier
+    let resume: () -> Void
+    let receive: () async throws -> Message
+    let sendPing: (@escaping @Sendable (Error?) -> Void) -> Void
+    let cancel: (CloseCode, Data?) -> Void
+    let state: () -> URLSessionTask.State
+    let response: () -> URLResponse?
+    let closeCode: () -> CloseCode
+
+    init(task: URLSessionWebSocketTask) {
+        identity = ObjectIdentifier(task)
+        resume = { task.resume() }
+        receive = { try await task.receive() }
+        sendPing = { handler in task.sendPing(pongReceiveHandler: handler) }
+        cancel = { code, reason in task.cancel(with: code, reason: reason) }
+        state = { task.state }
+        response = { task.response }
+        closeCode = { task.closeCode }
+    }
+
+    init(
+        identity: AnyObject,
+        resume: @escaping () -> Void,
+        receive: @escaping () async throws -> Message,
+        sendPing: @escaping (@escaping @Sendable (Error?) -> Void) -> Void,
+        cancel: @escaping (CloseCode, Data?) -> Void,
+        state: @escaping () -> URLSessionTask.State,
+        response: @escaping () -> URLResponse?,
+        closeCode: @escaping () -> CloseCode
+    ) {
+        self.identity = ObjectIdentifier(identity)
+        self.resume = resume
+        self.receive = receive
+        self.sendPing = sendPing
+        self.cancel = cancel
+        self.state = state
+        self.response = response
+        self.closeCode = closeCode
+    }
+}
+
 /// WebSocket client for the global app event stream.
 ///
 /// It decodes `AppEventMessage` directly and never produces `ServerMessage`, so
@@ -23,8 +71,9 @@ final class AppEventStreamClient {
     private let trustDelegate: PinnedServerTrustDelegate
     private let urlSession: URLSession
     private let reconnectDelay: @Sendable (Int) -> TimeInterval
+    private let webSocketFactory: (URLRequest) -> AppEventWebSocketTransport
 
-    private var webSocket: URLSessionWebSocketTask?
+    private var webSocket: AppEventWebSocketTransport?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
@@ -40,7 +89,8 @@ final class AppEventStreamClient {
         url: URL,
         token: String,
         tlsCertFingerprint: String? = nil,
-        reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = WebSocketRecoveryPolicy.reconnectDelay
+        reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = WebSocketRecoveryPolicy.reconnectDelay,
+        webSocketFactory: ((URLRequest) -> AppEventWebSocketTransport)? = nil
     ) {
         self.url = url
         self.token = token
@@ -48,7 +98,11 @@ final class AppEventStreamClient {
         self.trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60
-        self.urlSession = URLSession(configuration: config, delegate: trustDelegate, delegateQueue: nil)
+        let urlSession = URLSession(configuration: config, delegate: trustDelegate, delegateQueue: nil)
+        self.urlSession = urlSession
+        self.webSocketFactory = webSocketFactory ?? { request in
+            AppEventWebSocketTransport(task: urlSession.webSocketTask(with: request))
+        }
     }
 
     func connect() -> AsyncStream<AppEventMessage> {
@@ -83,7 +137,7 @@ final class AppEventStreamClient {
         receiveTask = nil
         pingTask?.cancel()
         pingTask = nil
-        webSocket?.cancel(with: .normalClosure, reason: nil)
+        webSocket?.cancel(.normalClosure, nil)
         webSocket = nil
         continuation?.finish()
         continuation = nil
@@ -94,7 +148,7 @@ final class AppEventStreamClient {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
-        let ws = urlSession.webSocketTask(with: request)
+        let ws = webSocketFactory(request)
         webSocket = ws
         openStartedNs = DispatchTime.now().uptimeNanoseconds
         ws.resume()
@@ -103,7 +157,7 @@ final class AppEventStreamClient {
     }
 
     private func startReceiveLoop(
-        ws: URLSessionWebSocketTask,
+        ws: AppEventWebSocketTransport,
         continuation: AsyncStream<AppEventMessage>.Continuation
     ) {
         receiveTask = Task { [weak self] in
@@ -154,9 +208,9 @@ final class AppEventStreamClient {
                         break
                     }
 
-                    let statusCode = (ws.response as? HTTPURLResponse)?.statusCode
+                    let statusCode = (ws.response() as? HTTPURLResponse)?.statusCode
                     reconnectReason = "receive_error"
-                    reconnectCloseCode = String(ws.closeCode.rawValue)
+                    reconnectCloseCode = String(ws.closeCode().rawValue)
                     if let statusCode, WebSocketRecoveryPolicy.isNonRetryableHandshakeStatus(statusCode) {
                         shouldAttemptReconnect = false
                         reconnectReason = "handshake_http"
@@ -168,7 +222,7 @@ final class AppEventStreamClient {
                                 extra: ["httpStatusCode": String(statusCode)]
                             )
                         }
-                    } else if WebSocketRecoveryPolicy.isRecoverableReceiveError(error, closeCode: ws.closeCode) {
+                    } else if WebSocketRecoveryPolicy.isRecoverableReceiveError(error, closeCode: ws.closeCode()) {
                         reconnectReason = "recoverable_receive"
                         appEventClientLogger.info("App event stream recoverable close: \(String(describing: error), privacy: .public)")
                     } else {
@@ -182,7 +236,7 @@ final class AppEventStreamClient {
             }
 
             await MainActor.run { [weak self] in
-                guard let self, self.webSocket === ws else { return }
+                guard let self, self.webSocket?.identity == ws.identity else { return }
                 if shouldAttemptReconnect {
                     self.attemptReconnect(reason: reconnectReason, closeCode: reconnectCloseCode)
                 } else {
@@ -192,13 +246,13 @@ final class AppEventStreamClient {
         }
     }
 
-    private func startPingTimer(ws: URLSessionWebSocketTask) {
+    private func startPingTimer(ws: AppEventWebSocketTransport) {
         pingTask = Task { [weak self] in
             var consecutiveFailures = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: WebSocketRecoveryPolicy.pingInterval)
                 guard !Task.isCancelled else { break }
-                guard ws.state == .running else { break }
+                guard ws.state() == .running else { break }
 
                 let failed = await withUnsafeContinuation { (cont: UnsafeContinuation<Bool, Never>) in
                     let oneShot = OneShotBoolContinuation(cont)
@@ -212,10 +266,10 @@ final class AppEventStreamClient {
                     if consecutiveFailures >= WebSocketRecoveryPolicy.maxConsecutivePingFailures {
                         appEventClientLogger.warning("App event ping watchdog reconnect after \(consecutiveFailures) failures")
                         await MainActor.run { [weak self] in
-                            guard let self, self.webSocket === ws else { return }
+                            guard let self, self.webSocket?.identity == ws.identity else { return }
                             self.receiveTask?.cancel()
                             self.receiveTask = nil
-                            ws.cancel(with: .goingAway, reason: nil)
+                            ws.cancel(.goingAway, nil)
                             self.webSocket = nil
                             self.logStreamWarning(
                                 "Ping watchdog reconnect",
@@ -343,7 +397,7 @@ final class AppEventStreamClient {
         pingTask?.cancel()
         pingTask = nil
         reconnectTask?.cancel()
-        webSocket?.cancel(with: .goingAway, reason: nil)
+        webSocket?.cancel(.goingAway, nil)
         webSocket = nil
 
         reconnectTask = Task { [weak self] in
