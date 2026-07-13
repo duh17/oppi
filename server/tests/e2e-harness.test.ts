@@ -23,7 +23,7 @@ describe("E2E harness helpers", () => {
 
   it("clears the Docker E2E data volume before a fresh startup", () => {
     expect(dockerStartupCleanupCommand("/tmp/docker-compose.e2e.yml")).toBe(
-      "docker compose -f /tmp/docker-compose.e2e.yml down -v --timeout 10",
+      "docker compose -f /tmp/docker-compose.e2e.yml down -v --timeout 60",
     );
   });
 

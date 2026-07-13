@@ -23,7 +23,7 @@ struct BackgroundKeepAlive {
     mutating func begin(sessionStore: SessionStore) {
         guard taskID == .invalid else { return }
 
-        taskID = UIApplication.shared.beginBackgroundTask(withName: "agent-keep-alive") { [self] in
+        taskID = UIApplication.shared.beginBackgroundTask(withName: "agent-keep-alive") {
             Self.log.error("Background task expired by OS")
             // Can't mutate self in the expiration handler directly,
             // but the task will be invalidated. Next foreground `end()` cleans up.

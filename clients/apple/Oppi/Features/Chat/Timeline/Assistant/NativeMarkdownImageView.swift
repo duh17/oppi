@@ -72,10 +72,7 @@ final class NativeMarkdownImageView: UIView {
 
     /// Placeholder height shown while loading. Ensures the view is visible
     /// in the stack view during async fetches (workspace or URLSession).
-    private static let loadingPlaceholderHeight = ImageViewportSizing.policy(
-        for: .inlineProse,
-        screenHeight: UIScreen.main.bounds.height
-    ).placeholderHeight
+    private static let loadingPlaceholderHeight = ImageViewportSizing.defaultPlaceholderHeight
 
     private func setupViews() {
         translatesAutoresizingMaskIntoConstraints = false
@@ -745,7 +742,7 @@ extension NativeMarkdownImageView: WKNavigationDelegate {
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
     ) {
         decisionHandler(navigationAction.navigationType == .other ? .allow : .cancel)
     }
@@ -966,7 +963,10 @@ private enum RemoteMarkdownImageHostResolver {
                     NI_NUMERICHOST
                 )
                 if err == 0 {
-                    addresses.insert(String(cString: hostBuffer))
+                    let hostBytes = hostBuffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+                    if let host = String(bytes: hostBytes, encoding: .utf8) {
+                        addresses.insert(host)
+                    }
                 }
                 cursor = current.pointee.ai_next
             }

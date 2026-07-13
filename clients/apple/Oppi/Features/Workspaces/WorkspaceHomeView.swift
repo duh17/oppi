@@ -1,5 +1,46 @@
 import SwiftUI
 
+func workspaceListSummary(
+    for workspaceId: String,
+    in summaries: [String: WorkspaceListSummary]
+) -> WorkspaceListSummary {
+    summaries[workspaceId] ?? WorkspaceListSummary(
+        workspaceId: workspaceId,
+        activeCount: 0,
+        stoppedCount: 0,
+        hasAttention: false
+    )
+}
+
+func sortedWorkspacesForList(
+    _ workspaces: [Workspace],
+    summaries: [String: WorkspaceListSummary]
+) -> [Workspace] {
+    workspaces.sorted { lhs, rhs in
+        let lhsSummary = workspaceListSummary(for: lhs.id, in: summaries)
+        let rhsSummary = workspaceListSummary(for: rhs.id, in: summaries)
+
+        if lhsSummary.hasAttention != rhsSummary.hasAttention {
+            return lhsSummary.hasAttention
+        }
+        if (lhsSummary.activeCount > 0) != (rhsSummary.activeCount > 0) {
+            return lhsSummary.activeCount > 0
+        }
+
+        let lhsLatest = lhsSummary.latestActivity ?? .distantPast
+        let rhsLatest = rhsSummary.latestActivity ?? .distantPast
+        if lhsLatest != rhsLatest {
+            return lhsLatest > rhsLatest
+        }
+
+        let nameOrder = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+        if nameOrder != .orderedSame {
+            return nameOrder == .orderedAscending
+        }
+        return lhs.id < rhs.id
+    }
+}
+
 /// Navigation target pairing a workspace with its server for on-demand connection switching.
 struct WorkspaceNavTarget: Hashable {
     let serverId: String
@@ -688,7 +729,7 @@ struct WorkspaceHomeView: View {
         let serverConn = coordinator.connection(for: serverId)
         let workspaceCatalog = workspacesForServer(serverId)
         let summaries = serverConn?.workspaceStore.workspaceSummaries(forServer: serverId) ?? [:]
-        let workspaces = sortedWorkspaces(workspaceCatalog, summaries: summaries)
+        let workspaces = sortedWorkspacesForList(workspaceCatalog, summaries: summaries)
         let isUnreachable = serverStatusPresentation(for: server).isUnreachable
 
         Section {
@@ -699,7 +740,7 @@ struct WorkspaceHomeView: View {
                     .listRowBackground(Color.themeBg)
             } else {
                 ForEach(workspaces) { workspace in
-                    let summary = summaryForWorkspace(workspace.id, in: summaries)
+                    let summary = workspaceListSummary(for: workspace.id, in: summaries)
                     workspaceOverviewRows(
                         server: server,
                         connection: serverConn,
@@ -1011,48 +1052,7 @@ struct WorkspaceHomeView: View {
         coordinator.connection(for: serverId)?.workspaceStore.workspaces ?? []
     }
 
-    private func sortedWorkspaces(
-        _ workspaces: [Workspace],
-        summaries: [String: WorkspaceListSummary]
-    ) -> [Workspace] {
-        workspaces.sorted { lhs, rhs in
-            let lhsSummary = summaryForWorkspace(lhs.id, in: summaries)
-            let rhsSummary = summaryForWorkspace(rhs.id, in: summaries)
-
-            if lhsSummary.hasAttention != rhsSummary.hasAttention {
-                return lhsSummary.hasAttention
-            }
-            if (lhsSummary.activeCount > 0) != (rhsSummary.activeCount > 0) {
-                return lhsSummary.activeCount > 0
-            }
-
-            let lhsLatest = lhsSummary.latestActivity ?? .distantPast
-            let rhsLatest = rhsSummary.latestActivity ?? .distantPast
-            if lhsLatest != rhsLatest {
-                return lhsLatest > rhsLatest
-            }
-
-            let nameOrder = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
-            if nameOrder != .orderedSame {
-                return nameOrder == .orderedAscending
-            }
-            return lhs.id < rhs.id
-        }
-    }
-
     // MARK: - Session Helpers
-
-    private func summaryForWorkspace(
-        _ workspaceId: String,
-        in summaries: [String: WorkspaceListSummary]
-    ) -> WorkspaceListSummary {
-        summaries[workspaceId] ?? WorkspaceListSummary(
-            workspaceId: workspaceId,
-            activeCount: 0,
-            stoppedCount: 0,
-            hasAttention: false
-        )
-    }
 
     private func refresh(force: Bool) async {
         if !force {

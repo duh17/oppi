@@ -101,7 +101,7 @@ private final class UnifiedDiffLayoutManager: NSLayoutManager {
 
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
-        guard let storage = textStorage, let textContainer = textContainers.first else { return }
+        guard let storage = textStorage else { return }
 
         let fillWidth = max(measuredContentWidth, viewportWidth)
 

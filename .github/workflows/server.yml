@@ -1,0 +1,107 @@
+name: Server CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - server/**
+      - protocol/**
+      - .github/workflows/server.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_VERSION: 8.30.1
+
+      - name: Guard against files larger than 5 MB
+        working-directory: .
+        env:
+          BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          LIMIT_BYTES: "5242880"
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import sys
+
+          before = os.environ["BEFORE"]
+          after = os.environ["AFTER"]
+          limit = int(os.environ["LIMIT_BYTES"])
+          empty = "0" * 40
+
+          if not before or before == empty:
+              before = subprocess.check_output(
+                  ["git", "hash-object", "-t", "tree", "/dev/null"],
+                  text=True,
+              ).strip()
+
+          changed = subprocess.check_output(
+              ["git", "diff", "--name-only", "--diff-filter=ACMR", before, after],
+              text=True,
+          ).splitlines()
+
+          offenders = []
+          for path in changed:
+              if not path or not os.path.exists(path):
+                  continue
+              size = os.path.getsize(path)
+              if size > limit:
+                  offenders.append((path, size))
+
+          if offenders:
+              print("Files larger than 5 MB are not allowed in changes:")
+              for path, size in offenders:
+                  print(f"- {path}: {size} bytes")
+              sys.exit(1)
+
+          print(f"Checked {len(changed)} changed files; none exceed {limit} bytes.")
+          PY
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.3.11
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Static checks
+        run: npm run check
+
+      - name: Run server tests
+        # `npm test` is the full bare-runner Vitest suite. Docker/OMLX E2E lives in
+        # separate `test:e2e*` scripts and is excluded by server/vitest.config.ts.
+        run: npm test

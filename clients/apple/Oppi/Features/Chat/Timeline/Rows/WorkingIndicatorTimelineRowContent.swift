@@ -53,7 +53,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
-        stopCustomAnimation()
+        customTimer?.invalidate()
     }
 
     var configuration: UIContentConfiguration {
@@ -212,9 +212,11 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         guard !UIAccessibility.isReduceMotionEnabled else { return }
         guard window != nil, customTimer == nil, customFrames.count > 1 else { return }
         customTimer = Timer.scheduledTimer(withTimeInterval: customInterval, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.customFrameIndex = (self.customFrameIndex + 1) % self.customFrames.count
-            self.customIndicatorLabel.text = self.customFrames[self.customFrameIndex]
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.customFrameIndex = (self.customFrameIndex + 1) % self.customFrames.count
+                self.customIndicatorLabel.text = self.customFrames[self.customFrameIndex]
+            }
         }
     }
 

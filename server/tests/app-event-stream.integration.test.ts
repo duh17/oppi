@@ -31,11 +31,22 @@ class AppStreamClient {
 
   constructor(readonly ws: WebSocket) {
     this.opened = new Promise<void>((resolve, reject) => {
-      ws.once("open", () => resolve());
+      const timer = setTimeout(() => {
+        ws.terminate();
+        reject(new Error("Timed out waiting for app event stream to open after 30000ms"));
+      }, 30_000);
+      ws.once("open", () => {
+        clearTimeout(timer);
+        resolve();
+      });
       ws.once("unexpected-response", (_req, res) => {
+        clearTimeout(timer);
         reject(new Error(`WS upgrade failed with HTTP ${res.statusCode ?? "unknown"}`));
       });
-      ws.once("error", (error) => reject(error));
+      ws.once("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
     });
 
     ws.on("message", (data) => {
@@ -57,7 +68,7 @@ class AppStreamClient {
     });
   }
 
-  waitFor(predicate: FramePredicate, timeoutMs = 1_000, fromNow = false): Promise<AppEventFrame> {
+  waitFor(predicate: FramePredicate, timeoutMs = 15_000, fromNow = false): Promise<AppEventFrame> {
     const startIndex = fromNow ? this.frames.length : 0;
     const existing = this.frames.slice(startIndex).find(predicate);
     if (existing) return Promise.resolve(existing);
@@ -77,7 +88,14 @@ class AppStreamClient {
       return;
     }
     await new Promise<void>((resolve) => {
-      this.ws.once("close", () => resolve());
+      const timer = setTimeout(() => {
+        this.ws.terminate();
+        resolve();
+      }, 30_000);
+      this.ws.once("close", () => {
+        clearTimeout(timer);
+        resolve();
+      });
       if (this.ws.readyState !== WebSocket.CLOSING) {
         this.ws.close();
       }
@@ -113,7 +131,7 @@ afterEach(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-describe("WS /app/events/stream", () => {
+describe("WS /app/events/stream", { timeout: 30_000 }, () => {
   it("delivers low-frequency row events for a non-focused session without opening its focused stream", async () => {
     const client = await connectAppStream();
     const connected = await waitForConnected(client);

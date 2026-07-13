@@ -432,6 +432,77 @@ final class NativeExpandedReadMediaView: UIView {
 }
 
 @MainActor
+private func configureExpandedMediaAttachmentRow(
+    owner: UIView,
+    container: UIView,
+    rootStack: UIStackView,
+    iconView: UIImageView,
+    labelsStack: UIStackView,
+    titleLabel: UILabel,
+    subtitleLabel: UILabel,
+    playButton: UIButton,
+    spinner: UIActivityIndicatorView,
+    playAction: Selector
+) {
+    owner.translatesAutoresizingMaskIntoConstraints = false
+    container.translatesAutoresizingMaskIntoConstraints = false
+    container.layer.cornerRadius = 8
+    container.layer.borderWidth = 1
+
+    rootStack.translatesAutoresizingMaskIntoConstraints = false
+    rootStack.axis = .horizontal
+    rootStack.alignment = .center
+    rootStack.spacing = 10
+
+    iconView.translatesAutoresizingMaskIntoConstraints = false
+    iconView.contentMode = .scaleAspectFit
+
+    labelsStack.translatesAutoresizingMaskIntoConstraints = false
+    labelsStack.axis = .vertical
+    labelsStack.alignment = .leading
+    labelsStack.spacing = 2
+
+    titleLabel.font = ToolFont.regular
+    titleLabel.numberOfLines = 1
+    titleLabel.lineBreakMode = .byTruncatingMiddle
+    subtitleLabel.font = ToolFont.small
+    subtitleLabel.numberOfLines = 1
+    subtitleLabel.lineBreakMode = .byTruncatingTail
+
+    playButton.translatesAutoresizingMaskIntoConstraints = false
+    playButton.addTarget(owner, action: playAction, for: .touchUpInside)
+    spinner.translatesAutoresizingMaskIntoConstraints = false
+    spinner.hidesWhenStopped = true
+
+    owner.addSubview(container)
+    container.addSubview(rootStack)
+    playButton.addSubview(spinner)
+    labelsStack.addArrangedSubview(titleLabel)
+    labelsStack.addArrangedSubview(subtitleLabel)
+    rootStack.addArrangedSubview(iconView)
+    rootStack.addArrangedSubview(labelsStack)
+    rootStack.addArrangedSubview(UIView())
+    rootStack.addArrangedSubview(playButton)
+
+    NSLayoutConstraint.activate([
+        container.leadingAnchor.constraint(equalTo: owner.leadingAnchor),
+        container.trailingAnchor.constraint(equalTo: owner.trailingAnchor),
+        container.topAnchor.constraint(equalTo: owner.topAnchor),
+        container.bottomAnchor.constraint(equalTo: owner.bottomAnchor),
+        rootStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+        rootStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+        rootStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+        rootStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+        iconView.widthAnchor.constraint(equalToConstant: 16),
+        iconView.heightAnchor.constraint(equalToConstant: 16),
+        playButton.widthAnchor.constraint(equalToConstant: 36),
+        playButton.heightAnchor.constraint(equalToConstant: 36),
+        spinner.centerXAnchor.constraint(equalTo: playButton.centerXAnchor),
+        spinner.centerYAnchor.constraint(equalTo: playButton.centerYAnchor),
+    ])
+}
+
+@MainActor
 final class NativeExpandedAudioAttachmentView: UIView {
     private static let maxDecodedBytes = 10 * 1024 * 1024
 
@@ -532,62 +603,18 @@ final class NativeExpandedAudioAttachmentView: UIView {
     }
 
     private func setupViews() {
-        translatesAutoresizingMaskIntoConstraints = false
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.layer.cornerRadius = 8
-        container.layer.borderWidth = 1
-
-        rootStack.translatesAutoresizingMaskIntoConstraints = false
-        rootStack.axis = .horizontal
-        rootStack.alignment = .center
-        rootStack.spacing = 10
-
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.contentMode = .scaleAspectFit
-
-        labelsStack.translatesAutoresizingMaskIntoConstraints = false
-        labelsStack.axis = .vertical
-        labelsStack.alignment = .leading
-        labelsStack.spacing = 2
-
-        titleLabel.font = ToolFont.regular
-        titleLabel.numberOfLines = 1
-        titleLabel.lineBreakMode = .byTruncatingMiddle
-        subtitleLabel.font = ToolFont.small
-        subtitleLabel.numberOfLines = 1
-        subtitleLabel.lineBreakMode = .byTruncatingTail
-
-        playButton.translatesAutoresizingMaskIntoConstraints = false
-        playButton.addTarget(self, action: #selector(togglePlayback), for: .touchUpInside)
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.hidesWhenStopped = true
-
-        addSubview(container)
-        container.addSubview(rootStack)
-        playButton.addSubview(spinner)
-        labelsStack.addArrangedSubview(titleLabel)
-        labelsStack.addArrangedSubview(subtitleLabel)
-        rootStack.addArrangedSubview(iconView)
-        rootStack.addArrangedSubview(labelsStack)
-        rootStack.addArrangedSubview(UIView())
-        rootStack.addArrangedSubview(playButton)
-
-        NSLayoutConstraint.activate([
-            container.leadingAnchor.constraint(equalTo: leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: trailingAnchor),
-            container.topAnchor.constraint(equalTo: topAnchor),
-            container.bottomAnchor.constraint(equalTo: bottomAnchor),
-            rootStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
-            rootStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-            rootStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
-            rootStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconView.heightAnchor.constraint(equalToConstant: 16),
-            playButton.widthAnchor.constraint(equalToConstant: 36),
-            playButton.heightAnchor.constraint(equalToConstant: 36),
-            spinner.centerXAnchor.constraint(equalTo: playButton.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: playButton.centerYAnchor),
-        ])
+        configureExpandedMediaAttachmentRow(
+            owner: self,
+            container: container,
+            rootStack: rootStack,
+            iconView: iconView,
+            labelsStack: labelsStack,
+            titleLabel: titleLabel,
+            subtitleLabel: subtitleLabel,
+            playButton: playButton,
+            spinner: spinner,
+            playAction: #selector(togglePlayback)
+        )
     }
 
     private func bindAudioStateObservationIfNeeded() {
@@ -597,8 +624,10 @@ final class NativeExpandedAudioAttachmentView: UIView {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            self.updateButton(palette: ThemeRuntimeState.currentPalette())
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.updateButton(palette: ThemeRuntimeState.currentPalette())
+            }
         }
     }
 
@@ -706,62 +735,18 @@ final class NativeExpandedVideoAttachmentView: UIView {
     }
 
     private func setupViews() {
-        translatesAutoresizingMaskIntoConstraints = false
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.layer.cornerRadius = 8
-        container.layer.borderWidth = 1
-
-        rootStack.translatesAutoresizingMaskIntoConstraints = false
-        rootStack.axis = .horizontal
-        rootStack.alignment = .center
-        rootStack.spacing = 10
-
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.contentMode = .scaleAspectFit
-
-        labelsStack.translatesAutoresizingMaskIntoConstraints = false
-        labelsStack.axis = .vertical
-        labelsStack.alignment = .leading
-        labelsStack.spacing = 2
-
-        titleLabel.font = ToolFont.regular
-        titleLabel.numberOfLines = 1
-        titleLabel.lineBreakMode = .byTruncatingMiddle
-        subtitleLabel.font = ToolFont.small
-        subtitleLabel.numberOfLines = 1
-        subtitleLabel.lineBreakMode = .byTruncatingTail
-
-        playButton.translatesAutoresizingMaskIntoConstraints = false
-        playButton.addTarget(self, action: #selector(playVideo), for: .touchUpInside)
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.hidesWhenStopped = true
-
-        addSubview(container)
-        container.addSubview(rootStack)
-        playButton.addSubview(spinner)
-        labelsStack.addArrangedSubview(titleLabel)
-        labelsStack.addArrangedSubview(subtitleLabel)
-        rootStack.addArrangedSubview(iconView)
-        rootStack.addArrangedSubview(labelsStack)
-        rootStack.addArrangedSubview(UIView())
-        rootStack.addArrangedSubview(playButton)
-
-        NSLayoutConstraint.activate([
-            container.leadingAnchor.constraint(equalTo: leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: trailingAnchor),
-            container.topAnchor.constraint(equalTo: topAnchor),
-            container.bottomAnchor.constraint(equalTo: bottomAnchor),
-            rootStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
-            rootStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-            rootStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
-            rootStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconView.heightAnchor.constraint(equalToConstant: 16),
-            playButton.widthAnchor.constraint(equalToConstant: 36),
-            playButton.heightAnchor.constraint(equalToConstant: 36),
-            spinner.centerXAnchor.constraint(equalTo: playButton.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: playButton.centerYAnchor),
-        ])
+        configureExpandedMediaAttachmentRow(
+            owner: self,
+            container: container,
+            rootStack: rootStack,
+            iconView: iconView,
+            labelsStack: labelsStack,
+            titleLabel: titleLabel,
+            subtitleLabel: subtitleLabel,
+            playButton: playButton,
+            spinner: spinner,
+            playAction: #selector(playVideo)
+        )
     }
 
     private func updateButton(palette: ThemePalette, isLoading: Bool) {
@@ -897,10 +882,10 @@ private enum ToolImageAttachmentDataCache {
         let task = Task<Data, Error> {
             do {
                 let data = try await fetch()
-                await store(data, for: key)
+                store(data, for: key)
                 return data
             } catch {
-                await removeInFlight(for: key)
+                removeInFlight(for: key)
                 throw error
             }
         }
@@ -944,10 +929,7 @@ private enum ToolImageAttachmentDataCache {
 }
 
 final class NativeExpandedInlineImageView: UIView {
-    private static let minPreviewHeight = ImageViewportSizing.policy(
-        for: .primaryMedia,
-        screenHeight: UIScreen.main.bounds.height
-    ).placeholderHeight
+    private static let minPreviewHeight = ImageViewportSizing.defaultPlaceholderHeight
 
     private enum AttachmentDataValidationError: Error {
         case sizeMismatch(expected: Int, actual: Int)
@@ -1281,7 +1263,7 @@ final class NativeExpandedInlineImageView: UIView {
 
         let availableWidth = bounds.width > 1
             ? bounds.width
-            : (superview?.bounds.width ?? UIScreen.main.bounds.width)
+            : (window?.windowScene?.screen.bounds.width ?? superview?.bounds.width ?? 375)
         let width = max(1, availableWidth)
         let naturalHeight = ImageViewportSizing.naturalHeight(
             forWidth: width,

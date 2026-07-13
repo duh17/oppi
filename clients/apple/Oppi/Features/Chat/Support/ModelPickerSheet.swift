@@ -271,6 +271,7 @@ struct ModelPickerSheet: View {
     }
 }
 
+@MainActor
 enum ModelPickerProviderOrdering {
     struct Stats: Equatable {
         var count = 0

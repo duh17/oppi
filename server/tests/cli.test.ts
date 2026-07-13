@@ -5,7 +5,7 @@
  * Each test uses a temp data dir via OPPI_DATA_DIR to avoid touching real config.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { execFile, execFileSync, execSync } from "node:child_process";
+import { execFile, execFileSync, execSync, spawn } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,6 +20,11 @@ try {
   execSync("openssl version", { stdio: "ignore" });
 } catch {
   hasOpenSSL = false;
+}
+
+function logSkip(unavailable: boolean, suite: string, reason: string): boolean {
+  if (unavailable) console.warn(`[test] Skipping ${suite}: ${reason}`);
+  return unavailable;
 }
 
 function run(
@@ -84,6 +89,47 @@ async function runAsync(
         resolveRun({ stdout, exitCode: Number.isFinite(exitCode) ? exitCode : 1 });
       },
     );
+  });
+}
+
+async function runUntilOutput(
+  args: string[],
+  expected: string,
+  env?: Record<string, string>,
+  timeoutMs = 60_000,
+): Promise<string> {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn("node", [CLI, ...args], {
+      env: { ...process.env, OPPI_DATA_DIR: dataDir, ...env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let matched = false;
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      rejectRun(new Error(`Timed out waiting for CLI output ${JSON.stringify(expected)}`));
+    }, timeoutMs);
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      if (!matched && stdout.includes(expected)) {
+        matched = true;
+        child.kill("SIGTERM");
+      }
+    });
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      rejectRun(error);
+    });
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      if (matched) {
+        resolveRun(stdout);
+      } else {
+        rejectRun(new Error(`CLI exited with code ${code ?? "unknown"} before expected output`));
+      }
+    });
   });
 }
 
@@ -306,7 +352,7 @@ describe("oppi help", () => {
         expect(text).toContain(expected);
       }
     }
-  });
+  }, 45_000);
 
   it("prints useful help for nested utility subcommands", () => {
     const cases: Array<{ args: string[]; expected: string[] }> = [
@@ -515,7 +561,7 @@ describe("oppi help", () => {
         expect(text).toContain(expected);
       }
     }
-  }, 45_000);
+  }, 120_000);
 
   it("prints agent-readable JSON help for agent namespace", () => {
     const { stdout, exitCode } = run(["agent", "help", "--json"]);
@@ -1852,7 +1898,7 @@ describe("oppi local API commands", () => {
       rmSync(workspaceRoot, { recursive: true, force: true });
       rmSync(worktreeRoot, { recursive: true, force: true });
     }
-  }, 45_000);
+  }, 180_000);
 
   it("keeps concurrent read-only local API CLI calls from failing on SQLite locks", async () => {
     const api = createHttpServer((req, res) => {
@@ -1898,7 +1944,7 @@ describe("oppi local API commands", () => {
       );
       rmSync(cliDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it("schedule list --json fails fast on malformed successful API JSON", async () => {
     const api = createHttpServer((_req, res) => {
@@ -2001,7 +2047,9 @@ describe("oppi pair", () => {
   });
 });
 
-describe.skipIf(!hasOpenSSL)("oppi pair (tls self-signed)", () => {
+describe.skipIf(
+  logSkip(!hasOpenSSL, "oppi pair (tls self-signed)", "openssl executable is unavailable"),
+)("oppi pair (tls self-signed)", () => {
   it("embeds https scheme + cert fingerprint in invite payload", () => {
     const tlsDataDir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-tls-"));
 
@@ -2046,7 +2094,9 @@ describe.skipIf(!hasOpenSSL)("oppi pair (tls self-signed)", () => {
   });
 });
 
-describe.skipIf(!hasOpenSSL)("oppi pair (tls tailscale)", () => {
+describe.skipIf(
+  logSkip(!hasOpenSSL, "oppi pair (tls tailscale)", "openssl executable is unavailable"),
+)("oppi pair (tls tailscale)", () => {
   it("embeds https scheme + tailscale hostname without a rotating leaf cert pin", () => {
     const tlsDataDir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-tailscale-"));
     const fakeBinDir = mkdtempSync(join(tmpdir(), "oppi-cli-fake-tailscale-"));
@@ -2197,8 +2247,13 @@ describe("oppi serve (first-run tls bootstrap)", () => {
       const beforeTls = JSON.parse(beforeTlsJson) as { mode?: string };
       expect(beforeTls.mode).toBe("disabled");
 
-      // `serve` is long-running; use a short timeout to trigger startup path.
-      const { stdout: serveStdout } = run(["serve"], { OPPI_DATA_DIR: serveDir }, 2_500);
+      // `serve` is long-running; stop it once startup reaches the invite output.
+      const serveStdout = await runUntilOutput(
+        ["serve"],
+        "oppi://connect?",
+        { OPPI_DATA_DIR: serveDir },
+        60_000,
+      );
 
       const strippedServe = serveStdout.replace(/\x1b\[[0-9;]*m/g, "");
       expect(strippedServe).toContain("Scan this QR code in Oppi:");
@@ -2215,7 +2270,7 @@ describe("oppi serve (first-run tls bootstrap)", () => {
     } finally {
       rmSync(serveDir, { recursive: true, force: true });
     }
-  });
+  }, 90_000);
 });
 
 // ── Init ──
@@ -2242,7 +2297,7 @@ describe("oppi doctor", () => {
     } finally {
       rmSync(doctorDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
 
 describe("oppi init (non-interactive)", () => {

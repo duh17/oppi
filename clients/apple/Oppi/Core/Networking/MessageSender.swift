@@ -904,7 +904,7 @@ final class MessageSender {
             switch cmdError {
             case .timeout(let command):
                 return command == "stop"
-            case .rejected(let command, let reason):
+            case .rejected(let command, _):
                 guard command == "stop" else { return false }
                 return false
             }

@@ -280,12 +280,10 @@ enum LinkAction: Equatable {
     case systemDefault
 }
 
-// MARK: - UITextViewDelegate (deep link routing)
-
-extension AssistantMarkdownContentView: UITextViewDelegate {
-    /// Classify a URL for tap/long-press behavior. Exposed for testing.
-    func classifyLink(_ url: URL) -> LinkAction {
-        let normalizedURL = Self.normalizedInteractionURL(url)
+@MainActor
+enum MarkdownLinkInteractionSupport {
+    static func classify(_ url: URL, workspaceID: String?) -> LinkAction {
+        let normalizedURL = AssistantMarkdownContentView.normalizedInteractionURL(url)
         guard let scheme = normalizedURL.scheme?.lowercased() else {
             return .systemDefault
         }
@@ -296,14 +294,91 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             return .webLink(normalizedURL)
         }
         if scheme == WorkspaceWikiLinkURL.scheme,
-           let payload = workspaceWikiLinkPayload(for: normalizedURL) {
-            return .fileLink(payload)
+           let parsed = WorkspaceWikiLinkURL.parse(normalizedURL),
+           parsed.workspaceID == workspaceID {
+            return .fileLink(FileLinkPayload(
+                workspaceID: parsed.workspaceID,
+                filePath: parsed.filePath,
+                originalURL: normalizedURL
+            ))
         }
         if scheme == "file",
-           let payload = fileLinkPayload(for: normalizedURL) {
-            return .fileLink(payload)
+           normalizedURL.isFileURL,
+           let workspaceID,
+           !workspaceID.isEmpty {
+            let filePath = normalizedURL.path.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !filePath.isEmpty else { return .systemDefault }
+            return .fileLink(FileLinkPayload(
+                workspaceID: workspaceID,
+                filePath: filePath,
+                originalURL: normalizedURL
+            ))
         }
         return .systemDefault
+    }
+
+    static func primaryAction(for action: LinkAction, defaultAction: UIAction) -> UIAction? {
+        switch action {
+        case .deepLink(let normalizedURL):
+            return UIAction { _ in
+                NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
+            }
+        case .webLink(let normalizedURL):
+            return UIAction { _ in
+                NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
+            }
+        case .fileLink(let payload):
+            return UIAction { _ in
+                NotificationCenter.default.post(name: .fileLinkTapped, object: payload)
+            }
+        case .systemDefault:
+            return defaultAction
+        }
+    }
+
+    static func menuConfiguration(
+        for action: LinkAction,
+        defaultMenu: UIMenu,
+        textView: UITextView,
+        shareWebLink: @escaping (_ url: URL, _ sourceView: UITextView?) -> Void
+    ) -> UITextItem.MenuConfiguration? {
+        guard case .webLink(let normalizedURL) = action else {
+            return UITextItem.MenuConfiguration(menu: defaultMenu)
+        }
+
+        let copyAction = UIAction(
+            title: "Copy Link",
+            image: UIImage(systemName: "doc.on.doc")
+        ) { _ in
+            UIPasteboard.general.string = normalizedURL.absoluteString
+        }
+
+        let openAction = UIAction(
+            title: AppPreferences.Browser.linkOpeningMode.openActionTitle,
+            image: UIImage(systemName: "safari")
+        ) { _ in
+            NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
+        }
+
+        let shareAction = UIAction(
+            title: "Share...",
+            image: UIImage(systemName: "square.and.arrow.up")
+        ) { [weak textView] _ in
+            shareWebLink(normalizedURL, textView)
+        }
+
+        return UITextItem.MenuConfiguration(
+            menu: UIMenu(children: [openAction, copyAction, shareAction])
+        )
+    }
+}
+
+// MARK: - UITextViewDelegate (deep link routing)
+
+extension AssistantMarkdownContentView: UITextViewDelegate {
+    /// Classify a URL for tap/long-press behavior. Exposed for testing.
+    func classifyLink(_ url: URL) -> LinkAction {
+        MarkdownLinkInteractionSupport.classify(url, workspaceID: currentConfig?.workspaceID)
     }
 
     func textView(
@@ -331,22 +406,10 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             return defaultAction
         }
 
-        switch classifyLink(url) {
-        case .deepLink(let normalizedURL):
-            return UIAction { _ in
-                NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
-            }
-        case .webLink(let normalizedURL):
-            return UIAction { _ in
-                NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
-            }
-        case .fileLink(let payload):
-            return UIAction { _ in
-                NotificationCenter.default.post(name: .fileLinkTapped, object: payload)
-            }
-        case .systemDefault:
-            return defaultAction
-        }
+        return MarkdownLinkInteractionSupport.primaryAction(
+            for: classifyLink(url),
+            defaultAction: defaultAction
+        )
     }
 
     func textView(
@@ -358,77 +421,22 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             return UITextItem.MenuConfiguration(menu: defaultMenu)
         }
 
-        switch classifyLink(url) {
-        case .webLink(let normalizedURL):
-            let copyAction = UIAction(
-                title: "Copy Link",
-                image: UIImage(systemName: "doc.on.doc")
-            ) { _ in
-                UIPasteboard.general.string = normalizedURL.absoluteString
-            }
-
-            let openAction = UIAction(
-                title: AppPreferences.Browser.linkOpeningMode.openActionTitle,
-                image: UIImage(systemName: "safari")
-            ) { _ in
-                NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
-            }
-
-            // Note: uses UIActivityViewController directly rather than FileSharePresenter
-            // because this shares a URL from a text interaction menu, not file content.
-            let shareAction = UIAction(
-                title: "Share...",
-                image: UIImage(systemName: "square.and.arrow.up")
-            ) { [weak textView] _ in
-                guard let textView else { return }
-                let activityVC = UIActivityViewController(
-                    activityItems: [normalizedURL],
-                    applicationActivities: nil
-                )
-                activityVC.popoverPresentationController?.sourceView = textView
-                textView.window?.rootViewController?
-                    .presentedViewController?.present(activityVC, animated: true)
-                    ?? textView.window?.rootViewController?.present(activityVC, animated: true)
-            }
-
-            let menu = UIMenu(children: [openAction, copyAction, shareAction])
-            return UITextItem.MenuConfiguration(menu: menu)
-
-        case .fileLink, .deepLink, .systemDefault:
-            return UITextItem.MenuConfiguration(menu: defaultMenu)
+        return MarkdownLinkInteractionSupport.menuConfiguration(
+            for: classifyLink(url),
+            defaultMenu: defaultMenu,
+            textView: textView
+        ) { normalizedURL, sourceView in
+            // This shares a URL from a text interaction menu, not file content.
+            guard let sourceView else { return }
+            let activityVC = UIActivityViewController(
+                activityItems: [normalizedURL],
+                applicationActivities: nil
+            )
+            activityVC.popoverPresentationController?.sourceView = sourceView
+            sourceView.window?.rootViewController?
+                .presentedViewController?.present(activityVC, animated: true)
+                ?? sourceView.window?.rootViewController?.present(activityVC, animated: true)
         }
-    }
-
-    private func workspaceWikiLinkPayload(for url: URL) -> FileLinkPayload? {
-        guard let parsed = WorkspaceWikiLinkURL.parse(url),
-              let config = currentConfig,
-              parsed.workspaceID == config.workspaceID else {
-            return nil
-        }
-
-        return FileLinkPayload(
-            workspaceID: parsed.workspaceID,
-            filePath: parsed.filePath,
-            originalURL: url
-        )
-    }
-
-    private func fileLinkPayload(for url: URL) -> FileLinkPayload? {
-        guard url.isFileURL,
-              let config = currentConfig,
-              let workspaceID = config.workspaceID,
-              !workspaceID.isEmpty else {
-            return nil
-        }
-
-        let filePath = url.path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !filePath.isEmpty else { return nil }
-
-        return FileLinkPayload(
-            workspaceID: workspaceID,
-            filePath: filePath,
-            originalURL: url
-        )
     }
 
     private static let trailingLinkDelimiters: Set<Character> = ["`", "'", "\"", "\u{2018}", "\u{201C}"]

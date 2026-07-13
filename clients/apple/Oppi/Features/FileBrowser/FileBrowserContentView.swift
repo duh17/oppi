@@ -277,15 +277,17 @@ struct FileBrowserContentView: View {
 
     @ViewBuilder
     private func videoView(_ source: AuthenticatedMediaSource) -> some View {
-        AuthenticatedMediaPlayerView(
-            source: source,
-            height: min(max(UIScreen.main.bounds.height * 0.34, 220), 420),
-            unavailableTitle: "Video preview unavailable",
-            unavailableSystemImage: "film.slash"
-        )
-        .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.themeBgDark)
+        GeometryReader { geometry in
+            AuthenticatedMediaPlayerView(
+                source: source,
+                height: min(max(geometry.size.height * 0.34, 220), 420),
+                unavailableTitle: "Video preview unavailable",
+                unavailableSystemImage: "film.slash"
+            )
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.themeBgDark)
+        }
     }
 
     @ViewBuilder

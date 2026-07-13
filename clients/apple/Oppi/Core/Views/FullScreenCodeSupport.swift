@@ -727,6 +727,7 @@ func buildFullScreenReviewCommentMenu(
     return menu
 }
 
+@MainActor
 private func nearestViewController(from responder: UIResponder) -> UIViewController? {
     var current: UIResponder? = responder
     while let node = current {

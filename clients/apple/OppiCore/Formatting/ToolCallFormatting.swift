@@ -306,7 +306,7 @@ enum ToolCallFormatting {
         argsSummary: String
     ) -> String {
         let questions = askQuestions(args: args, details: details)
-        guard let first = questions.first else {
+        guard !questions.isEmpty else {
             let trimmed = singleLine(argsSummary)
             return trimmed.isEmpty ? "Ask" : trimmed
         }

@@ -18,12 +18,46 @@ npm run check
 npm test
 ```
 
-Server E2E coverage is documented in `server/e2e/README.md`:
+### One-shot Linux validation on macOS
+
+Use Apple `container` copy-in mode for a clean Linux check without exposing the checkout through a host bind mount. This command streams the working tree into the container, so it includes uncommitted files while excluding local build products.
+
+```bash
+container system start
+
+./scripts/apple-container-copy-run.sh \
+  --source . \
+  --workdir /work/server \
+  --exclude .git \
+  --exclude .pi \
+  --exclude .internal \
+  --exclude clients \
+  --exclude server/node_modules \
+  --exclude server/dist \
+  --exclude server/coverage \
+  -- bash -lc '
+    set -euo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates git openssl
+    rm -rf /var/lib/apt/lists/*
+    npm install -g bun@1.3.11
+    npm ci --no-audit --no-fund
+    npm run check
+    npm test
+  '
+```
+
+To support Apple `container` installations without the `container cp` plugin, including 0.9, the helper uses `tar` over `container exec -i` for copy-in and optional copy-out, then deletes the ephemeral container. It does not pass `--volume` or `--mount`.
+
+Writable host bind mounts in compose files and scripted container runs are rejected by `server/scripts/check-compose-mounts.ts`, which runs as part of `npm run check` (`npm run mounts:check` standalone).
+
+Server E2E coverage is documented in `server/e2e/README.md`. Prefer native mode for local work; `E2E_NATIVE=1` also suppresses Docker cleanup:
 
 ```bash
 cd server
-npm run test:e2e
 E2E_NATIVE=1 npm run test:e2e
+npm run test:e2e # Docker Compose mode when that environment is explicitly needed
 ```
 
 ## Apple
@@ -44,7 +78,7 @@ For Oppi maintainer/agent work, use the simulator pool so parallel runs do not c
 
 ```bash
 cd clients/apple
-bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- \
+./scripts/sim-pool.sh run -- \
   xcodebuild -project Oppi.xcodeproj -scheme Oppi build
 ```
 
@@ -62,7 +96,7 @@ Use the dedicated `OppiUnitTests` scheme for `OppiTests`.
 
 ```bash
 cd clients/apple
-bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- \
+./scripts/sim-pool.sh run -- \
   xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
 ```
 
@@ -73,6 +107,29 @@ xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test \
   -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
   -derivedDataPath .build/derived-data-tests \
   -only-testing:OppiTests
+```
+
+### iOS coverage gate
+
+The repository owns the simulator and coverage scripts used by the pre-push gate. First run the focused harness self-test. It verifies retry result-bundle paths and failure classification without launching a simulator:
+
+```bash
+./.githooks/pre-push --self-test
+```
+
+Then run the real unit-test coverage gate through the simulator pool:
+
+```bash
+cd clients/apple
+./scripts/check-coverage.sh
+```
+
+`check-coverage.sh` returns `2` only when collected coverage is below an enforced logic-layer threshold. Test, simulator, result-bundle, `xccov`, and report-analysis failures use other nonzero statuses. A failed collection is not a coverage shortfall.
+
+The tracked pre-push hook is `.githooks/pre-push`. Install it into a clone's configured hook directory after reviewing any existing local hook:
+
+```bash
+install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"
 ```
 
 ### Swift Testing filters
@@ -146,7 +203,7 @@ Focused unit coverage for navigation routing, Shortcuts text/image intake, direc
 
 ```bash
 cd clients/apple
-bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- \
+./scripts/sim-pool.sh run -- \
   xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test \
   -only-testing:OppiTests/AppNavigationShellRoutingTests \
   -only-testing:OppiTests/WorkspaceDeepLinkTests \

@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Pre-push gate: enforce test coverage thresholds before pushing.
+# Server: vitest coverage thresholds (statements/branches/functions/lines)
+# iOS: per-layer logic coverage thresholds via check-coverage.sh
+#
+# Bypass: git push --no-verify
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CHECK_COVERAGE="$REPO_ROOT/clients/apple/scripts/check-coverage.sh"
+SIM_POOL="$REPO_ROOT/clients/apple/scripts/sim-pool.sh"
+
+report_ios_coverage_result() {
+  local status="$1"
+  case "$status" in
+    0)
+      echo "iOS coverage gate passed."
+      return 0
+      ;;
+    2)
+      echo ""
+      echo "BLOCKED: iOS logic layer coverage below threshold."
+      echo "See .internal/testing/coverage-baseline.md for layer targets."
+      return 1
+      ;;
+    *)
+      echo ""
+      echo "ERROR: iOS coverage could not be collected or analyzed (status $status)."
+      echo "No coverage shortfall was established. Inspect the sim-pool summary and log above."
+      return 1
+      ;;
+  esac
+}
+
+run_self_test() {
+  "$SIM_POOL" self-test
+
+  local output status
+  set +e
+  output="$(report_ios_coverage_result 3)"
+  status=$?
+  set -e
+  [[ "$status" -eq 1 ]]
+  [[ "$output" == *"No coverage shortfall was established."* ]]
+  [[ "$output" != *"below threshold"* ]]
+
+  set +e
+  output="$(report_ios_coverage_result 2)"
+  status=$?
+  set -e
+  [[ "$status" -eq 1 ]]
+  [[ "$output" == *"below threshold"* ]]
+
+  output="$(report_ios_coverage_result 0)"
+  [[ "$output" == "iOS coverage gate passed." ]]
+
+  echo "pre-push iOS coverage classification self-test passed."
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  run_self_test
+  exit 0
+fi
+
+# Determine which files differ from the remote tracking branch
+REMOTE="$1"
+REMOTE_REF=$(git rev-parse --verify "${REMOTE}/main" 2>/dev/null || echo "")
+if [ -z "$REMOTE_REF" ]; then
+  echo "pre-push: no remote ref found for ${REMOTE}/main — running all gates."
+  SERVER_CHANGED="yes"
+  SWIFT_CHANGED="yes"
+else
+  SERVER_CHANGED=$(git diff --name-only "$REMOTE_REF"..HEAD | grep '^server/' || true)
+  SWIFT_CHANGED=$(git diff --name-only "$REMOTE_REF"..HEAD | grep -E '\.swift$' || true)
+fi
+
+FAILED=0
+
+# --- Server coverage gate ---
+
+if [ -n "$SERVER_CHANGED" ]; then
+  echo ""
+  echo "=== Server coverage gate ==="
+  echo "Running npm run test:coverage..."
+  if (cd "$REPO_ROOT/server" && npm run test:coverage --silent); then
+    echo "Server coverage gate passed."
+  else
+    echo ""
+    echo "BLOCKED: server coverage below threshold."
+    echo "Check vitest.config.ts for current thresholds."
+    FAILED=1
+  fi
+else
+  echo "No server changes — skipping server coverage gate."
+fi
+
+# --- iOS coverage gate ---
+
+if [ -n "$SWIFT_CHANGED" ]; then
+  echo ""
+  echo "=== iOS coverage gate ==="
+  if [ ! -f "$CHECK_COVERAGE" ]; then
+    echo "ERROR: repository iOS coverage harness not found at $CHECK_COVERAGE."
+    FAILED=1
+  else
+    echo "Running iOS unit tests with coverage..."
+    set +e
+    bash "$CHECK_COVERAGE"
+    IOS_COVERAGE_STATUS=$?
+    set -e
+
+    if ! report_ios_coverage_result "$IOS_COVERAGE_STATUS"; then
+      FAILED=1
+    fi
+  fi
+else
+  echo "No Swift changes — skipping iOS coverage gate."
+fi
+
+# --- Summary ---
+
+echo ""
+if [ "$FAILED" -ne 0 ]; then
+  echo "Pre-push gate FAILED. Fix the reported test, coverage, or harness failure before pushing."
+  exit 1
+fi
+
+echo "Pre-push gate passed."

@@ -1,11 +1,11 @@
 # E2E Tests
 
-End-to-end tests that exercise the full Oppi stack: Docker server + local OMLX models.
+End-to-end tests that exercise the full Oppi stack with a native or containerized server and local OMLX models.
 
 ## Prerequisites
 
-- Docker (OrbStack recommended)
 - OMLX-compatible OpenAI API server on localhost:8400 with at least one model loaded
+- Docker only for explicit Docker Compose mode
 - Preferred model: `Qwen3.6-*` (fallback: first model returned by `/v1/models`)
 
 ## Test Suites
@@ -40,18 +40,20 @@ The session-list assertions use the harness `listWorkspaceSessions()` helper. Th
 ## Running
 
 ```bash
-# Full suite (builds Docker image, runs both suites)
+# Preferred local mode: spawns the server directly and does not inspect Docker state
+cd server && E2E_NATIVE=1 npm run test:e2e
+
+# Explicit Docker Compose mode
 cd server && npm run test:e2e
 
-# Pairing flow only
+# Docker pairing flow only
 cd server && npm run test:e2e:pairing
 
-# Session flow only
+# Docker session flow only
 cd server && npm run test:e2e:session
-
-# Native mode (faster iteration — no Docker, spawns server directly)
-E2E_NATIVE=1 npm run test:e2e
 ```
+
+On Mac Studio, do not add writable repo, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context, mounts its generated `models.json` read-only, and stores server state in a named volume. Use native mode for normal local iteration.
 
 ## Configuration
 
@@ -80,8 +82,8 @@ e2e/
 
 The harness supports two modes:
 
-- **Docker mode** (default): builds and starts `oppi-e2e` container, OMLX reached via `host.docker.internal`
-- **Native mode** (`E2E_NATIVE=1`): builds server locally, starts as child process in a temp directory
+- **Docker mode** (default): builds and starts `oppi-e2e` through Docker Compose, with OMLX reached via `host.docker.internal`
+- **Native mode** (`E2E_NATIVE=1`): builds the server locally, starts it as a child process in a temp directory, and skips Docker cleanup
 - **Packaged native mode** (`E2E_NATIVE=1 E2E_SERVER_DIR=/path/to/node_modules/oppi-server`): runs the installed package tarball through the same native harness without rebuilding source
 
 Both modes generate a temporary `models.json` from the probed local OMLX model, preferring `Qwen3.6*` when available. Both modes share the same test code — only server lifecycle differs.

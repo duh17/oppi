@@ -267,32 +267,40 @@ private struct OrgNativeHeadingView: View {
             .eraseToAnyView()
     }
 
-    // swiftlint:disable shorthand_operator
+    private func concatenate(_ lhs: Text, _ rhs: Text) -> Text {
+        Text("\(lhs)\(rhs)")
+    }
+
     private func buildHeadingText(keyword: String?, title: [OrgInline], tags: [String]) -> Text {
         var text = Text("\(bullet) ")
             .font(.system(size: fontSize, weight: .bold))
             .foregroundStyle(Color.themeMdHeading)
 
         if let kw = keyword {
-            text = text + Text("\(kw) ")
-                .font(.system(size: fontSize, weight: .heavy))
-                .foregroundStyle(kw == "DONE" ? Color.themeGreen : Color.themeOrange)
+            text = concatenate(
+                text,
+                Text("\(kw) ")
+                    .font(.system(size: fontSize, weight: .heavy))
+                    .foregroundStyle(kw == "DONE" ? Color.themeGreen : Color.themeOrange)
+            )
         }
 
         for inline in title {
-            text = text + renderInline(inline, baseSize: fontSize)
+            text = concatenate(text, renderInline(inline, baseSize: fontSize))
         }
 
         if !tags.isEmpty {
-            text = text + Text("  ")
-            text = text + Text(":" + tags.joined(separator: ":") + ":")
-                .font(.system(size: max(fontSize - 4, 11), design: .monospaced))
-                .foregroundStyle(Color.themeComment)
+            text = concatenate(text, Text("  "))
+            text = concatenate(
+                text,
+                Text(":" + tags.joined(separator: ":") + ":")
+                    .font(.system(size: max(fontSize - 4, 11), design: .monospaced))
+                    .foregroundStyle(Color.themeComment)
+            )
         }
 
         return text
     }
-    // swiftlint:enable shorthand_operator
 
     private func renderInline(_ inline: OrgInline, baseSize: CGFloat) -> Text {
         switch inline {
@@ -301,19 +309,19 @@ private struct OrgNativeHeadingView: View {
                 .font(.system(size: baseSize, weight: .bold))
                 .foregroundStyle(Color.themeMdHeading)
         case .bold(let children):
-            return children.reduce(Text("")) { $0 + renderInline($1, baseSize: baseSize) }
+            return children.reduce(Text("")) { concatenate($0, renderInline($1, baseSize: baseSize)) }
         case .italic(let children):
-            let inner = children.reduce(Text("")) { $0 + renderInline($1, baseSize: baseSize) }
+            let inner = children.reduce(Text("")) { concatenate($0, renderInline($1, baseSize: baseSize)) }
             return inner.italic()
         case .code(let str), .verbatim(let str):
             return Text(str)
                 .font(.system(size: max(baseSize - 2, 11), design: .monospaced))
                 .foregroundStyle(Color.themeFg)
         case .underline(let children):
-            let inner = children.reduce(Text("")) { $0 + renderInline($1, baseSize: baseSize) }
+            let inner = children.reduce(Text("")) { concatenate($0, renderInline($1, baseSize: baseSize)) }
             return inner.underline()
         case .strikethrough(let children):
-            let inner = children.reduce(Text("")) { $0 + renderInline($1, baseSize: baseSize) }
+            let inner = children.reduce(Text("")) { concatenate($0, renderInline($1, baseSize: baseSize)) }
             return inner.strikethrough()
         case .link(_, let description):
             let label = description?.map { inlineToString($0) }.joined() ?? "link"

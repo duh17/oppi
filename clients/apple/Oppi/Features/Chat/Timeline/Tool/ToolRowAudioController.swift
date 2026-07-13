@@ -59,8 +59,10 @@ final class ToolRowAudioController: NSObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self, let configuration = self.currentConfiguration else { return }
-            self.updateButtonImage(configuration: configuration)
+            MainActor.assumeIsolated {
+                guard let self, let configuration = self.currentConfiguration else { return }
+                self.updateButtonImage(configuration: configuration)
+            }
         }
     }
 

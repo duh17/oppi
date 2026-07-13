@@ -274,10 +274,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
         let parsed = UserMessageAttachmentPresentation.parse(rawText: configuration.text)
         let displayText = Self.displayText(for: parsed.visibleText)
-        let reviewCommentSourceContext = configuration.interactionContext?.sourceContext(
-            surface: .userMessage,
-            timelineItemId: configuration.itemID
-        )
         if displayText.text.isEmpty {
             messageTextView.attributedText = nil
         } else {

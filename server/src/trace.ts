@@ -18,6 +18,7 @@
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "./lifecycle-journal-extension.js";
 import { createLogger } from "./logger.js";
 import {
@@ -40,32 +41,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function audioPresentationText(root: Record<string, unknown>): string | undefined {
-  const candidates = [root.text, root.message, root.transcript];
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string") continue;
-    const text = candidate.trim();
-    if (text) return text;
-  }
-  return undefined;
-}
-
-function normalizeAudioPresentationDetails(details: unknown): unknown {
-  const root = asRecord(details);
-  if (!root || Array.isArray(root)) return details;
-  if (root.kind === "audio_presentation") return details;
-
-  const audio = asRecord(root.audio);
-  if (!audio || Array.isArray(audio) || audio.kind !== "audio") return details;
-
-  const text = audioPresentationText(root);
-  return {
-    ...root,
-    kind: "audio_presentation",
-    ...(text ? { text } : {}),
-  };
 }
 
 /**

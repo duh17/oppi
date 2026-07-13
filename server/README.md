@@ -234,6 +234,19 @@ See [config-schema.md](docs/config-schema.md) for full reference.
 
 ## Development
 
+### Dependency installation and script runtimes
+
+CI, Docker builds, and the development checks use `npm`; `package-lock.json` is
+the authoritative dependency lockfile for those flows. Use `npm ci` when you
+need the same dependency tree as CI. Bun is otherwise used only to execute the
+TypeScript repository scripts referenced by `package.json`.
+
+The source-checkout bootstrapper is currently an exception: root `install.sh`
+delegates to `server/setup.sh`, which prefers Bun when it is installed and runs
+`bun install --ignore-scripts`. That documented flow consumes `bun.lock`, so the
+Bun lockfile cannot be removed until the bootstrapper installs dependencies
+with npm. Its dependency tree can diverge from the npm/CI tree in the meantime.
+
 ```bash
 npm test                            # vitest unit tests
 npm run test:coverage               # coverage gate

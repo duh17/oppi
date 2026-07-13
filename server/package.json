@@ -20,7 +20,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=23.6.0"
+    "node": ">=24.0.0"
   },
   "repository": {
     "type": "git",
@@ -60,6 +60,7 @@
     "lint": "eslint src/ extensions/ bench/",
     "lint:fix": "eslint src/ extensions/ bench/ --fix",
     "architecture:check": "bun scripts/check-architecture-boundaries.ts",
+    "mounts:check": "bun scripts/check-compose-mounts.ts",
     "format": "prettier --write --ignore-unknown src/ extensions/ bench/",
     "format:check": "prettier --check --ignore-unknown src/ extensions/ bench/",
     "telemetry:import": "node scripts/manual/telemetry-import-sqlite.mjs",
@@ -79,11 +80,11 @@
     "test:e2e:clean": "node scripts/e2e-clean.mjs",
     "test:e2e:pairing": "vitest run --config vitest.e2e.config.ts e2e/pairing-flow",
     "test:e2e:session": "vitest run --config vitest.e2e.config.ts e2e/paired-session",
-    "test:e2e:paired-compat": "npm run test:e2e:clean && E2E_NATIVE=1 vitest run --config vitest.e2e.config.ts e2e/paired-session",
-    "test:e2e:auth-connection": "npm run test:e2e:clean && E2E_NATIVE=1 vitest run --config vitest.e2e.config.ts e2e/pairing-flow e2e/paired-session",
+    "test:e2e:paired-compat": "E2E_NATIVE=1 npm run test:e2e:clean && E2E_NATIVE=1 vitest run --config vitest.e2e.config.ts e2e/paired-session",
+    "test:e2e:auth-connection": "E2E_NATIVE=1 npm run test:e2e:clean && E2E_NATIVE=1 vitest run --config vitest.e2e.config.ts e2e/pairing-flow e2e/paired-session",
     "test:e2e:linux": "vitest run --config vitest.e2e.config.ts",
     "test:e2e:quick": "npm run test:e2e:clean && E2E_STRICT=1 vitest run --config vitest.e2e.config.ts e2e/quick-session-send",
-    "check": "prettier --version >/dev/null && bash -c 'pids=(); tsc --noEmit & pids+=($!); eslint src/ extensions/ bench/ & pids+=($!); knip & pids+=($!); prettier --check --ignore-unknown src/ extensions/ bench/ & pids+=($!); bun scripts/check-architecture-boundaries.ts & pids+=($!); rc=0; for p in \"${pids[@]}\"; do wait \"$p\" || rc=1; done; exit $rc'"
+    "check": "prettier --version >/dev/null && bash -c 'pids=(); tsc --noEmit & pids+=($!); eslint src/ extensions/ bench/ & pids+=($!); knip & pids+=($!); prettier --check --ignore-unknown src/ extensions/ bench/ & pids+=($!); bun scripts/check-architecture-boundaries.ts & pids+=($!); bun scripts/check-compose-mounts.ts & pids+=($!); rc=0; for p in \"${pids[@]}\"; do wait \"$p\" || rc=1; done; exit $rc'"
   },
   "dependencies": {
     "@earendil-works/gondolin": "0.12.0",

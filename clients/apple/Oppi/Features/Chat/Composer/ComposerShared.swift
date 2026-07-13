@@ -411,6 +411,7 @@ enum ComposerShared {
         return base + " "
     }
 
+    @discardableResult
     static func startVoiceInput(
         manager: VoiceInputManager,
         keyboardLanguage: String?,

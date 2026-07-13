@@ -16,10 +16,13 @@ clients/apple/Oppi.xcodeproj/**/xcuserdata/
 
 # Tracked script allowlists
 scripts/*
+!scripts/apple-container-copy-run.sh
 !scripts/duplication-scan.ts
 !scripts/scroll-offset-guard.ts
 !scripts/theme-surface-guard.ts
 clients/apple/scripts/*
+!clients/apple/scripts/check-coverage.sh
+!clients/apple/scripts/sim-pool.sh
 !clients/apple/scripts/release-mac.sh
 !clients/apple/scripts/periphery-scan.ts
 !clients/apple/scripts/ipad-shell-diagnostic.sh
@@ -27,7 +30,10 @@ server/scripts/manual/*
 !server/scripts/manual/telemetry-import-sqlite.mjs
 
 # Local/private workspace data
-.github/
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/server.yml
 .reviews/
 .internal/
 .pi/

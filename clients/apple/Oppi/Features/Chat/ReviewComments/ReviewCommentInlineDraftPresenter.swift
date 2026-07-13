@@ -177,7 +177,9 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        teardown(cancelOwnedVoiceInput: true)
+        MainActor.assumeIsolated {
+            teardown(cancelOwnedVoiceInput: true)
+        }
     }
 
     override func willMove(toWindow newWindow: UIWindow?) {

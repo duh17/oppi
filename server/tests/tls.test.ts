@@ -24,6 +24,11 @@ try {
   hasOpenSSL = false;
 }
 
+function logSkip(unavailable: boolean, suite: string, reason: string): boolean {
+  if (unavailable) console.warn(`[test] Skipping ${suite}: ${reason}`);
+  return unavailable;
+}
+
 function makeConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
   return {
     port: 7749,
@@ -401,7 +406,13 @@ describe("renderOpenSslConfig", () => {
 // readCertificateFingerprint + readCertificateExpiryMs
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!hasOpenSSL)("certificate reading (requires openssl)", () => {
+describe.skipIf(
+  logSkip(
+    !hasOpenSSL,
+    "certificate reading (requires openssl)",
+    "openssl executable is unavailable",
+  ),
+)("certificate reading (requires openssl)", () => {
   let tmpDir: string;
   let certPath: string;
   let keyPath: string;
@@ -536,7 +547,13 @@ describe("prepareTlsForServer", () => {
     expect(() => prepareTlsForServer(config, tmpDir)).toThrow(/requires.*certPath.*keyPath/i);
   });
 
-  describe.skipIf(!hasOpenSSL)("self-signed generation (requires openssl)", () => {
+  describe.skipIf(
+    logSkip(
+      !hasOpenSSL,
+      "self-signed generation (requires openssl)",
+      "openssl executable is unavailable",
+    ),
+  )("self-signed generation (requires openssl)", () => {
     it("generates cert material in dataDir", () => {
       const config = makeConfig({ tls: { mode: "self-signed" }, dataDir: tmpDir });
       const result = prepareTlsForServer(config, tmpDir);

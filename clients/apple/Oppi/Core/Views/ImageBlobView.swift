@@ -97,7 +97,7 @@ struct ImageBlobView: View {
 
     @ViewBuilder
     private func renderedStaticImage(_ image: UIImage) -> some View {
-        let maxHeight = ImageViewportSizing.maxHeight(for: .primaryMedia, screenHeight: UIScreen.main.bounds.height)
+        let maxHeight = ImageViewportSizing.maxHeight(for: .primaryMedia, screenHeight: nil)
         let targetHeight = staticImageTargetHeight(for: image, maxHeight: maxHeight)
 
         Image(uiImage: image)

@@ -363,11 +363,13 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             object: player.currentItem,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            self.stopMediaPlaybackSession()
-            self.deactivatePlaybackAudioSessionIfPossible()
-            self.setPlaybackState(playing: nil, loading: nil)
-            self.clearGlobalPlaybackOwnershipIfNeeded()
+            Task { @MainActor in
+                guard let self else { return }
+                self.stopMediaPlaybackSession()
+                self.deactivatePlaybackAudioSessionIfPossible()
+                self.setPlaybackState(playing: nil, loading: nil)
+                self.clearGlobalPlaybackOwnershipIfNeeded()
+            }
         }
 
         mediaStatusObservation = player.currentItem?.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in

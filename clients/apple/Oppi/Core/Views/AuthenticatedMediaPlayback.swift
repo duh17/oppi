@@ -66,7 +66,7 @@ enum AuthenticatedMediaResponseValidator {
 /// token in the URL. AVPlayer talks to an `oppi-media://` URL; this loader
 /// turns AVFoundation byte-range requests into normal HTTP requests with the
 /// `Authorization` header.
-private final class AuthenticatedMediaResourceLoader: NSObject, AVAssetResourceLoaderDelegate, URLSessionDataDelegate {
+private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVAssetResourceLoaderDelegate, URLSessionDataDelegate {
     private final class LoadingContext {
         let loadingRequest: AVAssetResourceLoadingRequest
         let requestedRange: AuthenticatedMediaRequestedRange?

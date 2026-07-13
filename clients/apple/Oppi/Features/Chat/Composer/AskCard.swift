@@ -328,12 +328,8 @@ struct AskCard: View {
             Button {
                 handleIgnore(question: question)
             } label: {
-                Text(isLastQuestionPage ? "Ignore & Send" : "Ignore")
+                Text("\(Text(isLastQuestionPage ? "Ignore & Send" : "Ignore").foregroundStyle(.themeComment))\(Text(" \u{2192}").foregroundStyle(.themeComment.opacity(0.6)))")
                     .font(.caption)
-                    .foregroundStyle(.themeComment)
-                + Text(" \u{2192}")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment.opacity(0.6))
             }
             .buttonStyle(.plain)
 

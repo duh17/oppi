@@ -41,7 +41,8 @@ final class GameOfLifeUIView: UIView {
     required init?(coder: NSCoder) { fatalError("Not supported") }
 
     deinit {
-        stopAnimation()
+        timer?.invalidate()
+        timer = nil
     }
 
     // MARK: - Layout
@@ -74,14 +75,22 @@ final class GameOfLifeUIView: UIView {
 
     private func startAnimation() {
         guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
-            self?.timerFired()
-        }
+        timer = Timer.scheduledTimer(
+            timeInterval: Self.tickInterval,
+            target: self,
+            selector: #selector(handleTimerTick),
+            userInfo: nil,
+            repeats: true
+        )
     }
 
     private func stopAnimation() {
         timer?.invalidate()
         timer = nil
+    }
+
+    @objc private func handleTimerTick() {
+        timerFired()
     }
 
     private func timerFired() {

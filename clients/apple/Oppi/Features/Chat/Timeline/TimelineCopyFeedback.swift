@@ -1,6 +1,7 @@
 import UIKit
 
 /// Shared copy + feedback behavior for timeline row interactions.
+@MainActor
 enum TimelineCopyFeedback {
     static func copy(
         _ text: String,
