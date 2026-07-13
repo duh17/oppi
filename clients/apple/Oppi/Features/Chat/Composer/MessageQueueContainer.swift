@@ -300,21 +300,52 @@ struct MessageQueueContainer: View {
 
     @ViewBuilder
     private func queueRow(kind: MessageQueueKind, index: Int) -> some View {
+        let item = queueItems(for: kind)[index]
         let binding = messageBinding(kind: kind, index: index)
-        HStack(spacing: 8) {
-            TextField("Queued message", text: binding, axis: .vertical)
+
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
+                TextField(
+                    item.attachments?.isEmpty == false ? "Add a message (optional)" : "Queued message",
+                    text: binding,
+                    axis: .vertical
+                )
                 .textFieldStyle(.plain)
                 .font(.caption)
                 .lineLimit(1...3)
                 .disabled(isApplying || isRefreshing)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.themeRecessedInset)
-                )
+
+                queuedAttachmentStrip(for: item)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.themeRecessedInset)
+            )
 
             rowActions(kind: kind, index: index)
+                .padding(.top, 3)
+        }
+    }
+
+    @ViewBuilder
+    private func queuedAttachmentStrip(for item: MessageQueueItem) -> some View {
+        if let attachments = item.attachments, !attachments.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(attachments) { attachment in
+                        QueuedAttachmentPill(attachment: attachment)
+                    }
+                }
+            }
+        } else if let optimisticImages = item.optimisticImages, !optimisticImages.isEmpty {
+            Label(
+                optimisticImages.count == 1 ? "Image attached" : "\(optimisticImages.count) images attached",
+                systemImage: "photo.fill"
+            )
+            .font(.caption2)
+            .foregroundStyle(.themeComment)
         }
     }
 
@@ -514,6 +545,27 @@ struct MessageQueueContainer: View {
 
     private static func isQueueVersionMismatch(_ error: Error) -> Bool {
         error.localizedDescription.localizedCaseInsensitiveContains("queue version mismatch")
+    }
+}
+
+private struct QueuedAttachmentPill: View {
+    let attachment: ChatAttachmentRef
+
+    var body: some View {
+        HStack(spacing: 4) {
+            FileIcon.forPath(attachment.name).iconView(size: 12, font: .appTag)
+
+            Text(attachment.name)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(.themeComment.opacity(0.1), in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("chat.messageQueue.attachment.\(attachment.id)")
+        .accessibilityLabel("Attachment \(attachment.name)")
     }
 }
 

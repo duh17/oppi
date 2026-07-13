@@ -703,6 +703,38 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
         )
     }
 
+    func testAttachmentOnlyQueueItemsShowImageAndFileNames() throws {
+        launchQueueHarness()
+
+        let clearQueue = app.descendants(matching: .any)["harness.queue.clear"]
+        XCTAssertTrue(clearQueue.waitForExistence(timeout: 4))
+        clearQueue.tap()
+
+        let enqueueAttachments = app.descendants(matching: .any)["harness.queue.enqueueAttachments"]
+        XCTAssertTrue(enqueueAttachments.waitForExistence(timeout: 4))
+        enqueueAttachments.tap()
+
+        XCTAssertEqual(waitForDiagnostic("diag.queueSteeringCount", equals: 2, timeout: 4), 2)
+
+        let queueToggle = app.descendants(matching: .any)["chat.messageQueue.toggle"]
+        XCTAssertTrue(queueToggle.waitForExistence(timeout: 4))
+        queueToggle.tap()
+
+        let imageAttachment = app.descendants(matching: .any)["chat.messageQueue.attachment.harness-image"]
+        XCTAssertTrue(
+            imageAttachment.waitForExistence(timeout: 4),
+            "An image-only queued message should show its image name"
+        )
+        XCTAssertEqual(imageAttachment.label, "Attachment image-1.jpg")
+
+        let fileAttachment = app.descendants(matching: .any)["chat.messageQueue.attachment.harness-file"]
+        XCTAssertTrue(
+            fileAttachment.waitForExistence(timeout: 4),
+            "A file-only queued message should show its file name"
+        )
+        XCTAssertEqual(fileAttachment.label, "Attachment notes.txt")
+    }
+
     private func launchQueueHarness() {
         launchHarness(
             noStream: true,
