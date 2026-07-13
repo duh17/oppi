@@ -157,6 +157,36 @@ describe("SessionRuntimes", () => {
     expect(mirror.sendPrompt).toHaveBeenCalledWith("sess-1", "resume here", { timestamp: 10 });
   });
 
+  it("keeps an in-flight command with the runtime owner selected at dispatch", async () => {
+    const session = makeSession({
+      runtime: "pi-tui",
+      status: "busy",
+      mirror: { status: "connected" },
+      piSessionFile: "/tmp/session.jsonl",
+    });
+    const { router, managed, mirror } = makeRouter(session, { mirrorConnected: true });
+    let finishPrompt: (() => void) | undefined;
+    vi.mocked(mirror.sendPrompt).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishPrompt = resolve;
+        }),
+    );
+
+    const prompt = router.sendPrompt("sess-1", "stay on the selected owner", {
+      requestId: "req-owner",
+    });
+    expect(finishPrompt).toBeDefined();
+
+    session.runtime = "oppi";
+    session.mirror = undefined;
+    finishPrompt?.();
+    await prompt;
+
+    expect(mirror.sendPrompt).toHaveBeenCalledOnce();
+    expect(managed.sendPrompt).not.toHaveBeenCalled();
+  });
+
   it("keeps stale mirror steer messages routed to the mirror runtime", async () => {
     const session = makeSession({
       runtime: "pi-tui",

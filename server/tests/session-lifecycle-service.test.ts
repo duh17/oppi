@@ -350,6 +350,32 @@ describe("SessionLifecycleService", () => {
       expect(saveSession).not.toHaveBeenCalled();
     });
 
+    it("keeps a busy disconnected mirror terminal-owned instead of taking over mid-turn", async () => {
+      const mirrorSession = makeSession({
+        runtime: "pi-tui",
+        status: "busy",
+        currentTurnStartedAt: 10,
+        mirror: { status: "disconnected" },
+        piSessionFile: "/tmp/busy-mirror.jsonl",
+      });
+      const { service, startSession, saveSession } = makeService({ mirrorConnected: false });
+
+      const result = await service.openFocusedSession({
+        session: mirrorSession,
+        workspace: makeWorkspace(),
+      });
+
+      expect(result).toMatchObject({ owner: "pi-tui", startedSession: false });
+      expect(result.session).toMatchObject({
+        runtime: "pi-tui",
+        status: "busy",
+        currentTurnStartedAt: 10,
+        mirror: { status: "disconnected" },
+      });
+      expect(startSession).not.toHaveBeenCalled();
+      expect(saveSession).not.toHaveBeenCalled();
+    });
+
     it("promotes ready disconnected mirror sessions when a focused stream opens", async () => {
       const mirrorSession = makeSession({
         runtime: "pi-tui",

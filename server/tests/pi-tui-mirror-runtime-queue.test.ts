@@ -510,15 +510,21 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(ws.closeCode).toBe(1008);
   });
 
-  it("stops an active Oppi SDK session after terminal takeover confirmation", async () => {
+  it("waits for a busy Oppi runtime to stop before terminal takeover", async () => {
     let oppiActive = true;
     const stoppedSessions: string[] = [];
+    let finishStop: (() => void) | undefined;
     const { runtime, sessions } = makeRuntime({
       hostMount: "/tmp/oppi-mirror-test",
       isOppiSessionActive: (sessionId) => oppiActive && sessionId === "oppi-1",
-      stopOppiSession: async (sessionId) => {
+      stopOppiSession: (sessionId) => {
         stoppedSessions.push(sessionId);
-        oppiActive = false;
+        return new Promise<void>((resolve) => {
+          finishStop = () => {
+            oppiActive = false;
+            resolve();
+          };
+        });
       },
     });
     sessions.set("oppi-1", {
@@ -550,6 +556,14 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
         sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
       },
     });
+    await Promise.resolve();
+
+    expect(stoppedSessions).toEqual(["oppi-1"]);
+    expect(finishStop).toBeDefined();
+    expect(ws.sent.some((message) => message.type === "hello_ack")).toBe(false);
+    expect(sessions.get("oppi-1")).toMatchObject({ runtime: "oppi", status: "busy" });
+
+    finishStop?.();
     await ws.waitForSend();
 
     const ack = ws.sent.find((message) => message.type === "hello_ack");
@@ -1056,6 +1070,49 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
         followUp: [{ id: "f1", message: "do not lose this follow-up", createdAt: 2 }],
       },
     });
+  });
+
+  it("settles an in-flight command once when the mirror disconnects", async () => {
+    const { runtime, sessions } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    const commandPromise = runtime.forwardClientCommand(
+      sessionId,
+      { type: "set_session_name", name: "Must not apply" },
+      "req-disconnect",
+    );
+    const command = latestCommand(ws);
+
+    ws.readyState = WebSocket.CLOSED;
+    ws.emit("close", 1006, Buffer.from("network lost"));
+    await expect(commandPromise).resolves.toBeUndefined();
+
+    expect(runtime.isSessionConnected(sessionId)).toBe(false);
+    expect(sessions.get(sessionId)).toMatchObject({
+      runtime: "pi-tui",
+      mirror: { status: "disconnected" },
+    });
+    expect(received.filter((message) => message.type === "command_result")).toEqual([
+      {
+        type: "command_result",
+        command: "set_session_name",
+        requestId: "req-disconnect",
+        success: false,
+        error: "pi-tui disconnected",
+      },
+    ]);
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { name: "Late terminal name" },
+    });
+
+    expect(sessions.get(sessionId)?.name).not.toBe("Late terminal name");
+    expect(received.filter((message) => message.type === "command_result")).toHaveLength(1);
   });
 
   it("applies forwarded metadata command results and broadcasts canonical command_result", async () => {
