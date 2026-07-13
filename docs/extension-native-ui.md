@@ -908,7 +908,7 @@ Apple implementations:
 - `server/src/sdk-ui-bridge.ts`
 - `server/src/pi-tui-mirror-runtime.ts`
 - `server/src/types/protocol.ts`
-- `clients/apple/Oppi/Core/Models/ServerMessage.swift`
+- `clients/apple/OppiCore/Models/ServerMessage.swift`
 - `clients/apple/Oppi/Core/Models/ExtensionUIRequest+Presentation.swift`
 - `clients/apple/Oppi/Features/Chat/Composer/AskCard.swift`
 - `clients/apple/Oppi/Features/Chat/Composer/AskCardExpanded.swift`

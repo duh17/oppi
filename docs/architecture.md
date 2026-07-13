@@ -180,7 +180,7 @@ Durable session events get per-session sequence numbers and can be replayed thro
 The protocol is mirrored manually on both sides:
 
 - Server source of truth: `server/src/types/protocol.ts`, re-exported by `server/src/types.ts`
-- Apple mirrors: `ClientMessage.swift`, `ServerMessage.swift`, `AppEventMessage.swift`, and `StreamMessage`
+- Apple mirrors under `clients/apple/OppiCore/Models/` (`ClientMessage.swift`, `ServerMessage.swift`, `AppEventMessage.swift`) plus the stream wrappers
 - Snapshot and Codable tests guard focused-stream and app-event drift.
 
-When a message contract changes, update server types, Apple models, and protocol tests together. Partial protocol updates are invalid because a mismatched app/server pair can fail at the transport boundary.
+When a message contract changes, update server types, Apple models, and protocol tests together. Partial protocol updates are invalid because a mismatched app/server pair can fail at the transport boundary. See [Server architecture](architecture-server.md#protocol-boundary) for the step-by-step checklist.

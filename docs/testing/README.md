@@ -275,10 +275,9 @@ Mock screenshot-preview tests live in `clients/apple/OppiUITests/ScreenshotPrevi
 
 ### Duplication and Apple guardrail check
 
-Run after Apple UI or rendering changes:
+Run after Apple UI or rendering changes. From the repo root:
 
 ```bash
-cd ~/workspace/oppi
 bun scripts/duplication-scan.ts
 ```
 
@@ -287,8 +286,11 @@ bun scripts/duplication-scan.ts
 Protocol changes must update and test both sides:
 
 - Server contracts: `server/src/types.ts` and related `server/src/types/*`
-- Apple models: `clients/apple/Oppi/Core/Models/*Message.swift`
+- Apple models: `clients/apple/OppiCore/Models/*Message.swift`
+- Protocol snapshots: `protocol/*.json` when the wire shape changes
 - Protocol/model tests in both `server/tests` and `clients/apple/OppiTests`
+
+The canonical protocol-change checklist lives in [Server architecture](../architecture-server.md#protocol-boundary).
 
 ## Failure investigation
 
