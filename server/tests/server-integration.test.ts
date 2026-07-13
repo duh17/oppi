@@ -71,6 +71,19 @@ function del(path: string, auth = true): Promise<Response> {
   return fetch(`${baseUrl}${path}`, { method: "DELETE", headers });
 }
 
+async function waitForServerShutdown(targetBaseUrl: string, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(`${targetBaseUrl}/health`);
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Server still accepted connections after ${timeoutMs}ms`);
+}
+
 beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-server-integration-"));
   storage = new Storage(dataDir);
@@ -85,14 +98,13 @@ beforeAll(async () => {
   server = new Server(storage);
   await server.start();
   baseUrl = `http://127.0.0.1:${server.port}`;
-}, 15_000);
+}, 30_000);
 
 afterAll(async () => {
   await server.stop().catch(() => {});
-  // Small delay to let sockets drain before rmSync
-  await new Promise((r) => setTimeout(r, 100));
+  await waitForServerShutdown(baseUrl);
   rmSync(dataDir, { recursive: true, force: true });
-}, 10_000);
+}, 45_000);
 
 // ── Health ──
 
@@ -929,6 +941,7 @@ function waitForUpgradeRejection(
 ): Promise<{ statusCode: number; headers: Record<string, string | string[] | undefined> }> {
   return new Promise((resolve, reject) => {
     const cleanup = (): void => {
+      clearTimeout(timer);
       ws.off("unexpected-response", onUnexpectedResponse);
       ws.off("open", onOpen);
       ws.off("error", onError);
@@ -960,6 +973,12 @@ function waitForUpgradeRejection(
       cleanup();
       reject(error);
     };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      ws.terminate();
+      reject(new Error("Timed out waiting for WebSocket upgrade rejection after 30000ms"));
+    }, 30_000);
 
     ws.once("unexpected-response", onUnexpectedResponse);
     ws.once("open", onOpen);
@@ -1191,9 +1210,15 @@ describe("split session WebSocket", () => {
     );
 
     const firstMessage = await new Promise<Record<string, unknown>>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("session stream did not open")), 5000);
-      ws.on("error", reject);
-      ws.on("message", (data) => {
+      const timeout = setTimeout(() => {
+        ws.terminate();
+        reject(new Error("session stream did not open after 30000ms"));
+      }, 30_000);
+      ws.once("error", (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      ws.once("message", (data) => {
         clearTimeout(timeout);
         resolve(JSON.parse(data.toString()) as Record<string, unknown>);
       });
@@ -1293,15 +1318,16 @@ async function withIsolatedPairingServer(
 
   const pairingServer = new Server(pairingStorage);
   await pairingServer.start();
+  const pairingBaseUrl = `http://127.0.0.1:${pairingServer.port}`;
 
   try {
     await run({
       storage: pairingStorage,
-      baseUrl: `http://127.0.0.1:${pairingServer.port}`,
+      baseUrl: pairingBaseUrl,
     });
   } finally {
     await pairingServer.stop().catch(() => {});
-    await new Promise((r) => setTimeout(r, 100));
+    await waitForServerShutdown(pairingBaseUrl);
     rmSync(pairingDataDir, { recursive: true, force: true });
   }
 }

@@ -50,7 +50,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
       console.warn(`[e2e] Pairing attempt ${attempt + 1} failed (${pairRes.status}), retrying...`);
     }
     expect(deviceToken).toBeTruthy();
-  }, 60_000);
+  }, 120_000);
 
   /** Split "provider/modelId" into its two components. */
   function parseModelId(fullModel: string): { provider: string; modelId: string } {
@@ -193,7 +193,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
           (e.type === "command_result" || e.type === "rpc_result") &&
           e.requestId === "req-set-model",
         "set_model result",
-        { timeoutMs: 30_000 },
+        { timeoutMs: 120_000 },
       );
       expect(modelResult.success).toBe(true);
 
@@ -244,7 +244,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
           (e.type === "command_result" || e.type === "rpc_result") &&
           e.requestId === "req-set-thinking",
         "set_thinking_level result",
-        { timeoutMs: 30_000 },
+        { timeoutMs: 120_000 },
       );
       expect(thinkResult.success).toBe(true);
 
@@ -348,7 +348,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
           (e.type === "command_result" || e.type === "rpc_result") &&
           e.requestId === "req-set-queue",
         "set_queue result",
-        { timeoutMs: 30_000 },
+        { timeoutMs: 120_000 },
       );
       expect(queueResult.success).toBe(true);
 

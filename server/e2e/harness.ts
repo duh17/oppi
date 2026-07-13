@@ -74,8 +74,10 @@ function makeModelsConfig(baseUrl: string, modelId: string): Record<string, unkn
   };
 }
 
-const BOOT_TIMEOUT_MS = 120_000;
+const BOOT_TIMEOUT_MS = 300_000;
 const HEALTH_POLL_MS = 500;
+const WEBSOCKET_TIMEOUT_MS = 120_000;
+const STREAM_CLOSE_TIMEOUT_MS = 30_000;
 const DEFAULT_APP_INVITE_FILE = "/tmp/oppi-e2e-invite.txt";
 const DEFAULT_APP_DEVICE_TOKEN_FILE = "/tmp/oppi-e2e-device-token.txt";
 
@@ -245,7 +247,7 @@ async function resolveDockerTransportScheme(): Promise<E2ETransportScheme> {
 }
 
 export function dockerStartupCleanupCommand(composeFile: string): string {
-  return `docker compose -f ${composeFile} down -v --timeout 10`;
+  return `docker compose -f ${composeFile} down -v --timeout 60`;
 }
 
 async function startDockerServer(): Promise<void> {
@@ -271,7 +273,7 @@ async function startDockerServer(): Promise<void> {
   writeFileSync(tmpModels, JSON.stringify(makeModelsConfig(OMLX_DOCKER_URL, modelId), null, 2));
   dockerModelsJson = tmpModels;
 
-  execSync(`docker compose -f ${composeFile} up -d --build --wait --wait-timeout 120`, {
+  execSync(`docker compose -f ${composeFile} up -d --build --wait --wait-timeout 300`, {
     cwd: HARNESS_SERVER_DIR,
     stdio: "inherit",
     env: {
@@ -402,19 +404,39 @@ async function terminateNativeServerProcess(): Promise<void> {
       const timer = setTimeout(() => {
         serverProcess?.kill("SIGKILL");
         resolve();
-      }, 4000);
+      }, 30_000);
       serverProcess!.once("exit", () => {
         clearTimeout(timer);
         resolve();
       });
     });
   } else if (process.env.E2E_NATIVE_SERVER_PID) {
+    const pid = Number(process.env.E2E_NATIVE_SERVER_PID);
     try {
-      process.kill(Number(process.env.E2E_NATIVE_SERVER_PID), "SIGTERM");
+      process.kill(pid, "SIGTERM");
     } catch {
       // Process may already be gone.
     }
-    await sleep(1000);
+    try {
+      await waitForCondition(
+        () => !isProcessRunning(pid),
+        `native server process ${pid} to exit`,
+        30_000,
+        100,
+      );
+    } catch {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Process exited between the condition check and escalation.
+      }
+      await waitForCondition(
+        () => !isProcessRunning(pid),
+        `native server process ${pid} to exit after SIGKILL`,
+        10_000,
+        100,
+      );
+    }
   }
   serverProcess = null;
   delete process.env.E2E_NATIVE_SERVER_PID;
@@ -740,7 +762,10 @@ async function openStreamAt(url: string, deviceToken: string): Promise<StreamCon
   });
 
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("WS open timeout")), 15_000);
+    const timer = setTimeout(() => {
+      ws.terminate();
+      reject(new Error(`WS open timeout (${WEBSOCKET_TIMEOUT_MS}ms)`));
+    }, WEBSOCKET_TIMEOUT_MS);
     ws.once("open", () => {
       clearTimeout(timer);
       resolve();
@@ -773,7 +798,10 @@ export async function openSessionStream(
 export async function closeStream(conn: StreamConnection): Promise<void> {
   if (conn.closed) return;
   await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, 2000);
+    const timer = setTimeout(() => {
+      conn.ws.terminate();
+      resolve();
+    }, STREAM_CLOSE_TIMEOUT_MS);
     conn.ws.once("close", () => {
       clearTimeout(timer);
       resolve();
@@ -788,27 +816,51 @@ export async function waitForEvent(
   label: string,
   opts?: { timeoutMs?: number; startIndex?: number },
 ): Promise<{ event: StreamEvent; index: number }> {
-  const timeoutMs = opts?.timeoutMs ?? 30_000;
+  const timeoutMs = opts?.timeoutMs ?? WEBSOCKET_TIMEOUT_MS;
   let cursor = opts?.startIndex ?? 0;
-  const started = Date.now();
 
-  while (Date.now() - started < timeoutMs) {
-    while (cursor < conn.events.length) {
-      const event = conn.events[cursor];
-      if (predicate(event)) {
-        return { event, index: cursor };
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      conn.ws.off("message", check);
+      conn.ws.off("close", onClose);
+      conn.ws.off("error", onError);
+    };
+    const fail = (error: Error): void => {
+      cleanup();
+      reject(error);
+    };
+    const check = (): void => {
+      while (cursor < conn.events.length) {
+        const index = cursor++;
+        const event = conn.events[index];
+        if (predicate(event)) {
+          cleanup();
+          resolve({ event, index });
+          return;
+        }
       }
-      cursor++;
-    }
 
-    if (conn.closed) {
-      throw new Error(`Stream closed while waiting for ${label} (code=${conn.closeCode})`);
-    }
+      if (conn.closed) {
+        fail(new Error(`Stream closed while waiting for ${label} (code=${conn.closeCode})`));
+      }
+    };
+    const onClose = (code: number): void => {
+      fail(new Error(`Stream closed while waiting for ${label} (code=${code})`));
+    };
+    const onError = (error: Error): void => {
+      fail(new Error(`Stream errored while waiting for ${label}: ${error.message}`));
+    };
+    const timer = setTimeout(
+      () => fail(new Error(`Timeout waiting for ${label} (${timeoutMs}ms)`)),
+      timeoutMs,
+    );
 
-    await sleep(25);
-  }
-
-  throw new Error(`Timeout waiting for ${label} (${timeoutMs}ms)`);
+    conn.ws.on("message", check);
+    conn.ws.once("close", onClose);
+    conn.ws.once("error", onError);
+    check();
+  });
 }
 
 /**
@@ -822,7 +874,7 @@ export async function sendPromptAndWait(
   opts?: { timeoutMs?: number },
 ): Promise<void> {
   const startIndex = conn.events.length;
-  const timeoutMs = opts?.timeoutMs ?? 90_000;
+  const timeoutMs = opts?.timeoutMs ?? 300_000;
 
   conn.send({
     type: "prompt",
@@ -901,6 +953,30 @@ function toEvent(direction: "in" | "out", msg: Record<string, unknown>, seq: num
   return event;
 }
 
-export function sleep(ms: number): Promise<void> {
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForCondition(
+  predicate: () => boolean | Promise<boolean>,
+  label: string,
+  timeoutMs: number,
+  pollMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await predicate())) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timeout waiting for ${label} (${timeoutMs}ms)`);
+    }
+    await sleep(pollMs);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

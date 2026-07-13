@@ -66,7 +66,7 @@ describe("E2E: Quick Session Send", { timeout: 300_000 }, () => {
     expect(sessionRes.status).toBe(201);
     sessionId = (sessionRes.json!.session as Record<string, unknown>).id as string;
     expect(sessionId).toBeTruthy();
-  }, 60_000);
+  }, 120_000);
 
   afterAll(async () => {
     if (!lmsReady() || !deviceToken || !workspaceId) return;

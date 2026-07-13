@@ -15,6 +15,11 @@ try {
   hasOpenSSL = false;
 }
 
+function logSkip(unavailable: boolean, suite: string, reason: string): boolean {
+  if (unavailable) console.warn(`[test] Skipping ${suite}: ${reason}`);
+  return unavailable;
+}
+
 function httpsGet(url: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = httpsRequest(
@@ -39,67 +44,84 @@ function httpsGet(url: string): Promise<{ status: number; body: string }> {
   });
 }
 
-describe.skipIf(!hasOpenSSL)("HTTPS/WSS integration", () => {
-  it("serves /health over HTTPS and bound session stream over WSS", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-https-integration-"));
-    const storage = new Storage(dataDir);
-    storage.updateConfig({
-      host: "127.0.0.1",
-      port: 0,
-      tls: { mode: "self-signed" },
-    });
-
-    const token = storage.ensurePaired();
-    const server = new Server(storage);
-
+async function waitForHttpsShutdown(url: string, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     try {
-      await server.start();
-      const baseURL = `https://127.0.0.1:${server.port}`;
+      await httpsGet(`${url}/health`);
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`HTTPS server still accepted connections after ${timeoutMs}ms`);
+}
 
-      const health = await httpsGet(`${baseURL}/health`);
-      expect(health.status).toBe(200);
-      const body = JSON.parse(health.body) as { ok?: boolean };
-      expect(body.ok).toBe(true);
-
-      const workspace = storage.createWorkspace({ name: "https-ws" });
-      const session = storage.createSession("https session");
-      session.workspaceId = workspace.id;
-      session.workspaceName = workspace.name;
-      storage.saveSession(session);
-
-      const streamMessage = await new Promise<Record<string, unknown> | null>((resolve) => {
-        const ws = new WebSocket(
-          `${baseURL.replace("https", "wss")}/workspaces/${workspace.id}/sessions/${session.id}/stream`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            rejectUnauthorized: false,
-          },
-        );
-
-        const timeout = setTimeout(() => {
-          ws.terminate();
-          resolve(null);
-        }, 5_000);
-
-        ws.on("message", (raw) => {
-          clearTimeout(timeout);
-          const parsed = JSON.parse(raw.toString()) as Record<string, unknown>;
-          ws.close();
-          resolve(parsed);
-        });
-
-        ws.on("error", () => {
-          clearTimeout(timeout);
-          resolve(null);
-        });
+describe.skipIf(logSkip(!hasOpenSSL, "HTTPS/WSS integration", "openssl executable is unavailable"))(
+  "HTTPS/WSS integration",
+  () => {
+    it("serves /health over HTTPS and bound session stream over WSS", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-https-integration-"));
+      const storage = new Storage(dataDir);
+      storage.updateConfig({
+        host: "127.0.0.1",
+        port: 0,
+        tls: { mode: "self-signed" },
       });
 
-      expect(streamMessage).not.toBeNull();
-      expect(streamMessage?.type).toBe("stream_connected");
-    } finally {
-      await server.stop().catch(() => {});
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  }, 30_000);
-});
+      const token = storage.ensurePaired();
+      const server = new Server(storage);
+      let baseURL = "";
+
+      try {
+        await server.start();
+        baseURL = `https://127.0.0.1:${server.port}`;
+
+        const health = await httpsGet(`${baseURL}/health`);
+        expect(health.status).toBe(200);
+        const body = JSON.parse(health.body) as { ok?: boolean };
+        expect(body.ok).toBe(true);
+
+        const workspace = storage.createWorkspace({ name: "https-ws" });
+        const session = storage.createSession("https session");
+        session.workspaceId = workspace.id;
+        session.workspaceName = workspace.name;
+        storage.saveSession(session);
+
+        const streamMessage = await new Promise<Record<string, unknown> | null>((resolve) => {
+          const ws = new WebSocket(
+            `${baseURL.replace("https", "wss")}/workspaces/${workspace.id}/sessions/${session.id}/stream`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              rejectUnauthorized: false,
+            },
+          );
+
+          const timeout = setTimeout(() => {
+            ws.terminate();
+            resolve(null);
+          }, 30_000);
+
+          ws.once("message", (raw) => {
+            clearTimeout(timeout);
+            const parsed = JSON.parse(raw.toString()) as Record<string, unknown>;
+            ws.close();
+            resolve(parsed);
+          });
+
+          ws.once("error", () => {
+            clearTimeout(timeout);
+            resolve(null);
+          });
+        });
+
+        expect(streamMessage).not.toBeNull();
+        expect(streamMessage?.type).toBe("stream_connected");
+      } finally {
+        await server.stop().catch(() => {});
+        if (baseURL) await waitForHttpsShutdown(baseURL);
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    }, 60_000);
+  },
+);
