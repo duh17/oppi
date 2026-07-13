@@ -158,7 +158,10 @@ async function listRecentSessionsLikeApp(
   const response = await call<SessionListResponse>(`/sessions/recent${querySuffix(params)}`);
   return {
     ...response,
-    sessions: applySessionListClientFilters(response.sessions ?? [], flags),
+    sessions: applySessionListClientFilters(
+      Array.isArray(response.sessions) ? response.sessions : [],
+      flags,
+    ),
   };
 }
 
