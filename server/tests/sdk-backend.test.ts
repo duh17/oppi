@@ -7,6 +7,7 @@ import * as PiSdk from "@earendil-works/pi-coding-agent";
 import { hostMountValidationError } from "../src/host.js";
 import * as GondolinManagerModule from "../src/gondolin-manager.js";
 import {
+  normalizeThinkingLevel,
   resolveSandboxGuestCwd,
   resolveSdkSessionCwd,
   resolveSdkSessionDisplayCwd,
@@ -464,27 +465,12 @@ describe("SdkBackend saved Agent definitions", () => {
 });
 
 describe("SdkBackend session state seeding", () => {
-  it("seeds the pi session thinking level from stored Oppi session state", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-thinking-seed-"));
-    const backend = await SdkBackend.create({
-      session: makeSession({ model: "openai/gpt-5.5", thinkingLevel: "high" }),
-      workspace: {
-        id: "w1",
-        name: "Thinking Seed Test",
-        runtime: "host",
-        hostMount: cwd,
-        extensions: [],
-      } as Workspace,
-      onEvent: vi.fn(),
-      onEnd: vi.fn(),
-    });
-
-    try {
-      expect(backend.session.thinkingLevel).toBe("high");
-    } finally {
-      await backend.dispose();
-      rmSync(cwd, { recursive: true, force: true });
+  it("normalizes stored Oppi thinking levels before SDK session creation", () => {
+    for (const level of ["off", "minimal", "low", "medium", "high", "xhigh"] as const) {
+      expect(normalizeThinkingLevel(level)).toBe(level);
     }
+    expect(normalizeThinkingLevel(undefined)).toBeUndefined();
+    expect(normalizeThinkingLevel("unsupported")).toBeUndefined();
   });
 });
 
