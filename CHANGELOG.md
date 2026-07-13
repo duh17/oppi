@@ -42,16 +42,21 @@ Example:
 
 - **Client:** WIP: reworking the Mac app into an interactive Oppi client for browsing workspaces, running sessions, and reviewing changes. It is not ready for general use yet.
 
+### Changed
+
+- **Client/Server:** The Mac app, terminal users, and managed host sessions now use the same `oppi` executable installed by `npm install -g oppi-server`. The Mac app no longer bundles a second server runtime; install or update the npm package before launching it.
+
 ## [0.44.0] - 2026-07-11
 
 ### Notes
 
-- Coordinated release for iOS `1.1.0` (build `41`) and `oppi-server@0.44.0`.
+- Coordinated release for iOS `1.1.0` (build `41`), `oppi-server@0.44.0`, and `oppi-mirror@0.44.0`.
 
 ### Added
 
 - **Client:** iPhone and iPad now open to a sessions-first inbox. Sessions needing attention and sessions still working stay prominent, recent stopped sessions remain available, and a workspace sidebar or drawer opens workspace-specific sessions, files, and settings without replacing the inbox.
 - **Server:** Expanded the `oppi` CLI for workspace, worktree, and session orchestration. It can create and manage workspaces and worktrees, launch sessions, send or queue messages, answer pending dialogs, watch or wait on session state, and inspect history progressively without loading a full trace.
+- **Mirror extension:** Added durable lifecycle evidence for agent, turn, and tool activity in terminal-owned Pi session files.
 
 ### Changed
 
@@ -64,6 +69,11 @@ Example:
 - **Client:** Following the system appearance now loads the correct light or dark theme and recolors existing code, diffs, tool output, and session rows when appearance changes.
 - **Client:** Relative images and links in session file previews resolve from the file being viewed, including in full screen.
 - **Server:** Skill and extension toggles now write Pi project settings for that workspace, so changing a resource in one workspace no longer mutates global settings for other workspaces.
+- **Mirror extension:** Pending blocking dialogs now replay after the bridge reconnects, so an unanswered terminal prompt remains available in Oppi.
+
+### Migration notes
+
+- **Mirror extension:** Install or refresh `oppi-mirror@0.44.0` after publish, then use `/reload` in any already-running interactive Pi session.
 
 ## [0.43.1] - 2026-06-30
 
