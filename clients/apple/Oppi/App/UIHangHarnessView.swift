@@ -982,36 +982,44 @@ struct UIHangHarnessView: View {
             }
 
             if UIHangHarnessConfig.queueHarnessEnabled {
-                HStack(spacing: 8) {
-                    Button("Queue Steer") {
-                        enqueueQueueItem(kind: .steer)
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.queue.enqueueSteer")
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Button("Queue Steer") {
+                            enqueueQueueItem(kind: .steer)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("harness.queue.enqueueSteer")
 
-                    Button("Queue Follow") {
-                        enqueueQueueItem(kind: .followUp)
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.queue.enqueueFollow")
+                        Button("Queue Follow") {
+                            enqueueQueueItem(kind: .followUp)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("harness.queue.enqueueFollow")
 
-                    Button("Start Steer") {
-                        startQueueItem(kind: .steer)
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.queue.startSteer")
+                        Button("Start Steer") {
+                            startQueueItem(kind: .steer)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("harness.queue.startSteer")
 
-                    Button("Start Follow") {
-                        startQueueItem(kind: .followUp)
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.queue.startFollow")
+                        Button("Start Follow") {
+                            startQueueItem(kind: .followUp)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("harness.queue.startFollow")
 
-                    Button("Clear Queue") {
-                        clearQueueItems()
+                        Button("Clear Queue") {
+                            clearQueueItems()
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("harness.queue.clear")
+                    }
+
+                    Button("Queue Attachments") {
+                        enqueueAttachmentQueueItems()
                     }
                     .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.queue.clear")
+                    .accessibilityIdentifier("harness.queue.enqueueAttachments")
                 }
             }
         }
@@ -1547,6 +1555,49 @@ struct UIHangHarnessView: View {
             next.followUp.append(item)
         }
 
+        next.version += 1
+        setCurrentQueueState(next)
+        heartbeat &+= 1
+    }
+
+    private func enqueueAttachmentQueueItems() {
+        let now = Int(Date().timeIntervalSince1970 * 1_000)
+        let image = ChatAttachmentRef(
+            type: "attachment",
+            id: "harness-image",
+            source: .upload,
+            name: "image-1.jpg",
+            mimeType: "image/jpeg",
+            sizeBytes: 1_024,
+            sha256: nil,
+            kind: .image,
+            workspacePath: ".pi/attachments/harness/image-1.jpg"
+        )
+        let file = ChatAttachmentRef(
+            type: "attachment",
+            id: "harness-file",
+            source: .upload,
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 256,
+            sha256: nil,
+            kind: .text,
+            workspacePath: ".pi/attachments/harness/notes.txt"
+        )
+
+        var next = currentQueueState
+        next.steering.append(MessageQueueItem(
+            id: "harness-image-item",
+            message: "",
+            attachments: [image],
+            createdAt: now
+        ))
+        next.steering.append(MessageQueueItem(
+            id: "harness-file-item",
+            message: "",
+            attachments: [file],
+            createdAt: now + 1
+        ))
         next.version += 1
         setCurrentQueueState(next)
         heartbeat &+= 1
