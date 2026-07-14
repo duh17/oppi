@@ -16,7 +16,6 @@ final class ServerConnection {
     // Networking
     private(set) var apiClient: APIClient?
     private(set) var wsClient: WebSocketClient?
-    var splitSessionStreamAvailable = false
     var dictationStreamAvailable = false
     var appEventStreamAvailable = false
     private(set) var appEventStreamTransportState: ServerHealth.TransportState = .disconnected
@@ -58,7 +57,6 @@ final class ServerConnection {
     }
 
     func disableSplitStreamsForUnsupportedEndpoint() {
-        splitSessionStreamAvailable = false
         dictationStreamAvailable = false
         missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities.requiredSplitStreamCapabilityNames
         streamCapabilitiesRefreshFailed = false
@@ -321,7 +319,6 @@ final class ServerConnection {
         self.credentials = credentials
         self.currentServerId = credentials.normalizedServerFingerprint
         self.endpointSelection = selection
-        self.splitSessionStreamAvailable = false
         self.dictationStreamAvailable = false
         self.appEventStreamAvailable = false
         self.appEventStreamTransportState = .disconnected
@@ -687,7 +684,6 @@ final class ServerConnection {
                 guard self.streamCapabilitiesGeneration == generation else { return }
 
                 let capabilities = info.capabilities
-                self.splitSessionStreamAvailable = capabilities?.sessionStream?.version ?? 0 >= 1
                 self.dictationStreamAvailable = capabilities?.dictationStream?.version ?? 0 >= 1
                 self.appEventStreamAvailable = capabilities?.appEventStream?.version ?? 0 >= 1
                 self.missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities
@@ -710,7 +706,6 @@ final class ServerConnection {
                 // session entry retries /server/info instead of returning nil forever.
                 self.streamCapabilitiesRefreshFailed = true
                 if !hadLoadedCapabilities {
-                    self.splitSessionStreamAvailable = false
                     self.dictationStreamAvailable = false
                     self.appEventStreamAvailable = false
                     self.disconnectAppEventStream()
@@ -1415,7 +1410,6 @@ final class ServerConnection {
         dictationStream: Bool = false,
         appEventStream: Bool = false
     ) {
-        splitSessionStreamAvailable = sessionStream
         dictationStreamAvailable = dictationStream
         appEventStreamAvailable = appEventStream
         var missing: [String] = []

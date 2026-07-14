@@ -1352,8 +1352,8 @@ enum ExtensionSurfacePanelEntry: Equatable, Identifiable {
 
     var id: String {
         switch self {
-        case .native(let nativeSurface): return "native:\(nativeSurface.identityKey)"
-        case .widget(let widget): return "widget:\(widget.identityKey)"
+        case .native(let nativeSurface): return "native:\(nativeSurface.key)"
+        case .widget(let widget): return "widget:\(widget.key)"
         }
     }
 
@@ -1732,8 +1732,8 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
         switch self {
         case .title: return "title"
         case .status(let id, _, _): return "status:\(id)"
-        case .native(let nativeSurface, _): return "native:\(nativeSurface.identityKey)"
-        case .widget(let widget, _, _): return "widget:\(widget.identityKey)"
+        case .native(let nativeSurface, _): return "native:\(nativeSurface.key)"
+        case .widget(let widget, _, _): return "widget:\(widget.key)"
         case .messageQueue: return "message-queue"
         }
     }
