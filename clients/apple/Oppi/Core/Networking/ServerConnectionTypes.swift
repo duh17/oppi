@@ -150,8 +150,6 @@ struct ExtensionWidgetState: Equatable, Sendable {
     var extensionScopeId: String? = nil
     var extensionDisplayName: String? = nil
     var order: Int = 0
-
-    var identityKey: String { key }
 }
 
 struct ExtensionNativeSurfaceState: Equatable, Sendable, Identifiable {
@@ -163,8 +161,6 @@ struct ExtensionNativeSurfaceState: Equatable, Sendable, Identifiable {
     var order: Int = 0
 
     var id: String { surface.id }
-
-    var identityKey: String { key }
 
     var hasVisibleContent: Bool {
         surface.hasVisibleContent
