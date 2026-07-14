@@ -1,11 +1,19 @@
 import { execFile } from "node:child_process";
 import { createServer as createHttpServer, type ServerResponse } from "node:http";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { openDatabase } from "../src/sqlite-compat.js";
 import { ConfigStore } from "../src/storage/config-store.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 
@@ -185,6 +193,61 @@ describe("CLI app-state API boundary", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("keeps config set able to repair an invalid config without opening app-state storage", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-invalid-config-repair-"));
+    try {
+      writeCliConfig(dataDir, 70_000);
+
+      const result = await runCliResult(["config", "set", "port", "7749"], dataDir);
+
+      expect(result.code, result.stdout).toBe(0);
+      const saved = JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8")) as {
+        port?: unknown;
+      };
+      expect(saved.port).toBe(7749);
+      expect(sessionStateDbFiles(dataDir)).toEqual([]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not require session-state SQLite writes for config-only commands", async () => {
+    const cases: Array<{
+      name: string;
+      args: (dataDir: string) => string[];
+      needsConfig: boolean;
+    }> = [
+      {
+        name: "pair",
+        args: () => ["pair", "Lock test", "--host", "127.0.0.1", "--json"],
+        needsConfig: true,
+      },
+      { name: "token", args: () => ["token", "rotate"], needsConfig: true },
+      { name: "config", args: () => ["config", "set", "port", "7750"], needsConfig: true },
+      {
+        name: "init",
+        args: (dataDir) => ["init", "--yes", "--data-dir", dataDir],
+        needsConfig: false,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const dataDir = mkdtempSync(join(tmpdir(), `oppi-cli-no-session-db-${testCase.name}-`));
+      if (testCase.needsConfig) writeCliConfig(dataDir, 7749);
+
+      const lock = openDatabase(join(dataDir, "session-state.db"));
+      lock.exec("BEGIN EXCLUSIVE");
+      try {
+        const result = await runCliResult(testCase.args(dataDir), dataDir);
+        expect(result.code, `${testCase.name}: ${result.stdout}`).toBe(0);
+      } finally {
+        lock.exec("ROLLBACK");
+        lock.close();
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    }
+  }, 45_000);
 
   it("serves workspace reads through the local API without opening session-state SQLite", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-api-first-"));

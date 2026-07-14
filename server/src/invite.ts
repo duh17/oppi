@@ -3,8 +3,7 @@
  */
 
 import { sign } from "node:crypto";
-import type { Storage } from "./storage.js";
-import type { InviteData, InvitePayloadV3, SignedInviteEnvelopeV3 } from "./types.js";
+import type { InviteData, InvitePayloadV3, ServerConfig, SignedInviteEnvelopeV3 } from "./types.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import {
   isTailscaleHostname,
@@ -33,6 +32,13 @@ export interface GenerateInviteOptions {
   pairingTokenTtlMs?: number;
 }
 
+export interface InviteStorage {
+  getConfig(): ServerConfig;
+  getDataDir(): string;
+  ensurePaired(): string;
+  issuePairingToken(ttlMs?: number): string;
+}
+
 /**
  * Generate a structured invite payload.
  *
@@ -42,7 +48,7 @@ export interface GenerateInviteOptions {
  * Throws on unrecoverable errors (no host detected, TLS mode mismatch, etc.).
  */
 export function generateInvite(
-  storage: Storage,
+  storage: InviteStorage,
   resolveInviteHost: (hostOverride?: string) => string | null,
   shortHostLabel: (host: string) => string,
   opts: GenerateInviteOptions = {},
