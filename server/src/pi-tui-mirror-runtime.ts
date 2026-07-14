@@ -110,6 +110,8 @@ export interface PiBridgeStateSnapshot {
   thinkingLevel?: string;
   isIdle?: boolean;
   contextUsage?: { tokens?: unknown; contextWindow?: unknown } | null;
+  showCacheMissNotices?: boolean;
+  cacheReadCostPerMillion?: number;
   cwd?: string;
 }
 
@@ -1741,6 +1743,21 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const model = normalizeModelId(state.model);
     if (model) session.model = model;
     active.leafId = normalizeLeafId(state.leafId);
+    if (typeof state.showCacheMissNotices === "boolean") {
+      active.showCacheMissNotices = state.showCacheMissNotices;
+    }
+    if (
+      model &&
+      typeof state.cacheReadCostPerMillion === "number" &&
+      Number.isFinite(state.cacheReadCostPerMillion)
+    ) {
+      const modelKey = model;
+      const cacheRead = Math.max(0, state.cacheReadCostPerMillion);
+      active.cacheMissModelPriceSource = {
+        find: (provider, modelId) =>
+          `${provider}/${modelId}` === modelKey ? { cost: { cacheRead } } : undefined,
+      };
+    }
     if (state.thinkingLevel?.trim()) session.thinkingLevel = state.thinkingLevel.trim();
     if (state.piSessionId?.trim()) session.piSessionId = state.piSessionId.trim();
     mergePiSessionFile(session, state.sessionFile);

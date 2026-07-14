@@ -2,7 +2,13 @@ import SwiftUI
 import UIKit
 
 struct SystemTimelineRowConfiguration: UIContentConfiguration {
+    enum Style {
+        case informational
+        case warning
+    }
+
     let message: String
+    var style: Style = .informational
 
     func makeContentView() -> any UIView & UIContentView {
         SystemTimelineRowContentView(configuration: self)
@@ -49,7 +55,6 @@ final class SystemTimelineRowContentView: UIView, UIContentView {
         stackView.spacing = 6
 
         iconImageView.translatesAutoresizingMaskIntoConstraints = false
-        iconImageView.image = UIImage(systemName: "info.circle")
         iconImageView.contentMode = .scaleAspectFit
 
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -77,8 +82,16 @@ final class SystemTimelineRowContentView: UIView, UIContentView {
         currentConfiguration = configuration
 
         let palette = ThemeRuntimeState.currentPalette()
-        iconImageView.tintColor = UIColor(palette.comment)
-        messageLabel.textColor = UIColor(palette.comment)
+        switch configuration.style {
+        case .informational:
+            iconImageView.image = UIImage(systemName: "info.circle")
+            iconImageView.tintColor = UIColor(palette.comment)
+            messageLabel.textColor = UIColor(palette.comment)
+        case .warning:
+            iconImageView.image = UIImage(systemName: "exclamationmark.triangle.fill")
+            iconImageView.tintColor = UIColor(palette.orange)
+            messageLabel.textColor = UIColor(palette.orange)
+        }
         messageLabel.text = configuration.message
     }
 }

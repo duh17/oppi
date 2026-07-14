@@ -144,6 +144,7 @@ final class DeltaCoalescer {
         case .agentStart,
              .agentEnd,
              .messageEnd,
+             .cacheMiss,
              .sessionEnded,
              .error,
              .compactionStart,

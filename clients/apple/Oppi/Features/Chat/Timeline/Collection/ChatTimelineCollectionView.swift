@@ -492,7 +492,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             switch item {
             case .audioClip, .toolCall:
                 return true
-            case .assistantMessage, .customEvent, .error, .systemEvent, .thinking, .userMessage:
+            case .assistantMessage, .cacheMiss, .customEvent, .error, .systemEvent, .thinking, .userMessage:
                 return false
             }
         }
@@ -1012,7 +1012,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 // with double-tap copy gestures.
                 return
 
-            case .customEvent:
+            case .cacheMiss, .customEvent:
                 return
 
             default:

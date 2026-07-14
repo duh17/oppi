@@ -136,6 +136,10 @@ extension ChatTimelineCollectionHost.Controller {
             )
         }
 
+        if case .cacheMiss(_, let message) = item {
+            return SystemTimelineRowConfiguration(message: message, style: .warning)
+        }
+
         guard case .systemEvent(_, let message) = item else { return nil }
 
         if let compaction = Self.compactionPresentation(from: message) {

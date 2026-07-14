@@ -135,6 +135,7 @@ describe("SessionBroadcaster", () => {
       "agent_end",
       "agent_settled",
       "message_end",
+      "cache_miss",
       "tool_start",
       "tool_end",
       "stop_requested",

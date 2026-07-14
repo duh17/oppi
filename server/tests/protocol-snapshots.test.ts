@@ -130,6 +130,11 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       role: "assistant",
       content: "I've finished updating the code.",
     },
+    cache_miss: {
+      type: "cache_miss",
+      id: "cache-miss:1739750460000:anthropic/claude-sonnet-4-20250514",
+      message: "Cache miss after 5m idle: 69k tokens re-billed (~$0.79)",
+    },
 
     // Streaming
     text_delta: { type: "text_delta", delta: "Hello, " },
@@ -424,6 +429,7 @@ describe("protocol snapshots", () => {
       "agent_end",
       "agent_settled",
       "message_end",
+      "cache_miss",
       "text_delta",
       "thinking_delta",
       "audio_stream",

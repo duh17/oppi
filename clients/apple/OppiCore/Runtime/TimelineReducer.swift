@@ -1007,6 +1007,19 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             handleMessageEnd(content)
             return renderMutationCheckpoint() != before
 
+        case .cacheMiss(_, let id, let message):
+            let item = ChatItem.cacheMiss(id: id, message: message)
+            if let index = indexForID(id) {
+                guard items[index] != item else { return false }
+                items[index] = item
+                bumpItemsMutationSeq()
+            } else {
+                items.append(item)
+                indexAppend(item)
+                bumpItemsMutationSeq()
+            }
+            return true
+
         case .toolStart(_, let toolEventId, let tool, let args, let callSegments):
             return handleToolStart(
                 toolEventId: toolEventId,

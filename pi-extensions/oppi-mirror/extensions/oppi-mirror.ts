@@ -61,6 +61,9 @@ interface EditableAgentSession {
     getSessionId?: () => string;
     getHeader?: () => { cwd?: string } | null;
   };
+  settingsManager?: {
+    getShowCacheMissNotices?: () => boolean;
+  };
   getToolDefinition?: (name: string) => ToolDefinition | undefined;
   resourceLoader?: {
     getSkills?: () => {
@@ -1543,7 +1546,16 @@ function textFromUserMessage(message: unknown): string | undefined {
     .trim();
 }
 
+function editableAgentSessionForContext(
+  ctx: ExtensionContext,
+): EditableAgentSession | undefined {
+  const bridge = getQueueUpdateBridge();
+  return bridge.sessions.get(ctx.sessionManager.getSessionId()) ?? bridge.lastSession;
+}
+
 function stateSnapshot(pi: ExtensionAPI, ctx: ExtensionContext) {
+  const session = editableAgentSessionForContext(ctx);
+  const cacheReadCostPerMillion = ctx.model?.cost.cacheRead;
   return {
     cwd: ctx.cwd,
     sessionFile: ctx.sessionManager.getSessionFile(),
@@ -1554,6 +1566,11 @@ function stateSnapshot(pi: ExtensionAPI, ctx: ExtensionContext) {
     thinkingLevel: pi.getThinkingLevel(),
     isIdle: ctx.isIdle(),
     contextUsage: contextUsageWire(ctx),
+    showCacheMissNotices:
+      session?.settingsManager?.getShowCacheMissNotices?.() ?? false,
+    ...(typeof cacheReadCostPerMillion === "number"
+      ? { cacheReadCostPerMillion }
+      : {}),
   };
 }
 
@@ -3210,10 +3227,7 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
   function findEditableAgentSession(
     ctx: ExtensionContext,
   ): EditableAgentSession | undefined {
-    const sessionId = ctx.sessionManager.getSessionId();
-    return (
-      queueUpdateBridge.sessions.get(sessionId) ?? queueUpdateBridge.lastSession
-    );
+    return editableAgentSessionForContext(ctx);
   }
 
   function requireEditableAgentSession(

@@ -1,4 +1,5 @@
 import { EventRing } from "./event-ring.js";
+import type { CacheMissModelPriceSource, CacheMissTrackerState } from "./cache-miss.js";
 import type { ExtensionUIState } from "./extension-ui-state.js";
 import type { PendingStop } from "./session-stop.js";
 import { TurnDedupeCache } from "./turn-cache.js";
@@ -26,6 +27,9 @@ export interface RuntimeSessionStateScaffold<
   messageQueue: TQueue;
   turnCache: TurnDedupeCache;
   pendingTurnStarts: string[];
+  cacheMissTracker: CacheMissTrackerState;
+  showCacheMissNotices: boolean;
+  cacheMissModelPriceSource?: CacheMissModelPriceSource;
 }
 
 export function createEmptyRuntimeMessageQueue(): MessageQueueState {
@@ -63,5 +67,7 @@ export function createRuntimeSessionStateScaffold<
     messageQueue,
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],
+    cacheMissTracker: {},
+    showCacheMissNotices: false,
   };
 }

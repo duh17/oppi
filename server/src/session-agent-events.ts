@@ -1,6 +1,16 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import {
+  asCacheMissAssistantMessage,
+  formatCacheMissNotice,
+  observeCacheMiss,
+  resetCacheMissTracker,
+  shouldDisplayCacheMissForMessage,
+  type CacheMissModelPriceSource,
+  type CacheMissNotice,
+  type CacheMissTrackerState,
+} from "./cache-miss.js";
+import {
   handleExtensionUIRequest as handleExtensionUIRequestState,
   settleExtensionUIRequest,
 } from "./extension-ui-state.js";
@@ -31,6 +41,9 @@ export interface SessionAgentEventState extends EventProcessorSessionState, Turn
   subscribers: Set<(msg: ServerMessage) => void>;
   sdkBackend?: SdkBackend;
   toolFullOutputPaths: Map<string, string>;
+  cacheMissTracker: CacheMissTrackerState;
+  showCacheMissNotices: boolean;
+  cacheMissModelPriceSource?: CacheMissModelPriceSource;
 }
 
 const log = createLogger({ base: { component: "session_agent_events" } });
@@ -138,6 +151,34 @@ export class SessionAgentEventCoordinator {
     });
     event = this.withToolTuiRenderSnapshot(active, event);
 
+    active.cacheMissTracker ??= {};
+    active.showCacheMissNotices ??= false;
+    if (active.sdkBackend) {
+      active.showCacheMissNotices = active.sdkBackend.showCacheMissNotices;
+      active.cacheMissModelPriceSource = active.sdkBackend.cacheMissModelPriceSource;
+    }
+
+    let cacheMissNotice: CacheMissNotice | undefined;
+    if (event.type === "compaction_end" && !event.aborted && event.result) {
+      resetCacheMissTracker(active.cacheMissTracker);
+    } else if (event.type === "message_end") {
+      const assistantMessage = asCacheMissAssistantMessage(event.message);
+      if (assistantMessage) {
+        const detected = observeCacheMiss(
+          active.cacheMissTracker,
+          assistantMessage,
+          active.cacheMissModelPriceSource,
+        );
+        if (
+          active.showCacheMissNotices &&
+          detected &&
+          shouldDisplayCacheMissForMessage(assistantMessage)
+        ) {
+          cacheMissNotice = detected;
+        }
+      }
+    }
+
     if (SessionAgentEventCoordinator.INFO_LOGGED_EVENT_TYPES.has(event.type)) {
       this.logPiEvent("info", active, event);
     } else if (SessionAgentEventCoordinator.DEBUG_LOGGED_EVENT_TYPES.has(event.type)) {
@@ -228,6 +269,13 @@ export class SessionAgentEventCoordinator {
           type: "message_end",
           role,
           content: extractAssistantText(event.message),
+        });
+      }
+      if (cacheMissNotice) {
+        this.deps.broadcast(key, {
+          type: "cache_miss",
+          id: cacheMissNotice.id,
+          message: formatCacheMissNotice(cacheMissNotice),
         });
       }
     }

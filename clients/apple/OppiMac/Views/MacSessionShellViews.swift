@@ -1221,6 +1221,8 @@ private struct ChatItemSummaryRow: View {
             )
         case .systemEvent(_, let message):
             TimelineBubble(title: "System", subtitle: nil, text: message, tint: .secondary)
+        case .cacheMiss(_, let message):
+            TimelineBubble(title: "Cache miss", subtitle: nil, text: message, tint: .orange)
         case .customEvent(_, let message, let presentation):
             TimelineBubble(title: presentation.title, subtitle: presentation.subtitle, text: message, tint: .secondary)
         case .error(_, let message):
