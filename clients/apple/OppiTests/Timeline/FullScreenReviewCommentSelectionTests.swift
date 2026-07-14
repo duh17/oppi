@@ -431,6 +431,41 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
+    @Test func markdownBodyKeepsAdjacentHeadingAndParagraphInSingleSelectionSurface() throws {
+        let body = NativeFullScreenMarkdownBody(
+            content: "# Selection heading\n\nParagraph text continues here.",
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let host = attachToHost(body)
+        _ = host
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let matchingTextViews = timelineAllTextViews(in: body).filter {
+            let text = timelineRenderedText(of: $0)
+            return text.contains("Selection heading") || text.contains("Paragraph text continues here.")
+        }
+
+        #expect(matchingTextViews.count == 1, "Adjacent markdown prose must share one UITextView so native selection can cross block boundaries")
+        let textView = try #require(matchingTextViews.first)
+        let renderedText = timelineRenderedText(of: textView) as NSString
+        let headingRange = renderedText.range(of: "Selection heading")
+        let paragraphRange = renderedText.range(of: "Paragraph text continues here.")
+        try #require(headingRange.location != NSNotFound)
+        try #require(paragraphRange.location != NSNotFound)
+        let crossBlockRange = NSRange(
+            location: headingRange.location,
+            length: NSMaxRange(paragraphRange) - headingRange.location
+        )
+
+        textView.selectedRange = crossBlockRange
+
+        #expect(textView.selectedRange == crossBlockRange)
+        #expect(crossBlockRange.length > headingRange.length)
+    }
+
     @Test func markdownBodyPrependsCommentAction() throws {
         let controller = makeController(
             content: .markdown(content: "Alpha beta gamma", filePath: "Notes.md")
