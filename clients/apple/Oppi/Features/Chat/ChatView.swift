@@ -1109,14 +1109,6 @@ struct ChatView: View {
         return true
     }
 
-    private func editReviewComment(_ comment: ReviewComment, body: String) -> Bool {
-        if let error = reviewComments.update(comment, body: body) {
-            connection.extensionToast = error
-            return false
-        }
-        return true
-    }
-
     private func deleteReviewComment(_ comment: ReviewComment) {
         reviewComments.delete(comment)
     }
@@ -1768,11 +1760,20 @@ struct ChatView: View {
     }
 
     private var reviewCommentStashSheet: some View {
-        ReviewCommentStashSheet(
-            comments: reviewComments.stagedComments,
+        let commentsController = reviewComments
+        let connection = connection
+
+        return ReviewCommentStashSheet(
+            comments: commentsController.stagedComments,
             focusedCommentId: focusedReviewCommentId,
-            onEdit: { comment, body in
-                editReviewComment(comment, body: body)
+            // Keep the save callback scoped to the state it needs. The device test
+            // determines whether this affects the watchdog path.
+            onEdit: { [commentsController, connection] comment, body in
+                if let error = commentsController.update(comment, body: body) {
+                    connection.extensionToast = error
+                    return false
+                }
+                return true
             },
             onDelete: { comment in
                 deleteReviewComment(comment)
