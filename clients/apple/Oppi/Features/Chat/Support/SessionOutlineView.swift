@@ -224,7 +224,7 @@ struct SessionOutlineView: View {
 
             let passesAllFilter: Bool
             switch item {
-            case .systemEvent:
+            case .systemEvent, .cacheMiss:
                 passesAllFilter = isCompaction
             default:
                 passesAllFilter = true
@@ -370,7 +370,7 @@ struct SessionOutlineView: View {
         case .audioClip: return .assistant
         case .thinking: return .thinking
         case .toolCall: return .tool
-        case .systemEvent: return .system
+        case .systemEvent, .cacheMiss: return .system
         case .customEvent: return .custom
         case .error: return .error
         }
@@ -1008,7 +1008,7 @@ struct SessionOutlineView: View {
         case .toolCall(let id, let tool, let argsSummary, _, _, _, _):
             return formatToolSummary(id: id, tool: tool, argsSummary: argsSummary)
 
-        case .systemEvent(_, let msg):
+        case .systemEvent(_, let msg), .cacheMiss(_, let msg):
             return msg
 
         case .customEvent(_, let msg, let presentation):

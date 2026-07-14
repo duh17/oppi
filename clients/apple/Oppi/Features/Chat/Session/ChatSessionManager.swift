@@ -926,7 +926,7 @@ final class ChatSessionManager {
                 connection.fatalSetupError = true
             }
 
-        case .sessionEnded, .compactionStart, .compactionEnd, .retryStart, .retryEnd:
+        case .sessionEnded, .cacheMiss, .compactionStart, .compactionEnd, .retryStart, .retryEnd:
             break
 
         case .commandResult(let command, let requestId, let success, let data, let error):

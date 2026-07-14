@@ -26,6 +26,34 @@ function makeSession(overrides?: Partial<Session>): Session {
   };
 }
 
+function cacheMessageEvent(timestamp: number, cached: boolean): SessionBackendEvent {
+  return {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      provider: "anthropic",
+      model: "claude-sonnet",
+      timestamp,
+      stopReason: "stop",
+      content: [{ type: "text", text: "done" }],
+      usage: {
+        input: cached ? 1_000 : 70_000,
+        output: 0,
+        cacheRead: cached ? 69_000 : 0,
+        cacheWrite: 0,
+        totalTokens: 70_000,
+        cost: {
+          input: cached ? 0.012 : 0.84,
+          output: 0,
+          cacheRead: cached ? 0.069 : 0,
+          cacheWrite: 0,
+          total: cached ? 0.081 : 0.84,
+        },
+      },
+    },
+  } as unknown as SessionBackendEvent;
+}
+
 describe("SessionAgentEventCoordinator", () => {
   const tempDirs: string[] = [];
 
@@ -52,6 +80,8 @@ describe("SessionAgentEventCoordinator", () => {
       sdkBackend: {} as never,
       subscribers: new Set<(msg: unknown) => void>(),
       toolFullOutputPaths: new Map<string, string>(),
+      cacheMissTracker: {},
+      showCacheMissNotices: false,
     };
   }
 
@@ -216,6 +246,60 @@ describe("SessionAgentEventCoordinator", () => {
     expect(output).not.toContain('"event":"session_agent_events.pi_event"');
     expect(output).not.toContain('"eventType":"turn_start"');
     expect(output).not.toContain('"eventType":"turn_end"');
+  });
+
+  it("emits live cache misses only when Pi's setting is enabled", () => {
+    const active = makeActiveSession();
+    active.sdkBackend = undefined;
+    active.showCacheMissNotices = true;
+    active.cacheMissModelPriceSource = {
+      find: () => ({ cost: { cacheRead: 1 } }),
+    };
+    const { broadcast, coordinator } = makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, cacheMessageEvent(1_000, true));
+    coordinator.handlePiEvent(active.session.id, cacheMessageEvent(310_700, false));
+
+    expect(broadcast).toHaveBeenCalledWith(
+      "child-1",
+      expect.objectContaining({
+        type: "cache_miss",
+        message: "Cache miss after 5m idle: 70k tokens re-billed (~$0.77)",
+      }),
+    );
+
+    const hidden = makeActiveSession();
+    hidden.sdkBackend = undefined;
+    hidden.cacheMissModelPriceSource = active.cacheMissModelPriceSource;
+    const hiddenHarness = makeCoordinator(hidden);
+    hiddenHarness.coordinator.handlePiEvent(hidden.session.id, cacheMessageEvent(1_000, true));
+    hiddenHarness.coordinator.handlePiEvent(hidden.session.id, cacheMessageEvent(310_700, false));
+    expect(
+      hiddenHarness.broadcast.mock.calls.some(([, message]) => message.type === "cache_miss"),
+    ).toBe(false);
+  });
+
+  it("keeps cache state when compaction fails without producing a result", () => {
+    const active = makeActiveSession();
+    active.sdkBackend = undefined;
+    active.showCacheMissNotices = true;
+    active.cacheMissModelPriceSource = {
+      find: () => ({ cost: { cacheRead: 1 } }),
+    };
+    const { broadcast, coordinator } = makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, cacheMessageEvent(1_000, true));
+    coordinator.handlePiEvent(active.session.id, {
+      type: "compaction_end",
+      reason: "manual",
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+      errorMessage: "compaction failed",
+    });
+    coordinator.handlePiEvent(active.session.id, cacheMessageEvent(310_700, false));
+
+    expect(broadcast.mock.calls.some(([, message]) => message.type === "cache_miss")).toBe(true);
   });
 
   it("attaches managed SDK renderResult snapshots to tool_end details", () => {

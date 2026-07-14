@@ -373,7 +373,7 @@ enum TimelineSnapshotApplier {
         // Assistant messages are handled separately via
         // shouldReconfigureStreamingAssistant — only the actively streaming
         // one needs reconfiguration. Past assistants never change in-flight.
-        case .assistantMessage, .audioClip, .customEvent, .error:
+        case .assistantMessage, .audioClip, .cacheMiss, .customEvent, .error:
             return false
         }
     }

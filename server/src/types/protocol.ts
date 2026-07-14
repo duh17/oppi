@@ -396,6 +396,12 @@ export type ServerMessage = // ── Connection ──
     | { type: "agent_end" }
     | { type: "agent_settled" }
     | { type: "message_end"; role: "user" | "assistant"; content: string }
+    | {
+        /** Experimental live-only projection, emitted only while Pi's showCacheMissNotices is enabled. */
+        type: "cache_miss";
+        id: string;
+        message: string;
+      }
     // ── Streaming ──
     | { type: "text_delta"; delta: string }
     | { type: "thinking_delta"; delta: string; contentIndex?: number }

@@ -268,6 +268,16 @@ struct ProtocolSnapshotTests {
         #expect(callSegs?[2].style == .warning)
     }
 
+    @Test func cacheMiss() throws {
+        let msg = try decodeMessage("cache_miss")
+        guard case .cacheMiss(let id, let message) = msg else {
+            Issue.record("Expected .cacheMiss")
+            return
+        }
+        #expect(id == "cache-miss:1739750460000:anthropic/claude-sonnet-4-20250514")
+        #expect(message == "Cache miss after 5m idle: 69k tokens re-billed (~$0.79)")
+    }
+
     @Test func compaction() throws {
         let startMsg = try decodeMessage("compaction_start")
         guard case .compactionStart(let reason) = startMsg else {
@@ -351,7 +361,7 @@ struct ProtocolSnapshotTests {
             "connected", "stream_connected", "state", "session_summary",
             "session_ended", "session_deleted",
             "stop_requested", "stop_confirmed", "stop_failed", "error",
-            "agent_start", "agent_end", "message_end",
+            "agent_start", "agent_end", "message_end", "cache_miss",
             "text_delta", "thinking_delta", "audio_stream",
             "tool_start", "tool_update", "tool_output", "tool_end",
             "queue_state", "queue_item_started",

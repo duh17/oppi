@@ -36,6 +36,7 @@ import {
 import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { AgentDefinition } from "./agent-launch-service.js";
+import type { CacheMissModelPriceSource } from "./cache-miss.js";
 import { isDefaultAgentId } from "./default-agent.js";
 import {
   modelCandidatesFromRegistry,
@@ -681,6 +682,14 @@ export class SdkBackend {
 
   get session(): AgentSession {
     return this.piSession;
+  }
+
+  get showCacheMissNotices(): boolean {
+    return this.runtime.services.settingsManager.getShowCacheMissNotices();
+  }
+
+  get cacheMissModelPriceSource(): CacheMissModelPriceSource {
+    return this.modelRegistry;
   }
 
   private subscribeToCurrentSession(): void {

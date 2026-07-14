@@ -228,6 +228,24 @@ struct TimelineReducerTests {
         #expect(text == "Done!")
     }
 
+    @Test func cacheMissRendersAsWarningTimelineItem() {
+        let reducer = TimelineReducer()
+        let expectedID = "cache-miss:1:anthropic/claude-sonnet"
+        reducer.process(.cacheMiss(
+            sessionId: "s1",
+            id: expectedID,
+            message: "Cache miss after 5m idle: 69k tokens re-billed (~$0.79)"
+        ))
+
+        #expect(reducer.items.count == 1)
+        guard case .cacheMiss(let id, let message) = reducer.items[0] else {
+            Issue.record("Expected typed cache miss notice")
+            return
+        }
+        #expect(id == "cache-miss:1:anthropic/claude-sonnet")
+        #expect(message == "Cache miss after 5m idle: 69k tokens re-billed (~$0.79)")
+    }
+
     @Test func retryStartRendersAsError() {
         let reducer = TimelineReducer()
         reducer.process(.retryStart(sessionId: "s1", attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: "rate limit"))
