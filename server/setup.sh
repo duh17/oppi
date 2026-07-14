@@ -43,7 +43,7 @@ else
 fi
 
 echo "Building..."
-"$RT" node_modules/.bin/tsc 2>/dev/null || npx tsc
+"$RT" node_modules/@typescript/native/bin/tsc
 chmod +x dist/src/cli.js
 
 # Start

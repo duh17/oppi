@@ -10,10 +10,18 @@ export default function buildCliOnce(): () => void {
   const buildRoot = mkdtempSync(join(tmpdir(), "oppi-vitest-build-"));
 
   try {
-    execFileSync(join(serverRoot, "node_modules", ".bin", "tsc"), ["--outDir", buildRoot], {
-      cwd: serverRoot,
-      stdio: "inherit",
-    });
+    execFileSync(
+      process.execPath,
+      [
+        join(serverRoot, "node_modules", "@typescript", "native", "bin", "tsc"),
+        "--outDir",
+        buildRoot,
+      ],
+      {
+        cwd: serverRoot,
+        stdio: "inherit",
+      },
+    );
     execFileSync(process.execPath, [join(serverRoot, "scripts", "copy-oppi-docs.mjs")], {
       cwd: serverRoot,
       env: { ...process.env, OPPI_BUILD_DIR: buildRoot },
