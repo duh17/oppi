@@ -360,16 +360,23 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var composerCapsule: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Ask card (inline question from agent)
+            // Ask card (inline question from agent). While the keyboard is up,
+            // let a long card scroll instead of allowing it to displace the
+            // text controls and model/thinking pills below the safe area.
             if let askRequest {
-                AskCard(
-                    request: askRequest,
-                    currentPage: $askCurrentPage,
-                    answers: $askDraftAnswers,
-                    onSubmit: { answers in onAskSubmit?(answers) },
-                    onIgnoreAll: { onAskIgnoreAll?() },
-                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil
-                )
+                Group {
+                    if isInputFocused && !suppressKeyboard {
+                        ScrollView(.vertical, showsIndicators: true) {
+                            askCard(request: askRequest)
+                        }
+                        .frame(maxHeight: ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard)
+                        .scrollBounceBehavior(.basedOnSize)
+                        .scrollDismissesKeyboard(.never)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    } else {
+                        askCard(request: askRequest)
+                    }
+                }
                 .id(askRequest.id)
                 .padding(.horizontal, composerHorizontalPadding)
                 .padding(.top, 8)
@@ -506,6 +513,17 @@ struct ChatInputBar<ActionRow: View>: View {
             }
         }
         .animation(ThemeMotion.easeInOut(duration: 0.18, reduceMotion: reduceMotion), value: showsComposerActionRow)
+    }
+
+    private func askCard(request: AskRequest) -> some View {
+        AskCard(
+            request: request,
+            currentPage: $askCurrentPage,
+            answers: $askDraftAnswers,
+            onSubmit: { answers in onAskSubmit?(answers) },
+            onIgnoreAll: { onAskIgnoreAll?() },
+            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil
+        )
     }
 
     private var attachButton: some View {

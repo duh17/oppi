@@ -551,9 +551,18 @@ private struct AskCardLongComposerPreview: View {
                 appliesOuterPadding: true,
                 alwaysShowActionRow: true
             ) {
-                Text("gpt-5.5 · max")
+                Spacer(minLength: 0)
+
+                Text("gpt-5.5")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeFg)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .glassEffect(.regular, in: Capsule())
+
+                Text("max")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themePurple)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .glassEffect(.regular, in: Capsule())
