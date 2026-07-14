@@ -1,5 +1,6 @@
 import AppIntents
 import Foundation
+import SwiftUI
 import Testing
 import UniformTypeIdentifiers
 @testable import Oppi
@@ -475,73 +476,48 @@ struct StartQuickSessionIntentTests {
     }
 }
 
-// MARK: - Quick session sheet layout
+// MARK: - Quick Session overlay layout
 
-@Suite("QuickSessionSheetLayout")
-struct QuickSessionSheetLayoutTests {
+@Suite("QuickSessionOverlayLayout")
+struct QuickSessionOverlayLayoutTests {
+    @Test func accessibilityTextStacksActionControls() {
+        #expect(QuickSessionOverlayLayout.stacksActionControls(for: .accessibility1))
+        #expect(QuickSessionOverlayLayout.stacksActionControls(for: .accessibility5))
+    }
 
-    @Test func zeroContentKeepsCompactDetent() {
-        #expect(
-            QuickSessionSheetLayout.detentHeight(forContentHeight: 0)
-                == QuickSessionSheetLayout.compactDetentHeight
+    @Test func standardTextKeepsCompactActionControls() {
+        #expect(!QuickSessionOverlayLayout.stacksActionControls(for: .large))
+        #expect(!QuickSessionOverlayLayout.stacksActionControls(for: .xxxLarge))
+    }
+
+    @Test func compactHeightBoundsComposerAndEnablesScrolling() {
+        let viewport = QuickSessionOverlayLayout.viewport(
+            contentHeight: 260,
+            availableHeight: 180
         )
+
+        #expect(viewport.height == 168)
+        #expect(viewport.requiresScrolling)
     }
 
-    @Test func shortComposerKeepsCompactDetent() {
-        #expect(
-            QuickSessionSheetLayout.detentHeight(forContentHeight: 120)
-                == QuickSessionSheetLayout.compactDetentHeight
+    @Test func accessibilityTextContentUsesTheSameBoundedFallback() {
+        let viewport = QuickSessionOverlayLayout.viewport(
+            contentHeight: 480,
+            availableHeight: 320
         )
+
+        #expect(viewport.height == 308)
+        #expect(viewport.requiresScrolling)
     }
 
-    @Test func twoLineComposerKeepsCompactDetent() {
-        let twoLineContentHeight: CGFloat = 140
-
-        #expect(
-            QuickSessionSheetLayout.detentHeight(forContentHeight: twoLineContentHeight)
-                == QuickSessionSheetLayout.compactDetentHeight
+    @Test func ordinaryContentKeepsItsFittedHeightWithoutScrolling() {
+        let viewport = QuickSessionOverlayLayout.viewport(
+            contentHeight: 220,
+            availableHeight: 700
         )
-        #expect(!QuickSessionSheetLayout.shouldApplyContentHeightChange(
-            currentContentHeight: 120,
-            incomingContentHeight: twoLineContentHeight
-        ))
-    }
 
-    @Test func contentJustOverCompactUsesStableMultilineDetent() {
-        #expect(QuickSessionSheetLayout.normalizedContentHeight(151) == 152)
-        #expect(
-            QuickSessionSheetLayout.detentHeight(forContentHeight: 151)
-                == QuickSessionSheetLayout.multilineComposerDetentHeight
-        )
-        #expect(QuickSessionSheetLayout.multilineComposerDetentHeight > QuickSessionSheetLayout.compactDetentHeight)
-        #expect(QuickSessionSheetLayout.multilineComposerDetentHeight < 260)
-    }
-
-    @Test func wrappedComposerGrowthDoesNotRetargetSheetEveryRow() {
-        let firstWrappedRowDetent = QuickSessionSheetLayout.detentHeight(forContentHeight: 181)
-        let secondWrappedRowDetent = QuickSessionSheetLayout.detentHeight(forContentHeight: 205)
-
-        #expect(firstWrappedRowDetent == QuickSessionSheetLayout.multilineComposerDetentHeight)
-        #expect(firstWrappedRowDetent == secondWrappedRowDetent)
-        #expect(firstWrappedRowDetent < 260)
-    }
-
-    @Test func contentHeightChangesWithinStableMultilineDetentAreIgnored() {
-        #expect(!QuickSessionSheetLayout.shouldApplyContentHeightChange(
-            currentContentHeight: 181,
-            incomingContentHeight: 205
-        ))
-    }
-
-    @Test func contentHeightChangesAcrossDetentsAreApplied() {
-        #expect(QuickSessionSheetLayout.shouldApplyContentHeightChange(
-            currentContentHeight: 120,
-            incomingContentHeight: 181
-        ))
-        #expect(QuickSessionSheetLayout.shouldApplyContentHeightChange(
-            currentContentHeight: 400,
-            incomingContentHeight: 181
-        ))
+        #expect(viewport.height == 220)
+        #expect(!viewport.requiresScrolling)
     }
 }
 

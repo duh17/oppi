@@ -4,6 +4,36 @@ import UIKit
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "QuickSession")
 
+struct QuickSessionOverlayLayout {
+    static let minimumTopClearance: CGFloat = 12
+
+    struct Viewport: Equatable {
+        let height: CGFloat
+        let requiresScrolling: Bool
+    }
+
+    static func stacksActionControls(for dynamicTypeSize: DynamicTypeSize) -> Bool {
+        dynamicTypeSize.isAccessibilitySize
+    }
+
+    static func viewport(contentHeight: CGFloat, availableHeight: CGFloat) -> Viewport {
+        let safeAvailableHeight = availableHeight.isFinite ? max(0, availableHeight) : 0
+        let maximumHeight = max(0, floor(safeAvailableHeight - minimumTopClearance))
+
+        // Geometry is initially unknown. Give the content a bounded measurement
+        // viewport; the next layout pass shrinks it to its fitted height.
+        guard contentHeight.isFinite, contentHeight > 0 else {
+            return Viewport(height: maximumHeight, requiresScrolling: false)
+        }
+
+        let safeContentHeight = ceil(contentHeight)
+        return Viewport(
+            height: min(safeContentHeight, maximumHeight),
+            requiresScrolling: safeContentHeight > maximumHeight
+        )
+    }
+}
+
 /// Compact sheet for starting a new agent session.
 ///
 /// Presented from Oppi, the Control widget, App Intents, or saved share intake.
@@ -14,12 +44,12 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Quic
 /// **Flow**: Pick workspace → compose message → send → session created →
 /// navigate to ChatView.
 struct QuickSessionSheet: View {
-    let onContentHeightChange: (CGFloat) -> Void
+    let onDismiss: () -> Void
 
     @Environment(ChatSessionState.self) private var chatState
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var text = ""
     @State private var composerTextBeforeRecording: String?
@@ -38,6 +68,9 @@ struct QuickSessionSheet: View {
     @State private var busyStreamingBehavior: StreamingBehavior = .followUp
     @State private var composerFocusRequestID = 0
     @State private var showWorkspacePicker = false
+    @State private var measuredComposerHeight: CGFloat = 0
+    @State private var measuredAccessibilityActionHeight: CGFloat = 0
+    @State private var keyboardFrame: CGRect = .null
 
     /// All workspaces across all connected servers.
     private var allServerWorkspaces: [(serverId: String, workspace: Workspace)] {
@@ -65,13 +98,63 @@ struct QuickSessionSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            composerContent
+        GeometryReader { proxy in
+            let rootFrame = proxy.frame(in: .global)
+            let keyboardOverlap = keyboardFrame.isNull
+                ? 0
+                : max(0, rootFrame.intersection(keyboardFrame).height)
+            let accessibilityActionHeight = stacksActionControls
+                ? measuredAccessibilityActionHeight
+                : 0
+            let viewport = QuickSessionOverlayLayout.viewport(
+                contentHeight: measuredComposerHeight,
+                availableHeight: proxy.size.height - keyboardOverlap - accessibilityActionHeight
+            )
+
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+
+                ScrollView(.vertical) {
+                    composerContent
+                        .onGeometryChange(for: CGFloat.self) { contentProxy in
+                            contentProxy.size.height
+                        } action: { height in
+                            let normalizedHeight = height.isFinite ? ceil(max(0, height)) : 0
+                            if measuredComposerHeight != normalizedHeight {
+                                measuredComposerHeight = normalizedHeight
+                            }
+                        }
+                }
+                .scrollDisabled(!viewport.requiresScrolling)
+                .scrollIndicators(viewport.requiresScrolling ? .automatic : .hidden)
+                .scrollDismissesKeyboard(.never)
+                .frame(maxWidth: .infinity)
+                .frame(height: viewport.height, alignment: .bottom)
+                .accessibilityIdentifier("quickSession.viewport")
+
+                if stacksActionControls {
+                    accessibilityActionControls
+                        .onGeometryChange(for: CGFloat.self) { controlsProxy in
+                            controlsProxy.size.height
+                        } action: { height in
+                            let normalizedHeight = height.isFinite ? ceil(max(0, height)) : 0
+                            if measuredAccessibilityActionHeight != normalizedHeight {
+                                measuredAccessibilityActionHeight = normalizedHeight
+                            }
+                        }
+                }
+            }
+            .padding(.bottom, keyboardOverlap)
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
-        .frame(maxHeight: .infinity, alignment: .bottom)
         .background(.clear)
-        .presentationBackground(.clear)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
+            notification in
+            keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect ?? .null
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardFrame = .null
+        }
         .sheet(isPresented: $showModelPicker) {
             ModelPickerSheet(
                 currentModel: effectiveModelId,
@@ -146,24 +229,52 @@ struct QuickSessionSheet: View {
                 appliesOuterPadding: true,
                 alwaysShowActionRow: true,
                 actionRow: {
-                    workspaceNavBarItem
-                    SessionToolbar(
-                        session: nil,
-                        modelOverride: effectiveModelId,
-                        thinkingLevel: thinkingLevel,
-                        onModelTap: { showModelPicker = true },
-                        onThinkingSelect: selectThinkingLevel
-                    )
+                    quickSessionActionControls
                 }
             )
         }
         .padding(.top, 6)
         .fixedSize(horizontal: false, vertical: true)
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.size.height
-        } action: { height in
-            onContentHeightChange(height)
+    }
+
+    private var stacksActionControls: Bool {
+        QuickSessionOverlayLayout.stacksActionControls(for: dynamicTypeSize)
+    }
+
+    @ViewBuilder
+    private var quickSessionActionControls: some View {
+        if !stacksActionControls {
+            workspaceNavBarItem
+            sessionToolbar
         }
+    }
+
+    private var accessibilityActionControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            workspaceNavBarItem
+
+            HStack(spacing: 6) {
+                sessionToolbar
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+    }
+
+    private var sessionToolbar: some View {
+        SessionToolbar(
+            session: nil,
+            modelOverride: effectiveModelId,
+            thinkingLevel: thinkingLevel,
+            onModelTap: { showModelPicker = true },
+            onThinkingSelect: selectThinkingLevel
+        )
     }
 
     private func selectModel(_ model: ModelInfo) {
@@ -265,13 +376,36 @@ struct QuickSessionSheet: View {
             applyInitialPayload(pendingPayload)
         }
 
-        // Auto-focus the text input
+        // Auto-focus the text input for typing, then move assistive focus to
+        // that same composer instead of the overlay's dismiss control.
         composerFocusRequestID += 1
+        await moveAccessibilityFocusToComposer()
 
         // Ensure model cache is fresh for the selected server.
         if let api = selectedServerConnection().apiClient {
             await chatState.refreshModelCache(api: api)
         }
+    }
+
+    private func moveAccessibilityFocusToComposer() async {
+        // The UIKit text view is mounted by ChatInputBar. Yield twice so both
+        // the external keyboard-focus request and SwiftUI accessibility tree
+        // have applied before posting the modal screen change.
+        await Task.yield()
+        await Task.yield()
+
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+        // An intent can open Quick Session over an existing chat composer.
+        // SwiftUI appends overlays later in the hosting hierarchy, so choose
+        // the last matching text view rather than the obscured background one.
+        guard let composer = windows.flatMap({
+            $0.quickSessionDescendants(accessibilityIdentifier: "chat.input")
+        }).last else {
+            return
+        }
+        UIAccessibility.post(notification: .screenChanged, argument: composer)
     }
 
     private func applyInitialPayload(_ payload: QuickSessionInitialPayload) {
@@ -440,7 +574,7 @@ struct QuickSessionSheet: View {
                     autoSendAttachments: shouldAutoSend ? pendingAttachments : nil
                 )
 
-                dismiss()
+                onDismiss()
             } catch {
                 let errorKind = ChatSessionTelemetry.metricErrorKind(for: error)
                 ChatSessionTelemetry.recordTimingMetric(
@@ -601,6 +735,15 @@ private struct QuickSessionWorkspacePickerRowButtonStyle: ButtonStyle {
                         .padding(.vertical, 1)
                 }
             }
+    }
+}
+
+private extension UIView {
+    func quickSessionDescendants(accessibilityIdentifier identifier: String) -> [UIView] {
+        let currentMatch = accessibilityIdentifier == identifier ? [self] : []
+        return currentMatch + subviews.flatMap {
+            $0.quickSessionDescendants(accessibilityIdentifier: identifier)
+        }
     }
 }
 

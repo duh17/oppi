@@ -1,6 +1,6 @@
 import XCTest
 
-/// Paired-server screenshot lab for workspace-home layout regressions.
+/// Paired-server screenshot lab for workspace navigation layout regressions.
 ///
 /// This uses the existing E2E server/pairing harness instead of screenshot-preview
 /// mocks, so the toolbar, server pill, workspace catalog refresh, and auth path are
@@ -12,16 +12,35 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
     nonisolated(unsafe) private var hiddenPreviewStoppedSessionIds: [String] = []
 
     override var e2eLaunchesWorkspaceHomeOnly: Bool {
-        true
+        !isQuickSessionComposerTest
+    }
+
+    override var e2eLaunchesSessionsInboxOnly: Bool {
+        isQuickSessionComposerTest
     }
 
     override var e2eRequiresFreshLaunch: Bool {
-        name.contains("testWorkspaceHomeHidesStoppedSessionPreviews")
+        // This class intentionally mixes launch-only roots and one Dynamic Type
+        // launch argument. Relaunch every case so shared E2E process state cannot
+        // leak a sessions-only or accessibility-sized launch into the next test.
+        true
+    }
+
+    override func configureE2ELaunch(_ application: XCUIApplication) {
+        guard name.contains("testQuickSessionComposerFitsAccessibilityText") else { return }
+        application.launchArguments += [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+    }
+
+    nonisolated private var isQuickSessionComposerTest: Bool {
+        name.contains("testQuickSessionComposer")
     }
 
     override func seedE2EFixtures() throws {
         try seedLabWorkspaces(WorkspaceHomeLabScenario.allFixtures)
-        if name.contains("testWorkspaceHomeHidesStoppedSessionPreviews") {
+        if name.contains("testWorkspaceSidebarHidesSessionPreviews") {
             try seedHiddenStoppedPreviewFixture()
         }
     }
@@ -34,46 +53,54 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
         try runWorkspaceHomeLab(.denseCounts)
     }
 
-    func testWorkspaceHomeHidesStoppedSessionPreviews() throws {
+    func testWorkspaceSidebarHidesSessionPreviews() throws {
         let workspaceName = try XCTUnwrap(hiddenPreviewWorkspaceName)
         let activeSessionId = try XCTUnwrap(hiddenPreviewActiveSessionId)
         let stoppedSessionIds = hiddenPreviewStoppedSessionIds
 
-        let workspaceList = app.collectionViews["workspace.list"]
-        XCTAssertTrue(workspaceList.waitForExistence(timeout: 10), "Workspace home list not visible")
-        dismissExtensionSheetIfNeeded(timeout: 3)
+        let workspaceList = openWorkspaceHomeList()
         workspaceList.swipeDown()
-
         XCTAssertTrue(
             scrollWorkspaceHomeList(workspaceList, toText: workspaceName, timeout: 20),
             "Workspace with mixed active and stopped sessions did not appear after refresh"
         )
 
         let activePreview = app.descendants(matching: .any)["workspaceHome.sessionPreview.\(activeSessionId)"]
-        XCTAssertTrue(
-            activePreview.waitForExistence(timeout: 20),
-            "Active session preview \(activeSessionId) did not appear"
+        XCTAssertFalse(
+            activePreview.exists,
+            "Workspace navigation should not render inline active session previews"
         )
 
         for stoppedSessionId in stoppedSessionIds {
             let stoppedPreview = app.descendants(matching: .any)["workspaceHome.sessionPreview.\(stoppedSessionId)"]
             XCTAssertFalse(
                 stoppedPreview.waitForExistence(timeout: 1),
-                "Stopped session preview \(stoppedSessionId) should stay hidden on workspace home"
+                "Workspace sidebar should not render stopped session preview \(stoppedSessionId)"
             )
         }
     }
 
     func testQuickSessionComposerGrowthFitsMeasuredContent() throws {
-        let workspaceList = app.collectionViews["workspace.list"]
-        XCTAssertTrue(workspaceList.waitForExistence(timeout: 10), "Workspace home list not visible")
+        let sessionsList = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(sessionsList.waitForExistence(timeout: 10), "Sessions inbox not visible")
 
         tap(app.buttons["workspace.quickSession.start"], named: "quick session button")
         defer { dismissQuickSessionSheetIfNeeded() }
 
         let chatInput = app.textViews["chat.input"]
         XCTAssertTrue(chatInput.waitForExistence(timeout: 10), "Quick Session input not visible")
-        waitForE2EDiagnostic("e2e.quickSession.detentHeight", timeout: 5) { $0 == "150" }
+        let dismissButton = app.buttons["quickSession.dismiss"]
+        XCTAssertTrue(
+            dismissButton.waitForExistence(timeout: 5),
+            "Quick Session visible dismiss control not visible"
+        )
+        XCTAssertTrue(dismissButton.isHittable, "Quick Session dismiss control must remain actionable")
+        XCTAssertFalse(
+            sessionsList.isHittable,
+            "Modal Quick Session must make the background sessions hierarchy inert"
+        )
+        XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Quick Session should not use a system sheet container")
+        let initialInputHeight = chatInput.frame.height
 
         tap(chatInput, named: "quick session input", timeout: 5)
         let focusPredicate = NSPredicate(format: "hasKeyboardFocus == true")
@@ -88,19 +115,113 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
 
         chatInput.typeText("first quick session line\nsecond quick session line\nthird quick session line")
 
-        let detentLabel = waitForE2EDiagnostic("e2e.quickSession.detentHeight", timeout: 10) { value in
-            guard let height = Double(value) else { return false }
-            return height > 150 && height < 260
+        let multilineExpectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate { object, _ in
+                guard let element = object as? XCUIElement else { return false }
+                return element.frame.height > initialInputHeight + 20
+            },
+            object: chatInput
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [multilineExpectation], timeout: 10),
+            .completed,
+            "Quick Session input did not grow for multiline content"
+        )
+        XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Multiline growth restored the system sheet container")
+
+        try saveLabScreenshot(name: "quick-session-overlay-composer-growth-e2e")
+
+        dismissButton.tap()
+        XCTAssertTrue(
+            sessionsList.waitForExistence(timeout: 5),
+            "Dismissing Quick Session must restore the sessions accessibility hierarchy"
+        )
+        let launchButton = app.buttons["workspace.quickSession.start"]
+        XCTAssertTrue(
+            launchButton.waitForExistence(timeout: 5) && launchButton.isHittable,
+            "Dismissing Quick Session must restore its launch control to the interactive hierarchy"
+        )
+    }
+
+    func testQuickSessionComposerScrollsInCompactHeight() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer {
+            dismissQuickSessionSheetIfNeeded()
+            XCUIDevice.shared.orientation = .portrait
         }
-        let detentHeight = try XCTUnwrap(Double(detentLabel))
-        XCTAssertLessThan(detentHeight, 260, "Quick Session jumped to the tall detent bucket")
 
-        let grabber = app.buttons["Sheet Grabber"]
-        XCTAssertTrue(grabber.waitForExistence(timeout: 5), "Quick Session grabber not visible")
-        let blankHeaderGap = chatInput.frame.minY - grabber.frame.maxY
-        XCTAssertLessThan(blankHeaderGap, 90, "Quick Session left a large blank header above the composer")
+        let sessionsList = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(sessionsList.waitForExistence(timeout: 10), "Sessions inbox not visible")
+        tap(app.buttons["workspace.quickSession.start"], named: "quick session button")
 
-        try saveLabScreenshot(name: "quick-session-measured-detent-composer-growth-e2e")
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10), "Quick Session input not visible in compact height")
+        tap(input, named: "quick session input", timeout: 5)
+        input.typeText("one\ntwo\nthree\nfour\nfive\nsix")
+
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "Keyboard not visible in compact height")
+        let viewport = app.scrollViews["quickSession.viewport"].firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), "Bounded Quick Session viewport not visible")
+        XCTAssertLessThanOrEqual(
+            input.frame.maxY,
+            keyboard.frame.minY + 1,
+            "Compact-height composer input must stay above the keyboard"
+        )
+        XCTAssertTrue(app.buttons["quickSession.dismiss"].isHittable, "Dismiss must remain visible in compact height")
+
+        viewport.swipeUp()
+        let workspacePicker = app.buttons["quickSession.workspacePicker"]
+        XCTAssertTrue(
+            workspacePicker.waitForExistence(timeout: 5) && workspacePicker.isHittable,
+            "Compact-height fallback must allow scrolling to the composer controls"
+        )
+        XCTAssertLessThanOrEqual(
+            workspacePicker.frame.maxY,
+            keyboard.frame.minY + 1,
+            "Scrolled composer controls must remain above the keyboard"
+        )
+        XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Compact fallback must not restore a system sheet")
+    }
+
+    func testQuickSessionComposerFitsAccessibilityText() throws {
+        let sessionsList = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(sessionsList.waitForExistence(timeout: 10), "Sessions inbox not visible")
+        tap(app.buttons["workspace.quickSession.start"], named: "quick session button")
+        defer { dismissQuickSessionSheetIfNeeded() }
+
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10), "Quick Session input not visible at accessibility text size")
+        tap(input, named: "quick session input", timeout: 5)
+        input.typeText("large type first line\nlarge type second line\nlarge type third line")
+
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "Keyboard not visible at accessibility text size")
+        let viewport = app.scrollViews["quickSession.viewport"].firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), "Bounded Quick Session viewport not visible")
+        XCTAssertLessThanOrEqual(
+            input.frame.maxY,
+            keyboard.frame.minY + 1,
+            "Accessibility-text composer input must stay above the keyboard"
+        )
+        XCTAssertTrue(app.buttons["quickSession.dismiss"].isHittable, "Dismiss must remain visible at accessibility text size")
+
+        let workspacePicker = app.buttons["quickSession.workspacePicker"]
+        let modelPicker = app.buttons["session.toolbar.model"]
+        let thinkingPicker = app.buttons["session.toolbar.thinking"]
+        let controls = [workspacePicker, modelPicker, thinkingPicker]
+        XCTAssertTrue(
+            scrollQuickSessionViewport(viewport, untilHittable: controls),
+            "Accessibility-text fallback must keep workspace, model, and thinking controls reachable"
+        )
+        for control in controls {
+            XCTAssertLessThanOrEqual(
+                control.frame.maxY,
+                keyboard.frame.minY + 1,
+                "Accessibility-text controls must remain above the keyboard"
+            )
+        }
+        XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Accessibility fallback must not restore a system sheet")
     }
 
     private func waitForInputValue(
@@ -157,9 +278,7 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
     }
 
     private func runWorkspaceHomeLab(_ scenario: WorkspaceHomeLabScenario) throws {
-        let workspaceList = app.collectionViews["workspace.list"]
-        XCTAssertTrue(workspaceList.waitForExistence(timeout: 10), "Workspace home list not visible")
-        dismissExtensionSheetIfNeeded(timeout: 3)
+        let workspaceList = openWorkspaceHomeList()
         workspaceList.swipeDown()
 
         XCTAssertTrue(
@@ -170,13 +289,48 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
         try saveLabScreenshot(name: scenario.screenshotName)
     }
 
-    private func dismissQuickSessionSheetIfNeeded() {
-        let grabber = app.buttons["Sheet Grabber"]
-        guard grabber.waitForExistence(timeout: 1) else { return }
-        grabber.swipeDown()
-        if grabber.waitForExistence(timeout: 1) {
-            grabber.swipeDown()
+    private func openWorkspaceHomeList() -> XCUIElement {
+        dismissExtensionSheetIfNeeded(timeout: 3)
+
+        let legacyList = app.collectionViews["workspace.list"]
+        if legacyList.isHittable {
+            return legacyList
         }
+
+        let sidebar = app.scrollViews["workspace.sidebar.scroll"]
+        if !sidebar.isHittable {
+            tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar button")
+        }
+
+        let hittable = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isHittable == true"),
+            object: sidebar
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [hittable], timeout: 5),
+            .completed,
+            "Workspace sidebar not visible"
+        )
+        return sidebar
+    }
+
+    private func scrollQuickSessionViewport(
+        _ viewport: XCUIElement,
+        untilHittable controls: [XCUIElement]
+    ) -> Bool {
+        for _ in 0..<4 {
+            if controls.allSatisfy({ $0.exists && $0.isHittable }) {
+                return true
+            }
+            viewport.swipeUp()
+        }
+        return controls.allSatisfy { $0.exists && $0.isHittable }
+    }
+
+    private func dismissQuickSessionSheetIfNeeded() {
+        let dismiss = app.buttons["quickSession.dismiss"]
+        guard dismiss.waitForExistence(timeout: 1) else { return }
+        dismiss.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
     }
 }
 

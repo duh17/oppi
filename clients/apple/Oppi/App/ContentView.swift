@@ -2,62 +2,12 @@ import AppIntents
 import SwiftUI
 import UIKit
 
-enum QuickSessionSheetLayout {
-    static let compactDetentHeight: CGFloat = 150
-    /// Stable target for normal multiline composer growth. This is tall enough
-    /// for wrapped dictation text without the old large blank header, and stable
-    /// enough to avoid retargeting the sheet on every measured text-row change.
-    static let multilineComposerDetentHeight: CGFloat = 224
-    private static let detentIncrement: CGFloat = 4
-
-    static func normalizedContentHeight(_ height: CGFloat) -> CGFloat {
-        guard height.isFinite, height > 0 else { return 0 }
-        return ceil(height / detentIncrement) * detentIncrement
-    }
-
-    static func detentHeight(forContentHeight height: CGFloat) -> CGFloat {
-        let contentHeight = normalizedContentHeight(height)
-        guard contentHeight > 0 else { return compactDetentHeight }
-
-        // `.height` detents already reserve the sheet presentation chrome/safe area.
-        // Keep the compact rest height for short input. Once wrapped dictation
-        // text needs more room, hold a smaller stable multiline detent instead
-        // of retargeting the sheet for every TextKit measurement change.
-        guard contentHeight > compactDetentHeight else { return compactDetentHeight }
-        guard contentHeight > multilineComposerDetentHeight else {
-            return multilineComposerDetentHeight
-        }
-        return contentHeight
-    }
-
-    static func shouldApplyContentHeightChange(currentContentHeight: CGFloat, incomingContentHeight: CGFloat) -> Bool {
-        let currentDetentHeight = detentHeight(forContentHeight: currentContentHeight)
-        let incomingDetentHeight = detentHeight(forContentHeight: incomingContentHeight)
-        return currentDetentHeight != incomingDetentHeight
-    }
-}
-
 struct ContentView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
     @State private var quickSessionTrigger = QuickSessionTrigger.shared
-    @State private var quickSessionMeasuredContentHeight: CGFloat = 0
-    @State private var quickSessionSelectedDetent: PresentationDetent = .height(
-        QuickSessionSheetLayout.compactDetentHeight
-    )
-    /// Sheet detents: keep Quick Session compact at rest, but let the composer
-    /// grow to its measured chat-input height for dictation and attachments.
-    private var quickSessionDetentHeight: CGFloat {
-        QuickSessionSheetLayout.detentHeight(forContentHeight: quickSessionMeasuredContentHeight)
-    }
-
-    private var quickSessionDetents: Set<PresentationDetent> {
-        [
-            .height(QuickSessionSheetLayout.compactDetentHeight),
-            .height(quickSessionDetentHeight),
-        ]
-    }
+    @State private var quickSessionLaunchAccessibilityElement: AnyObject?
 
     var body: some View {
         @Bindable var nav = navigation
@@ -79,6 +29,9 @@ struct ContentView: View {
                 }
             }
         }
+        .disabled(nav.showQuickSession)
+        .allowsHitTesting(!nav.showQuickSession)
+        .accessibilityHidden(nav.showQuickSession)
         .sheet(
             item: Binding<ExtensionUIRequest?>(
                 get: {
@@ -119,35 +72,47 @@ struct ContentView: View {
                 navigation.showWhatsNew = false
             }
         }
-        .sheet(isPresented: $nav.showQuickSession, onDismiss: {
-            QuickSessionTrigger.shared.isPresented = false
-            completePendingQuickSessionNavigation()
-            quickSessionMeasuredContentHeight = 0
-            quickSessionSelectedDetent = .height(QuickSessionSheetLayout.compactDetentHeight)
-        }, content: {
-            QuickSessionSheet { height in
-                let normalized = QuickSessionSheetLayout.normalizedContentHeight(height)
-                guard QuickSessionSheetLayout.shouldApplyContentHeightChange(
-                    currentContentHeight: quickSessionMeasuredContentHeight,
-                    incomingContentHeight: normalized
-                ) else { return }
-                quickSessionMeasuredContentHeight = normalized
-                quickSessionSelectedDetent = .height(
-                    QuickSessionSheetLayout.detentHeight(forContentHeight: normalized)
-                )
+        .overlay {
+            if nav.showQuickSession {
+                ZStack(alignment: .bottom) {
+                    Button(action: dismissQuickSession) {
+                        Color.black.opacity(0.34)
+                            .ignoresSafeArea()
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHidden(true)
+
+                    QuickSessionSheet(onDismiss: dismissQuickSession)
+                }
+                .overlay(alignment: .topTrailing) {
+                    Button(action: dismissQuickSession) {
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.themeFg)
+                            .frame(width: 44, height: 44)
+                            .background(.themeBgHighlight, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss Quick Session")
+                    .accessibilityIdentifier("quickSession.dismiss")
+                    .padding(16)
+                }
+                .ignoresSafeArea(.container, edges: .horizontal)
+                .accessibilityAddTraits(.isModal)
+                .accessibilityAction(.escape, dismissQuickSession)
+                .zIndex(100)
             }
-            .presentationDetents(quickSessionDetents, selection: $quickSessionSelectedDetent)
-            .presentationDragIndicator(.visible)
-            .presentationBackgroundInteraction(
-                .enabled(upThrough: .height(quickSessionDetentHeight))
-            )
-            .presentationCornerRadius(24)
-        })
+        }
         .onAppIntentExecution(QuickSessionOpenIntent.self) { intent in
             quickSessionTrigger.requestPresentation(for: intent)
         }
         .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
             presentQuickSessionIfPossible(requestID: newValue)
+        }
+        .onChange(of: nav.showQuickSession) { wasShowing, isShowing in
+            guard !wasShowing, isShowing else { return }
+            captureQuickSessionLaunchAccessibilityElement()
         }
         .onChange(of: navigation.launchPhase) { _, _ in
             presentQuickSessionIfPossible(requestID: quickSessionTrigger.presentationRequestID)
@@ -168,11 +133,7 @@ struct ContentView: View {
 #if DEBUG
         if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil
             || ProcessInfo.processInfo.environment["OPPI_E2E_DIAGNOSTICS"] == "1" {
-            E2EWebSocketDiagnosticsView(
-                connection: connection,
-                quickSessionContentHeight: quickSessionMeasuredContentHeight,
-                quickSessionDetentHeight: quickSessionDetentHeight
-            )
+            E2EWebSocketDiagnosticsView(connection: connection)
                 .frame(width: 1, height: 1)
                 .opacity(0.01)
                 .allowsHitTesting(false)
@@ -186,6 +147,39 @@ struct ContentView: View {
         guard !navigation.showQuickSession else { return }
         QuickSessionTrigger.shared.isPresented = true
         navigation.showQuickSession = true
+    }
+
+    private func dismissQuickSession() {
+        guard navigation.showQuickSession else { return }
+        let launchAccessibilityElement = navigation.pendingQuickSessionNav == nil
+            ? quickSessionLaunchAccessibilityElement
+            : nil
+        quickSessionLaunchAccessibilityElement = nil
+        navigation.showQuickSession = false
+        QuickSessionTrigger.shared.isPresented = false
+        completePendingQuickSessionNavigation()
+
+        // A custom overlay has no presentation controller to restore focus.
+        // Return VoiceOver to the exact launch button it focused before the
+        // modal appeared; sending a nil argument would let the system guess.
+        if let launchAccessibilityElement {
+            DispatchQueue.main.async {
+                UIAccessibility.post(
+                    notification: .screenChanged,
+                    argument: launchAccessibilityElement
+                )
+            }
+        }
+    }
+
+    private func captureQuickSessionLaunchAccessibilityElement() {
+        guard let focusedElement = UIAccessibility.focusedElement(using: .notificationVoiceOver),
+              let identifiedElement = focusedElement as? UIAccessibilityIdentification,
+              identifiedElement.accessibilityIdentifier == "workspace.quickSession.start" else {
+            quickSessionLaunchAccessibilityElement = nil
+            return
+        }
+        quickSessionLaunchAccessibilityElement = focusedElement as AnyObject
     }
 
     private func completePendingQuickSessionNavigation() {
@@ -220,8 +214,6 @@ struct ContentView: View {
 #if DEBUG
 private struct E2EWebSocketDiagnosticsView: View {
     let connection: ServerConnection
-    let quickSessionContentHeight: CGFloat
-    let quickSessionDetentHeight: CGFloat
     @State private var refreshTick = 0
 
     var body: some View {
@@ -234,8 +226,6 @@ private struct E2EWebSocketDiagnosticsView: View {
             diagnosticText("e2e.ws.desiredSubscriptions", value: desiredSubscriptionsLabel)
             diagnosticText("e2e.ws.ackedSubscriptions", value: ackedSubscriptionsLabel)
             diagnosticText("e2e.audio.liveTransportSession", value: connection.audioPlayer.activeLiveTransportSessionID ?? "none")
-            diagnosticText("e2e.quickSession.contentHeight", value: heightLabel(quickSessionContentHeight))
-            diagnosticText("e2e.quickSession.detentHeight", value: heightLabel(quickSessionDetentHeight))
         }
         .task {
             while !Task.isCancelled {
@@ -254,10 +244,6 @@ private struct E2EWebSocketDiagnosticsView: View {
             .lineLimit(1)
             .accessibilityIdentifier(id)
             .accessibilityLabel(value)
-    }
-
-    private func heightLabel(_ height: CGFloat) -> String {
-        String(format: "%.0f", height)
     }
 
     private var wsStatusLabel: String {
