@@ -7,15 +7,16 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ConfigStore } from "../src/storage/config-store.js";
+import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 
 const CLI = process.env.OPPI_TEST_CLI ?? resolve(__dirname, "../dist/src/cli.js");
 
-function writeCliConfig(dataDir: string, port: number): void {
+function writeCliConfig(dataDir: string): void {
   mkdirSync(dataDir, { recursive: true });
   const config = {
     ...ConfigStore.getDefaultConfig(dataDir),
     host: "127.0.0.1",
-    port,
+    port: 0,
     token: "test-owner-token",
     tls: { mode: "disabled" as const },
   };
@@ -80,10 +81,8 @@ async function runTraceOutlineCli(entries: TraceOutlineFixtureEntry[]): Promise<
   });
 
   try {
-    await new Promise<void>((resolveListen) => api.listen(0, "127.0.0.1", resolveListen));
-    const address = api.address();
-    if (!address || typeof address === "string") throw new Error("API fixture did not bind");
-    writeCliConfig(fixtureDataDir, address.port);
+    await listenOnLocalApiFixture(api, fixtureDataDir);
+    writeCliConfig(fixtureDataDir);
     return await runCli(["session", "trace-outline", "sess-1"], fixtureDataDir);
   } finally {
     await new Promise<void>((resolveClose, rejectClose) =>
@@ -162,10 +161,8 @@ async function withOrchApi<T>(
   });
 
   try {
-    await new Promise<void>((resolveListen) => api.listen(0, "127.0.0.1", resolveListen));
-    const address = api.address();
-    if (!address || typeof address === "string") throw new Error("API fixture did not bind");
-    writeCliConfig(dataDir, address.port);
+    await listenOnLocalApiFixture(api, dataDir);
+    writeCliConfig(dataDir);
     return await run({ dataDir, requests });
   } finally {
     await new Promise<void>((resolveClose, rejectClose) =>
@@ -199,10 +196,8 @@ describe("CLI app-state API boundary", () => {
     });
 
     try {
-      await new Promise<void>((resolveListen) => api.listen(0, "127.0.0.1", resolveListen));
-      const address = api.address();
-      if (!address || typeof address === "string") throw new Error("API fixture did not bind");
-      writeCliConfig(dataDir, address.port);
+      await listenOnLocalApiFixture(api, dataDir);
+      writeCliConfig(dataDir);
 
       const stdout = await runCli(["workspace", "list", "--json"], dataDir);
 

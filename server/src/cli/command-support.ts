@@ -3,7 +3,6 @@ import * as c from "../ansi.js";
 import {
   localApiRequest,
   type LocalApiConnection,
-  type LocalApiHostResolvers,
   type LocalApiRequestOptions,
 } from "./local-api-client.js";
 import {
@@ -17,14 +16,13 @@ import { apiStatus } from "./resources.js";
 export function createLocalApiCommandContext(
   storage: LocalApiConnection,
   jsonOutput: boolean,
-  hostResolvers: LocalApiHostResolvers,
 ): {
   call: <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
   output: (data: Record<string, unknown>, human: () => void) => void;
 } {
   return {
     call: <T>(path: string, options?: LocalApiRequestOptions) =>
-      localApiRequest<T>(storage, path, options, hostResolvers),
+      localApiRequest<T>(storage, path, options),
     output: (data, human) => {
       if (jsonOutput) writeJsonEnvelope({ ok: true, data });
       else human();

@@ -1,6 +1,6 @@
 # Oppi server architecture
 
-The Oppi server is the authority for sessions, workspace access, runtime configuration, and the mobile-facing projection of Pi session state. It exposes authenticated HTTP routes, focused WebSocket streams, app-wide event streams, dictation streams, and the terminal mirror bridge.
+The Oppi server is the authority for sessions, workspace access, runtime configuration, and the mobile-facing projection of Pi session state. It exposes authenticated HTTP over an owner-only Unix socket to the local CLI, plus an independently available network HTTP(S)/WebSocket listener for Apple clients, dictation, app events, and the terminal mirror bridge.
 
 ## Audience and scope
 
@@ -29,13 +29,15 @@ The server does not render the chat timeline. It sends protocol messages and HTT
 graph TD
   Client[Apple clients]
   Terminal[Terminal Pi extension]
+  CLI[Local oppi CLI]
 
   subgraph Entry[Server entry]
     Root[server.ts<br/>composition root]
   end
 
   subgraph Boundaries[Boundary adapters]
-    REST[REST routes<br/>routes/*]
+    LocalHTTP[HTTP over Unix socket<br/>owner-only local control plane]
+    REST[Network REST routes<br/>routes/*]
     AppEvents[Global app event stream<br/>app-event-stream.ts]
     Live[Focused session and audio streams<br/>stream.ts + ws-message-handler.ts]
     MirrorWS[Mirror bridge WS<br/>/mirror/v1/bridge]
@@ -71,6 +73,8 @@ graph TD
 
   Client --> Root
   Terminal --> Root
+  CLI --> LocalHTTP
+  LocalHTTP --> Root
   Root --> REST
   Root --> AppEvents
   Root --> Live
@@ -107,26 +111,31 @@ graph TD
 
 ## Main server blocks
 
-| Block                                           | Owns                                                                                                                 | Does not own                               |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `server.ts`                                     | startup, dependency wiring, HTTP and WebSocket entry, auth shell, service lifecycle                                  | session semantics                          |
-| `routes/*`                                      | HTTP parsing, auth-checked route boundaries, response shapes, app-event emission                                     | lifecycle, list, trace, or runtime policy  |
-| `session-lifecycle-service.ts`                  | create/import, resume/open, stop, fork, delete, and mirror promotion policy                                          | HTTP response mapping                      |
-| `session-list-service.ts`                       | recent/workspace/archive session row shaping, active runtime overlays, local-session catalog joins                   | route query parsing                        |
-| `session-trace-service.ts`                      | trace source precedence, tool output lookup, overall diffs, changed-file summaries, and raw changed-file read policy | streaming bytes to HTTP responses          |
-| `pi-model-auth-service.ts`                      | Pi model/auth compatibility calls for title generation and token pricing                                             | session lifecycle or route behavior        |
-| `agent-launch-service.ts`                       | idempotent saved-Agent and schedule launches into managed sessions                                                   | HTTP response mapping                      |
-| `agent-schedules.ts` + `agent-schedule-runner.ts` | durable schedule definitions, due-run materialization, lease claiming, dispatch, and run history | Apple UI routing                           |
-| `app-event-stream.ts`                           | global app-event WebSocket, app-event allowlist, row and extension UI mapping, workspace invalidation mapping        | focused timeline replay or command routing |
-| `stream.ts` + `ws-message-handler.ts`           | focused session and audio WebSocket framing, fan-out, client-message routing                                         | workspace list data flow                   |
-| `runtime-router.ts`                             | runtime ownership dispatch through `SessionRuntimes`                                                                 | shared Pi event projection semantics       |
-| `sessions.ts` + `session-*`                     | managed session lifecycle, queue, stop, event translation, SDK calls                                                 | HTTP response shaping                      |
-| `pi-tui-mirror-runtime.ts`                      | terminal mirror bridge registration, takeover, queue, and command proxying                                           | Apple focused-session transport            |
-| `session-sqlite-store.ts` + `local-sessions.ts` | persisted read models and local JSONL catalog                                                                        | runtime command delivery                   |
+| Block                                             | Owns                                                                                                                 | Does not own                               |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `server.ts`                                       | startup, dependency wiring, HTTP and WebSocket entry, auth shell, service lifecycle                                  | session semantics                          |
+| `routes/*`                                        | HTTP parsing, auth-checked route boundaries, response shapes, app-event emission                                     | lifecycle, list, trace, or runtime policy  |
+| `session-lifecycle-service.ts`                    | create/import, resume/open, stop, fork, delete, and mirror promotion policy                                          | HTTP response mapping                      |
+| `session-list-service.ts`                         | recent/workspace/archive session row shaping, active runtime overlays, local-session catalog joins                   | route query parsing                        |
+| `session-trace-service.ts`                        | trace source precedence, tool output lookup, overall diffs, changed-file summaries, and raw changed-file read policy | streaming bytes to HTTP responses          |
+| `pi-model-auth-service.ts`                        | Pi model/auth compatibility calls for title generation and token pricing                                             | session lifecycle or route behavior        |
+| `agent-launch-service.ts`                         | idempotent saved-Agent and schedule launches into managed sessions                                                   | HTTP response mapping                      |
+| `agent-schedules.ts` + `agent-schedule-runner.ts` | durable schedule definitions, due-run materialization, lease claiming, dispatch, and run history                     | Apple UI routing                           |
+| `app-event-stream.ts`                             | global app-event WebSocket, app-event allowlist, row and extension UI mapping, workspace invalidation mapping        | focused timeline replay or command routing |
+| `stream.ts` + `ws-message-handler.ts`             | focused session and audio WebSocket framing, fan-out, client-message routing                                         | workspace list data flow                   |
+| `runtime-router.ts`                               | runtime ownership dispatch through `SessionRuntimes`                                                                 | shared Pi event projection semantics       |
+| `sessions.ts` + `session-*`                       | managed session lifecycle, queue, stop, event translation, SDK calls                                                 | HTTP response shaping                      |
+| `pi-tui-mirror-runtime.ts`                        | terminal mirror bridge registration, takeover, queue, and command proxying                                           | Apple focused-session transport            |
+| `session-sqlite-store.ts` + `local-sessions.ts`   | persisted read models and local JSONL catalog                                                                        | runtime command delivery                   |
 
 ## HTTP and WebSocket boundaries
 
-`server.ts` creates the transport server, validates startup security, prepares TLS, handles CORS and `/health`, authenticates requests, and delegates authenticated HTTP to `RouteHandler`.
+`server.ts` creates two listeners that share the same HTTP route and bearer-authentication shell:
+
+- The mandatory local listener serves HTTP over an owner-only Unix socket. Its normal path is `$OPPI_DATA_DIR/run/oppi.sock`; deep custom data-directory paths use a deterministic socket under the user's temporary runtime directory. The runtime directory is `0700`, the socket and startup lock are `0600`, stale paths are ownership-checked, and startup refuses concurrent owners.
+- The network listener serves configured HTTP(S) and scoped WebSockets to remote clients. TLS preparation runs off the main thread after the local socket begins listening, so certificate commands and renewal-lock waits do not block local requests. Expected Tailscale availability failures disable the remote listener; unexpected preparation errors remain fatal. Network TLS failure must never create a plaintext fallback.
+
+The local socket intentionally has no WebSocket upgrade handler. Oppi Mirror and Oppi subagents continue to use the network WebSocket listener. `server.ts` validates network startup security, handles CORS and `/health`, authenticates requests, and delegates authenticated HTTP from either listener to `RouteHandler`.
 
 `RouteHandler` owns route dispatch across domain files:
 
@@ -274,22 +283,22 @@ Keep these high-churn modules small and explicit:
 
 ## Where to look in code
 
-| Concern                                     | Files                                                                                                                                                                        |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Server composition                          | `server/src/server.ts`, `server/src/cli.ts`                                                                                                                                  |
-| Route dispatch                              | `server/src/routes/index.ts`, `server/src/routes/*`                                                                                                                          |
-| Workspace catalog summaries                 | `server/src/routes/workspaces.ts`, `server/src/storage/session-sqlite-store.ts`                                                                                              |
-| Workspace detail recent list                | `server/src/routes/sessions.ts`, `server/src/session-list-service.ts`, `server/src/local-sessions.ts`                                                                        |
-| Session lifecycle HTTP actions              | `server/src/routes/sessions.ts`, `server/src/session-lifecycle-service.ts`                                                                                                   |
-| Saved Agent definitions and launches        | `server/src/routes/agents.ts`, `server/src/agent-definitions.ts`, `server/src/agent-launch-service.ts`                                                                       |
+| Concern                                     | Files                                                                                                                                                                                  |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server composition and listeners            | `server/src/server.ts`, `server/src/local-api-socket.ts`, `server/src/cli.ts`                                                                                                          |
+| Route dispatch                              | `server/src/routes/index.ts`, `server/src/routes/*`                                                                                                                                    |
+| Workspace catalog summaries                 | `server/src/routes/workspaces.ts`, `server/src/storage/session-sqlite-store.ts`                                                                                                        |
+| Workspace detail recent list                | `server/src/routes/sessions.ts`, `server/src/session-list-service.ts`, `server/src/local-sessions.ts`                                                                                  |
+| Session lifecycle HTTP actions              | `server/src/routes/sessions.ts`, `server/src/session-lifecycle-service.ts`                                                                                                             |
+| Saved Agent definitions and launches        | `server/src/routes/agents.ts`, `server/src/agent-definitions.ts`, `server/src/agent-launch-service.ts`                                                                                 |
 | Schedule definitions and automatic runs     | `server/src/routes/schedules.ts`, `server/src/agent-schedules.ts`, `server/src/agent-schedule-runner.ts`, `server/src/agent-schedule-dispatch.ts`, `server/src/agent-schedule-cron.ts` |
-| Session trace, diff, and changed-file reads | `server/src/routes/sessions.ts`, `server/src/routes/session-files.ts`, `server/src/session-trace-service.ts`                                                                 |
-| Focused session stream                      | `server/src/stream.ts`, `server/src/ws-message-handler.ts`                                                                                                                   |
-| Global app event stream                     | `server/src/app-event-stream.ts`, `server/src/session-broadcast.ts`                                                                                                          |
-| Managed runtime                             | `server/src/sessions.ts`, `server/src/session-*.ts`, `server/src/sdk-backend.ts`                                                                                             |
-| Terminal mirror runtime                     | `server/src/runtime-router.ts`, `server/src/pi-tui-mirror-runtime.ts`, `server/src/pi-tui-mirror-contract.ts`, `pi-extensions/oppi-mirror/extensions/oppi-mirror.ts`         |
-| Extension UI relay                          | `server/src/sdk-ui-bridge.ts`, `server/src/extension-ui-contract.ts`, `server/src/extension-ui-state.ts`, `server/src/session-agent-events.ts`                               |
-| Workspace files and media                   | `server/src/routes/workspace-files.ts`, `server/src/file-serving-policy.ts`, `server/src/routes/uploads.ts`, `server/src/session-attachments.ts`, `server/src/http-range.ts` |
-| Protocol contract                           | `server/src/types/protocol.ts`, `server/src/types.ts`, `protocol/*.json`                                                                                                     |
-| Pi model/auth compatibility                 | `server/src/pi-model-auth-service.ts`, `server/src/session-title-generator.ts`, `server/src/token-usage.ts`                                                                  |
-| Pi event projection                         | `server/src/session-events.ts`, `server/src/session-agent-events.ts`, `server/src/session-protocol.ts`, `server/src/session-agent-event-media.ts`                            |
+| Session trace, diff, and changed-file reads | `server/src/routes/sessions.ts`, `server/src/routes/session-files.ts`, `server/src/session-trace-service.ts`                                                                           |
+| Focused session stream                      | `server/src/stream.ts`, `server/src/ws-message-handler.ts`                                                                                                                             |
+| Global app event stream                     | `server/src/app-event-stream.ts`, `server/src/session-broadcast.ts`                                                                                                                    |
+| Managed runtime                             | `server/src/sessions.ts`, `server/src/session-*.ts`, `server/src/sdk-backend.ts`                                                                                                       |
+| Terminal mirror runtime                     | `server/src/runtime-router.ts`, `server/src/pi-tui-mirror-runtime.ts`, `server/src/pi-tui-mirror-contract.ts`, `pi-extensions/oppi-mirror/extensions/oppi-mirror.ts`                   |
+| Extension UI relay                          | `server/src/sdk-ui-bridge.ts`, `server/src/extension-ui-contract.ts`, `server/src/extension-ui-state.ts`, `server/src/session-agent-events.ts`                                         |
+| Workspace files and media                   | `server/src/routes/workspace-files.ts`, `server/src/file-serving-policy.ts`, `server/src/routes/uploads.ts`, `server/src/session-attachments.ts`, `server/src/http-range.ts`           |
+| Protocol contract                           | `server/src/types/protocol.ts`, `server/src/types.ts`, `protocol/*.json`                                                                                                               |
+| Pi model/auth compatibility                 | `server/src/pi-model-auth-service.ts`, `server/src/session-title-generator.ts`, `server/src/token-usage.ts`                                                                            |
+| Pi event projection                         | `server/src/session-events.ts`, `server/src/session-agent-events.ts`, `server/src/session-protocol.ts`, `server/src/session-agent-event-media.ts`                                      |

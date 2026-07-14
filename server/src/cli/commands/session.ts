@@ -5,7 +5,6 @@ import type { Session } from "../../types.js";
 import {
   localApiRequest,
   type LocalApiConnection,
-  type LocalApiHostResolvers,
   type LocalApiRequestOptions,
 } from "../local-api-client.js";
 import {
@@ -57,21 +56,20 @@ export async function cmdSession(
   action: string | undefined,
   positional: string[],
   flags: Record<string, string>,
-  hostResolvers: LocalApiHostResolvers = {},
   cwd = process.cwd(),
 ): Promise<void> {
   const requestedMode = action || "list";
   const mode = requestedMode === "start" ? "create" : requestedMode;
   const jsonOutput = flags.json === "true";
 
-  const { call, output } = createLocalApiCommandContext(storage, jsonOutput, hostResolvers);
+  const { call, output } = createLocalApiCommandContext(storage, jsonOutput);
 
   try {
     flags = normalizeSessionFlagAliases(mode, flags);
     assertSessionFlags(mode, flags);
 
     if (mode === "list") {
-      const result = await listSessions(storage, flags, call, hostResolvers);
+      const result = await listSessions(storage, flags, call);
       const sessions = Array.isArray(result.sessions) ? result.sessions : [];
       output({ sessions: sessions.map(compactSessionListRow) }, () => {
         printList(
@@ -113,7 +111,7 @@ export async function cmdSession(
     }
 
     if (mode === "create") {
-      await createSession(storage, flags, jsonOutput, hostResolvers);
+      await createSession(storage, flags, jsonOutput);
       return;
     }
 
@@ -305,10 +303,10 @@ export async function cmdSession(
         throw new Error("--workspace and --all cannot be used together");
       }
       if (flags.workspace) {
-        const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace, hostResolvers);
+        const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace);
         params.set("workspaceId", workspaceId);
       } else if (flags.all !== "true") {
-        const workspaceId = await inferWorkspaceIdFromCwdForCli(storage, cwd, hostResolvers);
+        const workspaceId = await inferWorkspaceIdFromCwdForCli(storage, cwd);
         if (!workspaceId)
           throw new Error("Could not infer workspace from cwd; pass --workspace or --all");
         params.set("workspaceId", workspaceId);
@@ -498,7 +496,6 @@ async function createSession(
   storage: LocalApiConnection,
   flags: Record<string, string>,
   jsonOutput: boolean,
-  hostResolvers: LocalApiHostResolvers,
 ): Promise<void> {
   const workspaceRef = flags.workspace?.trim();
   const promptText =
@@ -513,8 +510,8 @@ async function createSession(
     process.exitCode = 1;
     return;
   }
-  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef, hostResolvers);
-  const resolvedModel = await resolveModelFlagForCli(storage, flags.model, hostResolvers);
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef);
+  const resolvedModel = await resolveModelFlagForCli(storage, flags.model);
   const savedAgent = savedAgentReference(flags.agent);
   const result = savedAgent
     ? await localApiRequest<{ session: Session; receipt?: Record<string, unknown> }>(
@@ -540,7 +537,6 @@ async function createSession(
             ...(flags["idempotency-key"] ? { idempotencyKey: flags["idempotency-key"] } : {}),
           },
         },
-        hostResolvers,
       )
     : await localApiRequest<{ session: Session; prompted?: boolean }>(
         storage,
@@ -556,7 +552,6 @@ async function createSession(
             ...(flags["idempotency-key"] ? { launchIdempotencyKey: flags["idempotency-key"] } : {}),
           },
         },
-        hostResolvers,
       );
   if (jsonOutput) {
     writeJsonEnvelope({ ok: true, data: { session_id: result.session.id } });

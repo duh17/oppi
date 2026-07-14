@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { classifyOppiToolCommand, runOppiToolCommand } from "../src/default-agent-tool.js";
 import { Storage } from "../src/storage.js";
+import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 
 describe("Default Agent Oppi tool command runner", () => {
   it("returns help for write commands without local API dispatch", async () => {
@@ -53,6 +54,7 @@ describe("Default Agent Oppi tool command runner", () => {
   });
 
   it("dispatches allowed read commands through the JSON CLI modules", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-tool-"));
     const requests: string[] = [];
     const api = createHttpServer((req, res) => {
       requests.push(`${req.method ?? "GET"} ${req.url ?? "/"}`);
@@ -63,15 +65,12 @@ describe("Default Agent Oppi tool command runner", () => {
         }),
       );
     });
-    await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
-    const address = api.address();
-    if (!address || typeof address === "string") throw new Error("Failed to start API fixture");
+    await listenOnLocalApiFixture(api, dataDir);
 
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-tool-"));
     try {
       const storage = new Storage(dataDir);
       storage.rotateToken();
-      storage.updateConfig({ host: "127.0.0.1", port: address.port, tls: { mode: "disabled" } });
+      storage.updateConfig({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } });
 
       const result = await runOppiToolCommand({ dataDir, args: ["workspace", "list"] });
 
@@ -91,6 +90,7 @@ describe("Default Agent Oppi tool command runner", () => {
 
   it("passes the agent cwd into session search workspace inference", async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-default-agent-tool-cwd-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-tool-cwd-data-"));
     const requests: string[] = [];
     const api = createHttpServer((req, res) => {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -114,15 +114,12 @@ describe("Default Agent Oppi tool command runner", () => {
       }
       res.end(JSON.stringify({}));
     });
-    await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
-    const address = api.address();
-    if (!address || typeof address === "string") throw new Error("Failed to start API fixture");
+    await listenOnLocalApiFixture(api, dataDir);
 
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-tool-cwd-data-"));
     try {
       const storage = new Storage(dataDir);
       storage.rotateToken();
-      storage.updateConfig({ host: "127.0.0.1", port: address.port, tls: { mode: "disabled" } });
+      storage.updateConfig({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } });
 
       const result = await runOppiToolCommand({
         dataDir,

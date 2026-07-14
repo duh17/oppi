@@ -20,6 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
+import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 
 const CLI = process.env.OPPI_TEST_CLI ?? resolve(__dirname, "../dist/src/cli.js");
 let dataDir: string;
@@ -753,6 +754,7 @@ describe("oppi local API commands", () => {
   it("implements the spec-backed app-control CLI over local API routes", async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-cli-workspace-"));
     const worktreeRoot = mkdtempSync(join(tmpdir(), "oppi-cli-worktree-"));
+    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-app-control-"));
     const requests: Array<{ method: string; path: string; body?: unknown }> = [];
     const api = createHttpServer((req, res) => {
       void (async () => {
@@ -1252,10 +1254,7 @@ describe("oppi local API commands", () => {
         res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
       });
     });
-    await new Promise<void>((resolveListen) => api.listen(0, "127.0.0.1", resolveListen));
-    const address = api.address();
-    if (!address || typeof address === "string") throw new Error("Failed to start API fixture");
-    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-app-control-"));
+    await listenOnLocalApiFixture(api, cliDir);
     const definitionPath = join(cliDir, "schedule.json");
     const workspaceDefinitionPath = join(cliDir, "workspace.json");
     const workspaceUpdatePath = join(cliDir, "workspace-update.json");
@@ -1277,9 +1276,6 @@ describe("oppi local API commands", () => {
       expect(run(["init", "--yes", "--data-dir", cliDir]).exitCode).toBe(0);
       expect(
         run(["config", "set", "tls", '{"mode":"disabled"}'], { OPPI_DATA_DIR: cliDir }).exitCode,
-      ).toBe(0);
-      expect(
-        run(["config", "set", "port", String(address.port)], { OPPI_DATA_DIR: cliDir }).exitCode,
       ).toBe(0);
 
       const cases: Array<{ args: string[]; expected: string[]; exact?: boolean }> = [
@@ -1955,6 +1951,7 @@ describe("oppi local API commands", () => {
   }, 180_000);
 
   it("keeps concurrent read-only local API CLI calls from failing on SQLite locks", async () => {
+    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-concurrent-read-"));
     const api = createHttpServer((req, res) => {
       if (req.method === "GET" && req.url === "/workspaces") {
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -1965,18 +1962,12 @@ describe("oppi local API commands", () => {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: `${req.method ?? "GET"} ${req.url ?? "/"} not handled` }));
     });
-    await new Promise<void>((resolveListen) => api.listen(0, "127.0.0.1", resolveListen));
-    const address = api.address();
-    if (!address || typeof address === "string") throw new Error("Failed to start API fixture");
-    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-concurrent-read-"));
+    await listenOnLocalApiFixture(api, cliDir);
 
     try {
       expect(run(["init", "--yes", "--data-dir", cliDir]).exitCode).toBe(0);
       expect(
         run(["config", "set", "tls", '{"mode":"disabled"}'], { OPPI_DATA_DIR: cliDir }).exitCode,
-      ).toBe(0);
-      expect(
-        run(["config", "set", "port", String(address.port)], { OPPI_DATA_DIR: cliDir }).exitCode,
       ).toBe(0);
 
       const results = await Promise.all(
@@ -2001,22 +1992,17 @@ describe("oppi local API commands", () => {
   }, 30_000);
 
   it("schedule list --json fails fast on malformed successful API JSON", async () => {
+    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-local-api-"));
     const api = createHttpServer((_req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end("not-json");
     });
-    await new Promise<void>((resolveListen) => api.listen(0, "127.0.0.1", resolveListen));
-    const address = api.address();
-    if (!address || typeof address === "string") throw new Error("Failed to start API fixture");
-    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-local-api-"));
+    await listenOnLocalApiFixture(api, cliDir);
 
     try {
       expect(run(["init", "--yes", "--data-dir", cliDir]).exitCode).toBe(0);
       expect(
         run(["config", "set", "tls", '{"mode":"disabled"}'], { OPPI_DATA_DIR: cliDir }).exitCode,
-      ).toBe(0);
-      expect(
-        run(["config", "set", "port", String(address.port)], { OPPI_DATA_DIR: cliDir }).exitCode,
       ).toBe(0);
 
       const { stdout, exitCode } = await runAsync(["schedule", "list", "--json"], {

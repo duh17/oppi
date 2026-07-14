@@ -15,12 +15,12 @@ Settings are listed in the order they appear in the config file. Auth state is d
 
 ### Server
 
-| Setting         | Type   | Default            | Description                                                                    |
-| --------------- | ------ | ------------------ | ------------------------------------------------------------------------------ |
-| `configVersion` | number | `2`                | Schema version. Managed automatically — do not edit.                           |
-| `port`          | number | `7749`             | HTTP + WebSocket listen port. Range: 0-65535.                                  |
-| `host`          | string | `"0.0.0.0"`        | Bind address. Use `"127.0.0.1"` to restrict to localhost.                      |
-| `dataDir`       | string | `"~/.config/oppi"` | Root state directory. Contains sessions, workspaces, config, and TLS material. |
+| Setting         | Type   | Default            | Description                                                                                                     |
+| --------------- | ------ | ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `configVersion` | number | `2`                | Schema version. Managed automatically — do not edit.                                                            |
+| `port`          | number | `7749`             | Remote HTTP(S) + WebSocket listen port. Range: 0-65535.                                                         |
+| `host`          | string | `"0.0.0.0"`        | Remote bind address. Use `"127.0.0.1"` to restrict network clients to localhost.                                |
+| `dataDir`       | string | `"~/.config/oppi"` | Root state directory. Contains sessions, workspaces, config, TLS material, and the local CLI runtime directory. |
 
 ### Model
 
@@ -85,6 +85,12 @@ Default `runtimePathEntries`:
 
 If you need tools from custom paths (e.g. `mise`, `pyenv`, `nvm`), add their bin directories here.
 
+### Local CLI transport
+
+The local CLI always uses bearer-authenticated HTTP over an owner-only Unix socket. The normal path is `$OPPI_DATA_DIR/run/oppi.sock`; the runtime directory is mode `0700` and the socket is mode `0600`. If a custom data-directory path would exceed portable Unix socket limits, Oppi derives a deterministic owner-only socket path under the system temporary directory.
+
+`host`, `port`, and `tls` configure only the remote network listener. The CLI does not fall back to TCP when its Unix socket is missing or unavailable.
+
 ### TLS
 
 | Setting                        | Type    | Default         | Description                                                                                           |
@@ -95,19 +101,18 @@ If you need tools from custom paths (e.g. `mise`, `pyenv`, `nvm`), add their bin
 | `tls.caPath`                   | string  | -               | CA chain path. Used in `self-signed` mode for client certificate pinning.                             |
 | `tls.allowInsecureNetworkHttp` | boolean | `false`         | Explicit escape hatch required to bind plain HTTP/WS to non-loopback interfaces with `mode=disabled`. |
 
-New configs default to `"self-signed"` so iOS pairing uses HTTPS/WSS out of the box.
-Configs with `tls.mode="disabled"` are auto-promoted to `"self-signed"` on first `oppi serve`.
+New configs default to `"self-signed"` so iOS pairing uses HTTPS/WSS out of the box. Configs with `tls.mode="disabled"` are auto-promoted to `"self-signed"` on first `oppi serve`. TLS applies to the remote network listener, not the local Unix socket.
 
 Modes:
 
-| Mode          | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `disabled`    | Plain HTTP/WS. No encryption. Non-loopback binds require `tls.allowInsecureNetworkHttp=true`; loopback dev binds work.                                                                                                                                                                                                                                                                                                                                                                                    |
-| `tailscale`   | Uses a Tailnet DNS certificate and requests/renews it via `tailscale cert` when Tailscale is connected. Existing locally valid material keeps restarts, pairing, and local CLI/API access working while disconnected when the configured bind remains locally reachable. Wildcards dial same-family loopback; explicit binds dial their configured address while SNI remains the certificate's Tailnet DNS SAN. Tailscale is still required to obtain/renew material and for remote Tailnet connectivity. |
-| `self-signed` | Auto-generates cert material under `~/.config/oppi/tls/self-signed/`. Client must trust the CA.                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `manual`      | Uses `certPath` and `keyPath` you provide. Both are required.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `auto`        | Auto-selects based on environment (Tailscale if available, else self-signed).                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `cloudflare`  | Cloudflare Tunnel integration.                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Mode          | Behavior                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `disabled`    | Plain HTTP/WS. No encryption. Non-loopback binds require `tls.allowInsecureNetworkHttp=true`; loopback dev binds work.                                                                                                                                                                                                                                                                    |
+| `tailscale`   | Uses a Tailnet DNS certificate and requests/renews it via `tailscale cert` when Tailscale is connected. Existing locally valid material can restart the remote listener while disconnected. Missing or invalid material leaves remote HTTPS/WSS unavailable without affecting the Unix-socket CLI. Tailscale is required to obtain or renew material and for remote Tailnet connectivity. |
+| `self-signed` | Auto-generates cert material under `~/.config/oppi/tls/self-signed/`. Client must trust the CA.                                                                                                                                                                                                                                                                                           |
+| `manual`      | Uses `certPath` and `keyPath` you provide. Both are required.                                                                                                                                                                                                                                                                                                                             |
+| `auto`        | Auto-selects based on environment (Tailscale if available, else self-signed).                                                                                                                                                                                                                                                                                                             |
+| `cloudflare`  | Cloudflare Tunnel integration.                                                                                                                                                                                                                                                                                                                                                            |
 
 For Tailscale fallback, “locally valid” means the leaf parses, the current time
 is within its complete validity interval, it has an exact Tailnet DNS SAN, and

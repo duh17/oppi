@@ -12,10 +12,7 @@ oppi --version
 oppi serve
 ```
 
-On first `serve`, Oppi creates `~/.config/oppi/`, generates owner credentials,
-bootstraps local HTTPS/WSS with `tls.mode=self-signed`, and prints a pairing QR
-plus invite link for the iPhone/iPad app. Use `oppi pair` later to generate a
-fresh single-use invite.
+On first `serve`, Oppi creates `~/.config/oppi/`, generates owner credentials, starts the local CLI API at `~/.config/oppi/run/oppi.sock`, bootstraps remote HTTPS/WSS with `tls.mode=self-signed`, and prints a pairing QR plus invite link for the iPhone/iPad app. Use `oppi pair` later to generate a fresh single-use invite.
 
 Upgrade or uninstall the global CLI with npm:
 
@@ -61,13 +58,7 @@ Optional: enable Tailscale HTTPS/WSS (Let's Encrypt cert via `tailscale cert`):
 oppi config set tls '{"mode":"tailscale"}'
 ```
 
-Tailscale must be connected to obtain or renew this certificate and for remote
-Tailnet access. Once locally valid cert/key material exists, local server
-restarts, `oppi pair`, and local CLI/API commands continue to work while
-Tailscale is stopped when the configured bind remains locally reachable.
-Wildcard binds use same-family loopback (`0.0.0.0` → `127.0.0.1`, `::` →
-`::1`); explicit binds are dialed directly while TLS SNI remains the validated
-Tailnet DNS SAN.
+Tailscale must be connected to obtain or renew this certificate and for remote Tailnet access. Existing locally valid cert/key material can restart the remote listener while Tailscale is stopped. Without usable material, the remote listener stays unavailable and fails closed; the local Unix-socket CLI remains available because it does not use Tailscale or TLS.
 
 Oppi checks the certificate's full validity interval, Tailnet DNS SAN, and
 certificate/key match. It assumes material renewed by the local `tailscale`
@@ -120,7 +111,7 @@ docker compose up -d --build
 
 What it does:
 
-- runs `node dist/src/cli.js serve` as PID 1 in container
+- installs `oppi` as the canonical CLI inside the image and runs `oppi serve` as PID 1
 - auto-restarts via `restart: unless-stopped`
 - binds host `${OPPI_PORT:-7750}` to the same in-container port
 - persists server state in Docker volume `oppi-data` (`/data/oppi`)
@@ -146,8 +137,11 @@ curl -sk "https://127.0.0.1:${OPPI_PORT:-7750}/health"
 # Verify SearXNG reachability from inside container
 docker compose exec oppi-server curl -sS "$SEARXNG_URL/healthz"
 
+# Run CLI commands inside the container so they reach its Unix socket
+docker compose exec oppi-server oppi workspace list
+
 # Generate pairing QR/deep link explicitly
-docker compose exec oppi-server node dist/src/cli.js pair --host <your-lan-host-or-ip>
+docker compose exec oppi-server oppi pair --host <your-lan-host-or-ip>
 
 # Force resync Pi seed from host on next start
 PI_AGENT_SYNC_MODE=always docker compose up -d
@@ -159,8 +153,7 @@ docker compose start
 
 ## Commands
 
-Use `oppi ...` for npm/global installs. In a source checkout before linking, use
-`node dist/src/cli.js ...` from the `server/` directory.
+Use `oppi ...` for npm/global and Docker installs. In a source checkout before linking, use `node dist/src/cli.js ...` from the `server/` directory. Docker commands run inside the server container, for example `docker compose exec oppi-server oppi session list`, because Docker Desktop does not bridge the container's Unix socket to the host.
 
 ```bash
 oppi serve [--host <h>]      # start server
@@ -178,6 +171,8 @@ oppi config ...              # show/get/set/validate config
 oppi token rotate            # rotate owner bearer token
 oppi update                  # update the npm-installed server and CLI
 ```
+
+Commands that call the local API use bearer-authenticated HTTP over `$OPPI_DATA_DIR/run/oppi.sock`. They never auto-fallback to a network host or plaintext TCP. Deep custom data-directory paths use a deterministic owner-only socket under the system temporary directory to stay within Unix socket path limits. Remote HTTPS/WSS can be unavailable while local CLI commands continue to work. Oppi Mirror and Oppi subagents still require the network WebSocket listener.
 
 Session history reads are consolidated under `oppi session inspect`. Start with its default turn outline, use `--view summary` for counts, and request `--turns <spec> --view messages|tools` only for the smallest relevant turn set.
 
@@ -211,7 +206,8 @@ See [Oppi extension behavior](../docs/extensions.md) for extension loading, per-
 
 - **Config file**: `~/.config/oppi/config.json`
 - **Data directory**: `~/.config/oppi/`
-- Override both with `OPPI_DATA_DIR` or `--data-dir`
+- **Local CLI socket**: `$OPPI_DATA_DIR/run/oppi.sock` for normal-length paths
+- Override the config and data directory with `OPPI_DATA_DIR` or `--data-dir`
 
 Key config sections:
 

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { inferWorkspaceIdFromCwdForCli } from "../src/cli/resources.js";
 import { Storage } from "../src/storage.js";
+import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 
 const cleanupPaths = new Set<string>();
 
@@ -58,14 +59,12 @@ describe("CLI workspace inference", () => {
 
       res.end(JSON.stringify({}));
     });
-    await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
-    const address = api.address();
-    if (!address || typeof address === "string") throw new Error("Failed to start API fixture");
+    await listenOnLocalApiFixture(api, dataDir);
 
     try {
       const storage = new Storage(dataDir);
       storage.rotateToken();
-      storage.updateConfig({ host: "127.0.0.1", port: address.port, tls: { mode: "disabled" } });
+      storage.updateConfig({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } });
 
       await expect(inferWorkspaceIdFromCwdForCli(storage, nestedWorktreeDir)).resolves.toBe("ws-1");
       expect(requests).toEqual(["GET /workspaces", "GET /workspaces/ws-1/worktrees"]);

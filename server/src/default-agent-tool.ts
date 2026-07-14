@@ -10,7 +10,7 @@ import { cmdWorkspace } from "./cli/commands/workspace.js";
 import { cmdWorktree } from "./cli/commands/worktree.js";
 import { helpTopicToJson, resolveHelpTopic } from "./cli/help.js";
 import { captureCliOutput, type CliJsonEnvelope } from "./cli/output.js";
-import type { LocalApiConnection, LocalApiHostResolvers } from "./cli/local-api-client.js";
+import type { LocalApiConnection } from "./cli/local-api-client.js";
 import { tlsSchemeForConfig } from "./tls.js";
 
 export type OppiToolCommandKind = "read" | "approved-write";
@@ -265,9 +265,8 @@ export async function runOppiToolCommand(options: {
     return successResult(buildStatusEnvelope(connection));
   }
 
-  const hostResolvers = buildLocalApiHostResolvers();
   const output = await captureCliJsonOutput(async () => {
-    await dispatchJsonCliCommand(connection, parsed, hostResolvers, options.cwd);
+    await dispatchJsonCliCommand(connection, parsed, options.cwd);
   });
 
   const parsedOutput = parseCliJsonOutput(output.stdout, output.exitCode);
@@ -281,36 +280,17 @@ export async function runOppiToolCommand(options: {
 async function dispatchJsonCliCommand(
   storage: LocalApiConnection,
   parsed: ParsedCliArgs,
-  hostResolvers: LocalApiHostResolvers,
   cwd?: string,
 ): Promise<void> {
   switch (parsed.command) {
     case "workspace":
-      await cmdWorkspace(
-        storage,
-        parsed.positional[0],
-        parsed.positional.slice(1),
-        parsed.flags,
-        hostResolvers,
-      );
+      await cmdWorkspace(storage, parsed.positional[0], parsed.positional.slice(1), parsed.flags);
       return;
     case "worktree":
-      await cmdWorktree(
-        storage,
-        parsed.positional[0],
-        parsed.positional.slice(1),
-        parsed.flags,
-        hostResolvers,
-      );
+      await cmdWorktree(storage, parsed.positional[0], parsed.positional.slice(1), parsed.flags);
       return;
     case "agent":
-      await cmdAgent(
-        storage,
-        parsed.positional[0],
-        parsed.positional.slice(1),
-        parsed.flags,
-        hostResolvers,
-      );
+      await cmdAgent(storage, parsed.positional[0], parsed.positional.slice(1), parsed.flags);
       return;
     case "session":
       await cmdSession(
@@ -318,18 +298,11 @@ async function dispatchJsonCliCommand(
         parsed.positional[0],
         parsed.positional.slice(1),
         parsed.flags,
-        hostResolvers,
         cwd,
       );
       return;
     case "schedule":
-      await cmdSchedule(
-        storage,
-        parsed.positional[0],
-        parsed.positional.slice(1),
-        parsed.flags,
-        hostResolvers,
-      );
+      await cmdSchedule(storage, parsed.positional[0], parsed.positional.slice(1), parsed.flags);
       return;
     default:
       throw new Error(`Unsupported Oppi command: ${parsed.command}`);
@@ -419,10 +392,6 @@ function truncateToolOutput(output: string): string {
   if (output.length <= MAX_TOOL_OUTPUT_CHARS) return output;
   const omitted = output.length - MAX_TOOL_OUTPUT_CHARS;
   return `${output.slice(0, MAX_TOOL_OUTPUT_CHARS)}\n\n[Output truncated: omitted ${omitted} characters]`;
-}
-
-function buildLocalApiHostResolvers(): LocalApiHostResolvers {
-  return {};
 }
 
 function isCliEnvelope(value: unknown): value is CliJsonEnvelope {

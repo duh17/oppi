@@ -1338,9 +1338,6 @@ async function main(): Promise<void> {
   }
   const dataDir = process.env.OPPI_DATA_DIR || undefined;
   const connection = createCliConnectionConfig(dataDir);
-  // Local API requests derive their TLS identity from the configured leaf
-  // certificate and dial loopback; live Tailscale discovery is not required.
-  const localApiHostResolvers = {};
 
   switch (command) {
     case "serve":
@@ -1375,51 +1372,27 @@ async function main(): Promise<void> {
       break;
 
     case "agent":
-      await cmdAgent(connection, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      await cmdAgent(connection, positional[0], positional.slice(1), flags);
       break;
 
     case "workspace":
-      await cmdWorkspace(
-        connection,
-        positional[0],
-        positional.slice(1),
-        flags,
-        localApiHostResolvers,
-      );
+      await cmdWorkspace(connection, positional[0], positional.slice(1), flags);
       break;
 
     case "worktree":
-      await cmdWorktree(
-        connection,
-        positional[0],
-        positional.slice(1),
-        flags,
-        localApiHostResolvers,
-      );
+      await cmdWorktree(connection, positional[0], positional.slice(1), flags);
       break;
 
     case "session":
-      await cmdSession(
-        connection,
-        positional[0],
-        positional.slice(1),
-        flags,
-        localApiHostResolvers,
-      );
+      await cmdSession(connection, positional[0], positional.slice(1), flags);
       break;
 
     case "schedule":
-      await cmdSchedule(
-        connection,
-        positional[0],
-        positional.slice(1),
-        flags,
-        localApiHostResolvers,
-      );
+      await cmdSchedule(connection, positional[0], positional.slice(1), flags);
       break;
 
     case "wait":
-      await cmdWait(connection, positional[0], positional.slice(1), flags, localApiHostResolvers);
+      await cmdWait(connection, positional[0], positional.slice(1), flags);
       break;
 
     default:

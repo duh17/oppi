@@ -39,7 +39,6 @@ describe("session list command contract", () => {
           ],
         } as T;
       },
-      {},
     );
 
     expect(calls).toEqual(["/sessions/recent?recentDays=3"]);
@@ -60,7 +59,6 @@ describe("session list command contract", () => {
         calls.push(path);
         return { sessions: [{ id: "one" }] } as T;
       },
-      {},
     );
 
     expect(calls).toEqual([
@@ -92,10 +90,9 @@ describe("session list command contract", () => {
           ],
         } as T;
       },
-      {},
     );
 
-    expect(resolveRequest).toHaveBeenCalledWith(storage, "/workspaces/Oppi", undefined, {});
+    expect(resolveRequest).toHaveBeenCalledWith(storage, "/workspaces/Oppi");
     const url = new URL(calls[0] ?? "", "http://local");
     expect(url.pathname).toBe("/workspaces/ws%2Fresolved/sessions");
     expect(url.searchParams.get("status")).toBe("active,stopped");
@@ -121,7 +118,6 @@ describe("session list command contract", () => {
         calls.push(path);
         return { sessions: [] } as T;
       },
-      {},
     );
 
     expect(calls).toEqual(["/sessions?workspaceId=ws-1&status=error&agentId=agent-1"]);
@@ -129,7 +125,7 @@ describe("session list command contract", () => {
 
   it.each(["0", "-1", "nope"])("rejects invalid limit %s before returning rows", async (limit) => {
     await expect(
-      listSessions(storage, { limit }, async <T>(): Promise<T> => ({ sessions: [] }) as T, {}),
+      listSessions(storage, { limit }, async <T>(): Promise<T> => ({ sessions: [] }) as T),
     ).rejects.toThrow("--limit must be a positive integer");
   });
 
@@ -138,7 +134,6 @@ describe("session list command contract", () => {
       storage,
       {},
       async <T>(): Promise<T> => ({ sessions: "invalid" }) as T,
-      {},
     );
     expect(result.sessions).toEqual([]);
   });

@@ -37,13 +37,12 @@ describe("session command dispatch and output boundaries", () => {
       }),
     );
 
-    expect(request).toHaveBeenNthCalledWith(1, storage, "/sessions/s%2F1", undefined, {});
+    expect(request).toHaveBeenNthCalledWith(1, storage, "/sessions/s%2F1", undefined);
     expect(request).toHaveBeenNthCalledWith(
       2,
       storage,
       "/workspaces/ws%2F1/sessions/s%2F1/trace-page?cursor=prev+cursor&aroundEntryId=entry%2F1&targetEvents=50&previewBytes=1024",
       undefined,
-      {},
     );
     expect(JSON.parse(stdout)).toEqual({
       ok: true,
