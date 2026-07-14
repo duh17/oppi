@@ -1,6 +1,6 @@
 # Oppi architecture
 
-Oppi is an Apple client plus an Oppi server for viewing, prompting, and steering Pi coding-agent sessions from iPhone, iPad, and Mac clients. The server embeds the Pi SDK for managed sessions, can mirror a live terminal-owned Pi TUI session through the Oppi Mirror extension, stores saved Agent and schedule state, and exposes HTTP plus scoped WebSocket transports to Apple clients and the mirror bridge.
+Oppi is an Apple client plus an Oppi server for viewing, prompting, and steering Pi coding-agent sessions from iPhone, iPad, and Mac clients. The server embeds the Pi SDK for managed sessions, can mirror a live terminal-owned Pi TUI session through the Oppi Mirror extension, stores saved Agent and schedule state, and exposes two transport boundaries: HTTP over an owner-only Unix socket for the local CLI, plus optional network HTTP(S) and scoped WebSockets for Apple clients and the mirror bridge.
 
 ## Audience and scope
 
@@ -26,8 +26,11 @@ graph TD
     Voice[Voice input and playback]
   end
 
+  CLI[Local oppi CLI]
+
   subgraph Server[Oppi server]
-    HTTP[REST API]
+    LocalHTTP[HTTP over owner-only Unix socket]
+    HTTP[Network REST API]
     Streams[Focused session, app event,<br/>and audio streams]
     Router[Session runtime router]
     Sessions[Managed SessionManager]
@@ -46,6 +49,10 @@ graph TD
     Sandbox[Optional sandbox runtime]
   end
 
+  CLI --> LocalHTTP
+  LocalHTTP --> Router
+  LocalHTTP --> Automations
+  LocalHTTP --> Storage
   App --> HTTP
   App --> Streams
   HTTP --> Router
@@ -100,8 +107,9 @@ Oppi keeps workspace navigation HTTP-first. WebSockets carry live state where st
 
 | Lane                                        | Transport                   | Carries                                                                                                  |
 | ------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Local CLI control plane                     | HTTP over Unix socket       | Authenticated CLI routes without host, port, TLS, DNS, or Tailscale dependencies                         |
 | Global sessions inbox                       | HTTP                        | Recent session summaries across workspaces; the root groups active rows by attention and execution state |
-| Workspace catalog summaries                 | HTTP                        | Workspace rows, active/stopped counts, attention/error flags, and optional compact Git summaries          |
+| Workspace catalog summaries                 | HTTP                        | Workspace rows, active/stopped counts, attention/error flags, and optional compact Git summaries         |
 | Workspace detail recent list                | HTTP                        | Recent active/stopped session summaries, attention snapshot, importable local sessions                   |
 | Workspace archive bucket                    | HTTP                        | Older stopped/importable rows for one lazy-loaded time bucket                                            |
 | Workspace files and media                   | HTTP GET/HEAD               | Directory listings, raw bytes, uploads, attachments, byte-range media                                    |
@@ -158,6 +166,8 @@ Durable session events get per-session sequence numbers and can be replayed thro
 
 ## Cross-system invariants
 
+- The local CLI uses bearer-authenticated HTTP over the owner-only Unix socket. It does not discover or fall back to a host, port, DNS name, TLS identity, or plaintext network listener.
+- Network HTTP(S)/WebSocket availability is independent from the local CLI socket. Remote transport failures fail closed without disabling local CLI routes.
 - Workspace navigation is HTTP-first. `/app/events/stream` keeps visible rows and attention state fresh between snapshots; compact sidebar Git state comes from the workspace catalog snapshot, never raw Git payloads on the app-event stream.
 - The Workspaces root is a server-scoped active-session inbox. Workspace selection opens the workspace-scoped recent list, files, and configuration.
 - The hot workspace recent list is time-bounded. Older stopped/importable history belongs in archive buckets.

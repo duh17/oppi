@@ -65,7 +65,18 @@ import {
   OPPI_BONJOUR_SERVICE_TYPE,
 } from "./bonjour-advertiser.js";
 import { DnsSdBonjourPublisher, isDnsSdAvailable } from "./bonjour-dns-sd.js";
-import { prepareTlsForServer, readCertificateFingerprint, tlsSchemeForConfig } from "./tls.js";
+import {
+  readCertificateFingerprint,
+  TailscaleRemoteUnavailableError,
+  tlsSchemeForConfig,
+  type ResolvedTlsConfig,
+} from "./tls.js";
+import { prepareTlsForServerOffMainThread } from "./tls-preparation.js";
+import {
+  listenOnLocalApiSocket,
+  localApiSocketPath,
+  type LocalApiSocketBinding,
+} from "./local-api-socket.js";
 import { getPackageInfo } from "./version.js";
 import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
@@ -100,10 +111,21 @@ function secureTokenEquals(expected: string, actual: string): boolean {
 
 const WS_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 const WS_CLOSE_GOING_AWAY = 1001;
+const WS_SHUTDOWN_GRACE_MS = 500;
 const MIN_UPLOAD_GC_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_UPLOAD_GC_INTERVAL_MS = 60 * 60 * 1000;
 
 const log = createLogger({ base: { component: "server" } });
+
+type TransportServer = ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
+
+function closeListeningServer(server: TransportServer | undefined): Promise<void> {
+  if (!server?.listening) return Promise.resolve();
+  server.closeIdleConnections?.();
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
 
 function writeUpgradeErrorResponse(
   socket: Duplex,
@@ -360,9 +382,13 @@ export class Server {
   private skillsInitialized = false;
   private reportedMissingWorkspaceSkills = new Set<string>();
   private push: PushClient;
-  private httpServer: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
+  private httpServer?: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
+  private readonly localApiServer: ReturnType<typeof createServer>;
+  private readonly localApiSocket: string;
+  private localApiBinding?: LocalApiSocketBinding;
   private transportScheme: "http" | "https" = "http";
   private transportCertPath?: string;
+  private remoteTransportError?: string;
   private wss: WebSocketServer;
 
   private readonly piExecutable: string;
@@ -632,10 +658,10 @@ export class Server {
       piVersion: Server.detectPiVersion(this.piExecutable),
     });
 
-    const transport = this.createTransportServer(config);
-    this.httpServer = transport.server;
-    this.transportScheme = transport.scheme;
-    this.transportCertPath = transport.certPath;
+    this.localApiSocket = localApiSocketPath(dataDir);
+    this.localApiServer = createServer((req, res) => {
+      void this.handleHttp(req, res, "http");
+    });
 
     this.wss = new WebSocketServer({
       noServer: true,
@@ -646,27 +672,19 @@ export class Server {
       },
     });
 
-    this.httpServer.on("upgrade", (req, socket, head) => {
-      this.handleUpgrade(req, socket, head);
-    });
+    this.transportScheme = tlsSchemeForConfig(config);
   }
 
-  private createTransportServer(config: ServerConfig): {
+  private createTransportServer(tls: ResolvedTlsConfig): {
     server: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
     scheme: "http" | "https";
     certPath?: string;
   } {
-    const handler = (req: IncomingMessage, res: ServerResponse): void => {
-      void this.handleHttp(req, res);
-    };
-
-    const tls = prepareTlsForServer(config, this.storage.getDataDir(), {
-      additionalHosts: [config.host],
-    });
-
     if (!tls.enabled) {
       return {
-        server: createServer(handler),
+        server: createServer((req, res) => {
+          void this.handleHttp(req, res, "http");
+        }),
         scheme: "http",
       };
     }
@@ -683,7 +701,9 @@ export class Server {
     // Passing `ca` here causes Bun's node:https compat layer to demand client
     // certs (oven-sh/bun#16254), breaking HTTPS for all clients.
     return {
-      server: createHttpsServer({ cert, key }, handler),
+      server: createHttpsServer({ cert, key }, (req, res) => {
+        void this.handleHttp(req, res, "https");
+      }),
       scheme: "https",
       certPath: tls.certPath,
     };
@@ -713,10 +733,42 @@ export class Server {
       log.warn("startup.security.warning", { warning });
     }
 
-    return new Promise((resolve, reject) => {
-      this.httpServer.once("error", reject);
-      this.httpServer.listen(config.port, config.host, () => {
-        this.httpServer.removeListener("error", reject);
+    this.localApiBinding = await listenOnLocalApiSocket(this.localApiServer, this.localApiSocket);
+    log.info("server.local_api_listening", { socketPath: this.localApiSocket });
+
+    try {
+      try {
+        const tls = await prepareTlsForServerOffMainThread(
+          { tls: config.tls },
+          this.storage.getDataDir(),
+          { additionalHosts: [config.host] },
+        );
+        const transport = this.createTransportServer(tls);
+        this.httpServer = transport.server;
+        this.transportScheme = transport.scheme;
+        this.transportCertPath = transport.certPath;
+        this.httpServer.on("upgrade", (req, socket, head) => {
+          this.handleUpgrade(req, socket, head);
+        });
+      } catch (error: unknown) {
+        if (!(error instanceof TailscaleRemoteUnavailableError)) throw error;
+        this.remoteTransportError = safeErrorMessage(error);
+      }
+
+      if (this.httpServer) {
+        await new Promise<void>((resolve, reject) => {
+          const server = this.httpServer;
+          if (!server) {
+            resolve();
+            return;
+          }
+          const onError = (error: Error): void => reject(error);
+          server.once("error", onError);
+          server.listen(config.port, config.host, () => {
+            server.off("error", onError);
+            resolve();
+          });
+        });
         log.info("server.listening", {
           scheme: this.transportScheme,
           host: config.host,
@@ -729,41 +781,56 @@ export class Server {
           const message = safeErrorMessage(err);
           log.warn("bonjour.advertisement_disabled", { error: message });
         }
+      } else {
+        log.warn("server.remote_listener_unavailable", {
+          mode: config.tls?.mode ?? "disabled",
+          error: this.remoteTransportError ?? "remote transport unavailable",
+        });
+      }
+    } catch (error: unknown) {
+      await closeListeningServer(this.localApiServer);
+      this.releaseLocalApiBinding();
+      throw error;
+    }
 
-        this.resourceSampler.start();
-        this.opsMetrics.start();
-        this.startUploadGcLoop();
-        this.scheduleRunner.start();
+    this.resourceSampler.start();
+    this.opsMetrics.start();
+    this.startUploadGcLoop();
+    this.scheduleRunner.start();
 
-        // Background: sync search index (non-blocking, fires after listen)
-        if (this.searchIndex) {
-          const idx = this.searchIndex;
-          const sessions = this.storage.listSessions();
-          setTimeout(() => {
-            try {
-              idx.sync(sessions);
-            } catch (err) {
-              log.error("server.search_index_sync.failed", {
-                error: safeErrorMessage(err),
-              });
-            }
-          }, 0);
+    // Background: sync search index (non-blocking, fires after listen)
+    if (this.searchIndex) {
+      const idx = this.searchIndex;
+      const sessions = this.storage.listSessions();
+      setTimeout(() => {
+        try {
+          idx.sync(sessions);
+        } catch (err) {
+          log.error("server.search_index_sync.failed", {
+            error: safeErrorMessage(err),
+          });
         }
-
-        resolve();
-      });
-    });
+      }, 0);
+    }
   }
 
   /** Actual listening port (may differ from config when config.port is 0). */
   get port(): number {
-    const addr = this.httpServer.address();
+    const addr = this.httpServer?.address();
     if (addr && typeof addr === "object") return addr.port;
     return this.storage.getConfig().port;
   }
 
   get scheme(): "http" | "https" {
     return this.transportScheme;
+  }
+
+  get socketPath(): string {
+    return this.localApiSocket;
+  }
+
+  get remoteAvailable(): boolean {
+    return this.httpServer?.listening === true;
   }
 
   async stop(): Promise<void> {
@@ -773,13 +840,34 @@ export class Server {
     this.resourceSampler.stop();
     this.stopBonjourAdvertisement();
     this.skillRegistry.stopWatching();
-    await this.sessions.stopAll();
-    this.liveActivity.shutdown();
-    this.push.shutdown();
-    this.searchIndex?.close();
-    this.closeActiveConnections(WS_CLOSE_GOING_AWAY, "Server shutting down");
-    this.wss.close();
-    this.httpServer.close();
+
+    let shutdownError: unknown;
+    try {
+      await this.sessions.stopAll();
+      this.liveActivity.shutdown();
+      this.push.shutdown();
+      this.searchIndex?.close();
+      await this.closeWebSocketServer();
+    } catch (error: unknown) {
+      shutdownError = error;
+    }
+
+    const closeResults = await Promise.allSettled([
+      closeListeningServer(this.httpServer),
+      closeListeningServer(this.localApiServer),
+    ]);
+    this.releaseLocalApiBinding();
+
+    if (shutdownError) throw shutdownError;
+    const closeFailure = closeResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (closeFailure) throw closeFailure.reason;
+  }
+
+  private releaseLocalApiBinding(): void {
+    this.localApiBinding?.release();
+    this.localApiBinding = undefined;
   }
 
   private uploadGcIntervalMs(config: UploadStoreConfigResolved): number {
@@ -944,6 +1032,20 @@ export class Server {
     }
   }
 
+  private closeWebSocketServer(): Promise<void> {
+    this.closeActiveConnections(WS_CLOSE_GOING_AWAY, "Server shutting down");
+    return new Promise((resolve, reject) => {
+      const forceCloseTimer = setTimeout(() => {
+        for (const ws of this.wss.clients) ws.terminate();
+      }, WS_SHUTDOWN_GRACE_MS);
+      this.wss.close((error) => {
+        clearTimeout(forceCloseTimer);
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+  }
+
   private async ensureSkillsInitialized(): Promise<void> {
     if (this.skillsInitialized) return;
 
@@ -1003,9 +1105,13 @@ export class Server {
 
   // ─── HTTP Router ───
 
-  private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handleHttp(
+    req: IncomingMessage,
+    res: ServerResponse,
+    scheme: "http" | "https",
+  ): Promise<void> {
     const startTime = Date.now();
-    const url = new URL(req.url || "/", `${this.transportScheme}://${req.headers.host}`);
+    const url = new URL(req.url || "/", `${scheme}://${req.headers.host ?? "localhost"}`);
     const path = url.pathname;
     const method = req.method || "GET";
 

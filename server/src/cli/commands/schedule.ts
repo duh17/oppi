@@ -1,10 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import {
-  localApiRequest,
-  type LocalApiConnection,
-  type LocalApiHostResolvers,
-} from "../local-api-client.js";
+import { localApiRequest, type LocalApiConnection } from "../local-api-client.js";
 import { createLocalApiCommandContext, handleModelResolvingCliError } from "../command-support.js";
 import {
   codeValue,
@@ -56,13 +52,12 @@ async function newSessionAction(
   storage: LocalApiConnection,
   flags: Record<string, string>,
   prompt: string,
-  hostResolvers: LocalApiHostResolvers,
 ): Promise<Record<string, unknown>> {
   const workspaceRef = flags.workspace?.trim();
   if (!workspaceRef) throw new Error("--workspace or --session is required");
-  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef, hostResolvers);
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef);
   const agentId = savedAgentReference(flags.agent);
-  const resolvedModel = await resolveModelFlagForCli(storage, flags.model, hostResolvers);
+  const resolvedModel = await resolveModelFlagForCli(storage, flags.model);
   return {
     type: "new_session",
     workspaceId,
@@ -78,14 +73,10 @@ async function existingSessionAction(
   storage: LocalApiConnection,
   sessionId: string,
   prompt: string,
-  flags: Record<string, string>,
-  hostResolvers: LocalApiHostResolvers,
 ): Promise<Record<string, unknown>> {
   const result = await localApiRequest<{ session?: { workspaceId?: string } }>(
     storage,
     `/sessions/${encodeURIComponent(sessionId)}`,
-    undefined,
-    hostResolvers,
   );
   const workspaceId = result.session?.workspaceId;
   if (!workspaceId)
@@ -124,18 +115,17 @@ export async function cmdSchedule(
   action: string | undefined,
   positional: string[],
   flags: Record<string, string>,
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<void> {
   const mode = action || "list";
   const jsonOutput = flags.json === "true";
 
-  const { call, output } = createLocalApiCommandContext(storage, jsonOutput, hostResolvers);
+  const { call, output } = createLocalApiCommandContext(storage, jsonOutput);
 
   try {
     if (mode === "list") {
       const params = new URLSearchParams();
       if (flags.workspace) {
-        const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace, hostResolvers);
+        const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace);
         params.set("workspaceId", workspaceId);
       }
       if (flags.session) params.set("sessionId", flags.session);
@@ -188,8 +178,8 @@ export async function cmdSchedule(
         throw new Error("--agent can only be used with new-session schedules");
       }
       const action = flags.session
-        ? await existingSessionAction(storage, flags.session, prompt, flags, hostResolvers)
-        : await newSessionAction(storage, flags, prompt, hostResolvers);
+        ? await existingSessionAction(storage, flags.session, prompt)
+        : await newSessionAction(storage, flags, prompt);
       const body = { name, trigger, action };
       const result = await call<Record<string, unknown>>("/schedules", { method: "POST", body });
       output(result, () => {

@@ -1,9 +1,5 @@
 import type { Session } from "../../types.js";
-import type {
-  LocalApiConnection,
-  LocalApiHostResolvers,
-  LocalApiRequestOptions,
-} from "../local-api-client.js";
+import type { LocalApiConnection, LocalApiRequestOptions } from "../local-api-client.js";
 import { resolveWorkspaceIdForCli } from "../resources.js";
 
 type SessionListRow = Partial<Session> & {
@@ -183,12 +179,11 @@ export async function listSessions(
   storage: LocalApiConnection,
   flags: Record<string, string>,
   call: SessionListApiCall,
-  hostResolvers: LocalApiHostResolvers,
 ): Promise<SessionListResponse> {
   const statuses = normalizeStatusFilter(flags.status);
 
   if (flags.workspace) {
-    const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace, hostResolvers);
+    const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace);
     if (!flags.agent && isWorkspaceListStatusFilter(statuses)) {
       return listWorkspaceSessionsLikeApp(workspaceId, flags, call);
     }

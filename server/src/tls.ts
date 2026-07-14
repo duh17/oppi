@@ -37,6 +37,13 @@ export interface TlsPreparationOptions {
   ensureSelfSigned?: boolean;
 }
 
+export class TailscaleRemoteUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TailscaleRemoteUnavailableError";
+  }
+}
+
 interface SelfSignedPaths {
   certPath: string;
   keyPath: string;
@@ -111,7 +118,10 @@ export function tlsSchemeForConfig(config: ServerConfig): "http" | "https" {
   return mode === "disabled" ? "http" : "https";
 }
 
-export function resolveTlsConfig(config: ServerConfig, dataDir: string): ResolvedTlsConfig {
+export function resolveTlsConfig(
+  config: Pick<ServerConfig, "tls">,
+  dataDir: string,
+): ResolvedTlsConfig {
   const mode = config.tls?.mode ?? "disabled";
   if (mode === "disabled") {
     return { mode, enabled: false };
@@ -149,7 +159,7 @@ export function resolveTlsConfig(config: ServerConfig, dataDir: string): Resolve
 }
 
 export function prepareTlsForServer(
-  config: ServerConfig,
+  config: Pick<ServerConfig, "tls">,
   dataDir: string,
   options: TlsPreparationOptions = {},
 ): ResolvedTlsConfig {
@@ -449,7 +459,7 @@ function ensureTailscaleMaterial(
           validateTailscaleMaterial(resolved, requestedHost ?? undefined);
           return;
         } catch (existingError: unknown) {
-          throw new Error(
+          throw new TailscaleRemoteUnavailableError(
             `Unable to renew Tailscale TLS material and no usable existing certificate remains. ` +
               `Renewal error: ${errorMessage(renewalError)}. Existing material: ${errorMessage(existingError)}`,
           );
@@ -460,7 +470,7 @@ function ensureTailscaleMaterial(
     try {
       validateTailscaleMaterial(resolved, requestedHost ?? undefined);
     } catch (error: unknown) {
-      throw new Error(
+      throw new TailscaleRemoteUnavailableError(
         `Tailscale is unavailable and existing TLS material is unusable: ${errorMessage(error)}. ` +
           "Start Tailscale to obtain or renew the certificate.",
       );

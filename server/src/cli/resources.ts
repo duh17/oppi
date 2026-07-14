@@ -2,11 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
 
-import {
-  localApiRequest,
-  type LocalApiConnection,
-  type LocalApiHostResolvers,
-} from "./local-api-client.js";
+import { localApiRequest, type LocalApiConnection } from "./local-api-client.js";
 
 export type CliWorkspace = {
   id: string;
@@ -23,23 +19,14 @@ export type CliWorktree = {
   [key: string]: unknown;
 };
 
-export async function listWorkspacesForCli(
-  storage: LocalApiConnection,
-  hostResolvers: LocalApiHostResolvers = {},
-): Promise<CliWorkspace[]> {
-  const result = await localApiRequest<{ workspaces?: CliWorkspace[] }>(
-    storage,
-    "/workspaces",
-    undefined,
-    hostResolvers,
-  );
+export async function listWorkspacesForCli(storage: LocalApiConnection): Promise<CliWorkspace[]> {
+  const result = await localApiRequest<{ workspaces?: CliWorkspace[] }>(storage, "/workspaces");
   return Array.isArray(result.workspaces) ? result.workspaces : [];
 }
 
 export async function resolveWorkspaceForCli(
   storage: LocalApiConnection,
   reference: string,
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<CliWorkspace> {
   const trimmed = reference.trim();
   if (!trimmed) throw new Error("workspace is required");
@@ -48,15 +35,13 @@ export async function resolveWorkspaceForCli(
     const direct = await localApiRequest<{ workspace?: CliWorkspace }>(
       storage,
       `/workspaces/${encodeURIComponent(trimmed)}`,
-      undefined,
-      hostResolvers,
     );
     if (direct.workspace?.id) return direct.workspace;
   } catch (error) {
     if (apiStatus(error) !== 404) throw error;
   }
 
-  const workspaces = await listWorkspacesForCli(storage, hostResolvers);
+  const workspaces = await listWorkspacesForCli(storage);
   const matches = workspaces.filter(
     (workspace) => workspace.id === trimmed || workspace.name === trimmed,
   );
@@ -68,25 +53,18 @@ export async function resolveWorkspaceForCli(
 export async function resolveWorkspaceIdForCli(
   storage: LocalApiConnection,
   reference: string,
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<string> {
-  return (await resolveWorkspaceForCli(storage, reference, hostResolvers)).id;
+  return (await resolveWorkspaceForCli(storage, reference)).id;
 }
 
 export async function inferWorkspaceIdFromCwdForCli(
   storage: LocalApiConnection,
   cwd = process.cwd(),
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<string | undefined> {
   const currentPath = normalizeWorkspacePath(cwd);
-  const workspaces = await listWorkspacesForCli(storage, hostResolvers);
+  const workspaces = await listWorkspacesForCli(storage);
   const workspaceMatches = listWorkspacePathMatches(workspaces, currentPath);
-  const worktreeMatches = await listWorkspaceWorktreePathMatches(
-    storage,
-    workspaces,
-    currentPath,
-    hostResolvers,
-  );
+  const worktreeMatches = await listWorkspaceWorktreePathMatches(storage, workspaces, currentPath);
   return inferredWorkspaceIdFromPathMatches(
     [...workspaceMatches, ...worktreeMatches].sort(
       (left, right) => right.root.length - left.root.length,
@@ -97,14 +75,11 @@ export async function inferWorkspaceIdFromCwdForCli(
 export async function listWorktreesForCli(
   storage: LocalApiConnection,
   workspaceReference: string,
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<{ workspaceId: string; worktrees: CliWorktree[] }> {
-  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference, hostResolvers);
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference);
   const result = await localApiRequest<{ workspaceId?: string; worktrees?: CliWorktree[] }>(
     storage,
     `/workspaces/${encodeURIComponent(workspaceId)}/worktrees`,
-    undefined,
-    hostResolvers,
   );
   return {
     workspaceId: result.workspaceId ?? workspaceId,
@@ -116,14 +91,12 @@ export async function createWorktreeForCli(
   storage: LocalApiConnection,
   workspaceReference: string,
   body: { branch: string; base?: string; path?: string },
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<{ workspaceId: string; worktree: CliWorktree }> {
-  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference, hostResolvers);
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference);
   const result = await localApiRequest<{ workspaceId?: string; worktree?: CliWorktree }>(
     storage,
     `/workspaces/${encodeURIComponent(workspaceId)}/worktrees`,
     { method: "POST", body },
-    hostResolvers,
   );
   return requireWorktreeResult(result, workspaceId);
 }
@@ -132,14 +105,12 @@ export async function openWorktreeForCli(
   storage: LocalApiConnection,
   workspaceReference: string,
   body: { branch?: string; path?: string },
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<{ workspaceId: string; worktree: CliWorktree }> {
-  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference, hostResolvers);
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference);
   const result = await localApiRequest<{ workspaceId?: string; worktree?: CliWorktree }>(
     storage,
     `/workspaces/${encodeURIComponent(workspaceId)}/worktrees/open`,
     { method: "POST", body },
-    hostResolvers,
   );
   return requireWorktreeResult(result, workspaceId);
 }
@@ -148,9 +119,8 @@ export async function getWorktreeStatusForCli(
   storage: LocalApiConnection,
   workspaceReference: string,
   worktreeId: string,
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<{ workspaceId: string; worktree: CliWorktree; status: unknown }> {
-  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference, hostResolvers);
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference);
   const result = await localApiRequest<{
     workspaceId?: string;
     worktree?: CliWorktree;
@@ -158,8 +128,6 @@ export async function getWorktreeStatusForCli(
   }>(
     storage,
     `/workspaces/${encodeURIComponent(workspaceId)}/worktrees/${encodeURIComponent(worktreeId)}/status`,
-    undefined,
-    hostResolvers,
   );
   if (!result.worktree?.id) throw new Error("Local API did not return a worktree");
   return {
@@ -174,14 +142,12 @@ export async function previewWorktreeForCli(
   workspaceReference: string,
   worktreeId: string,
   body: { into: string; mode?: string },
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<{ workspaceId: string; preview: unknown }> {
-  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference, hostResolvers);
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference);
   const result = await localApiRequest<{ workspaceId?: string; preview?: unknown }>(
     storage,
     `/workspaces/${encodeURIComponent(workspaceId)}/worktrees/${encodeURIComponent(worktreeId)}/preview`,
     { method: "POST", body },
-    hostResolvers,
   );
   if (!result.preview) throw new Error("Local API did not return a worktree preview");
   return { workspaceId: result.workspaceId ?? workspaceId, preview: result.preview };
@@ -192,15 +158,13 @@ export async function removeWorktreeForCli(
   workspaceReference: string,
   worktreeId: string,
   force: boolean,
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<{ workspaceId: string; worktree: CliWorktree }> {
-  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference, hostResolvers);
+  const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceReference);
   const suffix = force ? "?force=true" : "";
   const result = await localApiRequest<{ workspaceId?: string; worktree?: CliWorktree }>(
     storage,
     `/workspaces/${encodeURIComponent(workspaceId)}/worktrees/${encodeURIComponent(worktreeId)}${suffix}`,
     { method: "DELETE" },
-    hostResolvers,
   );
   return requireWorktreeResult(result, workspaceId);
 }
@@ -242,15 +206,12 @@ async function listWorkspaceWorktreePathMatches(
   storage: LocalApiConnection,
   workspaces: CliWorkspace[],
   currentPath: string,
-  hostResolvers: LocalApiHostResolvers,
 ): Promise<WorkspacePathMatch[]> {
   const matches: WorkspacePathMatch[] = [];
   for (const workspace of workspaces) {
     const result = await localApiRequest<{ worktrees?: CliWorktree[] }>(
       storage,
       `/workspaces/${encodeURIComponent(workspace.id)}/worktrees`,
-      undefined,
-      hostResolvers,
     );
     for (const worktree of result.worktrees ?? []) {
       if (!worktree.path) continue;

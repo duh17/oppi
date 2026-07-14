@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
-import type { LocalApiConnection, LocalApiHostResolvers } from "../local-api-client.js";
+import type { LocalApiConnection } from "../local-api-client.js";
 import { createLocalApiCommandContext } from "../command-support.js";
 import {
   codeValue,
@@ -26,12 +26,11 @@ export async function cmdAgent(
   action: string | undefined,
   positional: string[],
   flags: Record<string, string>,
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<void> {
   const mode = action || "list";
   const jsonOutput = flags.json === "true";
 
-  const { call, output } = createLocalApiCommandContext(storage, jsonOutput, hostResolvers);
+  const { call, output } = createLocalApiCommandContext(storage, jsonOutput);
 
   try {
     if (mode === "list") {

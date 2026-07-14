@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import * as c from "../../ansi.js";
-import type { LocalApiConnection, LocalApiHostResolvers } from "../local-api-client.js";
+import type { LocalApiConnection } from "../local-api-client.js";
 import {
   codeValue,
   nonEmptyDetails,
@@ -24,7 +24,6 @@ export async function cmdWorktree(
   action: string | undefined,
   positional: string[],
   flags: Record<string, string>,
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<void> {
   const mode = action || "list";
   const jsonOutput = flags.json === "true";
@@ -47,16 +46,11 @@ export async function cmdWorktree(
     if (mode === "create") {
       const branch = flags.branch?.trim();
       if (!branch) throw new Error("--branch is required");
-      const result = await createWorktreeForCli(
-        storage,
-        workspace,
-        {
-          branch,
-          ...(flags.base?.trim() ? { base: flags.base.trim() } : {}),
-          ...(flags.path?.trim() ? { path: flags.path.trim() } : {}),
-        },
-        hostResolvers,
-      );
+      const result = await createWorktreeForCli(storage, workspace, {
+        branch,
+        ...(flags.base?.trim() ? { base: flags.base.trim() } : {}),
+        ...(flags.path?.trim() ? { path: flags.path.trim() } : {}),
+      });
       output(result, () =>
         printWorktreeDetails("Created worktree", result.workspaceId, result.worktree),
       );
@@ -67,12 +61,10 @@ export async function cmdWorktree(
       const branch = flags.branch?.trim();
       const path = flags.path?.trim();
       if (!branch && !path) throw new Error("--branch or --path is required");
-      const result = await openWorktreeForCli(
-        storage,
-        workspace,
-        { ...(branch ? { branch } : {}), ...(path ? { path } : {}) },
-        hostResolvers,
-      );
+      const result = await openWorktreeForCli(storage, workspace, {
+        ...(branch ? { branch } : {}),
+        ...(path ? { path } : {}),
+      });
       output(result, () => printWorktreeDetails("Worktree", result.workspaceId, result.worktree));
       return;
     }
@@ -80,7 +72,7 @@ export async function cmdWorktree(
     if (mode === "status") {
       const worktreeId = positional[0]?.trim();
       if (!worktreeId) throw new Error("worktree id is required");
-      const result = await getWorktreeStatusForCli(storage, workspace, worktreeId, hostResolvers);
+      const result = await getWorktreeStatusForCli(storage, workspace, worktreeId);
       output(result, () => {
         printWorktreeDetails("Worktree status", result.workspaceId, result.worktree);
         printStatusSummary(result.status);
@@ -93,13 +85,10 @@ export async function cmdWorktree(
       if (!worktreeId) throw new Error("worktree id is required");
       const into = flags.into?.trim();
       if (!into) throw new Error("--into is required");
-      const result = await previewWorktreeForCli(
-        storage,
-        workspace,
-        worktreeId,
-        { into, ...(flags.mode?.trim() ? { mode: flags.mode.trim() } : {}) },
-        hostResolvers,
-      );
+      const result = await previewWorktreeForCli(storage, workspace, worktreeId, {
+        into,
+        ...(flags.mode?.trim() ? { mode: flags.mode.trim() } : {}),
+      });
       output(result, () => printPreviewSummary(result.preview));
       return;
     }
@@ -112,7 +101,6 @@ export async function cmdWorktree(
         workspace,
         worktreeId,
         flags.force === "true",
-        hostResolvers,
       );
       output(result, () =>
         printWorktreeDetails("Removed worktree", result.workspaceId, result.worktree),
@@ -120,7 +108,7 @@ export async function cmdWorktree(
       return;
     }
 
-    const result = await listWorktreesForCli(storage, workspace, hostResolvers);
+    const result = await listWorktreesForCli(storage, workspace);
     if (mode === "list") {
       output(result, () => {
         printList(

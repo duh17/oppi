@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
-import type { LocalApiConnection, LocalApiHostResolvers } from "../local-api-client.js";
+import type { LocalApiConnection } from "../local-api-client.js";
 import { createLocalApiCommandContext } from "../command-support.js";
 import {
   codeValue,
@@ -19,16 +19,15 @@ export async function cmdWorkspace(
   action: string | undefined,
   positional: string[],
   flags: Record<string, string>,
-  hostResolvers: LocalApiHostResolvers = {},
 ): Promise<void> {
   const mode = action || "list";
   const jsonOutput = flags.json === "true";
 
-  const { call, output } = createLocalApiCommandContext(storage, jsonOutput, hostResolvers);
+  const { call, output } = createLocalApiCommandContext(storage, jsonOutput);
 
   try {
     if (mode === "list") {
-      const workspaces = await listWorkspacesForCli(storage, hostResolvers);
+      const workspaces = await listWorkspacesForCli(storage);
       output({ workspaces }, () => {
         printList(
           `Workspaces (${workspaces.length})`,
@@ -46,7 +45,7 @@ export async function cmdWorkspace(
     if (mode === "get") {
       const reference = positional[0];
       if (!reference) throw new Error("workspace id or name is required");
-      const workspace = await resolveWorkspaceForCli(storage, reference, hostResolvers);
+      const workspace = await resolveWorkspaceForCli(storage, reference);
       output({ workspace }, () => printWorkspaceDetails("Workspace", workspace));
       return;
     }
@@ -72,7 +71,7 @@ export async function cmdWorkspace(
     if (mode === "update") {
       const reference = positional[0];
       if (!reference) throw new Error("workspace id or name is required");
-      const workspace = await resolveWorkspaceForCli(storage, reference, hostResolvers);
+      const workspace = await resolveWorkspaceForCli(storage, reference);
       const definition = workspaceDefinitionFromFlags(flags, { requireFields: true });
       const result = await call<Record<string, unknown>>(
         `/workspaces/${encodeURIComponent(workspace.id)}`,
@@ -91,7 +90,7 @@ export async function cmdWorkspace(
     if (mode === "delete" || mode === "remove") {
       const reference = positional[0];
       if (!reference) throw new Error("workspace id or name is required");
-      const workspace = await resolveWorkspaceForCli(storage, reference, hostResolvers);
+      const workspace = await resolveWorkspaceForCli(storage, reference);
       const result = await call<Record<string, unknown>>(
         `/workspaces/${encodeURIComponent(workspace.id)}`,
         {

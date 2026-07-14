@@ -8,11 +8,7 @@ import {
   resolveModelRequest,
   type ModelResolutionInfo,
 } from "../model-resolution.js";
-import {
-  localApiRequest,
-  type LocalApiConnection,
-  type LocalApiHostResolvers,
-} from "./local-api-client.js";
+import { localApiRequest, type LocalApiConnection } from "./local-api-client.js";
 
 export class CliModelResolutionError extends Error {
   readonly availableModels: string[];
@@ -37,17 +33,11 @@ function isModelInfo(value: unknown): value is ModelResolutionInfo {
 export async function resolveModelFlagForCli(
   storage: LocalApiConnection,
   requestedModel: string | undefined,
-  hostResolvers: LocalApiHostResolvers,
 ): Promise<string | undefined> {
   const trimmed = requestedModel?.trim();
   if (!trimmed) return undefined;
 
-  const result = await localApiRequest<{ models?: unknown[] }>(
-    storage,
-    "/models",
-    undefined,
-    hostResolvers,
-  );
+  const result = await localApiRequest<{ models?: unknown[] }>(storage, "/models");
   const models = (Array.isArray(result.models) ? result.models : []).filter(isModelInfo);
   const candidates = modelCandidatesFromModelInfo(models);
   const resolution = resolveModelRequest(trimmed, candidates);

@@ -98,14 +98,14 @@ expose_recovered_scripts() {
 
 ensure_server_config() {
   # Keep container bind host safe for docker port publishing.
-  node dist/src/cli.js config set host 0.0.0.0 >/tmp/oppi-config-host.log 2>&1 || true
+  oppi config set host 0.0.0.0 >/tmp/oppi-config-host.log 2>&1 || true
 
   if [[ -z "$OPPI_PORT" ]]; then
     return
   fi
 
   if [[ "$OPPI_PORT" =~ ^[0-9]+$ ]] && (( OPPI_PORT > 0 && OPPI_PORT <= 65535 )); then
-    if ! node dist/src/cli.js config set port "$OPPI_PORT" >/tmp/oppi-config-port.log 2>&1; then
+    if ! oppi config set port "$OPPI_PORT" >/tmp/oppi-config-port.log 2>&1; then
       echo "[oppi-entrypoint] warning: failed to set port to $OPPI_PORT" >&2
       cat /tmp/oppi-config-port.log >&2 || true
     fi
@@ -131,8 +131,8 @@ fi
 
 if [[ -n "${OPPI_PAIR_HOST:-}" ]]; then
   echo "[oppi-entrypoint] starting oppi with pairing host: $OPPI_PAIR_HOST"
-  exec node dist/src/cli.js serve --host "$OPPI_PAIR_HOST"
+  exec oppi serve --host "$OPPI_PAIR_HOST"
 fi
 
 echo "[oppi-entrypoint] starting oppi"
-exec node dist/src/cli.js serve
+exec oppi serve
