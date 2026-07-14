@@ -1761,17 +1761,11 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             return
         }
         if shouldResolveFileLines {
-            let build = segmentSource.buildSegmentsWithSourceLineRanges(
-                config,
-                mergeAdjacentTextSegments: false
-            )
+            let build = segmentSource.buildSegmentsWithSourceLineRanges(config)
             renderedSegments = build.segments
             renderedSegmentLineRanges = build.sourceLineRanges
         } else {
-            renderedSegments = segmentSource.buildSegments(
-                config,
-                mergeAdjacentTextSegments: false
-            )
+            renderedSegments = segmentSource.buildSegments(config)
             renderedSegmentLineRanges = []
         }
         collectionView.reloadData()
@@ -1829,8 +1823,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                     workspaceID: workspaceID,
                     sessionID: sessionID,
                     serverBaseURL: serverBaseURL,
-                    sourceDirectory: sourceDirectory,
-                    mergeAdjacentTextSegments: false
+                    sourceDirectory: sourceDirectory
                 )
                 let buildEnd = DispatchTime.now().uptimeNanoseconds
                 guard !Task.isCancelled else { return nil }
