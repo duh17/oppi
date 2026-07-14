@@ -7,7 +7,7 @@ struct ReviewCommentStashSheet: View {
     let onDelete: (ReviewComment) -> Void
     let onClose: () -> Void
 
-    @State private var editingCommentRoute: ReviewCommentEditRoute?
+    @State private var editingComment: ReviewComment?
 
     private var sortedComments: [ReviewComment] {
         comments.sorted { left, right in
@@ -18,9 +18,21 @@ struct ReviewCommentStashSheet: View {
     }
 
     var body: some View {
+        let editingCommentBinding = $editingComment
+
         NavigationStack {
             Group {
-                if sortedComments.isEmpty {
+                if let editingComment {
+                    ReviewCommentEditorView(
+                        comment: editingComment,
+                        onSave: { body in
+                            guard onEdit(editingComment, body) else { return false }
+                            editingCommentBinding.wrappedValue = nil
+                            return true
+                        },
+                        onCancel: { editingCommentBinding.wrappedValue = nil }
+                    )
+                } else if sortedComments.isEmpty {
                     ContentUnavailableView(
                         "No Staged Review Comments",
                         systemImage: "text.bubble",
@@ -31,13 +43,13 @@ struct ReviewCommentStashSheet: View {
                         ReviewCommentStashRow(
                             comment: comment,
                             isFocused: comment.id == focusedCommentId,
-                            onEdit: { editingCommentRoute = ReviewCommentEditRoute(id: comment.id) },
+                            onEdit: { editingComment = comment },
                             onDelete: { onDelete(comment) }
                         )
                         .listRowBackground(rowBackground(isFocused: comment.id == focusedCommentId))
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
-                                editingCommentRoute = ReviewCommentEditRoute(id: comment.id)
+                                editingComment = comment
                             } label: {
                                 Label("Edit", systemImage: "pencil")
                             }
@@ -54,22 +66,15 @@ struct ReviewCommentStashSheet: View {
                     .listStyle(.plain)
                 }
             }
-            .navigationTitle("Staged Comments")
+            .navigationTitle(editingComment == nil ? "Staged Comments" : "Edit Comment")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(item: $editingCommentRoute) { route in
-                if let comment = comments.first(where: { $0.id == route.id }) {
-                    ReviewCommentEditorView(
-                        comment: comment,
-                        onSave: { body in onEdit(comment, body) },
-                        onCancel: { editingCommentRoute = nil }
-                    )
-                } else {
-                    ContentUnavailableView("Comment Removed", systemImage: "text.bubble")
-                }
-            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done", action: onClose)
+                    if editingComment == nil {
+                        Button("Done", action: onClose)
+                    } else {
+                        Button("Cancel") { editingComment = nil }
+                    }
                 }
             }
         }
@@ -78,10 +83,6 @@ struct ReviewCommentStashSheet: View {
     private func rowBackground(isFocused: Bool) -> Color {
         isFocused ? Color.themeCyan.opacity(0.12) : Color.clear
     }
-}
-
-private struct ReviewCommentEditRoute: Identifiable, Hashable {
-    let id: String
 }
 
 private struct ReviewCommentStashRow: View {

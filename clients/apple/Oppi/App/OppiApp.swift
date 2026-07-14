@@ -177,7 +177,9 @@ struct OppiApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if FullScreenReviewCommentHarnessConfig.isEnabled {
+            if ReviewCommentStashHarnessConfig.isEnabled {
+                ReviewCommentStashHarnessView()
+            } else if FullScreenReviewCommentHarnessConfig.isEnabled {
                 FullScreenReviewCommentHarnessView()
                     .ignoresSafeArea()
             } else if CodeGutterAlignmentHarnessConfig.isEnabled {
