@@ -117,6 +117,54 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "chat-input-attachment-contained")
     }
 
+    func testQuickSessionDictationComposerStreamsWithoutLayoutJumps() throws {
+        launchPreview(screen: "quick-session-dictation-composer")
+
+        let input = app.descendants(matching: .any)["dictation.preview.input"]
+        let composer = app.descendants(matching: .any)["dictation.preview.composer"]
+        let step = app.staticTexts["dictation.preview.step"]
+        let caretProbe = app.staticTexts["dictation.preview.caretProbe"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5), "Dictation input not visible")
+        XCTAssertTrue(composer.waitForExistence(timeout: 5), "Dictation composer not visible")
+        XCTAssertTrue(step.waitForExistence(timeout: 5), "Dictation progress probe not visible")
+        XCTAssertTrue(caretProbe.waitForExistence(timeout: 5), "Dictation caret probe not visible")
+
+        let finalStep = NSPredicate(format: "label == %@", "step 4")
+        let finalStepExpectation = XCTNSPredicateExpectation(predicate: finalStep, object: step)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [finalStepExpectation], timeout: 5),
+            .completed,
+            "Simulated dictation did not finish streaming"
+        )
+
+        let allCaretSteps = NSPredicate(format: "label == %@", "4/4 caret steps passed")
+        let caretExpectation = XCTNSPredicateExpectation(predicate: allCaretSteps, object: caretProbe)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [caretExpectation], timeout: 3),
+            .completed,
+            "Every streamed update must report a terminal caret both immediately and after deferred correction"
+        )
+
+        XCTAssertTrue(
+            (input.value as? String)?.contains("it actually busts our") == true,
+            "Final streamed transcript did not reach the text view"
+        )
+        XCTAssertGreaterThan(
+            input.frame.height,
+            55,
+            "The final streamed transcript did not occupy multiple rows"
+        )
+        XCTAssertTrue(composer.frame.contains(input.frame), "Text input escaped the composer surface")
+        XCTAssertLessThan(
+            composer.frame.height - input.frame.height,
+            110,
+            "Composer wrapper left an oversized blank region around multiline input"
+        )
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "Suppressed dictation input should not show the keyboard")
+
+        saveScreenshot(name: "quick-session-dictation-composer-streamed")
+    }
+
     func testLongAskPillsStayPutAndScroll() throws {
         launchPreview(screen: "ask-card-long-composer")
 

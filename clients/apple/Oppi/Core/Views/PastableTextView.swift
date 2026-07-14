@@ -153,6 +153,12 @@ struct PastableTextView: UIViewRepresentable {
     /// select the correct speech model.
     @Binding var keyboardLanguage: String?
 
+    #if DEBUG
+    /// Narrow test hook used by the dictation preview to prove both the
+    /// synchronous and next-main-loop caret positions for every streamed update.
+    var selectionProbeForTesting: PastableUITextView.SelectionProbe? = nil
+    #endif
+
     func makeUIView(context: Context) -> PastableUITextView {
         let textView = PastableUITextView()
         textView.delegate = context.coordinator
@@ -186,6 +192,9 @@ struct PastableTextView: UIViewRepresentable {
 
         textView.isAccessibilityElement = true
         textView.accessibilityIdentifier = accessibilityIdentifier
+        #if DEBUG
+        textView.selectionProbeForTesting = selectionProbeForTesting
+        #endif
 
         textView.onKeyboardRestoreRequest = onKeyboardRestoreRequest
         textView.setAllowKeyboardRestoreOnTap(allowKeyboardRestoreOnTap)
@@ -207,7 +216,8 @@ struct PastableTextView: UIViewRepresentable {
             volatileColor: UIColor(Color.themeBlue),
             volatileBackgroundColor: composerVolatileTranscriptBackgroundColor(),
             correctionRanges: correctionRanges,
-            correctionUnderlineColor: UIColor(Color.themeOrange)
+            correctionUnderlineColor: UIColor(Color.themeOrange),
+            scrollCaretToVisible: false
         )
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
@@ -225,6 +235,9 @@ struct PastableTextView: UIViewRepresentable {
         }
 
         textView.accessibilityIdentifier = accessibilityIdentifier
+        #if DEBUG
+        textView.selectionProbeForTesting = selectionProbeForTesting
+        #endif
 
         // Manage keyboard suppression — must apply before focus request so
         // inputView is set before becomeFirstResponder fires.
@@ -579,7 +592,8 @@ struct FullSizeTextView: UIViewRepresentable {
             volatileColor: UIColor(Color.themeBlue),
             volatileBackgroundColor: composerVolatileTranscriptBackgroundColor(),
             correctionRanges: correctionRanges,
-            correctionUnderlineColor: UIColor(Color.themeOrange)
+            correctionUnderlineColor: UIColor(Color.themeOrange),
+            scrollCaretToVisible: true
         )
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
@@ -689,9 +703,17 @@ class PastableUITextView: UITextView {
     var onKeyboardRestoreRequest: (() -> Void)?
 
     #if DEBUG
-    /// Test-only hook for simulating active IME composition in unit tests.
+    enum SelectionProbePhase: Equatable {
+        case immediate
+        case deferred
+    }
+
+    typealias SelectionProbe = (SelectionProbePhase, NSRange, Int) -> Void
+
+    /// Test-only hooks for IME and streamed-caret regression coverage.
     /// Kept out of Release builds so the production type surface stays clean.
     var markedTextRangeOverrideForTesting: UITextRange?
+    var selectionProbeForTesting: SelectionProbe?
     #endif
 
     private var renderedTextCache = ""
@@ -731,7 +753,8 @@ class PastableUITextView: UITextView {
         volatileColor: UIColor,
         volatileBackgroundColor: UIColor = .clear,
         correctionRanges: [NSRange] = [],
-        correctionUnderlineColor: UIColor = .clear
+        correctionUnderlineColor: UIColor = .clear,
+        scrollCaretToVisible: Bool = false
     ) {
         let clampedVolatileSuffixLength = max(0, min(volatileSuffixLength, text.count))
         let totalLength = (text as NSString).length
@@ -739,7 +762,7 @@ class PastableUITextView: UITextView {
             let clampedRange = NSIntersectionRange(range, NSRange(location: 0, length: totalLength))
             return clampedRange.length > 0 ? clampedRange : nil
         }
-        let styleUnchanged = renderedTextCache == text
+        let styleUnchanged = Self.hasExactUTF16Representation(renderedTextCache, text)
             && renderedVolatileSuffixLengthCache == clampedVolatileSuffixLength
             && renderedCorrectionRangesCache == clampedCorrectionRanges
             && (renderedFontCache?.isEqual(font) ?? false)
@@ -771,7 +794,7 @@ class PastableUITextView: UITextView {
 
         if !incomingTextHasInlineStyling,
            renderedPlainBaseStyleMatches,
-           self.text == text {
+           Self.hasExactUTF16Representation(self.text, text) {
             typingAttributes = [
                 .font: font,
                 .foregroundColor: baseColor,
@@ -790,41 +813,67 @@ class PastableUITextView: UITextView {
         let previousSelection = self.selectedRange
         let previousTextLength = textStorage.length
         let keepCaretPinnedToEnd = previousSelection.length == 0 && previousSelection.location >= previousTextLength
-        let attributed = NSMutableAttributedString(
-            string: text,
-            attributes: [
-                .font: font,
-                .foregroundColor: baseColor,
-            ]
-        )
-
-        if clampedVolatileSuffixLength > 0 {
-            let volatileStart = text.index(text.endIndex, offsetBy: -clampedVolatileSuffixLength)
-            let volatileRange = NSRange(volatileStart..<text.endIndex, in: text)
-            attributed.addAttributes(
-                [
-                    .foregroundColor: volatileColor,
-                    .backgroundColor: volatileBackgroundColor,
-                ],
-                range: volatileRange
-            )
-        }
-
-        for range in clampedCorrectionRanges {
-            attributed.addAttributes(
-                [
-                    .underlineStyle: NSUnderlineStyle.single.rawValue,
-                    .underlineColor: correctionUnderlineColor,
-                ],
-                range: range
-            )
-        }
-
-        self.attributedText = attributed
-        typingAttributes = [
+        let baseAttributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: baseColor,
         ]
+        let replacement = Self.minimalTextReplacement(current: textStorage.string, incoming: text)
+
+        // `attributedText` assignment replaces the text view's entire value and
+        // resets UIKit's editing state before we can restore the selection. During
+        // streamed dictation that briefly paints the caret at the replacement
+        // location, then at the end, which looks like a cursor flicker. Mutate the
+        // existing NSTextStorage in one edit batch instead; Apple exposes it as the
+        // mutable TextKit backing store specifically for styled text updates.
+        textStorage.beginEditing()
+        if replacement.current.length > 0 || replacement.incoming.length > 0 {
+            let replacementText = (text as NSString).substring(with: replacement.incoming)
+            textStorage.replaceCharacters(in: replacement.current, with: replacementText)
+        }
+
+        // Swift String equality is canonically equivalent, but TextKit ranges
+        // address the exact UTF-16 storage. Verify the intended representation
+        // before applying any incoming ranges, and recover with a full replacement
+        // rather than ever styling a mismatched backing store.
+        if !Self.hasExactUTF16Representation(textStorage.string, text) {
+            textStorage.replaceCharacters(
+                in: NSRange(location: 0, length: textStorage.length),
+                with: text
+            )
+        }
+        assert(
+            Self.hasExactUTF16Representation(textStorage.string, text),
+            "Styled text storage must exactly match the incoming UTF-16 representation"
+        )
+
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        if fullRange.length > 0 {
+            textStorage.setAttributes(baseAttributes, range: fullRange)
+
+            if clampedVolatileSuffixLength > 0 {
+                let volatileStart = text.index(text.endIndex, offsetBy: -clampedVolatileSuffixLength)
+                let volatileRange = NSRange(volatileStart..<text.endIndex, in: text)
+                textStorage.addAttributes(
+                    [
+                        .foregroundColor: volatileColor,
+                        .backgroundColor: volatileBackgroundColor,
+                    ],
+                    range: volatileRange
+                )
+            }
+
+            for range in clampedCorrectionRanges {
+                textStorage.addAttributes(
+                    [
+                        .underlineStyle: NSUnderlineStyle.single.rawValue,
+                        .underlineColor: correctionUnderlineColor,
+                    ],
+                    range: range
+                )
+            }
+        }
+        textStorage.endEditing()
+        typingAttributes = baseAttributes
 
         let maxSelectionLocation = totalLength
         let restoredSelection: NSRange
@@ -837,8 +886,39 @@ class PastableUITextView: UITextView {
                 length: min(previousSelection.length, max(0, maxSelectionLocation - clampedLocation))
             )
         }
-        self.selectedRange = restoredSelection
-        scrollRangeToVisible(restoredSelection)
+        if !NSEqualRanges(self.selectedRange, restoredSelection) {
+            self.selectedRange = restoredSelection
+        }
+        if scrollCaretToVisible {
+            scrollRangeToVisible(restoredSelection)
+        }
+        #if DEBUG
+        if keepCaretPinnedToEnd {
+            selectionProbeForTesting?(.immediate, selectedRange, textStorage.length)
+        }
+        #endif
+
+        if keepCaretPinnedToEnd {
+            // TextKit can apply its own selection adjustment after the storage
+            // edit returns, moving the caret back to the old transcript boundary.
+            // Reassert the terminal insertion point on the next main-queue turn,
+            // but only if this exact transcript is still current.
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      Self.hasExactUTF16Representation(self.textStorage.string, text)
+                else { return }
+                let terminalSelection = NSRange(location: self.textStorage.length, length: 0)
+                if !NSEqualRanges(self.selectedRange, terminalSelection) {
+                    self.selectedRange = terminalSelection
+                }
+                if scrollCaretToVisible {
+                    self.scrollRangeToVisible(terminalSelection)
+                }
+                #if DEBUG
+                self.selectionProbeForTesting?(.deferred, self.selectedRange, self.textStorage.length)
+                #endif
+            }
+        }
 
         renderedTextCache = text
         renderedVolatileSuffixLengthCache = clampedVolatileSuffixLength
@@ -848,6 +928,48 @@ class PastableUITextView: UITextView {
         renderedVolatileColorCache = volatileColor
         renderedVolatileBackgroundColorCache = volatileBackgroundColor
         renderedCorrectionUnderlineColorCache = correctionUnderlineColor
+    }
+
+    static func minimalTextReplacement(
+        current: String,
+        incoming: String
+    ) -> (current: NSRange, incoming: NSRange) {
+        let currentScalars = current.unicodeScalars
+        let incomingScalars = incoming.unicodeScalars
+        var currentStart = currentScalars.startIndex
+        var incomingStart = incomingScalars.startIndex
+        let currentEnd = currentScalars.endIndex
+        let incomingEnd = incomingScalars.endIndex
+
+        // Compare exact scalars, not Swift Characters. Character equality treats
+        // precomposed and decomposed forms as equal even though TextKit sees
+        // different UTF-16 lengths.
+        while currentStart != currentEnd,
+              incomingStart != incomingEnd,
+              currentScalars[currentStart].value == incomingScalars[incomingStart].value {
+            currentScalars.formIndex(after: &currentStart)
+            incomingScalars.formIndex(after: &incomingStart)
+        }
+
+        var currentSuffixStart = currentEnd
+        var incomingSuffixStart = incomingEnd
+        while currentSuffixStart != currentStart,
+              incomingSuffixStart != incomingStart {
+            let previousCurrent = currentScalars.index(before: currentSuffixStart)
+            let previousIncoming = incomingScalars.index(before: incomingSuffixStart)
+            guard currentScalars[previousCurrent].value == incomingScalars[previousIncoming].value else { break }
+            currentSuffixStart = previousCurrent
+            incomingSuffixStart = previousIncoming
+        }
+
+        return (
+            current: NSRange(currentStart..<currentSuffixStart, in: current),
+            incoming: NSRange(incomingStart..<incomingSuffixStart, in: incoming)
+        )
+    }
+
+    static func hasExactUTF16Representation(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.utf16.elementsEqual(rhs.utf16)
     }
 
     private var effectiveMarkedTextRange: UITextRange? {

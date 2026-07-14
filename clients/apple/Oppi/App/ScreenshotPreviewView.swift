@@ -33,6 +33,8 @@ struct ScreenshotPreviewView: View {
             ExtensionSurfacePreview()
         case "chat-input-attachment-containment":
             ChatInputAttachmentContainmentPreview()
+        case "quick-session-dictation-composer":
+            QuickSessionDictationComposerPreview()
         case "ask-card-long-composer":
             AskCardLongComposerPreview()
         case "extension-dock-stress":
@@ -462,6 +464,173 @@ private struct ChatInputAttachmentContainmentPreview: View {
             localFileData: nil,
             localMimeType: nil
         )
+    }
+}
+
+// MARK: - Quick Session Dictation Composer Preview
+
+private struct QuickSessionDictationComposerPreview: View {
+    @State private var text = ""
+    @State private var volatileSuffixLength = 0
+    @State private var focusRequestID = 0
+    @State private var keyboardLanguage: String?
+    @State private var streamStep = 0
+    @State private var immediateCaretSteps: Set<Int> = []
+    @State private var deferredCaretSteps: Set<Int> = []
+
+    private static let transcriptSteps = [
+        ("So right now, each", 8),
+        ("So right now, each of our git push", 12),
+        ("So right now, each of our git push is taking quite long to finish,", 15),
+        ("So right now, each of our git push is taking quite long to finish, and it actually busts our", 22),
+    ]
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.themeBg
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Streaming dictation composer")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+                Text("The blue volatile suffix should advance without the caret jumping backward.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                Spacer()
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            VStack(spacing: 10) {
+                HStack(alignment: .bottom, spacing: 8) {
+                    Image(systemName: "waveform")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.themeCyan)
+                        .frame(width: ComposerInputMetrics.controlDiameter, height: ComposerInputMetrics.controlDiameter)
+                        .background(Color.themeBgHighlight.opacity(0.72), in: Circle())
+
+                    PastableTextView(
+                        text: $text,
+                        placeholder: "",
+                        font: .preferredFont(forTextStyle: .body),
+                        textColor: UIColor(Color.themeFg),
+                        tintColor: UIColor(Color.themeBlue),
+                        volatileSuffixLength: volatileSuffixLength,
+                        correctionRanges: [],
+                        maxLines: ComposerInputMetrics.inlineMaxLines,
+                        autocorrectionEnabled: true,
+                        onPasteImages: { _ in },
+                        onCommandEnter: nil,
+                        onAlternateEnter: nil,
+                        onOverflowChange: nil,
+                        onLineCountChange: nil,
+                        onFocusChange: nil,
+                        onDictationStateChange: nil,
+                        focusRequestID: focusRequestID,
+                        blurRequestID: 0,
+                        dictationRequestID: 0,
+                        suppressKeyboard: true,
+                        allowKeyboardRestoreOnTap: false,
+                        onKeyboardRestoreRequest: nil,
+                        accessibilityIdentifier: "dictation.preview.input",
+                        keyboardLanguage: $keyboardLanguage,
+                        selectionProbeForTesting: recordSelectionProbe
+                    )
+                    .frame(maxWidth: .infinity)
+
+                    Image(systemName: "arrow.up")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.themeBg)
+                        .frame(width: ComposerInputMetrics.controlDiameter, height: ComposerInputMetrics.controlDiameter)
+                        .background(Color.themeBlue, in: Circle())
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+
+                HStack(spacing: 8) {
+                    Image(systemName: "plus")
+                        .frame(width: ComposerInputMetrics.controlDiameter, height: ComposerInputMetrics.controlDiameter)
+                        .background(Color.themeBgHighlight.opacity(0.72), in: Capsule())
+                    Text("🍕 oppi")
+                    Spacer()
+                    Text("gpt-5.6-sol")
+                    Text("high")
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.themeFg)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color.clear, lineWidth: 1)
+                    .accessibilityElement()
+                    .accessibilityLabel("Dictation composer")
+                    .accessibilityIdentifier("dictation.preview.composer")
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
+        }
+        .overlay(alignment: .topTrailing) {
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("step \(streamStep)")
+                    .accessibilityIdentifier("dictation.preview.step")
+                Text("\(verifiedCaretStepCount)/\(Self.transcriptSteps.count) caret steps passed")
+                    .accessibilityIdentifier("dictation.preview.caretProbe")
+            }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.themeComment)
+            .padding(8)
+        }
+        .overlay(alignment: .topLeading) {
+            Text("Ready")
+                .font(.caption2)
+                .frame(width: 1, height: 1)
+                .opacity(0.01)
+                .accessibilityIdentifier("screenshot.ready")
+        }
+        .task {
+            try? await Task.sleep(for: .seconds(2))
+            focusRequestID &+= 1
+
+            for (index, step) in Self.transcriptSteps.enumerated() {
+                text = step.0
+                volatileSuffixLength = step.1
+                streamStep = index + 1
+                try? await Task.sleep(for: .milliseconds(600))
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var verifiedCaretStepCount: Int {
+        immediateCaretSteps.intersection(deferredCaretSteps).count
+    }
+
+    private func recordSelectionProbe(
+        phase: PastableUITextView.SelectionProbePhase,
+        selection: NSRange,
+        storageLength: Int
+    ) {
+        guard let index = Self.transcriptSteps.firstIndex(where: {
+            ($0.0 as NSString).length == storageLength
+        }) else { return }
+        let step = index + 1
+        guard selection == NSRange(location: storageLength, length: 0) else { return }
+
+        // The immediate callback occurs during UIViewRepresentable update.
+        // Publish the probe result on the next turn instead of mutating SwiftUI
+        // state from inside that update transaction.
+        DispatchQueue.main.async {
+            switch phase {
+            case .immediate:
+                immediateCaretSteps.insert(step)
+            case .deferred:
+                deferredCaretSteps.insert(step)
+            }
+        }
     }
 }
 
