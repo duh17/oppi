@@ -409,8 +409,6 @@ export interface TranslationContext {
   toolArgs?: Map<string, Record<string, unknown>>;
   /** Last time a shell preview snapshot was sent per toolCallId (ms). */
   shellPreviewLastSent: Map<string, number>;
-  /** toolCallIds with active streaming arg viewport previews (tool_output emitted from args). */
-  streamingArgPreviews: Set<string>;
   /** Last serialized streaming tool args emitted per toolCallId this turn. */
   streamingToolUpdatesSeen: Map<string, string>;
 }
@@ -544,17 +542,6 @@ function extractMediaOutputs(
   return out;
 }
 
-// ─── Streaming Arg Preview ───
-
-/**
- * Byte threshold for emitting a streaming arg value as tool_output.
- *
- * When a string arg value exceeds this during toolcall_delta streaming,
- * the server emits a tool_output (replace mode) so the iOS viewport shows
- * the content in real time instead of stuffing it into the title bar.
- */
-const STREAMING_ARG_PREVIEW_THRESHOLD = 200;
-
 function audioPresentationDetails(
   details: unknown,
 ): { text?: string; playbackBehavior?: string } | null {
@@ -597,27 +584,6 @@ function pushToolOutputMessage(
     ...(payload.totalBytes !== undefined ? { totalBytes: payload.totalBytes } : {}),
     ...(payload.details !== undefined ? { details: payload.details } : {}),
   });
-}
-
-/**
- * Find the largest string arg value suitable for viewport preview.
- *
- * Returns the largest string value from args that exceeds the threshold,
- * or null if all string args are below it. Non-string values (objects,
- * arrays, numbers) are ignored — only plain text content is meaningful
- * for viewport rendering.
- */
-function findLargestStringArg(args: Record<string, unknown>): string | null {
-  let largest: string | null = null;
-  let largestLen = 0;
-  for (const value of Object.values(args)) {
-    if (typeof value === "string" && value.length > largestLen) {
-      largest = value;
-      largestLen = value.length;
-    }
-  }
-
-  return largest !== null && largestLen > STREAMING_ARG_PREVIEW_THRESHOLD ? largest : null;
 }
 
 function serializeStreamingToolArgs(args: Record<string, unknown>): string {
@@ -847,19 +813,6 @@ export function translatePiEvent(
           messages.push(toolCallUpdate);
         }
 
-        // Stream the largest string arg value as tool_output (replace mode)
-        // so the iOS viewport shows streaming content instead of "Waiting for
-        // output…". Cleared at tool_execution_start with an empty replace.
-        const largestArg = findLargestStringArg(toolCallUpdate.args);
-        if (largestArg && toolCallUpdate.toolCallId) {
-          pushToolOutputMessage(messages, {
-            output: largestArg,
-            toolCallId: toolCallUpdate.toolCallId,
-            mode: "replace",
-          });
-          ctx.streamingArgPreviews.add(toolCallUpdate.toolCallId);
-        }
-
         return messages;
       }
 
@@ -879,19 +832,6 @@ export function translatePiEvent(
       }
 
       const messages: ServerMessage[] = [];
-
-      // Clear streaming arg viewport preview before real execution begins.
-      // The preview was emitted during toolcall_delta streaming; now real
-      // tool output will arrive via tool_execution_update/end.
-      if (toolCallId && ctx.streamingArgPreviews.has(toolCallId)) {
-        ctx.streamingArgPreviews.delete(toolCallId);
-        pushToolOutputMessage(messages, {
-          output: "",
-          toolCallId,
-          mode: "replace",
-        });
-      }
-
       messages.push({
         type: "tool_start",
         tool: event.toolName,
@@ -1072,9 +1012,6 @@ export function translatePiEvent(
       ctx.toolNames.delete(key);
       ctx.toolArgs?.delete(key);
       ctx.shellPreviewLastSent.delete(key);
-      if (toolCallId) {
-        ctx.streamingArgPreviews.delete(toolCallId);
-      }
 
       // Forward structured details and error status from pi tool results.
       // Extensions emit typed details (e.g. remember: {file, redacted}, recall: {matches, topHeader})

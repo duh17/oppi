@@ -21,7 +21,6 @@ export interface RuntimeSessionStateScaffold<
   toolNames: Map<string, string>;
   toolArgs: Map<string, Record<string, unknown>>;
   shellPreviewLastSent: Map<string, number>;
-  streamingArgPreviews: Set<string>;
   streamingToolUpdatesSeen: Map<string, string>;
   toolFullOutputPaths: Map<string, string>;
   messageQueue: TQueue;
@@ -61,7 +60,6 @@ export function createRuntimeSessionStateScaffold<
     toolNames: new Map(),
     toolArgs: new Map(),
     shellPreviewLastSent: new Map(),
-    streamingArgPreviews: new Set(),
     streamingToolUpdatesSeen: new Map(),
     toolFullOutputPaths: new Map(),
     messageQueue,

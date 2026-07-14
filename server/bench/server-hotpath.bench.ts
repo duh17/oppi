@@ -41,7 +41,6 @@ function makeCtx(renderers?: MobileRendererRegistry): TranslationContext {
     mobileRenderers: renderers,
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
-    streamingArgPreviews: new Set(),
   };
 }
 
@@ -292,7 +291,6 @@ function benchTranslatePiEvent(renderers: MobileRendererRegistry): BenchResult[]
   results.push(
     runBench("translate:tool_start:bash", BENCH_ITERATIONS, () => {
       toolStartCtx.toolNames.clear();
-      toolStartCtx.streamingArgPreviews.clear();
       translatePiEvent(TOOL_EXECUTION_START_EVENT, toolStartCtx);
     }),
   );
@@ -331,7 +329,6 @@ function benchTranslatePiEvent(renderers: MobileRendererRegistry): BenchResult[]
   results.push(
     runBench("translate:tool_start:read", BENCH_ITERATIONS, () => {
       readCtx.toolNames.clear();
-      readCtx.streamingArgPreviews.clear();
       translatePiEvent(READ_TOOL_START, readCtx);
     }),
   );
@@ -341,7 +338,6 @@ function benchTranslatePiEvent(renderers: MobileRendererRegistry): BenchResult[]
   results.push(
     runBench("translate:tool_start:edit", BENCH_ITERATIONS, () => {
       editCtx.toolNames.clear();
-      editCtx.streamingArgPreviews.clear();
       translatePiEvent(EDIT_TOOL_START, editCtx);
     }),
   );

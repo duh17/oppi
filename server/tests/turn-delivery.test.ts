@@ -66,7 +66,6 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     streamedThinkingContentIndexes: new Set(),
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
-    streamingArgPreviews: new Set(),
     streamingToolUpdatesSeen: new Map(),
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],

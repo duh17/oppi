@@ -85,8 +85,6 @@ export interface EventProcessorSessionState extends ExtensionUIState {
   toolArgs?: Map<string, Record<string, unknown>>;
   /** Last time a shell preview snapshot was sent per toolCallId (ms). */
   shellPreviewLastSent: Map<string, number>;
-  /** toolCallIds with active streaming arg viewport previews. */
-  streamingArgPreviews: Set<string>;
   /** Last serialized streaming tool args emitted per toolCallId this turn. */
   streamingToolUpdatesSeen: Map<string, string>;
   /** Timestamp (ms) when the current turn started (agent_start). */
@@ -143,7 +141,6 @@ export class SessionEventProcessor {
       toolNames: active.toolNames,
       toolArgs: active.toolArgs,
       shellPreviewLastSent: active.shellPreviewLastSent,
-      streamingArgPreviews: active.streamingArgPreviews,
       streamingToolUpdatesSeen: active.streamingToolUpdatesSeen,
     };
   }
@@ -398,8 +395,8 @@ export class SessionEventProcessor {
 
     if (
       !options.force &&
-      tokenDelta < SessionEventProcessor.CONTEXT_USAGE_BROADCAST_MIN_TOKEN_DELTA &&
-      elapsedMs < SessionEventProcessor.CONTEXT_USAGE_BROADCAST_MIN_INTERVAL_MS
+      (tokenDelta < SessionEventProcessor.CONTEXT_USAGE_BROADCAST_MIN_TOKEN_DELTA ||
+        elapsedMs < SessionEventProcessor.CONTEXT_USAGE_BROADCAST_MIN_INTERVAL_MS)
     ) {
       return;
     }

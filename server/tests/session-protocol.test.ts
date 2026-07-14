@@ -23,7 +23,6 @@ function makeCtx(overrides?: Partial<TranslationContext>): TranslationContext {
     streamedThinkingContentIndexes: new Set(),
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
-    streamingArgPreviews: new Set(),
     streamingToolUpdatesSeen: new Map(),
     ...overrides,
   };
@@ -840,8 +839,8 @@ describe("translatePiEvent", () => {
     });
   });
 
-  describe("message_update: streaming arg viewport preview", () => {
-    it("emits tool_output with replace mode for large string args", () => {
+  describe("message_update: streamed tool args", () => {
+    it("does not duplicate large string args as tool output", () => {
       const ctx = makeCtx();
       const largeBody = "# Workspace Review\n\n" + "x".repeat(300);
       const event = {
@@ -860,17 +859,15 @@ describe("translatePiEvent", () => {
       } as unknown as AgentSessionEvent;
 
       const result = translatePiEvent(event, ctx);
-      expect(result).toHaveLength(2);
-      expect(result[0]!.type).toBe("tool_update");
-      const output = result[1] as Extract<ServerMessage, { type: "tool_output" }>;
-      expect(output.type).toBe("tool_output");
-      expect(output.output).toBe(largeBody);
-      expect(output.mode).toBe("replace");
-      expect(output.toolCallId).toBe("tc-1");
-      expect(ctx.streamingArgPreviews.has("tc-1")).toBe(true);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        type: "tool_update",
+        toolCallId: "tc-1",
+        args: { body: largeBody },
+      });
     });
 
-    it("does not emit tool_output for small string args", () => {
+    it("emits tool_update for small string args", () => {
       const ctx = makeCtx();
       const event = {
         type: "message_update",
@@ -890,7 +887,6 @@ describe("translatePiEvent", () => {
       const result = translatePiEvent(event, ctx);
       expect(result).toHaveLength(1);
       expect(result[0]!.type).toBe("tool_update");
-      expect(ctx.streamingArgPreviews.size).toBe(0);
     });
 
     it("skips empty streamed previews and emits when args become available", () => {
@@ -1005,57 +1001,6 @@ describe("translatePiEvent", () => {
       expect(third).toEqual([]);
     });
 
-    it("picks the largest string arg when multiple exceed threshold", () => {
-      const ctx = makeCtx();
-      const shortText = "a".repeat(250);
-      const longText = "b".repeat(500);
-      const event = {
-        type: "message_update",
-        message: {
-          content: [
-            {
-              type: "toolCall",
-              id: "tc-1",
-              name: "custom",
-              arguments: { title: shortText, body: longText },
-            },
-          ],
-        },
-        assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{}" },
-      } as unknown as AgentSessionEvent;
-
-      const result = translatePiEvent(event, ctx);
-      const output = result.find((m) => m.type === "tool_output") as Extract<
-        ServerMessage,
-        { type: "tool_output" }
-      >;
-      expect(output.output).toBe(longText);
-    });
-
-    it("ignores non-string args (objects, arrays, numbers)", () => {
-      const ctx = makeCtx();
-      const event = {
-        type: "message_update",
-        message: {
-          content: [
-            {
-              type: "toolCall",
-              id: "tc-1",
-              name: "some_extension",
-              arguments: {
-                data: { nested: { rows: Array(100).fill({ x: 1, y: 2 }) } },
-                title: "short",
-              },
-            },
-          ],
-        },
-        assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{}" },
-      } as unknown as AgentSessionEvent;
-
-      const result = translatePiEvent(event, ctx);
-      expect(result).toHaveLength(1); // only tool_update, no tool_output
-    });
-
     it("adds callSegments from mobile renderer during streaming", () => {
       const mockRenderer = {
         renderCall: (_tool: string, _args: Record<string, unknown>) => [
@@ -1149,36 +1094,7 @@ describe("translatePiEvent", () => {
       });
     });
 
-    it("clears streaming arg preview with empty replace before tool_start", () => {
-      const ctx = makeCtx();
-      ctx.streamingArgPreviews.add("tc-1");
-
-      const result = translatePiEvent(
-        {
-          type: "tool_execution_start",
-          toolCallId: "tc-1",
-          toolName: "todo",
-          args: { action: "create", body: "content" },
-        } as AgentSessionEvent,
-        ctx,
-      );
-
-      // Should emit: [tool_output(empty, replace), tool_start]
-      expect(result).toHaveLength(2);
-      const clearMsg = result[0] as Extract<ServerMessage, { type: "tool_output" }>;
-      expect(clearMsg.type).toBe("tool_output");
-      expect(clearMsg.output).toBe("");
-      expect(clearMsg.mode).toBe("replace");
-      expect(clearMsg.toolCallId).toBe("tc-1");
-
-      const startMsg = result[1] as Extract<ServerMessage, { type: "tool_start" }>;
-      expect(startMsg.type).toBe("tool_start");
-      expect(startMsg.tool).toBe("todo");
-
-      expect(ctx.streamingArgPreviews.has("tc-1")).toBe(false);
-    });
-
-    it("does not emit clear when no streaming arg preview exists", () => {
+    it("emits only tool_start", () => {
       const ctx = makeCtx();
 
       const result = translatePiEvent(
@@ -1191,7 +1107,6 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      // No preview to clear — just the tool_start
       expect(result).toHaveLength(1);
       expect(result[0]!.type).toBe("tool_start");
     });
@@ -2498,11 +2413,10 @@ describe("translatePiEvent", () => {
       expect(ctx.partialResults.get("tc-2")).toBe("file2");
     });
 
-    it("handles extension tool with streaming arg preview lifecycle", () => {
+    it("handles extension tool lifecycle without duplicating streamed args as output", () => {
       const ctx = makeCtx();
       const largeBody = "# Review\n\n" + "Content paragraph. ".repeat(20);
 
-      // Phase 1: toolcall_delta — streaming args
       const streaming1 = translatePiEvent(
         {
           type: "message_update",
@@ -2521,15 +2435,9 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      // Should emit tool_update + tool_output (preview)
-      expect(streaming1).toHaveLength(2);
+      expect(streaming1).toHaveLength(1);
       expect(streaming1[0]!.type).toBe("tool_update");
-      const preview = streaming1[1] as Extract<ServerMessage, { type: "tool_output" }>;
-      expect(preview.output).toBe(largeBody);
-      expect(preview.mode).toBe("replace");
-      expect(ctx.streamingArgPreviews.has("tc-1")).toBe(true);
 
-      // Phase 2: tool_execution_start — clears preview, emits real tool_start
       const execStart = translatePiEvent(
         {
           type: "tool_execution_start",
@@ -2540,15 +2448,10 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      // Should emit: empty-replace clear + tool_start
-      expect(execStart).toHaveLength(2);
-      const clearMsg = execStart[0] as Extract<ServerMessage, { type: "tool_output" }>;
-      expect(clearMsg.output).toBe("");
-      expect(clearMsg.mode).toBe("replace");
-      expect(execStart[1]!.type).toBe("tool_start");
-      expect(ctx.streamingArgPreviews.has("tc-1")).toBe(false);
+      expect(execStart).toHaveLength(1);
+      expect(execStart[0]!.type).toBe("tool_start");
 
-      // Phase 3: tool_execution_end — real output
+      // Real tool output still starts at tool execution end.
       const execEnd = translatePiEvent(
         {
           type: "tool_execution_end",
@@ -2568,52 +2471,7 @@ describe("translatePiEvent", () => {
       expect(realOutput.mode).toBeUndefined(); // append mode (default)
       expect(execEnd.find((m) => m.type === "tool_end")).toBeTruthy();
 
-      // Context fully clean
-      expect(ctx.streamingArgPreviews.size).toBe(0);
       expect(ctx.partialResults.size).toBe(0);
-    });
-
-    it("clears generic streaming arg preview when tool execution starts", () => {
-      const ctx = makeCtx();
-      const text = "x".repeat(320);
-
-      translatePiEvent(
-        {
-          type: "message_update",
-          message: {
-            content: [
-              {
-                type: "toolCall",
-                id: "preview-clear-1",
-                name: "example_tts_speak",
-                arguments: { text, voice: "warm-1" },
-              },
-            ],
-          },
-          assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{}" },
-        } as unknown as AgentSessionEvent,
-        ctx,
-      );
-
-      const execStart = translatePiEvent(
-        {
-          type: "tool_execution_start",
-          toolCallId: "preview-clear-1",
-          toolName: "example_tts_speak",
-          args: { text, voice: "warm-1" },
-        } as AgentSessionEvent,
-        ctx,
-      );
-
-      expect(execStart).toHaveLength(2);
-      expect(execStart[0]).toEqual({
-        type: "tool_output",
-        output: "",
-        toolCallId: "preview-clear-1",
-        mode: "replace",
-      });
-      expect(execStart[1]!.type).toBe("tool_start");
-      expect(ctx.streamingArgPreviews.has("preview-clear-1")).toBe(false);
     });
 
     it("forwards generic audio presentation details on tool updates and avoids duplicate final transcript", () => {
@@ -2737,7 +2595,7 @@ describe("translatePiEvent", () => {
       ]);
     });
 
-    it("streaming arg preview skipped when toolCallId is missing", () => {
+    it("streamed tool update is skipped when toolCallId is missing", () => {
       const ctx = makeCtx();
       const largeBody = "x".repeat(300);
       const event = {
@@ -2758,7 +2616,6 @@ describe("translatePiEvent", () => {
       // Empty toolCallId → extractStreamingToolCallUpdate returns null
       const result = translatePiEvent(event, ctx);
       expect(result).toEqual([]);
-      expect(ctx.streamingArgPreviews.size).toBe(0);
     });
   });
 });
