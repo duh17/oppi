@@ -40,6 +40,7 @@ Example:
 
 ### Added
 
+- **Client/Server:** When Pi's `showCacheMissNotices` setting is enabled, live prompt-cache misses render as warning timeline rows with re-billed token and cost details. Notices are intentionally live-only and are not reconstructed after reload.
 - **Client:** WIP: reworking the Mac app into an interactive Oppi client for browsing workspaces, running sessions, and reviewing changes. It is not ready for general use yet.
 
 ### Changed
