@@ -6,8 +6,17 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFile, execFileSync, execSync, spawn } from "node:child_process";
+import { X509Certificate } from "node:crypto";
 import { createServer as createHttpServer } from "node:http";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
@@ -65,6 +74,51 @@ function runBin(
 
 function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function generateDoctorCertificate(certPath: string, keyPath: string, dnsSan?: string): void {
+  const sanArg = dnsSan ? ["-addext", `subjectAltName=DNS:${dnsSan}`] : [];
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-keyout",
+      keyPath,
+      "-out",
+      certPath,
+      "-days",
+      "30",
+      "-subj",
+      `/CN=${dnsSan ?? "node.tail00000.ts.net"}`,
+      ...sanArg,
+    ],
+    { stdio: "ignore" },
+  );
+}
+
+function disconnectedTailscaleEnv(dir: string): Record<string, string> {
+  const fakeBinDir = join(dir, "bin");
+  mkdirSync(fakeBinDir, { recursive: true });
+  writeFileSync(join(fakeBinDir, "tailscale"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  return { PATH: `${fakeBinDir}:${process.env.PATH ?? ""}` };
+}
+
+function fakeDateNodeOptions(dir: string, nowMs: number): string {
+  const preloadPath = join(dir, `fake-date-${nowMs}.cjs`);
+  writeFileSync(
+    preloadPath,
+    `const RealDate = Date;\n` +
+      `const now = ${nowMs};\n` +
+      `global.Date = class extends RealDate {\n` +
+      `  constructor(...args) { super(...(args.length > 0 ? args : [now])); }\n` +
+      `  static now() { return now; }\n` +
+      `};\n`,
+  );
+  return `${process.env.NODE_OPTIONS ?? ""} --require ${preloadPath}`.trim();
 }
 
 async function runAsync(
@@ -2143,7 +2197,7 @@ describe.skipIf(
 describe.skipIf(
   logSkip(!hasOpenSSL, "oppi pair (tls tailscale)", "openssl executable is unavailable"),
 )("oppi pair (tls tailscale)", () => {
-  it("embeds https scheme + tailscale hostname without a rotating leaf cert pin", () => {
+  it("uses a Tailnet SAN for pairing and recovers it after Tailscale stops", () => {
     const tlsDataDir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-tailscale-"));
     const fakeBinDir = mkdtempSync(join(tmpdir(), "oppi-cli-fake-tailscale-"));
     const fakeTailscalePath = join(fakeBinDir, "tailscale");
@@ -2200,6 +2254,7 @@ case "\$cmd" in
       -keyout "\$key_file" \\
       -out "\$cert_file" \\
       -subj "/CN=\$host" \\
+      -addext "subjectAltName=DNS:\$host" \\
       -days 1 >/dev/null 2>&1
     exit 0
     ;;
@@ -2250,6 +2305,20 @@ exit 1
       expect(payload.host).toBe("my-server.tail00000.ts.net");
       expect(payload.scheme).toBe("https");
       expect(payload.tlsCertFingerprint).toBeUndefined();
+
+      // The live daemon is no longer discoverable. Pairing must recover the
+      // hostname from the existing valid leaf SAN and must not need renewal.
+      writeFileSync(fakeTailscalePath, "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+      const stoppedResult = run(["pair", "--json"], env);
+      expect(stoppedResult.exitCode).toBe(0);
+      const stoppedInvite = JSON.parse(stoppedResult.stdout) as {
+        host?: string;
+        scheme?: string;
+        tlsCertFingerprint?: string;
+      };
+      expect(stoppedInvite.host).toBe("my-server.tail00000.ts.net");
+      expect(stoppedInvite.scheme).toBe("https");
+      expect(stoppedInvite.tlsCertFingerprint).toBeUndefined();
     } finally {
       rmSync(tlsDataDir, { recursive: true, force: true });
       rmSync(fakeBinDir, { recursive: true, force: true });
@@ -2344,6 +2413,106 @@ describe("oppi doctor", () => {
       rmSync(doctorDir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  describe.skipIf(
+    logSkip(!hasOpenSSL, "oppi doctor (tailscale)", "openssl executable is unavailable"),
+  )("Tailscale material", () => {
+    function setupDoctorDir(options: { dnsSan?: string; malformed?: boolean } = {}): {
+      doctorDir: string;
+      certPath: string;
+      keyPath: string;
+      env: Record<string, string>;
+    } {
+      const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-tailscale-"));
+      expect(run(["init", "--yes", "--data-dir", doctorDir]).exitCode).toBe(0);
+      expect(
+        run(["config", "set", "tls", '{"mode":"tailscale"}'], {
+          OPPI_DATA_DIR: doctorDir,
+        }).exitCode,
+      ).toBe(0);
+      const tlsDir = join(doctorDir, "tls", "tailscale");
+      const certPath = join(tlsDir, "server.crt");
+      const keyPath = join(tlsDir, "server.key");
+      mkdirSync(tlsDir, { recursive: true });
+      if (options.malformed) {
+        writeFileSync(certPath, "not a certificate");
+        writeFileSync(keyPath, "not a key");
+      } else {
+        generateDoctorCertificate(certPath, keyPath, options.dnsSan);
+      }
+      return { doctorDir, certPath, keyPath, env: disconnectedTailscaleEnv(doctorDir) };
+    }
+
+    it("warns but passes while disconnected when the cert/key are locally valid", () => {
+      const fixture = setupDoctorDir({ dnsSan: "node.tail00000.ts.net" });
+      try {
+        const { stdout, exitCode } = run(["doctor"], {
+          OPPI_DATA_DIR: fixture.doctorDir,
+          ...fixture.env,
+        });
+        expect(exitCode).toBe(0);
+        expect(stripAnsi(stdout)).toContain("Tailscale is not connected");
+        expect(stripAnsi(stdout)).toContain("public trust is enforced by TLS clients");
+      } finally {
+        rmSync(fixture.doctorDir, { recursive: true, force: true });
+      }
+    });
+
+    it.each([
+      ["missing", "missing"],
+      ["malformed", "malformed"],
+      ["without a Tailnet SAN", "no-san"],
+      ["with a mismatched key", "mismatch"],
+    ])("fails for %s offline Tailscale material", (_label, failure) => {
+      const fixture = setupDoctorDir({
+        dnsSan: failure === "no-san" ? undefined : "node.tail00000.ts.net",
+        malformed: failure === "malformed",
+      });
+      try {
+        if (failure === "missing") {
+          rmSync(fixture.certPath, { force: true });
+          rmSync(fixture.keyPath, { force: true });
+        } else if (failure === "mismatch") {
+          generateDoctorCertificate(
+            join(fixture.doctorDir, "replacement.crt"),
+            fixture.keyPath,
+            "node.tail00000.ts.net",
+          );
+        }
+        const { stdout, exitCode } = run(["doctor"], {
+          OPPI_DATA_DIR: fixture.doctorDir,
+          ...fixture.env,
+        });
+        expect(exitCode).toBe(1);
+        expect(stripAnsi(stdout)).toContain("Tailscale TLS material is unusable");
+      } finally {
+        rmSync(fixture.doctorDir, { recursive: true, force: true });
+      }
+    });
+
+    it.each([
+      ["expired", "expired"],
+      ["not yet valid", "future"],
+    ])("fails when offline Tailscale material is %s", (_label, validity) => {
+      const fixture = setupDoctorDir({ dnsSan: "node.tail00000.ts.net" });
+      try {
+        const cert = new X509Certificate(readFileSync(fixture.certPath));
+        const nowMs =
+          validity === "expired" ? Date.parse(cert.validTo) + 1 : Date.parse(cert.validFrom) - 1;
+        const { stdout, exitCode } = run(["doctor"], {
+          OPPI_DATA_DIR: fixture.doctorDir,
+          ...fixture.env,
+          NODE_OPTIONS: fakeDateNodeOptions(fixture.doctorDir, nowMs),
+        });
+        expect(exitCode).toBe(1);
+        expect(stripAnsi(stdout)).toContain(
+          validity === "expired" ? "certificate is expired" : "certificate is not yet valid",
+        );
+      } finally {
+        rmSync(fixture.doctorDir, { recursive: true, force: true });
+      }
+    });
+  });
 });
 
 describe("oppi init (non-interactive)", () => {

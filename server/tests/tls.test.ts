@@ -1,21 +1,39 @@
-import { execSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFile, execSync } from "node:child_process";
+import { createHash, X509Certificate } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir, homedir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   certificateMatchesHost,
   collectSubjectAltNames,
   isTailscaleHostname,
   normalizeHostForSan,
   prepareTlsForServer,
+  promoteTailscaleMaterial,
   readCertificateExpiryMs,
   readCertificateFingerprint,
+  readValidTailnetDnsName,
   renderOpenSslConfig,
   resolveTlsConfig,
   tlsSchemeForConfig,
+  validateTailscaleMaterial,
 } from "../src/tls.js";
 import type { ServerConfig } from "../src/types.js";
+
+const execFileAsync = promisify(execFile);
 
 let hasOpenSSL = true;
 try {
@@ -27,6 +45,14 @@ try {
 function logSkip(unavailable: boolean, suite: string, reason: string): boolean {
   if (unavailable) console.warn(`[test] Skipping ${suite}: ${reason}`);
   return unavailable;
+}
+
+async function waitForCondition(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for test condition");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+  }
 }
 
 function makeConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
@@ -41,6 +67,23 @@ function makeConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
     maxSessionsGlobal: 5,
     ...overrides,
   };
+}
+
+function generateLeafCertificate(
+  certPath: string,
+  keyPath: string,
+  options: { dnsSans?: string[]; commonName?: string; days?: number } = {},
+): void {
+  const commonName = options.commonName ?? options.dnsSans?.[0] ?? "test-cert";
+  const sanArg = options.dnsSans?.length
+    ? ` -addext "subjectAltName=${options.dnsSans.map((name) => `DNS:${name}`).join(",")}"`
+    : "";
+  execSync(
+    `openssl req -x509 -newkey rsa:2048 -nodes` +
+      ` -keyout "${keyPath}" -out "${certPath}"` +
+      ` -days ${options.days ?? 30} -subj "/CN=${commonName}"${sanArg}`,
+    { stdio: "ignore" },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +519,68 @@ describe.skipIf(
 });
 
 // ---------------------------------------------------------------------------
+// Tailnet certificate identity
+// ---------------------------------------------------------------------------
+
+describe.skipIf(
+  logSkip(!hasOpenSSL, "Tailnet certificate identity", "openssl executable is unavailable"),
+)("Tailnet certificate identity", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "oppi-tailnet-cert-"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("selects an exact Tailnet DNS SAN and can require a preferred SAN", () => {
+    const certPath = join(tmpDir, "server.crt");
+    const keyPath = join(tmpDir, "server.key");
+    generateLeafCertificate(certPath, keyPath, {
+      dnsSans: ["first.tail00000.ts.net", "second.tail00000.ts.net"],
+    });
+
+    expect(readValidTailnetDnsName(certPath)).toBe("first.tail00000.ts.net");
+    expect(readValidTailnetDnsName(certPath, "SECOND.TAIL00000.TS.NET")).toBe(
+      "second.tail00000.ts.net",
+    );
+  });
+
+  it("rejects a Tailnet-looking common name when the certificate has no DNS SAN", () => {
+    const certPath = join(tmpDir, "server.crt");
+    const keyPath = join(tmpDir, "server.key");
+    generateLeafCertificate(certPath, keyPath, {
+      commonName: "node.tail00000.ts.net",
+    });
+
+    expect(() => readValidTailnetDnsName(certPath)).toThrow(/no valid Tailnet DNS SAN/);
+  });
+
+  it("rejects malformed, expired, and not-yet-valid certificates", () => {
+    const malformedPath = join(tmpDir, "malformed.crt");
+    writeFileSync(malformedPath, "not a certificate");
+    expect(() => readValidTailnetDnsName(malformedPath)).toThrow(/malformed/);
+
+    const certPath = join(tmpDir, "server.crt");
+    const keyPath = join(tmpDir, "server.key");
+    generateLeafCertificate(certPath, keyPath, {
+      dnsSans: ["node.tail00000.ts.net"],
+      days: 1,
+    });
+    const cert = new X509Certificate(readFileSync(certPath));
+    expect(() =>
+      readValidTailnetDnsName(certPath, undefined, Date.parse(cert.validTo) + 1),
+    ).toThrow(/expired/);
+    expect(() =>
+      readValidTailnetDnsName(certPath, undefined, Date.parse(cert.validFrom) - 1),
+    ).toThrow(/not yet valid/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // prepareTlsForServer
 // ---------------------------------------------------------------------------
 
@@ -545,6 +650,515 @@ describe("prepareTlsForServer", () => {
     const config = makeConfig({ tls: { mode: "manual" }, dataDir: tmpDir });
 
     expect(() => prepareTlsForServer(config, tmpDir)).toThrow(/requires.*certPath.*keyPath/i);
+  });
+
+  describe.skipIf(
+    logSkip(
+      !hasOpenSSL,
+      "Tailscale certificate lifecycle (requires openssl)",
+      "openssl executable is unavailable",
+    ),
+  )("Tailscale certificate lifecycle (requires openssl)", () => {
+    let previousPath: string | undefined;
+    let fakeBinDir: string;
+
+    beforeEach(() => {
+      previousPath = process.env.PATH;
+      fakeBinDir = join(tmpDir, "bin");
+      mkdirSync(fakeBinDir, { recursive: true });
+    });
+
+    afterEach(() => {
+      process.env.PATH = previousPath;
+      vi.useRealTimers();
+    });
+
+    function tailscaleConfig(): ServerConfig {
+      return makeConfig({ tls: { mode: "tailscale" }, dataDir: tmpDir });
+    }
+
+    function stopTailscale(): void {
+      process.env.PATH = fakeBinDir;
+    }
+
+    function writeExistingMaterial(days = 30): { certPath: string; keyPath: string } {
+      const resolved = resolveTlsConfig(tailscaleConfig(), tmpDir);
+      mkdirSync(join(tmpDir, "tls", "tailscale"), { recursive: true });
+      generateLeafCertificate(resolved.certPath!, resolved.keyPath!, {
+        dnsSans: ["node.tail00000.ts.net"],
+        days,
+      });
+      return { certPath: resolved.certPath!, keyPath: resolved.keyPath! };
+    }
+
+    function renewalLockDir(resolved: { certPath?: string; keyPath?: string }): string {
+      const identity = `${resolved.certPath ?? ""}\0${resolved.keyPath ?? ""}`;
+      const digest = createHash("sha256").update(identity).digest("hex").slice(0, 24);
+      return join(tmpDir, "tls", "locks", `tailscale-${digest}`);
+    }
+
+    it("reuses locally consistent self-signed material without asserting public-chain trust", () => {
+      const paths = writeExistingMaterial();
+      const fingerprint = readCertificateFingerprint(paths.certPath);
+      stopTailscale();
+
+      const resolved = prepareTlsForServer(tailscaleConfig(), tmpDir);
+
+      expect(resolved.certPath).toBe(paths.certPath);
+      expect(readCertificateFingerprint(paths.certPath)).toBe(fingerprint);
+    });
+
+    it("reuses valid offline custom material from a read-only directory", () => {
+      const customDir = join(tmpDir, "read-only-custom-tls");
+      const certPath = join(customDir, "server.crt");
+      const keyPath = join(customDir, "server.key");
+      mkdirSync(customDir);
+      generateLeafCertificate(certPath, keyPath, {
+        dnsSans: ["node.tail00000.ts.net"],
+      });
+      chmodSync(customDir, 0o555);
+      stopTailscale();
+      const config = makeConfig({
+        dataDir: tmpDir,
+        tls: { mode: "tailscale", certPath, keyPath },
+      });
+
+      try {
+        const resolved = prepareTlsForServer(config, tmpDir);
+
+        expect(resolved.certPath).toBe(certPath);
+        expect(validateTailscaleMaterial(resolved)).toBe("node.tail00000.ts.net");
+        expect(readdirSync(customDir).filter((entry) => entry.includes("oppi-renew"))).toEqual([]);
+        expect(existsSync(renewalLockDir(resolved))).toBe(true);
+      } finally {
+        chmodSync(customDir, 0o755);
+      }
+    });
+
+    it("keeps valid existing material when live renewal fails", () => {
+      const paths = writeExistingMaterial();
+      const fingerprint = readCertificateFingerprint(paths.certPath);
+      const fakeTailscalePath = join(fakeBinDir, "tailscale");
+      writeFileSync(
+        fakeTailscalePath,
+        `#!/bin/sh\nif [ "$1" = "status" ]; then\n  printf '%s\\n' '{"Self":{"DNSName":"node.tail00000.ts.net."}}'\n  exit 0\nfi\nprintf '%s\\n' 'daemon stopped during renewal' >&2\nexit 1\n`,
+        { mode: 0o755 },
+      );
+      stopTailscale();
+
+      const resolved = prepareTlsForServer(tailscaleConfig(), tmpDir);
+
+      expect(resolved.certPath).toBe(paths.certPath);
+      expect(readCertificateFingerprint(paths.certPath)).toBe(fingerprint);
+    });
+
+    it("fails closed when stopped Tailscale has missing, malformed, or expired material", () => {
+      stopTailscale();
+      expect(() => prepareTlsForServer(tailscaleConfig(), tmpDir)).toThrow(
+        /Tailscale is unavailable.*certificate not found/,
+      );
+
+      const resolved = resolveTlsConfig(tailscaleConfig(), tmpDir);
+      mkdirSync(join(tmpDir, "tls", "tailscale"), { recursive: true });
+      writeFileSync(resolved.certPath!, "not a certificate");
+      writeFileSync(resolved.keyPath!, "not a key");
+      expect(() => prepareTlsForServer(tailscaleConfig(), tmpDir)).toThrow(
+        /Tailscale is unavailable.*certificate is malformed/,
+      );
+
+      rmSync(resolved.certPath!, { force: true });
+      rmSync(resolved.keyPath!, { force: true });
+      process.env.PATH = previousPath;
+      const paths = writeExistingMaterial(1);
+      const expiry = readCertificateExpiryMs(paths.certPath);
+      stopTailscale();
+      vi.useFakeTimers();
+      vi.setSystemTime(expiry + 1);
+      expect(() => prepareTlsForServer(tailscaleConfig(), tmpDir)).toThrow(
+        /Tailscale is unavailable.*certificate is expired/,
+      );
+    });
+
+    it("rejects a mismatched private key even when the certificate is valid", () => {
+      const paths = writeExistingMaterial();
+      const replacementCert = join(tmpDir, "replacement.crt");
+      generateLeafCertificate(replacementCert, paths.keyPath, {
+        dnsSans: ["node.tail00000.ts.net"],
+      });
+      stopTailscale();
+
+      expect(() => prepareTlsForServer(tailscaleConfig(), tmpDir)).toThrow(
+        /certificate\/key material is malformed or mismatched/,
+      );
+    });
+
+    it("rolls back the original generation when key promotion fails after certificate promotion", () => {
+      const paths = writeExistingMaterial();
+      const originalFingerprint = readCertificateFingerprint(paths.certPath);
+      const originalKey = readFileSync(paths.keyPath, "utf8");
+      const stagedDir = join(tmpDir, "staged");
+      const stagedCertPath = join(stagedDir, "server.crt");
+      const stagedKeyPath = join(stagedDir, "server.key");
+      mkdirSync(stagedDir);
+      generateLeafCertificate(stagedCertPath, stagedKeyPath, {
+        dnsSans: ["node.tail00000.ts.net"],
+      });
+      let forcedFailure = false;
+
+      expect(() =>
+        promoteTailscaleMaterial(
+          resolveTlsConfig(tailscaleConfig(), tmpDir),
+          stagedCertPath,
+          stagedKeyPath,
+          "node.tail00000.ts.net",
+          (source, destination) => {
+            if (!forcedFailure && source === stagedKeyPath && destination === paths.keyPath) {
+              forcedFailure = true;
+              throw new Error("forced between-rename failure");
+            }
+            renameSync(source, destination);
+          },
+        ),
+      ).toThrow(
+        /forced between-rename failure.*previous certificate\/key generation was restored/i,
+      );
+      expect(forcedFailure).toBe(true);
+      expect(readCertificateFingerprint(paths.certPath)).toBe(originalFingerprint);
+      expect(readFileSync(paths.keyPath, "utf8")).toBe(originalKey);
+    });
+
+    it.each([
+      ["certificate backup", "certificate"],
+      ["key backup after certificate cleanup", "key"],
+    ])("keeps the committed live pair when %s deletion fails", (_label, failureTarget) => {
+      const paths = writeExistingMaterial();
+      const stagedDir = join(tmpDir, `cleanup-${failureTarget}`);
+      const stagedCertPath = join(stagedDir, "server.crt");
+      const stagedKeyPath = join(stagedDir, "server.key");
+      mkdirSync(stagedDir);
+      generateLeafCertificate(stagedCertPath, stagedKeyPath, {
+        dnsSans: ["node.tail00000.ts.net"],
+      });
+      const committedFingerprint = readCertificateFingerprint(stagedCertPath);
+      const certBackupPath = `${paths.certPath}.oppi-renew-backup`;
+      const keyBackupPath = `${paths.keyPath}.oppi-renew-backup`;
+
+      expect(() =>
+        promoteTailscaleMaterial(
+          resolveTlsConfig(tailscaleConfig(), tmpDir),
+          stagedCertPath,
+          stagedKeyPath,
+          "node.tail00000.ts.net",
+          renameSync,
+          (path) => {
+            if (
+              (failureTarget === "certificate" && path === certBackupPath) ||
+              (failureTarget === "key" && path === keyBackupPath)
+            ) {
+              throw new Error(`forced ${failureTarget} backup cleanup failure`);
+            }
+            rmSync(path, { force: true });
+          },
+        ),
+      ).toThrow(/cleanup failure.*committed live pair remains valid/i);
+
+      expect(readCertificateFingerprint(paths.certPath)).toBe(committedFingerprint);
+      expect(
+        validateTailscaleMaterial(
+          resolveTlsConfig(tailscaleConfig(), tmpDir),
+          "node.tail00000.ts.net",
+        ),
+      ).toBe("node.tail00000.ts.net");
+      expect(existsSync(keyBackupPath)).toBe(failureTarget === "key");
+      expect(existsSync(certBackupPath)).toBe(failureTarget === "certificate");
+    });
+
+    it.each(["certificate", "key"])(
+      "prefers a complete valid live pair over one-sided %s backup residue",
+      (residue) => {
+        const paths = writeExistingMaterial();
+        const oldDir = join(tmpDir, `old-${residue}`);
+        const oldCertPath = join(oldDir, "server.crt");
+        const oldKeyPath = join(oldDir, "server.key");
+        mkdirSync(oldDir);
+        generateLeafCertificate(oldCertPath, oldKeyPath, {
+          dnsSans: ["node.tail00000.ts.net"],
+        });
+        generateLeafCertificate(paths.certPath, paths.keyPath, {
+          dnsSans: ["node.tail00000.ts.net"],
+        });
+        const committedFingerprint = readCertificateFingerprint(paths.certPath);
+        const backupPath =
+          residue === "certificate"
+            ? `${paths.certPath}.oppi-renew-backup`
+            : `${paths.keyPath}.oppi-renew-backup`;
+        renameSync(residue === "certificate" ? oldCertPath : oldKeyPath, backupPath);
+        stopTailscale();
+
+        prepareTlsForServer(tailscaleConfig(), tmpDir);
+
+        expect(readCertificateFingerprint(paths.certPath)).toBe(committedFingerprint);
+        expect(
+          validateTailscaleMaterial(
+            resolveTlsConfig(tailscaleConfig(), tmpDir),
+            "node.tail00000.ts.net",
+          ),
+        ).toBe("node.tail00000.ts.net");
+        expect(existsSync(backupPath)).toBe(false);
+      },
+    );
+
+    it("recovers an interrupted partial destination from the preserved generation", () => {
+      const paths = writeExistingMaterial();
+      const originalFingerprint = readCertificateFingerprint(paths.certPath);
+      const originalKey = readFileSync(paths.keyPath, "utf8");
+      const certBackupPath = `${paths.certPath}.oppi-renew-backup`;
+      const keyBackupPath = `${paths.keyPath}.oppi-renew-backup`;
+      renameSync(paths.certPath, certBackupPath);
+      renameSync(paths.keyPath, keyBackupPath);
+
+      const interruptedDir = join(tmpDir, "interrupted");
+      const interruptedCertPath = join(interruptedDir, "server.crt");
+      const interruptedKeyPath = join(interruptedDir, "server.key");
+      mkdirSync(interruptedDir);
+      generateLeafCertificate(interruptedCertPath, interruptedKeyPath, {
+        dnsSans: ["node.tail00000.ts.net"],
+      });
+      renameSync(interruptedCertPath, paths.certPath);
+      stopTailscale();
+
+      prepareTlsForServer(tailscaleConfig(), tmpDir);
+
+      expect(readCertificateFingerprint(paths.certPath)).toBe(originalFingerprint);
+      expect(readFileSync(paths.keyPath, "utf8")).toBe(originalKey);
+      expect(existsSync(certBackupPath)).toBe(false);
+      expect(existsSync(keyBackupPath)).toBe(false);
+    });
+
+    it("serializes concurrent renewal attempts for the same destination", async () => {
+      const stateDir = join(tmpDir, "renewal-state");
+      mkdirSync(stateDir, { recursive: true });
+      const fakeTailscalePath = join(fakeBinDir, "tailscale");
+      writeFileSync(
+        fakeTailscalePath,
+        `#!/bin/sh\nset -eu\nif [ "$1" = "status" ]; then\n  printf '%s\\n' '{"Self":{"DNSName":"node.tail00000.ts.net."}}'\n  exit 0\nfi\nprintf 'arrival\\n' >> "$OPPI_TEST_RENEWAL_STATE/arrivals"\ni=0\nwhile [ "$(wc -l < "$OPPI_TEST_RENEWAL_STATE/arrivals")" -lt 2 ] && [ "$i" -lt 20 ]; do\n  sleep 0.1\n  i=$((i + 1))\ndone\nif ! mkdir "$OPPI_TEST_RENEWAL_STATE/active" 2>/dev/null; then\n  : > "$OPPI_TEST_RENEWAL_STATE/overlap"\n  exit 1\nfi\ntrap 'rmdir "$OPPI_TEST_RENEWAL_STATE/active"' EXIT\nshift\ncert_file=''\nkey_file=''\nwhile [ "$#" -gt 0 ]; do\n  case "$1" in\n    --cert-file) cert_file="$2"; shift 2 ;;\n    --key-file) key_file="$2"; shift 2 ;;\n    --min-validity) shift 2 ;;\n    *) host="$1"; shift ;;\n  esac\ndone\nsleep 0.5\nopenssl req -x509 -newkey rsa:2048 -nodes -keyout "$key_file" -out "$cert_file" -days 30 -subj "/CN=$host" -addext "subjectAltName=DNS:$host" >/dev/null 2>&1\n`,
+        { mode: 0o755 },
+      );
+      const workerPath = join(tmpDir, "renew-worker.ts");
+      const tlsSourcePath = resolve(__dirname, "../src/tls.ts");
+      writeFileSync(
+        workerPath,
+        `import { prepareTlsForServer } from ${JSON.stringify(tlsSourcePath)};\n` +
+          `const dataDir = ${JSON.stringify(tmpDir)};\n` +
+          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, workspaceIdleTimeoutMs: 1800000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
+      );
+      const env = {
+        ...process.env,
+        PATH: `${fakeBinDir}:${previousPath ?? ""}`,
+        OPPI_TEST_RENEWAL_STATE: stateDir,
+      };
+      const tsxPath = join(process.cwd(), "node_modules", ".bin", "tsx");
+
+      await Promise.all([
+        execFileAsync(tsxPath, [workerPath], { env, timeout: 20_000 }),
+        execFileAsync(tsxPath, [workerPath], { env, timeout: 20_000 }),
+      ]);
+
+      expect(existsSync(join(stateDir, "overlap"))).toBe(false);
+      const resolved = resolveTlsConfig(tailscaleConfig(), tmpDir);
+      expect(readValidTailnetDnsName(resolved.certPath!)).toBe("node.tail00000.ts.net");
+      const lockDir = renewalLockDir(resolved);
+      expect(
+        existsSync(lockDir)
+          ? readdirSync(lockDir).filter((entry) => /^\d+-\d+-[0-9a-f-]+\.ticket$/.test(entry))
+          : [],
+      ).toEqual([]);
+    }, 30_000);
+
+    it("keeps three long queued renewals mutually exclusive when a waiter becomes active", async () => {
+      const stateDir = join(tmpDir, "three-process-lock-state");
+      mkdirSync(stateDir);
+      const fakeTailscalePath = join(fakeBinDir, "tailscale");
+      writeFileSync(
+        fakeTailscalePath,
+        `#!/bin/sh\nset -eu\nif [ "$1" = "status" ]; then\n  printf '%s\\n' '{"Self":{"DNSName":"node.tail00000.ts.net."}}'\n  exit 0\nfi\nprintf '%s\\n' "$OPPI_TEST_WORKER" >> "$OPPI_TEST_RENEWAL_STATE/arrivals"\nowns_active=0\nif mkdir "$OPPI_TEST_RENEWAL_STATE/active" 2>/dev/null; then\n  owns_active=1\nelse\n  : > "$OPPI_TEST_RENEWAL_STATE/overlap"\nfi\nsleep "$OPPI_TEST_CERT_SLEEP"\nif [ "$owns_active" -eq 1 ]; then\n  rmdir "$OPPI_TEST_RENEWAL_STATE/active"\nfi\nshift\ncert_file=''\nkey_file=''\nwhile [ "$#" -gt 0 ]; do\n  case "$1" in\n    --cert-file) cert_file="$2"; shift 2 ;;\n    --key-file) key_file="$2"; shift 2 ;;\n    --min-validity) shift 2 ;;\n    *) host="$1"; shift ;;\n  esac\ndone\nopenssl req -x509 -newkey rsa:2048 -nodes -keyout "$key_file" -out "$cert_file" -days 30 -subj "/CN=$host" -addext "subjectAltName=DNS:$host" >/dev/null 2>&1\n`,
+        { mode: 0o755 },
+      );
+      const workerPath = join(tmpDir, "long-queue-worker.ts");
+      const tlsSourcePath = resolve(__dirname, "../src/tls.ts");
+      writeFileSync(
+        workerPath,
+        `import { prepareTlsForServer } from ${JSON.stringify(tlsSourcePath)};\n` +
+          `const dataDir = ${JSON.stringify(tmpDir)};\n` +
+          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, workspaceIdleTimeoutMs: 1800000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
+      );
+      const baseEnv = {
+        ...process.env,
+        PATH: `${fakeBinDir}:${previousPath ?? ""}`,
+        OPPI_TEST_RENEWAL_STATE: stateDir,
+      };
+      const tsxPath = join(process.cwd(), "node_modules", ".bin", "tsx");
+      const first = execFileAsync(tsxPath, [workerPath], {
+        env: { ...baseEnv, OPPI_TEST_WORKER: "A", OPPI_TEST_CERT_SLEEP: "2" },
+        timeout: 20_000,
+      }).then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+      await waitForCondition(() => existsSync(join(stateDir, "active")));
+
+      const second = execFileAsync(tsxPath, [workerPath], {
+        env: {
+          ...baseEnv,
+          OPPI_TEST_WORKER: "B",
+          OPPI_TEST_CERT_SLEEP: "4",
+        },
+        timeout: 20_000,
+      }).then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+      const resolved = resolveTlsConfig(tailscaleConfig(), tmpDir);
+      const lockDir = renewalLockDir(resolved);
+      await waitForCondition(
+        () =>
+          existsSync(lockDir) &&
+          readdirSync(lockDir).filter((entry) => entry.endsWith(".ticket")).length >= 2,
+      );
+      const third = execFileAsync(tsxPath, [workerPath], {
+        env: { ...baseEnv, OPPI_TEST_WORKER: "C", OPPI_TEST_CERT_SLEEP: "1" },
+        timeout: 20_000,
+      }).then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+
+      await waitForCondition(
+        () =>
+          existsSync(join(stateDir, "arrivals")) &&
+          readFileSync(join(stateDir, "arrivals"), "utf8").split("\n").includes("B"),
+      );
+      const activeTicket = readdirSync(lockDir)
+        .filter((entry) => entry.endsWith(".ticket"))
+        .map((entry) => join(lockDir, entry))
+        .find((ticketPath) => {
+          try {
+            return (
+              (
+                JSON.parse(readFileSync(join(ticketPath, "state.json"), "utf8")) as {
+                  active?: boolean;
+                }
+              ).active === true
+            );
+          } catch {
+            return false;
+          }
+        });
+      expect(activeTicket).toBeDefined();
+      const oldQueueTime = new Date(Date.now() - 120_000);
+      utimesSync(activeTicket!, oldQueueTime, oldQueueTime);
+
+      const results = await Promise.all([first, second, third]);
+      const failures = results.flatMap((result) => ("error" in result ? [result.error] : []));
+      expect(failures).toEqual([]);
+      expect(existsSync(join(stateDir, "overlap"))).toBe(false);
+      expect(readFileSync(join(stateDir, "arrivals"), "utf8").trim().split("\n")).toEqual([
+        "A",
+        "B",
+        "C",
+      ]);
+      expect(validateTailscaleMaterial(resolved)).toBe("node.tail00000.ts.net");
+    }, 25_000);
+
+    it("waits across the 60/90 boundary for a fresh empty current-v2 ticket, then reclaims it", async () => {
+      const paths = writeExistingMaterial();
+      const resolved = resolveTlsConfig(tailscaleConfig(), tmpDir);
+      const lockDir = renewalLockDir(resolved);
+      mkdirSync(lockDir, { recursive: true });
+      const emptyTicket = join(
+        lockDir,
+        `${Date.now()}-${process.pid}-00000000-0000-4000-8000-000000000001.ticket`,
+      );
+      mkdirSync(emptyTicket);
+      const sixtyOneSecondsAgo = new Date(Date.now() - 61_000);
+      utimesSync(emptyTicket, sixtyOneSecondsAgo, sixtyOneSecondsAgo);
+
+      const workerPath = join(tmpDir, "empty-lock-worker.ts");
+      const tlsSourcePath = resolve(__dirname, "../src/tls.ts");
+      writeFileSync(
+        workerPath,
+        `import { prepareTlsForServer } from ${JSON.stringify(tlsSourcePath)};\n` +
+          `const dataDir = ${JSON.stringify(tmpDir)};\n` +
+          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, workspaceIdleTimeoutMs: 1800000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
+      );
+      const tsxPath = join(process.cwd(), "node_modules", ".bin", "tsx");
+      writeFileSync(join(fakeBinDir, "tailscale"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      let settled = false;
+      const runWorker = execFileAsync(tsxPath, [workerPath], {
+        env: { ...process.env, PATH: `${fakeBinDir}:${previousPath ?? ""}` },
+        timeout: 5_000,
+      }).finally(() => {
+        settled = true;
+      });
+
+      await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+      expect(settled).toBe(false);
+      const almostStale = new Date(Date.now() - 89_900);
+      utimesSync(emptyTicket, almostStale, almostStale);
+      await expect(runWorker).resolves.toBeDefined();
+      expect(existsSync(emptyTicket)).toBe(false);
+      expect(readCertificateFingerprint(paths.certPath)).toMatch(/^sha256:/);
+    }, 10_000);
+
+    it("atomically reclaims an aged live-PID owner under simultaneous claimants", async () => {
+      const resolved = resolveTlsConfig(tailscaleConfig(), tmpDir);
+      mkdirSync(dirname(resolved.certPath!), { recursive: true });
+      const lockDir = renewalLockDir(resolved);
+      mkdirSync(lockDir, { recursive: true });
+      const staleTicket = `${Date.now()}-${process.pid}-00000000-0000-4000-8000-000000000000.ticket`;
+      const staleTicketPath = join(lockDir, staleTicket);
+      mkdirSync(staleTicketPath);
+      const staleTime = new Date(Date.now() - 120_000);
+      utimesSync(staleTicketPath, staleTime, staleTime);
+      mkdirSync(join(lockDir, "empty.ticket"));
+
+      const stateDir = join(tmpDir, "stale-lock-state");
+      mkdirSync(stateDir);
+      const fakeTailscalePath = join(fakeBinDir, "tailscale");
+      writeFileSync(
+        fakeTailscalePath,
+        `#!/bin/sh\nset -eu\nif [ "$1" = "status" ]; then\n  printf '%s\\n' '{"Self":{"DNSName":"node.tail00000.ts.net."}}'\n  exit 0\nfi\nprintf 'arrival\\n' >> "$OPPI_TEST_RENEWAL_STATE/arrivals"\nif ! mkdir "$OPPI_TEST_RENEWAL_STATE/active" 2>/dev/null; then\n  : > "$OPPI_TEST_RENEWAL_STATE/overlap"\n  exit 1\nfi\ntrap 'rmdir "$OPPI_TEST_RENEWAL_STATE/active"' EXIT\nshift\ncert_file=''\nkey_file=''\nwhile [ "$#" -gt 0 ]; do\n  case "$1" in\n    --cert-file) cert_file="$2"; shift 2 ;;\n    --key-file) key_file="$2"; shift 2 ;;\n    --min-validity) shift 2 ;;\n    *) host="$1"; shift ;;\n  esac\ndone\nsleep 0.5\nopenssl req -x509 -newkey rsa:2048 -nodes -keyout "$key_file" -out "$cert_file" -days 30 -subj "/CN=$host" -addext "subjectAltName=DNS:$host" >/dev/null 2>&1\n`,
+        { mode: 0o755 },
+      );
+      const workerPath = join(tmpDir, "stale-lock-worker.ts");
+      const tlsSourcePath = resolve(__dirname, "../src/tls.ts");
+      writeFileSync(
+        workerPath,
+        `import { prepareTlsForServer } from ${JSON.stringify(tlsSourcePath)};\n` +
+          `const dataDir = ${JSON.stringify(tmpDir)};\n` +
+          `prepareTlsForServer({ host: "127.0.0.1", port: 7749, dataDir, sessionIdleTimeoutMs: 600000, workspaceIdleTimeoutMs: 1800000, maxSessionsPerWorkspace: 3, maxSessionsGlobal: 5, tls: { mode: "tailscale" } }, dataDir);\n`,
+      );
+      const env = {
+        ...process.env,
+        PATH: `${fakeBinDir}:${previousPath ?? ""}`,
+        OPPI_TEST_RENEWAL_STATE: stateDir,
+      };
+      const tsxPath = join(process.cwd(), "node_modules", ".bin", "tsx");
+
+      await Promise.all([
+        execFileAsync(tsxPath, [workerPath], { env, timeout: 15_000 }),
+        execFileAsync(tsxPath, [workerPath], { env, timeout: 15_000 }),
+      ]);
+
+      expect(existsSync(join(stateDir, "overlap"))).toBe(false);
+      expect(readFileSync(join(stateDir, "arrivals"), "utf8").trim().split("\n")).toHaveLength(2);
+      expect(existsSync(staleTicketPath)).toBe(false);
+      expect(
+        readdirSync(lockDir).filter((entry) => /^\d+-\d+-[0-9a-f-]+\.ticket$/.test(entry)),
+      ).toEqual([]);
+      expect(existsSync(join(lockDir, "empty.ticket"))).toBe(true);
+      expect(validateTailscaleMaterial(resolved)).toBe("node.tail00000.ts.net");
+    }, 25_000);
   });
 
   describe.skipIf(

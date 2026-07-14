@@ -6,7 +6,13 @@ import { sign } from "node:crypto";
 import type { Storage } from "./storage.js";
 import type { InviteData, InvitePayloadV3, SignedInviteEnvelopeV3 } from "./types.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
-import { isTailscaleHostname, prepareTlsForServer, readCertificateFingerprint } from "./tls.js";
+import {
+  isTailscaleHostname,
+  prepareTlsForServer,
+  readCertificateFingerprint,
+  readValidTailnetDnsName,
+  resolveTlsConfig,
+} from "./tls.js";
 
 /** Structured invite result returned by generateInvite(). */
 export interface GeneratedInvite {
@@ -44,11 +50,26 @@ export function generateInvite(
   const config = storage.getConfig();
   storage.ensurePaired();
 
-  const inviteHost = resolveInviteHost(opts.hostOverride);
+  let inviteHost = resolveInviteHost(opts.hostOverride);
+  if (!inviteHost && config.tls?.mode === "tailscale") {
+    const resolved = resolveTlsConfig(config, storage.getDataDir());
+    if (resolved.certPath) {
+      try {
+        inviteHost = readValidTailnetDnsName(resolved.certPath);
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Could not determine pairing host from live Tailscale or existing certificate: ${detail}. ` +
+            "Start Tailscale to obtain or renew the certificate, or pass --host <machine>.<tailnet>.ts.net.",
+        );
+      }
+    }
+  }
+
   if (!inviteHost) {
     const hint =
       config.tls?.mode === "tailscale"
-        ? "Pass --host <machine>.<tailnet>.ts.net and ensure Tailscale is connected"
+        ? "Start Tailscale to obtain a certificate or pass --host <machine>.<tailnet>.ts.net"
         : "Pass --host <hostname-or-ip>, e.g. --host my-mac.local";
     throw new Error(`Could not determine pairing host. ${hint}`);
   }
@@ -70,8 +91,9 @@ export function generateInvite(
   });
 
   inviteScheme = tls.enabled ? "https" : "http";
-  // Tailscale certs are public-CA certificates and rotate; do not make
-  // already-paired clients depend on a single leaf certificate.
+  // Tailscale-issued leaves rotate, so do not make already-paired clients
+  // depend on one leaf pin. Oppi validates local consistency; clients still
+  // enforce normal certificate-chain trust for the HTTPS connection.
   if (tls.enabled && tls.certPath && tls.mode !== "tailscale") {
     tlsCertFingerprint = readCertificateFingerprint(tls.certPath);
   }

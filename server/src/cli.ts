@@ -30,6 +30,7 @@ import {
   readCertificateFingerprint,
   resolveTlsConfig,
   tlsSchemeForConfig,
+  validateTailscaleMaterial,
 } from "./tls.js";
 import type { ServerConfig } from "./types.js";
 import { generateInvite } from "./invite.js";
@@ -490,15 +491,36 @@ function cmdDoctor(storage: CliConnectionConfig): void {
 
     if (tls.mode === "tailscale") {
       const tailscaleHostname = getTailscaleHostname();
+      let validatedTailnetName: string | undefined;
+      try {
+        validatedTailnetName = validateTailscaleMaterial(tls, tailscaleHostname ?? undefined);
+        checks.push({
+          level: "pass",
+          message: `Tailscale cert/key are locally valid for ${validatedTailnetName}`,
+        });
+        checks.push({
+          level: "warn",
+          message:
+            "Tailscale certificate provenance/public chain is not checked by doctor; public trust is enforced by TLS clients",
+        });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        checks.push({
+          level: "fail",
+          message: `Tailscale TLS material is unusable (${message})`,
+        });
+      }
+
       if (tailscaleHostname) {
         checks.push({
           level: "pass",
           message: `Tailscale hostname detected (${tailscaleHostname})`,
         });
-      } else {
+      } else if (validatedTailnetName) {
         checks.push({
-          level: "fail",
-          message: "Tailscale hostname not detected (tailscale status --json)",
+          level: "warn",
+          message:
+            "Tailscale is not connected; locally valid certificate material still supports local operation on the configured bind address",
         });
       }
     }
@@ -1316,10 +1338,9 @@ async function main(): Promise<void> {
   }
   const dataDir = process.env.OPPI_DATA_DIR || undefined;
   const connection = createCliConnectionConfig(dataDir);
-  const localApiHostResolvers = {
-    tailscaleHostname: getTailscaleHostname,
-    tailscaleIp: getTailscaleIp,
-  };
+  // Local API requests derive their TLS identity from the configured leaf
+  // certificate and dial loopback; live Tailscale discovery is not required.
+  const localApiHostResolvers = {};
 
   switch (command) {
     case "serve":
