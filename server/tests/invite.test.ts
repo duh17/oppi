@@ -8,12 +8,16 @@ const {
   mockIsTailscaleHostname,
   mockPrepareTlsForServer,
   mockReadCertificateFingerprint,
+  mockReadValidTailnetDnsName,
+  mockResolveTlsConfig,
 } = vi.hoisted(() => ({
   mockEnsureIdentityMaterial: vi.fn(),
   mockIdentityConfigForDataDir: vi.fn(),
   mockIsTailscaleHostname: vi.fn(),
   mockPrepareTlsForServer: vi.fn(),
   mockReadCertificateFingerprint: vi.fn(),
+  mockReadValidTailnetDnsName: vi.fn(),
+  mockResolveTlsConfig: vi.fn(),
 }));
 
 vi.mock("../src/security.js", () => ({
@@ -25,6 +29,8 @@ vi.mock("../src/tls.js", () => ({
   isTailscaleHostname: (...args: unknown[]) => mockIsTailscaleHostname(...args),
   prepareTlsForServer: (...args: unknown[]) => mockPrepareTlsForServer(...args),
   readCertificateFingerprint: (...args: unknown[]) => mockReadCertificateFingerprint(...args),
+  readValidTailnetDnsName: (...args: unknown[]) => mockReadValidTailnetDnsName(...args),
+  resolveTlsConfig: (...args: unknown[]) => mockResolveTlsConfig(...args),
 }));
 
 import { generateInvite } from "../src/invite.js";
@@ -89,6 +95,13 @@ describe("generateInvite", () => {
     mockPrepareTlsForServer.mockReturnValue({ enabled: false, mode: "disabled" });
     mockIsTailscaleHostname.mockReturnValue(true);
     mockReadCertificateFingerprint.mockReturnValue("sha256:cert-fingerprint");
+    mockReadValidTailnetDnsName.mockReturnValue("cert-host.tail00000.ts.net");
+    mockResolveTlsConfig.mockReturnValue({
+      enabled: true,
+      mode: "tailscale",
+      certPath: "/tmp/oppi-test/tls/tailscale/server.crt",
+      keyPath: "/tmp/oppi-test/tls/tailscale/server.key",
+    });
     mockEnsureIdentityMaterial.mockReturnValue(makeIdentity());
   });
 
@@ -106,11 +119,46 @@ describe("generateInvite", () => {
     );
   });
 
-  it("throws a tailscale-specific host hint when invite host resolution fails", () => {
+  it("recovers the pairing hostname from an existing Tailnet certificate SAN", () => {
     const storage = makeStorage({
       port: 7777,
       host: "0.0.0.0",
       tls: { mode: "tailscale" },
+    });
+    mockPrepareTlsForServer.mockReturnValue({
+      enabled: true,
+      mode: "tailscale",
+      certPath: "/tmp/oppi-test/tls/tailscale/server.crt",
+    });
+
+    const invite = generateInvite(
+      storage as Storage,
+      () => null,
+      (host) => host.split(".")[0] ?? host,
+    );
+
+    expect(invite.host).toBe("cert-host.tail00000.ts.net");
+    expect(invite.scheme).toBe("https");
+    expect(mockReadValidTailnetDnsName).toHaveBeenCalledWith(
+      "/tmp/oppi-test/tls/tailscale/server.crt",
+    );
+    expect(mockPrepareTlsForServer).toHaveBeenCalledWith(
+      expect.anything(),
+      "/tmp/oppi-test",
+      expect.objectContaining({
+        additionalHosts: ["cert-host.tail00000.ts.net", "0.0.0.0"],
+      }),
+    );
+  });
+
+  it("fails with renewal guidance when discovery and existing certificate recovery fail", () => {
+    const storage = makeStorage({
+      port: 7777,
+      host: "0.0.0.0",
+      tls: { mode: "tailscale" },
+    });
+    mockReadValidTailnetDnsName.mockImplementation(() => {
+      throw new Error("Tailscale TLS certificate is expired: /tmp/server.crt");
     });
 
     expect(() =>
@@ -119,9 +167,8 @@ describe("generateInvite", () => {
         () => null,
         () => "unused",
       ),
-    ).toThrowError(
-      "Could not determine pairing host. Pass --host <machine>.<tailnet>.ts.net and ensure Tailscale is connected",
-    );
+    ).toThrowError(/Could not determine pairing host.*certificate is expired.*Start Tailscale/);
+    expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
   });
 
   it("rejects non-tailnet hosts in tailscale TLS mode before TLS setup", () => {

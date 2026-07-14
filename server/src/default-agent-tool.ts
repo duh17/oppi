@@ -1,5 +1,3 @@
-import { execFileSync } from "node:child_process";
-
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -424,36 +422,7 @@ function truncateToolOutput(output: string): string {
 }
 
 function buildLocalApiHostResolvers(): LocalApiHostResolvers {
-  return {
-    tailscaleHostname: () => {
-      try {
-        const result = execFileSync("tailscale", ["status", "--json"], {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
-        });
-        const status = JSON.parse(result) as { Self?: { DNSName?: unknown } };
-        return typeof status.Self?.DNSName === "string"
-          ? status.Self.DNSName.replace(/\.$/, "")
-          : null;
-      } catch {
-        return null;
-      }
-    },
-    tailscaleIp: () => {
-      try {
-        return (
-          execFileSync("tailscale", ["ip", "-4"], {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "ignore"],
-          })
-            .trim()
-            .split("\n")[0] ?? null
-        );
-      } catch {
-        return null;
-      }
-    },
-  };
+  return {};
 }
 
 function isCliEnvelope(value: unknown): value is CliJsonEnvelope {

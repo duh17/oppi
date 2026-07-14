@@ -61,6 +61,21 @@ Optional: enable Tailscale HTTPS/WSS (Let's Encrypt cert via `tailscale cert`):
 oppi config set tls '{"mode":"tailscale"}'
 ```
 
+Tailscale must be connected to obtain or renew this certificate and for remote
+Tailnet access. Once locally valid cert/key material exists, local server
+restarts, `oppi pair`, and local CLI/API commands continue to work while
+Tailscale is stopped when the configured bind remains locally reachable.
+Wildcard binds use same-family loopback (`0.0.0.0` → `127.0.0.1`, `::` →
+`::1`); explicit binds are dialed directly while TLS SNI remains the validated
+Tailnet DNS SAN.
+
+Oppi checks the certificate's full validity interval, Tailnet DNS SAN, and
+certificate/key match. It assumes material renewed by the local `tailscale`
+command or placed at the configured paths has the intended provenance; it does
+not independently validate a public CA chain during startup or `oppi doctor`.
+HTTPS clients keep normal certificate-chain verification enabled and reject
+untrusted material.
+
 Create a workspace in the app and start a session.
 
 ## Requirements

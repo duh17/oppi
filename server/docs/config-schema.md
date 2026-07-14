@@ -100,14 +100,22 @@ Configs with `tls.mode="disabled"` are auto-promoted to `"self-signed"` on first
 
 Modes:
 
-| Mode          | Behavior                                                                                                                        |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `disabled`    | Plain HTTP/WS. No encryption. Non-loopback binds require `tls.allowInsecureNetworkHttp=true`; loopback dev binds work.          |
-| `tailscale`   | Requests/renews certs via `tailscale cert`. Requires MagicDNS + HTTPS certs enabled in tailnet DNS + connected `tailscale` CLI. |
-| `self-signed` | Auto-generates cert material under `~/.config/oppi/tls/self-signed/`. Client must trust the CA.                                 |
-| `manual`      | Uses `certPath` and `keyPath` you provide. Both are required.                                                                   |
-| `auto`        | Auto-selects based on environment (Tailscale if available, else self-signed).                                                   |
-| `cloudflare`  | Cloudflare Tunnel integration.                                                                                                  |
+| Mode          | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `disabled`    | Plain HTTP/WS. No encryption. Non-loopback binds require `tls.allowInsecureNetworkHttp=true`; loopback dev binds work.                                                                                                                                                                                                                                                                                                                                                                                    |
+| `tailscale`   | Uses a Tailnet DNS certificate and requests/renews it via `tailscale cert` when Tailscale is connected. Existing locally valid material keeps restarts, pairing, and local CLI/API access working while disconnected when the configured bind remains locally reachable. Wildcards dial same-family loopback; explicit binds dial their configured address while SNI remains the certificate's Tailnet DNS SAN. Tailscale is still required to obtain/renew material and for remote Tailnet connectivity. |
+| `self-signed` | Auto-generates cert material under `~/.config/oppi/tls/self-signed/`. Client must trust the CA.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `manual`      | Uses `certPath` and `keyPath` you provide. Both are required.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `auto`        | Auto-selects based on environment (Tailscale if available, else self-signed).                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `cloudflare`  | Cloudflare Tunnel integration.                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+
+For Tailscale fallback, “locally valid” means the leaf parses, the current time
+is within its complete validity interval, it has an exact Tailnet DNS SAN, and
+the private key matches. Oppi assumes material produced by the local
+`tailscale` command or supplied at configured paths has the intended
+provenance. Startup and `oppi doctor` do not independently prove a public CA
+chain; clients use normal TLS trust verification and no insecure verification
+bypass is enabled.
 
 ```bash
 # Tailscale (recommended for LAN)

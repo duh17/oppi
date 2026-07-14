@@ -1,17 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { createHash, X509Certificate } from "node:crypto";
+import { createHash, randomUUID, X509Certificate } from "node:crypto";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { isIP } from "node:net";
 import { homedir, networkInterfaces } from "node:os";
 import { dirname, join } from "node:path";
+import { createSecureContext } from "node:tls";
 import type { ServerConfig, TlsMode } from "./types.js";
 
 const WILDCARD_BIND_HOSTS = new Set(["0.0.0.0", "::"]);
@@ -49,6 +53,11 @@ interface TailscaleStatus {
 
 const TAILNET_SUFFIXES = [".ts.net", ".beta.tailscale.net"];
 const TAILSCALE_MIN_VALIDITY = "720h";
+const TAILSCALE_RENEW_LOCK_WAIT_MS = 120_000;
+// Longer than the bounded 10s status probe + 45s certificate command. Age
+// therefore fences PID reuse without reclaiming a legitimate renewal.
+const TAILSCALE_STALE_LOCK_MS = 90_000;
+const TAILSCALE_LOCK_POLL_MS = 25;
 
 function expandHome(path: string): string {
   if (!path.startsWith("~/")) return path;
@@ -75,7 +84,21 @@ function defaultTailscalePaths(dataDir: string): { certPath: string; keyPath: st
 }
 
 function isTailnetDnsName(host: string): boolean {
-  return TAILNET_SUFFIXES.some((suffix) => host.endsWith(suffix));
+  if (host.length > 253 || !/^[a-z0-9.-]+$/.test(host)) {
+    return false;
+  }
+
+  const labels = host.split(".");
+  if (
+    labels.some(
+      (label) =>
+        label.length === 0 || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
+    )
+  ) {
+    return false;
+  }
+
+  return TAILNET_SUFFIXES.some((suffix) => host.endsWith(suffix) && host.length > suffix.length);
 }
 
 export function isTailscaleHostname(host: string): boolean {
@@ -146,7 +169,7 @@ export function prepareTlsForServer(
   }
 
   if (resolved.mode === "tailscale") {
-    ensureTailscaleMaterial(resolved, options.additionalHosts ?? []);
+    ensureTailscaleMaterial(resolved, options.additionalHosts ?? [], dataDir);
   }
 
   if (!resolved.certPath || !resolved.keyPath) {
@@ -197,6 +220,89 @@ export function certificateMatchesHost(certPath: string, host: string): boolean 
   }
 
   return cert.checkHost(normalizedHost, { subject: "never" }) !== undefined;
+}
+
+/**
+ * Returns an exact Tailnet DNS SAN from a currently valid leaf certificate.
+ * The certificate subject/CN is intentionally ignored: local clients use this
+ * name as the verified TLS identity while dialing the configured local bind
+ * address separately.
+ */
+export function readValidTailnetDnsName(
+  certPath: string,
+  preferredHost?: string,
+  nowMs = Date.now(),
+): string {
+  if (!existsSync(certPath)) {
+    throw new Error(`Tailscale TLS certificate not found: ${certPath}`);
+  }
+
+  let cert: X509Certificate;
+  try {
+    cert = new X509Certificate(readFileSync(certPath));
+  } catch {
+    throw new Error(`Tailscale TLS certificate is malformed: ${certPath}`);
+  }
+
+  const validFrom = Date.parse(cert.validFrom);
+  if (!Number.isFinite(validFrom)) {
+    throw new Error(`Tailscale TLS certificate has an invalid start date: ${certPath}`);
+  }
+  if (validFrom > nowMs) {
+    throw new Error(`Tailscale TLS certificate is not yet valid: ${certPath}`);
+  }
+
+  const expiresAt = Date.parse(cert.validTo);
+  if (!Number.isFinite(expiresAt)) {
+    throw new Error(`Tailscale TLS certificate has an invalid expiry: ${certPath}`);
+  }
+  if (expiresAt <= nowMs) {
+    throw new Error(`Tailscale TLS certificate is expired: ${certPath}`);
+  }
+
+  const tailnetNames = readDnsSubjectAltNames(cert.subjectAltName).filter(
+    (name) => isTailnetDnsName(name) && cert.checkHost(name, { subject: "never" }) === name,
+  );
+  if (tailnetNames.length === 0) {
+    throw new Error(
+      `Tailscale TLS certificate has no valid Tailnet DNS SAN (*.ts.net or *.beta.tailscale.net): ${certPath}`,
+    );
+  }
+
+  if (preferredHost !== undefined) {
+    const normalizedPreferredHost = normalizeHostForSan(preferredHost);
+    if (
+      !isTailnetDnsName(normalizedPreferredHost) ||
+      !tailnetNames.includes(normalizedPreferredHost)
+    ) {
+      throw new Error(
+        `Tailscale TLS certificate does not cover ${preferredHost} with a Tailnet DNS SAN: ${certPath}`,
+      );
+    }
+    return normalizedPreferredHost;
+  }
+
+  const selectedName = tailnetNames[0];
+  if (!selectedName) {
+    throw new Error(`Tailscale TLS certificate has no selectable Tailnet DNS SAN: ${certPath}`);
+  }
+  return selectedName;
+}
+
+function readDnsSubjectAltNames(subjectAltName: string | undefined): string[] {
+  if (!subjectAltName) {
+    return [];
+  }
+
+  const names: string[] = [];
+  const dnsEntry = /(?:^|,\s*)DNS:([a-zA-Z0-9.-]+)(?=,\s*|$)/g;
+  for (const match of subjectAltName.matchAll(dnsEntry)) {
+    const normalized = normalizeHostForSan(match[1] ?? "");
+    if (normalized) {
+      names.push(normalized);
+    }
+  }
+  return names;
 }
 
 function ensureSelfSignedMaterial(resolved: ResolvedTlsConfig, additionalHosts: string[]): void {
@@ -314,46 +420,456 @@ function ensureSelfSignedMaterial(resolved: ResolvedTlsConfig, additionalHosts: 
   }
 }
 
-function ensureTailscaleMaterial(resolved: ResolvedTlsConfig, additionalHosts: string[]): void {
+function ensureTailscaleMaterial(
+  resolved: ResolvedTlsConfig,
+  additionalHosts: string[],
+  dataDir: string,
+): void {
   if (!resolved.certPath || !resolved.keyPath) {
     throw new Error("tailscale TLS mode requires certPath/keyPath");
-  }
-
-  const certHost = resolveTailscaleCertHostname(additionalHosts);
-  if (!certHost) {
-    throw new Error(
-      "Could not determine Tailscale DNS hostname. Ensure Tailscale is connected and use a *.ts.net host.",
-    );
   }
 
   for (const dir of new Set([dirname(resolved.certPath), dirname(resolved.keyPath)])) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
-  runTailscale([
-    "cert",
-    "--cert-file",
-    resolved.certPath,
-    "--key-file",
-    resolved.keyPath,
-    "--min-validity",
-    TAILSCALE_MIN_VALIDITY,
-    certHost,
-  ]);
+  withTailscaleRenewalLock(tailscaleRenewalLockDir(dataDir, resolved), () => {
+    recoverInterruptedTailscalePromotion(resolved);
 
-  chmodSync(resolved.keyPath, 0o600);
-  chmodSync(resolved.certPath, 0o644);
+    const requestedHost = resolveRequestedTailnetHostname(additionalHosts);
+    const liveHost = detectTailscaleHostname();
+
+    if (liveHost) {
+      const renewalHost = requestedHost ?? liveHost;
+      try {
+        renewTailscaleMaterial(resolved, renewalHost);
+        return;
+      } catch (renewalError: unknown) {
+        try {
+          validateTailscaleMaterial(resolved, requestedHost ?? undefined);
+          return;
+        } catch (existingError: unknown) {
+          throw new Error(
+            `Unable to renew Tailscale TLS material and no usable existing certificate remains. ` +
+              `Renewal error: ${errorMessage(renewalError)}. Existing material: ${errorMessage(existingError)}`,
+          );
+        }
+      }
+    }
+
+    try {
+      validateTailscaleMaterial(resolved, requestedHost ?? undefined);
+    } catch (error: unknown) {
+      throw new Error(
+        `Tailscale is unavailable and existing TLS material is unusable: ${errorMessage(error)}. ` +
+          "Start Tailscale to obtain or renew the certificate.",
+      );
+    }
+  });
 }
 
-function resolveTailscaleCertHostname(additionalHosts: string[]): string | null {
+function renewTailscaleMaterial(resolved: ResolvedTlsConfig, certHost: string): void {
+  if (!resolved.certPath || !resolved.keyPath) {
+    throw new Error("tailscale TLS mode requires certPath/keyPath");
+  }
+  const certPath = resolved.certPath;
+  const keyPath = resolved.keyPath;
+  const certTempDir = mkdtempSync(join(dirname(certPath), ".tailscale-cert-"));
+  const keyTempDir =
+    dirname(keyPath) === dirname(certPath)
+      ? certTempDir
+      : mkdtempSync(join(dirname(keyPath), ".tailscale-key-"));
+  const tempCertPath = join(certTempDir, "server.crt");
+  const tempKeyPath = join(keyTempDir, "server.key");
+
+  try {
+    runTailscale([
+      "cert",
+      "--cert-file",
+      tempCertPath,
+      "--key-file",
+      tempKeyPath,
+      "--min-validity",
+      TAILSCALE_MIN_VALIDITY,
+      certHost,
+    ]);
+
+    validateTailscaleMaterial(
+      { ...resolved, certPath: tempCertPath, keyPath: tempKeyPath },
+      certHost,
+    );
+    promoteTailscaleMaterial(resolved, tempCertPath, tempKeyPath, certHost);
+  } finally {
+    rmSync(certTempDir, { recursive: true, force: true });
+    if (keyTempDir !== certTempDir) {
+      rmSync(keyTempDir, { recursive: true, force: true });
+    }
+  }
+}
+
+/**
+ * Install one staged certificate/key generation while retaining the previous
+ * pair until the final destination has been validated. The optional rename
+ * function keeps the failure boundary deterministic in tests.
+ */
+export function promoteTailscaleMaterial(
+  resolved: ResolvedTlsConfig,
+  stagedCertPath: string,
+  stagedKeyPath: string,
+  preferredHost: string,
+  renameFile: typeof renameSync = renameSync,
+  removeBackup: (path: string) => void = (path) => rmSync(path, { force: true }),
+): void {
+  if (!resolved.certPath || !resolved.keyPath) {
+    throw new Error("tailscale TLS mode requires certPath/keyPath");
+  }
+  const certPath = resolved.certPath;
+  const keyPath = resolved.keyPath;
+  const certBackupPath = tailscaleBackupPath(certPath);
+  const keyBackupPath = tailscaleBackupPath(keyPath);
+  let certBackedUp = false;
+  let keyBackedUp = false;
+
+  recoverInterruptedTailscalePromotion(resolved, preferredHost);
+  const hadCert = existsSync(certPath);
+  const hadKey = existsSync(keyPath);
+
+  try {
+    if (hadCert) {
+      renameFile(certPath, certBackupPath);
+      certBackedUp = true;
+    }
+    if (hadKey) {
+      renameFile(keyPath, keyBackupPath);
+      keyBackedUp = true;
+    }
+
+    renameFile(stagedCertPath, certPath);
+    renameFile(stagedKeyPath, keyPath);
+    chmodSync(keyPath, 0o600);
+    chmodSync(certPath, 0o644);
+    validateTailscaleMaterial(resolved, preferredHost);
+  } catch (promotionError: unknown) {
+    const rollbackErrors: string[] = [];
+    try {
+      if (certBackedUp || !hadCert) rmSync(certPath, { force: true });
+    } catch (error: unknown) {
+      rollbackErrors.push(`new certificate removal failed: ${errorMessage(error)}`);
+    }
+    try {
+      if (keyBackedUp || !hadKey) rmSync(keyPath, { force: true });
+    } catch (error: unknown) {
+      rollbackErrors.push(`new private-key removal failed: ${errorMessage(error)}`);
+    }
+
+    try {
+      if (certBackedUp) renameFile(certBackupPath, certPath);
+    } catch (error: unknown) {
+      rollbackErrors.push(`certificate restore failed: ${errorMessage(error)}`);
+    }
+    try {
+      if (keyBackedUp) renameFile(keyBackupPath, keyPath);
+    } catch (error: unknown) {
+      rollbackErrors.push(`private-key restore failed: ${errorMessage(error)}`);
+    }
+
+    if (rollbackErrors.length === 0 && hadCert && hadKey) {
+      try {
+        validateTailscaleMaterial(resolved);
+      } catch (error: unknown) {
+        rollbackErrors.push(`restored generation is invalid: ${errorMessage(error)}`);
+      }
+    }
+
+    const rollbackDetail =
+      rollbackErrors.length === 0
+        ? "The previous certificate/key generation was restored."
+        : `Rollback errors: ${rollbackErrors.join("; ")}`;
+    throw new Error(
+      `Failed to promote Tailscale TLS material: ${errorMessage(promotionError)}. ${rollbackDetail}`,
+    );
+  }
+
+  const cleanupErrors: string[] = [];
+  for (const backupPath of [certBackupPath, keyBackupPath]) {
+    try {
+      removeBackup(backupPath);
+    } catch (error: unknown) {
+      cleanupErrors.push(errorMessage(error));
+    }
+  }
+  if (cleanupErrors.length > 0) {
+    throw new Error(
+      `Tailscale TLS backup cleanup failure: ${cleanupErrors.join("; ")}. ` +
+        "The committed live pair remains valid.",
+    );
+  }
+}
+
+/**
+ * Side-effect-free local consistency validation. This checks the full leaf
+ * validity interval, Tailnet DNS SAN, parseability, and cert/key match. It does
+ * not establish certificate provenance or validate a public trust chain;
+ * HTTPS clients retain normal trust verification for that boundary.
+ */
+export function validateTailscaleMaterial(
+  resolved: ResolvedTlsConfig,
+  preferredHost?: string,
+): string {
+  if (!resolved.certPath || !resolved.keyPath) {
+    throw new Error("tailscale TLS mode requires certPath/keyPath");
+  }
+  const certPath = resolved.certPath;
+  const keyPath = resolved.keyPath;
+  const certHost = readValidTailnetDnsName(certPath, preferredHost);
+
+  if (!existsSync(keyPath)) {
+    throw new Error(`Tailscale TLS private key not found: ${keyPath}`);
+  }
+
+  try {
+    createSecureContext({ cert: readFileSync(certPath), key: readFileSync(keyPath) });
+  } catch {
+    throw new Error(`Tailscale TLS certificate/key material is malformed or mismatched`);
+  }
+
+  return certHost;
+}
+
+function tailscaleBackupPath(path: string): string {
+  return `${path}.oppi-renew-backup`;
+}
+
+function recoverInterruptedTailscalePromotion(
+  resolved: ResolvedTlsConfig,
+  preferredHost?: string,
+): void {
+  if (!resolved.certPath || !resolved.keyPath) return;
+  const certBackupPath = tailscaleBackupPath(resolved.certPath);
+  const keyBackupPath = tailscaleBackupPath(resolved.keyPath);
+  const hasCertBackup = existsSync(certBackupPath);
+  const hasKeyBackup = existsSync(keyBackupPath);
+  if (!hasCertBackup && !hasKeyBackup) return;
+
+  let livePairValid = false;
+  try {
+    validateTailscaleMaterial(resolved, preferredHost);
+    livePairValid = true;
+  } catch {
+    // The live destination is partial or mismatched; restore available backups.
+  }
+
+  if (livePairValid) {
+    try {
+      chmodSync(resolved.keyPath, 0o600);
+      chmodSync(resolved.certPath, 0o644);
+    } catch {
+      // A permission cleanup error must not replace a validated live pair.
+    }
+    for (const backupPath of [certBackupPath, keyBackupPath]) {
+      try {
+        rmSync(backupPath, { force: true });
+      } catch {
+        // Backup cleanup is best-effort after the live generation validates.
+      }
+    }
+    return;
+  }
+
+  if (hasCertBackup) {
+    rmSync(resolved.certPath, { force: true });
+    renameSync(certBackupPath, resolved.certPath);
+  }
+  if (hasKeyBackup) {
+    rmSync(resolved.keyPath, { force: true });
+    renameSync(keyBackupPath, resolved.keyPath);
+  }
+}
+
+type TailscaleRenewalTicket = {
+  token: string;
+  path: string;
+  pid: number;
+  createdAtMs: number;
+  state?: { choosing: boolean; number: number; active: boolean; updatedAtMs: number };
+};
+
+function tailscaleRenewalLockDir(dataDir: string, resolved: ResolvedTlsConfig): string {
+  const identity = `${resolved.certPath ?? ""}\0${resolved.keyPath ?? ""}`;
+  const digest = createHash("sha256").update(identity).digest("hex").slice(0, 24);
+  return join(dataDir, "tls", "locks", `tailscale-${digest}`);
+}
+
+function withTailscaleRenewalLock<T>(lockDir: string, operation: () => T): T {
+  mkdirSync(lockDir, { recursive: true, mode: 0o700 });
+
+  // This is Lamport's bakery lock over unique ticket directories. State file
+  // replacement is atomic, and release/reclamation removes only one
+  // never-reused ticket path. No read-then-unlink of shared ownership exists.
+  const token = `${Date.now()}-${process.pid}-${randomUUID()}`;
+  const ticketPath = join(lockDir, `${token}.ticket`);
+  mkdirSync(ticketPath, { mode: 0o700 });
+  const deadline = Date.now() + TAILSCALE_RENEW_LOCK_WAIT_MS;
+
+  try {
+    writeTailscaleTicketState(ticketPath, { choosing: true, number: 0, active: false });
+    removeStaleTailscaleTickets(lockDir, token);
+    const nextNumber =
+      1 +
+      Math.max(
+        0,
+        ...readTailscaleRenewalTickets(lockDir).map((ticket) => ticket.state?.number ?? 0),
+      );
+    writeTailscaleTicketState(ticketPath, {
+      choosing: false,
+      number: nextNumber,
+      active: false,
+    });
+
+    while (Date.now() < deadline) {
+      removeStaleTailscaleTickets(lockDir, token);
+      const blocked = readTailscaleRenewalTickets(lockDir).some((ticket) => {
+        if (ticket.token === token) return false;
+        if (!ticket.state || ticket.state.choosing) return true;
+        if (ticket.state.number <= 0) return false;
+        return (
+          ticket.state.number < nextNumber ||
+          (ticket.state.number === nextNumber && ticket.token.localeCompare(token) < 0)
+        );
+      });
+      if (!blocked) {
+        // Reset stale age at critical-section acquisition. A long queue cannot
+        // consume the active owner's bounded 90-second lease.
+        writeTailscaleTicketState(ticketPath, {
+          choosing: false,
+          number: nextNumber,
+          active: true,
+        });
+        return operation();
+      }
+      sleepSync(TAILSCALE_LOCK_POLL_MS);
+    }
+
+    throw new Error(`Timed out waiting for Tailscale TLS renewal lock: ${lockDir}`);
+  } finally {
+    // Empty or fully initialized tickets are both ownership-safe: this path is
+    // unique to this attempt and can never name a successor.
+    rmSync(ticketPath, { recursive: true, force: true });
+  }
+}
+
+function writeTailscaleTicketState(
+  ticketPath: string,
+  state: { choosing: boolean; number: number; active: boolean },
+): void {
+  const statePath = join(ticketPath, "state.json");
+  const tempPath = join(ticketPath, `.state-${randomUUID()}.tmp`);
+  try {
+    writeFileSync(tempPath, JSON.stringify(state), { mode: 0o600 });
+    renameSync(tempPath, statePath);
+  } finally {
+    rmSync(tempPath, { force: true });
+  }
+}
+
+function readTailscaleRenewalTickets(lockDir: string): TailscaleRenewalTicket[] {
+  const tickets: TailscaleRenewalTicket[] = [];
+  for (const entry of readdirSync(lockDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const match = /^(\d+)-(\d+)-([0-9a-f-]+)\.ticket$/.exec(entry.name);
+    if (!match) continue;
+    const pid = Number(match[2]);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    const path = join(lockDir, entry.name);
+    try {
+      tickets.push({
+        token: entry.name.slice(0, -".ticket".length),
+        path,
+        pid,
+        createdAtMs: statSync(path).mtimeMs,
+        state: readTailscaleTicketState(path),
+      });
+    } catch {
+      // A concurrent owner may have released its unique ticket.
+    }
+  }
+  return tickets;
+}
+
+function readTailscaleTicketState(
+  ticketPath: string,
+): { choosing: boolean; number: number; active: boolean; updatedAtMs: number } | undefined {
+  try {
+    const statePath = join(ticketPath, "state.json");
+    const parsed = JSON.parse(readFileSync(statePath, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object") return undefined;
+    const choosing = (parsed as { choosing?: unknown }).choosing;
+    const number = (parsed as { number?: unknown }).number;
+    const active = (parsed as { active?: unknown }).active;
+    if (
+      typeof choosing !== "boolean" ||
+      !Number.isInteger(number) ||
+      Number(number) < 0 ||
+      typeof active !== "boolean"
+    ) {
+      return undefined;
+    }
+    return {
+      choosing,
+      number: Number(number),
+      active,
+      updatedAtMs: statSync(statePath).mtimeMs,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function removeStaleTailscaleTickets(lockDir: string, ownToken: string): void {
+  const nowMs = Date.now();
+  for (const ticket of readTailscaleRenewalTickets(lockDir)) {
+    if (ticket.token === ownToken) continue;
+    const staleSinceMs = ticket.state?.updatedAtMs ?? ticket.createdAtMs;
+    const tooOld = nowMs - staleSinceMs >= TAILSCALE_STALE_LOCK_MS;
+    if (!tooOld && isProcessRunning(ticket.pid)) continue;
+
+    // Simultaneous claimants can remove the same stale ticket safely. The
+    // unique path is never reused, so it cannot become a successor's lock.
+    rmSync(ticket.path, { recursive: true, force: true });
+  }
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return errorCode(error) !== "ESRCH";
+  }
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
+}
+
+function resolveRequestedTailnetHostname(additionalHosts: string[]): string | null {
   for (const host of additionalHosts) {
     const normalized = normalizeHostForSan(host);
     if (normalized && isTailnetDnsName(normalized)) {
       return normalized;
     }
   }
+  return null;
+}
 
-  return detectTailscaleHostname();
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function detectTailscaleHostname(): string | null {
