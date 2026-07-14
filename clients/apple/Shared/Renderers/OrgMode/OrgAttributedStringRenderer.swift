@@ -67,6 +67,7 @@ private struct RenderContext: @unchecked Sendable {
         let theme = configuration.theme
         let size = configuration.fontSize
 
+        #if canImport(UIKit)
         foreground = PlatformColor(cgColor: theme.foreground)
         foregroundDim = PlatformColor(cgColor: theme.foregroundDim)
         linkColor = PlatformColor(cgColor: theme.link)
@@ -75,14 +76,19 @@ private struct RenderContext: @unchecked Sendable {
         commentColor = PlatformColor(cgColor: theme.comment)
         stringColor = PlatformColor(cgColor: theme.string)
         codeBackground = PlatformColor(cgColor: theme.backgroundDark)
-
-        #if canImport(UIKit)
-        bodyFont = PlatformFont.systemFont(ofSize: size)
-        monoFont = PlatformFont.monospacedSystemFont(ofSize: size, weight: .regular)
         #elseif canImport(AppKit)
+        foreground = PlatformColor(cgColor: theme.foreground) ?? .labelColor
+        foregroundDim = PlatformColor(cgColor: theme.foregroundDim) ?? .secondaryLabelColor
+        linkColor = PlatformColor(cgColor: theme.link) ?? .linkColor
+        headingColor = PlatformColor(cgColor: theme.heading) ?? .labelColor
+        keywordColor = PlatformColor(cgColor: theme.keyword) ?? .systemPurple
+        commentColor = PlatformColor(cgColor: theme.comment) ?? .secondaryLabelColor
+        stringColor = PlatformColor(cgColor: theme.string) ?? .systemGreen
+        codeBackground = PlatformColor(cgColor: theme.backgroundDark) ?? .textBackgroundColor
+        #endif
+
         bodyFont = PlatformFont.systemFont(ofSize: size)
         monoFont = PlatformFont.monospacedSystemFont(ofSize: size, weight: .regular)
-        #endif
     }
 
     // MARK: - Font Helpers
