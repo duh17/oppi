@@ -77,7 +77,7 @@ struct WorkspaceStoreOfflineTests {
             let url = request.url!.absoluteString
             let encoder = JSONEncoder()
 
-            if url.hasSuffix("/workspaces") {
+            if request.url?.path == "/workspaces" {
                 let data = try encoder.encode(["workspaces": [makeTestWorkspace(id: "w-fresh", name: "Fresh Workspace")]])
                 let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (data, response)
@@ -109,7 +109,7 @@ struct WorkspaceStoreOfflineTests {
         WorkspaceStoreMockURLProtocol.handler = { request in
             let url = request.url!.absoluteString
 
-            if url.hasSuffix("/workspaces") {
+            if request.url?.path == "/workspaces" {
                 let data = """
                 {
                   "serverNow": 1700000000000,
