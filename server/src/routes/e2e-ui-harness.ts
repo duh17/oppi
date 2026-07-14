@@ -24,6 +24,8 @@ import type { RouteDispatcher, RouteHelpers, RouteContext } from "./types.js";
 const MAX_E2E_UI_MESSAGE_BYTES = 2 * 1024 * 1024;
 const MAX_E2E_FIXTURE_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_E2E_FIXTURE_BODY_BYTES = 8 * 1024 * 1024;
+const MAX_E2E_STOPPED_SESSION_FIXTURES = 500;
+const e2eStoppedSessionFixtureIds = new Set<string>();
 
 export function createE2EUIHarnessRoutes(
   ctx: RouteContext,
@@ -66,6 +68,18 @@ export function createE2EUIHarnessRoutes(
         return true;
       }
       await handleLocalPiSessionFixture(ctx, helpers, req, res);
+      return true;
+    }
+
+    const stoppedSessionsFixtureMatch = path.match(/^\/e2e\/ui\/fixtures\/stopped-sessions$/);
+    if (stoppedSessionsFixtureMatch) {
+      if (method === "POST") {
+        await handleStoppedSessionsFixture(ctx, helpers, req, res);
+      } else if (method === "DELETE") {
+        await handleDeleteStoppedSessionsFixture(ctx, helpers, req, res);
+      } else {
+        helpers.error(res, 405, "Method not allowed");
+      }
       return true;
     }
 
@@ -283,6 +297,107 @@ async function handleLocalPiSessionFixture(
   await discoverLocalSessions(undefined, { dataDir: ctx.storage.getDataDir() });
 
   helpers.json(res, { ok: true, path: realpathSync(filePath), piSessionId: sessionId, cwd, name });
+}
+
+async function handleStoppedSessionsFixture(
+  ctx: RouteContext,
+  helpers: RouteHelpers,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = await helpers.parseBody<Record<string, unknown>>(req, {
+    maxBytes: MAX_E2E_FIXTURE_BODY_BYTES,
+  });
+  const workspaceId = stringField(body.workspaceId)?.trim();
+  const count = numberField(body.count);
+  const lastActivityMs = numberField(body.lastActivityMs);
+  const namePrefix = stringField(body.namePrefix)?.trim() || "E2E Stopped Session";
+
+  if (
+    !workspaceId ||
+    count === undefined ||
+    !Number.isInteger(count) ||
+    count < 1 ||
+    count > MAX_E2E_STOPPED_SESSION_FIXTURES ||
+    lastActivityMs === undefined ||
+    lastActivityMs < 0
+  ) {
+    helpers.error(
+      res,
+      400,
+      `Fixture requires workspaceId, count 1-${MAX_E2E_STOPPED_SESSION_FIXTURES}, and lastActivityMs`,
+    );
+    return;
+  }
+
+  const workspace = ctx.storage.getWorkspace(workspaceId);
+  if (!workspace) {
+    helpers.error(res, 404, "Workspace not found");
+    return;
+  }
+
+  const sessionIds: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const session = ctx.storage.createSession(`${namePrefix} ${index + 1}`);
+    session.workspaceId = workspace.id;
+    session.workspaceName = workspace.name;
+    session.status = "stopped";
+    session.createdAt = Math.max(0, lastActivityMs - 1_000);
+    session.lastActivity = lastActivityMs;
+    session.messageCount = 1;
+    ctx.storage.saveSession(session);
+    e2eStoppedSessionFixtureIds.add(session.id);
+    sessionIds.push(session.id);
+  }
+
+  helpers.json(res, { ok: true, count: sessionIds.length, sessionIds });
+}
+
+async function handleDeleteStoppedSessionsFixture(
+  ctx: RouteContext,
+  helpers: RouteHelpers,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = await helpers.parseBody<Record<string, unknown>>(req, {
+    maxBytes: MAX_E2E_FIXTURE_BODY_BYTES,
+  });
+  const workspaceId = stringField(body.workspaceId)?.trim();
+  const sessionIds = stringArrayField(body.sessionIds);
+  if (
+    !workspaceId ||
+    !sessionIds ||
+    sessionIds.length < 1 ||
+    sessionIds.length > MAX_E2E_STOPPED_SESSION_FIXTURES
+  ) {
+    helpers.error(
+      res,
+      400,
+      `Fixture cleanup requires workspaceId and 1-${MAX_E2E_STOPPED_SESSION_FIXTURES} sessionIds`,
+    );
+    return;
+  }
+
+  const sessions = sessionIds.map((sessionId) => ctx.storage.getSession(sessionId));
+  const ownsEverySession = sessionIds.every(
+    (sessionId, index) =>
+      e2eStoppedSessionFixtureIds.has(sessionId) &&
+      sessions[index]?.workspaceId === workspaceId &&
+      sessions[index]?.status === "stopped",
+  );
+  if (!ownsEverySession) {
+    helpers.error(res, 409, "Fixture cleanup only deletes owned stopped sessions");
+    return;
+  }
+
+  let deletedCount = 0;
+  for (const sessionId of sessionIds) {
+    if (ctx.storage.deleteSession(sessionId)) {
+      deletedCount += 1;
+      e2eStoppedSessionFixtureIds.delete(sessionId);
+    }
+  }
+  helpers.json(res, { ok: true, deletedCount });
 }
 
 function randomTraceEntryId(): string {

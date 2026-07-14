@@ -139,6 +139,93 @@ describe("E2E UI harness routes", () => {
     }
   });
 
+  it("creates backdated stopped-session fixtures without starting runtimes", async () => {
+    process.env.OPPI_E2E_UI_HARNESS = "1";
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-e2e-session-fixture-route-"));
+    const fixtureSessions: Array<Record<string, unknown>> = [];
+    try {
+      const dispatch = createE2EUIHarnessRoutes(
+        makeContext(dataDir, "session-1", [], fixtureSessions),
+        createRouteHelpers(),
+      );
+      const res = makeResponse();
+      const lastActivityMs = Date.UTC(2026, 6, 13, 12);
+
+      const handled = await dispatch({
+        method: "POST",
+        path: "/e2e/ui/fixtures/stopped-sessions",
+        url: new URL("http://localhost/e2e/ui/fixtures/stopped-sessions"),
+        req: makeRequest({
+          workspaceId: "workspace-dense",
+          count: 3,
+          lastActivityMs,
+          namePrefix: "Yesterday",
+        }),
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      const createBody = JSON.parse(res.body) as {
+        ok: boolean;
+        count: number;
+        sessionIds: string[];
+      };
+      expect(createBody).toMatchObject({ ok: true, count: 3 });
+      expect(fixtureSessions).toHaveLength(3);
+      expect(fixtureSessions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            workspaceId: "workspace-dense",
+            workspaceName: "Dense Workspace",
+            name: "Yesterday 1",
+            status: "stopped",
+            createdAt: lastActivityMs - 1_000,
+            lastActivity: lastActivityMs,
+            messageCount: 1,
+          }),
+        ]),
+      );
+
+      fixtureSessions.push({
+        id: "unowned-stopped-session",
+        workspaceId: "workspace-dense",
+        status: "stopped",
+      });
+      const rejectedCleanupResponse = makeResponse();
+      await dispatch({
+        method: "DELETE",
+        path: "/e2e/ui/fixtures/stopped-sessions",
+        url: new URL("http://localhost/e2e/ui/fixtures/stopped-sessions"),
+        req: makeRequest({
+          workspaceId: "workspace-dense",
+          sessionIds: ["unowned-stopped-session"],
+        }),
+        res: rejectedCleanupResponse as never,
+      });
+      expect(rejectedCleanupResponse.statusCode).toBe(409);
+      expect(fixtureSessions.pop()?.id).toBe("unowned-stopped-session");
+
+      const cleanupResponse = makeResponse();
+      await dispatch({
+        method: "DELETE",
+        path: "/e2e/ui/fixtures/stopped-sessions",
+        url: new URL("http://localhost/e2e/ui/fixtures/stopped-sessions"),
+        req: makeRequest({
+          workspaceId: "workspace-dense",
+          sessionIds: createBody.sessionIds,
+        }),
+        res: cleanupResponse as never,
+      });
+
+      expect(cleanupResponse.statusCode).toBe(200);
+      expect(JSON.parse(cleanupResponse.body)).toEqual({ ok: true, deletedCount: 3 });
+      expect(fixtureSessions).toHaveLength(0);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("materializes tool media before broadcasting synthetic session messages", async () => {
     process.env.OPPI_E2E_UI_HARNESS = "1";
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-e2e-media-route-"));
@@ -199,10 +286,35 @@ function makeContext(
   dataDir: string,
   sessionId = "session-1",
   broadcasted: unknown[] = [],
+  fixtureSessions?: Array<Record<string, unknown>>,
 ): RouteContext {
   return {
     storage: {
       getDataDir: () => dataDir,
+      getWorkspace: (id: string) =>
+        fixtureSessions && id === "workspace-dense"
+          ? { id, name: "Dense Workspace" }
+          : undefined,
+      createSession: (name?: string) => {
+        const session = {
+          id: `fixture-session-${(fixtureSessions?.length ?? 0) + 1}`,
+          name,
+          status: "ready",
+          createdAt: 0,
+          lastActivity: 0,
+          messageCount: 0,
+        };
+        fixtureSessions?.push(session);
+        return session;
+      },
+      saveSession: () => {},
+      getSession: (id: string) => fixtureSessions?.find((session) => session.id === id),
+      deleteSession: (id: string) => {
+        const index = fixtureSessions?.findIndex((session) => session.id === id) ?? -1;
+        if (!fixtureSessions || index < 0) return false;
+        fixtureSessions.splice(index, 1);
+        return true;
+      },
     },
     sessionRuntimes: {
       getSessionSnapshot: (id: string) => (id === sessionId ? { id } : undefined),

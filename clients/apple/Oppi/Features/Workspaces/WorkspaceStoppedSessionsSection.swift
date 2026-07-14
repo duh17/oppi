@@ -1,5 +1,22 @@
 import SwiftUI
 
+enum WorkspaceStoppedSessionExpansionPolicy {
+    static func dayBucket(
+        for date: Date,
+        calendar: Calendar = .current
+    ) -> Date {
+        calendar.startOfDay(for: date)
+    }
+
+    static func isDayExpandedByDefault(
+        _ day: Date,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Bool {
+        calendar.isDate(day, inSameDayAs: now)
+    }
+}
+
 struct WorkspaceStoppedSessionsSection: View {
     let stoppedSessions: [Session]
     let localSessions: [LocalSession]
@@ -72,59 +89,47 @@ struct WorkspaceStoppedSessionsSection: View {
 
         let now = Date()
         let recentCutoffTs = now.timeIntervalSince1970 - 30 * 86400
-        // Fast local-timezone day boundary using fixed UTC offset.
-        // Ignores DST transitions within the 30-day window (±1 hour shift at most)
-        // — acceptable for display-only grouping.
-        let tzOffset = Double(TimeZone.current.secondsFromGMT(for: now))
+        let calendar = Calendar.current
 
-        // Int-keyed grouping: positive = day index, negative = -YYYYMM for month buckets.
-        // Avoids String allocation and hashing per item.
+        // Int-keyed grouping: positive = local day-start timestamp, negative = -YYYYMM.
+        // Calendar-derived day starts remain correct across 23/25-hour DST days.
         var bucketItems: [Int: [StoppedItem]] = [:]
-        var bucketDates: [Int: Date] = [:]  // bucket → Date for Bucket enum reconstruction
+        var bucketDates: [Int: Date] = [:]
         bucketItems.reserveCapacity(40)
         bucketDates.reserveCapacity(40)
 
         for item in allItems {
             let ts = item.sortDate.timeIntervalSince1970
             let key: Int
+            let bucketDate: Date
             if ts >= recentCutoffTs {
-                let localTs = ts + tzOffset
-                key = Int(floor(localTs / 86400))  // day index since epoch
+                bucketDate = WorkspaceStoppedSessionExpansionPolicy.dayBucket(
+                    for: item.sortDate,
+                    calendar: calendar
+                )
+                key = Int(bucketDate.timeIntervalSince1970)
             } else {
-                let cal = Calendar.current
-                let comps = cal.dateComponents([.year, .month], from: item.sortDate)
+                let comps = calendar.dateComponents([.year, .month], from: item.sortDate)
                 let year = comps.year ?? 2000
                 let month = comps.month ?? 1
                 key = -(year * 100 + month)
+                bucketDate = calendar.date(from: DateComponents(year: year, month: month))
+                    ?? item.sortDate
             }
             bucketItems[key, default: []].append(item)
-            if bucketDates[key] == nil {
-                // First item per bucket is the max date (input is pre-sorted descending)
-                bucketDates[key] = item.sortDate
-            }
+            bucketDates[key] = bucketDates[key] ?? bucketDate
         }
 
-        // Sort buckets by max date descending, convert to StoppedSessionGroup
         return bucketItems
             .sorted { lhs, rhs in
                 (bucketDates[lhs.key] ?? .distantPast) > (bucketDates[rhs.key] ?? .distantPast)
             }
             .map { key, items in
-                let bucket: StoppedSessionGroup.Bucket
-                if key >= 0 {
-                    // Day bucket: reconstruct Date from day index
-                    let dayStart = Double(key) * 86400 - tzOffset
-                    bucket = .day(Date(timeIntervalSince1970: dayStart))
-                } else {
-                    // Month bucket: reconstruct Date via Calendar (only a few month groups)
-                    let encoded = -key
-                    let year = encoded / 100
-                    let month = encoded % 100
-                    let cal = Calendar.current
-                    let monthStart = cal.date(from: DateComponents(year: year, month: month)) ?? items[0].sortDate
-                    bucket = .month(monthStart)
-                }
-                // Items are already sorted descending from the pre-sorted input
+                let bucketDate = bucketDates[key] ?? items[0].sortDate
+                let bucket: StoppedSessionGroup.Bucket = key >= 0
+                    ? .day(bucketDate)
+                    : .month(bucketDate)
+                // Items are already sorted descending from the pre-sorted input.
                 return StoppedSessionGroup(bucket: bucket, items: items)
             }
     }
@@ -151,6 +156,8 @@ struct WorkspaceStoppedSessionsSection: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("workspace.stoppedGroup.\(group.id)")
+                .accessibilityValue(isGroupExpanded(group) ? "Expanded" : "Collapsed")
             }
         }
 
@@ -316,15 +323,9 @@ struct WorkspaceStoppedSessionsSection: View {
     private func isGroupExpandedByDefault(_ bucket: StoppedSessionGroup.Bucket) -> Bool {
         switch bucket {
         case .day(let day):
-            // Fast: today - 2 days in seconds
-            let now = Date()
-            let tzOffset = Double(TimeZone.current.secondsFromGMT(for: now))
-            let localNow = now.timeIntervalSince1970 + tzOffset
-            let todayStart = floor(localNow / 86400) * 86400 - tzOffset
-            let expandedCutoff = todayStart - 2 * 86400
-            return day.timeIntervalSince1970 >= expandedCutoff
+            WorkspaceStoppedSessionExpansionPolicy.isDayExpandedByDefault(day)
         case .month:
-            return false
+            false
         }
     }
 }
