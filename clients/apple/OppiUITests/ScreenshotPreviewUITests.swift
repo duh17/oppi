@@ -117,7 +117,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "chat-input-attachment-contained")
     }
 
-    func testAskCardLongComposerStaysInsideKeyboardSafeBar() throws {
+    func testLongAskPillsStayPutAndScroll() throws {
         launchPreview(screen: "ask-card-long-composer")
 
         let keyboardFirstRunContinue = app.buttons["Continue"]
@@ -128,15 +128,65 @@ final class ScreenshotPreviewUITests: XCTestCase {
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "Keyboard did not appear for the long ask response")
 
-        let actionRowLabel = app.staticTexts["gpt-5.5 · max"]
-        XCTAssertTrue(actionRowLabel.waitForExistence(timeout: 5), "Composer action row not visible")
+        let modelPill = app.staticTexts["gpt-5.5"]
+        let thinkingPill = app.staticTexts["max"]
 
-        XCTAssertLessThanOrEqual(
-            actionRowLabel.frame.maxY,
-            keyboard.frame.minY + 2,
-            "Composer controls must remain above the keyboard"
+        XCTAssertTrue(modelPill.waitForExistence(timeout: 5), "Model pill not visible")
+        XCTAssertTrue(thinkingPill.waitForExistence(timeout: 5), "Thinking pill not visible")
+
+        for pill in [modelPill, thinkingPill] {
+            XCTAssertGreaterThan(pill.frame.height, 0, "Composer pill must have a visible frame")
+            XCTAssertLessThanOrEqual(
+                pill.frame.maxY,
+                keyboard.frame.minY - 4,
+                "Composer pill must remain visibly separated from the keyboard"
+            )
+            XCTAssertGreaterThanOrEqual(pill.frame.minX, app.frame.minX, "Composer pill must remain inside the leading screen edge")
+            XCTAssertLessThanOrEqual(pill.frame.maxX, app.frame.maxX, "Composer pill must remain inside the trailing screen edge")
+        }
+        XCTAssertEqual(
+            modelPill.frame.midY,
+            thinkingPill.frame.midY,
+            accuracy: 2,
+            "Composer pills must remain aligned in the same action row"
         )
+        XCTAssertLessThan(
+            modelPill.frame.maxX,
+            thinkingPill.frame.minX,
+            "Composer pills must remain separately visible instead of overlapping"
+        )
+
+        sleep(1)
         saveScreenshot(name: "ask-card-long-composer-contained")
+
+        let visibleOption = app.staticTexts["Keep a launch-only helper"]
+        let hiddenOption = app.staticTexts["Delete CLI and visible runtimes"]
+        XCTAssertTrue(visibleOption.isHittable, "A visible ask option is required to drive the scroll gesture")
+        XCTAssertFalse(hiddenOption.isHittable, "The final option should begin below the capped ask viewport")
+
+        let modelFrameBeforeScroll = modelPill.frame
+        let thinkingFrameBeforeScroll = thinkingPill.frame
+        let question = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "session launcher still supports")).firstMatch
+        XCTAssertTrue(question.isHittable, "The ask question is required to locate the scroll viewport")
+
+        let scrollStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(
+            CGVector(dx: visibleOption.frame.midX, dy: visibleOption.frame.midY)
+        )
+        let scrollEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(
+            CGVector(dx: visibleOption.frame.midX, dy: question.frame.minY + 20)
+        )
+        for _ in 0..<2 where !hiddenOption.isHittable {
+            scrollStart.press(forDuration: 0.05, thenDragTo: scrollEnd)
+        }
+
+        XCTAssertTrue(hiddenOption.waitForExistence(timeout: 3), "The final ask option did not enter the visible viewport")
+        XCTAssertTrue(hiddenOption.isHittable, "The long ask card must scroll to its final option")
+        XCTAssertTrue(keyboard.exists, "Scrolling the ask card must not dismiss the keyboard")
+        XCTAssertEqual(modelPill.frame, modelFrameBeforeScroll, "Scrolling the ask must not move the model pill")
+        XCTAssertEqual(thinkingPill.frame, thinkingFrameBeforeScroll, "Scrolling the ask must not move the thinking pill")
+
+        sleep(1)
+        saveScreenshot(name: "ask-card-long-composer-scrolled")
     }
 
     func testExtensionDockStressPreview() throws {
