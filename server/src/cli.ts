@@ -16,6 +16,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostname as osHostname, networkInterfaces } from "node:os";
 import { Storage } from "./storage.js";
+import { ConfigStore } from "./storage/config-store.js";
 import { Server } from "./server.js";
 import {
   applyHostEnv,
@@ -50,7 +51,12 @@ import { cmdSession } from "./cli/commands/session.js";
 import { cmdWait } from "./cli/commands/wait.js";
 import { cmdWorkspace } from "./cli/commands/workspace.js";
 import { cmdWorktree } from "./cli/commands/worktree.js";
-import { createCliConnectionConfig, type CliConnectionConfig } from "./cli/connection-config.js";
+import {
+  createCliConfigStorage,
+  createCliConnectionConfig,
+  type CliConfigStorage,
+  type CliConnectionConfig,
+} from "./cli/connection-config.js";
 import { helpTopicToJson, renderHelpTopic, resolveHelpTopic } from "./cli/help.js";
 import { isNpmVersionNewer } from "./cli/npm-version.js";
 
@@ -270,7 +276,7 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
  * Returns true if QR was shown, false if host detection failed.
  */
 function showPairingQR(
-  storage: Storage,
+  storage: CliConfigStorage,
   requestedName?: string,
   hostOverride?: string,
   showToken = false,
@@ -330,7 +336,7 @@ function showPairingQR(
 }
 
 async function cmdPair(
-  storage: Storage,
+  storage: CliConfigStorage,
   requestedName: string | undefined,
   hostOverride?: string,
   showToken = false,
@@ -657,7 +663,7 @@ function cmdDoctor(storage: CliConnectionConfig): void {
   console.log("");
 }
 
-function cmdToken(storage: Storage, action: string | undefined): void {
+function cmdToken(storage: CliConfigStorage, action: string | undefined): void {
   const mode = action || "help";
 
   if (mode === "rotate") {
@@ -750,8 +756,8 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
     maxSessionsGlobal = parseInt(maxSessionsStr) || 200;
   }
 
-  // Create storage (auto-creates dirs + default config)
-  const storage = new Storage(dataDir);
+  // Create config storage (auto-creates dirs + default config)
+  const storage = createCliConfigStorage(dataDir);
 
   // Apply user choices + generate owner token so `oppi serve` can bind to 0.0.0.0.
   // Default to self-signed TLS so first `oppi serve` boots HTTPS/WSS out of the box.
@@ -930,7 +936,7 @@ function formatInlineConfigValue(value: unknown): string {
 }
 
 function cmdConfig(
-  storage: Storage,
+  storage: CliConfigStorage,
   action: string | undefined,
   positional: string[],
   flags: Record<string, string>,
@@ -960,7 +966,7 @@ function cmdConfig(
   if (mode === "show") {
     const showDefault = flags.default === "true";
     const config = showDefault
-      ? Storage.getDefaultConfig(storage.getDataDir())
+      ? ConfigStore.getDefaultConfig(storage.getDataDir())
       : storage.getConfig();
 
     console.log(`  ${c.bold(showDefault ? "Default config" : "Current config")}`);
@@ -976,7 +982,7 @@ function cmdConfig(
 
   if (mode === "validate") {
     const target = flags["config-file"] || storage.getConfigPath();
-    const result = Storage.validateConfigFile(target);
+    const result = ConfigStore.validateConfigFile(target);
 
     if (!result.valid) {
       console.log(c.red(`  ✗ Config validation failed: ${target}`));
@@ -1347,7 +1353,7 @@ async function main(): Promise<void> {
 
     case "pair":
       await cmdPair(
-        new Storage(dataDir),
+        createCliConfigStorage(dataDir),
         positional[0],
         flags.host,
         flags["show-token"] === "true",
@@ -1364,11 +1370,11 @@ async function main(): Promise<void> {
       break;
 
     case "token":
-      cmdToken(new Storage(dataDir), positional[0]);
+      cmdToken(createCliConfigStorage(dataDir), positional[0]);
       break;
 
     case "config":
-      cmdConfig(new Storage(dataDir), positional[0], positional.slice(1), flags);
+      cmdConfig(createCliConfigStorage(dataDir), positional[0], positional.slice(1), flags);
       break;
 
     case "agent":
