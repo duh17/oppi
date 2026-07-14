@@ -189,6 +189,73 @@ struct DeltaCoalescerTests {
         #expect(flushed.isEmpty)
     }
 
+    @Test func consecutiveReplaceToolOutputsKeepLatestSnapshotAndStickyMetadata() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+        let firstDetails = JSONValue.object(["phase": .string("first")])
+
+        coalescer.receive(.toolOutput(
+            sessionId: "s1",
+            toolEventId: "t1",
+            output: "first",
+            isError: true,
+            mode: .replace,
+            truncated: true,
+            totalBytes: 100,
+            details: firstDetails
+        ))
+        coalescer.receive(.toolOutput(
+            sessionId: "s1",
+            toolEventId: "t1",
+            output: "latest",
+            isError: false,
+            mode: .replace,
+            truncated: false,
+            totalBytes: 200
+        ))
+        coalescer.flushNow()
+
+        #expect(flushed.count == 1)
+        #expect(flushed[0].count == 1)
+        guard case .toolOutput(let payload) = flushed[0][0] else {
+            Issue.record("Expected toolOutput")
+            return
+        }
+        #expect(payload.output == "latest")
+        #expect(payload.mode == .replace)
+        #expect(payload.isError)
+        #expect(payload.details == firstDetails)
+        #expect(!payload.truncated)
+        #expect(payload.totalBytes == 200)
+    }
+
+    @Test func replaceToolOutputDoesNotCrossOrderingBarriers() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.receive(.toolOutput(
+            sessionId: "s1", toolEventId: "t1", output: "t1-first",
+            isError: false, mode: .replace
+        ))
+        coalescer.receive(.toolOutput(
+            sessionId: "s1", toolEventId: "t2", output: "t2",
+            isError: false, mode: .replace
+        ))
+        coalescer.receive(.toolOutput(
+            sessionId: "s1", toolEventId: "t1", output: "t1-latest",
+            isError: false, mode: .replace
+        ))
+        coalescer.flushNow()
+
+        let outputs = flushed.flatMap { $0 }.compactMap { event -> String? in
+            guard case .toolOutput(let payload) = event else { return nil }
+            return payload.output
+        }
+        #expect(outputs == ["t1-first", "t2", "t1-latest"])
+    }
+
     // MARK: - flushNow
 
     @Test func flushNowDeliversBufferedDeltas() {

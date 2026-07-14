@@ -26,7 +26,6 @@ function makeActiveSession(session: Session): EventProcessorSessionState {
     streamedThinkingContentIndexes: new Set(),
     toolNames: new Map<string, string>(),
     shellPreviewLastSent: new Map<string, number>(),
-    streamingArgPreviews: new Set<string>(),
     streamingToolUpdatesSeen: new Map<string, string>(),
   };
 }
@@ -101,5 +100,52 @@ describe("SessionEventProcessor", () => {
 
     expect(active.session.name).toBeUndefined();
     expect(persistSessionNow).toHaveBeenCalledWith("sess-1", active.session);
+  });
+
+  it("rate-limits estimated context state broadcasts", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const broadcast = vi.fn();
+      const processor = new SessionEventProcessor({
+        storage: {} as never,
+        broadcast,
+        persistSessionNow: vi.fn(),
+        markSessionDirty: vi.fn(),
+      });
+      const active = makeActiveSession({ ...makeSession("sess-1"), contextTokens: 1_000 });
+
+      processor.updateSessionFromEvent("sess-1", active, { type: "agent_start" } as never);
+      for (let index = 0; index < 4; index += 1) {
+        processor.updateSessionFromEvent("sess-1", active, {
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", delta: "x".repeat(512) },
+        } as never);
+      }
+      expect(broadcast).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(500);
+      processor.updateSessionFromEvent("sess-1", active, {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "x".repeat(512) },
+      } as never);
+      expect(broadcast).toHaveBeenCalledTimes(2);
+      expect(broadcast).toHaveBeenLastCalledWith(
+        "sess-1",
+        expect.objectContaining({
+          type: "state",
+          session: expect.objectContaining({ contextTokens: 1_640 }),
+        }),
+      );
+
+      vi.advanceTimersByTime(500);
+      processor.updateSessionFromEvent("sess-1", active, {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "tiny" },
+      } as never);
+      expect(broadcast).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

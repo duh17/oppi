@@ -266,6 +266,8 @@ final class DeltaCoalescer {
             appendChunkedText(delta) { chunk in
                 .thinkingDelta(sessionId: sessionId, delta: chunk, contentIndex: contentIndex)
             }
+        case .toolOutput(let payload) where payload.mode == .replace:
+            appendOrReplaceBufferedToolOutput(payload)
         case .toolOutput(let payload) where payload.mode == .append:
             recordOversizedTimelinePayloadIfNeeded(
                 sessionId: payload.sessionId,
@@ -349,6 +351,39 @@ final class DeltaCoalescer {
         }
 
         appendBuffered(event)
+    }
+
+    /// Replace-mode snapshots are last-write-wins. Collapse consecutive
+    /// snapshots for one tool before they reach the reducer or byte cap.
+    private func appendOrReplaceBufferedToolOutput(_ payload: ToolOutputEventPayload) {
+        if let lastIndex = buffer.indices.last,
+           case .toolOutput(let previous) = buffer[lastIndex],
+           previous.mode == .replace,
+           previous.sessionId == payload.sessionId,
+           previous.toolEventId == payload.toolEventId {
+            let mergedEvent = AgentEvent.toolOutput(.init(
+                sessionId: payload.sessionId,
+                toolEventId: payload.toolEventId,
+                output: payload.output,
+                isError: previous.isError || payload.isError,
+                mode: payload.mode,
+                truncated: payload.truncated,
+                totalBytes: payload.totalBytes,
+                details: payload.details ?? previous.details
+            ))
+            bufferedBytes -= estimatedPayloadBytes(buffer[lastIndex])
+            buffer[lastIndex] = mergedEvent
+            bufferedBytes += estimatedPayloadBytes(mergedEvent)
+
+            if bufferedBytes >= Self.maxBufferedBytes {
+                flushNow()
+            } else {
+                scheduleFlushIfNeeded()
+            }
+            return
+        }
+
+        appendBuffered(.toolOutput(payload))
     }
 
     private func matchesBufferedToolEvent(_ event: AgentEvent, key: ToolStartKey) -> Bool {
