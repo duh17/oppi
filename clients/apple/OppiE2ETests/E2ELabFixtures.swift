@@ -185,6 +185,55 @@ extension E2ETestCase {
         return sessionIds
     }
 
+    /// Creates stopped session metadata without starting agent runtimes.
+    ///
+    /// Dense list/navigation tests use this E2E-only route to reproduce high-volume
+    /// history with deterministic calendar-day placement.
+    @discardableResult
+    func createStoppedSessionFixtures(
+        count: Int,
+        workspaceId: String,
+        lastActivity: Date,
+        namePrefix: String
+    ) throws -> [String] {
+        let response = try e2eLabAPIJSON(
+            method: "POST",
+            path: "/e2e/ui/fixtures/stopped-sessions",
+            body: [
+                "workspaceId": workspaceId,
+                "count": count,
+                "lastActivityMs": Int(lastActivity.timeIntervalSince1970 * 1_000),
+                "namePrefix": namePrefix,
+            ]
+        )
+        return try XCTUnwrap(
+            response["sessionIds"] as? [String],
+            "Stopped-session fixture response missing sessionIds"
+        )
+    }
+
+    func deleteStoppedSessionFixtures(sessionIds: [String], workspaceId: String) throws {
+        guard !sessionIds.isEmpty else { return }
+        let response = try e2eLabAPIJSON(
+            method: "DELETE",
+            path: "/e2e/ui/fixtures/stopped-sessions",
+            body: [
+                "workspaceId": workspaceId,
+                "sessionIds": sessionIds,
+            ]
+        )
+        let deletedCount = try XCTUnwrap(
+            response["deletedCount"] as? Int,
+            "Stopped-session cleanup response missing deletedCount"
+        )
+        guard deletedCount == sessionIds.count else {
+            throw E2ELabAPIError.fixtureCleanupMismatch(
+                expected: sessionIds.count,
+                actual: deletedCount
+            )
+        }
+    }
+
     /// Sends a synthetic session message through the paired E2E UI harness.
     @discardableResult
     func sendE2EHarnessMessage(sessionId: String, _ message: [String: Any]) throws -> [String: Any] {
@@ -516,6 +565,7 @@ private enum E2ELabAPIError: Error, CustomStringConvertible {
     case missingHTTPResponse
     case httpStatus(Int, String)
     case timeout(String)
+    case fixtureCleanupMismatch(expected: Int, actual: Int)
 
     var description: String {
         switch self {
@@ -527,6 +577,8 @@ private enum E2ELabAPIError: Error, CustomStringConvertible {
             return "HTTP \(status): \(body)"
         case .timeout(let path):
             return "Timed out waiting for \(path)"
+        case .fixtureCleanupMismatch(let expected, let actual):
+            return "Fixture cleanup deleted \(actual) of \(expected) stopped sessions"
         }
     }
 }

@@ -805,9 +805,11 @@ struct ChatView: View {
 
     private func navigateBackFromChat() {
         if ownsWorkspacePathBackNavigation,
-           appNavigation.workspaceNavigationPresentation == .stack,
-           appNavigation.workspacePath.count > 0 {
-            appNavigation.workspacePath.removeLast()
+           appNavigation.workspaceNavigationPresentation == .stack {
+            // Let SwiftUI coordinate the pop with its hosting-controller cache.
+            // Mutating NavigationPath directly during toolbar layout can force a
+            // synchronous NavigationStack reconciliation on the main thread.
+            dismiss()
             return
         }
         if appNavigation.workspaceNavigationPresentation == .split {

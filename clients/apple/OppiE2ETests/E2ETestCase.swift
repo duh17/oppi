@@ -18,6 +18,13 @@ class E2ETestCase: XCTestCase {
         Self._app!
     }
 
+    /// Terminates the shared app and invalidates the process-wide handle.
+    /// The next E2E setup relaunches with the same paired device token.
+    func terminateSharedApp() {
+        Self._app?.terminate()
+        Self._app = nil
+    }
+
     /// Override in focused labs that need the paired workspace list itself,
     /// not the default workspace-detail starting point used by interaction E2Es.
     var e2eLaunchesWorkspaceHomeOnly: Bool {
