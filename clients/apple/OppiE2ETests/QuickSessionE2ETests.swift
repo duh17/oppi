@@ -2,11 +2,14 @@ import XCTest
 
 /// Focused Quick Session coverage kept outside the release gate.
 final class QuickSessionE2ETests: E2ETestCase {
-    override var e2eLaunchesWorkspaceHomeOnly: Bool { true }
+    override var e2eLaunchesSessionsInboxOnly: Bool { true }
 
     @MainActor
     func testQuickSessionChoosesWorkspaceModelThinkingAndSendsToChat() throws {
-        XCTAssertTrue(waitForElementToExist(app.collectionViews["workspace.list"], timeout: 20), "Workspace home did not appear")
+        XCTAssertTrue(
+            waitForElementToExist(app.collectionViews["workspace.sessionList"], timeout: 20),
+            "Sessions inbox did not appear"
+        )
 
         tap(app.buttons["workspace.quickSession.start"], named: "quick session button")
         let input = app.textViews["chat.input"]
@@ -26,6 +29,7 @@ final class QuickSessionE2ETests: E2ETestCase {
         XCTAssertTrue(waitForElementToExist(input, timeout: 10), "Quick Session input did not return after model selection")
 
         tap(app.buttons["session.toolbar.thinking"], named: "quick session thinking menu", timeout: 5)
+        assertThinkingMenuRunsFromMaxToOff()
         tap(app.buttons["High"], named: "High thinking option", timeout: 5)
 
         let marker = "E2E_QUICK_SESSION_SEND_OK"
@@ -44,6 +48,26 @@ final class QuickSessionE2ETests: E2ETestCase {
             "Quick Session model mismatch. selected=\(selectedModel), actual=\(actualModel)"
         )
         XCTAssertEqual(session["thinkingLevel"] as? String, "high")
+    }
+
+    @MainActor
+    private func assertThinkingMenuRunsFromMaxToOff() {
+        let options = ["Max", "High", "Medium", "Low", "Minimal", "Off"].map {
+            app.buttons[$0]
+        }
+        for option in options {
+            XCTAssertTrue(
+                option.waitForExistence(timeout: 5),
+                "Thinking option \(option.label) did not appear"
+            )
+        }
+        for (upper, lower) in zip(options, options.dropFirst()) {
+            XCTAssertLessThan(
+                upper.frame.midY,
+                lower.frame.midY,
+                "Thinking menu must run from Max at the top to Off at the bottom"
+            )
+        }
     }
 
     @MainActor
