@@ -162,6 +162,7 @@ struct OppiApp: App {
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
 
     @State private var inviteBootstrapInFlight = false
+    @State private var pendingSessionDeepLinkId: String?
     @State private var foregroundReconnectGate = ForegroundReconnectGate()
     @State private var backgroundKeepAlive = BackgroundKeepAlive()
     @Environment(\.scenePhase) private var scenePhase
@@ -288,6 +289,7 @@ struct OppiApp: App {
             .onOpenURL { url in Task { @MainActor in await handleIncomingURL(url) } }
             .task {
                 await startApp()
+                consumePendingSessionDeepLinkIfNeeded()
             }
     }
 
@@ -443,17 +445,44 @@ struct OppiApp: App {
         }
         let sessionId = rawId.removingPercentEncoding ?? rawId
 
-        // Find which server owns this session and open it directly from the workspace stack.
+        if openSessionDeepLinkIfAvailable(sessionId) {
+            return true
+        }
+
+        // A cold-launch URL can arrive before credentials and cached sessions
+        // finish loading. Keep the route until startup has populated the stores.
+        if navigation.launchPhase == .resolving || inviteBootstrapInFlight {
+            pendingSessionDeepLinkId = sessionId
+            return true
+        }
+
+        showWorkspaceRootForMissingSessionDeepLink()
+        return true
+    }
+
+    @MainActor
+    private func consumePendingSessionDeepLinkIfNeeded() {
+        guard let sessionId = pendingSessionDeepLinkId else { return }
+        pendingSessionDeepLinkId = nil
+        if !openSessionDeepLinkIfAvailable(sessionId) {
+            showWorkspaceRootForMissingSessionDeepLink()
+        }
+    }
+
+    @MainActor
+    private func openSessionDeepLinkIfAvailable(_ sessionId: String) -> Bool {
         for (serverId, conn) in coordinator.connections
             where conn.sessionStore.sessions.contains(where: { $0.id == sessionId }) {
             openWorkspaceSession(serverId: serverId, sessionId: sessionId, connection: conn)
             return true
         }
+        return false
+    }
 
-        // Session not found locally — just open the app to workspaces tab.
+    @MainActor
+    private func showWorkspaceRootForMissingSessionDeepLink() {
         navigation.selectedTab = .workspaces
         navigation.workspacePath = NavigationPath()
-        return true
     }
 
     /// Handle `oppi://workspace?path=<path>&name=<name>[&server=<fingerprint>]` deep links.
