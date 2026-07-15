@@ -12,6 +12,7 @@ struct SessionToolbar: View {
     let onThinkingSelect: (ThinkingLevel) -> Void
 
     @Environment(\.theme) private var theme
+    @State private var isThinkingPickerPresented = false
 
     private var effectiveModel: String? {
         modelOverride ?? session?.model
@@ -31,6 +32,8 @@ struct SessionToolbar: View {
         theme.thinking.color(for: thinkingLevel)
     }
 
+    // A system Menu can reverse its visual order when it expands upward from a
+    // keyboard-adjacent composer. The fixed popover stack keeps this order stable.
     private static let thinkingOptions: [ThinkingLevel] = [.xhigh, .high, .medium, .low, .minimal, .off]
 
     private var thinkingLabel: String {
@@ -76,19 +79,8 @@ struct SessionToolbar: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("session.toolbar.model")
 
-        Menu {
-            ForEach(Self.thinkingOptions, id: \.rawValue) { level in
-                Button {
-                    guard level != thinkingLevel else { return }
-                    onThinkingSelect(level)
-                } label: {
-                    if level == thinkingLevel {
-                        Label(Self.thinkingMenuTitle(for: level), systemImage: "checkmark")
-                    } else {
-                        Text(Self.thinkingMenuTitle(for: level))
-                    }
-                }
-            }
+        Button {
+            isThinkingPickerPresented = true
         } label: {
             PillLabel(text: thinkingLabel, tint: thinkingTint, showChevron: true) {
                 Image(systemName: "sparkle")
@@ -96,6 +88,42 @@ struct SessionToolbar: View {
                     .symbolRenderingMode(.hierarchical)
             }
         }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isThinkingPickerPresented, arrowEdge: .bottom) {
+            VStack(spacing: 0) {
+                ForEach(Self.thinkingOptions, id: \.rawValue) { level in
+                    Button {
+                        isThinkingPickerPresented = false
+                        guard level != thinkingLevel else { return }
+                        onThinkingSelect(level)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Text(Self.thinkingMenuTitle(for: level))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Image(systemName: "checkmark")
+                                .opacity(level == thinkingLevel ? 1 : 0)
+                                .accessibilityHidden(true)
+                        }
+                        .font(.body)
+                        .foregroundStyle(.themeFg)
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Self.thinkingMenuTitle(for: level))
+                    .accessibilityValue(level == thinkingLevel ? "Selected" : "")
+                    .accessibilityIdentifier("session.toolbar.thinking.option.\(level.rawValue)")
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(width: 190)
+            .presentationCompactAdaptation(.popover)
+            .presentationBackground(Color.themeSurfaceFill(.popover))
+        }
+        .accessibilityLabel("Thinking level")
+        .accessibilityValue(Self.thinkingMenuTitle(for: thinkingLevel))
         .accessibilityIdentifier("session.toolbar.thinking")
     }
 }

@@ -30,15 +30,25 @@ final class QuickSessionE2ETests: E2ETestCase {
 
         tap(app.buttons["session.toolbar.thinking"], named: "quick session thinking menu", timeout: 5)
         assertThinkingMenuRunsFromMaxToOff()
-        tap(app.buttons["High"], named: "High thinking option", timeout: 5)
+        tap(thinkingOption("high"), named: "High thinking option", timeout: 5)
 
         let marker = "E2E_QUICK_SESSION_SEND_OK"
         typeIntoTextView(input, text: marker)
         tap(app.buttons["chat.send"], named: "quick session send button", timeout: 5)
 
-        XCTAssertTrue(waitForElementToExist(app.textViews["chat.input"], timeout: 30), "Created chat did not open")
+        let chatInput = app.textViews["chat.input"]
+        XCTAssertTrue(waitForElementToExist(chatInput, timeout: 30), "Created chat did not open")
         let sessionId = waitForFocusedSessionId(timeout: 30)
         XCTAssertTrue(waitForTimelineTextContaining(marker, timeout: 30), "Quick Session prompt did not appear in the created chat")
+
+        focusTextView(chatInput)
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForExistence(timeout: 5),
+            "Normal chat keyboard did not appear before opening the thinking picker"
+        )
+        tap(app.buttons["session.toolbar.thinking"], named: "normal chat thinking menu", timeout: 5)
+        assertThinkingMenuRunsFromMaxToOff()
+        tap(thinkingOption("high"), named: "current High thinking option", timeout: 5)
 
         let session = try e2eSession(sessionId: sessionId)
         XCTAssertEqual(session["workspaceId"] as? String, expectedWorkspaceId)
@@ -52,14 +62,21 @@ final class QuickSessionE2ETests: E2ETestCase {
 
     @MainActor
     private func assertThinkingMenuRunsFromMaxToOff() {
-        let options = ["Max", "High", "Medium", "Low", "Minimal", "Off"].map {
-            app.buttons[$0]
-        }
-        for option in options {
+        let expectedOptions = [
+            (id: "xhigh", label: "Max"),
+            (id: "high", label: "High"),
+            (id: "medium", label: "Medium"),
+            (id: "low", label: "Low"),
+            (id: "minimal", label: "Minimal"),
+            (id: "off", label: "Off"),
+        ]
+        let options = expectedOptions.map { thinkingOption($0.id) }
+        for (option, expected) in zip(options, expectedOptions) {
             XCTAssertTrue(
                 option.waitForExistence(timeout: 5),
-                "Thinking option \(option.label) did not appear"
+                "Thinking option \(expected.label) did not appear"
             )
+            XCTAssertEqual(option.label, expected.label)
         }
         for (upper, lower) in zip(options, options.dropFirst()) {
             XCTAssertLessThan(
@@ -70,8 +87,18 @@ final class QuickSessionE2ETests: E2ETestCase {
         }
     }
 
+    private func thinkingOption(_ level: String) -> XCUIElement {
+        app.buttons["session.toolbar.thinking.option.\(level)"]
+    }
+
     @MainActor
     private func typeIntoTextView(_ element: XCUIElement, text: String) {
+        focusTextView(element)
+        element.typeText(text)
+    }
+
+    @MainActor
+    private func focusTextView(_ element: XCUIElement) {
         tap(element, named: "text input", timeout: 5)
         let focusPredicate = NSPredicate(format: "hasKeyboardFocus == true")
         if !focusPredicate.evaluate(with: element) {
@@ -82,7 +109,6 @@ final class QuickSessionE2ETests: E2ETestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         XCTAssertTrue(focusPredicate.evaluate(with: element), "Text input did not gain keyboard focus")
-        element.typeText(text)
     }
 
     @MainActor
