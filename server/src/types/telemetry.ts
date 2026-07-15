@@ -111,9 +111,10 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "count",
     description: "Payload byte count flushed per coalescer batch.",
   },
-  "chat.full_reload_ms": {
+  "chat.trace_fetch_ms": {
     unit: "ms",
-    description: "Latency for full timeline reload fallback path.",
+    description:
+      "HTTP trace-page fetch and response decode latency. Tags: status, trace_events, error_kind.",
   },
   "chat.fresh_content_lag_ms": {
     unit: "ms",

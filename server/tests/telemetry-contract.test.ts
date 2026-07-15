@@ -18,6 +18,23 @@ describe("shared telemetry constants", () => {
     expect(Object.keys(CHAT_METRIC_REGISTRY).sort()).toEqual([...CHAT_METRIC_NAME_VALUES].sort());
   });
 
+  it("tracks trace transport separately from reducer application", () => {
+    expect(CHAT_METRIC_REGISTRY).toHaveProperty("chat.trace_fetch_ms");
+    expect(CHAT_METRIC_REGISTRY).toHaveProperty("chat.reducer_load_ms");
+    expect(CHAT_METRIC_REGISTRY).not.toHaveProperty("chat.full_reload_ms");
+
+    const dashboardPath = join(
+      process.cwd(),
+      "docker",
+      "grafana",
+      "dashboards",
+      "oppi-release-preflight.json",
+    );
+    const dashboard = readFileSync(dashboardPath, "utf8");
+    expect(dashboard).toContain("chat.trace_fetch_ms");
+    expect(dashboard).not.toContain("chat.full_reload_ms");
+  });
+
   it("keeps iOS metric enum in parity with server metric names", () => {
     const metricModelsPath = join(
       process.cwd(),

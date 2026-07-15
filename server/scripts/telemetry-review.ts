@@ -128,7 +128,11 @@ interface ReviewOutput {
   fetchedAt: string;
 }
 
-export const STATUS_FILTERED_METRICS = new Set(["chat.queue_sync_ms", "chat.message_queue_ack_ms"]);
+export const STATUS_FILTERED_METRICS = new Set([
+  "chat.trace_fetch_ms",
+  "chat.queue_sync_ms",
+  "chat.message_queue_ack_ms",
+]);
 
 // Release SLOs gate on TM99, not raw p95. Values are intentionally tighter
 // than historical p95-era thresholds while keeping headroom over recent
@@ -152,11 +156,11 @@ export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
     group: "UX Responsiveness",
     short: "catchup",
   },
-  "chat.full_reload_ms": {
+  "chat.trace_fetch_ms": {
     p95: 1_500,
-    label: "Full reload",
+    label: "Trace fetch",
     group: "UX Responsiveness",
-    short: "full_reload",
+    short: "trace_fetch",
   },
   "chat.cache_load_ms": {
     p95: 200,

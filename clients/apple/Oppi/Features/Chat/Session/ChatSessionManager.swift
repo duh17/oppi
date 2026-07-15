@@ -1161,7 +1161,7 @@ final class ChatSessionManager {
             return nil
         }
 
-        let loadStartedMs = ChatSessionTelemetry.nowMs()
+        let traceFetchStartedMs = ChatSessionTelemetry.nowMs()
 
         do {
             let session: Session
@@ -1179,6 +1179,14 @@ final class ChatSessionManager {
                 trace = snapshot.trace
                 page = snapshot.page
             }
+
+            ChatSessionTelemetry.recordTraceFetch(
+                durationMs: max(0, ChatSessionTelemetry.nowMs() - traceFetchStartedMs),
+                sessionId: sessionId,
+                workspaceId: workspaceId,
+                status: "ok",
+                traceEventCount: trace.count
+            )
 
             guard !Task.isCancelled else { return nil }
             sessionStore.upsert(session)
@@ -1279,16 +1287,15 @@ final class ChatSessionManager {
                 }
             }
 
-            let durationMs = max(0, ChatSessionTelemetry.nowMs() - loadStartedMs)
-            ChatSessionTelemetry.recordFullReload(
-                durationMs: durationMs,
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                traceEventCount: trace.count
-            )
-
             return freshSignature
         } catch {
+            ChatSessionTelemetry.recordTraceFetch(
+                durationMs: max(0, ChatSessionTelemetry.nowMs() - traceFetchStartedMs),
+                sessionId: sessionId,
+                workspaceId: workspaceId,
+                status: "error",
+                errorKind: ChatSessionTelemetry.metricErrorKind(for: error)
+            )
             guard !Task.isCancelled else { return nil }
             if let replayID {
                 reducer.discardHistoryReplayBuffer(id: replayID)
