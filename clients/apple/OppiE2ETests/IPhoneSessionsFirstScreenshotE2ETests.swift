@@ -280,6 +280,43 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertTrue(app.staticTexts["All Sessions"].waitForExistence(timeout: 5), "Edge swipe did not return to All Sessions")
     }
 
+    func testSavingWorkspaceSettingsReturnsToScopedSessions() throws {
+        XCUIDevice.shared.orientation = .portrait
+        openAnchorWorkspace()
+        XCTAssertTrue(
+            app.buttons["workspace.newSession"].waitForExistence(timeout: 10),
+            "Workspace-scoped session list did not appear before editing"
+        )
+
+        tap(app.buttons["workspace.edit.open"], named: "workspace edit button")
+        let saveButton = app.buttons["workspace.edit.save"]
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 10), "Workspace save button did not appear")
+        XCTAssertTrue(
+            XCTWaiter.wait(
+                for: [XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "isEnabled == true"),
+                    object: saveButton
+                )],
+                timeout: 10
+            ) == .completed,
+            "Workspace save button did not become enabled"
+        )
+        tap(saveButton, named: "workspace save button")
+
+        XCTAssertTrue(
+            app.buttons["workspace.newSession"].waitForExistence(timeout: 15),
+            "Save did not return to the workspace-scoped session list"
+        )
+        XCTAssertFalse(
+            app.buttons["workspace.quickSession.start"].exists,
+            "Save returned to All Sessions instead of the workspace-scoped session list"
+        )
+        XCTAssertTrue(
+            app.buttons["All Sessions"].waitForExistence(timeout: 5),
+            "Workspace-scoped session list lost its All Sessions back destination"
+        )
+    }
+
     func testIPhoneHierarchicalBackSwipeNavigation() throws {
         XCUIDevice.shared.orientation = .portrait
         openAnchorWorkspace()

@@ -15,6 +15,16 @@ enum WorkspacePiResourceErrorPolicy {
     }
 }
 
+enum WorkspaceEditSaveCompletionPolicy {
+    static func complete(onSaved: (() -> Void)?, dismiss: () -> Void) {
+        if let onSaved {
+            onSaved()
+        } else {
+            dismiss()
+        }
+    }
+}
+
 /// Edit an existing workspace's configuration.
 struct WorkspaceEditView: View {
     let workspace: Workspace
@@ -756,8 +766,10 @@ struct WorkspaceEditView: View {
             if let activeServerId {
                 workspaceStore.upsert(updated, serverId: activeServerId)
             }
-            onSaved?()
-            dismiss()
+            WorkspaceEditSaveCompletionPolicy.complete(
+                onSaved: onSaved,
+                dismiss: { dismiss() }
+            )
         } catch {
             self.error = error.localizedDescription
             isSaving = false

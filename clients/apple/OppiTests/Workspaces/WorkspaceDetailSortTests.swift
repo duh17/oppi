@@ -140,6 +140,33 @@ struct WorkspaceDetailSortTests {
     }
 }
 
+@Suite("Workspace Edit Save Completion")
+struct WorkspaceEditSaveCompletionTests {
+    @Test func callbackOwnsCompletionWhenProvided() {
+        var callbackCount = 0
+        var dismissCount = 0
+
+        WorkspaceEditSaveCompletionPolicy.complete(
+            onSaved: { callbackCount += 1 },
+            dismiss: { dismissCount += 1 }
+        )
+
+        #expect(callbackCount == 1)
+        #expect(dismissCount == 0)
+    }
+
+    @Test func environmentDismissesWhenNoCallbackIsProvided() {
+        var dismissCount = 0
+
+        WorkspaceEditSaveCompletionPolicy.complete(
+            onSaved: nil,
+            dismiss: { dismissCount += 1 }
+        )
+
+        #expect(dismissCount == 1)
+    }
+}
+
 @Suite("Workspace Pi Resource Error Policy")
 struct WorkspacePiResourceErrorPolicyTests {
     @Test func cancellationDoesNotPresentAsSettingsError() {
