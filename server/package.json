@@ -1,6 +1,6 @@
 {
   "name": "oppi-server",
-  "version": "0.44.0",
+  "version": "0.44.1",
   "description": "Self-hosted server for the Oppi mobile coding agent",
   "type": "module",
   "main": "dist/src/cli.js",
