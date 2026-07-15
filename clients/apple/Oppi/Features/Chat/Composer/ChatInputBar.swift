@@ -58,6 +58,7 @@ struct ChatInputBar<ActionRow: View>: View {
     let externalFocusRequestID: Int
     let appliesOuterPadding: Bool
     var alwaysShowActionRow: Bool = false
+    var allowsExpansion: Bool = true
     @ViewBuilder let actionRow: () -> ActionRow
 
     @State private var photoSelection: [PhotosPickerItem] = []
@@ -214,7 +215,12 @@ struct ChatInputBar<ActionRow: View>: View {
 
     /// Show manual expand when the input reaches its current inline budget.
     private var showsExpandButton: Bool {
-        inlineVisualLineCount >= min(expandVisibilityLineThreshold, effectiveMaxLines)
+        Self.shouldShowExpandButton(
+            allowsExpansion: allowsExpansion,
+            visualLineCount: inlineVisualLineCount,
+            threshold: expandVisibilityLineThreshold,
+            maxLines: effectiveMaxLines
+        )
     }
 
     /// Slack-style inline controls row: hidden until composer is active.
@@ -282,6 +288,7 @@ struct ChatInputBar<ActionRow: View>: View {
                     }
                     Text(sendProgressText)
                         .font(.caption.monospaced())
+                        .accessibilityIdentifier("chat.sendProgress")
                 }
                 .foregroundStyle(.themeComment)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -845,6 +852,15 @@ struct ChatInputBar<ActionRow: View>: View {
 
     static func composerTextTrailingPadding(showsExpandButton: Bool) -> CGFloat {
         showsExpandButton ? 10 : 0
+    }
+
+    static func shouldShowExpandButton(
+        allowsExpansion: Bool,
+        visualLineCount: Int,
+        threshold: Int,
+        maxLines: Int
+    ) -> Bool {
+        allowsExpansion && visualLineCount >= min(threshold, maxLines)
     }
 
     static func inlineTextMaxLines(

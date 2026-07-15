@@ -13,6 +13,7 @@ struct RestorationState: Codable {
     /// Server fingerprint of the active server when backgrounded.
     let activeServerId: String?
     let selectedTab: String  // "workspaces", "server", "settings"
+    /// Read-only migration field. New snapshots write this as nil.
     let composerDraft: String?
     /// ID of the topmost visible chat item when the app was backgrounded.
     let scrollAnchorItemId: String?
@@ -30,7 +31,7 @@ struct RestorationState: Codable {
             activeSessionId: connection.sessionStore.activeSessionId,
             activeServerId: coordinator.activeServerId,
             selectedTab: navigation.selectedTab.rawString,
-            composerDraft: connection.chatState.composerDraft,
+            composerDraft: nil,
             scrollAnchorItemId: connection.chatState.scrollAnchorItemId,
             wasNearBottom: connection.chatState.scrollWasNearBottom,
             timestamp: Date()

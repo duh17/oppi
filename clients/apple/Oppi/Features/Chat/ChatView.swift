@@ -65,6 +65,7 @@ struct ChatView: View {
     @Environment(MessageQueueStore.self) private var messageQueueStore
     @Environment(AppNavigation.self) private var appNavigation
     @Environment(QuickCommentTemplateStore.self) private var quickCommentTemplateStore
+    @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -76,11 +77,10 @@ struct ChatView: View {
     @State private var actionHandler = ChatActionHandler()
     @State private var voiceInputManager = VoiceInputManager()
     @State private var audioLifecycleCoordinator = AudioLifecycleCoordinator()
+    @State private var composerDraftController: ChatComposerDraftController
 
-    @State private var inputText = ""
     @State private var composerTextBeforeRecording: String?
     @State private var pendingAttachments: [PendingAttachment] = []
-    @State private var pendingRepoPointers: [PendingFileReference] = []
 #if DEBUG
     @State private var hasSeededE2EChatImageAttachment = false
 #endif
@@ -130,8 +130,10 @@ struct ChatView: View {
         self.workspaceIdHint = workspaceIdHint
         self.ownsWorkspacePathBackNavigation = ownsWorkspacePathBackNavigation
         _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId, workspaceIdHint: workspaceIdHint))
-        _inputText = State(initialValue: initialInputText)
-        _pendingRepoPointers = State(initialValue: initialPendingFiles)
+        _composerDraftController = State(initialValue: ChatComposerDraftController(
+            initialText: initialInputText,
+            initialRepoPointers: initialPendingFiles
+        ))
         _selectedFilePanelTab = State(initialValue: ChatFileBrowserPanelTabStore.shared.tab(for: sessionId))
     }
 
@@ -143,6 +145,11 @@ struct ChatView: View {
     private struct SessionRoute: Identifiable, Hashable {
         let id: String
         let workspaceId: String?
+    }
+
+    private struct ComposerDraftAttachmentKey: Equatable {
+        let key: ComposerDraftKey?
+        let isEphemeral: Bool
     }
 
     private enum TreeNavigationError: LocalizedError {
@@ -197,6 +204,71 @@ struct ChatView: View {
         }
         let fallback = workspaceIdHint?.trimmingCharacters(in: .whitespacesAndNewlines)
         return fallback?.isEmpty == false ? fallback : nil
+    }
+
+    private var composerDraftKey: ComposerDraftKey? {
+        guard let serverID = connection.currentServerId ?? sessionStore.activeServerId,
+              let workspaceID = timelineWorkspaceId else {
+            return nil
+        }
+        return ComposerDraftKey(
+            serverID: serverID,
+            workspaceID: workspaceID,
+            sessionID: sessionId
+        )
+    }
+
+    private var composerDraftAttachmentKey: ComposerDraftAttachmentKey {
+        ComposerDraftAttachmentKey(
+            key: composerDraftKey,
+            isEphemeral: composerDraftIsMemoryOnly
+        )
+    }
+
+    /// Unknown session metadata stays memory-only until the session record confirms
+    /// that local persistence is allowed. This avoids briefly writing incognito text.
+    private var composerDraftIsMemoryOnly: Bool {
+        Self.composerDraftIsMemoryOnly(
+            hasSessionMetadata: session != nil,
+            isEphemeral: session?.ephemeral
+        )
+    }
+
+    static func composerDraftIsMemoryOnly(
+        hasSessionMetadata: Bool,
+        isEphemeral: Bool?
+    ) -> Bool {
+        !hasSessionMetadata || isEphemeral == true
+    }
+
+    static func resolvedComposerMode(
+        hasReviewComment: Bool,
+        hasAskRequest: Bool
+    ) -> ChatComposerDraftController.Mode {
+        if hasReviewComment { return .reviewComment }
+        if hasAskRequest { return .ask }
+        return .message
+    }
+
+    static func resolvedComposerAskRequest(
+        _ askRequest: AskRequest?,
+        hasReviewComment: Bool
+    ) -> AskRequest? {
+        hasReviewComment ? nil : askRequest
+    }
+
+    private var composerTextBinding: Binding<String> {
+        Binding(
+            get: { composerDraftController.text },
+            set: { composerDraftController.text = $0 }
+        )
+    }
+
+    private var composerRepoPointersBinding: Binding<[PendingFileReference]> {
+        Binding(
+            get: { composerDraftController.repoPointers },
+            set: { composerDraftController.repoPointers = $0 }
+        )
     }
 
     private var hasShareSlashCommand: Bool {
@@ -258,6 +330,13 @@ struct ChatView: View {
 
     private var activeComposerAskRequest: AskRequest? {
         askRequestStore.pending(for: sessionId)
+    }
+
+    private var composerAskRequest: AskRequest? {
+        Self.resolvedComposerAskRequest(
+            activeComposerAskRequest,
+            hasReviewComment: activeReviewCommentRequest != nil
+        )
     }
 
     private var hasBlockingExtensionInput: Bool {
@@ -394,6 +473,9 @@ struct ChatView: View {
             } message: {
                 Text("This will summarize the conversation to free up context window space. The summary replaces earlier messages.")
             }
+            .task(id: composerDraftAttachmentKey) {
+                attachComposerDraftIfPossible()
+            }
             .task(id: connectionTaskKey) {
                 audioPlayer.setSessionContext(session)
                 voiceInputManager.activeSessionId = sessionId
@@ -434,8 +516,8 @@ struct ChatView: View {
                 appNavigation.pendingQuickSessionMessage = nil
                 appNavigation.pendingQuickSessionAttachments = nil
 
-                // Pre-fill the composer so the user sees their message while connecting
-                inputText = message
+                // Pre-fill the composer so the user sees their message while connecting.
+                composerDraftController.replaceMessage(text: message)
                 pendingAttachments = attachments
 
                 // Wait for the session stream to be established AND the WebSocket
@@ -465,6 +547,9 @@ struct ChatView: View {
             }
             .onChange(of: chatState.extensionEditorTextUpdate?.revision) { _, _ in
                 handleExtensionEditorTextUpdate()
+            }
+            .onChange(of: activeComposerAskRequest?.id) { _, _ in
+                synchronizeComposerMode()
             }
             .onChange(of: extensionSurfaceState?.toolsExpanded) { _, _ in
                 applyExtensionToolsExpandedState()
@@ -504,22 +589,23 @@ struct ChatView: View {
                     connection.disconnectSession()
                 }
 
-                // Stand up new session
+                // Stand up new session. Detach the draft key before any new
+                // workspace metadata resolves so edits cannot hit the old session.
+                composerDraftController.detachForSessionChange()
                 sessionManager = ChatSessionManager(sessionId: newId, workspaceIdHint: workspaceIdHint)
                 scrollController = ChatScrollController()
                 reviewComments = ChatReviewCommentsController()
                 activeReviewCommentRequest = nil
                 showReviewCommentStash = false
                 focusedReviewCommentId = nil
-                inputText = ""
                 pendingAttachments = []
-                pendingRepoPointers = []
                 contextBarExpanded = false
                 showOutline = false
                 isFilePanelVisible = false
                 selectedFilePanelTab = ChatFileBrowserPanelTabStore.shared.tab(for: newId)
                 messageQueueEditorState = MessageQueueEditorState(queue: .empty)
                 showContextInspector = false
+                attachComposerDraftIfPossible()
             }
             .onChange(of: selectedFilePanelTab) { _, newTab in
                 ChatFileBrowserPanelTabStore.shared.setTab(newTab, for: sessionId)
@@ -528,9 +614,10 @@ struct ChatView: View {
                 actionHandler.cleanup()
                 sessionManager.cleanup()
                 scrollController.cancel()
-                let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-                chatState.composerDraft = draft.isEmpty ? nil : draft
                 Task {
+                    if let composerDraftStore {
+                        await composerDraftStore.flush()
+                    }
                     await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
                 }
                 disconnectIfCurrentSession()
@@ -646,10 +733,10 @@ struct ChatView: View {
                 }
 
                 ChatInputBar(
-                    text: $inputText,
+                    text: composerTextBinding,
                     textBeforeRecording: $composerTextBeforeRecording,
                     pendingAttachments: $pendingAttachments,
-                    pendingRepoPointers: $pendingRepoPointers,
+                    pendingRepoPointers: composerRepoPointersBinding,
 
                     isBusy: isBusy,
                     busyStreamingBehavior: $busyStreamingBehavior,
@@ -662,7 +749,7 @@ struct ChatView: View {
                     voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
-                    askRequest: activeComposerAskRequest,
+                    askRequest: composerAskRequest,
                     onAskSubmit: handleComposerAskSubmit,
                     onAskIgnoreAll: handleComposerAskIgnoreAll,
 
@@ -683,6 +770,7 @@ struct ChatView: View {
                     externalFocusRequestID: composerExternalFocusRequestID,
                     appliesOuterPadding: true,
                     alwaysShowActionRow: true,
+                    allowsExpansion: composerAskRequest == nil,
                     actionRow: {
                         composerActionRow
                     }
@@ -976,10 +1064,9 @@ struct ChatView: View {
         presentingViewController: UIViewController? = nil
     ) {
         activeReviewCommentRequest = request
-        inputText = ""
+        composerDraftController.setMode(.reviewComment, resetTransientInput: true)
         composerTextBeforeRecording = nil
         pendingAttachments = []
-        pendingRepoPointers = []
         composerExternalFocusRequestID &+= 1
         contextBarCollapseToken &+= 1
     }
@@ -987,20 +1074,20 @@ struct ChatView: View {
     private func applyQuickCommentTemplate(_ template: QuickCommentTemplate) {
         let text = template.quickCommentText
         guard !text.isEmpty else { return }
-        let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = composerDraftController.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            inputText = text
-        } else if inputText.hasSuffix("\n") {
-            inputText += text
+            composerDraftController.text = text
+        } else if composerDraftController.text.hasSuffix("\n") {
+            composerDraftController.text += text
         } else {
-            inputText += "\n" + text
+            composerDraftController.text += "\n" + text
         }
         composerExternalFocusRequestID &+= 1
     }
 
     private func cancelReviewCommentInput() {
         activeReviewCommentRequest = nil
-        inputText = ""
+        synchronizeComposerMode()
         composerTextBeforeRecording = nil
     }
 
@@ -1028,12 +1115,12 @@ struct ChatView: View {
         guard connection.isFocusedSession(sessionId),
               let plan = MessageQueueComposerRestore.plan(
                   queue: messageQueueState,
-                  currentText: inputText
+                  currentText: composerDraftController.text
               ) else {
             return false
         }
 
-        inputText = plan.text
+        composerDraftController.replaceMessage(text: plan.text)
         composerTextBeforeRecording = nil
         messageQueueStore.apply(plan.clearedQueue, for: sessionId)
         if !showComposer {
@@ -1044,36 +1131,39 @@ struct ChatView: View {
 
     private func sendActiveReviewComment() {
         guard let request = activeReviewCommentRequest else { return }
-        let body = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = composerDraftController.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
         let didSave = saveReviewComment(body: body, request: request)
         if didSave {
             activeReviewCommentRequest = nil
-            inputText = ""
+            synchronizeComposerMode()
             composerTextBeforeRecording = nil
             loadReviewCommentsIfPossible()
         }
     }
 
     private func presentComposer() {
+        guard activeComposerAskRequest == nil else { return }
         AppHaptics.toolbarExpansion()
         showComposer = true
     }
 
     @MainActor
     private func stageWorkspaceReviewInCurrentSession(prompt: String, files: [PendingFileReference]) {
-        if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            inputText = prompt
-        } else if inputText.hasSuffix("\n\n") {
-            inputText += prompt
-        } else if inputText.hasSuffix("\n") {
-            inputText += "\n" + prompt
-        } else {
-            inputText += "\n\n" + prompt
-        }
+        composerDraftController.mutateMessage { text, repoPointers in
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                text = prompt
+            } else if text.hasSuffix("\n\n") {
+                text += prompt
+            } else if text.hasSuffix("\n") {
+                text += "\n" + prompt
+            } else {
+                text += "\n\n" + prompt
+            }
 
-        for file in files where !pendingRepoPointers.contains(where: { $0.id == file.id }) {
-            pendingRepoPointers.append(file)
+            for file in files where !repoPointers.contains(where: { $0.id == file.id }) {
+                repoPointers.append(file)
+            }
         }
 
         if isStopped {
@@ -1085,7 +1175,7 @@ struct ChatView: View {
 
     @MainActor
     private func applyExtensionEditorText(_ text: String) {
-        inputText = text
+        composerDraftController.replaceMessage(text: text)
         if isStopped {
             showComposer = true
         } else if !showComposer {
@@ -1135,6 +1225,29 @@ struct ChatView: View {
     }
 
     @MainActor
+    private func attachComposerDraftIfPossible() {
+        guard let composerDraftStore, let composerDraftKey else { return }
+        composerDraftController.attach(
+            store: composerDraftStore,
+            key: composerDraftKey,
+            isEphemeral: composerDraftIsMemoryOnly
+        )
+        synchronizeComposerMode()
+    }
+
+    @MainActor
+    private func synchronizeComposerMode() {
+        let mode = Self.resolvedComposerMode(
+            hasReviewComment: activeReviewCommentRequest != nil,
+            hasAskRequest: activeComposerAskRequest != nil
+        )
+        if mode == .ask {
+            showComposer = false
+        }
+        composerDraftController.setMode(mode)
+    }
+
+    @MainActor
     private func handleAppear() {
         // Re-establish command routing immediately on re-entry.
         // The async sessionManager.connect() task starts shortly after onAppear,
@@ -1144,10 +1257,7 @@ struct ChatView: View {
 
         sessionManager.markAppeared()
         voiceInputManager.loadPreferences()
-        if sessionManager.hasAppeared, let draft = chatState.composerDraft, !draft.isEmpty {
-            inputText = draft
-            chatState.composerDraft = nil
-        }
+        attachComposerDraftIfPossible()
         // Load initial git status for the workspace
         if let wsId = session?.workspaceId, let api = connection.apiClient {
             let ws = connection.workspaceStore.workspaces.first { $0.id == wsId }
@@ -1335,8 +1445,10 @@ struct ChatView: View {
         )
     }
 
-    private func uploadPendingLocalAttachments() async throws -> [ChatAttachmentRef] {
-        let localAttachments = pendingAttachments.filter { $0.source == .image || $0.source == .localFile }
+    private func uploadPendingLocalAttachments(
+        _ sourceAttachments: [PendingAttachment]
+    ) async throws -> [ChatAttachmentRef] {
+        let localAttachments = sourceAttachments.filter { $0.source == .image || $0.source == .localFile }
         guard !localAttachments.isEmpty else { return [] }
         guard let workspaceId = session?.workspaceId else {
             throw APIError.server(status: 400, message: "Attachments require a workspace-backed session")
@@ -1474,9 +1586,9 @@ struct ChatView: View {
     }
 
     private func sendPrompt() {
-        let rawTrimmedInput = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawTrimmedInput = composerDraftController.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if rawTrimmedInput.caseInsensitiveCompare("/reload") == .orderedSame {
-            inputText = ""
+            composerDraftController.clearMessage()
             actionHandler.reloadResources(
                 connection: connection,
                 reducer: reducer,
@@ -1487,35 +1599,37 @@ struct ChatView: View {
         }
 
         if rawTrimmedInput.caseInsensitiveCompare("/share") == .orderedSame {
-            sendShareSlashCommand(clearComposer: true, restoreInputOnFailure: inputText)
+            sendShareSlashCommand(clearComposer: true)
             return
         }
 
         if rawTrimmedInput.caseInsensitiveCompare("/review-comments") == .orderedSame {
-            inputText = ""
+            composerDraftController.clearMessage()
             connection.extensionToast = "Review comments use compact inline selection now."
             return
         }
 
         guard !isPreparingAttachments, !actionHandler.isSending else { return }
 
-        let originalInputText = inputText
+        let originalInputText = composerDraftController.text
         let originalPendingAttachments = pendingAttachments
-        let originalPendingRepoPointers = pendingRepoPointers
-        let reviewText = reviewComments.appendReviewBlock(to: inputText)
-        let text = PendingFileReference.appendReferenceBlock(to: reviewText, files: pendingRepoPointers)
+        let originalPendingRepoPointers = composerDraftController.repoPointers
+        let submission = composerDraftController.beginSubmission()
+        let reviewText = reviewComments.appendReviewBlock(to: originalInputText)
+        let text = PendingFileReference.appendReferenceBlock(to: reviewText, files: originalPendingRepoPointers)
         let stagedReviewCommentIds = reviewComments.stagedCommentIds
         let sessionManagerRef = sessionManager
         let scrollRef = scrollController
 
         Task { @MainActor in
             do {
-                let pendingLocalAttachments = pendingAttachments.filter { $0.source == .image || $0.source == .localFile }
+                let pendingLocalAttachments = originalPendingAttachments.filter {
+                    $0.source == .image || $0.source == .localFile
+                }
                 isPreparingAttachments = true
                 attachmentPreparationText = pendingLocalAttachments.isEmpty ? nil : "Uploading attachments…"
 
-                let uploadedAttachments = try await self.uploadPendingLocalAttachments()
-                let attachments = uploadedAttachments
+                let attachments = try await self.uploadPendingLocalAttachments(originalPendingAttachments)
                 let optimisticDisplayText = UserMessageAttachmentPresentation.makeDisplayText(
                     text: reviewText,
                     pendingAttachments: originalPendingAttachments,
@@ -1540,33 +1654,31 @@ struct ChatView: View {
                     sessionStore: sessionStore,
                     sessionManager: sessionManager,
                     onDispatchStarted: {
-                        inputText = ""
                         pendingAttachments = []
-                        pendingRepoPointers = []
 
                         // Scroll to bottom after sending
                         scrollRef.requestScrollToBottom()
                     },
                     onSendSucceeded: {
+                        composerDraftController.completeSubmission(submission)
                         clearSentReviewComments(ids: stagedReviewCommentIds)
                     },
-                    onAsyncFailure: { _, failedAttachments in
-                        inputText = originalInputText
+                    onAsyncFailure: { _, _ in
+                        composerDraftController.failSubmission(submission)
                         pendingAttachments = originalPendingAttachments
-                        pendingRepoPointers = originalPendingRepoPointers
                     },
                     onNeedsReconnect: {
                         sessionManagerRef.reconnect()
                     }
                 )
                 if !restored.isEmpty {
-                    inputText = restored
+                    composerDraftController.failSubmission(submission)
                 }
             } catch {
                 isPreparingAttachments = false
                 attachmentPreparationText = nil
+                composerDraftController.failSubmission(submission)
                 pendingAttachments = originalPendingAttachments
-                pendingRepoPointers = originalPendingRepoPointers
                 reducer.process(.error(sessionId: sessionId, message: self.uploadPreparationErrorMessage(error)))
             }
         }
@@ -1614,7 +1726,7 @@ struct ChatView: View {
         showShareRedactionSheet = true
     }
 
-    private func sendShareSlashCommand(clearComposer: Bool, restoreInputOnFailure: String?) {
+    private func sendShareSlashCommand(clearComposer: Bool) {
         guard hasShareSlashCommand else {
             reducer.process(
                 .error(sessionId: sessionId, message: "Share command is not enabled for this workspace.")
@@ -1624,6 +1736,7 @@ struct ChatView: View {
 
         let sessionManagerRef = sessionManager
         let policy = AppPreferences.Share.redactionPolicy
+        let submission = clearComposer ? composerDraftController.beginSubmission() : nil
 
         actionHandler.shareSession(
             connection: connection,
@@ -1632,13 +1745,16 @@ struct ChatView: View {
             redactionPolicy: policy,
             onDispatchStarted: {
                 guard clearComposer else { return }
-                inputText = ""
                 pendingAttachments = []
-                pendingRepoPointers = []
+            },
+            onSendSucceeded: {
+                if let submission {
+                    composerDraftController.completeSubmission(submission)
+                }
             },
             onAsyncFailure: {
-                if let restoreInputOnFailure {
-                    inputText = restoreInputOnFailure
+                if let submission {
+                    composerDraftController.failSubmission(submission)
                 }
             },
             onNeedsReconnect: {
@@ -1866,9 +1982,11 @@ struct ChatView: View {
         )
 
         scrollController.scrollTargetID = viewUpdate.scrollTargetID
-        inputText = viewUpdate.inputText
+        composerDraftController.replaceMessage(
+            text: viewUpdate.inputText,
+            repoPointers: []
+        )
         pendingAttachments = []
-        pendingRepoPointers = []
 
         if viewUpdate.shouldFocusComposer {
             composerExternalFocusRequestID &+= 1
@@ -1934,10 +2052,10 @@ struct ChatView: View {
 
     private var composerSheet: some View {
         ExpandedComposerView(
-            text: $inputText,
+            text: composerTextBinding,
             textBeforeRecording: $composerTextBeforeRecording,
             pendingAttachments: $pendingAttachments,
-            pendingRepoPointers: $pendingRepoPointers,
+            pendingRepoPointers: composerRepoPointersBinding,
             isBusy: isBusy,
             busyStreamingBehavior: busyStreamingBehavior,
             slashCommands: chatState.slashCommands,
@@ -1948,7 +2066,7 @@ struct ChatView: View {
             session: session,
             thinkingLevel: chatState.thinkingLevel,
             voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
-            onSend: sendPrompt,
+            onSend: sendComposerAction,
             onModelTap: { showModelPicker = true },
             onThinkingSelect: { level in
                 actionHandler.setThinking(

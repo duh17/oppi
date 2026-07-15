@@ -329,6 +329,22 @@ struct ChatInputBarTests {
         #expect(reserved < 20, "Trailing gutter should stay visually tight so wrapped text reaches near the send button")
     }
 
+    @Test("Active asks can disable expanded composer routing")
+    func activeAsksCanDisableExpandedComposerRouting() {
+        #expect(!ChatInputBar<EmptyView>.shouldShowExpandButton(
+            allowsExpansion: false,
+            visualLineCount: 8,
+            threshold: 5,
+            maxLines: 10
+        ))
+        #expect(ChatInputBar<EmptyView>.shouldShowExpandButton(
+            allowsExpansion: true,
+            visualLineCount: 5,
+            threshold: 5,
+            maxLines: 10
+        ))
+    }
+
     @Test("Empty submit is opt-in")
     func emptySubmitIsOptIn() {
         #expect(!ChatInputBar<EmptyView>.canSubmitMessage(

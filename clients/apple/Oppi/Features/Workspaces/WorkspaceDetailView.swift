@@ -59,7 +59,7 @@ enum SessionDeleteConfirmationPolicy {
     }
 
     static func deleteMessage(for session: Session) -> String {
-        "This permanently deletes SQLite session metadata, local pi JSONL trace files for this session, chat attachment copies under .pi/attachments/\(session.id), generated media attachments served by Oppi, and this device's cached timeline copy."
+        "This permanently deletes SQLite session metadata, local pi JSONL trace files for this session, chat attachment copies under .pi/attachments/\(session.id), generated media attachments served by Oppi, this device's cached timeline copy, and its local message draft."
     }
 }
 
@@ -116,6 +116,7 @@ struct WorkspaceDetailView: View {
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(AppNavigation.self) private var navigation
     @Environment(GitStatusStore.self) private var gitStatusStore
+    @Environment(\.composerDraftStore) private var composerDraftStore
 
     @State private var isCreating = false
     @State private var error: String?
@@ -946,14 +947,26 @@ struct WorkspaceDetailView: View {
         }
         do {
             try await api.deleteWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
+            clearComposerDraft(for: session.id)
         } catch let apiError as APIError {
             // 404 means already deleted server-side — local removal above is sufficient.
-            if case .server(let status, _) = apiError, status == 404 { /* ok */ } else {
+            if case .server(let status, _) = apiError, status == 404 {
+                clearComposerDraft(for: session.id)
+            } else {
                 self.error = "Delete failed: \(apiError.localizedDescription)"
             }
         } catch {
             self.error = "Delete failed: \(error.localizedDescription)"
         }
+    }
+
+    private func clearComposerDraft(for sessionId: String) {
+        guard let currentServerId else { return }
+        composerDraftStore?.clearDraft(
+            serverID: currentServerId,
+            workspaceID: workspace.id,
+            sessionID: sessionId
+        )
     }
 
     private func openSession(_ session: Session) {

@@ -117,6 +117,7 @@ struct SessionInboxView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.theme) private var theme
 
     let onOpenSidebar: (() -> Void)?
@@ -799,8 +800,19 @@ struct SessionInboxView: View {
         await TimelineCache.shared.removeTrace(pending.session.id, serverId: pending.serverId)
         do {
             try await api.deleteWorkspaceSession(workspaceId: pending.workspaceId, sessionId: pending.session.id)
+            composerDraftStore?.clearDraft(
+                serverID: pending.serverId,
+                workspaceID: pending.workspaceId,
+                sessionID: pending.session.id
+            )
         } catch let apiError as APIError {
-            if case .server(let status, _) = apiError, status == 404 { /* ok */ } else {
+            if case .server(let status, _) = apiError, status == 404 {
+                composerDraftStore?.clearDraft(
+                    serverID: pending.serverId,
+                    workspaceID: pending.workspaceId,
+                    sessionID: pending.session.id
+                )
+            } else {
                 self.error = "Delete failed: \(apiError.localizedDescription)"
             }
         } catch {

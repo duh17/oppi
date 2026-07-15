@@ -63,7 +63,6 @@ struct RestorationStateTests {
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         let conn = coordinator.connection
         conn.sessionStore.activeSessionId = "s1"
-        conn.chatState.composerDraft = "test draft"
 
         let nav = AppNavigation()
         nav.selectedTab = .workspaces
@@ -73,7 +72,7 @@ struct RestorationStateTests {
         let loaded = RestorationState.load()
         #expect(loaded != nil)
         #expect(loaded?.activeSessionId == "s1")
-        #expect(loaded?.composerDraft == "test draft")
+        #expect(loaded?.composerDraft == nil)
         #expect(loaded?.selectedTab == "workspaces")
 
         RestorationState.clear()
@@ -194,6 +193,19 @@ struct RestorationStateTests {
         #expect(loaded?.wasNearBottom == true)
         #expect(loaded?.scrollAnchorItemId == "msg-99")
 
+        RestorationState.clear()
+    }
+
+    @Test func v2StateRemainsReadableForDraftMigration() throws {
+        let v2JSON = """
+        {"version":2,"activeSessionId":"s1","activeServerId":"server-1","selectedTab":"workspaces","composerDraft":"old draft","scrollAnchorItemId":null,"wasNearBottom":true,"timestamp":\(Date().timeIntervalSince1970)}
+        """
+        UserDefaults.standard.set(Data(v2JSON.utf8), forKey: RestorationState.key)
+
+        let loaded = try #require(RestorationState.load())
+
+        #expect(loaded.version == 2)
+        #expect(loaded.composerDraft == "old draft")
         RestorationState.clear()
     }
 
