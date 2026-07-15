@@ -40,12 +40,37 @@ Example:
 
 ### Added
 
-- **Client/Server:** When Pi's `showCacheMissNotices` setting is enabled, live prompt-cache misses render as warning timeline rows with re-billed token and cost details. Notices are intentionally live-only and are not reconstructed after reload.
 - **Client:** WIP: reworking the Mac app into an interactive Oppi client for browsing workspaces, running sessions, and reviewing changes. It is not ready for general use yet.
+
+## [0.44.1] - 2026-07-15
+
+### Notes
+
+- Coordinated release for iOS `1.1.0` (build `42`) and `oppi-server@0.44.1`.
+- `oppi-mirror` remains at `0.44.0`; this release does not publish a new mirror package.
+
+### Added
+
+- **Client/Server:** When Pi's `showCacheMissNotices` setting is enabled, live prompt-cache misses render as warning timeline rows with re-billed token and cost details. Notices are intentionally live-only and are not reconstructed after reload.
+- **Client/Server:** Workspace rows show tracked, staged, and untracked Git summaries, updated from workspace API responses and app events.
+- **Client:** Chat drafts are stored per session and survive navigation, app relaunch, and server switching until sent or cleared.
+- **Server:** Local `oppi` commands use a bearer-authenticated Unix socket, so CLI traffic stays local and remains available when the remote TLS listener is offline.
 
 ### Changed
 
-- **Client/Server:** The Mac app, terminal users, and managed host sessions now use the same `oppi` executable installed by `npm install -g oppi-server`. The Mac app no longer bundles a second server runtime; install or update the npm package before launching it.
+- **Client/Server:** The Mac app, terminal users, and managed host sessions use the same `oppi` executable installed by `npm install -g oppi-server`. The Mac app requires the npm package and does not bundle a second server runtime.
+- **Server:** The package now requires Node.js 24 and compiles with the TypeScript 7 native compiler.
+
+### Fixed
+
+- **Client:** Isolated session and timeline caches by server, refreshed mounted views after theme changes, and reduced stream and dense-session navigation work that could stall the UI.
+- **Client:** Kept long ask cards above the keyboard, preserved cross-block Markdown text selection and the dictation caret, and kept the Quick Session composer fitted while dismissing it only after a successful launch.
+- **Client:** Preserved workspace scope after editing, kept the configured thinking-level order, showed queued attachment names, and returned edited review comments to the staged list.
+- **Server:** Kept local and config commands working without Tailscale or a session database, and prevented managed agent sessions from targeting themselves through `oppi session`.
+
+### Removed
+
+- **Server:** Removed the unreachable `oppi-admin` extension from the npm server package.
 
 ## [0.44.0] - 2026-07-11
 
@@ -255,7 +280,8 @@ Example:
 
 - Last public GitHub release before adopting this changelog. See the GitHub release and commit history for details.
 
-[Unreleased]: https://github.com/duh17/oppi/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/duh17/oppi/compare/v0.44.1...HEAD
+[0.44.1]: https://github.com/duh17/oppi/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/duh17/oppi/compare/v0.43.1...v0.44.0
 [0.43.1]: https://github.com/duh17/oppi/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/duh17/oppi/compare/v0.42.0...v0.43.0
