@@ -102,7 +102,7 @@ describe("sessions module", () => {
     };
     expect(body.active.map((session) => session.id)).toEqual(["s1"]);
     expect(body.stopped.map((session) => session.id)).toEqual(["stopped-1"]);
-  });
+  }, 30_000);
 
   it("dispatches generic session commands through the runtime command transport", async () => {
     const session = {

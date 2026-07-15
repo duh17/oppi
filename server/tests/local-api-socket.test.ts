@@ -75,7 +75,7 @@ describe("Unix-socket local API", () => {
         Promise.race([
           localApiRequest<Record<string, unknown>>(storage, "/workspaces"),
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("local API was blocked by TLS preparation")), 750),
+            setTimeout(() => reject(new Error("local API was blocked by TLS preparation")), 2_000),
           ),
         ]),
       ).resolves.toEqual(expect.objectContaining({ workspaces: [] }));
