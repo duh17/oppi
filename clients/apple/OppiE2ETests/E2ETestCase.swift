@@ -671,6 +671,10 @@ class E2ETestCase: XCTestCase {
             return
         }
 
+        // XCUIApplication.open can relaunch the app in UI tests. Do not let the
+        // launch-only workspace fixtures race and replace the deep-linked route.
+        app.launchEnvironment.removeValue(forKey: "OPPI_E2E_AUTO_OPEN_WORKSPACE")
+        app.launchEnvironment.removeValue(forKey: "OPPI_E2E_AUTO_CREATE_SESSION")
         app.open(url)
         XCTAssertTrue(
             waitForChatSessionSurface(in: app, timeout: timeout),
