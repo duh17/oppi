@@ -82,25 +82,25 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityHidden(true)
+                    .accessibilityIdentifier("quickSession.overlay")
 
                     QuickSessionSheet(onDismiss: dismissQuickSession)
                 }
-                .overlay(alignment: .topTrailing) {
-                    Button(action: dismissQuickSession) {
-                        Image(systemName: "xmark")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.themeFg)
-                            .frame(width: 44, height: 44)
-                            .background(.themeBgHighlight, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Dismiss Quick Session")
-                    .accessibilityIdentifier("quickSession.dismiss")
-                    .padding(16)
-                }
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: NavigationSwipeGesturePolicy.minimumDistance)
+                        .onEnded { value in
+                            guard NavigationSwipeGesturePolicy.isSwipe(
+                                translation: value.translation,
+                                direction: .down
+                            ) else { return }
+                            dismissQuickSession()
+                        }
+                )
                 .ignoresSafeArea(.container, edges: .horizontal)
                 .accessibilityAddTraits(.isModal)
                 .accessibilityAction(.escape, dismissQuickSession)
+                .accessibilityAction(named: "Dismiss Quick Session", dismissQuickSession)
                 .zIndex(100)
             }
         }

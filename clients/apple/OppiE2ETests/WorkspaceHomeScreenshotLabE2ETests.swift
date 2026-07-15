@@ -89,12 +89,9 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
 
         let chatInput = app.textViews["chat.input"]
         XCTAssertTrue(chatInput.waitForExistence(timeout: 10), "Quick Session input not visible")
-        let dismissButton = app.buttons["quickSession.dismiss"]
-        XCTAssertTrue(
-            dismissButton.waitForExistence(timeout: 5),
-            "Quick Session visible dismiss control not visible"
-        )
-        XCTAssertTrue(dismissButton.isHittable, "Quick Session dismiss control must remain actionable")
+        let overlay = app.buttons["quickSession.overlay"].firstMatch
+        XCTAssertTrue(overlay.waitForExistence(timeout: 5), "Quick Session overlay not visible")
+        XCTAssertFalse(app.buttons["quickSession.dismiss"].exists, "Quick Session should not show a close button")
         XCTAssertFalse(
             sessionsList.isHittable,
             "Modal Quick Session must make the background sessions hierarchy inert"
@@ -131,10 +128,10 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
 
         try saveLabScreenshot(name: "quick-session-overlay-composer-growth-e2e")
 
-        dismissButton.tap()
+        dismissQuickSessionSheetIfNeeded()
         XCTAssertTrue(
             sessionsList.waitForExistence(timeout: 5),
-            "Dismissing Quick Session must restore the sessions accessibility hierarchy"
+            "Swiping down on Quick Session must restore the sessions accessibility hierarchy"
         )
         let launchButton = app.buttons["workspace.quickSession.start"]
         XCTAssertTrue(
@@ -168,7 +165,7 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
             keyboard.frame.minY + 1,
             "Compact-height composer input must stay above the keyboard"
         )
-        XCTAssertTrue(app.buttons["quickSession.dismiss"].isHittable, "Dismiss must remain visible in compact height")
+        XCTAssertFalse(app.buttons["quickSession.dismiss"].exists, "Quick Session should not show a close button")
 
         viewport.swipeUp()
         let workspacePicker = app.buttons["quickSession.workspacePicker"]
@@ -204,7 +201,7 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
             keyboard.frame.minY + 1,
             "Accessibility-text composer input must stay above the keyboard"
         )
-        XCTAssertTrue(app.buttons["quickSession.dismiss"].isHittable, "Dismiss must remain visible at accessibility text size")
+        XCTAssertFalse(app.buttons["quickSession.dismiss"].exists, "Quick Session should not show a close button")
 
         let workspacePicker = app.buttons["quickSession.workspacePicker"]
         let modelPicker = app.buttons["session.toolbar.model"]
@@ -328,9 +325,11 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
     }
 
     private func dismissQuickSessionSheetIfNeeded() {
-        let dismiss = app.buttons["quickSession.dismiss"]
-        guard dismiss.waitForExistence(timeout: 1) else { return }
-        dismiss.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        let overlay = app.buttons["quickSession.overlay"].firstMatch
+        guard overlay.waitForExistence(timeout: 1) else { return }
+        let start = overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+        let end = overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+        start.press(forDuration: 0.05, thenDragTo: end)
     }
 }
 

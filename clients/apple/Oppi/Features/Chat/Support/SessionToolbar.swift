@@ -31,7 +31,7 @@ struct SessionToolbar: View {
         theme.thinking.color(for: thinkingLevel)
     }
 
-    private static let thinkingOptions: [ThinkingLevel] = [.off, .minimal, .low, .medium, .high, .xhigh]
+    private static let thinkingOptions: [ThinkingLevel] = [.xhigh, .high, .medium, .low, .minimal, .off]
 
     private var thinkingLabel: String {
         Self.thinkingLabel(for: thinkingLevel)
