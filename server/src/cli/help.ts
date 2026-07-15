@@ -1424,6 +1424,10 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "saved Agent id/name; omit or use workspace_default for workspace defaults",
       },
       {
+        name: "--allow-nested-delegation",
+        summary: "authorize this direct child to create sessions at one nested level",
+      },
+      {
         name: "--idempotency-key",
         value: "<key>",
         summary: "reuse one launch/session across retries of the same request",
@@ -1433,6 +1437,7 @@ const HELP_TOPICS: HelpTopic[] = [
     notes: [
       "Pass @- to --prompt to read the first prompt from stdin.",
       "JSON output is compact and returns the launch id as data.session_id.",
+      "Managed sessions can create only direct children by default. A root may pass --allow-nested-delegation to authorize that child to create sessions at one additional nesting level; descendants cannot extend the authorization.",
       "With --idempotency-key, retrying the same create request reuses the existing launch instead of creating a duplicate session.",
       "If another launcher still owns the active lease for that key, the server can report launch_in_progress; retry with the same key.",
       "--model accepts exact provider/model IDs or fuzzy text like sonnet; it resolves against /models, which is filtered by Pi enabledModels.",

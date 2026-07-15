@@ -40,6 +40,9 @@ function makeService(
     else storedSessions.push(session);
   });
   const listSessions = vi.fn(() => storedSessions);
+  const getSession = vi.fn((sessionId: string) =>
+    storedSessions.find((session) => session.id === sessionId),
+  );
   const findSessionByLaunchIdempotencyKey = vi.fn((key: string) =>
     storedSessions.find((session) => session.launch?.idempotencyKey === key),
   );
@@ -71,6 +74,7 @@ function makeService(
     storage: {
       createSession,
       saveSession,
+      getSession,
       listSessions,
       findSessionByLaunchIdempotencyKey,
       claimSessionLaunchRecovery,
@@ -85,6 +89,7 @@ function makeService(
     service,
     createSession,
     saveSession,
+    getSession,
     listSessions,
     findSessionByLaunchIdempotencyKey,
     claimSessionLaunchRecovery,
@@ -134,6 +139,200 @@ describe("AgentLaunchService", () => {
     }
     expect(createSession).toHaveBeenCalledWith("Launch me", "openai/gpt-5.5");
     expect(saveSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("stamps managed child sessions with their caller identity", async () => {
+    const parent = makeSession({ id: "root-1" });
+    const { service } = makeService({ sessions: [parent] });
+
+    const result = await service.launch({
+      agent: { name: "child" },
+      target: { workspace: makeWorkspace() },
+      parentSessionId: parent.id,
+    });
+
+    expect(result).toMatchObject({
+      kind: "created",
+      session: {
+        launch: { parentSessionId: "root-1", allowsNestedDelegation: undefined },
+      },
+    });
+  });
+
+  it("rejects nested delegation by default", async () => {
+    const root = makeSession({ id: "root-1" });
+    const child = makeSession({
+      id: "child-1",
+      launch: { parentSessionId: root.id, status: "accepted", requestedAt: 1 },
+    });
+    const { service, createSession } = makeService({ sessions: [root, child] });
+
+    await expect(
+      service.launch({
+        agent: { name: "grandchild" },
+        target: { workspace: makeWorkspace() },
+        parentSessionId: child.id,
+      }),
+    ).rejects.toThrow("Nested delegation is not authorized");
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("allows multiple grandchildren at one explicitly authorized nested level", async () => {
+    const root = makeSession({ id: "root-1" });
+    const { service, createSession } = makeService({ sessions: [root] });
+
+    const child = await service.launch({
+      agent: { name: "child" },
+      target: { workspace: makeWorkspace() },
+      parentSessionId: root.id,
+      allowNestedDelegation: true,
+    });
+    expect(child).toMatchObject({
+      kind: "created",
+      session: { launch: { parentSessionId: root.id, allowsNestedDelegation: true } },
+    });
+    if (child.kind === "launch_in_progress") throw new Error("Expected child session");
+
+    const grandchildren = await Promise.all(
+      ["grandchild-a", "grandchild-b"].map((name) =>
+        service.launch({
+          agent: { name },
+          target: { workspace: makeWorkspace() },
+          parentSessionId: child.session.id,
+        }),
+      ),
+    );
+    for (const grandchild of grandchildren) {
+      expect(grandchild).toMatchObject({
+        kind: "created",
+        session: {
+          launch: {
+            parentSessionId: child.session.id,
+            allowsNestedDelegation: undefined,
+          },
+        },
+      });
+      if (grandchild.kind === "launch_in_progress") throw new Error("Expected grandchild session");
+    }
+
+    const [grandchild] = grandchildren;
+    if (!grandchild || grandchild.kind === "launch_in_progress") {
+      throw new Error("Expected a grandchild session");
+    }
+    await expect(
+      service.launch({
+        agent: { name: "great-grandchild" },
+        target: { workspace: makeWorkspace() },
+        parentSessionId: grandchild.session.id,
+        allowNestedDelegation: true,
+      }),
+    ).rejects.toThrow("Nested delegation is not authorized");
+    expect(createSession).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns an existing launch for an authorized idempotent retry", async () => {
+    const root = makeSession({ id: "root-1" });
+    const existing = makeSession({
+      id: "child-1",
+      firstMessage: "already delivered",
+      launch: {
+        parentSessionId: root.id,
+        idempotencyKey: "delegated-retry",
+        status: "accepted",
+        requestedAt: 1,
+        promptDispatch: "delivered",
+      },
+    });
+    const { service, createSession, getSession } = makeService({ sessions: [root, existing] });
+
+    await expect(
+      service.launch({
+        agent: { name: "child" },
+        target: { workspace: makeWorkspace() },
+        parentSessionId: root.id,
+        idempotencyKey: "delegated-retry",
+      }),
+    ).resolves.toMatchObject({ kind: "existing", session: { id: existing.id } });
+    expect(getSession).toHaveBeenCalledWith(root.id);
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects a normal idempotent retry with a different delegation lineage", async () => {
+    const root = makeSession({ id: "root-1" });
+    const existing = makeSession({
+      id: "child-1",
+      launch: {
+        parentSessionId: root.id,
+        allowsNestedDelegation: true,
+        idempotencyKey: "delegated-retry",
+        status: "accepted",
+        requestedAt: 1,
+      },
+    });
+    const { service, createSession } = makeService({ sessions: [root, existing] });
+
+    await expect(
+      service.launch({
+        agent: { name: "child" },
+        target: { workspace: makeWorkspace() },
+        parentSessionId: root.id,
+        idempotencyKey: "delegated-retry",
+      }),
+    ).rejects.toThrow("Idempotency key is already associated with a different delegation lineage");
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects an idempotent retry from a different authorized root parent", async () => {
+    const firstRoot = makeSession({ id: "root-1" });
+    const secondRoot = makeSession({ id: "root-2" });
+    const existing = makeSession({
+      id: "child-1",
+      launch: {
+        parentSessionId: firstRoot.id,
+        idempotencyKey: "delegated-retry",
+        status: "accepted",
+        requestedAt: 1,
+      },
+    });
+    const { service, createSession, getSession } = makeService({
+      sessions: [firstRoot, secondRoot, existing],
+    });
+
+    await expect(
+      service.launch({
+        agent: { name: "child" },
+        target: { workspace: makeWorkspace() },
+        parentSessionId: secondRoot.id,
+        idempotencyKey: "delegated-retry",
+      }),
+    ).rejects.toThrow("Idempotency key is already associated with a different delegation lineage");
+    expect(getSession).toHaveBeenCalledWith(secondRoot.id);
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unauthorized caller before matching an idempotent retry", async () => {
+    const root = makeSession({ id: "root-1" });
+    const unauthorizedChild = makeSession({
+      id: "child-1",
+      launch: { parentSessionId: root.id, status: "accepted", requestedAt: 1 },
+    });
+    const existing = makeSession({
+      id: "existing-1",
+      launch: { idempotencyKey: "delegated-retry", status: "accepted", requestedAt: 1 },
+    });
+    const { service, findSessionByLaunchIdempotencyKey } = makeService({
+      sessions: [root, unauthorizedChild, existing],
+    });
+
+    await expect(
+      service.launch({
+        agent: { name: "grandchild" },
+        target: { workspace: makeWorkspace() },
+        parentSessionId: unauthorizedChild.id,
+        idempotencyKey: "delegated-retry",
+      }),
+    ).rejects.toThrow("Nested delegation is not authorized");
+    expect(findSessionByLaunchIdempotencyKey).not.toHaveBeenCalled();
   });
 
   it("reuses one session for the same idempotency key and reports existing", async () => {
@@ -217,6 +416,7 @@ describe("AgentLaunchService", () => {
       storage: {
         createSession: vi.fn(),
         saveSession,
+        getSession: vi.fn(),
         listSessions: vi.fn(() => (persistedWinner ? [persistedWinner] : [])),
         findSessionByLaunchIdempotencyKey: vi.fn(() => persistedWinner),
         claimSessionLaunchRecovery: vi.fn(() => undefined),
@@ -241,6 +441,57 @@ describe("AgentLaunchService", () => {
       session: { id: "winner-1" },
       retryAfterMs: 59_000,
     });
+    expect(saveSession).toHaveBeenCalledTimes(1);
+    expect(startSession).not.toHaveBeenCalled();
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("rejects a persistence-race idempotency recovery with a different delegation lineage", async () => {
+    const root = makeSession({ id: "root-1" });
+    const winner = makeSession({
+      id: "winner-1",
+      workspaceId: "ws-1",
+      launch: {
+        parentSessionId: root.id,
+        allowsNestedDelegation: true,
+        idempotencyKey: "launch-race",
+        status: "launching",
+        requestedAt: 1_000,
+        lease: { owner: "other-worker", acquiredAt: 1_000, expiresAt: 61_000 },
+      },
+    });
+    let persistedWinner: Session | undefined;
+    const saveSession = vi.fn(() => {
+      persistedWinner = winner;
+      throw new Error("UNIQUE constraint failed: launch.idempotency_key");
+    });
+    const startSession = vi.fn(async (sessionId: string) => makeSession({ id: sessionId }));
+    const sendPrompt = vi.fn(async () => undefined);
+    const service = new AgentLaunchService({
+      storage: {
+        createSession: vi.fn(),
+        saveSession,
+        getSession: vi.fn((sessionId: string) => (sessionId === root.id ? root : undefined)),
+        listSessions: vi.fn(() => (persistedWinner ? [persistedWinner] : [root])),
+        findSessionByLaunchIdempotencyKey: vi.fn(() => persistedWinner),
+        claimSessionLaunchRecovery: vi.fn(() => undefined),
+      },
+      sessions: { startSession, sendPrompt },
+      ensureSessionContextWindow: (session) => session,
+      nowMs: () => 2_000,
+      leaseTtlMs: 60_000,
+    });
+
+    await expect(
+      service.launch({
+        agent: { name: "Race loser" },
+        target: { workspace: makeWorkspace() },
+        prompt: "must not be sent",
+        parentSessionId: root.id,
+        idempotencyKey: "launch-race",
+        leaseOwner: "this-worker",
+      }),
+    ).rejects.toThrow("Idempotency key is already associated with a different delegation lineage");
     expect(saveSession).toHaveBeenCalledTimes(1);
     expect(startSession).not.toHaveBeenCalled();
     expect(sendPrompt).not.toHaveBeenCalled();

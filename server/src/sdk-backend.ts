@@ -56,6 +56,7 @@ import { buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd } from "./worktrees.js";
+import { callerSessionIdentityShellPrefix } from "./session-caller-identity.js";
 
 type PiThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
 type AttachmentToolExecute = ToolDefinition["execute"] & {
@@ -530,6 +531,21 @@ export class SdkBackend {
               }),
             }),
       });
+      if (!sandboxMode) {
+        const reload = loader.reload.bind(loader);
+        loader.reload = async (options) => {
+          await reload(options);
+          const configuredShellCommandPrefix = settingsManager.getShellCommandPrefix();
+          settingsManager.applyOverrides({
+            shellCommandPrefix: [
+              callerSessionIdentityShellPrefix(session.id),
+              configuredShellCommandPrefix,
+            ]
+              .filter((prefix): prefix is string => Boolean(prefix))
+              .join("\n"),
+          });
+        };
+      }
       await loader.reload();
 
       // Sandbox mode: create tools backed by Gondolin micro-VM

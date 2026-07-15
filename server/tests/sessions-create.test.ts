@@ -277,6 +277,39 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(mock.sessions.sendPrompt).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [{ parentSessionId: 42 }, "parentSessionId must be a non-empty string"],
+    [{ parentSessionId: "   " }, "parentSessionId must be a non-empty string"],
+    [{ allowNestedDelegation: "true" }, "allowNestedDelegation must be a boolean"],
+  ])("rejects malformed delegation fields with HTTP 400", async (body, message) => {
+    const mock = createMockContext();
+
+    await dispatchCreate(mock, body);
+
+    expect(mock.responses).toEqual([]);
+    expect(mock.errors).toEqual([{ status: 400, message }]);
+    expect(mock.storage.createSession).not.toHaveBeenCalled();
+  });
+
+  it("maps delegation policy rejections to HTTP 409", async () => {
+    const mock = createMockContext();
+    const nestedCaller = makeSession({
+      id: "child-1",
+      launch: { parentSessionId: "root-1", status: "accepted", requestedAt: 1 },
+    });
+    mock.storage.getSession.mockImplementation((sessionId: string) =>
+      sessionId === nestedCaller.id ? nestedCaller : undefined,
+    );
+
+    await dispatchCreate(mock, { parentSessionId: nestedCaller.id });
+
+    expect(mock.responses).toEqual([]);
+    expect(mock.errors).toEqual([
+      { status: 409, message: "Nested delegation is not authorized for this caller session" },
+    ]);
+    expect(mock.storage.createSession).not.toHaveBeenCalled();
+  });
+
   it("creates session and dispatches prompt when prompt is provided", async () => {
     const mock = createMockContext();
 

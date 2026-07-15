@@ -17,6 +17,10 @@ import {
 import { inferWorkspaceIdFromCwdForCli, resolveWorkspaceIdForCli } from "../resources.js";
 import { resolveModelFlagForCli } from "../model-resolution.js";
 import { createLocalApiCommandContext, handleModelResolvingCliError } from "../command-support.js";
+import {
+  assertNotSelfTargetingSession,
+  callerSessionIdFromEnvironment,
+} from "../../session-caller-identity.js";
 import { parseDurationMs } from "./wait.js";
 import {
   clipListCell,
@@ -67,6 +71,7 @@ export async function cmdSession(
   try {
     flags = normalizeSessionFlagAliases(mode, flags);
     assertSessionFlags(mode, flags);
+    assertNotSelfTargetingSession(sessionTargetsForMode(mode, positional));
 
     if (mode === "list") {
       const result = await listSessions(storage, flags, call);
@@ -513,6 +518,8 @@ async function createSession(
   const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef);
   const resolvedModel = await resolveModelFlagForCli(storage, flags.model);
   const savedAgent = savedAgentReference(flags.agent);
+  const parentSessionId = callerSessionIdFromEnvironment();
+  const allowNestedDelegation = flags["allow-nested-delegation"] === "true";
   const result = savedAgent
     ? await localApiRequest<{ session: Session; receipt?: Record<string, unknown> }>(
         storage,
@@ -534,6 +541,8 @@ async function createSession(
                   },
                 }
               : {}),
+            ...(parentSessionId ? { parentSessionId } : {}),
+            ...(allowNestedDelegation ? { allowNestedDelegation: true } : {}),
             ...(flags["idempotency-key"] ? { idempotencyKey: flags["idempotency-key"] } : {}),
           },
         },
@@ -549,6 +558,8 @@ async function createSession(
             ...(resolvedModel ? { model: resolvedModel } : {}),
             ...(flags.thinking ? { thinking: flags.thinking } : {}),
             ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
+            ...(parentSessionId ? { parentSessionId } : {}),
+            ...(allowNestedDelegation ? { allowNestedDelegation: true } : {}),
             ...(flags["idempotency-key"] ? { launchIdempotencyKey: flags["idempotency-key"] } : {}),
           },
         },
@@ -573,6 +584,7 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
   get: ["json"],
   create: [
     "agent",
+    "allow-nested-delegation",
     "idempotency-key",
     "json",
     "model",
@@ -636,6 +648,37 @@ function assertSessionFlags(mode: string, flags: Record<string, string>): void {
   if (unsupported.length > 0) {
     throw new Error(`Unsupported flag for 'session ${mode}': --${unsupported.sort().join(", --")}`);
   }
+}
+
+function sessionTargetsForMode(mode: string, positional: string[]): string[] {
+  if (mode === "watch") return positional.map((value) => value.trim()).filter(Boolean);
+  if (
+    [
+      "get",
+      "send",
+      "abort",
+      "dialogs",
+      "respond",
+      "wait",
+      "read",
+      "events",
+      "trace",
+      "inspect",
+      "stop",
+      "delete",
+      "resume",
+      "fork",
+      "changes",
+      "diff",
+      "tool-output",
+      "trace-page",
+      "trace-outline",
+    ].includes(mode)
+  ) {
+    const id = positional[0]?.trim();
+    return id ? [id] : [];
+  }
+  return [];
 }
 
 function requirePositional(positional: string[], message: string): string {

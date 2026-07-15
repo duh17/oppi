@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openDatabase } from "../src/sqlite-compat.js";
 import { Storage } from "../src/storage.js";
+import { SessionSqliteStore } from "../src/storage/session-sqlite-store.js";
 
 describe("storage session metadata format", () => {
   let dir: string;
@@ -53,6 +54,39 @@ describe("storage session metadata format", () => {
     expect(existsSync(join(dir, "session-state.db"))).toBe(true);
     expect(existsSync(sessionPath)).toBe(false);
     expect(new Storage(dir).getSession(session.id)?.status).toBe("ready");
+  });
+
+  it("persists delegation lineage across SQLite close and reopen", () => {
+    const writer = new SessionSqliteStore(dir);
+    try {
+      const session = writer.createSession("delegated", "openai/gpt-5");
+      session.launch = {
+        source: "cli",
+        parentSessionId: "parent-1",
+        allowsNestedDelegation: true,
+        status: "accepted",
+        requestedAt: 1,
+      };
+      writer.saveSession(session);
+    } finally {
+      writer.close();
+    }
+
+    const reader = new SessionSqliteStore(dir);
+    try {
+      expect(reader.listSessions()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            launch: expect.objectContaining({
+              parentSessionId: "parent-1",
+              allowsNestedDelegation: true,
+            }),
+          }),
+        ]),
+      );
+    } finally {
+      reader.close();
+    }
   });
 
   it("persists pi-tui runtime metadata", () => {

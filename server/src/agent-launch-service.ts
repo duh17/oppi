@@ -38,6 +38,7 @@ export interface AgentLaunchRequest {
   agentId?: string;
   agentVersion?: number;
   parentSessionId?: string;
+  allowNestedDelegation?: boolean;
   target: AgentLaunchTarget;
   prompt?: string;
   attachments?: ChatAttachmentRef[];
@@ -72,6 +73,7 @@ export interface AgentLaunchServiceDeps {
     | "claimSessionLaunchRecovery"
     | "createSession"
     | "findSessionByLaunchIdempotencyKey"
+    | "getSession"
     | "listSessions"
     | "saveSession"
   >;
@@ -91,6 +93,13 @@ export interface AgentLaunchServiceDeps {
 const DEFAULT_LEASE_TTL_MS = 2 * 60_000;
 const DEFAULT_LEASE_OWNER = "workspace-session-create";
 
+export class DelegationPolicyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DelegationPolicyError";
+  }
+}
+
 export class AgentLaunchService {
   private readonly nowMs: () => number;
   private readonly leaseTtlMs: number;
@@ -101,6 +110,7 @@ export class AgentLaunchService {
   }
 
   async launch(request: AgentLaunchRequest): Promise<AgentLaunchResult> {
+    const delegation = this.resolveDelegation(request);
     const idempotencyKey = normalizedText(request.idempotencyKey);
     const leaseOwner = normalizedText(request.leaseOwner) ?? DEFAULT_LEASE_OWNER;
     const now = this.nowMs();
@@ -108,6 +118,7 @@ export class AgentLaunchService {
     if (idempotencyKey) {
       const existing = this.findSessionByIdempotencyKey(idempotencyKey);
       if (existing) {
+        this.assertIdempotentDelegationMatches(existing, delegation);
         const existingResult = this.resultForExistingLaunch(existing, now);
         if (
           existingResult.kind === "existing" &&
@@ -119,7 +130,7 @@ export class AgentLaunchService {
       }
     }
 
-    const session = this.buildSession(request, idempotencyKey, leaseOwner, now);
+    const session = this.buildSession(request, delegation, idempotencyKey, leaseOwner, now);
     try {
       this.deps.storage.saveSession(session);
     } catch (error) {
@@ -127,6 +138,7 @@ export class AgentLaunchService {
         ? this.findSessionByIdempotencyKey(idempotencyKey)
         : undefined;
       if (existing) {
+        this.assertIdempotentDelegationMatches(existing, delegation);
         return this.resultForExistingLaunch(existing, now);
       }
       throw error;
@@ -176,6 +188,7 @@ export class AgentLaunchService {
 
   private buildSession(
     request: AgentLaunchRequest,
+    delegation: { parentSessionId?: string; allowsNestedDelegation?: boolean },
     idempotencyKey: string | undefined,
     leaseOwner: string,
     now: number,
@@ -217,7 +230,8 @@ export class AgentLaunchService {
       source: request.source ?? "workspace-wrapper",
       agentId: request.agentId,
       agentVersion: request.agentVersion,
-      parentSessionId: request.parentSessionId,
+      parentSessionId: delegation.parentSessionId,
+      allowsNestedDelegation: delegation.allowsNestedDelegation,
       idempotencyKey,
       schedule: request.schedule,
       target: {
@@ -246,6 +260,59 @@ export class AgentLaunchService {
     };
 
     return session;
+  }
+
+  private resolveDelegation(request: AgentLaunchRequest): {
+    parentSessionId?: string;
+    allowsNestedDelegation?: boolean;
+  } {
+    const parentSessionId = normalizedText(request.parentSessionId);
+    if (!parentSessionId) {
+      if (request.allowNestedDelegation) {
+        throw new DelegationPolicyError(
+          "Nested delegation can only be authorized by a managed caller session",
+        );
+      }
+      return {};
+    }
+
+    const parent = this.deps.storage.getSession(parentSessionId);
+    if (!parent) {
+      throw new DelegationPolicyError("Caller session not found");
+    }
+
+    if (!parent.launch?.parentSessionId) {
+      return {
+        parentSessionId,
+        ...(request.allowNestedDelegation ? { allowsNestedDelegation: true } : {}),
+      };
+    }
+
+    if (!parent.launch.allowsNestedDelegation) {
+      throw new DelegationPolicyError(
+        "Nested delegation is not authorized for this caller session",
+      );
+    }
+    if (request.allowNestedDelegation) {
+      throw new DelegationPolicyError("Nested sessions cannot extend delegation authorization");
+    }
+    return { parentSessionId };
+  }
+
+  private assertIdempotentDelegationMatches(
+    existing: Session,
+    delegation: { parentSessionId?: string; allowsNestedDelegation?: boolean },
+  ): void {
+    const existingParentSessionId = normalizedText(existing.launch?.parentSessionId);
+    const existingAllowsNestedDelegation = existing.launch?.allowsNestedDelegation === true;
+    if (
+      existingParentSessionId !== delegation.parentSessionId ||
+      existingAllowsNestedDelegation !== (delegation.allowsNestedDelegation === true)
+    ) {
+      throw new DelegationPolicyError(
+        "Idempotency key is already associated with a different delegation lineage",
+      );
+    }
   }
 
   private markLaunchComplete(
