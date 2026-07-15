@@ -26,6 +26,22 @@ const CREATE_SESSION_THINKING_LEVELS = new Set([
 
 const log = createLogger({ base: { component: "route_sessions" } });
 
+function invalidDelegationFields(
+  parentSessionId: unknown,
+  allowNestedDelegation: unknown,
+): string | undefined {
+  if (
+    parentSessionId !== undefined &&
+    (typeof parentSessionId !== "string" || !parentSessionId.trim())
+  ) {
+    return "parentSessionId must be a non-empty string";
+  }
+  if (allowNestedDelegation !== undefined && typeof allowNestedDelegation !== "boolean") {
+    return "allowNestedDelegation must be a boolean";
+  }
+  return undefined;
+}
+
 export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   const lifecycle = new SessionLifecycleService({
     storage: ctx.storage,
@@ -110,7 +126,17 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       idempotencyKey?: string;
       launchIdempotencyKey?: string;
       launchLeaseOwner?: string;
+      parentSessionId?: string;
+      allowNestedDelegation?: boolean;
     }>(req);
+    const delegationFieldError = invalidDelegationFields(
+      body.parentSessionId,
+      body.allowNestedDelegation,
+    );
+    if (delegationFieldError) {
+      helpers.error(res, 400, delegationFieldError);
+      return;
+    }
     if (Array.isArray(body.images) && body.images.length > 0) {
       helpers.error(
         res,
@@ -173,6 +199,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         attachments: body.attachments,
         idempotencyKey: body.launchIdempotencyKey ?? body.idempotencyKey,
         leaseOwner: body.launchLeaseOwner,
+        parentSessionId: body.parentSessionId,
+        allowNestedDelegation: body.allowNestedDelegation === true,
       });
       if (result.launchKind !== "existing") {
         ctx.appEvents?.emitSessionCreated(result.createdSession);

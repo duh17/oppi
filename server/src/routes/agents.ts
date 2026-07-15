@@ -1,6 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { AgentLaunchService, type AgentDefinition } from "../agent-launch-service.js";
+import {
+  AgentLaunchService,
+  DelegationPolicyError,
+  type AgentDefinition,
+} from "../agent-launch-service.js";
 import {
   agentSummary,
   validateAgentDefinition,
@@ -130,6 +134,14 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
 
     try {
       const body = await helpers.parseBody<CreateAgentSessionRequest>(req);
+      const delegationFieldError = invalidDelegationFields(
+        body.parentSessionId,
+        body.allowNestedDelegation,
+      );
+      if (delegationFieldError) {
+        helpers.error(res, 400, delegationFieldError);
+        return true;
+      }
       const prompt = parsePromptText(body.prompt);
       if (!prompt) {
         helpers.error(res, 400, "prompt.text required");
@@ -170,6 +182,7 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         agentId: agent.id,
         agentVersion: agent.version,
         parentSessionId: body.parentSessionId,
+        allowNestedDelegation: body.allowNestedDelegation === true,
         target: { workspace, worktreeId: worktreeSelection.worktreeId },
         prompt,
         attachments: body.prompt?.attachments,
@@ -221,7 +234,11 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         result.kind === "existing" ? 200 : 201,
       );
     } catch (error) {
-      helpers.error(res, 500, safeErrorMessage(error));
+      if (error instanceof DelegationPolicyError) {
+        helpers.error(res, 409, error.message);
+      } else {
+        helpers.error(res, 500, safeErrorMessage(error));
+      }
     }
 
     return true;
@@ -277,6 +294,7 @@ interface CreateAgentSessionRequest {
     noTools?: "all" | "builtin";
   };
   parentSessionId?: string;
+  allowNestedDelegation?: boolean;
   idempotencyKey?: string;
   ephemeral?: boolean;
   sessionName?: string;
@@ -293,6 +311,22 @@ function serializeAgent(agent: StoredAgentDefinition): Record<string, unknown> {
 function parsePromptText(prompt: CreateAgentSessionRequest["prompt"]): string | undefined {
   const text = prompt?.text?.trim();
   return text ? text : undefined;
+}
+
+function invalidDelegationFields(
+  parentSessionId: unknown,
+  allowNestedDelegation: unknown,
+): string | undefined {
+  if (
+    parentSessionId !== undefined &&
+    (typeof parentSessionId !== "string" || !parentSessionId.trim())
+  ) {
+    return "parentSessionId must be a non-empty string";
+  }
+  if (allowNestedDelegation !== undefined && typeof allowNestedDelegation !== "boolean") {
+    return "allowNestedDelegation must be a boolean";
+  }
+  return undefined;
 }
 
 function applyOverrides(

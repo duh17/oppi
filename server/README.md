@@ -176,6 +176,8 @@ Commands that call the local API use bearer-authenticated HTTP over `$OPPI_DATA_
 
 Session history reads are consolidated under `oppi session inspect`. Start with its default turn outline, use `--view summary` for counts, and request `--turns <spec> --view messages|tools` only for the smallest relevant turn set.
 
+Managed host sessions cannot use `oppi session` to target themselves. They may create direct child sessions; a root can pass `oppi session create --allow-nested-delegation` to authorize that child to create sessions at one additional nesting level. Descendants cannot extend this authorization. Human terminal CLI invocations remain unrestricted.
+
 ### Saved Agents and schedules
 
 Saved Agents store reusable Agent definitions. Launch inputs such as workspace, worktree, prompt, and session name stay on `oppi session create`, so the same Agent definition can run in different workspaces.

@@ -431,6 +431,37 @@ describe("agent routes", () => {
     }
   });
 
+  it.each([
+    [{ parentSessionId: 42 }, "parentSessionId must be a non-empty string"],
+    [{ parentSessionId: "   " }, "parentSessionId must be a non-empty string"],
+    [{ allowNestedDelegation: "true" }, "allowNestedDelegation must be a boolean"],
+  ])("rejects malformed delegation fields with HTTP 400", async (body, error) => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-delegation-routes-"));
+    const store = new AgentDefinitionStore(dataDir);
+    try {
+      const agent = store.createAgent({ name: "Reviewer" });
+      const dispatch = createAgentRoutes(
+        { storage: { getAgentDefinitionStore: () => store } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const res = makeResponse();
+
+      await dispatch({
+        method: "POST",
+        path: `/agents/${agent.id}/sessions`,
+        url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+        req: makeRequest(body) as never,
+        res: res as never,
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error });
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects invalid launch override values before creating a session", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-override-routes-"));
     try {

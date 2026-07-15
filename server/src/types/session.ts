@@ -49,6 +49,8 @@ export interface SessionLaunchMetadata {
   agentId?: string;
   agentVersion?: number;
   parentSessionId?: string;
+  /** This session may create children at one additional delegation level. */
+  allowsNestedDelegation?: boolean;
   /** Client-supplied key used to make agent launch retries create at most one session. */
   idempotencyKey?: string;
   schedule?: {

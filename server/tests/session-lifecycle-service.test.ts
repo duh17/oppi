@@ -182,6 +182,25 @@ describe("SessionLifecycleService", () => {
       expect(result.summarySession).toBeUndefined();
     });
 
+    it("persists caller lineage for managed CLI child sessions", async () => {
+      const parent = makeSession({ id: "parent-1" });
+      const createdSession = makeSession({ id: "created-1" });
+      const { service, saveSession } = makeService({
+        forkSession: createdSession,
+        storedSession: parent,
+      });
+
+      await service.createWorkspaceSession({
+        workspace: makeWorkspace(),
+        parentSessionId: parent.id,
+      });
+
+      expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+        id: "created-1",
+        launch: { parentSessionId: "parent-1" },
+      });
+    });
+
     it("starts prompted sessions, records the first message, and reports summary updates", async () => {
       const createdSession = makeSession({ id: "created-1" });
       const { service, saveSession, startSession, sendPrompt } = makeService({

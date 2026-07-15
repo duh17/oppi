@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import {
   AgentLaunchService,
+  DelegationPolicyError,
   type AgentDefinition,
   type AgentLaunchResult,
   type ThinkingLevel,
@@ -141,6 +142,8 @@ export class SessionLifecycleService {
     attachments?: ChatAttachmentRef[];
     idempotencyKey?: string;
     leaseOwner?: string;
+    parentSessionId?: string;
+    allowNestedDelegation?: boolean;
   }): Promise<CreateWorkspaceSessionResult> {
     const inlineAgent: AgentDefinition = {
       name: params.name?.trim() || params.workspace.name || "Workspace session",
@@ -155,17 +158,27 @@ export class SessionLifecycleService {
       ensureSessionContextWindow: this.deps.ensureSessionContextWindow,
     });
 
-    const result = await launchService.launch({
-      agent: inlineAgent,
-      target: { workspace: params.workspace, worktreeId: params.worktreeId },
-      prompt: params.prompt,
-      attachments: params.attachments,
-      idempotencyKey: params.idempotencyKey,
-      leaseOwner: params.leaseOwner,
-      sessionName: params.name,
-      ephemeral: params.ephemeral,
-      source: "workspace-wrapper",
-    });
+    let result: AgentLaunchResult;
+    try {
+      result = await launchService.launch({
+        agent: inlineAgent,
+        target: { workspace: params.workspace, worktreeId: params.worktreeId },
+        prompt: params.prompt,
+        attachments: params.attachments,
+        idempotencyKey: params.idempotencyKey,
+        leaseOwner: params.leaseOwner,
+        parentSessionId: params.parentSessionId,
+        allowNestedDelegation: params.allowNestedDelegation,
+        sessionName: params.name,
+        ephemeral: params.ephemeral,
+        source: "workspace-wrapper",
+      });
+    } catch (error) {
+      if (error instanceof DelegationPolicyError) {
+        throw new SessionLifecycleError(error.message, 409);
+      }
+      throw error;
+    }
 
     if (result.kind === "launch_in_progress") {
       throw new SessionLifecycleError("launch_in_progress", 409);

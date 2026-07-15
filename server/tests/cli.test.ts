@@ -309,6 +309,8 @@ describe("oppi help", () => {
     expect(text).toContain("Usage: oppi session create");
     expect(text).toContain("--workspace <workspace>");
     expect(text).toContain("--prompt <text>");
+    expect(text).toContain("--allow-nested-delegation");
+    expect(text).toContain("one nested level");
     expect(text).toContain("--idempotency-key <key>");
     expect(text).toContain("reuses the existing launch");
   });

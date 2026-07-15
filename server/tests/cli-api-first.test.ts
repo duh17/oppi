@@ -123,12 +123,13 @@ function runCliResult(
   args: string[],
   cliDataDir: string,
   stdin?: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<{ stdout: string; code: number }> {
   return new Promise((resolveRun) => {
     const child = execFile(
       "node",
       [CLI, ...args],
-      { encoding: "utf-8", env: { ...process.env, OPPI_DATA_DIR: cliDataDir } },
+      { encoding: "utf-8", env: { ...process.env, OPPI_DATA_DIR: cliDataDir, ...env } },
       (error, stdout) => {
         const code =
           error && typeof (error as { code?: unknown }).code === "number"
@@ -447,13 +448,30 @@ describe("CLI app-state API boundary", () => {
         }
         sendJson(res, { error: "unexpected route" }, 404);
       },
-      async ({ dataDir }) => {
+      async ({ dataDir, requests }) => {
         const { stdout, code } = await runCliResult(
-          ["session", "create", "--workspace", "ws-1", "--prompt", "review", "--json"],
+          [
+            "session",
+            "create",
+            "--workspace",
+            "ws-1",
+            "--prompt",
+            "review",
+            "--allow-nested-delegation",
+            "--json",
+          ],
           dataDir,
+          undefined,
+          { OPPI_CALLER_SESSION_ID: "parent-1" },
         );
         expect(code).toBe(0);
         expect(JSON.parse(stdout)).toEqual({ ok: true, data: { session_id: "created-1" } });
+        expect(
+          requests.find((request) => request.path === "/workspaces/ws-1/sessions")?.body,
+        ).toMatchObject({
+          parentSessionId: "parent-1",
+          allowNestedDelegation: true,
+        });
       },
     );
   });
@@ -511,15 +529,21 @@ describe("CLI app-state API boundary", () => {
             "ws-1",
             "--prompt",
             "@-",
+            "--allow-nested-delegation",
             "--json",
           ],
           dataDir,
           "saved-Agent prompt from stdin\n",
+          { OPPI_CALLER_SESSION_ID: "parent-2" },
         );
         expect(code).toBe(0);
         expect(
           requests.find((request) => request.path === "/agents/reviewer/sessions")?.body,
-        ).toMatchObject({ prompt: { text: "saved-Agent prompt from stdin\n" } });
+        ).toMatchObject({
+          prompt: { text: "saved-Agent prompt from stdin\n" },
+          parentSessionId: "parent-2",
+          allowNestedDelegation: true,
+        });
       },
     );
   });
@@ -693,6 +717,67 @@ describe("CLI app-state API boundary", () => {
           error: { message: 'Unknown option "bogus" for question approach' },
         });
         expect(requests.filter((request) => request.path.endsWith("/command"))).toHaveLength(0);
+      },
+    );
+  });
+
+  it.each([
+    ["get", ["get", "caller-1"]],
+    ["send", ["send", "caller-1"]],
+    ["abort", ["abort", "caller-1"]],
+    ["dialogs", ["dialogs", "caller-1"]],
+    ["respond", ["respond", "caller-1"]],
+    ["watch", ["watch", "other-1", "caller-1"]],
+    ["wait", ["wait", "caller-1"]],
+    ["read", ["read", "caller-1"]],
+    ["events", ["events", "caller-1"]],
+    ["trace", ["trace", "caller-1"]],
+    ["inspect", ["inspect", "caller-1"]],
+    ["stop", ["stop", "caller-1"]],
+    ["delete", ["delete", "caller-1"]],
+    ["resume", ["resume", "caller-1"]],
+    ["fork", ["fork", "caller-1"]],
+    ["changes", ["changes", "caller-1"]],
+    ["diff", ["diff", "caller-1"]],
+    ["tool-output", ["tool-output", "caller-1"]],
+    ["trace-page", ["trace-page", "caller-1"]],
+    ["trace-outline", ["trace-outline", "caller-1"]],
+  ])("rejects managed self-targeting session %s commands before local API calls", async (_command, args) => {
+    await withOrchApi(
+      (res) => sendJson(res, { error: "local API must not be called" }, 500),
+      async ({ dataDir, requests }) => {
+        const { stdout, code } = await runCliResult(
+          ["session", ...args, "--json"],
+          dataDir,
+          undefined,
+          { OPPI_CALLER_SESSION_ID: "caller-1" },
+        );
+
+        expect(code).toBe(1);
+        expect(JSON.parse(stdout)).toEqual({
+          ok: false,
+          error: { message: "Cannot target the calling Oppi session (caller-1)" },
+        });
+        expect(requests).toEqual([]);
+      },
+    );
+  });
+
+  it("keeps human terminal session commands unchanged without caller identity", async () => {
+    await withOrchApi(
+      (res, ctx) => {
+        expect(ctx.path).toBe("/sessions/caller-1");
+        sendJson(res, { session: { id: "caller-1", status: "ready" } });
+      },
+      async ({ dataDir, requests }) => {
+        const { stdout, code } = await runCliResult(
+          ["session", "get", "caller-1", "--json"],
+          dataDir,
+        );
+
+        expect(code).toBe(0);
+        expect(JSON.parse(stdout)).toMatchObject({ ok: true });
+        expect(requests).toHaveLength(1);
       },
     );
   });

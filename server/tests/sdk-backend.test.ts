@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,10 @@ import {
   SdkBackend,
 } from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
+import {
+  callerSessionIdentityShellPrefix,
+  OPPI_CALLER_SESSION_ID_ENV,
+} from "../src/session-caller-identity.js";
 import type { AgentDefinition } from "../src/agent-launch-service.js";
 import { DEFAULT_AGENT_DEFINITION, DEFAULT_AGENT_ID } from "../src/default-agent.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
@@ -244,6 +248,126 @@ describe("SdkBackend host extensions", () => {
 
     return resourceLoader.getExtensions().extensions.flatMap((ext) => [...ext.commands.keys()]);
   }
+
+  it("preserves caller identity, shell prefix, and custom shell path across reloads", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-caller-identity-"));
+    const shellPath = join(cwd, "custom-bash");
+    const configuredShellCommandPrefix = "export OPPI_CONFIGURED_SHELL_PREFIX=preserved";
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(
+      shellPath,
+      [
+        "#!/bin/sh",
+        "export OPPI_CUSTOM_SHELL_PATH_ACTIVE=1",
+        'exec /bin/bash "$@"',
+      ].join("\n"),
+    );
+    chmodSync(shellPath, 0o755);
+    writeFileSync(
+      join(cwd, ".pi", "settings.json"),
+      JSON.stringify({ shellPath, shellCommandPrefix: configuredShellCommandPrefix }),
+    );
+    const originalCallerIdentity = process.env[OPPI_CALLER_SESSION_ID_ENV];
+    delete process.env[OPPI_CALLER_SESSION_ID_ENV];
+    let first: SdkBackend | undefined;
+    let second: SdkBackend | undefined;
+
+    try {
+      [first, second] = await Promise.all(
+        ["caller-a", "caller-b"].map((id) =>
+          SdkBackend.create({
+            session: makeSession({ id, ephemeral: true }),
+            workspace: {
+              id: "w1",
+              name: "Caller identity test",
+              runtime: "host",
+              hostMount: cwd,
+            } as Workspace,
+            onEvent: vi.fn(),
+            onEnd: vi.fn(),
+          }),
+        ),
+      );
+
+      const effectiveShellCommandPrefix = (backend: SdkBackend): string | undefined =>
+        (
+          backend as unknown as {
+            runtime: { services: { settingsManager: PiSdk.SettingsManager } };
+          }
+        ).runtime.services.settingsManager.getShellCommandPrefix();
+      const expectEffectiveShellCommandPrefix = (backend: SdkBackend, id: string): void => {
+        expect(effectiveShellCommandPrefix(backend)).toBe(
+          `${callerSessionIdentityShellPrefix(id)}\n${configuredShellCommandPrefix}`,
+        );
+      };
+      const readCallerIdentity = async (backend: SdkBackend): Promise<string> => {
+        const bash = backend.session.getToolDefinition("bash");
+        if (!bash) throw new Error("Managed host bash tool was not registered");
+        const result = await bash.execute(
+          "bash-call",
+          {
+            command: `printf '%s:%s:%s' "$${OPPI_CALLER_SESSION_ID_ENV}" "$OPPI_CONFIGURED_SHELL_PREFIX" "$OPPI_CUSTOM_SHELL_PATH_ACTIVE"`,
+          },
+          new AbortController().signal,
+          undefined,
+          {} as never,
+        );
+        return result.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("");
+      };
+
+      expectEffectiveShellCommandPrefix(first, "caller-a");
+      expectEffectiveShellCommandPrefix(second, "caller-b");
+      await expect(Promise.all([readCallerIdentity(first), readCallerIdentity(second)])).resolves.toEqual(
+        ["caller-a:preserved:1", "caller-b:preserved:1"],
+      );
+      for (let reloadCount = 0; reloadCount < 2; reloadCount += 1) {
+        await Promise.all([first.reloadResources(), second.reloadResources()]);
+        expectEffectiveShellCommandPrefix(first, "caller-a");
+        expectEffectiveShellCommandPrefix(second, "caller-b");
+        await expect(Promise.all([readCallerIdentity(first), readCallerIdentity(second)])).resolves.toEqual(
+          ["caller-a:preserved:1", "caller-b:preserved:1"],
+        );
+      }
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBeUndefined();
+    } finally {
+      await first?.dispose();
+      await second?.dispose();
+      if (originalCallerIdentity === undefined) delete process.env[OPPI_CALLER_SESSION_ID_ENV];
+      else process.env[OPPI_CALLER_SESSION_ID_ENV] = originalCallerIdentity;
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps bash disabled when launch policy uses noTools: "builtin"', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-no-builtin-tools-"));
+    const backend = await SdkBackend.create({
+      session: makeSession({
+        launch: {
+          status: "launching",
+          requestedAt: 1,
+          tools: { noTools: "builtin" },
+        },
+      }),
+      workspace: {
+        id: "w1",
+        name: "No Built-in Tools Test",
+        runtime: "host",
+        hostMount: cwd,
+      } as Workspace,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      expect(backend.session.getActiveToolNames()).not.toContain("bash");
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 
   it("loads project extensions through Pi settings discovery instead of workspace allowlists", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-project-extension-"));
