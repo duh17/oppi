@@ -154,6 +154,7 @@ struct OppiApp: App {
     @State private var navigation = AppNavigation()
     @State private var themeStore = ThemeStore()
     @State private var quickCommentTemplateStore = QuickCommentTemplateStore()
+    @State private var composerDraftStore = ComposerDraftStore()
 
     /// Convenience accessor — most lifecycle code targets the active connection.
     private var connection: ServerConnection { coordinator.activeConnection }
@@ -220,6 +221,7 @@ struct OppiApp: App {
             .environment(coordinator.serverStore)
             .environment(themeStore)
             .environment(quickCommentTemplateStore)
+            .environment(\.composerDraftStore, composerDraftStore)
             .environment(\.theme, themeStore.appTheme)
             .environment(\.themeID, themeStore.activeThemeID)
             .tint(.themeBlue)
@@ -296,6 +298,7 @@ struct OppiApp: App {
         DeviceResourceSampler.shared.configure()
         configureWatchdogHooks()
         mainThreadLagWatchdog.start()
+        await composerDraftStore.load()
         coordinator.startLANDiscovery()
         coordinator.startNetworkPathMonitor()
         await setupNotifications()
@@ -623,6 +626,22 @@ struct OppiApp: App {
     }
 
     @MainActor
+    private func activeComposerDraftRecord() -> ComposerDraftRecord? {
+        guard let serverID = coordinator.activeServerId,
+              let sessionID = diagnosticVisibleSessionId() ?? connection.sessionStore.activeSessionId,
+              let workspaceID = diagnosticVisibleWorkspaceId()
+                ?? connection.sessionStore.workspaceId(for: sessionID),
+              let key = ComposerDraftKey(
+                  serverID: serverID,
+                  workspaceID: workspaceID,
+                  sessionID: sessionID
+              ) else {
+            return nil
+        }
+        return composerDraftStore.record(for: key)
+    }
+
+    @MainActor
     private func diagnosticVisibleSessionId() -> String? {
         switch navigation.workspaceNavigationPresentation {
         case .split:
@@ -766,6 +785,8 @@ struct OppiApp: App {
             }
 
         case .background:
+            composerDraftStore.saveLifecycleFallback(activeComposerDraftRecord())
+            Task { await composerDraftStore.flush() }
             recordLifecycleStep(phase, "restoration_save_begin", flush: true)
             RestorationState.save(from: connection, coordinator: coordinator, navigation: navigation)
             recordLifecycleStep(phase, "restoration_save_done", flush: true)
@@ -796,7 +817,8 @@ struct OppiApp: App {
             }
 
         case .inactive:
-            break
+            composerDraftStore.saveLifecycleFallback(activeComposerDraftRecord())
+            Task { await composerDraftStore.flush() }
 
         @unknown default:
             break
@@ -1009,7 +1031,11 @@ struct OppiApp: App {
         if let restored {
             navigation.selectedTab = AppTab(rawString: restored.selectedTab)
             connection.sessionStore.activeSessionId = restored.activeSessionId
-            connection.chatState.composerDraft = restored.composerDraft
+            composerDraftStore.stageLegacyDraft(
+                text: restored.composerDraft,
+                serverID: restored.activeServerId,
+                sessionID: restored.activeSessionId
+            )
         }
 
         // 3. Show cached data immediately (before any network calls)

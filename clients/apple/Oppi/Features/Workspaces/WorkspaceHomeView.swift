@@ -425,6 +425,7 @@ struct WorkspaceHomeView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var createSheetContext: WorkspaceCreateSheetContext?
@@ -1121,9 +1122,11 @@ struct WorkspaceHomeView: View {
                 workspaceId: pending.workspaceId,
                 sessionId: pending.session.id
             )
+            clearComposerDraft(for: pending)
             await refresh(force: true)
         } catch let apiError as APIError {
             if case .server(let status, _) = apiError, status == 404 {
+                clearComposerDraft(for: pending)
                 await refresh(force: true)
             } else {
                 self.error = "Delete failed: \(apiError.localizedDescription)"
@@ -1133,6 +1136,14 @@ struct WorkspaceHomeView: View {
             self.error = "Delete failed: \(error.localizedDescription)"
             await refresh(force: true)
         }
+    }
+
+    private func clearComposerDraft(for pending: WorkspaceHomePendingDeleteSession) {
+        composerDraftStore?.clearDraft(
+            serverID: pending.serverId,
+            workspaceID: pending.workspaceId,
+            sessionID: pending.session.id
+        )
     }
 
     // MARK: - Guided Workspace Creation

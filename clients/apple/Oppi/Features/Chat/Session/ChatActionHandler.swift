@@ -312,6 +312,7 @@ final class ChatActionHandler {
         sessionId: String,
         redactionPolicy: ShareSessionRedactionPolicy = .recommended,
         onDispatchStarted: (() -> Void)? = nil,
+        onSendSucceeded: (() -> Void)? = nil,
         onAsyncFailure: (() -> Void)? = nil,
         onNeedsReconnect: (() -> Void)? = nil
     ) {
@@ -337,6 +338,7 @@ final class ChatActionHandler {
                     link: published.link,
                     redaction: published.redaction
                 )
+                onSendSucceeded?()
                 self.scheduleSendStageClear()
             } catch {
                 self.clearSendStageNow()

@@ -471,6 +471,7 @@ private struct NavigationChromeChatFilesReproHarnessView: View {
     @State private var navigation = AppNavigation()
     @State private var connection = NavigationChromeChatFilesReproHarnessView.makeConnection()
     @State private var quickCommentTemplateStore = QuickCommentTemplateStore(templates: [])
+    @State private var composerDraftStore = ComposerDraftStore()
     @State private var didAutoOpen = false
     @State private var isFilePanelVisible = false
     @State private var filesTapCount = 0
@@ -503,6 +504,7 @@ private struct NavigationChromeChatFilesReproHarnessView: View {
                 }
         }
         .environment(navigation)
+        .environment(\.composerDraftStore, composerDraftStore)
         .overlay(alignment: .topLeading) {
             diagnosticsOverlay
         }

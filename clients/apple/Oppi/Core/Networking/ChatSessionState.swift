@@ -9,7 +9,7 @@ struct ExtensionEditorTextUpdate: Equatable, Sendable {
 /// Observable state bag for per-connection chat UI concerns.
 ///
 /// Extracted from `ServerConnection` to isolate view-model properties
-/// (composer draft, model/slash command caches, file suggestions, thinking level)
+/// (model/slash command caches, file suggestions, thinking level)
 /// from transport and networking state. Views that only need these properties
 /// observe `ChatSessionState` instead of the full `ServerConnection`.
 ///
@@ -19,8 +19,6 @@ struct ExtensionEditorTextUpdate: Equatable, Sendable {
 final class ChatSessionState {
 
     // MARK: - Composer
-
-    var composerDraft: String?
 
     /// Extension-driven editor updates (`ctx.ui.setEditorText`) with revision
     /// tokens so repeated identical payloads still trigger view updates.
