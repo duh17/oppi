@@ -1780,7 +1780,7 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "full_reload_ms"
+                "value": "trace_fetch_ms"
               },
               {
                 "id": "color",
@@ -1867,8 +1867,8 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.full_reload_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.full_reload_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.trace_fetch_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.trace_fetch_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "timeColumns": ["time"],
           "refId": "B"
         },
@@ -4739,6 +4739,6 @@
   "timezone": "browser",
   "title": "Oppi Release Preflight",
   "uid": "oppi-release-preflight",
-  "version": 9,
+  "version": 10,
   "weekStart": ""
 }

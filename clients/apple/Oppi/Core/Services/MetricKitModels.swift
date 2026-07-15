@@ -56,7 +56,7 @@ enum ChatMetricName: String, Codable, Sendable {
     // Removed: wsDecodeMs — high-volume noise (32% of samples, almost always 0ms)
     case coalescerFlushEvents = "chat.coalescer_flush_events"
     case coalescerFlushBytes = "chat.coalescer_flush_bytes"
-    case fullReloadMs = "chat.full_reload_ms"
+    case traceFetchMs = "chat.trace_fetch_ms"
     case freshContentLagMs = "chat.fresh_content_lag_ms"
     case cacheLoadMs = "chat.cache_load_ms"
     case reducerLoadMs = "chat.reducer_load_ms"

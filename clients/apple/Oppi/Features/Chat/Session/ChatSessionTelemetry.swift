@@ -112,17 +112,26 @@ enum ChatSessionTelemetry {
 
     // MARK: - History reload
 
-    static func recordFullReload(
+    static func recordTraceFetch(
         durationMs: Int64,
         sessionId: String,
         workspaceId: String?,
-        traceEventCount: Int
+        status: String,
+        traceEventCount: Int? = nil,
+        errorKind: String? = nil
     ) {
+        var tags = ["status": status]
+        if let traceEventCount {
+            tags["trace_events"] = String(traceEventCount)
+        }
+        if let errorKind {
+            tags["error_kind"] = errorKind
+        }
         emit(
-            .fullReloadMs, Double(durationMs), .ms,
+            .traceFetchMs, Double(durationMs), .ms,
             sessionId: sessionId,
             workspaceId: workspaceId,
-            tags: ["trace_events": String(traceEventCount)]
+            tags: tags
         )
     }
 

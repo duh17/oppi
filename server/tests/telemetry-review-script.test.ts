@@ -43,10 +43,13 @@ function makeReviewData(endTs: number) {
 
 describe("telemetry-review svg reporting", () => {
   it("gates on current emitted release metrics", () => {
+    expect(SLO_THRESHOLDS).toHaveProperty("chat.trace_fetch_ms");
+    expect(SLO_THRESHOLDS).toHaveProperty("chat.reducer_load_ms");
     expect(SLO_THRESHOLDS).toHaveProperty("chat.ws_wait_for_connected_ms");
     expect(SLO_THRESHOLDS).toHaveProperty("server.ws_handshake_ms");
     expect(SLO_THRESHOLDS).toHaveProperty("server.session_subscribe_ms");
 
+    expect(SLO_THRESHOLDS).not.toHaveProperty("chat.full_reload_ms");
     expect(SLO_THRESHOLDS).not.toHaveProperty("chat.subscribe_ack_ms");
     expect(SLO_THRESHOLDS).not.toHaveProperty("chat.ws_connect_ms");
     expect(SLO_THRESHOLDS).not.toHaveProperty("chat.connected_dispatch_ms");
@@ -77,6 +80,41 @@ describe("telemetry-review svg reporting", () => {
       expect(result.samples).toHaveLength(6);
       expect(result.values["server.cpu_total"]?.vals).toEqual([12]);
       expect(result.values["server.event_loop_lag_ms"]?.vals).toEqual([7]);
+    } finally {
+      rmSync(telemetryDir, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes failed trace fetches from latency SLOs", () => {
+    const telemetryDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-review-"));
+    try {
+      const now = Date.now();
+      writeFileSync(
+        join(telemetryDir, "chat-metrics-2026-07-14.jsonl"),
+        JSON.stringify({
+          buildNumber: "42",
+          samples: [
+            {
+              ts: now,
+              metric: "chat.trace_fetch_ms",
+              value: 120,
+              unit: "ms",
+              tags: { status: "ok" },
+            },
+            {
+              ts: now,
+              metric: "chat.trace_fetch_ms",
+              value: 10_000,
+              unit: "ms",
+              tags: { status: "error", error_kind: "timeout" },
+            },
+          ],
+        }) + "\n",
+      );
+
+      const result = loadSamples(telemetryDir, 1);
+
+      expect(result.values["chat.trace_fetch_ms"]?.vals).toEqual([120]);
     } finally {
       rmSync(telemetryDir, { recursive: true, force: true });
     }
