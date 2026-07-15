@@ -157,8 +157,6 @@ All 49 color keys must be present. Each value must be `#RRGGBB` or `""` (empty =
 
 ## Agent-friendly theme creation
 
-The sample source at `server/extensions/oppi-admin.ts` includes a `build_theme` tool that validates the 49-token color map and writes the theme to the configured theme directory. The current server does not register that factory, and Pi does not auto-discover extensions from `server/extensions/`, so the tool does not appear in workspace extension toggles or load by default.
-
 Create themes by writing the JSON file directly to `~/.config/oppi/themes/`, or `$OPPI_DATA_DIR/themes/` when the server uses a custom data dir. No server restart is required.
 
 Theme routes are available for clients:
