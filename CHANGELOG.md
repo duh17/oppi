@@ -58,6 +58,7 @@ Example:
 
 ### Changed
 
+- **Server:** Updated the embedded Pi runtime packages to `0.80.7`, bringing cache-friendly dynamic extension tool loading and current provider/session-affinity fixes into Oppi sessions.
 - **Client/Server:** The Mac app, terminal users, and managed host sessions use the same `oppi` executable installed by `npm install -g oppi-server`. The Mac app requires the npm package and does not bundle a second server runtime.
 - **Server:** The package now requires Node.js 24 and compiles with the TypeScript 7 native compiler.
 

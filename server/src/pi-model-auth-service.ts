@@ -24,5 +24,9 @@ export function getBuiltinCostModel(
   provider: KnownProvider,
   modelId: string,
 ): Model<Api> | undefined {
-  return getModel(provider, modelId as never) as Model<Api> | undefined;
+  // KnownProvider includes dynamic providers such as Radius, while this static
+  // catalog intentionally does not. Its lookup returns undefined for them.
+  return getModel(provider as Parameters<typeof getModel>[0], modelId as never) as
+    | Model<Api>
+    | undefined;
 }

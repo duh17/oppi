@@ -124,6 +124,15 @@ describe("estimateUsageCostFromModel", () => {
 
     expect(cost).toBe(codexSparkExpectedCost);
   });
+
+  it("returns zero for dynamic providers without static pricing", () => {
+    const cost = estimateUsageCostFromModel("radius/custom-model", {
+      input: 1000,
+      output: 100,
+    });
+
+    expect(cost).toBe(0);
+  });
 });
 
 describe("resolveCacheWriteForModelBreakdown", () => {
