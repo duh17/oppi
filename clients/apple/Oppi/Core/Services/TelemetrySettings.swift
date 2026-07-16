@@ -43,7 +43,7 @@ enum TelemetryMode: Sendable, Equatable {
         .internalDiagnostics
     }
 
-    var allowsRemoteDiagnosticsUpload: Bool {
+    var diagnosticsEnabledByDefault: Bool {
         self == .internalDiagnostics
     }
 }
@@ -63,21 +63,17 @@ enum TelemetrySettings {
 
     static func allowsRemoteDiagnosticsUpload(
         mode: TelemetryMode,
-        userOptIn: Bool = false,
+        userOptIn: Bool? = nil,
         environment: [String: String]
     ) -> Bool {
         if isRunningAutomatedTests(environment: environment) {
             return false
         }
 
-        // Internal/debug builds always upload metrics to the user's server.
-        if mode.allowsRemoteDiagnosticsUpload {
-            return true
-        }
-
-        // Release/public builds upload metrics to the user's own server
-        // only if the user explicitly opts in via Settings.
-        return userOptIn
+        // Callers may supply an explicit preference for deterministic tests.
+        // An unset preference preserves the build defaults: on for internal
+        // builds and off for public builds.
+        return userOptIn ?? mode.diagnosticsEnabledByDefault
     }
 
     private static func isRunningAutomatedTests(environment: [String: String]) -> Bool {

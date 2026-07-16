@@ -3,7 +3,7 @@ import Testing
 
 @Suite("Telemetry mode")
 struct TelemetryModeTests {
-    @Test func internalAliasesEnableRemoteDiagnostics() {
+    @Test func internalAliasesDefaultDiagnosticsOn() {
         let enabledAliases = [
             "internal",
             "debug",
@@ -21,11 +21,11 @@ struct TelemetryModeTests {
         for alias in enabledAliases {
             let mode = TelemetryMode.fromRawString(alias)
             #expect(mode == .internalDiagnostics)
-            #expect(mode.allowsRemoteDiagnosticsUpload)
+            #expect(mode.diagnosticsEnabledByDefault)
         }
     }
 
-    @Test func publicAliasesDisableRemoteDiagnostics() {
+    @Test func publicAliasesDefaultDiagnosticsOff() {
         let disabledAliases = [
             "public",
             "release",
@@ -41,7 +41,7 @@ struct TelemetryModeTests {
         for alias in disabledAliases {
             let mode = TelemetryMode.fromRawString(alias)
             #expect(mode == .public)
-            #expect(!mode.allowsRemoteDiagnosticsUpload)
+            #expect(!mode.diagnosticsEnabledByDefault)
         }
     }
 
@@ -104,9 +104,9 @@ struct TelemetryModeTests {
         )
     }
 
-    @Test func internalModeAlwaysAllowsRegardlessOfOptIn() {
+    @Test func internalModeRespectsExplicitPreference() {
         #expect(
-            TelemetrySettings.allowsRemoteDiagnosticsUpload(
+            !TelemetrySettings.allowsRemoteDiagnosticsUpload(
                 mode: .internalDiagnostics,
                 userOptIn: false,
                 environment: [:]
@@ -117,6 +117,33 @@ struct TelemetryModeTests {
                 mode: .internalDiagnostics,
                 userOptIn: true,
                 environment: [:]
+            )
+        )
+    }
+
+    @Test func telemetryPreferenceUsesBuildDefaultUntilExplicitlySet() {
+        #expect(
+            AppPreferences.Telemetry.resolvedEnabled(
+                storedValue: nil,
+                defaultEnabled: true
+            )
+        )
+        #expect(
+            !AppPreferences.Telemetry.resolvedEnabled(
+                storedValue: nil,
+                defaultEnabled: false
+            )
+        )
+        #expect(
+            !AppPreferences.Telemetry.resolvedEnabled(
+                storedValue: false,
+                defaultEnabled: true
+            )
+        )
+        #expect(
+            AppPreferences.Telemetry.resolvedEnabled(
+                storedValue: true,
+                defaultEnabled: false
             )
         )
     }
