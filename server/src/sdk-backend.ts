@@ -28,7 +28,7 @@ import {
   type ToolDefinition,
   SessionManager as PiSessionManager,
   DefaultResourceLoader,
-  AuthStorage,
+  ModelRuntime,
   ModelRegistry,
   SettingsManager,
   getAgentDir,
@@ -354,7 +354,7 @@ export class SdkBackend {
   }
 
   private get modelRegistry(): ModelRegistry {
-    return this.runtime.services.modelRegistry;
+    return new ModelRegistry(this.runtime.services.modelRuntime);
   }
 
   private restoreSessionManagerDisplayCwd(): void {
@@ -433,8 +433,11 @@ export class SdkBackend {
       );
       const savedAgentSkillPaths = agentDefinition?.resources?.skillPaths ?? [];
       const additionalSkillPaths = [...(config.skillPaths ?? []), ...savedAgentSkillPaths];
-      const authStorage = AuthStorage.create(join(runtimeAgentDir, "auth.json"));
-      const modelRegistry = ModelRegistry.create(authStorage, join(runtimeAgentDir, "models.json"));
+      const modelRuntime = await ModelRuntime.create({
+        authPath: join(runtimeAgentDir, "auth.json"),
+        modelsPath: join(runtimeAgentDir, "models.json"),
+      });
+      const modelRegistry = new ModelRegistry(modelRuntime);
       const settingsManager = SettingsManager.create(hostCwd, runtimeAgentDir);
 
       const shouldSeedFromSessionState = !sessionStartEvent;
@@ -623,8 +626,7 @@ export class SdkBackend {
       const createResult = await createAgentSession({
         cwd: sessionCwd,
         agentDir: runtimeAgentDir,
-        authStorage,
-        modelRegistry,
+        modelRuntime,
         model,
         thinkingLevel: normalizeThinkingLevel(session.thinkingLevel),
         sessionManager,
@@ -652,9 +654,8 @@ export class SdkBackend {
         services: {
           cwd: sessionCwd,
           agentDir: runtimeAgentDir,
-          authStorage,
+          modelRuntime,
           settingsManager,
-          modelRegistry,
           resourceLoader: loader,
           diagnostics: [],
         },
@@ -931,7 +932,7 @@ export class SdkBackend {
     thinkingLevel?: string;
     error?: string;
   }> {
-    this.modelRegistry.refresh();
+    await this.modelRegistry.refresh();
     const candidates = modelCandidatesFromRegistry(
       this.modelRegistry,
       this.runtime.services.settingsManager.getEnabledModels(),

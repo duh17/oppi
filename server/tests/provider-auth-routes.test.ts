@@ -36,7 +36,7 @@ function makeRequest(body?: unknown): Readable {
 describe("provider auth routes", () => {
   it("handles GET /provider-auth/status", async () => {
     const providerAuth = {
-      getStatus: vi.fn(() => [
+      getStatus: vi.fn(async () => [
         { id: "openai-codex", name: "ChatGPT (Codex)", supportsApiKey: false },
       ]),
     } as unknown as RouteContext["providerAuth"];

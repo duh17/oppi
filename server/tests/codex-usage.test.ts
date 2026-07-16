@@ -4,11 +4,10 @@ import { fetchCodexUsageStatus } from "../src/codex-usage.js";
 
 describe("fetchCodexUsageStatus", () => {
   it("returns unauthenticated when no openai-codex credential is stored", async () => {
+    const modelRuntime = { getAuth: vi.fn() };
     const result = await fetchCodexUsageStatus({
-      authStorage: {
-        get: vi.fn(() => undefined),
-        getApiKey: vi.fn(async () => undefined),
-      } as never,
+      modelRuntime,
+      readCredential: vi.fn(() => undefined),
       fetchImpl: vi.fn() as never,
       now: () => 123,
     });
@@ -27,10 +26,19 @@ describe("fetchCodexUsageStatus", () => {
   });
 
   it("maps five-hour and weekly windows from the usage payload", async () => {
-    const authStorage = {
-      get: vi.fn(() => ({ type: "oauth", accountId: "acct_123" })),
-      getApiKey: vi.fn(async () => "token_123"),
-    } as never;
+    const modelRuntime = {
+      getAuth: vi.fn(async () => ({ auth: { apiKey: "token_123" }, source: "OAuth" })),
+    };
+    const readCredential = vi.fn(
+      () =>
+        ({
+          type: "oauth",
+          refresh: "refresh_123",
+          access: "token_123",
+          expires: 1_800_000_000_000,
+          accountId: "acct_123",
+        }) as const,
+    );
 
     const fetchImpl = vi.fn(
       async () =>
@@ -78,7 +86,8 @@ describe("fetchCodexUsageStatus", () => {
     ) as never;
 
     const result = await fetchCodexUsageStatus({
-      authStorage,
+      modelRuntime,
+      readCredential,
       fetchImpl,
       now: () => 999,
     });
@@ -123,10 +132,19 @@ describe("fetchCodexUsageStatus", () => {
 
   it("returns a structured error on non-200 responses", async () => {
     const result = await fetchCodexUsageStatus({
-      authStorage: {
-        get: vi.fn(() => ({ type: "oauth", accountId: "acct_123" })),
-        getApiKey: vi.fn(async () => "token_123"),
-      } as never,
+      modelRuntime: {
+        getAuth: vi.fn(async () => ({ auth: { apiKey: "token_123" }, source: "OAuth" })),
+      },
+      readCredential: vi.fn(
+        () =>
+          ({
+            type: "oauth",
+            refresh: "refresh_123",
+            access: "token_123",
+            expires: 1_800_000_000_000,
+            accountId: "acct_123",
+          }) as const,
+      ),
       fetchImpl: vi.fn(
         async () =>
           new Response(JSON.stringify({ error: { message: "rate limited" } }), { status: 429 }),
