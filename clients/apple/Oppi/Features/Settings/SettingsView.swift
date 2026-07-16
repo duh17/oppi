@@ -406,9 +406,9 @@ struct SettingsView: View {
         let authenticationText = biometricEnabled
             ? "Sensitive local actions require \(bio.biometricName)."
             : "Sensitive local actions skip device authentication."
-        let diagnosticsText = TelemetryMode.current == .public
-            ? "Diagnostics stay on your server and are never shared externally."
-            : "Internal builds upload performance metrics automatically."
+        let diagnosticsText = telemetryEnabled
+            ? "Diagnostics are sent only to your server."
+            : "Diagnostics uploads are off."
         return "\(authenticationText) \(diagnosticsText)"
     }
 
@@ -427,17 +427,12 @@ struct SettingsView: View {
                 bio.isEnabled = newValue
             }
 
-            if TelemetryMode.current == .public {
-                Toggle("Send Diagnostics to Server", isOn: $telemetryEnabled)
-                    .onChange(of: telemetryEnabled) { _, newValue in
-                        AppPreferences.Telemetry.setEnabled(newValue)
-                        MetricKitService.shared.refreshAfterPreferenceChange()
-                        DeviceResourceSampler.shared.refreshAfterPreferenceChange()
-                    }
-            } else {
-                Text("Diagnostics are active (internal build)")
-                    .foregroundStyle(.themeComment)
-            }
+            Toggle("Send Diagnostics to Server", isOn: $telemetryEnabled)
+                .onChange(of: telemetryEnabled) { _, newValue in
+                    AppPreferences.Telemetry.setEnabled(newValue)
+                    MetricKitService.shared.refreshAfterPreferenceChange()
+                    DeviceResourceSampler.shared.refreshAfterPreferenceChange()
+                }
         } header: {
             Text("Privacy & Security")
         } footer: {
