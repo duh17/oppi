@@ -1,4 +1,7 @@
-import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import type {
+  InlineExtension,
+  SessionManager as PiSessionManager,
+} from "@earendil-works/pi-coding-agent";
 
 /**
  * Versioned Pi custom-entry type used to persist structural lifecycle events.
@@ -28,12 +31,22 @@ export interface OppiLifecycleEntryData {
   isError?: boolean;
 }
 
-export function createLifecycleJournalExtension(): InlineExtension {
+type LifecycleJournalSessionManager = Pick<PiSessionManager, "appendCustomEntry">;
+
+/**
+ * Register the lifecycle hooks that must run before Pi notifies normal session
+ * subscribers. The injected manager belongs to this exact runtime instance, so
+ * a late teardown event cannot write through a stale extension API or into a
+ * replacement session.
+ */
+export function createLifecycleJournalExtension(
+  sessionManager: LifecycleJournalSessionManager,
+): InlineExtension {
   return {
     name: "oppi-lifecycle-journal",
     factory: (pi) => {
       const append = (data: OppiLifecycleEntryData): void => {
-        pi.appendEntry(OPPI_LIFECYCLE_CUSTOM_TYPE, data);
+        sessionManager.appendCustomEntry(OPPI_LIFECYCLE_CUSTOM_TYPE, data);
       };
 
       pi.on("agent_start", () => {
@@ -41,15 +54,6 @@ export function createLifecycleJournalExtension(): InlineExtension {
       });
       pi.on("agent_end", () => {
         append({ version: 1, event: "agent_end" });
-      });
-      pi.on("agent_settled", () => {
-        append({ version: 1, event: "agent_settled" });
-      });
-      pi.on("turn_start", (event) => {
-        append({ version: 1, event: "turn_start", turnIndex: event.turnIndex });
-      });
-      pi.on("turn_end", (event) => {
-        append({ version: 1, event: "turn_end", turnIndex: event.turnIndex });
       });
       pi.on("tool_execution_start", (event) => {
         append({
