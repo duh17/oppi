@@ -153,6 +153,21 @@ describe("SessionTraceService", () => {
     ]);
   });
 
+  it("marks a live leaf stale when no trace source is available", async () => {
+    const dataDir = tempDir("oppi-session-trace-missing-live-");
+    const session = makeSession({ id: "sess-1", workspaceId: "ws-1" });
+    const { service } = makeService({
+      dataDir,
+      storedSession: session,
+      liveState: { sessionFile: join(dataDir, "missing.jsonl"), leafId: "live-leaf" },
+    });
+
+    const result = await service.getSessionTracePage({ session });
+
+    expect(result?.trace).toEqual([]);
+    expect(result?.page.staleCursor).toBe(true);
+  });
+
   it("returns stored image metadata instead of truncated inline image bytes in trace pages", async () => {
     const dataDir = tempDir("oppi-session-trace-page-image-");
     const traceDir = join(dataDir, "ws-1", "sessions", "sess-1", "agent", "sessions", "--work--");

@@ -323,6 +323,10 @@ export function createSessionTraceRouteHandlers(
       helpers.error(res, 404, "Session trace not found");
       return;
     }
+    if (!url.searchParams.has("cursor") && result.page.staleCursor) {
+      helpers.error(res, 409, "Session trace is not synchronized with the active tree leaf");
+      return;
+    }
     helpers.compressedJson(req, res, attachTracePageResponseMetrics(result));
   }
 

@@ -91,6 +91,73 @@ describe("trace paging", () => {
     expect(page.trace.some((event) => event.id === result?.toolCallId)).toBe(true);
   });
 
+  it("ends the latest page at an explicit live leaf instead of the abandoned file tail", () => {
+    const abandonedBranch = Array.from({ length: 20 }, (_, index) =>
+      messageEntry(
+        `abandoned-${index}`,
+        index === 0 ? "a1" : `abandoned-${index - 1}`,
+        index % 2 === 0 ? "user" : "assistant",
+        index % 2 === 0 ? `abandoned prompt ${index}` : textBlock(`abandoned answer ${index}`),
+      ),
+    );
+    const path = tempJsonl([
+      messageEntry("u1", null, "user", "selected prompt"),
+      messageEntry("a1", "u1", "assistant", textBlock("selected answer")),
+      ...abandonedBranch,
+    ]);
+
+    const page = readSessionTracePageFromFile(path, {
+      leafId: "a1",
+      targetEvents: 10,
+      previewBytes: 8,
+      maxInitialReadBytes: 512,
+    });
+
+    expect(page.trace.map((event) => event.id)).toEqual(["u1", "a1-text-0"]);
+    expect(page.trace.some((event) => event.text?.includes("abandoned"))).toBe(false);
+  });
+
+  it("keeps older cursor pages on the selected branch", () => {
+    const path = tempJsonl([
+      messageEntry("u1", null, "user", "root"),
+      messageEntry("a1", "u1", "assistant", textBlock("root answer")),
+      messageEntry("abandoned-u2", "a1", "user", "abandoned prompt"),
+      messageEntry("abandoned-a2", "abandoned-u2", "assistant", textBlock("abandoned answer")),
+      messageEntry("current-u2", "a1", "user", "current prompt"),
+      messageEntry("current-a2", "current-u2", "assistant", textBlock("current answer")),
+      messageEntry("current-u3", "current-a2", "user", "latest prompt"),
+      messageEntry("current-a3", "current-u3", "assistant", textBlock("latest answer")),
+    ]);
+
+    const latest = readSessionTracePageFromFile(path, {
+      leafId: "current-a3",
+      targetEvents: 2,
+      previewBytes: 8,
+    });
+    const older = readSessionTracePageFromFile(path, {
+      cursor: latest.page.olderCursor ?? undefined,
+      targetEvents: 2,
+      previewBytes: 8,
+    });
+
+    expect(latest.trace.map((event) => event.id)).toEqual(["current-u3", "current-a3-text-0"]);
+    expect(older.trace.map((event) => event.id)).toEqual(["current-u2", "current-a2-text-0"]);
+    expect(older.trace.some((event) => event.text?.includes("abandoned"))).toBe(false);
+  });
+
+  it("marks a missing explicit leaf stale instead of returning a successful empty page", () => {
+    const path = tempJsonl(fixtureEntries());
+
+    const page = readSessionTracePageFromFile(path, {
+      leafId: "missing-leaf",
+      targetEvents: 2,
+      previewBytes: 8,
+    });
+
+    expect(page.trace).toEqual([]);
+    expect(page.page.staleCursor).toBe(true);
+  });
+
   it("uses the default target size when targetEvents is omitted", () => {
     const path = tempJsonl(fixtureEntries());
 
