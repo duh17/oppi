@@ -37,7 +37,7 @@ export function createProviderAuthRoutes(
 
     try {
       if (path === "/provider-auth/status" && method === "GET") {
-        helpers.json(res, { providers: ctx.providerAuth.getStatus() });
+        helpers.json(res, { providers: await ctx.providerAuth.getStatus() });
         return true;
       }
 

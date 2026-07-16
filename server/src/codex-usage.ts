@@ -1,5 +1,5 @@
-import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { join } from "node:path";
+import { readStoredCredential, type ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AuthResult, Credential } from "@earendil-works/pi-ai";
 
 import { safeErrorMessage } from "./log-utils.js";
 
@@ -41,18 +41,14 @@ export interface CodexUsageStatus {
   error?: string;
 }
 
-type AuthStorageLike = Pick<AuthStorage, "get" | "getApiKey">;
-
+type CodexModelRuntime = Pick<ModelRuntime, "getAuth">;
 type FetchLike = typeof fetch;
 
 interface FetchCodexUsageStatusOptions {
-  authStorage?: AuthStorageLike;
+  modelRuntime: CodexModelRuntime;
+  readCredential?: (providerId: string) => Credential | undefined;
   fetchImpl?: FetchLike;
   now?: () => number;
-}
-
-function defaultAuthStorage(): AuthStorage {
-  return AuthStorage.create(join(getAgentDir(), "auth.json"));
 }
 
 function emptyStatus(now: number, authenticated = false, error?: string): CodexUsageStatus {
@@ -84,7 +80,7 @@ function readString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
-function extractAccountId(credential: unknown): string | null {
+function extractAccountId(credential: Credential | undefined): string | null {
   const record = asRecord(credential);
   if (!record) return null;
   return readString(record.accountId);
@@ -185,24 +181,24 @@ function parseErrorMessage(status: number, payload: unknown, fallbackText: strin
 }
 
 export async function fetchCodexUsageStatus(
-  options: FetchCodexUsageStatusOptions = {},
+  options: FetchCodexUsageStatusOptions,
 ): Promise<CodexUsageStatus> {
   const now = options.now ?? Date.now;
-  const authStorage = options.authStorage ?? defaultAuthStorage();
+  const readCredential = options.readCredential ?? readStoredCredential;
   const fetchImpl = options.fetchImpl ?? fetch;
-
-  const initialCredential = authStorage.get(CODEX_PROVIDER_ID);
+  const initialCredential = readCredential(CODEX_PROVIDER_ID);
   if (!initialCredential) {
     return emptyStatus(now(), false);
   }
 
-  let apiKey: string | undefined;
+  let auth: AuthResult | undefined;
   try {
-    apiKey = await authStorage.getApiKey(CODEX_PROVIDER_ID, { includeFallback: false });
+    auth = await options.modelRuntime.getAuth(CODEX_PROVIDER_ID);
   } catch (error) {
     return emptyStatus(now(), true, `Codex auth refresh failed: ${safeErrorMessage(error)}`);
   }
 
+  const apiKey = auth?.auth.apiKey;
   if (!apiKey) {
     return emptyStatus(
       now(),
@@ -211,9 +207,7 @@ export async function fetchCodexUsageStatus(
     );
   }
 
-  const refreshedCredential = authStorage.get(CODEX_PROVIDER_ID) ?? initialCredential;
-  const accountId = extractAccountId(refreshedCredential) ?? extractAccountId(initialCredential);
-
+  const accountId = extractAccountId(readCredential(CODEX_PROVIDER_ID) ?? initialCredential);
   const headers = new Headers({
     Authorization: `Bearer ${apiKey}`,
     Accept: "application/json",

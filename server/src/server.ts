@@ -38,7 +38,7 @@ import { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import { SessionRuntimes } from "./runtime-router.js";
 import {
   ModelRegistry,
-  AuthStorage,
+  ModelRuntime,
   getAgentDir,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -394,10 +394,11 @@ export class Server {
   private readonly piExecutable: string;
   private readonly identityFingerprint: string;
   private bonjourAdvertiser: BonjourAdvertiser | null = null;
-  private modelRegistry: ModelRegistry;
-  private models: ModelCatalog;
-  private providerAuth: ProviderAuthManager;
-  private titleGenerator: SessionTitleGenerator;
+  private modelRuntime!: ModelRuntime;
+  private modelRegistry!: ModelRegistry;
+  private models!: ModelCatalog;
+  private providerAuth!: ProviderAuthManager;
+  private titleGenerator!: SessionTitleGenerator;
 
   // Track all WebSocket connections for lifecycle/resource accounting.
   private connections: Set<WebSocket> = new Set();
@@ -434,46 +435,6 @@ export class Server {
     this.storage = storage;
     this.piExecutable = resolvePiExecutable();
 
-    // SDK model registry + catalog
-    const agentDir = getAgentDir();
-    const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-    this.modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
-    this.models = new ModelCatalog(this.modelRegistry, this.storage, () =>
-      SettingsManager.create(process.cwd(), agentDir).getEnabledModels(),
-    );
-    this.providerAuth = new ProviderAuthManager({
-      authStorage,
-      getKnownApiKeyProviderIds: () => {
-        const knownApiKeyProviders = new Set<string>([
-          "anthropic",
-          "openai",
-          "google",
-          "deepseek",
-          "mistral",
-          "groq",
-          "xai",
-          "openrouter",
-          "zai",
-        ]);
-        const oauthOnlyProviders = new Set<string>([
-          "openai-codex",
-          "github-copilot",
-          "google-gemini-cli",
-          "google-antigravity",
-        ]);
-
-        for (const model of this.modelRegistry.getAll()) {
-          if (!oauthOnlyProviders.has(model.provider)) {
-            knownApiKeyProviders.add(model.provider);
-          }
-        }
-
-        return [...knownApiKeyProviders];
-      },
-      onCredentialsChanged: () => {
-        this.models.refresh();
-      },
-    });
     const dataDir = storage.getDataDir();
     const config = storage.getConfig();
     const identity = ensureIdentityMaterial(identityConfigForDataDir(dataDir));
@@ -581,35 +542,6 @@ export class Server {
       },
     });
 
-    // Auto-title generator — generates concise task titles on first user message
-    this.titleGenerator = new SessionTitleGenerator({
-      getConfig: () => this.storage.getConfig().autoTitle ?? { enabled: false },
-      modelRegistry: this.modelRegistry,
-      getSession: (sessionId) => this.storage.getSession(sessionId) ?? undefined,
-      setSessionName: async (sessionId, name) => {
-        await this.sessions.runCommand(sessionId, { type: "set_session_name", name });
-
-        // Keep Oppi's Session.name as a projection for list/header broadcasts.
-        // Pi's session_info entry is the source of truth.
-        const active = this.sessions.getActiveSession(sessionId);
-        if (active) {
-          active.name = name;
-          this.storage.saveSession(active);
-        }
-      },
-      broadcastSessionUpdate: (sessionId) => {
-        this.appEventStreamMux.emitSessionSummaryById(sessionId);
-      },
-      onMetrics: (metrics) => {
-        this.opsMetrics.record("server.session_title_gen_ms", metrics.durationMs, {
-          model: metrics.model,
-          status: metrics.status,
-          tokens: String(metrics.tokens),
-        });
-      },
-    });
-    this.sessions.onFirstMessage = (session) => this.titleGenerator.tryGenerateTitle(session);
-
     const handleSessionEvent = (payload: SessionBroadcastEvent): void => {
       this.liveActivity.handleSessionEvent(payload);
       this.sessionPushNotifier.handleSessionEvent(payload);
@@ -634,28 +566,6 @@ export class Server {
       sessions: this.sessions,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       appEvents: this.appEventStreamMux,
-    });
-
-    // Create route handler (dispatch + all HTTP business logic)
-    this.routes = new RouteHandler({
-      storage: this.storage,
-      sessions: this.sessions,
-      sessionRuntimes: this.sessionRuntimes,
-      skillRegistry: this.skillRegistry,
-      providerAuth: this.providerAuth,
-      ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
-      resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
-      refreshModelCatalog: () => {
-        this.models.refresh();
-        return Promise.resolve();
-      },
-      getModelCatalog: () => this.models.getAll(),
-      getCodexUsageStatus: () => fetchCodexUsageStatus(),
-      searchIndex: this.searchIndex ?? undefined,
-      appEvents: this.appEventStreamMux,
-      serverStartedAt: Date.now(),
-      serverVersion: Server.VERSION,
-      piVersion: Server.detectPiVersion(this.piExecutable),
     });
 
     this.localApiSocket = localApiSocketPath(dataDir);
@@ -711,6 +621,97 @@ export class Server {
 
   // ─── Start / Stop ───
 
+  private async initializeModelServices(): Promise<void> {
+    const agentDir = getAgentDir();
+    this.modelRuntime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    this.modelRegistry = new ModelRegistry(this.modelRuntime);
+    this.models = new ModelCatalog(this.modelRegistry, this.storage, () =>
+      SettingsManager.create(process.cwd(), agentDir).getEnabledModels(),
+    );
+    this.providerAuth = new ProviderAuthManager({
+      modelRuntime: this.modelRuntime,
+      getKnownApiKeyProviderIds: () => {
+        const knownApiKeyProviders = new Set<string>([
+          "anthropic",
+          "openai",
+          "google",
+          "deepseek",
+          "mistral",
+          "groq",
+          "xai",
+          "openrouter",
+          "zai",
+        ]);
+        const oauthOnlyProviders = new Set<string>([
+          "openai-codex",
+          "github-copilot",
+          "google-gemini-cli",
+          "google-antigravity",
+        ]);
+
+        for (const model of this.modelRegistry.getAll()) {
+          if (!oauthOnlyProviders.has(model.provider)) {
+            knownApiKeyProviders.add(model.provider);
+          }
+        }
+
+        return [...knownApiKeyProviders];
+      },
+      onCredentialsChanged: () => this.models.refresh(),
+    });
+
+    // Auto-title generator — generates concise task titles on first user message.
+    this.titleGenerator = new SessionTitleGenerator({
+      getConfig: () => this.storage.getConfig().autoTitle ?? { enabled: false },
+      modelRegistry: this.modelRegistry,
+      getSession: (sessionId) => this.storage.getSession(sessionId) ?? undefined,
+      setSessionName: async (sessionId, name) => {
+        await this.sessions.runCommand(sessionId, { type: "set_session_name", name });
+
+        // Keep Oppi's Session.name as a projection for list/header broadcasts.
+        // Pi's session_info entry is the source of truth.
+        const active = this.sessions.getActiveSession(sessionId);
+        if (active) {
+          active.name = name;
+          this.storage.saveSession(active);
+        }
+      },
+      broadcastSessionUpdate: (sessionId) => {
+        this.appEventStreamMux.emitSessionSummaryById(sessionId);
+      },
+      onMetrics: (metrics) => {
+        this.opsMetrics.record("server.session_title_gen_ms", metrics.durationMs, {
+          model: metrics.model,
+          status: metrics.status,
+          tokens: String(metrics.tokens),
+        });
+      },
+    });
+    this.sessions.onFirstMessage = (session) => this.titleGenerator.tryGenerateTitle(session);
+
+    // Model/auth routes depend on the asynchronous Pi ModelRuntime.
+    this.routes = new RouteHandler({
+      storage: this.storage,
+      sessions: this.sessions,
+      sessionRuntimes: this.sessionRuntimes,
+      skillRegistry: this.skillRegistry,
+      providerAuth: this.providerAuth,
+      ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
+      resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
+      refreshModelCatalog: () => this.models.refresh(),
+      getModelCatalog: () => this.models.getAll(),
+      getCodexUsageStatus: () => fetchCodexUsageStatus({ modelRuntime: this.modelRuntime }),
+      searchIndex: this.searchIndex ?? undefined,
+      appEvents: this.appEventStreamMux,
+      serverStartedAt: Date.now(),
+      serverVersion: Server.VERSION,
+      piVersion: Server.detectPiVersion(this.piExecutable),
+    });
+  }
+
   async start(): Promise<void> {
     const config = this.storage.getConfig();
     const startupSecurityError = validateStartupSecurityConfig(config);
@@ -718,8 +719,10 @@ export class Server {
       throw new Error(startupSecurityError);
     }
 
+    await this.initializeModelServices();
+
     // Prime model catalog so first picker open is fast.
-    this.models.refresh();
+    await this.models.refresh();
 
     // Heal stale persisted contextWindow fallbacks before any client connects.
     this.models.healPersistedSessionContextWindows();

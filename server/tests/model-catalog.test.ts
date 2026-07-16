@@ -21,7 +21,7 @@ function makeRegistry(
 ): ModelRegistry {
   const oauth = new Set(oauthModelIds);
   return {
-    refresh: vi.fn(),
+    refresh: vi.fn(async () => {}),
     getAvailable: vi.fn(() => available),
     getAll: vi.fn(() => all ?? available),
     isUsingOAuth: vi.fn((model: TestModel) => oauth.has(`${model.provider}/${model.id}`)),

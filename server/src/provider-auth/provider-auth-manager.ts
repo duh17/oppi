@@ -1,9 +1,10 @@
-import type { OAuthLoginCallbacks, OAuthProviderInterface } from "@earendil-works/pi-ai";
+import type { AuthEvent, AuthInteraction, AuthPrompt, Provider } from "@earendil-works/pi-ai";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { openBrowser as defaultOpenBrowser } from "./browser-launcher.js";
-import { ProviderAuthFlowStore, createDeferred } from "./flow-store.js";
+import { ProviderAuthFlowStore, createDeferred, type Deferred } from "./flow-store.js";
 import {
   ProviderAuthError,
   type ProviderAuthFlowSnapshot,
@@ -33,27 +34,13 @@ const PROVIDER_NAME_OVERRIDES: Record<string, string> = {
   zai: "Z.ai",
 };
 
-type ProviderCredential =
-  | {
-      type: "api_key";
-      key: string;
-    }
-  | {
-      type: "oauth";
-      expires: number;
-      [key: string]: unknown;
-    };
-
-export interface ProviderAuthStorage {
-  getOAuthProviders(): OAuthProviderInterface[];
-  login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void>;
-  set(provider: string, credential: { type: "api_key"; key: string }): void;
-  remove(provider: string): void;
-  getAll(): Record<string, ProviderCredential>;
-}
+type ProviderAuthRuntime = Pick<
+  ModelRuntime,
+  "getProviders" | "getProvider" | "login" | "logout" | "listCredentials"
+>;
 
 export interface ProviderAuthManagerOptions {
-  authStorage: ProviderAuthStorage;
+  modelRuntime: ProviderAuthRuntime;
   onCredentialsChanged?: () => Promise<void> | void;
   getKnownApiKeyProviderIds?: () => string[];
   openBrowser?: (url: string) => Promise<void> | void;
@@ -73,44 +60,25 @@ function prettifyProviderName(providerId: string): string {
     .join(" ");
 }
 
-function maskApiKey(key: string): string {
-  if (key.length <= 8) {
-    return "****";
-  }
-  return `${key.slice(0, 5)}...${key.slice(-3)}`;
-}
-
 function redactSensitiveError(message: string): string {
   return message
     .replace(/(code|token|access_token|refresh_token)=([^&\s]+)/gi, "$1=<redacted>")
     .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer <redacted>");
 }
 
-function flowTypeForProvider(provider: OAuthProviderInterface): ProviderAuthFlowType {
-  return provider.usesCallbackServer ? "oauth_callback" : "device_code";
-}
-
-function isApiKeyCredential(
-  value: ProviderCredential | undefined,
-): value is { type: "api_key"; key: string } {
-  return Boolean(value && value.type === "api_key" && typeof value.key === "string");
-}
-
-function isOAuthCredential(
-  value: ProviderCredential | undefined,
-): value is { type: "oauth"; expires: number } {
-  return Boolean(value && value.type === "oauth" && typeof value.expires === "number");
+function flowTypeForProvider(_provider: Provider): ProviderAuthFlowType {
+  return "oauth";
 }
 
 export class ProviderAuthManager {
-  private readonly authStorage: ProviderAuthStorage;
+  private readonly modelRuntime: ProviderAuthRuntime;
   private readonly onCredentialsChanged: () => Promise<void> | void;
   private readonly getKnownApiKeyProviderIds: () => string[];
   private readonly openBrowser: (url: string) => Promise<void> | void;
   private readonly flowStore: ProviderAuthFlowStore;
 
   constructor(options: ProviderAuthManagerOptions) {
-    this.authStorage = options.authStorage;
+    this.modelRuntime = options.modelRuntime;
     this.onCredentialsChanged = options.onCredentialsChanged ?? (() => {});
     this.getKnownApiKeyProviderIds = options.getKnownApiKeyProviderIds ?? (() => []);
     this.openBrowser = options.openBrowser ?? defaultOpenBrowser;
@@ -124,89 +92,66 @@ export class ProviderAuthManager {
   listProviders(): ProviderAuthProviderInfo[] {
     this.flowStore.prune();
 
-    const oauthProviders = this.authStorage.getOAuthProviders();
-    const oauthById = new Map(oauthProviders.map((provider) => [provider.id, provider]));
-
     const providers = new Map<string, ProviderAuthProviderInfo>();
-    const apiProviderIds = new Set(this.getKnownApiKeyProviderIds());
-
-    for (const oauthProvider of oauthProviders) {
-      providers.set(oauthProvider.id, {
-        id: oauthProvider.id,
-        name: oauthProvider.name,
-        supportsApiKey: apiProviderIds.has(oauthProvider.id),
-        oauth: {
-          flowType: flowTypeForProvider(oauthProvider),
-          supportsServerBrowserLaunch: true,
-          supportsPhoneBrowserLaunch: true,
-          supportsManualCodeInput: oauthProvider.usesCallbackServer === true,
-          mayPromptForInput: true,
-        },
-      });
-    }
-
-    for (const providerId of apiProviderIds) {
-      if (providers.has(providerId)) continue;
-
-      const oauthProvider = oauthById.get(providerId);
-      providers.set(providerId, {
-        id: providerId,
-        name: oauthProvider?.name ?? prettifyProviderName(providerId),
-        supportsApiKey: true,
-        oauth: oauthProvider
+    for (const provider of this.modelRuntime.getProviders()) {
+      providers.set(provider.id, {
+        id: provider.id,
+        name: provider.name || prettifyProviderName(provider.id),
+        supportsApiKey: provider.auth.apiKey?.login !== undefined,
+        oauth: provider.auth.oauth
           ? {
-              flowType: flowTypeForProvider(oauthProvider),
+              flowType: flowTypeForProvider(provider),
               supportsServerBrowserLaunch: true,
               supportsPhoneBrowserLaunch: true,
-              supportsManualCodeInput: oauthProvider.usesCallbackServer === true,
+              supportsManualCodeInput: true,
               mayPromptForInput: true,
             }
           : undefined,
       });
     }
 
-    return [...providers.values()].sort((a, b) => a.id.localeCompare(b.id));
-  }
-
-  getStatus(): ProviderAuthProviderStatus[] {
-    this.flowStore.prune();
-
-    const providerInfo = this.listProviders();
-    const statusById = new Map<string, ProviderAuthProviderStatus>();
-
-    for (const info of providerInfo) {
-      statusById.set(info.id, {
-        ...info,
-        authenticated: false,
+    for (const providerId of this.getKnownApiKeyProviderIds()) {
+      if (providers.has(providerId)) continue;
+      providers.set(providerId, {
+        id: providerId,
+        name: prettifyProviderName(providerId),
+        supportsApiKey: true,
       });
     }
 
-    const credentials = this.authStorage.getAll();
-    for (const [providerId, credential] of Object.entries(credentials)) {
-      const existing = statusById.get(providerId);
-      const base: ProviderAuthProviderStatus =
-        existing ??
-        ({
-          id: providerId,
-          name: prettifyProviderName(providerId),
-          supportsApiKey: true,
-          authenticated: false,
-        } satisfies ProviderAuthProviderStatus);
+    return [...providers.values()].sort((a, b) => a.id.localeCompare(b.id));
+  }
 
-      if (isApiKeyCredential(credential)) {
-        base.authenticated = true;
-        base.credentialType = "api_key";
-        base.maskedKey = maskApiKey(credential.key);
-      } else if (isOAuthCredential(credential)) {
-        base.authenticated = true;
-        base.credentialType = "oauth";
-        base.expiresAt = credential.expires;
-      }
+  async getStatus(): Promise<ProviderAuthProviderStatus[]> {
+    this.flowStore.prune();
 
-      statusById.set(providerId, base);
-    }
+    const providers = this.listProviders();
+    const credentials = new Map(
+      (await this.modelRuntime.listCredentials()).map((credential) => [
+        credential.providerId,
+        credential,
+      ]),
+    );
+    const providerIds = new Set([
+      ...providers.map((provider) => provider.id),
+      ...credentials.keys(),
+    ]);
 
-    return [...statusById.values()].sort((a, b) => a.id.localeCompare(b.id));
+    return [...providerIds]
+      .map((providerId) => {
+        const info = providers.find((provider) => provider.id === providerId);
+        const credential = credentials.get(providerId);
+        return {
+          ...(info ?? {
+            id: providerId,
+            name: prettifyProviderName(providerId),
+            supportsApiKey: true,
+          }),
+          authenticated: credential !== undefined,
+          ...(credential ? { credentialType: credential.type } : {}),
+        } satisfies ProviderAuthProviderStatus;
+      })
+      .sort((a, b) => a.id.localeCompare(b.id));
   }
 
   startFlow(providerId: string, launchMode: ProviderAuthLaunchMode): ProviderAuthFlowSnapshot {
@@ -217,11 +162,8 @@ export class ProviderAuthManager {
 
     this.flowStore.prune();
 
-    const oauthProvider = this.authStorage
-      .getOAuthProviders()
-      .find((provider) => provider.id === normalizedProviderId);
-
-    if (!oauthProvider) {
+    const provider = this.modelRuntime.getProvider(normalizedProviderId);
+    if (!provider?.auth.oauth) {
       throw new ProviderAuthError(404, `Unknown OAuth provider: ${normalizedProviderId}`);
     }
 
@@ -232,7 +174,7 @@ export class ProviderAuthManager {
 
     const record = this.flowStore.create(
       normalizedProviderId,
-      flowTypeForProvider(oauthProvider),
+      flowTypeForProvider(provider),
       launchMode,
     );
 
@@ -316,11 +258,15 @@ export class ProviderAuthManager {
       throw new ProviderAuthError(400, "key is required");
     }
 
-    this.authStorage.set(normalizedProviderId, {
-      type: "api_key",
-      key: normalizedKey,
-    });
+    const provider = this.modelRuntime.getProvider(normalizedProviderId);
+    if (!provider?.auth.apiKey?.login) {
+      throw new ProviderAuthError(404, `Unknown API-key provider: ${normalizedProviderId}`);
+    }
 
+    await this.modelRuntime.login(normalizedProviderId, "api_key", {
+      prompt: async () => normalizedKey,
+      notify: () => {},
+    });
     await this.refreshAfterCredentialChange();
   }
 
@@ -330,7 +276,7 @@ export class ProviderAuthManager {
       throw new ProviderAuthError(400, "providerId is required");
     }
 
-    this.authStorage.remove(normalizedProviderId);
+    await this.modelRuntime.logout(normalizedProviderId);
     await this.refreshAfterCredentialChange();
   }
 
@@ -340,85 +286,23 @@ export class ProviderAuthManager {
       return;
     }
 
-    const callbacks: OAuthLoginCallbacks = {
-      onAuth: (info) => {
-        const snapshot = this.flowStore.setAuthInfo(flowId, info);
-        if (!snapshot) return;
-
-        const record = this.flowStore.get(flowId);
-        if (!record) return;
-
-        if (record.launchMode === "server_browser" && !record.browserOpened) {
-          record.browserOpened = true;
-          void Promise.resolve()
-            .then(() => this.openBrowser(info.url))
-            .catch((error: unknown) => {
-              log.warn("provider_auth.open_browser.failed", {
-                flowId,
-                providerId,
-                error: safeErrorMessage(error),
-              });
-              this.flowStore.setProgress(flowId, "Could not open browser on server");
-            });
-        }
-      },
-      onDeviceCode: (info) => {
-        this.flowStore.setAuthInfo(flowId, {
-          url: info.verificationUri,
-          instructions: `Enter code ${info.userCode}`,
-        });
-      },
-      onPrompt: async (prompt) => {
-        return this.waitForPromptResponse(flowId, {
-          message: prompt.message,
-          placeholder: prompt.placeholder,
-          allowEmpty: prompt.allowEmpty,
-        });
-      },
-      onManualCodeInput: async () => {
-        const record = this.flowStore.get(flowId);
-        if (!record || isTerminalProviderAuthStatus(record.snapshot.status)) {
-          throw new Error("Login flow is no longer active");
-        }
-
-        const waiter = createDeferred<string>();
-        this.flowStore.setManualCodeWaiter(flowId, waiter);
-
-        return waiter.promise;
-      },
-      onProgress: (message) => {
-        this.flowStore.setProgress(flowId, message);
-      },
-      onSelect: async (prompt) => {
-        const selected = await this.waitForPromptResponse(flowId, {
-          message: prompt.message,
-          placeholder: "Enter option id",
-          allowEmpty: true,
-          options: prompt.options.map((option) => ({ id: option.id, label: option.label })),
-        });
-        const normalized = selected.trim();
-        if (!normalized) return undefined;
-        const matchingOption = prompt.options.find(
-          (option) => option.id === normalized || option.label === normalized,
-        );
-        return matchingOption?.id ?? normalized;
-      },
+    const interaction: AuthInteraction = {
       signal: existing.abortController.signal,
+      notify: (event) => this.handleAuthEvent(flowId, providerId, event),
+      prompt: (prompt) => this.requestAuthPrompt(flowId, prompt),
     };
 
     try {
-      await this.authStorage.login(providerId, callbacks);
+      await this.modelRuntime.login(providerId, "oauth", interaction);
 
       const current = this.flowStore.get(flowId);
-      if (!current) return;
-      if (isTerminalProviderAuthStatus(current.snapshot.status)) return;
+      if (!current || isTerminalProviderAuthStatus(current.snapshot.status)) return;
 
       this.flowStore.markCompleted(flowId);
       await this.refreshAfterCredentialChange();
     } catch (error) {
       const current = this.flowStore.get(flowId);
-      if (!current) return;
-      if (isTerminalProviderAuthStatus(current.snapshot.status)) return;
+      if (!current || isTerminalProviderAuthStatus(current.snapshot.status)) return;
 
       if (current.abortController.signal.aborted) {
         this.flowStore.markCancelled(flowId, "Login cancelled");
@@ -435,9 +319,76 @@ export class ProviderAuthManager {
     }
   }
 
+  private handleAuthEvent(flowId: string, providerId: string, event: AuthEvent): void {
+    if (event.type === "auth_url") {
+      const snapshot = this.flowStore.setAuthInfo(flowId, {
+        url: event.url,
+        ...(event.instructions ? { instructions: event.instructions } : {}),
+      });
+      if (!snapshot) return;
+
+      const record = this.flowStore.get(flowId);
+      if (record?.launchMode === "server_browser" && !record.browserOpened) {
+        record.browserOpened = true;
+        void Promise.resolve()
+          .then(() => this.openBrowser(event.url))
+          .catch((error: unknown) => {
+            log.warn("provider_auth.open_browser.failed", {
+              flowId,
+              providerId,
+              error: safeErrorMessage(error),
+            });
+            this.flowStore.setProgress(flowId, "Could not open browser on server");
+          });
+      }
+      return;
+    }
+
+    if (event.type === "device_code") {
+      this.flowStore.setAuthInfo(flowId, {
+        url: event.verificationUri,
+        instructions: `Enter code ${event.userCode}`,
+      });
+      return;
+    }
+
+    this.flowStore.setProgress(flowId, event.message);
+  }
+
+  private requestAuthPrompt(flowId: string, prompt: AuthPrompt): Promise<string> {
+    if (prompt.type === "manual_code") {
+      return this.waitForManualCode(flowId, prompt.signal);
+    }
+
+    const options =
+      prompt.type === "select"
+        ? prompt.options.map((option) => ({ id: option.id, label: option.label }))
+        : undefined;
+    return this.waitForPromptResponse(
+      flowId,
+      {
+        message: prompt.message,
+        ...(prompt.type !== "select" && prompt.placeholder
+          ? { placeholder: prompt.placeholder }
+          : {}),
+        ...(prompt.type === "text" ? { allowEmpty: true } : {}),
+        ...(options ? { options } : {}),
+      },
+      prompt.signal,
+    ).then((response) => {
+      if (!options) return response;
+      const normalized = response.trim();
+      return (
+        options.find((option) => option.id === normalized || option.label === normalized)?.id ??
+        normalized
+      );
+    });
+  }
+
   private async waitForPromptResponse(
     flowId: string,
     promptShape: ProviderAuthPrompt,
+    signal?: AbortSignal,
   ): Promise<string> {
     const record = this.flowStore.get(flowId);
     if (!record || isTerminalProviderAuthStatus(record.snapshot.status)) {
@@ -446,7 +397,44 @@ export class ProviderAuthManager {
 
     const waiter = createDeferred<string>();
     this.flowStore.setPromptWaiter(flowId, promptShape, waiter);
-    return waiter.promise;
+    return this.waitForAuthInput(waiter, signal, () => {
+      this.flowStore.clearPromptWaiter(flowId);
+    });
+  }
+
+  private async waitForManualCode(flowId: string, signal?: AbortSignal): Promise<string> {
+    const record = this.flowStore.get(flowId);
+    if (!record || isTerminalProviderAuthStatus(record.snapshot.status)) {
+      throw new Error("Login flow is no longer active");
+    }
+
+    const waiter = createDeferred<string>();
+    this.flowStore.setManualCodeWaiter(flowId, waiter);
+    return this.waitForAuthInput(waiter, signal, () => {
+      this.flowStore.clearManualCodeWaiter(flowId);
+    });
+  }
+
+  private async waitForAuthInput(
+    waiter: Deferred<string>,
+    signal: AbortSignal | undefined,
+    clear: () => void,
+  ): Promise<string> {
+    const abort = (): void => {
+      waiter.reject(new Error("Authentication prompt cancelled"));
+      clear();
+    };
+    if (signal?.aborted) {
+      abort();
+    } else {
+      signal?.addEventListener("abort", abort, { once: true });
+    }
+
+    try {
+      return await waiter.promise;
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
   }
 
   private mustGetFlow(flowId: string): ProviderAuthFlowSnapshot {

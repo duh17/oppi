@@ -711,16 +711,20 @@ describe("SdkBackend.setModel", () => {
     baseUrl?: string;
   };
 
-  function makeSetModelHarness(options: { models?: HarnessModel[]; oauthIds?: string[]; enabledModels?: string[] } = {}) {
+  function makeSetModelHarness(
+    options: { models?: HarnessModel[]; oauthIds?: string[]; enabledModels?: string[] } = {},
+  ) {
     const backend = Object.create(SdkBackend.prototype) as SdkBackend;
     const models = options.models ?? [];
-    const oauthIds = new Set(options.oauthIds ?? []);
+    const oauthProviders = new Set(
+      (options.oauthIds ?? []).map((canonicalId) => canonicalId.split("/", 1)[0]),
+    );
 
-    const modelRegistry = {
-      refresh: vi.fn(),
-      getAvailable: vi.fn(() => models),
-      getAll: vi.fn(() => models),
-      isUsingOAuth: vi.fn((model: HarnessModel) => oauthIds.has(`${model.provider}/${model.id}`)),
+    const modelRuntime = {
+      reloadConfig: vi.fn(async () => {}),
+      getAvailableSnapshot: vi.fn(() => models),
+      getModels: vi.fn(() => models),
+      isUsingOAuth: vi.fn((provider: string) => oauthProviders.has(provider)),
     };
 
     const settingsManager = {
@@ -742,7 +746,7 @@ describe("SdkBackend.setModel", () => {
     const runtime = {
       session: piSession,
       services: {
-        modelRegistry,
+        modelRuntime,
         settingsManager,
       },
     };
@@ -753,7 +757,7 @@ describe("SdkBackend.setModel", () => {
 
     mutableBackend.runtime = runtime;
 
-    return { backend, modelRegistry, settingsManager, piSession };
+    return { backend, modelRuntime, settingsManager, piSession };
   }
 
   it("rejects blank model IDs", async () => {
@@ -790,15 +794,15 @@ describe("SdkBackend.setModel", () => {
       name: "Gemma 4 31B",
       contextWindow: 262_144,
     };
-    const { backend, modelRegistry, piSession } = makeSetModelHarness({ models: [model] });
+    const { backend, modelRuntime, piSession } = makeSetModelHarness({ models: [model] });
     piSession.model = model;
 
     await backend.setModel("omlx/gemma-4-31b-bf16");
 
-    expect(modelRegistry.refresh).toHaveBeenCalledTimes(1);
-    expect(modelRegistry.getAvailable).toHaveBeenCalled();
-    expect(modelRegistry.refresh.mock.invocationCallOrder[0]).toBeLessThan(
-      modelRegistry.getAvailable.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    expect(modelRuntime.reloadConfig).toHaveBeenCalledTimes(1);
+    expect(modelRuntime.getAvailableSnapshot).toHaveBeenCalled();
+    expect(modelRuntime.reloadConfig.mock.invocationCallOrder[0]).toBeLessThan(
+      modelRuntime.getAvailableSnapshot.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
   });
 

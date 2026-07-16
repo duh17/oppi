@@ -64,31 +64,45 @@ export class ModelCatalog {
   }
 
   /** Refresh the model catalog from the SDK registry. */
-  refresh(): void {
+  refresh(): Promise<void> {
     try {
-      this.registry.refresh();
-      this.catalog = modelCandidatesFromRegistry(this.registry, this.getAllowlist()).map(
-        candidateToModelInfo,
-      );
-      this.updatedAt = Date.now();
-
-      if (this.catalog.length > 0) {
-        return;
-      }
-
-      const allCount = this.registry.getAll().length;
-      if (allCount > 0) {
-        log.warn("models.no_authenticated_models_available", {
-          hiddenModelCount: allCount,
+      // Keep the existing snapshot available synchronously while Pi reloads its
+      // asynchronous model runtime. The second population captures refreshed
+      // configured and dynamic provider catalogs.
+      const reload = this.registry.refresh();
+      this.populateFromRegistry();
+      return reload
+        .then(() => this.populateFromRegistry())
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          log.warn("models.refresh.failed", { error: message });
         });
-        return;
-      }
-
-      log.warn("models.registry_returned_zero", { availableModelCount: 0 });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       log.warn("models.refresh.failed", { error: message });
+      return Promise.resolve();
     }
+  }
+
+  private populateFromRegistry(): void {
+    this.catalog = modelCandidatesFromRegistry(this.registry, this.getAllowlist()).map(
+      candidateToModelInfo,
+    );
+    this.updatedAt = Date.now();
+
+    if (this.catalog.length > 0) {
+      return;
+    }
+
+    const allCount = this.registry.getAll().length;
+    if (allCount > 0) {
+      log.warn("models.no_authenticated_models_available", {
+        hiddenModelCount: allCount,
+      });
+      return;
+    }
+
+    log.warn("models.registry_returned_zero", { availableModelCount: 0 });
   }
 
   /** Return the current model catalog. */
