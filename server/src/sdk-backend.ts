@@ -465,7 +465,7 @@ export class SdkBackend {
         settingsManager,
         appendSystemPrompt: baseAppendSystemPrompt,
         extensionFactories: [
-          createLifecycleJournalExtension(),
+          createLifecycleJournalExtension(sessionManager),
           ...(isDefaultAgentSession
             ? [createDefaultAgentExtensionFactory({ dataDir: config.dataDir })]
             : []),

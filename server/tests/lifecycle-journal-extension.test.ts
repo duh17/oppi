@@ -11,13 +11,16 @@ import { readSessionTracePageFromFile } from "../src/trace-paging.js";
 import { buildSessionContext, type SessionEntry } from "../src/trace.js";
 
 describe("lifecycle journal extension", () => {
-  it("persists structural Pi events as versioned custom entries", () => {
+  it("persists only agent and tool boundaries through the originating manager", () => {
     const handlers = new Map<string, (event: Record<string, unknown>) => void>();
-    const appendEntry = vi.fn();
-    const extension = createLifecycleJournalExtension();
+    const appendCustomEntry = vi.fn();
+    const staleAppendEntry = vi.fn(() => {
+      throw new Error("stale extension context");
+    });
+    const extension = createLifecycleJournalExtension({ appendCustomEntry });
 
     extension.factory({
-      appendEntry,
+      appendEntry: staleAppendEntry,
       on: (type: string, handler: (event: Record<string, unknown>) => void) => {
         handlers.set(type, handler);
       },
@@ -36,9 +39,14 @@ describe("lifecycle journal extension", () => {
       result: { content: "also not duplicated" },
     });
     handlers.get("agent_end")?.({});
-    handlers.get("agent_settled")?.({});
 
-    expect(appendEntry.mock.calls).toEqual([
+    expect([...handlers.keys()]).toEqual([
+      "agent_start",
+      "agent_end",
+      "tool_execution_start",
+      "tool_execution_end",
+    ]);
+    expect(appendCustomEntry.mock.calls).toEqual([
       [OPPI_LIFECYCLE_CUSTOM_TYPE, { version: 1, event: "agent_start" }],
       [
         OPPI_LIFECYCLE_CUSTOM_TYPE,
@@ -60,8 +68,35 @@ describe("lifecycle journal extension", () => {
         },
       ],
       [OPPI_LIFECYCLE_CUSTOM_TYPE, { version: 1, event: "agent_end" }],
-      [OPPI_LIFECYCLE_CUSTOM_TYPE, { version: 1, event: "agent_settled" }],
     ]);
+    expect(staleAppendEntry).not.toHaveBeenCalled();
+  });
+
+  it("keeps delayed teardown writes bound to the replaced session manager", () => {
+    const firstHandlers = new Map<string, (event: Record<string, unknown>) => void>();
+    const secondHandlers = new Map<string, (event: Record<string, unknown>) => void>();
+    const firstAppend = vi.fn();
+    const secondAppend = vi.fn();
+
+    createLifecycleJournalExtension({ appendCustomEntry: firstAppend }).factory({
+      on: (type: string, handler: (event: Record<string, unknown>) => void) => {
+        firstHandlers.set(type, handler);
+      },
+    } as never);
+    createLifecycleJournalExtension({ appendCustomEntry: secondAppend }).factory({
+      on: (type: string, handler: (event: Record<string, unknown>) => void) => {
+        secondHandlers.set(type, handler);
+      },
+    } as never);
+
+    secondHandlers.get("agent_start")?.({});
+    firstHandlers.get("agent_end")?.({});
+
+    expect(firstAppend).toHaveBeenCalledWith(OPPI_LIFECYCLE_CUSTOM_TYPE, {
+      version: 1,
+      event: "agent_end",
+    });
+    expect(secondAppend).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the full lifecycle and result with its call at a page boundary", async () => {
