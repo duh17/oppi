@@ -272,6 +272,51 @@ describe("workspace session trace page route", () => {
     expect(body.page).toMatchObject({ hasOlder: true, staleCursor: false });
   });
 
+  it("rejects an initial page when the live tree leaf is missing from the trace", async () => {
+    const tracePath = writeTrace();
+    const session: Session = {
+      id: "s1",
+      workspaceId: "ws-1",
+      status: "ready",
+      createdAt: 0,
+      lastActivity: 10,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      piSessionFile: tracePath,
+    };
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getSession: vi.fn(() => session),
+        getDataDir: vi.fn(() => tmpDir ?? tmpdir()),
+        listWorkspaces: vi.fn(() => []),
+      },
+      sessionRuntimes: {
+        refreshSessionState: vi.fn(async () => ({
+          sessionFile: tracePath,
+          leafId: "missing-live-leaf",
+        })),
+        getToolFullOutputPath: vi.fn(() => undefined),
+      },
+      ensureSessionContextWindow: vi.fn((s: Session) => s),
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+    const handled = await dispatch({
+      method: "GET",
+      path: "/workspaces/ws-1/sessions/s1/trace-page",
+      url: new URL("http://localhost/workspaces/ws-1/sessions/s1/trace-page?targetEvents=2"),
+      req: makeRequest() as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toContain("Session trace is not synchronized with the active tree leaf");
+  });
+
   it("returns an opt-in latest trace page without changing the full session route", async () => {
     const tracePath = writeTrace();
     const session: Session = {

@@ -196,7 +196,7 @@ export class SessionTraceService {
           olderCursor: null,
           traceVersion: "",
           previewBytes,
-          staleCursor: false,
+          staleCursor: typeof live?.leafId === "string",
         },
         metrics: {
           rawEntryCount: 0,
@@ -220,6 +220,9 @@ export class SessionTraceService {
       previewBytes: params.previewBytes,
       attachmentDataDir: this.traceBaseDir(),
       attachmentSessionId: params.session.id,
+      ...(!params.cursor && !params.aroundEntryId && live?.leafId !== undefined
+        ? { leafId: live.leafId }
+        : {}),
     });
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
     return {

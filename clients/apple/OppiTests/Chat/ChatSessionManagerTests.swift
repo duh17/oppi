@@ -136,6 +136,44 @@ struct ChatSessionManagerTests {
         #expect(manager.lastSyncFailed == true)
     }
 
+    @Test func forceHistoryReloadTreatsEmptyTreeTraceAsAuthoritative() async {
+        let sessionId = "force-reload-empty-tree"
+        let firstMessage = "Root prompt restored to the composer"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        manager.reducer.appendUserMessage("stale abandoned branch")
+        manager._fetchSessionTraceForTesting = { _, _ in
+            (
+                makeTestSession(
+                    id: sessionId,
+                    workspaceId: "w1",
+                    status: .ready,
+                    messageCount: 1,
+                    firstMessage: firstMessage
+                ),
+                []
+            )
+        }
+
+        let connection = ServerConnection()
+        connection.setAPIClientForTesting(makeURLProtocolAPIClient())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(
+            id: sessionId,
+            workspaceId: "w1",
+            status: .ready,
+            messageCount: 1,
+            firstMessage: firstMessage
+        ))
+
+        let reloaded = await manager.forceHistoryReload(
+            connection: connection,
+            sessionStore: sessionStore
+        )
+
+        #expect(reloaded)
+        #expect(manager.reducer.items.isEmpty)
+    }
+
     @Test func forceHistoryReloadFallsBackToFullTraceWhenTracePageRouteIsMissing() async {
         defer { TestURLProtocol.handler = nil }
 

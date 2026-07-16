@@ -70,6 +70,67 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         )
     }
 
+    func testTreeNavigationSwitchesBranchWithoutSummary() throws {
+        createAndEnterSession()
+
+        let firstMarker = "TREE_BRANCH_ONE"
+        let abandonedMarker = "TREE_BRANCH_TWO"
+        sendMessageAndWaitForResponse(localEchoPrompt(firstMarker))
+        sendMessageAndWaitForResponse(localEchoPrompt(abandonedMarker))
+
+        let outlineButton = app.buttons["chat.toolbar.outline"]
+        tap(outlineButton, named: "session outline toolbar button")
+        XCTAssertTrue(
+            app.navigationBars["Session Outline"].waitForExistence(timeout: 10),
+            "Session outline did not open"
+        )
+
+        let treeTab = app.buttons["Tree"]
+        tap(treeTab, named: "session tree tab")
+
+        let firstBranchNode = app.buttons
+            .matching(NSPredicate(format: "label CONTAINS %@", firstMarker))
+            .firstMatch
+        XCTAssertTrue(
+            firstBranchNode.waitForExistence(timeout: 10),
+            "First branch target did not appear in the real session tree"
+        )
+        tap(firstBranchNode, named: "first branch tree node")
+
+        let switchWithoutSummary = app.buttons["Switch without summary"]
+        tap(switchWithoutSummary, named: "switch without summary")
+
+        let outlineNavigationBar = app.navigationBars["Session Outline"]
+        let outlineDismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: outlineNavigationBar
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [outlineDismissed], timeout: 15),
+            .completed,
+            "Successful tree navigation did not dismiss the session outline"
+        )
+
+        let chatInput = app.textViews["chat.input"]
+        XCTAssertTrue(chatInput.waitForExistence(timeout: 10), "Chat input did not return after tree navigation")
+        XCTAssertTrue(
+            (chatInput.value as? String)?.contains(firstMarker) == true,
+            "Tree navigation did not restore the selected user message into the composer"
+        )
+
+        let timeline = app.collectionViews["chat.timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 5), "Chat timeline did not return after tree navigation")
+        for marker in [firstMarker, abandonedMarker] {
+            let staleTimelineText = timeline.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", marker, marker))
+                .firstMatch
+            XCTAssertFalse(
+                staleTimelineText.exists,
+                "Tree navigation left \(marker) in the active timeline instead of rewinding before the selected prompt"
+            )
+        }
+    }
+
     func testSessionSwitching() throws {
         // Create session A, then go back and create session B.
         createSession()

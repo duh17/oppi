@@ -12,6 +12,8 @@ export interface TracePageOptions {
   maxInitialReadBytes?: number;
   attachmentDataDir?: string;
   attachmentSessionId?: string;
+  /// Current in-memory tree leaf for the initial page. Omit for cursor and around-entry pages.
+  leafId?: string | null;
 }
 
 export interface TracePageMetadata {
@@ -63,6 +65,7 @@ interface TraceCursor {
   byteStart: number;
   entryId: string;
   lineHash: string;
+  branchLeafId?: string | null;
 }
 
 interface ToolPreviewMetadata {
@@ -117,6 +120,19 @@ export function readSessionTracePageFromFiles(
   }
 
   const cursor = options.cursor ? decodeCursor(options.cursor) : null;
+  const requestedLeafId = options.cursor ? cursor?.branchLeafId : options.leafId;
+  if (requestedLeafId === null) {
+    return emptyPage({
+      traceVersion,
+      previewBytes,
+      jsonlBytes,
+      scannedBytes: 0,
+      rawEntryCount: 0,
+      readMs: 0,
+      parseMs: 0,
+      staleCursor: false,
+    });
+  }
 
   if (options.cursor && !cursor) {
     return emptyPage({
@@ -186,9 +202,10 @@ export function readSessionTracePageFromFiles(
     parseMs += elapsed(parseStart);
     parsed.sort(compareLines);
 
-    selected = selectPageEntries(
+    selected = selectEligiblePageEntries(
       parsed.filter((line) => isBeforeCursor(line, cursor, cursorSourceIndex)),
       targetEvents,
+      requestedLeafId,
     );
     const selectEnough = selectedTraceEventEstimate(selected) >= targetEvents;
     if (selectEnough || window.baseByteOffset > 0) {
@@ -197,28 +214,57 @@ export function readSessionTracePageFromFiles(
   }
 
   const selectStart = performance.now();
-  selected = selectPageEntries(
+  selected = selectEligiblePageEntries(
     parsed.filter((line) => isBeforeCursor(line, cursor, cursorSourceIndex)),
     targetEvents,
+    requestedLeafId,
   );
   const selectMs = elapsed(selectStart);
+
+  if (
+    typeof requestedLeafId === "string" &&
+    !selected.some((line) => line.entry.id === requestedLeafId)
+  ) {
+    return readAroundTracePage(sources, requestedLeafId, {
+      traceVersion,
+      jsonlBytes,
+      targetEvents,
+      previewBytes,
+      maxInitialReadBytes,
+      attachmentDataDir: options.attachmentDataDir,
+      attachmentSessionId: options.attachmentSessionId,
+      leafId: requestedLeafId,
+    });
+  }
+
   const previewStart = performance.now();
   const prepared = prepareEntriesForFormatting(selected, previewBytes);
   const previewMs = elapsed(previewStart);
   const formatStart = performance.now();
-  const formattedTrace = formatEntries(prepared.entries, options);
+  const formattedTrace = formatEntries(prepared.entries, {
+    ...options,
+    leafId: requestedLeafId,
+  });
   const formatMs = elapsed(formatStart);
   const trace = applyToolOutputPreviews(formattedTrace, previewBytes, prepared.previews);
   const firstSelected = selected[0];
   const hasOlder = firstSelected
-    ? firstSelected.sourceIndex > 0 || firstSelected.byteStart > 0
+    ? typeof requestedLeafId === "string"
+      ? typeof firstSelected.entry.parentId === "string"
+      : firstSelected.sourceIndex > 0 || firstSelected.byteStart > 0
     : false;
 
   return {
     trace,
     page: {
       hasOlder,
-      olderCursor: hasOlder && firstSelected ? encodeCursor(firstSelected) : null,
+      olderCursor:
+        hasOlder && firstSelected
+          ? encodeCursor(
+              firstSelected,
+              typeof requestedLeafId === "string" ? firstSelected.entry.parentId : undefined,
+            )
+          : null,
       traceVersion,
       previewBytes,
       staleCursor: false,
@@ -283,6 +329,7 @@ function readAroundTracePage(
     maxInitialReadBytes: number;
     attachmentDataDir?: string;
     attachmentSessionId?: string;
+    leafId?: string;
   },
 ): TracePageResult {
   const readStart = performance.now();
@@ -297,7 +344,7 @@ function readAroundTracePage(
       rawEntryCount: found.rawEntryCount,
       readMs,
       parseMs: found.parseMs,
-      staleCursor: false,
+      staleCursor: params.leafId !== undefined,
     });
   }
 
@@ -315,7 +362,13 @@ function readAroundTracePage(
   const parseMs = found.parseMs + elapsed(parseStart);
 
   const selectStart = performance.now();
-  const selected = selectAroundPageEntries(parsed, found.line, params.targetEvents);
+  const selected = params.leafId
+    ? selectEligiblePageEntries(
+        parsed.filter((line) => compareLines(line, found.line as ParsedLine) <= 0),
+        params.targetEvents,
+        params.leafId,
+      )
+    : selectAroundPageEntries(parsed, found.line, params.targetEvents);
   const selectMs = elapsed(selectStart);
   const previewStart = performance.now();
   const prepared = prepareEntriesForFormatting(selected, params.previewBytes);
@@ -326,14 +379,19 @@ function readAroundTracePage(
   const trace = applyToolOutputPreviews(formattedTrace, params.previewBytes, prepared.previews);
   const firstSelected = selected[0];
   const hasOlder = firstSelected
-    ? firstSelected.sourceIndex > 0 || firstSelected.byteStart > 0
+    ? params.leafId
+      ? typeof firstSelected.entry.parentId === "string"
+      : firstSelected.sourceIndex > 0 || firstSelected.byteStart > 0
     : false;
 
   return {
     trace,
     page: {
       hasOlder,
-      olderCursor: hasOlder && firstSelected ? encodeCursor(firstSelected) : null,
+      olderCursor:
+        hasOlder && firstSelected
+          ? encodeCursor(firstSelected, params.leafId ? firstSelected.entry.parentId : undefined)
+          : null,
       traceVersion: params.traceVersion,
       previewBytes: params.previewBytes,
       staleCursor: false,
@@ -732,6 +790,30 @@ function lineKey(line: ParsedLine): string {
   return `${line.sourceIndex}:${line.byteStart}`;
 }
 
+function selectEligiblePageEntries(
+  lines: ParsedLine[],
+  targetEvents: number,
+  leafId: string | null | undefined,
+): ParsedLine[] {
+  if (leafId === null) return [];
+  if (typeof leafId !== "string") return selectPageEntries(lines, targetEvents);
+
+  const byId = new Map(lines.map((line) => [line.entry.id, line]));
+  const branch: ParsedLine[] = [];
+  const visited = new Set<string>();
+  let currentId: string | null = leafId;
+
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const line = byId.get(currentId);
+    if (!line) break;
+    branch.push(line);
+    currentId = typeof line.entry.parentId === "string" ? line.entry.parentId : null;
+  }
+
+  return selectPageEntries(branch.reverse(), targetEvents);
+}
+
 function selectPageEntries(lines: ParsedLine[], targetEvents: number): ParsedLine[] {
   const eligible = [...lines].sort(compareLines);
   if (eligible.length === 0) return [];
@@ -957,12 +1039,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function formatEntries(
   entries: SessionEntry[],
-  options: Pick<TracePageOptions, "attachmentDataDir" | "attachmentSessionId">,
+  options: Pick<TracePageOptions, "attachmentDataDir" | "attachmentSessionId" | "leafId">,
 ): TraceEvent[] {
   return buildSessionContext(entries, {
     view: "full",
     attachmentDataDir: options.attachmentDataDir,
     attachmentSessionId: options.attachmentSessionId,
+    ...(options.leafId !== undefined ? { leafId: options.leafId } : {}),
   });
 }
 
@@ -1034,12 +1117,13 @@ function utf8Prefix(text: string, maxBytes: number): string {
     .replace(/\uFFFD$/, "");
 }
 
-function encodeCursor(line: ParsedLine): string {
+function encodeCursor(line: ParsedLine, branchLeafId?: string | null): string {
   const cursor: TraceCursor = {
     sourceId: line.sourceId,
     byteStart: line.byteStart,
     entryId: line.entry.id,
     lineHash: line.hash,
+    ...(branchLeafId !== undefined ? { branchLeafId } : {}),
   };
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
@@ -1057,6 +1141,9 @@ function decodeCursor(encoded: string): TraceCursor | null {
       byteStart: record.byteStart,
       entryId: record.entryId,
       lineHash: record.lineHash,
+      ...(typeof record.branchLeafId === "string" || record.branchLeafId === null
+        ? { branchLeafId: record.branchLeafId as string | null }
+        : {}),
     };
   } catch {
     return null;

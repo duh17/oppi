@@ -165,8 +165,12 @@ final class ChatSessionManager {
         )
     }
 
-    private static func timelineTrace(from trace: [TraceEvent], session: Session) -> [TraceEvent] {
-        if !trace.isEmpty {
+    private static func timelineTrace(
+        from trace: [TraceEvent],
+        session: Session,
+        allowFirstMessageFallback: Bool
+    ) -> [TraceEvent] {
+        if !trace.isEmpty || !allowFirstMessageFallback {
             return trace
         }
 
@@ -1153,7 +1157,8 @@ final class ChatSessionManager {
         sessionStore: SessionStore,
         cachedEventCount: Int?,
         cachedLastEventId: String?,
-        replayID: UUID?
+        replayID: UUID?,
+        allowFirstMessageFallback: Bool = true
     ) async -> TraceSignature? {
         guard let workspaceId = resolveWorkspaceId(from: sessionStore) else {
             markSyncFailed()
@@ -1193,10 +1198,25 @@ final class ChatSessionManager {
             tracePage = page
             markSyncSucceeded()
 
-            let timelineTrace = Self.timelineTrace(from: trace, session: session)
+            let timelineTrace = Self.timelineTrace(
+                from: trace,
+                session: session,
+                allowFirstMessageFallback: allowFirstMessageFallback
+            )
             let freshSignature = Self.traceSignature(for: timelineTrace)
             let usedFirstMessageFallback = trace.isEmpty && !timelineTrace.isEmpty
             var freshnessReason = "history_empty"
+
+            if timelineTrace.isEmpty, !allowFirstMessageFallback {
+                let usedReplay = replayID.map { reducer.isReplayBuffering(id: $0) } ?? false
+                if usedReplay, let replayID {
+                    reducer.applyTraceWithLiveReplay([], replayID: replayID)
+                } else {
+                    reducer.loadSession([], preserveOrphans: false)
+                }
+                needsInitialScroll = true
+                freshnessReason = "history_applied_empty"
+            }
 
             if !timelineTrace.isEmpty {
                 // Skip rebuild if the timeline projection hasn't changed since
@@ -1511,7 +1531,8 @@ final class ChatSessionManager {
             sessionStore: sessionStore,
             cachedEventCount: nil,
             cachedLastEventId: nil,
-            replayID: replayID
+            replayID: replayID,
+            allowFirstMessageFallback: false
         ) else {
             if activeHistoryReplayID == replayID {
                 activeHistoryReplayID = nil
