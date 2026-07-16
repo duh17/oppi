@@ -42,7 +42,7 @@ Example:
 
 - **Client:** WIP: reworking the Mac app into an interactive Oppi client for browsing workspaces, running sessions, and reviewing changes. It is not ready for general use yet.
 
-## [0.44.1] - 2026-07-15
+## [0.44.1] - 2026-07-16
 
 ### Notes
 
@@ -61,6 +61,7 @@ Example:
 - **Server:** Updated the embedded Pi runtime packages to `0.80.7`, bringing cache-friendly dynamic extension tool loading and current provider/session-affinity fixes into Oppi sessions.
 - **Client/Server:** The Mac app, terminal users, and managed host sessions use the same `oppi` executable installed by `npm install -g oppi-server`. The Mac app requires the npm package and does not bundle a second server runtime.
 - **Server:** The package now requires Node.js 24 and compiles with the TypeScript 7 native compiler.
+- **Client:** Internal builds honor the **Send Diagnostics to Server** setting, so device-local diagnostic uploads can be turned off when needed.
 
 ### Fixed
 
@@ -69,6 +70,7 @@ Example:
 - **Client:** Kept long ask cards above the keyboard, preserved cross-block Markdown text selection and the dictation caret, and kept the Quick Session composer fitted while dismissing it only after a successful launch.
 - **Client:** Preserved workspace scope after editing, kept the configured thinking-level order, showed queued attachment names, and returned edited review comments to the staged list.
 - **Server:** Kept local and config commands working without Tailscale or a session database, and prevented managed agent sessions from targeting themselves through `oppi session`.
+- **Client/Server:** Branched Pi sessions now open and page the active tree leaf without showing messages from another branch.
 
 ### Removed
 
