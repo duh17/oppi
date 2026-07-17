@@ -238,4 +238,51 @@ struct PairedServerTests {
         let server = PairedServer(from: creds)!
         #expect(server.baseURL?.absoluteString == "https://192.168.1.50:7749")
     }
+
+    @Test("Iroh-only transport metadata stores without HTTP base URL")
+    func irohOnlyStorageRoundTrip() throws {
+        let iroh = IrohServerTransport(
+            version: 2,
+            nodeId: "iroh-node-storage",
+            alpns: ["oppi/pair/1", "oppi/http/1"],
+            addressMode: .nodeId,
+            ticket: nil
+        )
+        let transports = ServerTransports(
+            preference: .irohOnly,
+            iroh: iroh,
+            http: nil
+        )
+        let creds = ServerCredentials(
+            host: "",
+            port: 0,
+            token: "dt_iroh_storage",
+            name: "Iroh Mac",
+            scheme: nil,
+            serverFingerprint: "sha256:irohstorage",
+            tlsCertFingerprint: nil,
+            transports: transports
+        )
+
+        let original = try #require(PairedServer(from: creds, sortOrder: 7))
+        #expect(original.baseURL == nil)
+        #expect(original.transports.preference == .irohOnly)
+        #expect(original.transports.http == nil)
+        #expect(original.transports.iroh == iroh)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(PairedServer.self, from: data)
+        #expect(decoded.baseURL == nil)
+        #expect(decoded.transports.preference == .irohOnly)
+        #expect(decoded.transports.http == nil)
+        #expect(decoded.transports.iroh == iroh)
+        #expect(decoded.sortOrder == 7)
+
+        let derived = decoded.credentials
+        #expect(derived.baseURL == nil)
+        #expect(derived.transports.preference == .irohOnly)
+        #expect(derived.transports.http == nil)
+        #expect(derived.transports.iroh == iroh)
+        #expect(derived.token == "dt_iroh_storage")
+    }
 }

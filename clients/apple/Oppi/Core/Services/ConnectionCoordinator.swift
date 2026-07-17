@@ -45,6 +45,12 @@ final class ConnectionCoordinator {
 
     #if DEBUG
     var _onRefreshAllServersForTesting: (() -> Void)?
+    var _onRefreshInactiveServerForTesting: ((String) -> Void)?
+    var _irohProxyFactoryForTesting: (@MainActor (
+        IrohServerTransport,
+        String
+    ) async throws -> (IrohConnectionManager?, URL))?
+    var _onConnectionPreparedForTesting: ((String, ServerConnection) -> Void)?
     #endif
 
     private let lanDiscovery = LANDiscovery()
@@ -71,48 +77,121 @@ final class ConnectionCoordinator {
 
     // MARK: - Connection Pool
 
-    /// Get or create a ServerConnection for a specific server.
+    /// Server IDs whose transport is being prepared. Views keep showing their
+    /// current connection until the requested server's API surface is ready.
+    private(set) var preparingServerIds: Set<String> = []
+    private var connectionPreparationTasks: [String: Task<ServerConnection?, Never>] = [:]
+
+    #if DEBUG
+    /// Synchronous HTTP-only seam retained for tests that exercise LAN endpoint
+    /// mutation. Production navigation never calls this path.
     @discardableResult
     func ensureConnection(for server: PairedServer) -> ServerConnection {
-        let serverId = server.id
+        guard (try? IrohTransportPolicy.select(credentials: server.credentials)) == .http else {
+            return disconnectedSentinel
+        }
+        return ensureHTTPConnectionForTesting(for: server)
+    }
 
+    private func ensureHTTPConnectionForTesting(for server: PairedServer) -> ServerConnection {
+        let serverId = server.id
+        if let existing = connections[serverId] {
+            if existing.credentials != server.credentials {
+                existing.disconnectStream()
+                existing.disconnectAppEventStream()
+                existing.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
+                guard existing.configure(credentials: server.credentials) else { return disconnectedSentinel }
+            }
+            return existing
+        }
+
+        let connection = ServerConnection()
+        guard connection.configure(credentials: server.credentials) else { return disconnectedSentinel }
+        initializeStores(for: connection, serverId: serverId)
+        connections[serverId] = connection
+        return connection
+    }
+    #endif
+
+    /// Await transport setup for HTTP or Iroh. Iroh needs this asynchronous path
+    /// because its app-local listener must reach `.ready` before clients receive
+    /// the ephemeral URL.
+    @discardableResult
+    func ensureConnectionReady(for server: PairedServer) async -> ServerConnection {
+        let serverId = server.id
+        if let task = connectionPreparationTasks[serverId] {
+            return await task.value ?? disconnectedSentinel
+        }
+
+        preparingServerIds.insert(serverId)
+        let task = Task { @MainActor [weak self] in
+            await self?.prepareConnection(for: server)
+        }
+        connectionPreparationTasks[serverId] = task
+        let prepared = await task.value
+        connectionPreparationTasks.removeValue(forKey: serverId)
+        preparingServerIds.remove(serverId)
+        return prepared ?? disconnectedSentinel
+    }
+
+    private func prepareConnection(for server: PairedServer) async -> ServerConnection? {
+        let serverId = server.id
         if let existing = connections[serverId] {
             if existing.credentials != server.credentials {
                 logger.warning("Reconfiguring connection for re-paired server \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
                 existing.disconnectStream()
                 existing.disconnectAppEventStream()
                 existing.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
-                guard existing.configure(credentials: server.credentials) else {
+                guard await configureConnection(existing, credentials: server.credentials) else {
                     logger.error("Failed to reconfigure connection for \(server.name, privacy: .public)")
-                    return disconnectedSentinel
+                    return nil
                 }
             }
+            #if DEBUG
+            _onConnectionPreparedForTesting?(serverId, existing)
+            #endif
             return existing
         }
 
-        let conn = ServerConnection()
-        guard conn.configure(credentials: server.credentials) else {
+        let connection = ServerConnection()
+        guard await configureConnection(connection, credentials: server.credentials) else {
             logger.error("Failed to configure connection for \(server.name, privacy: .public)")
-            return disconnectedSentinel
+            return nil
         }
-
-        // Initialize the stores' active partition to this server
-        conn.sessionStore.switchServer(to: serverId)
-        conn.askRequestStore.switchServer(to: serverId)
-        conn.workspaceStore.switchServer(to: serverId)
-        conn.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
-
-        connections[serverId] = conn
-        logger.warning("Created connection for \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
-        return conn
+        initializeStores(for: connection, serverId: serverId)
+        #if DEBUG
+        _onConnectionPreparedForTesting?(serverId, connection)
+        #endif
+        connections[serverId] = connection
+        logger.warning("Created ready connection for \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
+        return connection
     }
 
-    /// Ensure every paired server has a configured connection object.
-    ///
-    /// Split-stream mode opens live sockets from workspace/chat screens, not at app startup.
-    func prepareAllConnections() {
+    private func configureConnection(
+        _ connection: ServerConnection,
+        credentials: ServerCredentials
+    ) async -> Bool {
+        #if DEBUG
+        if let factory = _irohProxyFactoryForTesting {
+            return await connection.configureForUse(
+                credentials: credentials,
+                irohProxyFactory: factory
+            )
+        }
+        #endif
+        return await connection.configureForUse(credentials: credentials)
+    }
+
+    private func initializeStores(for connection: ServerConnection, serverId: String) {
+        connection.sessionStore.switchServer(to: serverId)
+        connection.askRequestStore.switchServer(to: serverId)
+        connection.workspaceStore.switchServer(to: serverId)
+        connection.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
+    }
+
+    func prepareAllConnectionsReady() async {
         for server in serverStore.servers {
-            _ = ensureConnection(for: server)
+            _ = await ensureConnectionReady(for: server)
         }
     }
 
@@ -350,62 +429,115 @@ final class ConnectionCoordinator {
 
     // MARK: - Server Switching
 
-    /// Switch the focused server. The previous server's WS stays open.
+    /// Prepare and switch the focused server. The previous server remains active
+    /// while an unprepared Iroh listener starts, so navigation never receives a
+    /// disconnected sentinel.
     @discardableResult
-    func switchToServer(_ serverId: String) -> Bool {
-        guard serverId != activeServerId else { return true }
-
+    func switchToServerReady(_ serverId: String) async -> Bool {
         guard let server = serverStore.server(for: serverId) else {
             logger.error("Cannot switch to unknown server \(serverId.prefix(16), privacy: .public)")
             return false
         }
-
-        return switchToServer(server)
+        return await switchToServerReady(server)
     }
 
-    /// Switch to a specific PairedServer instance.
     @discardableResult
-    func switchToServer(_ server: PairedServer) -> Bool {
-        let serverId = server.id
+    func switchToServerReady(_ server: PairedServer) async -> Bool {
+        if server.id == activeServerId,
+           let connection = connections[server.id],
+           connection.credentials == server.credentials,
+           connection.apiClient != nil {
+            return true
+        }
 
-        // Ensure connection exists and is configured
-        let conn = ensureConnection(for: server)
-        guard conn.credentials != nil else { return false }
-
-        activeServerId = serverId
-        MetricKitService.shared.setUploadClient(conn.apiClient)
-
-        logger.warning("Switched to server \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
+        let connection = await ensureConnectionReady(for: server)
+        guard connection !== disconnectedSentinel, connection.apiClient != nil else { return false }
+        activatePreparedConnection(connection, server: server)
         return true
     }
 
+    private func activatePreparedConnection(_ connection: ServerConnection, server: PairedServer) {
+        activeServerId = server.id
+        MetricKitService.shared.setUploadClient(connection.apiClient)
+        logger.warning("Switched to server \(server.name, privacy: .public) (\(server.id.prefix(16), privacy: .public))")
+    }
+
+    #if DEBUG
+    /// Test-only synchronous switch for HTTP fixtures. Iroh fixtures must use
+    /// `switchToServerReady` to cover production behavior.
+    @discardableResult
+    func switchToServer(_ serverId: String) -> Bool {
+        guard let server = serverStore.server(for: serverId) else { return false }
+        return switchToServer(server)
+    }
+
+    @discardableResult
+    func switchToServer(_ server: PairedServer) -> Bool {
+        let connection = ensureConnection(for: server)
+        guard connection !== disconnectedSentinel, connection.apiClient != nil else { return false }
+        activatePreparedConnection(connection, server: server)
+        return true
+    }
+
+    func addServer(_ server: PairedServer, switchTo: Bool = true) {
+        serverStore.addOrUpdate(server)
+        let connection = ensureConnection(for: server)
+        if switchTo, connection !== disconnectedSentinel {
+            activatePreparedConnection(connection, server: server)
+        }
+    }
+
+    func prepareAllConnections() {
+        for server in serverStore.servers {
+            _ = ensureConnection(for: server)
+        }
+    }
+    #endif
+
     // MARK: - API Clients
 
-    /// Get an API client for a specific server (from its connection).
     func apiClient(for serverId: String) -> APIClient? {
         connections[serverId]?.apiClient
     }
 
+    func apiClientReady(for serverId: String) async -> APIClient? {
+        guard let server = serverStore.server(for: serverId) else { return nil }
+        let connection = await ensureConnectionReady(for: server)
+        guard connection !== disconnectedSentinel else { return nil }
+        return connection.apiClient
+    }
+
     // MARK: - Server Lifecycle
 
-    /// Add a new server. Creates the connection and optionally switches to it.
-    func addServer(_ server: PairedServer, switchTo: Bool = true) {
+    @discardableResult
+    func addServerReady(_ server: PairedServer, switchTo: Bool = true) async -> Bool {
+        let previous = serverStore.server(for: server.id)
         serverStore.addOrUpdate(server)
-
-        _ = ensureConnection(for: server)
-
-        if switchTo {
-            switchToServer(server)
+        let connection = await ensureConnectionReady(for: server)
+        guard connection !== disconnectedSentinel else {
+            // Transport setup failed closed. Do not leave unusable replacement
+            // credentials persisted; restore the prior pairing when this was a re-pair.
+            if let previous {
+                serverStore.addOrUpdate(previous)
+            } else {
+                serverStore.remove(id: server.id)
+            }
+            return false
         }
+        if switchTo {
+            activatePreparedConnection(connection, server: server)
+        }
+        return true
     }
 
     /// Remove a server. Cleans up all associated data.
-    func removeServer(id: String) {
+    func removeServer(id: String) async {
         // Disconnect and remove the server's connection
         if let conn = connections[id] {
             conn.disconnectSession()
             conn.disconnectStream()
             conn.disconnectAppEventStream()
+            await conn.shutdownTransport()
         }
         connections.removeValue(forKey: id)
 
@@ -417,7 +549,7 @@ final class ConnectionCoordinator {
         if id == activeServerId {
             activeServerId = nil
             if let firstServer = serverStore.servers.first {
-                switchToServer(firstServer)
+                _ = await switchToServerReady(firstServer)
             }
         }
     }
@@ -434,7 +566,7 @@ final class ConnectionCoordinator {
             return
         }
 
-        let connection = ensureConnection(for: server)
+        let connection = await ensureConnectionReady(for: server)
         guard connection !== disconnectedSentinel, connection.apiClient != nil else {
             logger.error("Cannot refresh server without a configured API client: \(serverId.prefix(16), privacy: .public)")
             let failedConnection = connections[serverId] ?? connection
@@ -480,6 +612,9 @@ final class ConnectionCoordinator {
     /// The focused server is handled by `ServerConnection.reconnectIfNeeded()`.
     func refreshInactiveServers() async {
         for (serverId, connection) in connections where serverId != activeServerId {
+            #if DEBUG
+            _onRefreshInactiveServerForTesting?(serverId)
+            #endif
             guard connection.apiClient != nil else { continue }
             await connection.refreshWorkspaceAndSessionLists(force: true)
         }
@@ -492,7 +627,7 @@ final class ConnectionCoordinator {
         guard ReleaseFeatures.remotePushNotificationsEnabled else {
             return
         }
-        await PushRegistration.shared.registerWithAllServers(serverStore.servers)
+        await PushRegistration.shared.registerWithAllServers(using: self)
     }
 
     // MARK: - Cross-Server Queries
@@ -510,9 +645,21 @@ final class ConnectionCoordinator {
             .sorted { $0.lastActivity > $1.lastActivity }
     }
 
+    /// Whether any server has work whose live streams should remain eligible for
+    /// the app's background keep-alive window.
+    var hasActiveAgentTransport: Bool {
+        BackgroundKeepAlive.hasActiveAgent(in: connections.values)
+    }
+
     /// Whether any active playback still depends on live focused-session delivery.
     var hasActiveAudioTransportPlayback: Bool {
         connections.values.contains { $0.audioPlayer.hasActiveLiveTransportPlayback }
+    }
+
+    func prepareAllForBackground() {
+        for connection in connections.values {
+            connection.prepareForBackground()
+        }
     }
 
     /// Find a session by ID across all servers.

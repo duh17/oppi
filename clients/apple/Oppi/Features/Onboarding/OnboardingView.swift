@@ -179,16 +179,19 @@ struct OnboardingView: View {
                 return
             }
 
-            coordinator.addServer(pairedServer, switchTo: false)
-            guard coordinator.switchToServer(pairedServer) else {
+            guard await coordinator.addServerReady(pairedServer, switchTo: false),
+                  await coordinator.switchToServerReady(pairedServer) else {
                 connectionTest = .failed("Connection blocked by server transport policy")
                 return
             }
 
-            // Load sessions
-            connection.sessionStore.markSyncStarted()
-            connection.sessionStore.applyServerSnapshot(bootstrap.sessions)
-            connection.sessionStore.markSyncSucceeded()
+            // Load sessions into the connection that was just selected. The
+            // environment connection can still point at the previous server for
+            // this render pass during add-server and deep-link onboarding.
+            let selectedConnection = coordinator.activeConnection
+            selectedConnection.sessionStore.markSyncStarted()
+            selectedConnection.sessionStore.applyServerSnapshot(bootstrap.sessions)
+            selectedConnection.sessionStore.markSyncSucceeded()
 
             connectionTest = .success
 
@@ -388,26 +391,61 @@ protocol InviteBootstrapAPI: Sendable {
 
 extension APIClient: InviteBootstrapAPI {}
 
+/// Minimal policy boundary for the Iroh pairing step.
+protocol IrohInvitePairingClient: Sendable {
+    func pairDevice(
+        pairingToken: String,
+        iroh: IrohServerTransport,
+        deviceName: String?
+    ) async -> IrohInvitePairingResult
+}
+
+enum IrohInvitePairingResult: Sendable, Equatable {
+    case success(deviceToken: String)
+    case transportUnavailable(String)
+    case pairingRejected(status: Int, message: String)
+
+    static func rejected(_ message: String) -> Self {
+        .pairingRejected(status: rejectionStatus(for: message), message: message)
+    }
+
+    static func rejected(status: Int, message: String) -> Self {
+        .pairingRejected(status: status, message: message)
+    }
+
+    private static func rejectionStatus(for message: String) -> Int {
+        let normalized = message.localizedLowercase
+        if normalized.contains("too many") || normalized.contains("rate limit") {
+            return 429
+        }
+        if normalized.contains("invalid") || normalized.contains("expired") {
+            return 401
+        }
+        return 500
+    }
+}
+
 @MainActor
 enum InviteBootstrapService {
     static func credentials(from inviteURL: URL) -> ServerCredentials? {
         ServerCredentials.decodeInviteURL(inviteURL)
     }
 
+    private static let irohPairingALPN = "oppi/pair/1"
+
     static func validateAndBootstrap(
         credentials: ServerCredentials,
         existingCredentials: ServerCredentials?,
         confirmTrust: @MainActor (String) async -> Bool,
+        irohPairingClient: any IrohInvitePairingClient = RealIrohInvitePairingClient(),
         apiFactory: @MainActor (URL, String, String?) -> any InviteBootstrapAPI = { baseURL, token, tlsCertFingerprint in
             APIClient(baseURL: baseURL, token: token, tlsCertFingerprint: tlsCertFingerprint)
+        },
+        irohProxyFactory: @MainActor (IrohServerTransport, String) async throws -> URL = { iroh, token in
+            let (_, url) = try await IrohTransportRegistry.shared.startProxy(iroh: iroh, token: token)
+            return url
         }
     ) async throws -> InviteBootstrapResult {
-        guard let baseURL = credentials.baseURL else {
-            throw InviteBootstrapError.message(
-                "Invalid server address: \(credentials.host):\(credentials.port)"
-            )
-        }
-
         let sameTarget = isSameServer(existingCredentials, credentials)
         let existingFingerprint = existingCredentials?.normalizedServerFingerprint
         let inviteFingerprint = credentials.normalizedServerFingerprint
@@ -421,10 +459,10 @@ enum InviteBootstrapService {
         if requiresTrustReset || requiresInviteTrust {
             let reason: String
             if requiresTrustReset {
-                reason = "Server identity changed for \(credentials.host). Confirm trust reset."
+                reason = "Server identity changed for \(displayTarget(credentials)). Confirm trust reset."
             } else {
                 let displayFingerprint = inviteFingerprint ?? "unknown"
-                reason = "Trust \(credentials.host) (\(shortFingerprint(displayFingerprint)))"
+                reason = "Trust \(displayTarget(credentials)) (\(shortFingerprint(displayFingerprint)))"
             }
 
             let trusted = await confirmTrust(reason)
@@ -433,47 +471,128 @@ enum InviteBootstrapService {
             }
         }
 
-        let bootstrapAPI = apiFactory(
-            baseURL,
-            credentials.token,
-            credentials.normalizedTLSCertFingerprint
-        )
+        let selection: ServerTransportSelection
+        do {
+            selection = try IrohTransportPolicy.select(credentials: credentials)
+        } catch {
+            throw InviteBootstrapError.message(error.localizedDescription)
+        }
 
         let effectiveToken: String
         if let pairingToken = credentials.pairingToken, !pairingToken.isEmpty {
-            do {
-                let pairResult = try await bootstrapAPI.pairDevice(
-                    pairingToken: pairingToken,
-                    deviceName: nil
-                )
-                effectiveToken = pairResult.deviceToken
-            } catch {
-                throw InviteBootstrapError.message(pairingFailureMessage(for: error, host: credentials.host))
-            }
+            effectiveToken = try await pairToken(
+                pairingToken,
+                credentials: credentials,
+                selection: selection,
+                irohPairingClient: irohPairingClient,
+                apiFactory: apiFactory
+            )
         } else {
             effectiveToken = credentials.token
         }
 
-        let api = apiFactory(
+        let api: any InviteBootstrapAPI
+        switch selection {
+        case .iroh(let iroh):
+            // No broad fallback here. Auth, identity, framing, protocol, and
+            // reachability failures all remain on the selected Iroh lane.
+            let localURL = try await irohProxyFactory(iroh, effectiveToken)
+            api = apiFactory(localURL, effectiveToken, nil)
+        case .http:
+            api = try httpBootstrapAPI(
+                credentials: credentials,
+                token: effectiveToken,
+                apiFactory: apiFactory
+            )
+        }
+
+        let sessions = try await bootstrapSessions(using: api)
+        return InviteBootstrapResult(
+            effectiveCredentials: credentials.withAuthToken(effectiveToken),
+            sessions: sessions
+        )
+    }
+
+    private static func httpBootstrapAPI(
+        credentials: ServerCredentials,
+        token: String,
+        apiFactory: @MainActor (URL, String, String?) -> any InviteBootstrapAPI
+    ) throws -> any InviteBootstrapAPI {
+        guard let baseURL = credentials.baseURL else {
+            throw InviteBootstrapError.message(
+                "Invalid server address: \(credentials.host):\(credentials.port)"
+            )
+        }
+        return apiFactory(
             baseURL,
-            effectiveToken,
+            token,
             credentials.normalizedTLSCertFingerprint
         )
+    }
 
+    private static func bootstrapSessions(using api: any InviteBootstrapAPI) async throws -> [Session] {
         let healthy = try await api.health()
         guard healthy else {
             throw InviteBootstrapError.message("Server is not healthy")
         }
 
         _ = try await api.me()
+        return try await api.listSessionsFromWorkspaces(recentDays: 3)
+    }
 
-        let effectiveCredentials = credentials.withAuthToken(effectiveToken)
-        let sessions = try await api.listSessionsFromWorkspaces(recentDays: 3)
+    private static func pairToken(
+        _ pairingToken: String,
+        credentials: ServerCredentials,
+        selection: ServerTransportSelection,
+        irohPairingClient: any IrohInvitePairingClient,
+        apiFactory: @MainActor (URL, String, String?) -> any InviteBootstrapAPI
+    ) async throws -> String {
+        switch selection {
+        case .iroh(let iroh):
+            guard iroh.alpns.contains(irohPairingALPN) else {
+                throw InviteBootstrapError.message("Selected Iroh transport is missing oppi/pair/1 metadata")
+            }
+            switch await irohPairingClient.pairDevice(
+                pairingToken: pairingToken,
+                iroh: iroh,
+                deviceName: nil
+            ) {
+            case .success(let deviceToken):
+                return deviceToken
+            case .transportUnavailable(let message):
+                throw InviteBootstrapError.message("Iroh pairing unavailable: \(message)")
+            case .pairingRejected(let status, let message):
+                throw InviteBootstrapError.message(
+                    pairingFailureMessage(
+                        for: APIError.server(status: status, message: message),
+                        host: displayTarget(credentials)
+                    )
+                )
+            }
 
-        return InviteBootstrapResult(
-            effectiveCredentials: effectiveCredentials,
-            sessions: sessions
-        )
+        case .http:
+            guard let baseURL = credentials.baseURL else {
+                throw InviteBootstrapError.message(
+                    "Invalid server address: \(credentials.host):\(credentials.port)"
+                )
+            }
+            let bootstrapAPI = apiFactory(
+                baseURL,
+                credentials.token,
+                credentials.normalizedTLSCertFingerprint
+            )
+            do {
+                let pairResult = try await bootstrapAPI.pairDevice(
+                    pairingToken: pairingToken,
+                    deviceName: nil
+                )
+                return pairResult.deviceToken
+            } catch {
+                throw InviteBootstrapError.message(
+                    pairingFailureMessage(for: error, host: displayTarget(credentials))
+                )
+            }
+        }
     }
 
     static func pairingFailureMessage(for error: Error, host: String) -> String {
@@ -520,6 +639,13 @@ enum InviteBootstrapService {
         }
 
         return "Pairing failed. Request a fresh invite and try again."
+    }
+
+    private static func displayTarget(_ credentials: ServerCredentials) -> String {
+        if !credentials.host.isEmpty {
+            return credentials.host
+        }
+        return credentials.name
     }
 
     private static func isSameServer(_ lhs: ServerCredentials?, _ rhs: ServerCredentials) -> Bool {

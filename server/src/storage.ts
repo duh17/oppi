@@ -29,6 +29,7 @@ import type {
 import { SessionSqliteStore } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import type {
+  AuthTransport,
   CreateWorkspaceRequest,
   ServerConfig,
   Session,
@@ -241,12 +242,33 @@ export class Storage {
     return this.authStore.rotateToken();
   }
 
-  issuePairingToken(ttlMs?: number): string {
-    return this.authStore.issuePairingToken(ttlMs);
+  issuePairingToken(ttlMs?: number, options?: { allowedTransports?: AuthTransport[] }): string {
+    return this.authStore.issuePairingToken(ttlMs, options);
   }
 
-  consumePairingToken(candidate: string): string | null {
-    return this.authStore.consumePairingToken(candidate);
+  consumePairingToken(
+    candidate: string,
+    options?: { irohClientNodeId?: string; allowedTransports?: AuthTransport[] },
+  ): string | null {
+    return this.authStore.consumePairingToken(candidate, options);
+  }
+
+  hasAuthToken(candidate: string): boolean {
+    return this.authStore.hasAuthToken(candidate);
+  }
+
+  hasAuthTokenForTransport(
+    candidate: string,
+    transport: AuthTransport,
+  ): ReturnType<AuthStore["hasAuthTokenForTransport"]> {
+    return this.authStore.hasAuthTokenForTransport(candidate, transport);
+  }
+
+  validateIrohDeviceToken(
+    candidate: string,
+    clientNodeId: string,
+  ): ReturnType<AuthStore["validateIrohDeviceToken"]> {
+    return this.authStore.validateIrohDeviceToken(candidate, clientNodeId);
   }
 
   getOwnerName(): string {

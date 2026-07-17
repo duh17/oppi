@@ -1,6 +1,6 @@
 # Oppi server architecture
 
-The Oppi server is the authority for sessions, workspace access, runtime configuration, and the mobile-facing projection of Pi session state. It exposes authenticated HTTP over an owner-only Unix socket to the local CLI, plus an independently available network HTTP(S)/WebSocket listener for Apple clients, dictation, app events, and the terminal mirror bridge.
+The Oppi server is the authority for sessions, workspace access, runtime configuration, and the mobile-facing projection of Pi session state. It exposes authenticated HTTP over an owner-only Unix socket to the local CLI. Apple clients, dictation, app events, and the terminal mirror bridge use the same remote HTTP and WebSocket handlers through an independently available network listener or an Iroh encrypted tunnel.
 
 ## Audience and scope
 
@@ -37,6 +37,8 @@ graph TD
 
   subgraph Boundaries[Boundary adapters]
     LocalHTTP[HTTP over Unix socket<br/>owner-only local control plane]
+    Iroh[Iroh endpoint<br/>oppi/pair/1 + oppi/http/1]
+    Loopback[Private authenticated<br/>HTTP loopback]
     REST[Network REST routes<br/>routes/*]
     AppEvents[Global app event stream<br/>app-event-stream.ts]
     Live[Focused session and audio streams<br/>stream.ts + ws-message-handler.ts]
@@ -72,6 +74,9 @@ graph TD
   end
 
   Client --> Root
+  Client --> Iroh
+  Iroh --> Loopback
+  Loopback --> Root
   Terminal --> Root
   CLI --> LocalHTTP
   LocalHTTP --> Root
@@ -111,31 +116,36 @@ graph TD
 
 ## Main server blocks
 
-| Block                                             | Owns                                                                                                                 | Does not own                               |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `server.ts`                                       | startup, dependency wiring, HTTP and WebSocket entry, auth shell, service lifecycle                                  | session semantics                          |
-| `routes/*`                                        | HTTP parsing, auth-checked route boundaries, response shapes, app-event emission                                     | lifecycle, list, trace, or runtime policy  |
-| `session-lifecycle-service.ts`                    | create/import, resume/open, stop, fork, delete, and mirror promotion policy                                          | HTTP response mapping                      |
-| `session-list-service.ts`                         | recent/workspace/archive session row shaping, active runtime overlays, local-session catalog joins                   | route query parsing                        |
-| `session-trace-service.ts`                        | trace source precedence, tool output lookup, overall diffs, changed-file summaries, and raw changed-file read policy | streaming bytes to HTTP responses          |
-| `session-title-generator.ts` + `token-usage.ts`   | Provider-owned Pi model requests and static built-in pricing lookup                                                   | session lifecycle or route behavior        |
-| `agent-launch-service.ts`                         | idempotent saved-Agent and schedule launches into managed sessions                                                   | HTTP response mapping                      |
-| `agent-schedules.ts` + `agent-schedule-runner.ts` | durable schedule definitions, due-run materialization, lease claiming, dispatch, and run history                     | Apple UI routing                           |
-| `app-event-stream.ts`                             | global app-event WebSocket, app-event allowlist, row and extension UI mapping, workspace invalidation mapping        | focused timeline replay or command routing |
-| `stream.ts` + `ws-message-handler.ts`             | focused session and audio WebSocket framing, fan-out, client-message routing                                         | workspace list data flow                   |
-| `runtime-router.ts`                               | runtime ownership dispatch through `SessionRuntimes`                                                                 | shared Pi event projection semantics       |
-| `sessions.ts` + `session-*`                       | managed session lifecycle, queue, stop, event translation, SDK calls                                                 | HTTP response shaping                      |
-| `pi-tui-mirror-runtime.ts`                        | terminal mirror bridge registration, takeover, queue, and command proxying                                           | Apple focused-session transport            |
-| `session-sqlite-store.ts` + `local-sessions.ts`   | persisted read models and local JSONL catalog                                                                        | runtime command delivery                   |
+| Block                                              | Owns                                                                                                                 | Does not own                               |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `server.ts`                                        | startup, dependency wiring, HTTP, WebSocket, and Iroh entry, auth shell, service lifecycle                           | session semantics                          |
+| `iroh-pairing-server.ts` + `iroh-http-loopback.ts` | persistent Iroh endpoint, peer-bound pairing, bounded tunnel streams, and private HTTP/WebSocket adaptation          | route, runtime, or projection semantics    |
+| `routes/*`                                         | HTTP parsing, auth-checked route boundaries, response shapes, app-event emission                                     | lifecycle, list, trace, or runtime policy  |
+| `session-lifecycle-service.ts`                     | create/import, resume/open, stop, fork, delete, and mirror promotion policy                                          | HTTP response mapping                      |
+| `session-list-service.ts`                          | recent/workspace/archive session row shaping, active runtime overlays, local-session catalog joins                   | route query parsing                        |
+| `session-trace-service.ts`                         | trace source precedence, tool output lookup, overall diffs, changed-file summaries, and raw changed-file read policy | streaming bytes to HTTP responses          |
+| `session-title-generator.ts` + `token-usage.ts`    | Provider-owned Pi model requests and static built-in pricing lookup                                                  | session lifecycle or route behavior        |
+| `agent-launch-service.ts`                          | idempotent saved-Agent and schedule launches into managed sessions                                                   | HTTP response mapping                      |
+| `agent-schedules.ts` + `agent-schedule-runner.ts`  | durable schedule definitions, due-run materialization, lease claiming, dispatch, and run history                     | Apple UI routing                           |
+| `app-event-stream.ts`                              | global app-event WebSocket, app-event allowlist, row and extension UI mapping, workspace invalidation mapping        | focused timeline replay or command routing |
+| `stream.ts` + `ws-message-handler.ts`              | focused session and audio WebSocket framing, fan-out, client-message routing                                         | workspace list data flow                   |
+| `runtime-router.ts`                                | runtime ownership dispatch through `SessionRuntimes`                                                                 | shared Pi event projection semantics       |
+| `sessions.ts` + `session-*`                        | managed session lifecycle, queue, stop, event translation, SDK calls                                                 | HTTP response shaping                      |
+| `pi-tui-mirror-runtime.ts`                         | terminal mirror bridge registration, takeover, queue, and command proxying                                           | Apple focused-session transport            |
+| `session-sqlite-store.ts` + `local-sessions.ts`    | persisted read models and local JSONL catalog                                                                        | runtime command delivery                   |
 
 ## HTTP and WebSocket boundaries
 
-`server.ts` creates two listeners that share the same HTTP route and bearer-authentication shell:
+`server.ts` creates a mandatory local listener and, when configured, a network listener. Both share the same HTTP route and bearer-authentication shell:
 
 - The mandatory local listener serves HTTP over an owner-only Unix socket. Its normal path is `$OPPI_DATA_DIR/run/oppi.sock`; deep custom data-directory paths use a deterministic socket under the user's temporary runtime directory. The runtime directory is `0700`, the socket and startup lock are `0600`, stale paths are ownership-checked, and startup refuses concurrent owners.
 - The network listener serves configured HTTP(S) and scoped WebSockets to remote clients. TLS preparation runs off the main thread after the local socket begins listening, so certificate commands and renewal-lock waits do not block local requests. Expected Tailscale availability failures disable the remote listener; unexpected preparation errors remain fatal. Network TLS failure must never create a plaintext fallback.
 
 The local socket intentionally has no WebSocket upgrade handler. Oppi Mirror and Oppi subagents continue to use the network WebSocket listener. `server.ts` validates network startup security, handles CORS and `/health`, authenticates requests, and delegates authenticated HTTP from either listener to `RouteHandler`.
+
+When Iroh is enabled, `iroh-pairing-server.ts` owns one persistent endpoint with `oppi/pair/1` and `oppi/http/1` ALPNs. Pairing binds the issued device token to the Apple endpoint ID. Each authenticated HTTP tunnel stream is pumped into `iroh-http-loopback.ts`, which invokes the same request and WebSocket upgrade handlers as the network listener. Limits on connections, streams, preface size and timeout, bearer size, and pump chunks bound resource use. Iroh-only startup and authentication fail closed.
+
+The private loopback is an adapter, not another API. Iroh transport code must not branch on route names, session types, or feature payloads.
 
 `RouteHandler` owns route dispatch across domain files:
 
@@ -300,5 +310,5 @@ Keep these high-churn modules small and explicit:
 | Extension UI relay                          | `server/src/sdk-ui-bridge.ts`, `server/src/extension-ui-contract.ts`, `server/src/extension-ui-state.ts`, `server/src/session-agent-events.ts`                                         |
 | Workspace files and media                   | `server/src/routes/workspace-files.ts`, `server/src/file-serving-policy.ts`, `server/src/routes/uploads.ts`, `server/src/session-attachments.ts`, `server/src/http-range.ts`           |
 | Protocol contract                           | `server/src/types/protocol.ts`, `server/src/types.ts`, `protocol/*.json`                                                                                                               |
-| Pi model/auth and pricing                   | `server/src/session-title-generator.ts`, `server/src/token-usage.ts`, `server/src/model-catalog.ts`                                                                                   |
+| Pi model/auth and pricing                   | `server/src/session-title-generator.ts`, `server/src/token-usage.ts`, `server/src/model-catalog.ts`                                                                                    |
 | Pi event projection                         | `server/src/session-events.ts`, `server/src/session-agent-events.ts`, `server/src/session-protocol.ts`, `server/src/session-agent-event-media.ts`                                      |

@@ -1,6 +1,6 @@
 # Server benchmarks
 
-This directory is the canonical home for server microbenchmarks and perf regressions.
+This directory is the canonical home for server microbenchmarks and perf regressions. The containerized Iroh network benchmark lives under `e2e/` because it exercises production HTTP routes, WebSocket muxes, uploads, downloads, Docker topology, and selected Iroh paths rather than an in-process hot path.
 
 ## Layout
 
@@ -56,4 +56,9 @@ npm run bench:perf:gate   # run hotpath multi-run + compare to baseline
 npm run bench:hotpath     # critical event pipeline benchmark
 npm run bench:hotpath:gate
 npm run bench:compare -- --baseline <file> --current <file>
+
+# Separate evidence lane; not part of the flaky-sensitive unit/perf gate
+npm run bench:iroh-network
 ```
+
+`bench:iroh-network` uses fixed sample counts and writes durable raw JSON plus a Markdown comparison to `.internal/reports/iroh-benchmark-<timestamp>.{json,md}`. It fails on missing samples or an Iroh `Connection.paths()` selection that does not match the requested direct or relay path.

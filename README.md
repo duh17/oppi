@@ -27,7 +27,7 @@ Extension prompts, confirmations, editor requests, status, and widgets render as
 │   iPhone / iPad     │
 │        Oppi         │
 └──────────┬──────────┘
-           │ HTTPS / WSS
+           │ Iroh or HTTPS / WSS
            │ session stream + Pi extension UI
 ┌──────────▼──────────┐
 │     oppi-server     │
@@ -75,11 +75,19 @@ npm install -g oppi-server@latest
 npm uninstall -g oppi-server
 ```
 
-Your phone and server must be reachable over LAN, Tailscale, or a public hostname. For remote pairing (Tailscale or VPS), generate invites with an explicit host:
+The default HTTP/TLS transport requires the phone to reach the server over LAN, Tailscale, or a public hostname. For remote HTTP pairing, generate invites with an explicit host:
 
 ```bash
 oppi pair --host <hostname-or-ip>
 ```
+
+Iroh mode removes the Oppi host, port, TLS certificate, LAN, and Tailscale requirement. It uses the signed server endpoint ID and can connect directly or through Iroh relay infrastructure:
+
+```bash
+OPPI_IROH_TRANSPORT=1 OPPI_IROH_INVITE_MODE=irohOnly oppi serve
+```
+
+An Iroh-only invite and its device token fail closed instead of falling back to HTTP.
 
 Notes:
 
@@ -87,7 +95,7 @@ Notes:
 - Invites are single-use and short-lived (90 seconds by default). If pairing fails, generate a fresh invite.
 - Invite port comes from server config (`oppi config get port`).
 
-If you want first-run QR output from `serve` to already use your Tailscale host, start with:
+If you use HTTP/TLS and want first-run QR output from `serve` to already use your Tailscale host, start with:
 
 ```bash
 oppi serve --host <your-host>.ts.net

@@ -19,8 +19,19 @@ struct BackgroundKeepAlive {
     private var taskID: UIBackgroundTaskIdentifier = .invalid
     private var pollingTask: Task<Void, Never>?
 
-    /// Begin background execution if any agent is active.
-    mutating func begin(sessionStore: SessionStore) {
+    /// Shared predicate used both before starting and while polling. It must
+    /// include inactive server connections because their agents continue work
+    /// while another server is selected.
+    static func hasActiveAgent(in connections: some Sequence<ServerConnection>) -> Bool {
+        connections.contains { connection in
+            connection.sessionStore.sessions.contains {
+                $0.status == .busy || $0.status == .starting
+            }
+        }
+    }
+
+    /// Begin background execution if any agent on any connection is active.
+    mutating func begin(coordinator: ConnectionCoordinator) {
         guard taskID == .invalid else { return }
 
         taskID = UIApplication.shared.beginBackgroundTask(withName: "agent-keep-alive") {
@@ -40,16 +51,13 @@ struct BackgroundKeepAlive {
 
         // Poll session status — end when no agents are busy.
         let capturedTaskID = taskID
-        pollingTask = Task { @MainActor [sessionStore] in
+        pollingTask = Task { @MainActor [weak coordinator] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(5))
                 guard !Task.isCancelled else { break }
 
-                let stillActive = sessionStore.sessions.contains {
-                    $0.status == .busy || $0.status == .starting
-                }
-
-                if !stillActive {
+                guard let coordinator else { break }
+                if !Self.hasActiveAgent(in: coordinator.connections.values) {
                     Self.log.info("No active agents — ending background keep-alive")
                     UIApplication.shared.endBackgroundTask(capturedTaskID)
                     break

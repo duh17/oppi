@@ -1,12 +1,12 @@
 # E2E Tests
 
-End-to-end tests that exercise the full Oppi stack with a native or containerized server and local OMLX models.
+End-to-end tests exercise the HTTP/TLS compatibility path and the isolated Iroh transport with a native or containerized server.
 
 ## Prerequisites
 
-- OMLX-compatible OpenAI API server on localhost:8400 with at least one model loaded
-- Docker only for explicit Docker Compose mode
-- Preferred model: `Qwen3.6-*` (fallback: first model returned by `/v1/models`)
+- The HTTP/TLS suites require an OMLX-compatible OpenAI API server on localhost:8400 with at least one model loaded. They prefer `Qwen3.6-*` and fall back to the first model returned by `/v1/models`.
+- Docker (OrbStack recommended) is required only for explicit Docker Compose mode and the isolated Iroh suite.
+- The isolated Iroh suite uses a deterministic server-local stub and does not access a host model endpoint.
 
 ## Test Suites
 
@@ -37,13 +37,55 @@ Exercises the full session lifecycle for an already-paired device:
 
 The session-list assertions use the harness `listWorkspaceSessions()` helper. The server API requires `status=active` or `status=stopped`; tests should not call the collection route without an explicit status filter.
 
+### Isolated Iroh transport (`npm run test:e2e:iroh`)
+
+This non-skippable harness starts separate server and client containers. They share an internal Iroh network but use separate egress networks. The server binds Oppi HTTP to `127.0.0.1`, publishes no host port, and provides the client only an Iroh endpoint ticket through a shared bootstrap volume.
+
+The client proves:
+
+1. the Oppi HTTP port is unreachable from the client container;
+2. Iroh-only pairing binds the device token to the client node ID;
+3. one `oppi/http/1` connection carries REST reads and mutations across multiple bi-streams;
+4. file downloads, byte ranges, upload records, and binary upload bodies use existing routes;
+5. focused-session and app-event WebSockets use existing upgrade handlers, reconnect, and use the REST catch-up route;
+6. stream cancellation and invalid bearer errors remain isolated to one bi-stream;
+7. dictation control and binary audio reach the existing dictation mux and a server-local deterministic STT stub.
+
+The command fails unless the client executes at least 25 assertions. It writes combined Compose logs under `/tmp/oppi-iroh-isolated-<pid>-artifacts/compose.log` and prints the exact path.
+
+### Iroh network benchmark (`npm run bench:iroh-network`)
+
+This separate, non-gating lane compares three paths through dedicated containers:
+
+- HTTP direct over a project-scoped Docker bridge;
+- Iroh direct, accepted only when the selected `Connection.paths()` snapshot has `isIp=true` and `isRelay=false`;
+- forced Iroh relay, accepted only when the selected snapshot has `isRelay=true` and `isIp=false`.
+
+The relay server and client use separate egress networks. After each endpoint establishes its public relay connection, the harness allowlists that relay's resolved address and blocks all other UDP with container-local firewall rules. The client also receives a relay-only `EndpointAddr` and proves that the Oppi HTTP listener is unreachable. No service uses host networking, `host.docker.internal`, Tailscale, a host model endpoint, or a host-published Oppi port.
+
+The fixed sample plan is 30 cold transport connections, 200 warm authenticated `/me` requests, 200 focused-WebSocket `get_state` round trips, 20 focused-WebSocket reconnects, and five uploads plus five downloads at 1, 10, and 50 MiB. Every Iroh sample records a sanitized selected-path snapshot, connection/path counter deltas, RTT, loss, congestion events, congestion window, and MTU. A path mismatch or missing sample fails the command.
+
+The runner writes raw JSON plus a Markdown comparison under `.internal/reports/iroh-benchmark-<timestamp>.{json,md}`. Runtime Compose logs remain under `/tmp/oppi-iroh-benchmark-<pid>-artifacts/`. Public relay measurements are rate-limited, shared-service observations with no SLA.
+
+Relevant feature-story dispositions from `.internal/reports/feature-user-story-status.csv`:
+
+| Story                                      | Isolated server evidence                                                | Disposition                         |
+| ------------------------------------------ | ----------------------------------------------------------------------- | ----------------------------------- |
+| `SERVER-001`                               | Creates a workspace session and opens its focused stream                | Automated                           |
+| `SERVER-014`                               | Focused stream, app-event stream, reconnect, and REST catch-up          | Automated                           |
+| `SERVER-020`                               | Iroh-only one-time pairing, node-bound bearer, invalid-bearer rejection | Automated                           |
+| `SERVER-021`                               | No HTTP shortcut; the normal HTTP/TLS suites remain separate            | Automated server evidence           |
+| `SERVER-023`                               | Dictation start, binary PCM, stop, and deterministic final transcript   | Automated                           |
+| `SERVER-029`                               | Existing file route ownership is exercised by full and ranged reads     | Automated transport evidence        |
+| `IOS-007`, `IOS-054`, `IOS-063`, `IOS-065` | Server transport paths are covered here                                 | Apple Iroh interoperability pending |
+
 ## Running
 
 ```bash
-# Preferred local mode: spawns the server directly and does not inspect Docker state
+# Preferred local HTTP/TLS mode: spawns the server directly and requires local OMLX
 cd server && E2E_NATIVE=1 npm run test:e2e
 
-# Explicit Docker Compose mode
+# Explicit Docker Compose HTTP/TLS mode
 cd server && npm run test:e2e
 
 # Docker pairing flow only
@@ -51,6 +93,12 @@ cd server && npm run test:e2e:pairing
 
 # Docker session flow only
 cd server && npm run test:e2e:session
+
+# Isolated Iroh matrix; no host model endpoint required
+cd server && npm run test:e2e:iroh
+
+# Reproducible HTTP-direct / Iroh-direct / forced-relay benchmark
+cd server && npm run bench:iroh-network
 ```
 
 On Mac Studio, do not add writable repo, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context, mounts its generated `models.json` read-only, and stores server state in a named volume. Use native mode for normal local iteration.
@@ -75,9 +123,16 @@ e2e/
 ├── harness.ts                  # Shared: Docker/native/package lifecycle, API/WS/bootstrap helpers
 ├── harness-cli.ts              # Thin CLI wrapper for non-Vitest harness callers
 ├── pairing-flow.e2e.test.ts    # Suite 1: pairing flow
-├── paired-session.e2e.test.ts  # Suite 2: already-paired session flow
-├── docker-compose.e2e.yml      # Ephemeral Docker server config
-└── README.md                   # This file
+├── paired-session.e2e.test.ts       # Suite 2: already-paired session flow
+├── docker-compose.e2e.yml           # HTTP/TLS Docker server config
+├── docker-compose.iroh-isolated.yml # Isolated Iroh server/client topology
+├── iroh-isolated-server.ts          # Server bootstrap and deterministic STT stub
+├── iroh-isolated-client.ts          # Raw HTTP/WebSocket-over-Iroh assertions
+├── run-iroh-isolated-e2e.ts         # Non-skippable Compose runner
+├── docker-compose.iroh-benchmark.yml
+├── iroh-network-benchmark-{server,client,common}.ts
+├── run-iroh-network-benchmark.ts    # Reproducible performance runner
+└── README.md                        # This file
 ```
 
 The harness supports two modes:

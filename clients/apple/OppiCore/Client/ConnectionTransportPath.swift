@@ -4,4 +4,5 @@ import Foundation
 enum ConnectionTransportPath: String, Sendable, Equatable {
     case paired
     case lan
+    case iroh
 }

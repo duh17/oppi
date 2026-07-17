@@ -1,6 +1,6 @@
 # Oppi client architecture
 
-The Oppi Apple client is a remote control and renderer for server-owned and terminal-owned Pi sessions. It keeps workspace navigation HTTP-first, uses WebSockets only for live streams, and renders the hot chat timeline through a UIKit-backed pipeline.
+The Oppi Apple client is a remote control and renderer for server-owned and terminal-owned Pi sessions. It keeps workspace navigation HTTP-first, uses WebSockets only for live streams, and renders the hot chat timeline through a UIKit-backed pipeline. The same HTTP/WebSocket clients can connect to a normal remote endpoint or to an app-local loopback proxy carried by Iroh.
 
 ## Audience and scope
 
@@ -27,6 +27,7 @@ The client does not execute Pi sessions or mutate server read models directly. I
 ```mermaid
 graph TD
   subgraph Transport[Transport]
+    Iroh[Iroh endpoint manager<br/>and loopback proxy]
     API[APIClient]
     AppEventClient[AppEventStreamClient]
     SessionClient[WebSocketClient]
@@ -62,6 +63,10 @@ graph TD
     UIKit[ChatTimelineCollectionView]
   end
 
+  Iroh --> API
+  Iroh --> AppEventClient
+  Iroh --> SessionClient
+  Iroh --> AudioClient
   API --> Connection
   AppEventClient --> Connection
   SessionClient --> Connection
@@ -92,7 +97,8 @@ graph TD
 
 | Block                                    | Owns                                                                                                                        | Does not own                          |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| `ServerConnection`                       | connection composition, API/WS client wiring, focused/app-event stream startup, shared store updates, command sender wiring | per-session timeline reducer state    |
+| `ServerConnection`                       | connection composition, HTTP/Iroh selection, API/WS client wiring, focused/app-event stream startup, shared store updates   | per-session timeline reducer state    |
+| `IrohConnectionManager` + `IrohLoopbackProxy` | persistent endpoint/connection ownership, signed-peer validation, and bounded local TCP-to-Iroh stream pumping         | HTTP routes or WebSocket semantics    |
 | `APIClient`                              | authenticated HTTP requests and response decoding                                                                           | UI decisions or store mutation policy |
 | `WebSocketClient`                        | focused session WebSocket transport, reconnect policy, inbound metadata                                                     | protocol side effects                 |
 | `AppEventStreamClient` + coordinator     | app-event WebSocket consumption                                                                                             | focused timeline replay               |
@@ -112,6 +118,10 @@ graph TD
 Non-adapter files in `OppiCore` must stay platform-neutral. UI/device work belongs in `clients/apple/OppiCore/PlatformAdapters/**`, the iOS app under `clients/apple/Oppi/**`, or the Mac app under `clients/apple/OppiMac/**`. `OppiCore/PlatformAdapters` is excluded from the shared source group until each adapter is added to the correct target explicitly. Mac local server ownership, owner-token loading, certificate trust delegates, notifications, TCC, and process lifecycle are adapters around this shared core, not part of the core itself.
 
 ## Transport lanes
+
+For HTTP credentials, clients connect directly to the selected HTTP(S) endpoint. For signed Iroh metadata advertising `oppi/http/1`, `IrohConnectionManager` reuses the Keychain-backed process endpoint and a verified QUIC connection. `IrohLoopbackProxy` binds an ephemeral IPv4 loopback port; each accepted local TCP connection maps to one authenticated Iroh bidirectional stream. `APIClient`, `WebSocketClient`, media loaders, uploads, focused streams, app events, and dictation keep their existing URLSession semantics.
+
+Iroh-only credentials fail closed. An Iroh-preferred credential that advertises the tunnel also fails closed on malformed metadata, peer mismatch, authentication failure, or protocol failure; it does not silently downgrade after selecting Iroh. Loopback URLs are runtime-only and never become the paired server identity.
 
 ```mermaid
 graph TD
@@ -269,7 +279,7 @@ Keep these high-churn client modules small and explicit:
 
 | Concern                     | Files                                                                                                                                                                 |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connection composition      | `clients/apple/Oppi/Core/Networking/ServerConnection.swift`, `ServerConnection+*.swift`                                                                               |
+| Connection composition      | `clients/apple/Oppi/Core/Networking/ServerConnection.swift`, `ServerConnection+*.swift`, `IrohConnectionManager.swift`, `IrohLoopbackProxy.swift`, `IrohTransportPolicy.swift`                                                                               |
 | HTTP API                    | `clients/apple/Oppi/Core/Networking/APIClient.swift`                                                                                                                  |
 | Focused WebSocket transport | `clients/apple/Oppi/Core/Networking/WebSocketClient.swift`, `SessionStreamCoordinator.swift`, `MessageSender.swift`; shared state in `clients/apple/OppiCore/Runtime/FocusedSessionStore.swift` and `SessionStreamCatchUpTracker.swift` |
 | App event stream            | `clients/apple/Oppi/Core/Networking/AppEventStreamClient.swift`, `AppEventStreamCoordinator.swift`, `ServerConnection+AppEvents.swift`                                |

@@ -18,13 +18,14 @@ final class PushRegistration {
 
     private(set) var isRegistered = false
     private var deviceToken: String?
-    private var serverConnection: ServerConnection?
+    private weak var coordinator: ConnectionCoordinator?
 
     private init() {}
 
-    /// Configure with the active server connection.
-    func configure(connection: ServerConnection) {
-        self.serverConnection = connection
+    /// Configure with the app's transport owner. The active server may not be
+    /// prepared yet when APNs registration starts during launch.
+    func configure(coordinator: ConnectionCoordinator) {
+        self.coordinator = coordinator
     }
 
     /// Request notification permission and register for remote notifications.
@@ -79,8 +80,10 @@ final class PushRegistration {
 
     /// Forward the device token to the server.
     func sendTokenToServer(_ token: String, tokenType: String = "apns") async {
-        guard let api = serverConnection?.apiClient else {
-            logger.warning("Cannot send token — no API client configured")
+        guard let coordinator,
+              let serverId = coordinator.activeServerId,
+              let api = await coordinator.apiClientReady(for: serverId) else {
+            logger.warning("Cannot send token — active server transport is unavailable")
             return
         }
 
@@ -97,31 +100,23 @@ final class PushRegistration {
     ///
     /// Each server gets a separate registration call. Failures are per-server
     /// and don't block others.
-    func registerWithAllServers(_ servers: [PairedServer]) async {
+    func registerWithAllServers(using coordinator: ConnectionCoordinator) async {
         guard let token = deviceToken else {
             logger.warning("No device token yet — skipping multi-server registration")
             return
         }
 
-        await withTaskGroup(of: Void.self) { group in
-            for server in servers {
-                guard let baseURL = server.baseURL else { continue }
-                let serverToken = server.token
-                let serverId = server.id
-
-                group.addTask {
-                    let api = APIClient(
-                        baseURL: baseURL,
-                        token: serverToken,
-                        tlsCertFingerprint: server.tlsCertFingerprint
-                    )
-                    do {
-                        try await api.registerDeviceToken(token, tokenType: "apns")
-                        logger.warning("Push token registered with server \(serverId.prefix(16), privacy: .public)")
-                    } catch {
-                        logger.error("Push token registration failed for server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
-                    }
-                }
+        for server in coordinator.serverStore.servers {
+            let serverId = server.id
+            guard let api = await coordinator.apiClientReady(for: serverId) else {
+                logger.error("Push token registration skipped; transport unavailable for server \(serverId.prefix(16), privacy: .public)")
+                continue
+            }
+            do {
+                try await api.registerDeviceToken(token, tokenType: "apns")
+                logger.warning("Push token registered with server \(serverId.prefix(16), privacy: .public)")
+            } catch {
+                logger.error("Push token registration failed for server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
     }

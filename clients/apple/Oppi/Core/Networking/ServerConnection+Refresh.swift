@@ -295,14 +295,14 @@ extension ServerConnection {
             // canonical pending stores and will restore when focus returns.
 
             do {
-                let (session, _) = try await apiClient.getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId)
+                let (session, _) = try await apiClient.getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId, traceView: .context)
                 applyFetchedSessionState(session)
             } catch {
                 logger.error("Failed to refresh session \(sessionId): \(error)")
             }
         } else {
             do {
-                let (session, _) = try await apiClient.getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId)
+                let (session, _) = try await apiClient.getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId, traceView: .context)
                 applyFetchedSessionState(session)
             } catch {
                 logger.error("Failed to refresh session metadata: \(error)")

@@ -433,31 +433,6 @@ final class WorkspaceStore {
         }
     }
 
-    // periphery:ignore - used by MultiServerStoreTests via @testable import
-    /// Load workspaces and skills from ALL paired servers.
-    ///
-    /// Uses the same per-server path as single-server loads (`loadServer`).
-    func loadAll(servers: [PairedServer]) async {
-        serverOrder = servers.map(\.id)
-
-        for server in servers {
-            ensureFreshness(for: server.id)
-            if serverLoaded[server.id] == nil {
-                serverLoaded[server.id] = false
-            }
-        }
-
-        for server in servers {
-            guard let baseURL = server.baseURL else { continue }
-            let api = APIClient(
-                baseURL: baseURL,
-                token: server.token,
-                tlsCertFingerprint: server.tlsCertFingerprint
-            )
-            await loadServer(serverId: server.id, api: api)
-        }
-    }
-
     // MARK: - Private helpers
 
     private struct CachedCatalog {

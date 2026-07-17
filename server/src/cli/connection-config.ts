@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { AuthStore } from "../storage/auth-store.js";
 import { ConfigStore, DEFAULT_DATA_DIR } from "../storage/config-store.js";
-import type { ServerConfig } from "../types.js";
+import type { AuthTransport, ServerConfig } from "../types.js";
 import type { LocalApiConnection } from "./local-api-client.js";
 
 export interface CliConnectionConfig extends LocalApiConnection {
@@ -15,7 +15,7 @@ export interface CliConfigStorage extends CliConnectionConfig {
   updateConfig(updates: Partial<ServerConfig>): void;
   ensurePaired(): string;
   rotateToken(): string;
-  issuePairingToken(ttlMs?: number): string;
+  issuePairingToken(ttlMs?: number, options?: { allowedTransports?: AuthTransport[] }): string;
 }
 
 export class FileCliConnectionConfig implements CliConnectionConfig {
@@ -105,8 +105,8 @@ export class FileCliConfigStorage implements CliConfigStorage {
     return this.authStore.rotateToken();
   }
 
-  issuePairingToken(ttlMs?: number): string {
-    return this.authStore.issuePairingToken(ttlMs);
+  issuePairingToken(ttlMs?: number, options?: { allowedTransports?: AuthTransport[] }): string {
+    return this.authStore.issuePairingToken(ttlMs, options);
   }
 }
 

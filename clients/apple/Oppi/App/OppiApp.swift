@@ -328,13 +328,13 @@ struct OppiApp: App {
             .onReceive(NotificationCenter.default.publisher(for: .fileLinkTapped)) { notification in
                 guard let payload = notification.object as? FileLinkPayload else { return }
                 Task { @MainActor in
-                    _ = handleIncomingFileLink(payload)
+                    _ = await handleIncomingFileLink(payload)
                 }
             }
             .onOpenURL { url in Task { @MainActor in await handleIncomingURL(url) } }
             .task {
                 await startApp()
-                consumePendingSessionDeepLinkIfNeeded()
+                await consumePendingSessionDeepLinkIfNeeded()
             }
     }
 
@@ -366,7 +366,7 @@ struct OppiApp: App {
                 // Wipe all stale servers before connecting anything
                 let staleCount = serverStore.servers.count
                 for server in serverStore.servers {
-                    coordinator.removeServer(id: server.id)
+                    await coordinator.removeServer(id: server.id)
                 }
                 os_log(.error, "[E2E] Cleared %{public}d stale servers", staleCount)
 
@@ -424,22 +424,22 @@ struct OppiApp: App {
             e2eInviteProcessedThisProcess = true
         }
 #endif
-        if handleIncomingSessionURL(url) {
+        if await handleIncomingSessionURL(url) {
             return
         }
-        if handleIncomingWorkspaceURL(url) {
+        if await handleIncomingWorkspaceURL(url) {
             return
         }
         await handleIncomingInviteURL(url)
     }
 
     @MainActor
-    private func handleIncomingFileLink(_ payload: FileLinkPayload) -> Bool {
+    private func handleIncomingFileLink(_ payload: FileLinkPayload) async -> Bool {
         guard let resolution = resolveFileLink(payload) else {
             connection.extensionToast = "Could not open this file link"
             return false
         }
-        guard coordinator.switchToServer(resolution.target.serverId) else {
+        guard await coordinator.switchToServerReady(resolution.target.serverId) else {
             connection.extensionToast = "Could not open the server for this file link"
             return false
         }
@@ -475,7 +475,7 @@ struct OppiApp: App {
 
     /// Handle `oppi://session/<sessionId>` deep links from Live Activity taps.
     @MainActor
-    private func handleIncomingSessionURL(_ url: URL) -> Bool {
+    private func handleIncomingSessionURL(_ url: URL) async -> Bool {
         guard url.scheme?.lowercased() == "oppi" else {
             return false
         }
@@ -490,7 +490,7 @@ struct OppiApp: App {
         }
         let sessionId = rawId.removingPercentEncoding ?? rawId
 
-        if openSessionDeepLinkIfAvailable(sessionId) {
+        if await openSessionDeepLinkIfAvailable(sessionId) {
             return true
         }
 
@@ -506,19 +506,19 @@ struct OppiApp: App {
     }
 
     @MainActor
-    private func consumePendingSessionDeepLinkIfNeeded() {
+    private func consumePendingSessionDeepLinkIfNeeded() async {
         guard let sessionId = pendingSessionDeepLinkId else { return }
         pendingSessionDeepLinkId = nil
-        if !openSessionDeepLinkIfAvailable(sessionId) {
+        if !(await openSessionDeepLinkIfAvailable(sessionId)) {
             showWorkspaceRootForMissingSessionDeepLink()
         }
     }
 
     @MainActor
-    private func openSessionDeepLinkIfAvailable(_ sessionId: String) -> Bool {
+    private func openSessionDeepLinkIfAvailable(_ sessionId: String) async -> Bool {
         for (serverId, conn) in coordinator.connections
             where conn.sessionStore.sessions.contains(where: { $0.id == sessionId }) {
-            openWorkspaceSession(serverId: serverId, sessionId: sessionId, connection: conn)
+            await openWorkspaceSession(serverId: serverId, sessionId: sessionId, connection: conn)
             return true
         }
         return false
@@ -532,10 +532,10 @@ struct OppiApp: App {
 
     /// Handle `oppi://workspace?path=<path>&name=<name>[&server=<fingerprint>]` deep links.
     @MainActor
-    private func handleIncomingWorkspaceURL(_ url: URL) -> Bool {
+    private func handleIncomingWorkspaceURL(_ url: URL) async -> Bool {
         guard let payload = WorkspaceDeepLink.payload(from: url) else { return false }
         guard let server = workspaceDeepLinkTargetServer(for: payload) else { return true }
-        guard coordinator.switchToServer(server) else {
+        guard await coordinator.switchToServerReady(server) else {
             connection.extensionToast = "Could not open the server for this workspace link"
             return true
         }
@@ -572,8 +572,8 @@ struct OppiApp: App {
         serverId: String,
         sessionId: String,
         connection: ServerConnection
-    ) {
-        coordinator.switchToServer(serverId)
+    ) async {
+        guard await coordinator.switchToServerReady(serverId) else { return }
         let workspaceId = connection.sessionReentryWorkspaceId(for: sessionId)
         connection.sessionStore.activeSessionId = sessionId
         connection.prepareForSessionReentry(sessionId, workspaceIdHint: workspaceId)
@@ -637,25 +637,29 @@ struct OppiApp: App {
             ) else {
                 throw InviteBootstrapError.message("Missing server fingerprint in invite credentials")
             }
-            coordinator.addServer(
+            guard await coordinator.addServerReady(
                 pairedServer,
                 switchTo: true
-            )
+            ) else {
+                throw InviteBootstrapError.message("Connection blocked by server transport policy")
+            }
 
-            // Reset the new connection's state
-            connection.disconnectSession()
-            connection.sessionStore.sessions.removeAll()
-            connection.sessionStore.activeSessionId = nil
+            // Reset the newly selected connection. The environment connection
+            // can still point at the previous server during deep-link handling.
+            let selectedConnection = coordinator.activeConnection
+            selectedConnection.disconnectSession()
+            selectedConnection.sessionStore.sessions.removeAll()
+            selectedConnection.sessionStore.activeSessionId = nil
 
-            connection.sessionStore.markSyncStarted()
-            connection.sessionStore.applyServerSnapshot(bootstrap.sessions, preserveRecentWindow: 0)
-            connection.sessionStore.markSyncSucceeded()
-            connection.syncLiveActivityState()
+            selectedConnection.sessionStore.markSyncStarted()
+            selectedConnection.sessionStore.applyServerSnapshot(bootstrap.sessions, preserveRecentWindow: 0)
+            selectedConnection.sessionStore.markSyncSucceeded()
+            selectedConnection.syncLiveActivityState()
             navigation.showOnboarding = false
             navigation.selectedTab = .workspaces
-            if let api = connection.apiClient {
+            if let api = selectedConnection.apiClient {
                 MetricKitService.shared.setUploadClient(api)
-                await connection.refreshWorkspaceCatalog(force: true)
+                await selectedConnection.refreshWorkspaceCatalog(force: true)
             }
             if ReleaseFeatures.remotePushNotificationsEnabled {
                 await PushRegistration.shared.requestAndRegister()
@@ -663,10 +667,10 @@ struct OppiApp: App {
             }
 #if DEBUG
             if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] == nil {
-                connection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.host)"
+                selectedConnection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.name)"
             }
 #else
-            connection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.host)"
+            selectedConnection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.name)"
 #endif
         } catch {
             connection.sessionStore.markSyncFailed()
@@ -888,14 +892,11 @@ struct OppiApp: App {
 
             // Keep the WS alive while agents are working so we receive status
             // updates without reconnecting.
-            let hasActiveAgent = connection.sessionStore.sessions.contains {
-                $0.status == .busy || $0.status == .starting
-            }
-            if hasActiveAgent {
+            if coordinator.hasActiveAgentTransport {
                 let keepAliveInterval = lifecycleSignposter.beginInterval("scene.background.keep_alive")
                 lifecycleSignposter.emitEvent("background.mode.keep_alive")
                 recordLifecycleStep(phase, "keep_alive_begin", flush: true)
-                backgroundKeepAlive.begin(sessionStore: connection.sessionStore)
+                backgroundKeepAlive.begin(coordinator: coordinator)
                 lifecycleSignposter.endInterval("scene.background.keep_alive", keepAliveInterval)
             } else if coordinator.hasActiveAudioTransportPlayback {
                 // Let live streamed playback continue under the audio background mode.
@@ -914,7 +915,7 @@ struct OppiApp: App {
                 let gracefulCloseInterval = lifecycleSignposter.beginInterval("scene.background.graceful_close")
                 lifecycleSignposter.emitEvent("background.mode.graceful_close")
                 recordLifecycleStep(phase, "prepare_for_background_begin", flush: true)
-                connection.prepareForBackground()
+                coordinator.prepareAllForBackground()
                 recordLifecycleStep(phase, "prepare_for_background_done", flush: true)
                 backgroundKeepAlive.end()
                 lifecycleSignposter.endInterval("scene.background.graceful_close", gracefulCloseInterval)
@@ -1026,14 +1027,14 @@ struct OppiApp: App {
 
         // Configure remote push registration only when the APNs lane is enabled.
         if ReleaseFeatures.remotePushNotificationsEnabled {
-            PushRegistration.shared.configure(connection: connection)
+            PushRegistration.shared.configure(coordinator: coordinator)
         }
 
         let navigateToSessionFromNotification: (String) -> Void = { [weak coordinator] sessionId in
             guard let coordinator, !sessionId.isEmpty else { return }
             Task { @MainActor in
                 if let found = coordinator.findSession(id: sessionId) {
-                    openWorkspaceSession(
+                    await openWorkspaceSession(
                         serverId: found.serverId,
                         sessionId: sessionId,
                         connection: found.connection
@@ -1117,8 +1118,11 @@ struct OppiApp: App {
             return
         }
 
-        // Switch to the target server (creates + configures its ServerConnection)
-        guard coordinator.switchToServer(server) else {
+        // Prepare the target transport before switching. Iroh startup awaits its
+        // ephemeral loopback listener and never persists that local URL.
+        let preparedConnection = await coordinator.ensureConnectionReady(for: server)
+        guard preparedConnection.credentials != nil,
+              await coordinator.switchToServerReady(server) else {
             launchOutcome = "invalid_credentials"
             navigation.showOnboarding = true
             navigation.launchPhase = .ready
@@ -1126,16 +1130,16 @@ struct OppiApp: App {
         }
 
         // Prepare paired server connections. Live sockets open from workspace/chat screens.
-        coordinator.prepareAllConnections()
+        await coordinator.prepareAllConnectionsReady()
 
-        guard let api = connection.apiClient else {
+        guard connection.apiClient != nil else {
             launchOutcome = "no_api_client"
             navigation.showOnboarding = true
             navigation.launchPhase = .ready
             return
         }
 
-        MetricKitService.shared.setUploadClient(api)
+        MetricKitService.shared.setUploadClient(connection.apiClient)
 
         // Never show onboarding when we have valid credentials.
         // Even if security profile check fails (server offline), show cached workspace.

@@ -78,6 +78,7 @@ function decodeInvite(urlString: string) {
 
   const envelope = JSON.parse(Buffer.from(invite!, "base64url").toString("utf-8")) as {
     v: number;
+    alg?: string;
     signedPayload: string;
     publicKey: string;
     signature: string;
@@ -284,5 +285,176 @@ describe("generateInvite", () => {
       pairingToken: "pair-90000",
     });
     expect(signedPayload.tlsCertFingerprint).toBeUndefined();
+  });
+
+  it("generates a signed v4 iroh-only invite without host, port, or HTTP transport", () => {
+    const storage = makeStorage({ port: 7777, host: "0.0.0.0" });
+    const identity = makeIdentity();
+    mockEnsureIdentityMaterial.mockReturnValue(identity);
+    const resolveHost = vi.fn(() => {
+      throw new Error("host resolver should not run for iroh-only invites");
+    });
+    const shortLabel = vi.fn(() => "unused");
+
+    const invite = generateInvite(storage as Storage, resolveHost, shortLabel, {
+      inviteVersion: 4,
+      requestedName: "Host-free Mac",
+      preference: "irohOnly",
+      transports: {
+        iroh: {
+          version: 2,
+          nodeId: "iroh-node-abc123",
+          alpns: ["oppi/pair/1", "oppi/http/1"],
+          addressMode: "node-id",
+        },
+      },
+    });
+
+    expect(resolveHost).not.toHaveBeenCalled();
+    expect(shortLabel).not.toHaveBeenCalled();
+    expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
+    expect(invite).toMatchObject({
+      name: "Host-free Mac",
+      pairingToken: "pair-90000",
+      fingerprint: identity.fingerprint,
+    });
+    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000, {
+      allowedTransports: ["iroh"],
+    });
+    expect(Object.hasOwn(invite, "host")).toBe(false);
+    expect(Object.hasOwn(invite, "port")).toBe(false);
+    expect(new URL(invite.inviteURL).searchParams.get("v")).toBe("4");
+
+    const { envelope, signedPayload, signedPayloadJson } = decodeInvite(invite.inviteURL);
+    expect(envelope.v).toBe(4);
+    expect(envelope.alg).toBe("ed25519");
+    expect(envelope.publicKey).toBe(identity.publicKeyRaw);
+    expect(signedPayload).toEqual({
+      v: 4,
+      name: "Host-free Mac",
+      pairingToken: "pair-90000",
+      fingerprint: identity.fingerprint,
+      preference: "irohOnly",
+      transports: {
+        iroh: {
+          version: 2,
+          nodeId: "iroh-node-abc123",
+          alpns: ["oppi/pair/1", "oppi/http/1"],
+          addressMode: "node-id",
+        },
+      },
+    });
+    expect(
+      verify(
+        null,
+        Buffer.from(envelope.signedPayload, "utf-8"),
+        createPublicKey(identity.publicKeyPem),
+        Buffer.from(envelope.signature, "base64url"),
+      ),
+    ).toBe(true);
+    expect(
+      verify(
+        null,
+        Buffer.from(signedPayloadJson, "utf-8"),
+        createPublicKey(identity.publicKeyPem),
+        Buffer.from(envelope.signature, "base64url"),
+      ),
+    ).toBe(false);
+  });
+
+  it("generates a signed v4 http-only invite with HTTP-only pairing constraints", () => {
+    const storage = makeStorage({ port: 7777, host: "0.0.0.0" });
+
+    const invite = generateInvite(
+      storage as Storage,
+      () => "server.local",
+      () => "Fallback Label",
+      {
+        inviteVersion: 4,
+        requestedName: "HTTP Mac",
+        preference: "httpOnly",
+        transports: {},
+      },
+    );
+
+    expect(invite.host).toBe("server.local");
+    expect(invite.port).toBe(7777);
+    expect(invite.scheme).toBe("http");
+    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000, {
+      allowedTransports: ["http"],
+    });
+
+    const { signedPayload } = decodeInvite(invite.inviteURL);
+    expect(signedPayload).toMatchObject({
+      v: 4,
+      preference: "httpOnly",
+      transports: {
+        http: { host: "server.local", port: 7777, scheme: "http" },
+      },
+    });
+    expect((signedPayload.transports as Record<string, unknown>).iroh).toBeUndefined();
+  });
+
+  it("generates a signed v4 iroh-preferred invite with HTTP fallback and ticket as a hint", () => {
+    const storage = makeStorage({
+      port: 7777,
+      host: "0.0.0.0",
+      tls: { mode: "self-signed" },
+    });
+    const identity = makeIdentity();
+    mockEnsureIdentityMaterial.mockReturnValue(identity);
+    mockPrepareTlsForServer.mockReturnValue({
+      enabled: true,
+      mode: "self-signed",
+      certPath: "/tmp/server.crt",
+    });
+
+    const invite = generateInvite(
+      storage as Storage,
+      () => "server.local",
+      () => "Fallback Label",
+      {
+        inviteVersion: 4,
+        requestedName: "  Preferred Mac  ",
+        preference: "irohPreferred",
+        transports: {
+          iroh: {
+            version: 2,
+            nodeId: "iroh-node-preferred",
+            alpns: ["oppi/pair/1"],
+            addressMode: "ticket",
+            ticket: "iroh-ticket-hint",
+          },
+        },
+      },
+    );
+
+    expect(invite.host).toBe("server.local");
+    expect(invite.port).toBe(7777);
+    expect(invite.scheme).toBe("https");
+    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000, {
+      allowedTransports: ["iroh", "http"],
+    });
+
+    const { envelope, signedPayload } = decodeInvite(invite.inviteURL);
+    expect(envelope.v).toBe(4);
+    expect(signedPayload).toMatchObject({
+      v: 4,
+      name: "Preferred Mac",
+      preference: "irohPreferred",
+      transports: {
+        iroh: {
+          nodeId: "iroh-node-preferred",
+          addressMode: "ticket",
+          ticket: "iroh-ticket-hint",
+        },
+        http: {
+          host: "server.local",
+          port: 7777,
+          scheme: "https",
+          tlsCertFingerprint: "sha256:cert-fingerprint",
+        },
+      },
+    });
   });
 });

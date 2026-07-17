@@ -412,7 +412,7 @@ struct SessionInboxView: View {
         Menu {
             ForEach(servers) { server in
                 Button {
-                    switchVisibleServer(to: server)
+                    Task { await switchVisibleServer(to: server) }
                 } label: {
                     Label(
                         serverMenuTitle(server),
@@ -445,8 +445,8 @@ struct SessionInboxView: View {
         .accessibilityValue(serverBadgeConnectionState(for: current).title)
     }
 
-    private func switchVisibleServer(to server: PairedServer) {
-        guard coordinator.switchToServer(server) else { return }
+    private func switchVisibleServer(to server: PairedServer) async {
+        guard await coordinator.switchToServerReady(server) else { return }
         searchText = ""
         error = nil
         expandedStoppedGroupIDs.removeAll()
@@ -946,7 +946,7 @@ private struct WorkspaceConfigurationScopedDestinationView: View {
     @State private var scopedConnection: ServerConnection?
 
     private var resolvedConnection: ServerConnection? {
-        scopedConnection ?? coordinator.connection(for: target.serverId)
+        scopedConnection
     }
 
     var body: some View {
@@ -960,16 +960,10 @@ private struct WorkspaceConfigurationScopedDestinationView: View {
                 ProgressView("Connecting…")
             }
         }
-        .onAppear(perform: activateTargetServer)
         .task(id: target.serverId) {
-            activateTargetServer()
+            guard await coordinator.switchToServerReady(target.serverId) else { return }
+            scopedConnection = coordinator.connection(for: target.serverId)
         }
-    }
-
-    @MainActor
-    private func activateTargetServer() {
-        guard coordinator.switchToServer(target.serverId) else { return }
-        scopedConnection = coordinator.connection(for: target.serverId)
     }
 
     private func dismissConfiguration() {

@@ -3,6 +3,7 @@ import { hostname } from "node:os";
 
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
 import { createLogger } from "../logger.js";
+import { handleIrohPairingRequest } from "../iroh-pairing.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import type { RegisterDeviceTokenRequest } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
@@ -75,15 +76,17 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return;
     }
 
-    const deviceToken = ctx.storage.consumePairingToken(pairingToken);
-    if (!deviceToken) {
-      recordPairingFailure(source, now);
-      helpers.error(res, 401, "Invalid or expired pairing token");
+    const pairing = handleIrohPairingRequest(ctx.storage, { pairingToken });
+    if (!pairing.ok) {
+      if (pairing.status === 401) {
+        recordPairingFailure(source, now);
+      }
+      helpers.error(res, pairing.status, pairing.error);
       return;
     }
 
     clearPairingFailures(source);
-    helpers.json(res, { deviceToken });
+    helpers.json(res, { deviceToken: pairing.deviceToken });
   }
 
   function handleGetMe(res: ServerResponse): void {

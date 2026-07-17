@@ -196,10 +196,43 @@ struct KeychainServiceTests {
         #expect(loaded?.host == server.host)
     }
 
+    // MARK: - Iroh Endpoint Secret
+
+    @Test func irohEndpointSecretGeneratesOnceAndReusesKeychainValue() throws {
+        KeychainService.deleteIrohEndpointSecretForTests()
+        defer { KeychainService.deleteIrohEndpointSecretForTests() }
+
+        var generationCount = 0
+        let first = try KeychainService.loadOrCreateIrohEndpointSecret {
+            generationCount += 1
+            return Data(repeating: 7, count: 32)
+        }
+        let second = try KeychainService.loadOrCreateIrohEndpointSecret {
+            generationCount += 1
+            return Data(repeating: 8, count: 32)
+        }
+
+        #expect(first == Data(repeating: 7, count: 32))
+        #expect(second == first)
+        #expect(generationCount == 1)
+    }
+
+    @Test func irohEndpointSecretRejectsInvalidGeneratedLength() {
+        KeychainService.deleteIrohEndpointSecretForTests()
+        defer { KeychainService.deleteIrohEndpointSecretForTests() }
+
+        #expect(throws: KeychainError.invalidSecretLength) {
+            _ = try KeychainService.loadOrCreateIrohEndpointSecret {
+                Data(repeating: 1, count: 31)
+            }
+        }
+    }
+
     // MARK: - KeychainError
 
     @Test func keychainErrorDescription() {
         let err = KeychainError.saveFailed(-25299)
         #expect(err.errorDescription?.contains("-25299") == true)
+        #expect(KeychainError.invalidSecretLength.errorDescription == "Iroh endpoint secret must be 32 bytes")
     }
 }

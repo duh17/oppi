@@ -17,6 +17,51 @@ struct ServerConnectionLifecycleTests {
         #expect(conn.credentials?.host == "192.168.1.10")
     }
 
+    @Test func configureIrohOnlyUsesTransparentHTTPAndWebSocketClients() async throws {
+        let conn = ServerConnection()
+        let credentials = makeTestIrohOnlyCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:41991"))
+        let result = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (nil, localURL) }
+        )
+
+        #expect(result)
+        #expect(conn.transportPath == .iroh)
+        #expect(conn.apiClient != nil)
+        #expect(conn.wsClient != nil)
+        #expect(conn.currentServerId == "sha256:iroh-server-fp")
+        #expect(await conn.apiClient?.baseURL == localURL)
+        #expect(conn.credentials?.baseURL == nil, "Loopback URL must not become persisted remote metadata")
+
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "iroh-server-fp",
+            tlsCertFingerprintPrefix: nil
+        ))
+        #expect(conn.transportPath == .iroh)
+        #expect(await conn.apiClient?.baseURL == localURL)
+    }
+
+    @Test func configureIrohOnlyRequiresTunnelMetadataAndFailsClosed() async {
+        let conn = ServerConnection()
+        var proxyStarted = false
+        let result = await conn.configureForUse(
+            credentials: makeTestIrohOnlyCredentials(alpns: ["oppi/pair/1"]),
+            irohProxyFactory: { _, _ in
+                proxyStarted = true
+                return (nil, URL(string: "http://127.0.0.1:41992")!)
+            }
+        )
+
+        #expect(!result)
+        #expect(!proxyStarted)
+        #expect(conn.credentials == nil)
+        #expect(conn.apiClient == nil)
+        #expect(conn.wsClient == nil)
+    }
+
     @Test func disconnectSessionClearsActiveId() {
         let scenario = EventFlowServerConnectionScenario()
         let conn = scenario.connection
@@ -120,4 +165,5 @@ struct ServerConnectionLifecycleTests {
         let conn = ServerConnection()
         #expect(conn.currentServerId == nil)
     }
+
 }

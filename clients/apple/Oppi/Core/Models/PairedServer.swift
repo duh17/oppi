@@ -52,11 +52,11 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
     let id: String
     /// Display name (from invite, editable by user).
     var name: String
-    /// Server hostname or IP.
+    /// Server hostname or IP for HTTP-capable servers.
     var host: String
-    /// Server port.
+    /// Server port for HTTP-capable servers.
     var port: Int
-    /// Transport scheme (`http` or `https`).
+    /// Transport scheme (`http` or `https`) for HTTP-capable servers.
     var scheme: ServerScheme?
     /// Auth token.
     var token: String
@@ -64,6 +64,8 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
     var tlsCertFingerprint: String?
     /// Server Ed25519 fingerprint (same as `id`).
     var fingerprint: String
+    /// Signed transport metadata. Existing servers synthesize an HTTP-only value.
+    var transports: ServerTransports
 
     // ── Local state (not from server) ──
 
@@ -82,7 +84,7 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
     }
 
     var resolvedScheme: ServerScheme {
-        scheme ?? .https
+        scheme ?? transports.http?.scheme ?? .https
     }
 
     /// Derive `ServerCredentials` for connection and API calls.
@@ -92,15 +94,31 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
             port: port,
             token: token,
             name: name,
-            scheme: resolvedScheme,
+            scheme: transports.http?.scheme ?? scheme,
             serverFingerprint: fingerprint,
-            tlsCertFingerprint: tlsCertFingerprint
+            tlsCertFingerprint: tlsCertFingerprint,
+            transports: transports
         )
     }
 
     /// Base URL for REST calls.
     var baseURL: URL? {
-        URL(string: "\(resolvedScheme.rawValue)://\(host):\(port)")
+        transports.http?.baseURL
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case host
+        case port
+        case scheme
+        case token
+        case tlsCertFingerprint
+        case fingerprint
+        case transports
+        case addedAt
+        case sortOrder
+        case badgeIcon
     }
 
     // MARK: - Init from ServerCredentials
@@ -122,9 +140,52 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         self.token = credentials.token
         self.tlsCertFingerprint = credentials.tlsCertFingerprint
         self.fingerprint = fp
+        self.transports = credentials.transports
         self.addedAt = Date()
         self.sortOrder = sortOrder
         self.badgeIcon = nil
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        host = try container.decodeIfPresent(String.self, forKey: .host) ?? ""
+        port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 0
+        scheme = try container.decodeIfPresent(ServerScheme.self, forKey: .scheme)
+        token = try container.decode(String.self, forKey: .token)
+        tlsCertFingerprint = try container.decodeIfPresent(String.self, forKey: .tlsCertFingerprint)
+        fingerprint = try container.decode(String.self, forKey: .fingerprint)
+        transports = try container.decodeIfPresent(ServerTransports.self, forKey: .transports)
+            ?? ServerTransports.legacyHTTP(
+                host: host,
+                port: port,
+                scheme: scheme,
+                tlsCertFingerprint: tlsCertFingerprint
+            )
+        addedAt = try container.decode(Date.self, forKey: .addedAt)
+        sortOrder = try container.decode(Int.self, forKey: .sortOrder)
+        badgeIcon = try container.decodeIfPresent(ServerBadgeIcon.self, forKey: .badgeIcon)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        if transports.http != nil || !host.isEmpty {
+            try container.encode(host, forKey: .host)
+        }
+        if transports.http != nil || port != 0 {
+            try container.encode(port, forKey: .port)
+        }
+        try container.encodeIfPresent(scheme, forKey: .scheme)
+        try container.encode(token, forKey: .token)
+        try container.encodeIfPresent(tlsCertFingerprint, forKey: .tlsCertFingerprint)
+        try container.encode(fingerprint, forKey: .fingerprint)
+        try container.encode(transports, forKey: .transports)
+        try container.encode(addedAt, forKey: .addedAt)
+        try container.encode(sortOrder, forKey: .sortOrder)
+        try container.encodeIfPresent(badgeIcon, forKey: .badgeIcon)
     }
 
     /// Update connection details from fresh credentials (re-pair).
@@ -136,5 +197,6 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         self.scheme = credentials.scheme
         self.token = credentials.token
         self.tlsCertFingerprint = credentials.tlsCertFingerprint
+        self.transports = credentials.transports
     }
 }

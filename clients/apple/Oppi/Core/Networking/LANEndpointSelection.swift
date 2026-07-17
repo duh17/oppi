@@ -34,6 +34,10 @@ enum LANEndpointSelection {
         credentials: ServerCredentials,
         discoveredEndpoint: LANDiscoveredEndpoint?
     ) -> EndpointSelection? {
+        guard case .http = try? IrohTransportPolicy.select(credentials: credentials) else {
+            return nil
+        }
+
         guard let paired = pairedSelection(from: credentials) else {
             return nil
         }

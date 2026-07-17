@@ -20,6 +20,8 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
+import { writeIrohInviteState } from "../src/iroh-invite-state.js";
+import { Storage } from "../src/storage.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 
 const CLI = process.env.OPPI_TEST_CLI ?? resolve(__dirname, "../dist/src/cli.js");
@@ -41,17 +43,21 @@ function run(
   args: string[],
   env?: Record<string, string>,
   timeoutMs = 15_000,
-): { stdout: string; exitCode: number } {
+): { stdout: string; stderr: string; exitCode: number } {
   try {
     const stdout = execFileSync("node", [CLI, ...args], {
       encoding: "utf-8",
       env: { ...process.env, OPPI_DATA_DIR: dataDir, ...env },
       timeout: timeoutMs,
     });
-    return { stdout, exitCode: 0 };
+    return { stdout, stderr: "", exitCode: 0 };
   } catch (err: unknown) {
-    const e = err as { stdout?: string; status?: number };
-    return { stdout: e.stdout ?? "", exitCode: e.status ?? 1 };
+    const e = err as { stdout?: string; stderr?: string; status?: number };
+    return {
+      stdout: e.stdout ?? "",
+      stderr: e.stderr ?? "",
+      exitCode: e.status ?? 1,
+    };
   }
 }
 
@@ -2132,6 +2138,102 @@ describe("oppi pair", () => {
     expect(exitCode).toBe(0);
     // Should contain QR blocks or URL
     expect(stdout.length).toBeGreaterThan(50);
+  });
+});
+
+describe("oppi pair persisted Iroh policy", () => {
+  function preparePersistedPolicy(
+    mode: "irohOnly" | "irohPreferred" | "httpOnly",
+    state: "ready" | "missing" | "stale",
+  ): string {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-iroh-policy-"));
+    const storage = new Storage(dir);
+    const readinessId = `readiness-${mode}`;
+    storage.updateConfig({
+      host: "127.0.0.1",
+      port: 7749,
+      tls: { mode: "disabled" },
+      irohInviteMode: mode,
+      irohInviteReadinessId: mode === "httpOnly" ? undefined : readinessId,
+    });
+    storage.ensurePaired();
+    if (state !== "missing") {
+      writeIrohInviteState(dir, {
+        version: 2,
+        nodeId: `node-${mode}`,
+        alpns: ["oppi/pair/1", "oppi/http/1"],
+        addressMode: "ticket",
+        ticket: `ticket-${mode}`,
+        readinessId,
+        processId: state === "ready" ? process.pid : 2_147_483_647,
+      });
+    }
+    return dir;
+  }
+
+  const plainPairEnv = (dir: string): Record<string, string> => ({
+    OPPI_DATA_DIR: dir,
+    OPPI_IROH_PAIRING: "0",
+    OPPI_IROH_TRANSPORT: "0",
+    OPPI_IROH_INVITE_MODE: "",
+  });
+
+  it("keeps plain pair Iroh-only after server startup persisted the mode", () => {
+    const dir = preparePersistedPolicy("irohOnly", "ready");
+    try {
+      const { stdout, exitCode } = run(["pair", "--json"], plainPairEnv(dir));
+      expect(exitCode).toBe(0);
+      const invite = JSON.parse(stdout) as Record<string, unknown>;
+      expect(invite.preference).toBe("irohOnly");
+      expect(invite.transports).toMatchObject({ iroh: { nodeId: "node-irohOnly" } });
+      expect(invite).not.toHaveProperty("host");
+      expect(invite).not.toHaveProperty("port");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["missing", "stale"] as const)(
+    "errors instead of downgrading persisted Iroh-only when readiness is %s",
+    (state) => {
+      const dir = preparePersistedPolicy("irohOnly", state);
+      try {
+        const { stderr, exitCode } = run(["pair", "--json"], plainPairEnv(dir));
+        expect(exitCode).toBe(1);
+        expect(stderr).toContain("Iroh-only pairing is unavailable");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("preserves preferred invites with HTTP and plain HTTP mode", () => {
+    const preferredDir = preparePersistedPolicy("irohPreferred", "ready");
+    const httpDir = preparePersistedPolicy("httpOnly", "missing");
+    try {
+      const preferredResult = run(
+        ["pair", "--host", "127.0.0.1", "--json"],
+        plainPairEnv(preferredDir),
+      );
+      expect(preferredResult.exitCode).toBe(0);
+      const preferred = JSON.parse(preferredResult.stdout) as Record<string, unknown>;
+      expect(preferred.preference).toBe("irohPreferred");
+      expect(preferred).toMatchObject({ host: "127.0.0.1", scheme: "http" });
+      expect(preferred.transports).toMatchObject({
+        iroh: { nodeId: "node-irohPreferred" },
+        http: { host: "127.0.0.1" },
+      });
+
+      const httpResult = run(["pair", "--host", "127.0.0.1", "--json"], plainPairEnv(httpDir));
+      expect(httpResult.exitCode).toBe(0);
+      const http = JSON.parse(httpResult.stdout) as Record<string, unknown>;
+      expect(http).toMatchObject({ host: "127.0.0.1", scheme: "http" });
+      expect(http).not.toHaveProperty("preference");
+      expect(http).not.toHaveProperty("transports");
+    } finally {
+      rmSync(preferredDir, { recursive: true, force: true });
+      rmSync(httpDir, { recursive: true, force: true });
+    }
   });
 });
 

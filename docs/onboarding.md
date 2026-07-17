@@ -41,7 +41,15 @@ Notes:
 - The guided create flow lets you pick a project, enter a path manually, or start with a blank workspace.
 - Manual connection keeps **Connect** disabled until host and token are filled. If the port is invalid, Oppi uses `7749`.
 
-If your phone is not on the same LAN (for example Tailscale or VPS), generate an invite with an explicit host:
+For host-free pairing and app traffic, start the server in Iroh-only mode:
+
+```bash
+OPPI_IROH_TRANSPORT=1 OPPI_IROH_INVITE_MODE=irohOnly oppi serve
+```
+
+The signed invite identifies the Iroh endpoint instead of an Oppi host and port. The app uses the same REST, file, media, focused-session, app-event, and dictation behavior through the Iroh tunnel. Iroh-only pairing and connection failures do not fall back to HTTP.
+
+For remote HTTP/TLS pairing (for example Tailscale or a VPS), generate an invite with an explicit host:
 
 ```bash
 oppi pair --host <hostname-or-ip>
@@ -93,22 +101,24 @@ Host override notes:
 
 ### Could not reach server
 
-1. Confirm phone-to-server connectivity (LAN, Tailscale, or public DNS).
+1. For Iroh, confirm the invite advertises `oppi/http/1`, the server log reports `iroh_transport.started`, and the device can reach the configured Iroh address-lookup or relay infrastructure. Generate a fresh invite if its ticket is stale.
 
-2. Check server health and config:
+2. For HTTP/TLS, confirm phone-to-server connectivity through LAN, Tailscale, or public DNS.
+
+3. Check server health and config:
 
    ```bash
    oppi status
    oppi doctor
    ```
 
-3. Regenerate invite with explicit host:
+4. For HTTP/TLS, regenerate the invite with an explicit host:
 
    ```bash
    oppi pair --host <hostname-or-ip>
    ```
 
-4. Retry pairing.
+5. Retry pairing.
 
 ### Secure connection failed
 

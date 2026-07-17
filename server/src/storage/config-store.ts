@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createLogger } from "../logger.js";
-import type { ServerConfig } from "../types.js";
+import type { AuthTransport, IrohInviteMode, ServerConfig } from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
@@ -18,6 +18,20 @@ export interface ConfigValidationResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeAuthTransports(value: unknown): AuthTransport[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const transports = value.filter(
+    (transport): transport is AuthTransport => transport === "http" || transport === "iroh",
+  );
+  return transports.length > 0 ? [...new Set(transports)] : undefined;
+}
+
+function normalizeIrohInviteMode(value: unknown): IrohInviteMode | undefined {
+  return value === "irohOnly" || value === "irohPreferred" || value === "httpOnly"
+    ? value
+    : undefined;
 }
 
 function defaultRuntimePathEntries(): string[] {
@@ -103,11 +117,15 @@ function normalizeConfig(
     "oppiDocsPrompt",
     "oppiCliPrompt",
     "tls",
+    "irohInviteMode",
+    "irohInviteReadinessId",
 
     "token",
     "pairingToken",
     "pairingTokenExpiresAt",
+    "pairingTokenAllowedTransports",
     "authDeviceTokens",
+    "irohDeviceTokenBindings",
     "pushDeviceTokens",
     "liveActivityToken",
     "autoTitle",
@@ -395,6 +413,18 @@ function normalizeConfig(
     changed = true;
   }
 
+  const irohInviteMode = normalizeIrohInviteMode(obj.irohInviteMode);
+  if (irohInviteMode) {
+    config.irohInviteMode = irohInviteMode;
+  }
+  if (
+    "irohInviteReadinessId" in obj &&
+    typeof obj.irohInviteReadinessId === "string" &&
+    obj.irohInviteReadinessId.trim().length > 0
+  ) {
+    config.irohInviteReadinessId = obj.irohInviteReadinessId;
+  }
+
   // Pairing/auth/push runtime state — passthrough (no strict schema validation, optional)
   if ("token" in obj && typeof obj.token === "string") {
     config.token = obj.token;
@@ -412,10 +442,45 @@ function normalizeConfig(
     config.pairingTokenExpiresAt = obj.pairingTokenExpiresAt;
   }
 
+  const pairingTokenAllowedTransports = normalizeAuthTransports(obj.pairingTokenAllowedTransports);
+  if (pairingTokenAllowedTransports) {
+    config.pairingTokenAllowedTransports = pairingTokenAllowedTransports;
+  }
+
   if ("authDeviceTokens" in obj && Array.isArray(obj.authDeviceTokens)) {
     config.authDeviceTokens = (obj.authDeviceTokens as unknown[]).filter(
       (t): t is string => typeof t === "string",
     );
+  }
+
+  if ("irohDeviceTokenBindings" in obj && Array.isArray(obj.irohDeviceTokenBindings)) {
+    config.irohDeviceTokenBindings = (obj.irohDeviceTokenBindings as unknown[]).flatMap((value) => {
+      if (!isRecord(value)) return [];
+      if (typeof value.token !== "string" || value.token.trim().length === 0) return [];
+      if (typeof value.clientNodeId !== "string" || value.clientNodeId.trim().length === 0) {
+        return [];
+      }
+      if (!Array.isArray(value.allowedTransports)) return [];
+      const allowedTransports = normalizeAuthTransports(value.allowedTransports) ?? [];
+      if (allowedTransports.length === 0) return [];
+      const createdAt =
+        typeof value.createdAt === "number" && Number.isFinite(value.createdAt)
+          ? value.createdAt
+          : Date.now();
+      const lastSeenAt =
+        typeof value.lastSeenAt === "number" && Number.isFinite(value.lastSeenAt)
+          ? value.lastSeenAt
+          : undefined;
+      return [
+        {
+          token: value.token,
+          clientNodeId: value.clientNodeId,
+          allowedTransports,
+          createdAt,
+          ...(lastSeenAt !== undefined ? { lastSeenAt } : {}),
+        },
+      ];
+    });
   }
 
   if ("pushDeviceTokens" in obj && Array.isArray(obj.pushDeviceTokens)) {

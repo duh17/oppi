@@ -223,7 +223,7 @@ struct RestorationStateTests {
 
     // MARK: - Server ID restoration
 
-    @Test func savesAndRestoresServerId() {
+    @Test func savesAndRestoresServerId() async {
         RestorationState.clear()
 
         let serverStore = ServerStore()
@@ -246,7 +246,7 @@ struct RestorationStateTests {
 
         // Clean up
         RestorationState.clear()
-        coordinator.removeServer(id: "sha256:test-restore")
+        await coordinator.removeServer(id: "sha256:test-restore")
     }
 }
 

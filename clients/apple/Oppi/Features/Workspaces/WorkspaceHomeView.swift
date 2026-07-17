@@ -175,29 +175,19 @@ struct WorkspaceScopedDestinationView: View {
 
     @State private var scopedConnection: ServerConnection?
 
-    private var resolvedConnection: ServerConnection? {
-        scopedConnection ?? coordinator.connection(for: target.serverId)
-    }
-
     var body: some View {
         Group {
-            if let connection = resolvedConnection {
+            if let connection = scopedConnection {
                 WorkspaceDetailView(workspace: target.workspace)
                     .withServerScopedEnvironment(connection)
             } else {
                 ProgressView("Connecting…")
             }
         }
-        .onAppear(perform: activateTargetServer)
         .task(id: target.serverId) {
-            activateTargetServer()
+            guard await coordinator.switchToServerReady(target.serverId) else { return }
+            scopedConnection = coordinator.connection(for: target.serverId)
         }
-    }
-
-    @MainActor
-    private func activateTargetServer() {
-        guard coordinator.switchToServer(target.serverId) else { return }
-        scopedConnection = coordinator.connection(for: target.serverId)
     }
 }
 
@@ -207,13 +197,9 @@ struct WorkspaceSessionScopedDestinationView: View {
 
     @State private var scopedConnection: ServerConnection?
 
-    private var resolvedConnection: ServerConnection? {
-        scopedConnection ?? coordinator.connection(for: target.serverId)
-    }
-
     var body: some View {
         Group {
-            if let connection = resolvedConnection {
+            if let connection = scopedConnection {
                 ChatView(
                     sessionId: target.sessionId,
                     workspaceIdHint: target.workspaceId,
@@ -224,16 +210,10 @@ struct WorkspaceSessionScopedDestinationView: View {
                 ProgressView("Connecting…")
             }
         }
-        .onAppear(perform: activateTargetServer)
         .task(id: target.serverId) {
-            activateTargetServer()
+            guard await coordinator.switchToServerReady(target.serverId) else { return }
+            scopedConnection = coordinator.connection(for: target.serverId)
         }
-    }
-
-    @MainActor
-    private func activateTargetServer() {
-        guard coordinator.switchToServer(target.serverId) else { return }
-        scopedConnection = coordinator.connection(for: target.serverId)
     }
 }
 
@@ -248,7 +228,7 @@ struct WorkspaceFileBrowserDestinationView: View {
     }
 
     private var resolvedConnection: ServerConnection? {
-        scopedConnection ?? coordinator.connection(for: targetServerId)
+        scopedConnection
     }
 
     var body: some View {
@@ -265,16 +245,10 @@ struct WorkspaceFileBrowserDestinationView: View {
                 ProgressView("Connecting…")
             }
         }
-        .onAppear(perform: activateTargetServer)
         .task(id: targetServerId) {
-            activateTargetServer()
+            guard await coordinator.switchToServerReady(targetServerId) else { return }
+            scopedConnection = coordinator.connection(for: targetServerId)
         }
-    }
-
-    @MainActor
-    private func activateTargetServer() {
-        guard coordinator.switchToServer(targetServerId) else { return }
-        scopedConnection = coordinator.connection(for: targetServerId)
     }
 }
 
@@ -284,13 +258,9 @@ struct WorkspaceLinkedFileDestinationView: View {
 
     @State private var scopedConnection: ServerConnection?
 
-    private var resolvedConnection: ServerConnection? {
-        scopedConnection ?? coordinator.connection(for: target.serverId)
-    }
-
     var body: some View {
         Group {
-            if let connection = resolvedConnection {
+            if let connection = scopedConnection {
                 switch target.kind {
                 case .workspaceFile(let path, let fileName):
                     FileBrowserContentView(
@@ -306,16 +276,10 @@ struct WorkspaceLinkedFileDestinationView: View {
                 ProgressView("Connecting…")
             }
         }
-        .onAppear(perform: activateTargetServer)
         .task(id: target.serverId) {
-            activateTargetServer()
+            guard await coordinator.switchToServerReady(target.serverId) else { return }
+            scopedConnection = coordinator.connection(for: target.serverId)
         }
-    }
-
-    @MainActor
-    private func activateTargetServer() {
-        guard coordinator.switchToServer(target.serverId) else { return }
-        scopedConnection = coordinator.connection(for: target.serverId)
     }
 }
 
@@ -574,13 +538,15 @@ struct WorkspaceHomeView: View {
         }
         .task {
             await refresh(force: false)
-            consumeWorkspaceDeepLinkIfNeeded()
+            await consumeWorkspaceDeepLinkIfNeeded()
             triggerGuidedCreateIfNeeded()
             autoOpenE2EWorkspaceIfRequested()
         }
         .onChange(of: navigation.pendingWorkspaceDeepLink != nil) { _, hasPending in
             guard hasPending else { return }
-            consumeWorkspaceDeepLinkIfNeeded()
+            Task { @MainActor in
+                await consumeWorkspaceDeepLinkIfNeeded()
+            }
         }
         .onChange(of: navigation.selectedTab) { _, selectedTab in
             guard selectedTab == .workspaces else { return }
@@ -715,9 +681,9 @@ struct WorkspaceHomeView: View {
     }
 
     private func switchVisibleServer(to server: PairedServer) {
-        guard coordinator.switchToServer(server) else { return }
-        navigation.clearWorkspaceSelections()
         Task { @MainActor in
+            guard await coordinator.switchToServerReady(server) else { return }
+            navigation.clearWorkspaceSelections()
             await refresh(force: true)
         }
     }
@@ -1192,7 +1158,7 @@ struct WorkspaceHomeView: View {
 
     /// Consume a workspace creation deep link and present the create form with
     /// the linked path/name prefilled.
-    private func consumeWorkspaceDeepLinkIfNeeded() {
+    private func consumeWorkspaceDeepLinkIfNeeded() async {
         guard let payload = navigation.pendingWorkspaceDeepLink else { return }
         navigation.pendingWorkspaceDeepLink = nil
         navigation.shouldGuideWorkspaceCreation = false
@@ -1208,7 +1174,7 @@ struct WorkspaceHomeView: View {
             coordinator.activeConnection.extensionToast = "Server not found for this workspace link"
             return
         }
-        guard coordinator.switchToServer(server) else {
+        guard await coordinator.switchToServerReady(server) else {
             coordinator.activeConnection.extensionToast = "Could not open the server for this workspace link"
             return
         }
