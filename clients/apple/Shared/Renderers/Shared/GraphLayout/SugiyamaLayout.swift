@@ -186,39 +186,35 @@ enum SugiyamaLayout {
         adjacency: [String: [String]],
         reverseAdj: [String: [String]]
     ) -> [[String]] {
-        // Find sources (no incoming edges in acyclic graph).
-        let sources = nodeIds.filter { (reverseAdj[$0] ?? []).isEmpty }
-
-        // BFS/topological longest path.
-        var depth: [String: Int] = [:]
-        for id in nodeIds { depth[id] = 0 }
-
-        // If no sources (all nodes in a cycle that got fully reversed), pick arbitrary start.
-        let startNodes = sources.isEmpty ? [nodeIds[0]] : sources
-
-        var queue = startNodes
-        for s in startNodes { depth[s] = 0 }
-
-        var visited: Set<String> = Set(startNodes)
+        // Kahn topological traversal with longest-path relaxation. A plain BFS
+        // can process a converging node before its deepest predecessor and then
+        // fail to propagate the corrected depth to that node's descendants.
+        var indegree = Dictionary(uniqueKeysWithValues: nodeIds.map {
+            ($0, (reverseAdj[$0] ?? []).count)
+        })
+        var depth = Dictionary(uniqueKeysWithValues: nodeIds.map { ($0, 0) })
+        var queue = nodeIds.filter { indegree[$0] == 0 }
         var head = 0
+
         while head < queue.count {
-            let u = queue[head]
+            let nodeId = queue[head]
             head += 1
-            for v in adjacency[u] ?? [] {
-                let newDepth = (depth[u] ?? 0) + 1
-                if newDepth > (depth[v] ?? 0) {
-                    depth[v] = newDepth
-                }
-                if !visited.contains(v) {
-                    visited.insert(v)
-                    queue.append(v)
+            for successor in adjacency[nodeId] ?? [] {
+                depth[successor] = max(depth[successor] ?? 0, (depth[nodeId] ?? 0) + 1)
+                indegree[successor, default: 0] -= 1
+                if indegree[successor] == 0 {
+                    queue.append(successor)
                 }
             }
         }
 
-        // Assign unvisited disconnected nodes to layer 0.
-        for id in nodeIds where !visited.contains(id) {
-            depth[id] = 0
+        // Cycle removal should make every component acyclic. Keep malformed or
+        // disconnected leftovers visible at layer zero rather than dropping them.
+        if head < nodeIds.count {
+            let processed = Set(queue)
+            for id in nodeIds where !processed.contains(id) {
+                depth[id] = 0
+            }
         }
 
         // Group by layer.

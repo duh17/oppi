@@ -124,6 +124,7 @@ enum MermaidMindmapRenderer {
         return MermaidFlowchartRenderer.FlowchartLayout(
             graphResult: GraphLayoutResult(nodePositions: [:], edgePaths: [], totalSize: .zero),
             flowchart: .empty,
+            subgraphFrames: [:],
             nodeLabels: [:],
             nodeShapes: [:],
             edgeLabels: [:],

@@ -243,6 +243,7 @@ enum MermaidSequenceRenderer {
         return MermaidFlowchartRenderer.FlowchartLayout(
             graphResult: GraphLayoutResult(nodePositions: [:], edgePaths: [], totalSize: .zero),
             flowchart: .empty,
+            subgraphFrames: [:],
             nodeLabels: [:], nodeShapes: [:], edgeLabels: [:], edgeStyles: [:],
             edgeIds: [:], edgeKeys: [], edgeStyleDirectives: [:], edgeEndpointSubgraphs: [:],
             classDefs: [:], styleDirectives: [:],
@@ -280,6 +281,7 @@ enum MermaidSequenceRenderer {
         return MermaidFlowchartRenderer.FlowchartLayout(
             graphResult: GraphLayoutResult(nodePositions: [:], edgePaths: [], totalSize: .zero),
             flowchart: .empty,
+            subgraphFrames: [:],
             nodeLabels: [:], nodeShapes: [:], edgeLabels: [:], edgeStyles: [:],
             edgeIds: [:], edgeKeys: [], edgeStyleDirectives: [:], edgeEndpointSubgraphs: [:],
             classDefs: [:], styleDirectives: [:],
