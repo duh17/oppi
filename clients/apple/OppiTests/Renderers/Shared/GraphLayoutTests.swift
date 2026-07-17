@@ -88,6 +88,29 @@ struct GraphLayoutTests {
         #expect(b.midY < c.midY)
     }
 
+    @Test func convergingLongPathPropagatesDepthToDescendants() {
+        let nodes = ["A", "B", "C", "D", "E"].map {
+            GraphLayoutNode(id: $0, size: CGSize(width: 60, height: 30))
+        }
+        let input = GraphLayoutInput(
+            nodes: nodes,
+            edges: [
+                GraphLayoutEdge(from: "A", to: "D"),
+                GraphLayoutEdge(from: "A", to: "B"),
+                GraphLayoutEdge(from: "B", to: "C"),
+                GraphLayoutEdge(from: "C", to: "D"),
+                GraphLayoutEdge(from: "D", to: "E"),
+            ],
+            direction: .topToBottom,
+            nodeSpacing: 20,
+            rankSpacing: 40
+        )
+        let result = SugiyamaLayout.layout(input)
+
+        #expect(result.nodePositions["C"]!.midY < result.nodePositions["D"]!.midY)
+        #expect(result.nodePositions["D"]!.midY < result.nodePositions["E"]!.midY)
+    }
+
     // MARK: - Diamond pattern
 
     @Test func diamondPattern() {

@@ -318,6 +318,7 @@ enum MermaidGanttRenderer {
                 nodePositions: [:], edgePaths: [], totalSize: .zero
             ),
             flowchart: .empty,
+            subgraphFrames: [:],
             nodeLabels: [:],
             nodeShapes: [:],
             edgeLabels: [:],
