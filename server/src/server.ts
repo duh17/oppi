@@ -666,7 +666,7 @@ export class Server {
     // Auto-title generator — generates concise task titles on first user message.
     this.titleGenerator = new SessionTitleGenerator({
       getConfig: () => this.storage.getConfig().autoTitle ?? { enabled: false },
-      modelRegistry: this.modelRegistry,
+      modelRuntime: this.modelRuntime,
       getSession: (sessionId) => this.storage.getSession(sessionId) ?? undefined,
       setSessionName: async (sessionId, name) => {
         await this.sessions.runCommand(sessionId, { type: "set_session_name", name });

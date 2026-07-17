@@ -1,6 +1,6 @@
 import { calculateCost, type KnownProvider, type Usage } from "@earendil-works/pi-ai";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { PiMessageUsage } from "./pi-events.js";
-import { getBuiltinCostModel } from "./pi-model-auth-service.js";
 
 export interface NormalizedUsage {
   input: number;
@@ -29,6 +29,8 @@ interface CacheWriteInferenceRule {
   matches: (modelId: string) => boolean;
   estimate: (tokens: TokenCounts) => number;
 }
+
+const costModels = builtinModels();
 
 const COST_PROVIDER_FALLBACKS: Partial<Record<KnownProvider, KnownProvider[]>> = {
   "openai-codex": ["openai", "azure-openai-responses"],
@@ -132,7 +134,7 @@ export function estimateUsageCostFromModel(
   const candidateProviders = [provider, ...(COST_PROVIDER_FALLBACKS[provider] ?? [])];
 
   for (const candidateProvider of candidateProviders) {
-    const candidate = getBuiltinCostModel(candidateProvider, rawModelId);
+    const candidate = costModels.getModel(candidateProvider, rawModelId);
     if (!candidate) {
       continue;
     }

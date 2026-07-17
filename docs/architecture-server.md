@@ -47,7 +47,7 @@ graph TD
     Lifecycle[SessionLifecycleService]
     Lists[SessionListService]
     Trace[SessionTraceService]
-    PiModel[PiModelAuthService]
+    ModelAccess[Title generation + built-in pricing]
     AgentLaunch[AgentLaunchService]
     ScheduleRunner[AgentScheduleRunner]
   end
@@ -92,7 +92,7 @@ graph TD
   Lists --> LocalCatalog
   Trace --> Sqlite
   Trace --> LocalCatalog
-  Project --> PiModel
+  Project --> ModelAccess
   Live --> Router
   MirrorWS --> Mirror
   Router --> Sessions
@@ -118,7 +118,7 @@ graph TD
 | `session-lifecycle-service.ts`                    | create/import, resume/open, stop, fork, delete, and mirror promotion policy                                          | HTTP response mapping                      |
 | `session-list-service.ts`                         | recent/workspace/archive session row shaping, active runtime overlays, local-session catalog joins                   | route query parsing                        |
 | `session-trace-service.ts`                        | trace source precedence, tool output lookup, overall diffs, changed-file summaries, and raw changed-file read policy | streaming bytes to HTTP responses          |
-| `pi-model-auth-service.ts`                        | Pi model/auth compatibility calls for title generation and token pricing                                             | session lifecycle or route behavior        |
+| `session-title-generator.ts` + `token-usage.ts`   | Provider-owned Pi model requests and static built-in pricing lookup                                                   | session lifecycle or route behavior        |
 | `agent-launch-service.ts`                         | idempotent saved-Agent and schedule launches into managed sessions                                                   | HTTP response mapping                      |
 | `agent-schedules.ts` + `agent-schedule-runner.ts` | durable schedule definitions, due-run materialization, lease claiming, dispatch, and run history                     | Apple UI routing                           |
 | `app-event-stream.ts`                             | global app-event WebSocket, app-event allowlist, row and extension UI mapping, workspace invalidation mapping        | focused timeline replay or command routing |
@@ -264,7 +264,7 @@ These rules are enforced by `server/scripts/check-architecture-boundaries.ts` an
 - `server/src/types.ts` may only re-export modules under `server/src/types/`.
 - `session-*` modules must not import the `sessions.ts` facade.
 - `server/src/storage/**` modules are infrastructure leaves. They must not import routes, stream code, or session runtime modules.
-- Direct `@earendil-works/pi-ai/compat` imports live only in `server/src/pi-model-auth-service.ts`; title generation, token cost lookup, and future catalog/auth behavior go through that boundary.
+- `@earendil-works/pi-ai/compat` imports are forbidden. Configured model/auth requests use `ModelRuntime`; static built-in pricing reads use `@earendil-works/pi-ai/providers/all`.
 - Direct `mirror-session-resume.ts` imports live only in `server/src/session-lifecycle-service.ts`; routes and streams call lifecycle service methods for mirror open/resume behavior.
 - `runtime == "pi-tui"` ownership checks live only in runtime, lifecycle, mirror-resume, and current input-command boundary modules. Other modules consume typed service results or semantic capabilities instead of branching on runtime ownership.
 - Generic extension UI relay/rendering code must not branch on concrete tool names, extension names, status keys, widget keys, or display names. Add semantic protocol metadata at the producer boundary instead.
@@ -300,5 +300,5 @@ Keep these high-churn modules small and explicit:
 | Extension UI relay                          | `server/src/sdk-ui-bridge.ts`, `server/src/extension-ui-contract.ts`, `server/src/extension-ui-state.ts`, `server/src/session-agent-events.ts`                                         |
 | Workspace files and media                   | `server/src/routes/workspace-files.ts`, `server/src/file-serving-policy.ts`, `server/src/routes/uploads.ts`, `server/src/session-attachments.ts`, `server/src/http-range.ts`           |
 | Protocol contract                           | `server/src/types/protocol.ts`, `server/src/types.ts`, `protocol/*.json`                                                                                                               |
-| Pi model/auth compatibility                 | `server/src/pi-model-auth-service.ts`, `server/src/session-title-generator.ts`, `server/src/token-usage.ts`                                                                            |
+| Pi model/auth and pricing                   | `server/src/session-title-generator.ts`, `server/src/token-usage.ts`, `server/src/model-catalog.ts`                                                                                   |
 | Pi event projection                         | `server/src/session-events.ts`, `server/src/session-agent-events.ts`, `server/src/session-protocol.ts`, `server/src/session-agent-event-media.ts`                                      |

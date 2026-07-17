@@ -36,8 +36,6 @@ const SERVER_ROUTE_TO_ROUTE_ALLOWED_TARGETS = new Set([
   "server/src/routes/types.ts",
 ]);
 
-const SERVER_PI_AI_COMPAT_ALLOWED_FILES = new Set(["server/src/pi-model-auth-service.ts"]);
-
 const SERVER_MIRROR_RESUME_IMPORT_ALLOWED_FILES = new Set([
   "server/src/session-lifecycle-service.ts",
 ]);
@@ -188,6 +186,15 @@ function readImportEntriesFromFile(filePath) {
       if (expression && ts.isStringLiteralLike(expression)) {
         pushImport(expression, expression.text);
       }
+    }
+
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length >= 1 &&
+      ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      pushImport(node.arguments[0], node.arguments[0].text);
     }
 
     ts.forEachChild(node, visit);
@@ -401,10 +408,7 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
     }
 
     for (const entry of importEntries) {
-      if (
-        entry.specifier === "@earendil-works/pi-ai/compat" &&
-        !SERVER_PI_AI_COMPAT_ALLOWED_FILES.has(importer)
-      ) {
+      if (entry.specifier === "@earendil-works/pi-ai/compat") {
         violations.push(
           makeServerViolation({
             rule: "pi-ai-compat-boundary",
@@ -412,9 +416,9 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
             target: entry.specifier,
             line: entry.line,
             column: entry.column,
-            reason: "Pi 0.80 compat imports must stay behind the Pi model/auth service.",
+            reason: "Oppi server code must use provider-owned Pi model APIs.",
             remediation:
-              "Inject title generation, token cost lookup, or catalog behavior through pi-model-auth-service.ts instead of importing pi-ai compat here.",
+              "Use ModelRuntime for configured model/auth requests or @earendil-works/pi-ai/providers/all for static built-in catalog reads.",
           }),
         );
       }
