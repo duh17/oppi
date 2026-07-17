@@ -210,7 +210,7 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
-  it("flags Pi AI compat imports outside the Pi model/auth boundary", () => {
+  it("flags every Pi AI compat import", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-pi-ai-compat-"));
 
     try {
@@ -222,6 +222,10 @@ describe("architecture layer rule helpers", () => {
         join(repoRoot, "server/src/pi-model-auth-service.ts"),
         'import { getModel } from "@earendil-works/pi-ai/compat";\nexport { getModel };\n',
       );
+      write(
+        join(repoRoot, "server/src/dynamic-model-helper.ts"),
+        'export async function loadCompat() { return import("@earendil-works/pi-ai/compat", {}); }\n',
+      );
 
       const violations = findServerLayerViolations(repoRoot);
 
@@ -232,13 +236,19 @@ describe("architecture layer rule helpers", () => {
             file: "server/src/random-title-helper.ts",
             target: "@earendil-works/pi-ai/compat",
           }),
+          expect.objectContaining({
+            rule: "pi-ai-compat-boundary",
+            file: "server/src/dynamic-model-helper.ts",
+            target: "@earendil-works/pi-ai/compat",
+          }),
         ]),
       );
-      expect(violations).not.toEqual(
+      expect(violations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             rule: "pi-ai-compat-boundary",
             file: "server/src/pi-model-auth-service.ts",
+            target: "@earendil-works/pi-ai/compat",
           }),
         ]),
       );

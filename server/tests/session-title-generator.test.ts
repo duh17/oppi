@@ -1,16 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockCompleteSimple = vi.hoisted(() => vi.fn());
-
-vi.mock("../src/pi-model-auth-service.js", async () => {
-  const actual = await vi.importActual<typeof import("../src/pi-model-auth-service.js")>(
-    "../src/pi-model-auth-service.js",
-  );
-  return {
-    ...actual,
-    completeSimpleWithPiModel: mockCompleteSimple,
-  };
-});
+const mockCompleteSimple = vi.fn();
 
 import {
   normalizeTitle,
@@ -107,14 +97,14 @@ describe("DisabledProvider", () => {
 
 describe("ApiModelTitleProvider", () => {
   it("returns null when model is not found", async () => {
-    const mockRegistry = {
-      find: vi.fn(() => undefined),
-      getApiKey: vi.fn(),
+    const mockRuntime = {
+      getModel: vi.fn(() => undefined),
+      completeSimple: mockCompleteSimple,
     };
     const onMetrics = vi.fn();
     const provider = new ApiModelTitleProvider(
       "anthropic/nonexistent",
-      mockRegistry as never,
+      mockRuntime as never,
       onMetrics,
     );
     const result = await provider.generateTitle("fix the websocket bug");
@@ -125,12 +115,12 @@ describe("ApiModelTitleProvider", () => {
   });
 
   it("reports metrics on error", async () => {
-    const mockRegistry = {
-      find: vi.fn(() => undefined),
-      getApiKey: vi.fn(),
+    const mockRuntime = {
+      getModel: vi.fn(() => undefined),
+      completeSimple: mockCompleteSimple,
     };
     const onMetrics = vi.fn();
-    const provider = new ApiModelTitleProvider("bad/model-id", mockRegistry as never, onMetrics);
+    const provider = new ApiModelTitleProvider("bad/model-id", mockRuntime as never, onMetrics);
     await provider.generateTitle("some message");
     expect(onMetrics).toHaveBeenCalledTimes(1);
     const metrics = onMetrics.mock.calls[0][0] as TitleGenerationMetrics;
@@ -140,11 +130,11 @@ describe("ApiModelTitleProvider", () => {
   });
 
   it("returns null for unparseable model ID", async () => {
-    const mockRegistry = {
-      find: vi.fn(() => undefined),
-      getApiKey: vi.fn(),
+    const mockRuntime = {
+      getModel: vi.fn(() => undefined),
+      completeSimple: mockCompleteSimple,
     };
-    const provider = new ApiModelTitleProvider("no-slash", mockRegistry as never);
+    const provider = new ApiModelTitleProvider("no-slash", mockRuntime as never);
     const result = await provider.generateTitle("fix the websocket bug");
     expect(result).toBeNull();
   });
@@ -157,10 +147,10 @@ describe("SessionTitleGenerator", () => {
     mockCompleteSimple.mockReset();
   });
 
-  function successfulModelRegistry() {
+  function successfulModelRuntime() {
     return {
-      find: vi.fn(() => ({ provider: "anthropic", id: "claude-haiku-3" })),
-      getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "test-key", headers: {} })),
+      getModel: vi.fn(() => ({ provider: "anthropic", id: "claude-haiku-3" })),
+      completeSimple: mockCompleteSimple,
     } as never;
   }
 
@@ -181,7 +171,10 @@ describe("SessionTitleGenerator", () => {
   function makeDeps(overrides?: Partial<SessionTitleGeneratorDeps>): SessionTitleGeneratorDeps {
     return {
       getConfig: () => ({ enabled: true, model: "anthropic/claude-haiku-3" }),
-      modelRegistry: { find: vi.fn(() => undefined), getApiKey: vi.fn() } as never,
+      modelRuntime: {
+        getModel: vi.fn(() => undefined),
+        completeSimple: mockCompleteSimple,
+      } as never,
       getSession: vi.fn((id: string) => ({ id, name: undefined })),
       setSessionName: vi.fn(),
       broadcastSessionUpdate: vi.fn(),
@@ -238,7 +231,7 @@ describe("SessionTitleGenerator", () => {
       resolveBroadcast = resolve;
     });
     const deps = makeDeps({
-      modelRegistry: successfulModelRegistry(),
+      modelRuntime: successfulModelRuntime(),
       onMetrics,
       setSessionName: vi.fn(),
       broadcastSessionUpdate: vi.fn(() => resolveBroadcast()),
@@ -261,7 +254,7 @@ describe("SessionTitleGenerator", () => {
     const { onMetrics, metrics } = waitForMetrics();
     const deps = makeDeps({
       getSession: vi.fn(() => ({ id: "s1", name: "Already Named" })),
-      modelRegistry: successfulModelRegistry(),
+      modelRuntime: successfulModelRuntime(),
       onMetrics,
     });
     const gen = new SessionTitleGenerator(deps);
@@ -281,7 +274,7 @@ describe("SessionTitleGenerator", () => {
     const { onMetrics, metrics } = waitForMetrics();
     const deps = makeDeps({
       getSession: vi.fn(() => undefined),
-      modelRegistry: successfulModelRegistry(),
+      modelRuntime: successfulModelRuntime(),
       onMetrics,
     });
     const gen = new SessionTitleGenerator(deps);

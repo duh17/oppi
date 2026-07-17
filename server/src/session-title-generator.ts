@@ -6,11 +6,10 @@
  * conversation history.
  */
 
-import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 
 import { createLogger } from "./logger.js";
-import { completeSimpleWithPiModel } from "./pi-model-auth-service.js";
 
 // ─── Types ───
 
@@ -126,22 +125,22 @@ function parseModelId(modelId: string): { provider: string; model: string } | nu
 }
 
 /**
- * API model provider — calls any model available through the pi SDK ModelRegistry.
+ * API model provider — calls any model available through the Pi SDK ModelRuntime.
  * Works with Anthropic, OpenAI, local MLX, etc.
  */
 export class ApiModelTitleProvider implements SessionTitleProvider {
   readonly name = "api-model";
   private readonly modelId: string;
-  private readonly modelRegistry: ModelRegistry;
+  private readonly modelRuntime: Pick<ModelRuntime, "getModel" | "completeSimple">;
   private readonly onMetrics?: (metrics: TitleGenerationMetrics) => void;
 
   constructor(
     modelId: string,
-    modelRegistry: ModelRegistry,
+    modelRuntime: Pick<ModelRuntime, "getModel" | "completeSimple">,
     onMetrics?: (metrics: TitleGenerationMetrics) => void,
   ) {
     this.modelId = modelId;
-    this.modelRegistry = modelRegistry;
+    this.modelRuntime = modelRuntime;
     this.onMetrics = onMetrics;
   }
 
@@ -158,16 +157,11 @@ export class ApiModelTitleProvider implements SessionTitleProvider {
         });
         return null;
       }
-      const auth = await this.modelRegistry.getApiKeyAndHeaders(model);
-      // completeSimple throws if apiKey is falsy, even for local models that
-      // don't need auth (e.g. mlx-server). Use a placeholder so the request
-      // goes through — the local server ignores the Authorization header.
-      const apiKey = (auth.ok ? auth.apiKey : undefined) || "no-key-needed";
       const abortController = new AbortController();
       const timeout = setTimeout(() => abortController.abort(), GENERATION_TIMEOUT_MS);
 
       try {
-        const response = await completeSimpleWithPiModel(
+        const response = await this.modelRuntime.completeSimple(
           model,
           {
             systemPrompt: TITLE_SYSTEM_PROMPT,
@@ -176,7 +170,6 @@ export class ApiModelTitleProvider implements SessionTitleProvider {
           {
             maxTokens: 30,
             temperature: 0.3,
-            apiKey,
             signal: abortController.signal,
           },
         );
@@ -227,7 +220,7 @@ export class ApiModelTitleProvider implements SessionTitleProvider {
   private resolveModel(): Model<Api> | undefined {
     const parsed = parseModelId(this.modelId);
     if (!parsed) return undefined;
-    return this.modelRegistry.find(parsed.provider, parsed.model);
+    return this.modelRuntime.getModel(parsed.provider, parsed.model);
   }
 }
 
@@ -262,7 +255,7 @@ class ConcurrencyLimiter {
 
 export interface SessionTitleGeneratorDeps {
   getConfig: () => AutoTitleConfig;
-  modelRegistry: ModelRegistry;
+  modelRuntime: Pick<ModelRuntime, "getModel" | "completeSimple">;
   /** Get current session state — returns undefined if session no longer exists. */
   getSession: (sessionId: string) => { id: string; name?: string } | undefined;
   /** Set the Pi session display name; Oppi stores the resulting name as a projection. */
@@ -325,6 +318,6 @@ export class SessionTitleGenerator {
     if (!config.enabled || !config.model) {
       return new DisabledProvider();
     }
-    return new ApiModelTitleProvider(config.model, this.deps.modelRegistry, this.deps.onMetrics);
+    return new ApiModelTitleProvider(config.model, this.deps.modelRuntime, this.deps.onMetrics);
   }
 }
