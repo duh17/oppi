@@ -157,12 +157,4 @@ final class RecoveryE2ETests: E2ETestCase {
             && (progress.label == "Dispatched…" || progress.label == "Started…")
     }
 
-    @MainActor
-    private func waitForAppToLeaveForeground(timeout: TimeInterval) {
-        let deadline = Date().addingTimeInterval(timeout)
-        while app.state == .runningForeground && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-        XCTAssertNotEqual(app.state, .runningForeground, "App did not leave foreground after Home button")
-    }
 }

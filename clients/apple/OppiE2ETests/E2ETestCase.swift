@@ -1,5 +1,15 @@
 import XCTest
 
+struct E2ELifecycleDiagnosticSnapshot: Equatable {
+    let sequence: Int
+    let phase: String
+    let step: String
+    let backgroundCompleted: Int
+    let activeCompleted: Int
+    let backgroundDurationMs: Int
+    let activeDurationMs: Int
+}
+
 /// Shared base class for E2E tests.
 /// Launches the app and pairs with the E2E server once per test process,
 /// then each test method reuses the same app instance.
@@ -763,6 +773,23 @@ class E2ETestCase: XCTestCase {
 
     // MARK: - E2E Diagnostics
 
+    @MainActor
+    func e2eDiagnosticMatches(
+        _ identifier: String,
+        timeout: TimeInterval = 15,
+        matching predicate: (String) -> Bool
+    ) -> Bool {
+        let element = app.staticTexts[identifier]
+        guard waitForElementToExist(element, timeout: min(timeout, 5)) else { return false }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if predicate(element.label) { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return predicate(element.label)
+    }
+
     @discardableResult
     func waitForE2EDiagnostic(
         _ identifier: String,
@@ -808,6 +835,143 @@ class E2ETestCase: XCTestCase {
     @discardableResult
     func waitForWebSocketConnected(timeout: TimeInterval = 20) -> String {
         waitForE2EDiagnostic("e2e.ws.status", timeout: timeout) { $0 == "connected" }
+    }
+
+    @MainActor
+    func e2eLifecycleSnapshot(timeout: TimeInterval = 10) -> E2ELifecycleDiagnosticSnapshot {
+        let value = waitForE2EDiagnostic("e2e.lifecycle", timeout: timeout) {
+            Self.e2eLifecycleSnapshot(from: $0) != nil
+        }
+        guard let snapshot = Self.e2eLifecycleSnapshot(from: value) else {
+            XCTFail("E2E lifecycle diagnostic was malformed: \(value)")
+            return E2ELifecycleDiagnosticSnapshot(
+                sequence: 0,
+                phase: "unknown",
+                step: "unknown",
+                backgroundCompleted: 0,
+                activeCompleted: 0,
+                backgroundDurationMs: 0,
+                activeDurationMs: 0
+            )
+        }
+        return snapshot
+    }
+
+    /// Executes one real scene cycle and proves precisely one completed
+    /// background handler followed by one completed active handler.
+    @MainActor
+    func backgroundAndActivate(
+        after previous: E2ELifecycleDiagnosticSnapshot,
+        scenario: String,
+        cycle: Int,
+        foregroundDeadline: TimeInterval = 10,
+        duringBackground: () throws -> Void = {}
+    ) rethrows -> E2ELifecycleDiagnosticSnapshot {
+        XCUIDevice.shared.press(.home)
+        let backgroundDeadline = Date().addingTimeInterval(5)
+        while app.state == .runningForeground && Date() < backgroundDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        guard app.state != .runningForeground else {
+            recordLifecycleCycleFailure(scenario: scenario, cycle: cycle, message: "App did not leave foreground")
+            return previous
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        do {
+            try duringBackground()
+        } catch {
+            recordLifecycleCycleFailure(
+                scenario: scenario,
+                cycle: cycle,
+                message: "Background harness action failed: \(error.localizedDescription)"
+            )
+            throw error
+        }
+
+        app.activate()
+        guard app.state == .runningForeground else {
+            recordLifecycleCycleFailure(scenario: scenario, cycle: cycle, message: "App did not survive foreground activation")
+            return previous
+        }
+
+        let expectedBackgroundCompleted = previous.backgroundCompleted + 1
+        let expectedActiveCompleted = previous.activeCompleted + 1
+        let diagnostic = app.staticTexts["e2e.lifecycle"]
+        guard waitForElementToExist(diagnostic, timeout: 5) else {
+            recordLifecycleCycleFailure(scenario: scenario, cycle: cycle, message: "Lifecycle diagnostic did not return")
+            return previous
+        }
+
+        let deadline = Date().addingTimeInterval(foregroundDeadline)
+        var latest = diagnostic.label
+        var snapshot = Self.e2eLifecycleSnapshot(from: latest)
+        while Date() < deadline {
+            latest = diagnostic.label
+            snapshot = Self.e2eLifecycleSnapshot(from: latest)
+            if let snapshot,
+               snapshot.phase == "active",
+               snapshot.step == "end",
+               snapshot.backgroundCompleted == expectedBackgroundCompleted,
+               snapshot.activeCompleted == expectedActiveCompleted {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        guard let snapshot,
+              snapshot.phase == "active",
+              snapshot.step == "end",
+              snapshot.backgroundCompleted == expectedBackgroundCompleted,
+              snapshot.activeCompleted == expectedActiveCompleted else {
+            recordLifecycleCycleFailure(
+                scenario: scenario,
+                cycle: cycle,
+                message: "Expected bgCompleted=\(expectedBackgroundCompleted), activeCompleted=\(expectedActiveCompleted); last=\(latest)"
+            )
+            return previous
+        }
+        guard snapshot.backgroundDurationMs <= Self.maximumLifecycleHandlerDurationMs else {
+            recordLifecycleCycleFailure(
+                scenario: scenario,
+                cycle: cycle,
+                message: "App-owned synchronous background handler exceeded \(Self.maximumLifecycleHandlerDurationMs)ms: \(snapshot.backgroundDurationMs)ms"
+            )
+            return snapshot
+        }
+        guard snapshot.activeDurationMs <= Self.maximumLifecycleHandlerDurationMs else {
+            recordLifecycleCycleFailure(
+                scenario: scenario,
+                cycle: cycle,
+                message: "App-owned synchronous active handler exceeded \(Self.maximumLifecycleHandlerDurationMs)ms: \(snapshot.activeDurationMs)ms"
+            )
+            return snapshot
+        }
+        return snapshot
+    }
+
+    @MainActor
+    func recordLifecycleCycleFailure(scenario: String, cycle: Int, message: String) {
+        XCTContext.runActivity(named: "\(scenario) lifecycle cycle \(cycle) failure") { activity in
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "\(scenario)-cycle-\(cycle)"
+            screenshot.lifetime = .keepAlways
+            activity.add(screenshot)
+
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "\(scenario)-cycle-\(cycle)-ui-hierarchy"
+            hierarchy.lifetime = .keepAlways
+            activity.add(hierarchy)
+            XCTFail(message)
+        }
+    }
+
+    @MainActor
+    func waitForAppToLeaveForeground(timeout: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while app.state == .runningForeground && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertNotEqual(app.state, .runningForeground, "App did not leave foreground after Home button")
     }
 
     @discardableResult
@@ -868,6 +1032,36 @@ class E2ETestCase: XCTestCase {
         waitForE2EDiagnostic("e2e.ws.ackedSubscriptions", timeout: timeout) { value in
             hasSubscription(value, sessionId: sessionId, level: level)
         }
+    }
+
+    private static let maximumLifecycleHandlerDurationMs = 3_000
+
+    private static func e2eLifecycleSnapshot(from value: String) -> E2ELifecycleDiagnosticSnapshot? {
+        guard let sequence = e2eLifecycleField("seq", in: value).flatMap(Int.init),
+              let phase = e2eLifecycleField("phase", in: value),
+              let step = e2eLifecycleField("step", in: value),
+              let backgroundCompleted = e2eLifecycleField("bgCompleted", in: value).flatMap(Int.init),
+              let activeCompleted = e2eLifecycleField("activeCompleted", in: value).flatMap(Int.init),
+              let backgroundDurationMs = e2eLifecycleField("bgMs", in: value).flatMap(Int.init),
+              let activeDurationMs = e2eLifecycleField("activeMs", in: value).flatMap(Int.init) else {
+            return nil
+        }
+        return E2ELifecycleDiagnosticSnapshot(
+            sequence: sequence,
+            phase: phase,
+            step: step,
+            backgroundCompleted: backgroundCompleted,
+            activeCompleted: activeCompleted,
+            backgroundDurationMs: backgroundDurationMs,
+            activeDurationMs: activeDurationMs
+        )
+    }
+
+    private static func e2eLifecycleField(_ name: String, in value: String) -> String? {
+        value
+            .split(separator: " ")
+            .first { $0.hasPrefix("\(name)=") }
+            .map { String($0.dropFirst(name.count + 1)) }
     }
 
     private func hasSubscription(_ value: String, sessionId: String, level: String) -> Bool {
