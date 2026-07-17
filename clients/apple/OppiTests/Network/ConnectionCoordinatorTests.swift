@@ -89,7 +89,7 @@ struct ConnectionCoordinatorTests {
 
     // MARK: - Server Removal
 
-    @Test func removeServerCleansConnection() {
+    @Test func removeServerCleansConnection() async {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:remove-test", name: "Victim")
 
@@ -97,14 +97,14 @@ struct ConnectionCoordinatorTests {
         coordinator.switchToServer(server)
         coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s1", name: "Doomed"))
 
-        coordinator.removeServer(id: "sha256:remove-test")
+        await coordinator.removeServer(id: "sha256:remove-test")
 
         #expect(coordinator.serverStore.server(for: "sha256:remove-test") == nil)
         #expect(coordinator.connections["sha256:remove-test"] == nil)
         #expect(coordinator.activeServerId != "sha256:remove-test")
     }
 
-    @Test func removeActiveServerSwitchesToNext() {
+    @Test func removeActiveServerSwitchesToNext() async {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:auto-switch-a", name: "A")
         let serverB = makeServer(id: "sha256:auto-switch-b", name: "B")
@@ -113,7 +113,7 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverB)
         coordinator.switchToServer(serverA)
 
-        coordinator.removeServer(id: "sha256:auto-switch-a")
+        await coordinator.removeServer(id: "sha256:auto-switch-a")
 
         // Should auto-switch to the remaining server
         #expect(coordinator.activeServerId == "sha256:auto-switch-b")
@@ -135,6 +135,49 @@ struct ConnectionCoordinatorTests {
         #expect(client1 === client2)
     }
 
+    @Test func unpreparedIrohOnlySwitchAwaitsReadyTransport() async {
+        let (coordinator, _) = makeCoordinator()
+        guard let server = PairedServer(from: makeTestIrohOnlyCredentials(), sortOrder: 0) else {
+            Issue.record("Expected Iroh-only PairedServer")
+            return
+        }
+        coordinator.serverStore.addOrUpdate(server)
+
+        #expect(coordinator.connection(for: server.id) == nil)
+        let switched = await coordinator.switchToServerReady(server)
+
+        #expect(switched)
+        #expect(coordinator.activeServerId == server.id)
+        #expect(coordinator.preparingServerIds.isEmpty)
+        #expect(coordinator.activeConnection.transportPath == .iroh)
+        #expect(coordinator.activeConnection.apiClient != nil)
+        #expect(await coordinator.activeConnection.apiClient?.baseURL.host == "127.0.0.1")
+        await coordinator.removeServer(id: server.id)
+    }
+
+    @Test func switchToIrohOnlyServerUsesTransparentAPIClient() async {
+        let (coordinator, _) = makeCoordinator()
+        guard let server = PairedServer(from: makeTestIrohOnlyCredentials(), sortOrder: 0) else {
+            Issue.record("Expected Iroh-only PairedServer")
+            return
+        }
+
+        coordinator.serverStore.addOrUpdate(server)
+        let prepared = await coordinator.ensureConnectionReady(for: server)
+        let result = await coordinator.switchToServerReady(server)
+
+        #expect(prepared.credentials != nil)
+        #expect(result)
+        #expect(coordinator.activeServerId == "sha256:iroh-server-fp")
+        #expect(coordinator.activeConnection.transportPath == .iroh)
+        #expect(coordinator.activeConnection.apiClient != nil)
+        #expect(coordinator.apiClient(for: "sha256:iroh-server-fp") != nil)
+        #expect(await coordinator.activeConnection.apiClient?.baseURL.host == "127.0.0.1")
+        #expect(coordinator.activeConnection.credentials?.baseURL == nil)
+
+        await coordinator.removeServer(id: server.id)
+    }
+
     // MARK: - Cross-Server Queries
 
     @Test func allSessionsSpansServers() {
@@ -153,6 +196,61 @@ struct ConnectionCoordinatorTests {
 
         let allSessions = coordinator.allSessions
         #expect(allSessions.count == 2)
+    }
+
+    @Test func backgroundActivityIncludesInactiveBusyServer() {
+        let (coordinator, _) = makeCoordinator()
+        let selected = makeServer(id: "sha256:bg-selected", name: "Selected")
+        let inactive = makeServer(id: "sha256:bg-inactive", name: "Inactive")
+        coordinator.serverStore.addOrUpdate(selected)
+        coordinator.serverStore.addOrUpdate(inactive)
+
+        coordinator.switchToServer(selected)
+        coordinator.activeConnection.sessionStore.upsert(
+            makeTestSession(id: "selected-idle", status: .ready)
+        )
+        coordinator.switchToServer(inactive)
+        coordinator.activeConnection.sessionStore.upsert(
+            makeTestSession(id: "inactive-busy", status: .busy)
+        )
+        coordinator.switchToServer(selected)
+
+        #expect(coordinator.hasActiveAgentTransport)
+        #expect(BackgroundKeepAlive.hasActiveAgent(in: coordinator.connections.values))
+    }
+
+    @Test func backgroundActivityIsFalseWhenAllServersIdle() {
+        let (coordinator, _) = makeCoordinator()
+        let serverA = makeServer(id: "sha256:bg-idle-a", name: "A")
+        let serverB = makeServer(id: "sha256:bg-idle-b", name: "B")
+        coordinator.serverStore.addOrUpdate(serverA)
+        coordinator.serverStore.addOrUpdate(serverB)
+
+        coordinator.switchToServer(serverA)
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "idle-a", status: .ready))
+        coordinator.switchToServer(serverB)
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "idle-b", status: .stopped))
+
+        #expect(!coordinator.hasActiveAgentTransport)
+        #expect(!BackgroundKeepAlive.hasActiveAgent(in: coordinator.connections.values))
+    }
+
+    @Test func foregroundRecoveryRefreshesInactiveBusyServer() async {
+        let (coordinator, _) = makeCoordinator()
+        let selected = makeServer(id: "sha256:fg-selected", name: "Selected")
+        let inactive = makeServer(id: "sha256:fg-inactive", name: "Inactive")
+        coordinator.serverStore.addOrUpdate(selected)
+        coordinator.serverStore.addOrUpdate(inactive)
+        coordinator.switchToServer(selected)
+        coordinator.switchToServer(inactive)
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "busy", status: .busy))
+        coordinator.switchToServer(selected)
+
+        var refreshed: [String] = []
+        coordinator._onRefreshInactiveServerForTesting = { refreshed.append($0) }
+        await coordinator.refreshInactiveServers()
+
+        #expect(refreshed == [inactive.id])
     }
 
     @Test func audioTransportPlaybackOnlyTracksLiveStreams() {

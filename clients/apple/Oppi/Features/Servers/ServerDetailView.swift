@@ -686,19 +686,21 @@ struct ServerDetailView: View {
     }
 
     private func removeServer() {
-        coordinator.removeServer(id: pairedServer.id)
+        Task { @MainActor in
+            await coordinator.removeServer(id: pairedServer.id)
 
-        if serverStore.servers.isEmpty {
-            navigation.showOnboarding = true
-            return
+            if serverStore.servers.isEmpty {
+                navigation.showOnboarding = true
+                return
+            }
+
+            dismiss()
         }
-
-        dismiss()
     }
 
     private func load() async {
-        guard let api = makeAPIClient() else {
-            error = "Invalid server address"
+        guard let api = await prepareAPIClient() else {
+            error = "Unable to prepare server transport"
             isLoading = false
             return
         }
@@ -714,17 +716,24 @@ struct ServerDetailView: View {
         isLoading = false
     }
 
+    private func prepareAPIClient() async -> APIClient? {
+        await coordinator.apiClientReady(for: pairedServer.id)
+    }
+
     private func makeAPIClient() -> APIClient? {
-        guard let baseURL = pairedServer.baseURL else { return nil }
-        return APIClient(
-            baseURL: baseURL,
-            token: pairedServer.token,
-            tlsCertFingerprint: pairedServer.tlsCertFingerprint
-        )
+        coordinator.apiClient(for: pairedServer.id)
     }
 
     private func loadProviderConfiguration(api: APIClient? = nil) async {
-        guard let client = api ?? makeAPIClient() else { return }
+        let client: APIClient
+        if let api {
+            client = api
+        } else if let prepared = await prepareAPIClient() {
+            client = prepared
+        } else {
+            providerError = "Unable to prepare server transport"
+            return
+        }
 
         isLoadingProviders = true
         defer { isLoadingProviders = false }

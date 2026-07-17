@@ -15,10 +15,13 @@ import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { spawnSync } from "node:child_process";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { URL } from "node:url";
 import type { Storage } from "./storage.js";
+import type { RunningIrohPairingServer } from "./iroh-pairing-server.js";
+import { clearIrohInviteState } from "./iroh-invite-state.js";
+import { startIrohHttpLoopback, type RunningIrohHttpLoopback } from "./iroh-http-loopback.js";
 import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
 import { AppEventStreamMux } from "./app-event-stream.js";
@@ -332,6 +335,10 @@ function resolvePiExecutable(): string {
   return "pi";
 }
 
+export interface ServerOptions {
+  onIrohTransportFailure?: (error: Error) => void;
+}
+
 export class Server {
   static readonly VERSION = getPackageInfo().version;
 
@@ -390,6 +397,11 @@ export class Server {
   private transportCertPath?: string;
   private remoteTransportError?: string;
   private wss: WebSocketServer;
+  private irohPairingServer: RunningIrohPairingServer | null = null;
+  private irohHttpLoopback: RunningIrohHttpLoopback | null = null;
+  private irohTransportFailure: Error | null = null;
+  private irohInviteReadinessId: string | undefined;
+  private readonly publicHttpEnabled: boolean;
 
   private readonly piExecutable: string;
   private readonly identityFingerprint: string;
@@ -431,8 +443,13 @@ export class Server {
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
   private scheduleRunner!: AgentScheduleRunner;
 
-  constructor(storage: Storage, apnsConfig?: APNsConfig) {
+  constructor(
+    storage: Storage,
+    apnsConfig?: APNsConfig,
+    private readonly options: ServerOptions = {},
+  ) {
     this.storage = storage;
+    this.publicHttpEnabled = process.env.OPPI_IROH_INVITE_MODE !== "irohOnly";
     this.piExecutable = resolvePiExecutable();
 
     const dataDir = storage.getDataDir();
@@ -714,9 +731,24 @@ export class Server {
 
   async start(): Promise<void> {
     const config = this.storage.getConfig();
-    const startupSecurityError = validateStartupSecurityConfig(config);
-    if (startupSecurityError) {
-      throw new Error(startupSecurityError);
+    if (this.publicHttpEnabled) {
+      const startupSecurityError = validateStartupSecurityConfig(config);
+      if (startupSecurityError) {
+        throw new Error(startupSecurityError);
+      }
+      for (const warning of formatStartupSecurityWarnings(config)) {
+        log.warn("startup.security.warning", { warning });
+      }
+    }
+
+    const inviteMode = this.effectiveIrohInviteMode();
+    this.irohInviteReadinessId = inviteMode === "httpOnly" ? undefined : randomUUID();
+    this.storage.updateConfig({
+      irohInviteMode: inviteMode,
+      irohInviteReadinessId: this.irohInviteReadinessId,
+    });
+    if (inviteMode === "httpOnly") {
+      clearIrohInviteState(this.storage.getDataDir());
     }
 
     await this.initializeModelServices();
@@ -731,89 +763,98 @@ export class Server {
     // These are sessions that crashed mid-startup or were orphaned by a server restart.
     this.healOrphanedSessions();
 
-    const securityWarnings = formatStartupSecurityWarnings(config);
-    for (const warning of securityWarnings) {
-      log.warn("startup.security.warning", { warning });
-    }
+    const finishStartup = async (): Promise<void> => {
+      await this.startOptionalIrohPairingServer();
+
+      if (this.httpServer?.listening) {
+        try {
+          this.startBonjourAdvertisement();
+        } catch (err: unknown) {
+          log.warn("bonjour.advertisement_disabled", { error: safeErrorMessage(err) });
+        }
+      }
+
+      this.resourceSampler.start();
+      this.opsMetrics.start();
+      this.startUploadGcLoop();
+      this.scheduleRunner.start();
+
+      // Background: sync search index after all required transports are ready.
+      if (this.searchIndex) {
+        const idx = this.searchIndex;
+        const sessions = this.storage.listSessions();
+        setTimeout(() => {
+          try {
+            idx.sync(sessions);
+          } catch (err) {
+            log.error("server.search_index_sync.failed", {
+              error: safeErrorMessage(err),
+            });
+          }
+        }, 0);
+      }
+    };
 
     this.localApiBinding = await listenOnLocalApiSocket(this.localApiServer, this.localApiSocket);
     log.info("server.local_api_listening", { socketPath: this.localApiSocket });
 
     try {
-      try {
-        const tls = await prepareTlsForServerOffMainThread(
-          { tls: config.tls },
-          this.storage.getDataDir(),
-          { additionalHosts: [config.host] },
-        );
-        const transport = this.createTransportServer(tls);
-        this.httpServer = transport.server;
-        this.transportScheme = transport.scheme;
-        this.transportCertPath = transport.certPath;
-        this.httpServer.on("upgrade", (req, socket, head) => {
-          this.handleUpgrade(req, socket, head);
-        });
-      } catch (error: unknown) {
-        if (!(error instanceof TailscaleRemoteUnavailableError)) throw error;
-        this.remoteTransportError = safeErrorMessage(error);
+      if (this.publicHttpEnabled) {
+        try {
+          const tls = await prepareTlsForServerOffMainThread(
+            { tls: config.tls },
+            this.storage.getDataDir(),
+            { additionalHosts: [config.host] },
+          );
+          const transport = this.createTransportServer(tls);
+          this.httpServer = transport.server;
+          this.transportScheme = transport.scheme;
+          this.transportCertPath = transport.certPath;
+          this.httpServer.on("upgrade", (req, socket, head) => {
+            this.handleUpgrade(req, socket, head);
+          });
+        } catch (error: unknown) {
+          if (!(error instanceof TailscaleRemoteUnavailableError)) throw error;
+          this.remoteTransportError = safeErrorMessage(error);
+        }
+
+        if (this.httpServer) {
+          await new Promise<void>((resolve, reject) => {
+            const server = this.httpServer;
+            if (!server) {
+              resolve();
+              return;
+            }
+            const onError = (error: Error): void => reject(error);
+            server.once("error", onError);
+            server.listen(config.port, config.host, () => {
+              server.off("error", onError);
+              resolve();
+            });
+          });
+          log.info("server.listening", {
+            scheme: this.transportScheme,
+            host: config.host,
+            port: this.port,
+          });
+        } else {
+          log.warn("server.remote_listener_unavailable", {
+            mode: config.tls?.mode ?? "disabled",
+            error: this.remoteTransportError ?? "remote transport unavailable",
+          });
+        }
       }
 
-      if (this.httpServer) {
-        await new Promise<void>((resolve, reject) => {
-          const server = this.httpServer;
-          if (!server) {
-            resolve();
-            return;
-          }
-          const onError = (error: Error): void => reject(error);
-          server.once("error", onError);
-          server.listen(config.port, config.host, () => {
-            server.off("error", onError);
-            resolve();
-          });
-        });
-        log.info("server.listening", {
-          scheme: this.transportScheme,
-          host: config.host,
-          port: this.port,
-        });
-
-        try {
-          this.startBonjourAdvertisement();
-        } catch (err: unknown) {
-          const message = safeErrorMessage(err);
-          log.warn("bonjour.advertisement_disabled", { error: message });
-        }
-      } else {
-        log.warn("server.remote_listener_unavailable", {
-          mode: config.tls?.mode ?? "disabled",
-          error: this.remoteTransportError ?? "remote transport unavailable",
-        });
+      await finishStartup();
+      if (!this.publicHttpEnabled) {
+        log.info("server.iroh_only_ready", { publicHttpListener: false });
       }
     } catch (error: unknown) {
-      await closeListeningServer(this.localApiServer);
+      await this.stopOptionalIrohPairingServer().catch(() => {});
+      await closeListeningServer(this.httpServer).catch(() => {});
+      await closeListeningServer(this.localApiServer).catch(() => {});
       this.releaseLocalApiBinding();
       throw error;
-    }
-
-    this.resourceSampler.start();
-    this.opsMetrics.start();
-    this.startUploadGcLoop();
-    this.scheduleRunner.start();
-
-    // Background: sync search index (non-blocking, fires after listen)
-    if (this.searchIndex) {
-      const idx = this.searchIndex;
-      const sessions = this.storage.listSessions();
-      setTimeout(() => {
-        try {
-          idx.sync(sessions);
-        } catch (err) {
-          log.error("server.search_index_sync.failed", {
-            error: safeErrorMessage(err),
-          });
-        }
-      }, 0);
     }
   }
 
@@ -836,7 +877,92 @@ export class Server {
     return this.httpServer?.listening === true;
   }
 
+  get hasPublicHttpListener(): boolean {
+    return this.publicHttpEnabled && this.httpServer?.listening === true;
+  }
+
+  get irohFailure(): Error | undefined {
+    return this.irohTransportFailure ?? undefined;
+  }
+
+  private effectiveIrohInviteMode(): "irohOnly" | "irohPreferred" | "httpOnly" {
+    if (process.env.OPPI_IROH_INVITE_MODE === "irohOnly") return "irohOnly";
+    return this.shouldStartIrohPairingServer() ? "irohPreferred" : "httpOnly";
+  }
+
+  private shouldStartIrohPairingServer(): boolean {
+    return process.env.OPPI_IROH_PAIRING === "1" || process.env.OPPI_IROH_TRANSPORT === "1";
+  }
+
+  private requiresIrohReadiness(): boolean {
+    return process.env.OPPI_IROH_INVITE_MODE === "irohOnly";
+  }
+
+  private async startOptionalIrohPairingServer(): Promise<void> {
+    if (this.irohPairingServer) return;
+    if (!this.shouldStartIrohPairingServer()) {
+      if (this.requiresIrohReadiness()) {
+        throw new Error("Iroh-only mode requires OPPI_IROH_TRANSPORT=1");
+      }
+      return;
+    }
+
+    try {
+      clearIrohInviteState(this.storage.getDataDir());
+      this.irohHttpLoopback = await startIrohHttpLoopback({
+        handleRequest: (req, res) => {
+          void this.handleHttp(req, res, "http");
+        },
+        handleUpgrade: (req, socket, head) => this.handleUpgrade(req, socket, head),
+      });
+      const { startIrohPairingServer } = await import("./iroh-pairing-server.js");
+      this.irohPairingServer = await startIrohPairingServer(this.storage, {
+        tunnelTarget: this.irohHttpLoopback,
+        readinessId: this.irohInviteReadinessId,
+        onFailure: (error) => this.handleIrohTransportFailure(error),
+      });
+    } catch (error: unknown) {
+      await this.irohHttpLoopback?.close().catch(() => {});
+      this.irohHttpLoopback = null;
+      clearIrohInviteState(this.storage.getDataDir());
+      this.irohTransportFailure =
+        error instanceof Error ? error : new Error(safeErrorMessage(error));
+      if (this.requiresIrohReadiness()) {
+        log.error("iroh_transport.start_failed", { error: safeErrorMessage(error) });
+        throw error;
+      }
+      log.warn("iroh_transport.start_failed", { error: safeErrorMessage(error) });
+    }
+  }
+
+  private handleIrohTransportFailure(error: Error): void {
+    this.irohTransportFailure = error;
+    clearIrohInviteState(this.storage.getDataDir());
+    log.error("iroh_transport.terminal_failure", {
+      mode: this.effectiveIrohInviteMode(),
+      error: safeErrorMessage(error),
+    });
+    if (this.requiresIrohReadiness()) {
+      this.closeActiveConnections(WS_CLOSE_GOING_AWAY, "Iroh transport unavailable");
+      void this.irohHttpLoopback?.close().catch(() => {});
+      this.options.onIrohTransportFailure?.(error);
+    }
+  }
+
+  private async stopOptionalIrohPairingServer(): Promise<void> {
+    const pairingServer = this.irohPairingServer;
+    const loopback = this.irohHttpLoopback;
+    this.irohPairingServer = null;
+    this.irohHttpLoopback = null;
+    try {
+      await pairingServer?.close();
+    } finally {
+      await loopback?.close();
+    }
+  }
+
   async stop(): Promise<void> {
+    await this.stopOptionalIrohPairingServer();
     this.stopUploadGcLoop();
     this.scheduleRunner.stop();
     this.opsMetrics.stop();
@@ -1085,7 +1211,21 @@ export class Server {
 
   // ─── Auth ───
 
+  private authenticateIrohContext(req: IncomingMessage): boolean | undefined {
+    const irohContext = this.irohHttpLoopback?.contextFor(req);
+    if (!irohContext) return undefined;
+
+    const authorization = req.headers.authorization;
+    if (!authorization?.startsWith("Bearer ")) return false;
+    if (!secureTokenEquals(irohContext.bearerToken, authorization.slice(7))) return false;
+    return this.storage.validateIrohDeviceToken(irohContext.bearerToken, irohContext.clientNodeId)
+      .ok;
+  }
+
   private authenticate(req: IncomingMessage): boolean {
+    const irohAuthenticated = this.authenticateIrohContext(req);
+    if (irohAuthenticated !== undefined) return irohAuthenticated;
+
     // Bearer header (primary auth)
     const auth = req.headers.authorization;
     if (auth?.startsWith("Bearer ")) {
@@ -1100,7 +1240,9 @@ export class Server {
     if (configToken && secureTokenEquals(configToken, candidate)) return true;
 
     for (const dt of this.storage.getAuthDeviceTokens()) {
-      if (secureTokenEquals(dt, candidate)) return true;
+      if (secureTokenEquals(dt, candidate)) {
+        return this.storage.hasAuthTokenForTransport(dt, "http");
+      }
     }
 
     return false;
@@ -1122,6 +1264,21 @@ export class Server {
     res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
     res.setHeader("X-Oppi-Protocol", "2");
+
+    // The private loopback context proves which Iroh peer opened the tunnel, not
+    // which local request owns the credential. Require every tunneled request,
+    // including keep-alive requests and otherwise-public routes, to present the
+    // exact bearer injected by the authenticated tunnel preface.
+    if (this.authenticateIrohContext(req) === false) {
+      log.warn("auth.unauthorized", {
+        transport: "http",
+        method,
+        path,
+        authPresent: hasAuthHeader(req.headers.authorization),
+      });
+      this.error(res, 401, "Unauthorized");
+      return;
+    }
 
     // Record HTTP request duration when the response finishes. Routine health,
     // stats, capability, and telemetry upload routes are threshold-gated so

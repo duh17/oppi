@@ -157,7 +157,9 @@ struct ContentView: View {
         quickSessionLaunchAccessibilityElement = nil
         navigation.showQuickSession = false
         QuickSessionTrigger.shared.isPresented = false
-        completePendingQuickSessionNavigation()
+        Task { @MainActor in
+            await completePendingQuickSessionNavigation()
+        }
 
         // A custom overlay has no presentation controller to restore focus.
         // Return VoiceOver to the exact launch button it focused before the
@@ -182,7 +184,7 @@ struct ContentView: View {
         quickSessionLaunchAccessibilityElement = focusedElement as AnyObject
     }
 
-    private func completePendingQuickSessionNavigation() {
+    private func completePendingQuickSessionNavigation() async {
         guard let pending = navigation.pendingQuickSessionNav else { return }
         navigation.pendingQuickSessionNav = nil
 
@@ -190,7 +192,7 @@ struct ContentView: View {
         // environment-injected stores) reflect the target server by the time
         // ChatView renders. Without this, cross-server quick sessions can
         // capture the OLD connection in ChatView's .task.
-        guard coordinator.switchToServer(pending.target.serverId) else {
+        guard await coordinator.switchToServerReady(pending.target.serverId) else {
             return
         }
 

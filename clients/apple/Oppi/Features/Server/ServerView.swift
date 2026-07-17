@@ -10,6 +10,7 @@ import SwiftUI
 /// - Multi-server picker when 2+ servers are paired
 struct ServerView: View {
     @Environment(ServerStore.self) private var serverStore
+    @Environment(ConnectionCoordinator.self) private var coordinator
 
     @State private var selectedServerId: String?
     @State private var stats: ServerStats?
@@ -29,10 +30,10 @@ struct ServerView: View {
         Self.resolveServer(selectedId: selectedServerId, from: serverStore.servers)
     }
 
-    /// Build an `APIClient` for a specific server, or nil if URL is invalid.
-    private func apiClient(for server: PairedServer) -> APIClient? {
-        guard let baseURL = server.baseURL else { return nil }
-        return APIClient(baseURL: baseURL, token: server.token, tlsCertFingerprint: server.tlsCertFingerprint)
+    /// Resolve the coordinator-owned client so HTTP and Iroh-only servers use
+    /// the same dashboard/provider path.
+    private func apiClient(for server: PairedServer) async -> APIClient? {
+        await coordinator.apiClientReady(for: server.id)
     }
 
     /// Metadata task identity — reloads only when the selected server changes.
@@ -330,7 +331,7 @@ struct ServerView: View {
 
     private func loadStats() async {
         guard let server = selectedServer,
-              let client = apiClient(for: server)
+              let client = await apiClient(for: server)
         else {
             error = "Not connected to a server"
             isLoading = false
@@ -352,7 +353,7 @@ struct ServerView: View {
 
     private func loadServerInfo() async {
         guard let server = selectedServer,
-              let client = apiClient(for: server)
+              let client = await apiClient(for: server)
         else { return }
 
         do {
@@ -364,7 +365,7 @@ struct ServerView: View {
 
     private func loadProviderStatus() async {
         guard let server = selectedServer,
-              let client = apiClient(for: server)
+              let client = await apiClient(for: server)
         else { return }
 
         do {
@@ -384,7 +385,7 @@ struct ServerView: View {
         }
 
         guard let server = selectedServer,
-              let client = apiClient(for: server)
+              let client = await apiClient(for: server)
         else { return }
 
         isLoadingDetail = true

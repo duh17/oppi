@@ -72,6 +72,7 @@ final class AppEventStreamClient {
     private let urlSession: URLSession
     private let reconnectDelay: @Sendable (Int) -> TimeInterval
     private let webSocketFactory: (URLRequest) -> AppEventWebSocketTransport
+    private let diagnosticRemoteIdentity: String?
 
     private var webSocket: AppEventWebSocketTransport?
     private var receiveTask: Task<Void, Never>?
@@ -89,12 +90,14 @@ final class AppEventStreamClient {
         url: URL,
         token: String,
         tlsCertFingerprint: String? = nil,
+        diagnosticRemoteIdentity: String? = nil,
         reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = WebSocketRecoveryPolicy.reconnectDelay,
         webSocketFactory: ((URLRequest) -> AppEventWebSocketTransport)? = nil
     ) {
         self.url = url
         self.token = token
         self.reconnectDelay = reconnectDelay
+        self.diagnosticRemoteIdentity = diagnosticRemoteIdentity
         self.trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60
@@ -146,7 +149,7 @@ final class AppEventStreamClient {
 
     private func open(continuation: AsyncStream<AppEventMessage>.Continuation) {
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        ServerAuthorization.apply(token: token, to: &request)
 
         let ws = webSocketFactory(request)
         webSocket = ws
@@ -344,7 +347,12 @@ final class AppEventStreamClient {
     }
 
     private func streamLogMetadata(extra: [String: String] = [:]) -> [String: String] {
-        var metadata = ClientLog.endpointMetadata(url, prefix: "appStream")
+        var metadata: [String: String]
+        if let diagnosticRemoteIdentity {
+            metadata = ["remoteIdentity": diagnosticRemoteIdentity]
+        } else {
+            metadata = ClientLog.endpointMetadata(url, prefix: "appStream")
+        }
         metadata["streamRole"] = "app_event_stream"
         metadata["status"] = String(describing: status)
         metadata["connectionID"] = String(connectionID)

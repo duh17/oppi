@@ -145,9 +145,7 @@ private struct WorkspaceSplitFileBrowserDestinationView: View {
         target.serverId
     }
 
-    private var resolvedConnection: ServerConnection? {
-        scopedConnection ?? coordinator.connection(for: targetServerId)
-    }
+    private var resolvedConnection: ServerConnection? { scopedConnection }
 
     var body: some View {
         Group {
@@ -163,16 +161,10 @@ private struct WorkspaceSplitFileBrowserDestinationView: View {
                 ProgressView("Connecting…")
             }
         }
-        .onAppear(perform: activateTargetServer)
         .task(id: targetServerId) {
-            activateTargetServer()
+            guard await coordinator.switchToServerReady(targetServerId) else { return }
+            scopedConnection = coordinator.connection(for: targetServerId)
         }
-    }
-
-    @MainActor
-    private func activateTargetServer() {
-        guard coordinator.switchToServer(targetServerId) else { return }
-        scopedConnection = coordinator.connection(for: targetServerId)
     }
 }
 
@@ -183,9 +175,7 @@ private struct WorkspaceSplitWorkspaceConfigurationDestinationView: View {
 
     @State private var scopedConnection: ServerConnection?
 
-    private var resolvedConnection: ServerConnection? {
-        scopedConnection ?? coordinator.connection(for: target.serverId)
-    }
+    private var resolvedConnection: ServerConnection? { scopedConnection }
 
     var body: some View {
         Group {
@@ -206,16 +196,10 @@ private struct WorkspaceSplitWorkspaceConfigurationDestinationView: View {
                 ProgressView("Connecting…")
             }
         }
-        .onAppear(perform: activateTargetServer)
         .task(id: target.serverId) {
-            activateTargetServer()
+            guard await coordinator.switchToServerReady(target.serverId) else { return }
+            scopedConnection = coordinator.connection(for: target.serverId)
         }
-    }
-
-    @MainActor
-    private func activateTargetServer() {
-        guard coordinator.switchToServer(target.serverId) else { return }
-        scopedConnection = coordinator.connection(for: target.serverId)
     }
 }
 
@@ -287,7 +271,7 @@ private struct WorkspaceCreationIntakeModifier: ViewModifier {
             }
             .onChange(of: navigation.pendingWorkspaceDeepLink != nil) { _, hasPending in
                 guard hasPending else { return }
-                consumeWorkspaceDeepLinkIfNeeded()
+                Task { await consumeWorkspaceDeepLinkIfNeeded() }
             }
             .onChange(of: navigation.shouldGuideWorkspaceCreation) { _, shouldGuide in
                 guard shouldGuide else { return }
@@ -297,7 +281,7 @@ private struct WorkspaceCreationIntakeModifier: ViewModifier {
 
     @MainActor
     private func processWorkspaceCreationIntake() async {
-        if consumeWorkspaceDeepLinkIfNeeded() {
+        if await consumeWorkspaceDeepLinkIfNeeded() {
             return
         }
         await presentGuidedWorkspaceCreationIfNeeded()
@@ -305,7 +289,7 @@ private struct WorkspaceCreationIntakeModifier: ViewModifier {
 
     @MainActor
     @discardableResult
-    private func consumeWorkspaceDeepLinkIfNeeded() -> Bool {
+    private func consumeWorkspaceDeepLinkIfNeeded() async -> Bool {
         guard let payload = navigation.pendingWorkspaceDeepLink else { return false }
         navigation.pendingWorkspaceDeepLink = nil
         navigation.shouldGuideWorkspaceCreation = false
@@ -321,7 +305,7 @@ private struct WorkspaceCreationIntakeModifier: ViewModifier {
             coordinator.activeConnection.extensionToast = "Server not found for this workspace link"
             return true
         }
-        guard coordinator.switchToServer(server) else {
+        guard await coordinator.switchToServerReady(server) else {
             coordinator.activeConnection.extensionToast = "Could not open the server for this workspace link"
             return true
         }

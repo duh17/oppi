@@ -129,6 +129,74 @@ struct WorkspaceNavigationServerScopeTests {
         )
     }
 
+    @Test func workspaceEditWaitsForUnpreparedIrohTargetBeforeInitialLoads() async throws {
+        SharedConstants.sharedDefaults.removeObject(forKey: SharedConstants.pairedServerIdsKey)
+        UserDefaults.standard.removeObject(forKey: SharedConstants.pairedServerIdsKey)
+        KeychainService.deleteAllServers()
+        defer { TestURLProtocol.handler = nil }
+
+        let requestLog = RequestLog()
+        TestURLProtocol.handler = { request in
+            requestLog.append(request)
+            return Self.response(for: request)
+        }
+
+        let serverStore = ServerStore()
+        let coordinator = ConnectionCoordinator(serverStore: serverStore)
+        let serverA = makeServer(id: "sha256:edit-a", name: "Server A", host: "server-a.test")
+        let serverB = try #require(PairedServer(
+            from: makeTestIrohOnlyCredentials(
+                token: "dt_edit_b",
+                name: "Server B",
+                fingerprint: "sha256:edit-b"
+            )
+        ))
+        serverStore.addOrUpdate(serverA)
+        serverStore.addOrUpdate(serverB)
+        coordinator.switchToServer(serverA)
+        coordinator.connection(for: serverA.id)?.setAPIClientForTesting(
+            Self.makeAPIClient(host: "server-a.test")
+        )
+        #expect(coordinator.connection(for: serverB.id) == nil)
+
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            (nil, try #require(URL(string: "http://server-b.test:7749")))
+        }
+        coordinator._onConnectionPreparedForTesting = { serverId, connection in
+            guard serverId == serverB.id else { return }
+            connection.setAPIClientForTesting(Self.makeAPIClient(host: "server-b.test"))
+        }
+
+        let workspace = makeTestWorkspace(
+            id: "ws-edit-b",
+            name: "Edit on B",
+            hostMount: "/srv/edit-b",
+            gitStatusEnabled: true
+        )
+        let host = makeEditScopedHost(
+            coordinator: coordinator,
+            serverStore: serverStore,
+            server: serverB,
+            workspace: workspace
+        )
+        defer { host.teardown() }
+
+        let completedInitialLoads = await waitForTestCondition(timeoutMs: 2_000) {
+            requestLog.contains(host: "server-b.test", pathPrefix: "/models")
+                && requestLog.contains(host: "server-b.test", pathPrefix: "/extensions")
+                && requestLog.contains(host: "server-b.test", pathPrefix: "/host/path/status")
+        }
+
+        #expect(completedInitialLoads)
+        #expect(coordinator.activeServerId == serverB.id)
+        #expect(!requestLog.contains(host: "server-a.test", pathPrefix: "/models"))
+        #expect(!requestLog.contains(host: "server-a.test", pathPrefix: "/extensions"))
+        #expect(!requestLog.contains(host: "server-a.test", pathPrefix: "/host/path/status"))
+
+        await coordinator.removeServer(id: serverB.id)
+        await coordinator.removeServer(id: serverA.id)
+    }
+
     private static func makeAPIClient(host: String) -> APIClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [TestURLProtocol.self]
@@ -191,6 +259,15 @@ struct WorkspaceNavigationServerScopeTests {
             }
             if path == "/models" {
                 return makeResponse(request: request, body: #"{"models":[]}"#)
+            }
+            if path == "/extensions" {
+                return makeResponse(request: request, body: #"{"extensions":[]}"#)
+            }
+            if path == "/host/path/status" {
+                return makeResponse(
+                    request: request,
+                    body: #"{"status":{"path":"/srv/edit-b","resolvedPath":"/srv/edit-b","exists":true,"isDirectory":true,"isFile":false,"issue":null,"message":null}}"#
+                )
             }
             return makeResponse(request: request, body: #"{}"#)
         }
@@ -257,6 +334,43 @@ struct WorkspaceNavigationServerScopeTests {
         window.rootViewController = controller
         window.makeKeyAndVisible()
 
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        return WorkspaceNavigationHostHarness(controller: controller, window: window)
+    }
+
+    private func makeEditScopedHost(
+        coordinator: ConnectionCoordinator,
+        serverStore: ServerStore,
+        server: PairedServer,
+        workspace: Workspace
+    ) -> WorkspaceNavigationHostHarness {
+        let activeConnection = coordinator.activeConnection
+        let root = AnyView(
+            NavigationStack {
+                WorkspaceEditScopedDestinationView(server: server, workspace: workspace)
+            }
+            .environment(coordinator)
+            .environment(activeConnection)
+            .environment(\.apiClient, activeConnection.apiClient)
+            .environment(activeConnection.chatState)
+            .environment(activeConnection.sessionStore)
+            .environment(activeConnection.workspaceStore)
+            .environment(activeConnection.askRequestStore)
+            .environment(activeConnection.audioPlayer)
+            .environment(activeConnection.gitStatusStore)
+            .environment(activeConnection.fileIndexStore)
+            .environment(activeConnection.messageQueueStore)
+            .environment(serverStore)
+        )
+
+        let controller = UIHostingController(rootView: root)
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+
+        let window = UIWindow(frame: controller.view.frame)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
         controller.view.setNeedsLayout()
         controller.view.layoutIfNeeded()
         return WorkspaceNavigationHostHarness(controller: controller, window: window)

@@ -62,6 +62,33 @@ func makeTestCredentials(
     )
 }
 
+func makeTestIrohOnlyCredentials(
+    token: String = "dt_iroh",
+    name: String = "Iroh Server",
+    fingerprint: String = "sha256:iroh-server-fp",
+    alpns: [String] = [IrohTunnelProtocol.alpn]
+) -> ServerCredentials {
+    ServerCredentials(
+        host: "",
+        port: 0,
+        token: token,
+        name: name,
+        scheme: nil,
+        serverFingerprint: fingerprint,
+        transports: ServerTransports(
+            preference: .irohOnly,
+            iroh: IrohServerTransport(
+                version: 2,
+                nodeId: "node-id-123",
+                alpns: alpns,
+                addressMode: .nodeId,
+                ticket: nil
+            ),
+            http: nil
+        )
+    )
+}
+
 func makeTestWorkspace(
     id: String = "w1",
     name: String = "Workspace",

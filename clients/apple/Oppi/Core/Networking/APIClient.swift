@@ -1354,7 +1354,7 @@ actor APIClient: ClientLogUploading {
                 path: path,
                 queryItems: workspaceWorktreeQueryItems(worktreeId)
             ),
-            authorizationHeaderValue: "Bearer \(token)",
+            authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
             tlsCertFingerprint: tlsCertFingerprint,
             contentTypeHint: contentTypeHint,
             sourceFileExtension: sourceFileExtension
@@ -1372,7 +1372,7 @@ actor APIClient: ClientLogUploading {
     ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
             url: try makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path),
-            authorizationHeaderValue: "Bearer \(token)",
+            authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
             tlsCertFingerprint: tlsCertFingerprint,
             contentTypeHint: contentTypeHint,
             sourceFileExtension: sourceFileExtension
@@ -1388,7 +1388,7 @@ actor APIClient: ClientLogUploading {
     ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
             url: try makeURL(pathSegments: ["sessions", sessionId, "attachments", attachmentId]),
-            authorizationHeaderValue: "Bearer \(token)",
+            authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
             tlsCertFingerprint: tlsCertFingerprint,
             contentTypeHint: contentTypeHint,
             sourceFileExtension: sourceFileExtension
@@ -1498,7 +1498,7 @@ actor APIClient: ClientLogUploading {
     func request(_ method: String, path: String) async throws -> (Data, URLResponse) {
         var req = try URLRequest(url: makeURL(path: path))
         req.httpMethod = method
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        ServerAuthorization.apply(token: token, to: &req)
         logger.debug("\(method) \(path)")
         return try await session.data(for: req)
     }
@@ -1506,7 +1506,7 @@ actor APIClient: ClientLogUploading {
     private func request(_ method: String, url: URL) async throws -> (Data, URLResponse) {
         var req = URLRequest(url: url)
         req.httpMethod = method
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        ServerAuthorization.apply(token: token, to: &req)
         logger.debug("\(method) \(url.path)")
         return try await session.data(for: req)
     }
@@ -1519,7 +1519,7 @@ actor APIClient: ClientLogUploading {
     ) async throws -> (Data, URLResponse) {
         var req = try URLRequest(url: makeURL(path: path))
         req.httpMethod = method
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        ServerAuthorization.apply(token: token, to: &req)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try (encoder ?? JSONEncoder()).encode(body)
         logger.debug("\(method) \(path)")
@@ -1529,7 +1529,7 @@ actor APIClient: ClientLogUploading {
     private func request(_ method: String, path: String, body: Data, contentType: String) async throws -> (Data, URLResponse) {
         var req = try URLRequest(url: makeURL(path: path))
         req.httpMethod = method
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        ServerAuthorization.apply(token: token, to: &req)
         req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         req.httpBody = body
         logger.debug("\(method) \(path)")

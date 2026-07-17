@@ -24,6 +24,17 @@ export interface UploadStoreConfig {
   allowedMimeTypes?: string[];
 }
 
+export type AuthTransport = "http" | "iroh";
+export type IrohInviteMode = "irohOnly" | "irohPreferred" | "httpOnly";
+
+export interface IrohDeviceTokenBinding {
+  token: string;
+  clientNodeId: string;
+  allowedTransports: AuthTransport[];
+  createdAt: number;
+  lastSeenAt?: number;
+}
+
 export interface ServerConfig {
   configVersion?: number;
   port: number;
@@ -52,15 +63,22 @@ export interface ServerConfig {
   /** Transport security (HTTPS/WSS). */
   tls?: TlsConfig;
 
+  /** Effective invite policy persisted by the running server for separate CLI invocations. */
+  irohInviteMode?: IrohInviteMode;
+  /** Correlates invite readiness with the current server start. */
+  irohInviteReadinessId?: string;
+
   // Owner/admin bearer token
   token?: string;
 
   // One-time pairing token bootstrap state
   pairingToken?: string;
   pairingTokenExpiresAt?: number;
+  pairingTokenAllowedTransports?: AuthTransport[];
 
   // Device auth state (issued during pairing)
   authDeviceTokens?: string[];
+  irohDeviceTokenBindings?: IrohDeviceTokenBinding[];
 
   // Push notification state (written by iOS client registration)
   pushDeviceTokens?: string[];

@@ -4,16 +4,6 @@ import OSLog
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "AskOppiIntent")
 
 /// App Intent that sends a prompt to the server without opening the app.
-///
-/// Creates a session, auto-resumes it, and delivers the prompt — all
-/// server-side via a single REST call. The agent starts working in the
-/// background; check the result in Oppi whenever.
-///
-/// Works from:
-/// - Shortcuts app
-/// - Siri voice
-/// - Action Button (via Shortcut assignment)
-/// - Automations
 struct AskOppiIntent: AppIntent {
     static let title: LocalizedStringResource = "Ask Oppi"
     // periphery:ignore
@@ -39,16 +29,19 @@ struct AskOppiIntent: AppIntent {
             return .result(dialog: "No paired server found. Open Oppi to pair first.")
         }
 
-        guard let baseURL = server.baseURL else {
-            return .result(dialog: "Invalid server configuration.")
+        do {
+            let message = try await ServerTransportAPIClient.withClient(for: server) { api in
+                await performRequest(api: api)
+            }
+            return .result(dialog: IntentDialog(stringLiteral: message))
+        } catch {
+            logger.error("Failed to prepare intent transport: \(error)")
+            return .result(dialog: "Could not connect to server.")
         }
+    }
 
-        let api = APIClient(
-            baseURL: baseURL,
-            token: server.token,
-            tlsCertFingerprint: server.tlsCertFingerprint
-        )
-
+    @MainActor
+    private func performRequest(api: APIClient) async -> String {
         let targetWorkspaceId: String
         let workspaceSelectionSource: String
         if let workspace {
@@ -58,7 +51,7 @@ struct AskOppiIntent: AppIntent {
             do {
                 let workspaces = try await api.listWorkspaces()
                 guard !workspaces.isEmpty else {
-                    return .result(dialog: "No workspaces configured on the server.")
+                    return "No workspaces configured on the server."
                 }
 
                 if let preferred = AppPreferences.QuickSession.preferredWorkspaceSelection(
@@ -72,7 +65,7 @@ struct AskOppiIntent: AppIntent {
                 }
             } catch {
                 logger.error("Failed to list workspaces: \(error)")
-                return .result(dialog: "Could not connect to server.")
+                return "Could not connect to server."
             }
         }
 
@@ -104,20 +97,20 @@ struct AskOppiIntent: AppIntent {
             )
             if prompted {
                 logger.error("Quick dispatch succeeded: session=\(response.session.id)")
-                return .result(dialog: "Session started: \(sessionName)")
-            } else {
-                ChatSessionTelemetry.recordCountMetric(
-                    .quickSessionError,
-                    workspaceId: targetWorkspaceId,
-                    tags: [
-                        "source": "intent",
-                        "selection": workspaceSelectionSource,
-                        "error_kind": "prompt_delivery",
-                    ]
-                )
-                logger.warning("Session created but prompt delivery failed: \(response.session.id)")
-                return .result(dialog: "Session created but agent failed to start. Open Oppi to retry.")
+                return "Session started: \(sessionName)"
             }
+
+            ChatSessionTelemetry.recordCountMetric(
+                .quickSessionError,
+                workspaceId: targetWorkspaceId,
+                tags: [
+                    "source": "intent",
+                    "selection": workspaceSelectionSource,
+                    "error_kind": "prompt_delivery",
+                ]
+            )
+            logger.warning("Session created but prompt delivery failed: \(response.session.id)")
+            return "Session created but agent failed to start. Open Oppi to retry."
         } catch {
             let errorKind = ChatSessionTelemetry.metricErrorKind(for: error)
             ChatSessionTelemetry.recordTimingMetric(
@@ -139,13 +132,12 @@ struct AskOppiIntent: AppIntent {
                 ]
             )
             logger.error("Quick dispatch failed: \(error)")
-            return .result(dialog: "Failed to create session: \(error.localizedDescription)")
+            return "Failed to create session: \(error.localizedDescription)"
         }
     }
 
     /// Load the first paired server from Keychain (shared access group).
     private func loadPairedServer() -> PairedServer? {
-        let servers = KeychainService.loadServers()
-        return servers.first
+        KeychainService.loadServers().first
     }
 }

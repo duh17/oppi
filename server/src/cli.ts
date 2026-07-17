@@ -34,7 +34,17 @@ import {
   validateTailscaleMaterial,
 } from "./tls.js";
 import type { ServerConfig } from "./types.js";
-import { generateInvite } from "./invite.js";
+import {
+  irohInviteTransportFromState,
+  isIrohInviteStateReady,
+  readIrohInviteState,
+} from "./iroh-invite-state.js";
+import {
+  generateInvite,
+  type GeneratedInvite,
+  type GeneratedInviteWithHttp,
+  type GenerateInviteOptions,
+} from "./invite.js";
 import { getPackageInfo } from "./version.js";
 import {
   getServiceStatus,
@@ -197,7 +207,11 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
 
   // Load APNs config from config file if present
   const apnsConfig = loadAPNsConfig(storage);
-  const server = new Server(storage, apnsConfig);
+  const server = new Server(storage, apnsConfig, {
+    onIrohTransportFailure(error) {
+      void shutdown(1, c.red(`Iroh-only transport failed: ${safeErrorMessage(error)}`));
+    },
+  });
   let shuttingDown = false;
 
   async function shutdown(code: number, reason?: string): Promise<void> {
@@ -240,17 +254,21 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   console.log("");
   const scheme = server.scheme;
   const displayPort = server.port;
-  if (localHostname) {
-    console.log(`  Local:     ${c.cyan(`${scheme}://${localHostname}:${displayPort}`)}`);
-  }
-  if (localIp) {
-    console.log(`  LAN IP:    ${c.dim(`${scheme}://${localIp}:${displayPort}`)}`);
-  }
-  if (tailscaleHostname) {
-    console.log(`  Tailscale: ${c.dim(`${scheme}://${tailscaleHostname}:${displayPort}`)}`);
-  }
-  if (tailscaleIp) {
-    console.log(`  Tail IP:   ${c.dim(`${scheme}://${tailscaleIp}:${displayPort}`)}`);
+  if (server.hasPublicHttpListener) {
+    if (localHostname) {
+      console.log(`  Local:     ${c.cyan(`${scheme}://${localHostname}:${displayPort}`)}`);
+    }
+    if (localIp) {
+      console.log(`  LAN IP:    ${c.dim(`${scheme}://${localIp}:${displayPort}`)}`);
+    }
+    if (tailscaleHostname) {
+      console.log(`  Tailscale: ${c.dim(`${scheme}://${tailscaleHostname}:${displayPort}`)}`);
+    }
+    if (tailscaleIp) {
+      console.log(`  Tail IP:   ${c.dim(`${scheme}://${tailscaleIp}:${displayPort}`)}`);
+    }
+  } else {
+    console.log(`  Transport: ${c.cyan("Iroh only (no public HTTP listener)")}`);
   }
   console.log(`  Data:      ${c.dim(storage.getDataDir())}`);
   console.log("");
@@ -271,6 +289,73 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   }
 }
 
+function configuredInviteMode(
+  storage: CliConfigStorage,
+): "irohOnly" | "irohPreferred" | "httpOnly" {
+  const envMode = process.env.OPPI_IROH_INVITE_MODE;
+  if (envMode === "irohOnly" || envMode === "irohPreferred") return envMode;
+  if (process.env.OPPI_IROH_PAIRING === "1" || process.env.OPPI_IROH_TRANSPORT === "1") {
+    return "irohPreferred";
+  }
+  return storage.getConfig().irohInviteMode ?? "httpOnly";
+}
+
+function buildPairInviteOptions(
+  storage: CliConfigStorage,
+  hostOverride?: string,
+  requestedName?: string,
+): GenerateInviteOptions {
+  const base = { hostOverride, requestedName };
+  const mode = configuredInviteMode(storage);
+  if (mode === "httpOnly") return base;
+
+  const state = readIrohInviteState(storage.getDataDir());
+  const ready = isIrohInviteStateReady(state, storage.getConfig().irohInviteReadinessId);
+  const iroh = ready ? irohInviteTransportFromState(state) : undefined;
+  if (!iroh) {
+    if (mode === "irohOnly") {
+      throw new Error(
+        "Iroh-only pairing is unavailable because the running server has no current Iroh readiness state",
+      );
+    }
+    return base;
+  }
+
+  return {
+    ...base,
+    inviteVersion: 4,
+    preference: mode,
+    transports: { iroh },
+  };
+}
+
+function inviteHasHttpTransport(invite: GeneratedInvite): invite is GeneratedInviteWithHttp {
+  return typeof (invite as { host?: unknown }).host === "string";
+}
+
+function generatePairInvite(
+  storage: CliConfigStorage,
+  hostOverride?: string,
+  requestedName?: string,
+): GeneratedInvite {
+  const options = buildPairInviteOptions(storage, hostOverride, requestedName);
+  if (options.inviteVersion === 4) {
+    return generateInvite(
+      storage,
+      (override) => resolveInviteHost(storage.getConfig(), override),
+      shortHostLabel,
+      options,
+    );
+  }
+
+  return generateInvite(
+    storage,
+    (override) => resolveInviteHost(storage.getConfig(), override),
+    shortHostLabel,
+    options,
+  );
+}
+
 /**
  * Show the pairing QR code + deep link. Reusable by both `pair` and `serve`.
  * Returns true if QR was shown, false if host detection failed.
@@ -283,12 +368,7 @@ function showPairingQR(
 ): boolean {
   let invite;
   try {
-    invite = generateInvite(
-      storage,
-      (override) => resolveInviteHost(storage.getConfig(), override),
-      shortHostLabel,
-      { hostOverride, requestedName },
-    );
+    invite = generatePairInvite(storage, hostOverride, requestedName);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.log(c.red(`  Error: ${message}`));
@@ -296,16 +376,27 @@ function showPairingQR(
     return false;
   }
 
-  if (hostOverride?.trim()) {
-    console.log(c.dim(`  (using host override: ${invite.host})`));
-  } else {
-    console.log(c.dim(`  (auto-detected host: ${invite.host})`));
-  }
+  if (inviteHasHttpTransport(invite)) {
+    if (hostOverride?.trim()) {
+      console.log(c.dim(`  (using host override: ${invite.host})`));
+    } else {
+      console.log(c.dim(`  (auto-detected host: ${invite.host})`));
+    }
 
-  console.log(`  📱 Pair with ${c.bold(shortHostLabel(invite.host))}`);
-  console.log(c.dim(`  Transport: ${invite.scheme.toUpperCase()} (${invite.host}:${invite.port})`));
-  if (invite.tlsCertFingerprint) {
-    console.log(c.dim(`  Cert pin:  ${invite.tlsCertFingerprint}`));
+    console.log(`  📱 Pair with ${c.bold(shortHostLabel(invite.host))}`);
+    console.log(
+      c.dim(`  Transport: ${invite.scheme.toUpperCase()} (${invite.host}:${invite.port})`),
+    );
+    if (invite.tlsCertFingerprint) {
+      console.log(c.dim(`  Cert pin:  ${invite.tlsCertFingerprint}`));
+    }
+  } else {
+    console.log(c.dim("  (host-free Iroh invite)"));
+    console.log(`  📱 Pair with ${c.bold(invite.name)}`);
+    console.log(c.dim(`  Transport: IROH (${invite.transports.iroh?.nodeId ?? "unknown-node"})`));
+  }
+  if (invite.transports?.iroh && inviteHasHttpTransport(invite)) {
+    console.log(c.dim(`  Iroh node: ${invite.transports.iroh.nodeId}`));
   }
   console.log("");
   console.log("  Scan this QR code in Oppi:");
@@ -344,12 +435,7 @@ async function cmdPair(
 ): Promise<void> {
   if (jsonOutput) {
     try {
-      const invite = generateInvite(
-        storage,
-        (override) => resolveInviteHost(storage.getConfig(), override),
-        shortHostLabel,
-        { hostOverride, requestedName },
-      );
+      const invite = generatePairInvite(storage, hostOverride, requestedName);
       process.stdout.write(JSON.stringify(invite, null, 2) + "\n");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

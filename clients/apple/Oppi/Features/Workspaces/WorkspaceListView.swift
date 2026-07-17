@@ -21,8 +21,7 @@ struct WorkspaceListView: View {
         List {
             ForEach(workspaces) { workspace in
                 NavigationLink {
-                    WorkspaceEditView(workspace: workspace)
-                        .onAppear { coordinator.switchToServer(server) }
+                    WorkspaceEditScopedDestinationView(server: server, workspace: workspace)
                 } label: {
                     WorkspaceRowView(workspace: workspace)
                 }
@@ -49,9 +48,14 @@ struct WorkspaceListView: View {
             WorkspaceCreateView(server: server)
         }
         .refreshable {
-            if let connection = coordinator.connection(for: server.id) {
-                await connection.refreshWorkspaceCatalog(force: true)
-            }
+            guard await coordinator.apiClientReady(for: server.id) != nil,
+                  let connection = coordinator.connection(for: server.id) else { return }
+            await connection.refreshWorkspaceCatalog(force: true)
+        }
+        .task {
+            guard await coordinator.apiClientReady(for: server.id) != nil,
+                  let connection = coordinator.connection(for: server.id) else { return }
+            await connection.refreshWorkspaceCatalog(force: false)
         }
         .overlay {
             if workspaces.isEmpty {
@@ -82,6 +86,32 @@ struct WorkspaceListView: View {
                 // Re-add on failure — next refresh reconciles
                 logger.error("Delete failed for \(workspace.id.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
+        }
+    }
+}
+
+/// Defers WorkspaceEditView construction until the target transport and
+/// server-scoped environment are ready. This prevents its initial `.task` and
+/// `.onAppear` work from capturing the previously active server.
+struct WorkspaceEditScopedDestinationView: View {
+    let server: PairedServer
+    let workspace: Workspace
+
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    @State private var scopedConnection: ServerConnection?
+
+    var body: some View {
+        Group {
+            if let scopedConnection {
+                WorkspaceEditView(workspace: workspace)
+                    .withServerScopedEnvironment(scopedConnection)
+            } else {
+                ProgressView("Connecting…")
+            }
+        }
+        .task(id: server.id) {
+            guard await coordinator.switchToServerReady(server) else { return }
+            scopedConnection = coordinator.connection(for: server.id)
         }
     }
 }

@@ -16,6 +16,7 @@ final class ServerConnection {
     // Networking
     private(set) var apiClient: APIClient?
     private(set) var wsClient: WebSocketClient?
+    private var irohManager: IrohConnectionManager?
     var dictationStreamAvailable = false
     var appEventStreamAvailable = false
     private(set) var appEventStreamTransportState: ServerHealth.TransportState = .disconnected
@@ -296,10 +297,70 @@ final class ServerConnection {
         return configure(credentials: server.credentials)
     }
 
-    /// Configure the connection with validated credentials.
-    /// Returns `false` if the credentials contain a malformed host.
+    /// Synchronous compatibility entry point for HTTP credentials and tests.
+    /// Iroh setup must await an ephemeral listener; production callers use
+    /// `configureForUse(credentials:)`.
     @discardableResult
     func configure(credentials: ServerCredentials) -> Bool {
+        do {
+            guard case .http = try IrohTransportPolicy.select(credentials: credentials) else {
+                logger.error("Iroh configuration requires asynchronous proxy startup")
+                return false
+            }
+        } catch {
+            logger.error("Transport policy rejected credentials: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        return configureHTTP(credentials: credentials)
+    }
+
+    /// Configure either compatibility HTTP or the host-free Iroh lane.
+    /// Once signed metadata selects Iroh, this method intentionally fails
+    /// closed; it does not broad-catch and downgrade irohPreferred to HTTP.
+    @discardableResult
+    func configureForUse(
+        credentials: ServerCredentials,
+        irohProxyFactory: @MainActor (IrohServerTransport, String) async throws -> (IrohConnectionManager?, URL) = { iroh, token in
+            let (manager, url) = try await IrohTransportRegistry.shared.startProxy(iroh: iroh, token: token)
+            return (manager, url)
+        }
+    ) async -> Bool {
+        do {
+            switch try IrohTransportPolicy.select(credentials: credentials) {
+            case .http:
+                return configureHTTP(credentials: credentials)
+            case .iroh(let iroh):
+                let (manager, localURL) = try await irohProxyFactory(iroh, credentials.token)
+                let selection = EndpointSelection(baseURL: localURL, transportPath: .iroh)
+                irohManager = manager
+                configureClients(
+                    credentials: credentials,
+                    selection: selection,
+                    tlsCertFingerprint: nil
+                )
+                ClientLog.info("Iroh", "Transparent tunnel selected", metadata: [
+                    "nodeId": String(iroh.nodeId.prefix(16)),
+                    "metadataVersion": String(iroh.version),
+                    "addressMode": iroh.addressMode.rawValue,
+                    "fallback": "fail_closed",
+                ])
+                return true
+            }
+        } catch {
+            logger.error("Iroh transport setup failed closed: \(error.localizedDescription, privacy: .public)")
+            ClientLog.error("Iroh", "Transport setup failed closed", metadata: [
+                "error": error.localizedDescription,
+                "preference": credentials.transports.preference.rawValue,
+            ])
+            return false
+        }
+    }
+
+    private func configureHTTP(credentials: ServerCredentials) -> Bool {
+        if let oldNodeID = self.credentials?.transports.iroh?.nodeId {
+            irohManager = nil
+            Task { await IrohTransportRegistry.shared.remove(nodeID: oldNodeID) }
+        }
         guard let selection = LANEndpointSelection.select(
             credentials: credentials,
             discoveredEndpoint: discoveredLANEndpoint
@@ -307,7 +368,54 @@ final class ServerConnection {
             logger.error("Invalid server credentials: host=\(credentials.host) port=\(credentials.port)")
             return false
         }
+        irohManager = nil
+        configureClients(
+            credentials: credentials,
+            selection: selection,
+            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+        )
+        return true
+    }
 
+    private func configureClients(
+        credentials: ServerCredentials,
+        selection: EndpointSelection,
+        tlsCertFingerprint: String?
+    ) {
+        resetTransportState(
+            credentials: credentials,
+            endpointSelection: selection,
+            transportPath: selection.transportPath
+        )
+        let apiClient = APIClient(
+            environment: makeClientEnvironment(
+                selection: selection,
+                credentials: credentials,
+                tlsCertFingerprint: tlsCertFingerprint
+            )
+        )
+        self.apiClient = apiClient
+        self.wsClient = WebSocketClient(
+            credentials: credentials,
+            preferredEndpoint: selection,
+            diagnosticRole: "focused_session",
+            diagnosticRemoteIdentity: selection.transportPath == .iroh
+                ? "iroh:\(credentials.transports.iroh.map { String($0.nodeId.prefix(16)) } ?? "unknown")"
+                : nil,
+            tlsCertFingerprint: tlsCertFingerprint
+        )
+        self.wsClient?.setStreamURL(nil)
+        sender.wsClient = self.wsClient
+        sender.focusedSessionProvider = { [weak self] in
+            self?.focusedSessionStore.focused
+        }
+    }
+
+    private func resetTransportState(
+        credentials: ServerCredentials,
+        endpointSelection: EndpointSelection?,
+        transportPath: ConnectionTransportPath
+    ) {
         disconnectAppEventStream()
         streamCapabilitiesRefreshTask?.cancel()
         streamCapabilitiesRefreshTask = nil
@@ -318,7 +426,7 @@ final class ServerConnection {
 
         self.credentials = credentials
         self.currentServerId = credentials.normalizedServerFingerprint
-        self.endpointSelection = selection
+        self.endpointSelection = endpointSelection
         self.dictationStreamAvailable = false
         self.appEventStreamAvailable = false
         self.appEventStreamTransportState = .disconnected
@@ -326,33 +434,18 @@ final class ServerConnection {
         self.streamCapabilitiesLoaded = false
         self.streamCapabilitiesRefreshFailed = false
         self.clearFocusedSessionStreamEndpoint()
-        self.transportPath = selection.transportPath
-
-        self.apiClient = APIClient(
-            environment: makeClientEnvironment(selection: selection, credentials: credentials)
-        )
-        self.wsClient = WebSocketClient(
-            credentials: credentials,
-            preferredEndpoint: selection,
-            diagnosticRole: "focused_session"
-        )
-        self.wsClient?.setStreamURL(nil)
-        sender.wsClient = self.wsClient
-        sender.focusedSessionProvider = { [weak self] in
-            self?.focusedSessionStore.focused
-        }
-
-        return true
+        self.transportPath = transportPath
     }
 
     private func makeClientEnvironment(
         selection: EndpointSelection,
-        credentials: ServerCredentials
+        credentials: ServerCredentials,
+        tlsCertFingerprint: String? = nil
     ) -> OppiClientEnvironment {
         OppiClientEnvironment(
             baseURL: selection.baseURL,
             bearerToken: credentials.token,
-            pinnedCertificateFingerprint: credentials.normalizedTLSCertFingerprint,
+            pinnedCertificateFingerprint: tlsCertFingerprint ?? credentials.normalizedTLSCertFingerprint,
             processOwnership: .clientOnly
         )
     }
@@ -450,6 +543,7 @@ final class ServerConnection {
 
     func setDiscoveredLANEndpoint(_ endpoint: LANDiscoveredEndpoint?) {
         discoveredLANEndpoint = endpoint
+        guard transportPath != .iroh else { return }
         guard let credentials else { return }
         guard let selection = LANEndpointSelection.select(
             credentials: credentials,
@@ -557,8 +651,8 @@ final class ServerConnection {
             "wsStatus": String(describing: statusBeforePathChange),
             "hasFocusedSession": focusedSessionId == nil ? "false" : "true",
         ]
-        pathChangeMetadata.merge(ClientLog.endpointMetadata(endpointSelection?.baseURL, prefix: "api")) { current, _ in current }
-        pathChangeMetadata.merge(ClientLog.endpointMetadata(focusedSessionStreamURL, prefix: "stream")) { current, _ in current }
+        pathChangeMetadata.merge(diagnosticEndpointMetadata(endpointSelection?.baseURL, prefix: "api")) { current, _ in current }
+        pathChangeMetadata.merge(diagnosticEndpointMetadata(focusedSessionStreamURL, prefix: "stream")) { current, _ in current }
         ClientLog.info("Network", "Force stream reconnect after path change", metadata: pathChangeMetadata)
 
         // Tear down old WS + consumption task. Per-session continuations
@@ -718,7 +812,7 @@ final class ServerConnection {
                 metadata["capabilityStatus"] = self.requiredSplitStreamCapabilitiesStatusForDiagnostics
                 metadata["transport"] = self.transportPath.rawValue
                 let apiBaseURL = apiClient.baseURL
-                metadata.merge(ClientLog.endpointMetadata(apiBaseURL, prefix: "api")) { current, _ in current }
+                metadata.merge(self.diagnosticEndpointMetadata(apiBaseURL, prefix: "api")) { current, _ in current }
                 ClientLog.warning("Network", "Stream capability refresh failed", metadata: metadata)
             }
         }
@@ -727,10 +821,21 @@ final class ServerConnection {
         await task.value
     }
 
-    /// Send a graceful WS close frame before iOS suspends the app.
-    /// Preserves subscriptions so `reconnectIfNeeded()` can reopen on foreground.
+    /// Send a graceful WS close frame before iOS suspends the app and release
+    /// the reusable QUIC connection. The endpoint/listener remain available so
+    /// foreground recovery keeps the same Keychain-backed endpoint identity.
     func prepareForBackground() {
         wsClient?.prepareForBackground()
+        if let irohManager {
+            Task { await irohManager.prepareForBackground() }
+        }
+    }
+
+    /// Permanently tear down app-local and Iroh state for unpair/reconfigure.
+    func shutdownTransport() async {
+        guard let iroh = credentials?.transports.iroh else { return }
+        irohManager = nil
+        await IrohTransportRegistry.shared.remove(nodeID: iroh.nodeId)
     }
 
     func routeStreamMessage(_ frameEvent: StreamFrameEvent) {
@@ -973,8 +1078,8 @@ final class ServerConnection {
                 "transport": selection.transportPath.rawValue,
                 "urlChanged": "true",
             ]
-            metadata.merge(ClientLog.endpointMetadata(previousURL, prefix: "previousStream")) { current, _ in current }
-            metadata.merge(ClientLog.endpointMetadata(sessionStreamURL, prefix: "nextStream")) { current, _ in current }
+            metadata.merge(diagnosticEndpointMetadata(previousURL, prefix: "previousStream")) { current, _ in current }
+            metadata.merge(diagnosticEndpointMetadata(sessionStreamURL, prefix: "nextStream")) { current, _ in current }
             ClientLog.info("Network", "Focused stream endpoint changed", metadata: metadata)
         }
     }
@@ -1022,9 +1127,19 @@ final class ServerConnection {
             "transport": transportPath.rawValue,
             "hasWebSocketClient": wsClient == nil ? "false" : "true",
         ]
-        metadata.merge(ClientLog.endpointMetadata(endpointSelection?.baseURL, prefix: "api")) { current, _ in current }
-        metadata.merge(ClientLog.endpointMetadata(focusedSessionStreamURL, prefix: "stream")) { current, _ in current }
+        metadata.merge(diagnosticEndpointMetadata(endpointSelection?.baseURL, prefix: "api")) { current, _ in current }
+        metadata.merge(diagnosticEndpointMetadata(focusedSessionStreamURL, prefix: "stream")) { current, _ in current }
         ClientLog.warning("Network", "Session stream unavailable", metadata: metadata)
+    }
+
+    private func diagnosticEndpointMetadata(_ url: URL?, prefix: String) -> [String: String] {
+        if transportPath == .iroh, let iroh = credentials?.transports.iroh {
+            return [
+                "\(prefix)Transport": "iroh",
+                "\(prefix)NodeId": String(iroh.nodeId.prefix(16)),
+            ]
+        }
+        return ClientLog.endpointMetadata(url, prefix: prefix)
     }
 
     func cancelDeferredQueueSync() {
@@ -1076,7 +1191,10 @@ final class ServerConnection {
     }
 
     func streamEndpointHostForMetrics() -> String {
-        endpointSelection?.baseURL.host ?? credentials?.host ?? "unknown"
+        if transportPath == .iroh, let nodeID = credentials?.transports.iroh?.nodeId {
+            return "iroh:\(nodeID.prefix(16))"
+        }
+        return endpointSelection?.baseURL.host ?? credentials?.host ?? "unknown"
     }
 
     /// Close local continuations for a specific session stream.
@@ -1308,7 +1426,7 @@ final class ServerConnection {
         return DictationStreamClient(
             baseURL: selection.baseURL,
             token: credentials.token,
-            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+            tlsCertFingerprint: transportPath == .iroh ? nil : credentials.normalizedTLSCertFingerprint
         )
     }
 
@@ -1333,7 +1451,10 @@ final class ServerConnection {
         let client = AppEventStreamClient(
             url: streamURL,
             token: credentials.token,
-            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+            tlsCertFingerprint: transportPath == .iroh ? nil : credentials.normalizedTLSCertFingerprint,
+            diagnosticRemoteIdentity: transportPath == .iroh
+                ? "iroh:\(credentials.transports.iroh.map { String($0.nodeId.prefix(16)) } ?? "unknown")"
+                : nil
         )
         appEventStreamCoordinator.start(
             connection: self,

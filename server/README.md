@@ -77,6 +77,17 @@ Create a workspace in the app and start a session.
 - macOS or Linux
 - OpenSSL on PATH for `tls.mode=self-signed` certificate generation
 
+## Iroh transport
+
+Set `OPPI_IROH_TRANSPORT=1` before `oppi serve` to start one Iroh endpoint with two ALPNs:
+
+- `oppi/pair/1` exchanges a single-use pairing token for a device token bound to the client Iroh node ID.
+- `oppi/http/1` carries an authenticated preface followed by raw HTTP/1.1 or WebSocket bytes. Requests enter the same route and upgrade handlers as HTTP/TLS clients.
+
+`OPPI_IROH_INVITE_MODE=irohOnly` makes endpoint readiness mandatory. Startup fails if Iroh is disabled, cannot bind, or does not become online before the readiness timeout. `irohPreferred` keeps HTTP/TLS available when Iroh startup fails. The Unix-socket CLI path is independent of both network transports.
+
+Iroh tunnel limits are fixed at 64 QUIC connections, 16 concurrent bi-streams per connection, and 128 active tunnels. Each stream has a 4 KiB preface limit, a 512-byte bearer limit, a 10-second preface timeout, and a 3-second internal loopback timeout. HTTP bodies and WebSocket frames retain the limits enforced by the existing HTTP and WebSocket handlers.
+
 ## Docker (skills-ready compose setup)
 
 A containerized setup is included in this directory:
@@ -261,6 +272,8 @@ npm run dev                         # watch mode
 npm run test:e2e                    # Docker E2E harness
 npm run test:e2e:pairing            # pairing flow only
 npm run test:e2e:session            # paired session flow only
+npm run test:e2e:iroh               # isolated host-free Iroh transport matrix
+npm run bench:iroh-network           # HTTP/direct-Iroh/forced-relay evidence
 E2E_NATIVE=1 npm run test:e2e       # native E2E harness without Docker
 npm run bench:correctness           # check + test before perf measurements
 npm run bench                       # correctness + perf regression gate

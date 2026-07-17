@@ -16,6 +16,8 @@ enum KeychainService {
     private static let service = SharedConstants.keychainService
     private static let accessGroup = SharedConstants.keychainAccessGroup
     private static let serverAccountPrefix = SharedConstants.serverAccountPrefix
+    private static let irohEndpointSecretAccount = "iroh.endpoint.secret.v1"
+    private static let irohEndpointSecretLock = NSLock()
 
     // MARK: - Save / Delete
 
@@ -52,6 +54,54 @@ enum KeychainService {
             kSecAttrAccessGroup as String: accessGroup,
         ]
         SecItemDelete(query as CFDictionary)
+    }
+
+    // MARK: - Iroh Endpoint Secret
+
+    static func loadOrCreateIrohEndpointSecret(generate: () throws -> Data) throws -> Data {
+        irohEndpointSecretLock.lock()
+        defer { irohEndpointSecretLock.unlock() }
+
+        if let existing = loadIrohEndpointSecret(), existing.count == 32 {
+            return existing
+        }
+
+        let secret = try generate()
+        guard secret.count == 32 else {
+            throw KeychainError.invalidSecretLength
+        }
+        try saveIrohEndpointSecret(secret)
+        return secret
+    }
+
+    static func deleteIrohEndpointSecretForTests() {
+        SecItemDelete(sharedQuery(account: irohEndpointSecretAccount) as CFDictionary)
+    }
+
+    private static func loadIrohEndpointSecret() -> Data? {
+        var query = sharedQuery(account: irohEndpointSecretAccount)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else {
+            return nil
+        }
+        return data
+    }
+
+    private static func saveIrohEndpointSecret(_ secret: Data) throws {
+        SecItemDelete(sharedQuery(account: irohEndpointSecretAccount) as CFDictionary)
+
+        var addQuery = sharedQuery(account: irohEndpointSecretAccount)
+        addQuery[kSecValueData as String] = secret
+        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw KeychainError.saveFailed(status)
+        }
     }
 
     // MARK: - Load
@@ -260,13 +310,16 @@ enum KeychainService {
     }
 }
 
-enum KeychainError: LocalizedError {
+enum KeychainError: LocalizedError, Equatable {
     case saveFailed(OSStatus)
+    case invalidSecretLength
 
     var errorDescription: String? {
         switch self {
         case .saveFailed(let status):
             return "Keychain save failed: \(status)"
+        case .invalidSecretLength:
+            return "Iroh endpoint secret must be 32 bytes"
         }
     }
 }

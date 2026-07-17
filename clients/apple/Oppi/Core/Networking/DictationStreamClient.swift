@@ -48,7 +48,7 @@ final class DictationStreamClient: DictationTransport {
             self.continuation = continuation
 
             var request = URLRequest(url: self.url)
-            request.setValue("Bearer \(self.token)", forHTTPHeaderField: "Authorization")
+            ServerAuthorization.apply(token: self.token, to: &request)
 
             let task = self.urlSession.webSocketTask(with: request)
             self.task = task

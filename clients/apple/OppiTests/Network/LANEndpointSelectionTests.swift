@@ -31,6 +31,31 @@ struct LANEndpointSelectionTests {
         #expect(result?.transportPath == .paired)
     }
 
+    @Test func irohOnlyIsNotEligibleForLANSelection() {
+        let credentials = ServerCredentials(
+            host: "",
+            port: 0,
+            token: "dt_iroh",
+            name: "Iroh Server",
+            scheme: nil,
+            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
+            transports: ServerTransports(
+                preference: .irohOnly,
+                iroh: IrohServerTransport(
+                    version: 2,
+                    nodeId: "node-id-123",
+                    alpns: ["oppi/http/1"],
+                    addressMode: .nodeId,
+                    ticket: nil
+                )
+            )
+        )
+
+        let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: nil)
+
+        #expect(result == nil)
+    }
+
     @Test func selectsLANWithPairedHostnameForHTTPS() {
         let credentials = makeCredentials(
             host: "my-server.tail00000.ts.net",

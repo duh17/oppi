@@ -46,6 +46,7 @@ final class WebSocketClient {
     private var diagnosticSessionId: String?
     private var diagnosticWorkspaceId: String?
     private let diagnosticRole: String
+    private let diagnosticRemoteIdentity: String?
     private let urlSession: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
 
@@ -63,16 +64,19 @@ final class WebSocketClient {
         credentials: ServerCredentials,
         preferredEndpoint: EndpointSelection? = nil,
         diagnosticRole: String = "focused_session",
+        diagnosticRemoteIdentity: String? = nil,
+        tlsCertFingerprint: String? = nil,
         waitForConnectionTimeout: Duration = .seconds(3),
         sendTimeout: Duration = .seconds(5)
     ) {
         self.credentials = credentials
         self.preferredEndpoint = preferredEndpoint
         self.diagnosticRole = diagnosticRole
+        self.diagnosticRemoteIdentity = diagnosticRemoteIdentity
         self.waitForConnectionTimeout = waitForConnectionTimeout
         self.sendTimeout = sendTimeout
         self.trustDelegate = PinnedServerTrustDelegate(
-            pinnedLeafFingerprint: credentials.normalizedTLSCertFingerprint
+            pinnedLeafFingerprint: tlsCertFingerprint ?? credentials.normalizedTLSCertFingerprint
         )
         let config = URLSessionConfiguration.default
         // No timeout for WebSocket — we handle keepalive ourselves
@@ -375,9 +379,13 @@ final class WebSocketClient {
 
     private func wsLogMetadata(extra: [String: String] = [:]) -> [String: String] {
         var metadata = extra
-        metadata.merge(
-            ClientLog.endpointMetadata(streamURL ?? preferredEndpoint?.baseURL, prefix: "ws")
-        ) { current, _ in current }
+        if let diagnosticRemoteIdentity {
+            metadata["remoteIdentity"] = diagnosticRemoteIdentity
+        } else {
+            metadata.merge(
+                ClientLog.endpointMetadata(streamURL ?? preferredEndpoint?.baseURL, prefix: "ws")
+            ) { current, _ in current }
+        }
         metadata["status"] = String(describing: status)
         metadata["connectionID"] = String(connectionID)
         metadata["transportPath"] = preferredEndpoint?.transportPath.rawValue ?? ConnectionTransportPath.paired.rawValue
@@ -466,7 +474,7 @@ final class WebSocketClient {
             return
         }
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(credentials.token)", forHTTPHeaderField: "Authorization")
+        ServerAuthorization.apply(token: credentials.token, to: &request)
 
         let ws = urlSession.webSocketTask(with: request)
         self.webSocket = ws

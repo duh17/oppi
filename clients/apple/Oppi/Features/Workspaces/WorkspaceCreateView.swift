@@ -560,6 +560,11 @@ struct WorkspaceCreateView: View {
     // MARK: - Data Loading
 
     @MainActor
+    private func preparedAPIClient() async -> APIClient? {
+        await coordinator.apiClientReady(for: server.id)
+    }
+
+    @MainActor
     private func validateAndCompleteHostMount() async {
         let current = trimmedHostMount
         if let pending = hostPathPendingCreation, pending != current {
@@ -574,7 +579,7 @@ struct WorkspaceCreateView: View {
             return
         }
 
-        guard let api = coordinator.apiClient(for: server.id) else {
+        guard let api = await preparedAPIClient() else {
             hostMountStatus = nil
             hostMountValidationMessage = "Cannot check path while the server is offline"
             hostMountCompletions = []
@@ -617,7 +622,7 @@ struct WorkspaceCreateView: View {
             hostPathPendingCreation = nil
             return
         }
-        guard let api = coordinator.apiClient(for: server.id) else {
+        guard let api = await preparedAPIClient() else {
             error = "Cannot connect to \(server.name)"
             hostPathPendingCreation = nil
             return
@@ -645,7 +650,7 @@ struct WorkspaceCreateView: View {
     }
 
     private func loadDirectories() async {
-        guard let api = coordinator.apiClient(for: server.id) else {
+        guard let api = await preparedAPIClient() else {
             directoriesError = "Cannot connect to \(server.name)"
             isLoadingDirectories = false
             return
@@ -669,7 +674,7 @@ struct WorkspaceCreateView: View {
             skillsByLookupKey[lookupKey] = targetWorkspaceStore.skillsByServer[server.id]
             return
         }
-        guard let api = coordinator.apiClient(for: server.id) else { return }
+        guard let api = await preparedAPIClient() else { return }
         do {
             let loaded = try await api.listSkills(cwd: cwd)
             guard lookupKey == skillCatalogLookupKey else { return }
@@ -685,9 +690,8 @@ struct WorkspaceCreateView: View {
     // MARK: - Create
 
     private func create() async {
-        coordinator.switchToServer(server)
-
-        guard let api = coordinator.apiClient(for: server.id) else {
+        guard await coordinator.switchToServerReady(server),
+              let api = coordinator.apiClient(for: server.id) else {
             error = "Cannot connect to \(server.name)"
             return
         }
