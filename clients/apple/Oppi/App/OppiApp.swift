@@ -3,8 +3,53 @@ import SwiftUI
 import UIKit
 
 private let appLog = Logger(subsystem: AppIdentifiers.subsystem, category: "App")
+private let lifecycleSignposter = OSSignposter(
+    subsystem: AppIdentifiers.subsystem,
+    category: "AppLifecyclePerf"
+)
 #if DEBUG
 nonisolated(unsafe) private var e2eInviteProcessedThisProcess = false
+
+/// Bounded scene-transition state for the DEBUG/E2E accessibility probe.
+/// It deliberately excludes user, server, workspace, and session values.
+@MainActor
+final class E2ELifecycleDiagnostics {
+    static let shared = E2ELifecycleDiagnostics()
+
+    private(set) var sequence = 0
+    private(set) var backgroundCompleted = 0
+    private(set) var activeCompleted = 0
+    private(set) var backgroundDurationMs = 0
+    private(set) var activeDurationMs = 0
+    private(set) var phase = "unknown"
+    private(set) var step = "unknown"
+
+    func record(phase: String, step: String) {
+        sequence &+= 1
+        self.phase = phase
+        self.step = step
+    }
+
+    /// Completion is recorded at the full app-owned synchronous scene-handler
+    /// boundary. It excludes system scene delivery and asynchronous reconnect work.
+    func complete(phase: String, durationMs: Int) {
+        let boundedDurationMs = min(60_000, max(0, durationMs))
+        switch phase {
+        case "background":
+            backgroundCompleted &+= 1
+            backgroundDurationMs = boundedDurationMs
+        case "active":
+            activeCompleted &+= 1
+            activeDurationMs = boundedDurationMs
+        default:
+            break
+        }
+    }
+
+    var accessibilityValue: String {
+        "seq=\(sequence) phase=\(phase) step=\(step) bgCompleted=\(backgroundCompleted) activeCompleted=\(activeCompleted) bgMs=\(backgroundDurationMs) activeMs=\(activeDurationMs)"
+    }
+}
 #endif
 
 /// Gate reconnect work so foreground transitions only trigger recovery
@@ -773,10 +818,14 @@ struct OppiApp: App {
 
     @MainActor
     private func recordLifecycleStep(_ phase: ScenePhase, _ step: String, flush: Bool = false) {
+        let phaseLabel = diagnosticScenePhase(phase)
+#if DEBUG
+        E2ELifecycleDiagnostics.shared.record(phase: phaseLabel, step: step)
+#endif
         recordDiagnosticContext(phase: phase, lifecycleEvent: "scene_phase", lifecycleStep: step)
         ClientLog.info(
             "Lifecycle",
-            "Scene phase \(diagnosticScenePhase(phase)) \(step)",
+            "Scene phase \(phaseLabel) \(step)",
             metadata: diagnosticLifecycleMetadata(phase: phase, step: step),
             flush: flush
         )
@@ -784,6 +833,14 @@ struct OppiApp: App {
 
     @MainActor
     private func handleScenePhase(_ phase: ScenePhase) {
+        let phaseLabel = diagnosticScenePhase(phase)
+        let handlerStartedAt = ProcessInfo.processInfo.systemUptime
+        let foregroundInterval = phase == .active
+            ? lifecycleSignposter.beginInterval("scene.foreground")
+            : nil
+        let backgroundInterval = phase == .background
+            ? lifecycleSignposter.beginInterval("scene.background")
+            : nil
         let shouldReconnect = foregroundReconnectGate.shouldReconnect(for: phase)
         recordLifecycleStep(phase, "begin", flush: phase == .background)
 
@@ -805,7 +862,11 @@ struct OppiApp: App {
             backgroundKeepAlive.end()
 
             if shouldReconnect {
-                Task {
+                let reconnectInterval = lifecycleSignposter.beginInterval("foreground.reconnect")
+                Task { @MainActor in
+                    defer {
+                        lifecycleSignposter.endInterval("foreground.reconnect", reconnectInterval)
+                    }
                     // Active server: full reconnect (WS, session metadata, lists)
                     await connection.reconnectIfNeeded()
                     // All other servers: reconnect + refresh
@@ -814,11 +875,16 @@ struct OppiApp: App {
             }
 
         case .background:
+            let draftFallbackInterval = lifecycleSignposter.beginInterval("scene.background.draft_fallback")
             composerDraftStore.saveLifecycleFallback(activeComposerDraftRecord())
             Task { await composerDraftStore.flush() }
+            lifecycleSignposter.endInterval("scene.background.draft_fallback", draftFallbackInterval)
+
+            let restorationInterval = lifecycleSignposter.beginInterval("scene.background.restoration_save")
             recordLifecycleStep(phase, "restoration_save_begin", flush: true)
             RestorationState.save(from: connection, coordinator: coordinator, navigation: navigation)
             recordLifecycleStep(phase, "restoration_save_done", flush: true)
+            lifecycleSignposter.endInterval("scene.background.restoration_save", restorationInterval)
 
             // Keep the WS alive while agents are working so we receive status
             // updates without reconnecting.
@@ -826,28 +892,39 @@ struct OppiApp: App {
                 $0.status == .busy || $0.status == .starting
             }
             if hasActiveAgent {
+                let keepAliveInterval = lifecycleSignposter.beginInterval("scene.background.keep_alive")
+                lifecycleSignposter.emitEvent("background.mode.keep_alive")
                 recordLifecycleStep(phase, "keep_alive_begin", flush: true)
                 backgroundKeepAlive.begin(sessionStore: connection.sessionStore)
+                lifecycleSignposter.endInterval("scene.background.keep_alive", keepAliveInterval)
             } else if coordinator.hasActiveAudioTransportPlayback {
                 // Let live streamed playback continue under the audio background mode.
                 // Local clips can finish without keeping the focused session stream open; only
                 // active audio_stream delivery needs the transport to drain.
+                let audioTransportInterval = lifecycleSignposter.beginInterval("scene.background.audio_transport")
+                lifecycleSignposter.emitEvent("background.mode.audio_transport")
                 recordLifecycleStep(phase, "audio_transport_background", flush: true)
                 backgroundKeepAlive.end()
+                lifecycleSignposter.endInterval("scene.background.audio_transport", audioTransportInterval)
             } else {
                 // No active agents or playback — send graceful close so the
                 // server sees 1001 (going away) instead of discovering the
                 // dead connection via ping timeout (1006). This avoids a 30-60s
                 // server-side wait and produces cleaner telemetry.
+                let gracefulCloseInterval = lifecycleSignposter.beginInterval("scene.background.graceful_close")
+                lifecycleSignposter.emitEvent("background.mode.graceful_close")
                 recordLifecycleStep(phase, "prepare_for_background_begin", flush: true)
                 connection.prepareForBackground()
                 recordLifecycleStep(phase, "prepare_for_background_done", flush: true)
                 backgroundKeepAlive.end()
+                lifecycleSignposter.endInterval("scene.background.graceful_close", gracefulCloseInterval)
             }
 
         case .inactive:
+            let inactiveDraftFallbackInterval = lifecycleSignposter.beginInterval("scene.inactive.draft_fallback")
             composerDraftStore.saveLifecycleFallback(activeComposerDraftRecord())
             Task { await composerDraftStore.flush() }
+            lifecycleSignposter.endInterval("scene.inactive.draft_fallback", inactiveDraftFallbackInterval)
 
         @unknown default:
             break
@@ -856,6 +933,21 @@ struct OppiApp: App {
         recordLifecycleStep(phase, "end", flush: phase == .background)
         if phase == .background {
             mainThreadLagWatchdog.stopAfterGracePeriod(10_000)
+        }
+
+        // This is only app-owned synchronous work in this handler. It excludes
+        // UIKit/SwiftUI scene delivery, suspension time, and async reconnect work.
+        let synchronousHandlerDurationMs = max(0, Int(
+            ((ProcessInfo.processInfo.systemUptime - handlerStartedAt) * 1_000).rounded()
+        ))
+#if DEBUG
+        E2ELifecycleDiagnostics.shared.complete(phase: phaseLabel, durationMs: synchronousHandlerDurationMs)
+#endif
+        if let foregroundInterval {
+            lifecycleSignposter.endInterval("scene.foreground", foregroundInterval)
+        }
+        if let backgroundInterval {
+            lifecycleSignposter.endInterval("scene.background", backgroundInterval)
         }
     }
 

@@ -226,6 +226,7 @@ private struct E2EWebSocketDiagnosticsView: View {
             diagnosticText("e2e.ws.desiredSubscriptions", value: desiredSubscriptionsLabel)
             diagnosticText("e2e.ws.ackedSubscriptions", value: ackedSubscriptionsLabel)
             diagnosticText("e2e.audio.liveTransportSession", value: connection.audioPlayer.activeLiveTransportSessionID ?? "none")
+            diagnosticText("e2e.lifecycle", value: E2ELifecycleDiagnostics.shared.accessibilityValue)
         }
         .task {
             while !Task.isCancelled {
