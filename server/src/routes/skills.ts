@@ -25,7 +25,6 @@ import {
 import { listConfiguredHostExtensionResources } from "../extension-loader.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
-const DEPRECATED_EXTENSION_NAMES = new Set(["review"]);
 const MAX_SKILL_FILE_BYTES = 1024 * 1024;
 const MAX_SKILL_LISTED_FILES = 500;
 
@@ -541,13 +540,11 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     const cwd = url.searchParams.get("cwd") ?? undefined;
     const piExtensions = (
       await listConfiguredHostExtensionResources({ cwd, agentDir: getAgentDir() })
-    )
-      .filter((ext) => !DEPRECATED_EXTENSION_NAMES.has(ext.name))
-      .map((ext) => ({
-        ...ext,
-        enabled: ext.enabled ?? true,
-        source: "pi" as const,
-      }));
+    ).map((ext) => ({
+      ...ext,
+      enabled: ext.enabled ?? true,
+      source: "pi" as const,
+    }));
     const byName = new Map<string, (typeof piExtensions)[number]>();
     for (const ext of piExtensions) {
       if (!byName.has(ext.name)) {
