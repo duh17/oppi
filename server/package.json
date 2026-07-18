@@ -85,6 +85,7 @@
     "test:e2e:session": "vitest run --config vitest.e2e.config.ts e2e/paired-session",
     "test:e2e:iroh": "bun e2e/run-iroh-isolated-e2e.ts",
     "bench:iroh-network": "bun e2e/run-iroh-network-benchmark.ts",
+    "bench:tailscale-network": "bun e2e/run-tailscale-network-benchmark.ts",
     "test:e2e:paired-compat": "E2E_NATIVE=1 npm run test:e2e:clean && E2E_NATIVE=1 vitest run --config vitest.e2e.config.ts e2e/paired-session",
     "test:e2e:auth-connection": "E2E_NATIVE=1 npm run test:e2e:clean && E2E_NATIVE=1 vitest run --config vitest.e2e.config.ts e2e/pairing-flow e2e/paired-session",
     "test:e2e:linux": "vitest run --config vitest.e2e.config.ts",
