@@ -61,6 +61,86 @@ final class QuickSessionE2ETests: E2ETestCase {
     }
 
     @MainActor
+    func testQuickSessionDraftSurvivesDismissalAndRelaunch() {
+        XCTAssertTrue(
+            waitForElementToExist(app.collectionViews["workspace.sessionList"], timeout: 20),
+            "Sessions inbox did not appear"
+        )
+
+        let marker = "E2E_QUICK_SESSION_RESTORED_\(UUID().uuidString)"
+        openQuickSession()
+        replaceText(in: app.textViews["chat.input"], with: marker)
+        dismissQuickSession()
+
+        openQuickSession()
+        XCTAssertEqual(
+            app.textViews["chat.input"].value as? String,
+            marker,
+            "Quick Session draft did not survive overlay dismissal"
+        )
+        dismissQuickSession()
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(
+            waitForElementToExist(app.collectionViews["workspace.sessionList"], timeout: 30),
+            "Sessions inbox did not return after relaunch"
+        )
+
+        openQuickSession()
+        let restoredInput = app.textViews["chat.input"]
+        XCTAssertEqual(
+            restoredInput.value as? String,
+            marker,
+            "Quick Session draft did not survive app relaunch"
+        )
+
+        replaceText(in: restoredInput, with: "")
+        dismissQuickSession()
+    }
+
+    @MainActor
+    private func openQuickSession() {
+        tap(app.buttons["workspace.quickSession.start"], named: "quick session button", timeout: 10)
+        XCTAssertTrue(
+            waitForElementToExist(app.textViews["chat.input"], timeout: 20),
+            "Quick Session input did not appear"
+        )
+    }
+
+    @MainActor
+    private func dismissQuickSession() {
+        let overlay = app.buttons["quickSession.overlay"].firstMatch
+        XCTAssertTrue(overlay.waitForExistence(timeout: 5), "Quick Session overlay did not appear")
+        let start = overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+        let end = overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+        start.press(forDuration: 0.05, thenDragTo: end)
+
+        let dismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: overlay
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [dismissed], timeout: 5),
+            .completed,
+            "Quick Session did not dismiss"
+        )
+    }
+
+    @MainActor
+    private func replaceText(in element: XCUIElement, with text: String) {
+        focusTextView(element)
+        let currentValue = element.value as? String ?? ""
+        if !currentValue.isEmpty {
+            element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentValue.count))
+        }
+        if !text.isEmpty {
+            element.typeText(text)
+        }
+        XCTAssertEqual(element.value as? String, text)
+    }
+
+    @MainActor
     private func assertThinkingMenuRunsFromMaxToOff() {
         let expectedOptions = [
             (id: "xhigh", label: "Max"),

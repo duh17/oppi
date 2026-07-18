@@ -476,6 +476,26 @@ struct StartQuickSessionIntentTests {
     }
 }
 
+// MARK: - Quick Session draft intake
+
+@Suite("Quick Session draft intake")
+struct QuickSessionDraftIntakeTests {
+    @Test func incomingTextAppendsAfterRestoredDraft() {
+        #expect(
+            quickSessionText("restored draft", appending: "  shortcut text  ")
+                == "restored draft\nshortcut text"
+        )
+    }
+
+    @Test func incomingTextReplacesAnEmptyDraft() {
+        #expect(quickSessionText("  \n", appending: "shortcut text") == "shortcut text")
+    }
+
+    @Test func emptyIncomingTextPreservesExactDraft() {
+        #expect(quickSessionText("  restored draft  ", appending: " \n ") == "  restored draft  ")
+    }
+}
+
 // MARK: - Quick Session overlay layout
 
 @Suite("QuickSessionOverlayLayout")

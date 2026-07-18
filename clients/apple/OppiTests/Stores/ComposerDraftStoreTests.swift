@@ -43,6 +43,49 @@ struct ComposerDraftStoreTests {
         #expect(reloaded.record(for: key)?.revision == 1)
     }
 
+    @Test func quickSessionTextSurvivesReloadAndClearsDurably() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let draft = "  Quick session first line\nsecond line  "
+
+        let store = fixture.makeStore()
+        await store.load()
+        store.setQuickSessionDraftText(draft)
+        #expect(store.quickSessionDraftText == draft)
+        store.saveQuickSessionLifecycleFallback()
+
+        let relaunchedBeforeDebouncedSave = fixture.makeStore()
+        await relaunchedBeforeDebouncedSave.load()
+        #expect(relaunchedBeforeDebouncedSave.quickSessionDraftText == draft)
+
+        await store.flush()
+        let reloaded = fixture.makeStore()
+        await reloaded.load()
+        #expect(reloaded.quickSessionDraftText == draft)
+
+        reloaded.setQuickSessionDraftText("")
+        #expect(reloaded.quickSessionDraftText.isEmpty)
+
+        let relaunchedBeforeDebouncedClear = fixture.makeStore()
+        await relaunchedBeforeDebouncedClear.load()
+        #expect(relaunchedBeforeDebouncedClear.quickSessionDraftText.isEmpty)
+    }
+
+    @Test func quickSessionRevisionGuardPreservesNewerTyping() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+
+        let submitted = try #require(store.setQuickSessionDraftText("submitted draft"))
+        let newer = try #require(store.setQuickSessionDraftText("newer draft"))
+
+        #expect(!store.clearQuickSessionDraft(ifRevision: submitted.revision))
+        #expect(store.quickSessionDraftText == "newer draft")
+        #expect(store.clearQuickSessionDraft(ifRevision: newer.revision))
+        #expect(store.quickSessionDraftText.isEmpty)
+    }
+
     @Test func isolatesDraftsByServerWorkspaceAndSession() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -178,6 +221,31 @@ struct ComposerDraftStoreTests {
         let afterClear = fixture.makeStore()
         await afterClear.load()
         #expect(afterClear.record(for: key) == nil)
+    }
+
+    @Test func synchronousFallbackPreservesQuickSessionAndChatDraftsTogether() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let chatKey = try #require(ComposerDraftKey(
+            serverID: "server",
+            workspaceID: "workspace",
+            sessionID: "session"
+        ))
+
+        store.setQuickSessionDraftText("quick draft")
+        store.saveQuickSessionLifecycleFallback()
+        let chatRecord = try #require(store.setDraft(
+            .init(text: "chat draft", repoPointers: []),
+            for: chatKey
+        ))
+        store.saveLifecycleFallback(chatRecord)
+
+        let relaunched = fixture.makeStore()
+        await relaunched.load()
+        #expect(relaunched.quickSessionDraftText == "quick draft")
+        #expect(relaunched.record(for: chatKey)?.payload.text == "chat draft")
     }
 
     @Test func recoversNewerSynchronousLifecycleBackup() async throws {

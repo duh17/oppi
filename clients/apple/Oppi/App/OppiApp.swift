@@ -880,6 +880,7 @@ struct OppiApp: App {
 
         case .background:
             let draftFallbackInterval = lifecycleSignposter.beginInterval("scene.background.draft_fallback")
+            composerDraftStore.saveQuickSessionLifecycleFallback()
             composerDraftStore.saveLifecycleFallback(activeComposerDraftRecord())
             Task { await composerDraftStore.flush() }
             lifecycleSignposter.endInterval("scene.background.draft_fallback", draftFallbackInterval)
@@ -923,6 +924,7 @@ struct OppiApp: App {
 
         case .inactive:
             let inactiveDraftFallbackInterval = lifecycleSignposter.beginInterval("scene.inactive.draft_fallback")
+            composerDraftStore.saveQuickSessionLifecycleFallback()
             composerDraftStore.saveLifecycleFallback(activeComposerDraftRecord())
             Task { await composerDraftStore.flush() }
             lifecycleSignposter.endInterval("scene.inactive.draft_fallback", inactiveDraftFallbackInterval)

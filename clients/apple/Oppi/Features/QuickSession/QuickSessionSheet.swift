@@ -4,6 +4,15 @@ import UIKit
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "QuickSession")
 
+func quickSessionText(_ existingText: String, appending incomingText: String?) -> String {
+    guard let incomingText = incomingText?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !incomingText.isEmpty else { return existingText }
+    if existingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return incomingText
+    }
+    return existingText + "\n" + incomingText
+}
+
 struct QuickSessionOverlayLayout {
     static let minimumTopClearance: CGFloat = 12
 
@@ -49,6 +58,7 @@ struct QuickSessionSheet: View {
     @Environment(ChatSessionState.self) private var chatState
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var text = ""
@@ -62,6 +72,7 @@ struct QuickSessionSheet: View {
     @State private var thinkingLevel: ThinkingLevel = AppPreferences.QuickSession.lastThinkingLevel
     @State private var showModelPicker = false
     @State private var showExpandedComposer = false
+    @State private var isInitialized = false
     @State private var isCreating = false
     @State private var error: String?
     @State private var voiceInputManager: VoiceInputManager?
@@ -189,6 +200,9 @@ struct QuickSessionSheet: View {
         .onChange(of: selectedServerId) { _, _ in
             configureVoiceInputForSelectedServer()
         }
+        .onChange(of: text) { _, newValue in
+            composerDraftStore?.setQuickSessionDraftText(newValue)
+        }
     }
 
     private var composerContent: some View {
@@ -235,6 +249,7 @@ struct QuickSessionSheet: View {
         }
         .padding(.top, 6)
         .fixedSize(horizontal: false, vertical: true)
+        .disabled(!isInitialized)
     }
 
     private var stacksActionControls: Bool {
@@ -349,7 +364,10 @@ struct QuickSessionSheet: View {
     // MARK: - Actions
 
     private func setupInitialState() async {
-        await drainPendingDictationCleanupQueue()
+        if let composerDraftStore {
+            await composerDraftStore.load()
+            text = composerDraftStore.quickSessionDraftText
+        }
 
         // Select workspace: last used > explicit default > first available.
         let all = allServerWorkspaces
@@ -375,6 +393,7 @@ struct QuickSessionSheet: View {
         if let pendingPayload = QuickSessionTrigger.shared.consumePendingPayload() {
             applyInitialPayload(pendingPayload)
         }
+        isInitialized = true
 
         // Auto-focus the text input for typing, then move assistive focus to
         // that same composer instead of the overlay's dismiss control.
@@ -385,6 +404,8 @@ struct QuickSessionSheet: View {
         if let api = selectedServerConnection().apiClient {
             await chatState.refreshModelCache(api: api)
         }
+
+        await drainPendingDictationCleanupQueue()
     }
 
     private func moveAccessibilityFocusToComposer() async {
@@ -420,12 +441,7 @@ struct QuickSessionSheet: View {
     }
 
     private func appendInitialText(_ value: String?) {
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return }
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            text = value
-        } else {
-            text += "\n\(value)"
-        }
+        text = quickSessionText(text, appending: value)
     }
 
     private func appendInitialAttachment(name: String, data: Data, mimeType: String) {
@@ -513,6 +529,9 @@ struct QuickSessionSheet: View {
         )
         let modelId = selectedModelId
         let thinking = thinkingLevel
+        let submittedDraftRevision = composerDraftStore?
+            .setQuickSessionDraftText(text)?
+            .revision
 
         isCreating = true
         error = nil
@@ -574,6 +593,7 @@ struct QuickSessionSheet: View {
                     autoSendAttachments: shouldAutoSend ? pendingAttachments : nil
                 )
 
+                composerDraftStore?.clearQuickSessionDraft(ifRevision: submittedDraftRevision)
                 onDismiss()
             } catch {
                 let errorKind = ChatSessionTelemetry.metricErrorKind(for: error)
