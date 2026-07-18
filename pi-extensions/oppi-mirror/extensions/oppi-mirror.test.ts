@@ -83,7 +83,7 @@ interface MockPi {
 interface MockExtensionContext {
   cwd: string;
   hasUI: boolean;
-  mode: "tui";
+  mode: "tui" | "rpc";
   model: undefined;
   sessionManager: {
     getSessionFile: ReturnType<typeof vi.fn>;
@@ -240,11 +240,31 @@ afterEach(() => {
 });
 
 describe("oppi mirror extension UI replay", () => {
+  it("does not initialize mirror runtime side effects for managed RPC sessions", async () => {
+    vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+    const pi = createMockPi();
+    await oppiPiMirror(pi as never);
+    const ctx = createMockContext();
+    ctx.mode = "rpc";
+    const originalSetStatus = ctx.ui.setStatus;
+    const originalSetWidget = ctx.ui.setWidget;
+
+    await startSession(pi, ctx);
+
+    expect(pi.commands.size).toBe(0);
+    expect(Array.from(pi.handlers.keys())).toEqual(["session_start"]);
+    expect(ctx.ui.setStatus).toBe(originalSetStatus);
+    expect(ctx.ui.setWidget).toBe(originalSetWidget);
+    expect(pi.appendEntry).not.toHaveBeenCalled();
+    expect(wsMock.instances).toHaveLength(0);
+  });
+
   it("persists Pi lifecycle evidence in TUI session entries", async () => {
     vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
     const pi = createMockPi();
     await oppiPiMirror(pi as never);
     const ctx = createMockContext();
+    await startSession(pi, ctx);
 
     for (const handler of pi.handlers.get("tool_execution_end") ?? []) {
       await handler(
