@@ -25,12 +25,23 @@ npm uninstall -g oppi-server
 
 Use a source checkout only for development or unreleased server changes. For regular use, prefer the npm global install above.
 
+For a foreground one-off run:
+
 ```bash
 git clone https://github.com/duh17/oppi.git && cd oppi/server
 npm install
 npm run build
 node dist/src/cli.js serve
 ```
+
+For ongoing development, source-link the machine-wide `oppi` command and install the LaunchAgent from that link:
+
+```bash
+cd oppi/server
+bash setup.sh --install
+```
+
+The global npm link points `oppi` at this checkout's `dist/src/cli.js`. Rebuilding the checkout therefore updates the terminal CLI, background server, and managed host-session CLI together. Running `setup.sh --install` again repairs the link if another npm install replaced it.
 
 If you prefer the repo bootstrapper from outside the repo, use:
 
@@ -199,7 +210,7 @@ Schedules store a trigger plus an action. `oppi schedule create` accepts `--at`,
 
 - **npm global install:** npm owns both server code and the `oppi` executable used by humans, the Mac app, and managed host sessions. Use `oppi update` or `npm install -g oppi-server@latest` to upgrade, and `npm uninstall -g oppi-server` to remove it.
 - **Mac app:** requires the npm global install and does not bundle or seed another server runtime.
-- **Git/bootstrap install:** git owns server code. Use `git pull && npm install && npm run build` to upgrade a checkout; `OPPI_SERVER_PATH` remains available for explicit Mac development launches.
+- **Git/bootstrap install:** git owns server code. Use `git pull && npm install && npm run build` to upgrade a checkout. For a machine-wide development CLI, run `bash setup.sh --install`; it source-links `oppi` to the checkout and installs the LaunchAgent from that exact link. `OPPI_SERVER_PATH` remains available for explicit Mac development launches.
 
 ## Extensions
 
