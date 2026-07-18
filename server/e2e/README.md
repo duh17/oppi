@@ -7,6 +7,7 @@ End-to-end tests exercise the HTTP/TLS compatibility path and the isolated Iroh 
 - The HTTP/TLS suites require an OMLX-compatible OpenAI API server on localhost:8400 with at least one model loaded. They prefer `Qwen3.6-*` and fall back to the first model returned by `/v1/models`.
 - Docker (OrbStack recommended) is required only for explicit Docker Compose mode and the isolated Iroh suite.
 - The isolated Iroh suite uses a deterministic server-local stub and does not access a host model endpoint.
+- The Tailscale benchmark requires the local `tailscale`, `ssh`, `rsync`, and `scp` commands plus a separately provisioned macOS peer reachable through batch-mode SSH. The peer needs Node.js, npm, Tailscale, and npm registry access; the runner installs locked dependencies in a unique `/tmp` directory and removes it afterward.
 
 ## Test Suites
 
@@ -67,6 +68,12 @@ The fixed sample plan is 30 cold transport connections, 200 warm authenticated `
 
 The runner writes raw JSON plus a Markdown comparison under `.internal/reports/iroh-benchmark-<timestamp>.{json,md}`. Runtime Compose logs remain under `/tmp/oppi-iroh-benchmark-<pid>-artifacts/`. Public relay measurements are rate-limited, shared-service observations with no SLA.
 
+### Tailscale direct benchmark (`npm run bench:tailscale-network`)
+
+This opt-in, non-gating lane runs the same sample counts and Oppi REST/WebSocket/file operations against a dedicated server on a separate macOS Tailscale peer. `tailscale ping` must select a direct path—not DERP—before and after the measurements. The ephemeral server uses HTTPS with a self-signed certificate; verification is disabled in the benchmark client, while the Tailscale network path remains encrypted.
+
+The runner accepts the SSH target and peer Tailscale IP only through environment variables, excludes them and other device/account identifiers from durable output, and writes sanitized JSON/Markdown under `.internal/reports/tailscale-network-benchmark-<timestamp>.{json,md}`. This real two-machine topology complements rather than replaces the same-phone physical-device A/B; it is not numerically interchangeable with the same-host container direct lanes.
+
 Relevant feature-story dispositions from `.internal/reports/feature-user-story-status.csv`:
 
 | Story                                      | Isolated server evidence                                                | Disposition                         |
@@ -99,6 +106,12 @@ cd server && npm run test:e2e:iroh
 
 # Reproducible HTTP-direct / Iroh-direct / forced-relay benchmark
 cd server && npm run bench:iroh-network
+
+# Opt-in direct Tailscale benchmark against a separate macOS peer
+cd server && \
+  TAILSCALE_BENCH_SSH_TARGET=user@peer \
+  TAILSCALE_BENCH_TARGET_IP=100.x.y.z \
+  npm run bench:tailscale-network
 ```
 
 On Mac Studio, do not add writable repo, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context, mounts its generated `models.json` read-only, and stores server state in a named volume. Use native mode for normal local iteration.
@@ -116,6 +129,14 @@ On Mac Studio, do not add writable repo, worktree, report, or output bind mounts
 | `E2E_TLS_MODE`        | `self-signed`   | Native mode TLS setting; use `disabled` for iOS harnesses that need HTTP     |
 | `OPPI_E2E_UI_HARNESS` | `0`             | Enables `/e2e/ui/...` injection routes for Apple extension UI snapshot tests |
 
+Tailscale benchmark-only variables:
+
+| Env var                      | Default                | Description                                                 |
+| ---------------------------- | ---------------------- | ----------------------------------------------------------- |
+| `TAILSCALE_BENCH_SSH_TARGET` | required               | Batch-mode SSH target for the separate macOS peer           |
+| `TAILSCALE_BENCH_TARGET_IP`  | required               | Peer Tailscale IP used by Oppi and direct-path verification |
+| `TAILSCALE_BENCH_REGION`     | `US Pacific Northwest` | Coarse, non-identifying region written to the report        |
+
 ## Architecture
 
 ```
@@ -132,6 +153,9 @@ e2e/
 ├── docker-compose.iroh-benchmark.yml
 ├── iroh-network-benchmark-{server,client,common}.ts
 ├── run-iroh-network-benchmark.ts    # Reproducible performance runner
+├── tailscale-network-benchmark-client.ts
+├── tailscale-network-benchmark-server.mjs
+├── run-tailscale-network-benchmark.ts # Opt-in two-peer Tailscale runner
 └── README.md                        # This file
 ```
 
