@@ -24,6 +24,8 @@ final class WebSocketClient {
     /// Used to prevent stale `onTermination` handlers from killing newer connections.
     private var connectionID: UInt64 = 0
 
+    var diagnosticConnectionID: UInt64 { connectionID }
+
     typealias InboundMeta = InboundStreamMeta
 
     private var webSocket: URLSessionWebSocketTask?
@@ -528,15 +530,23 @@ final class WebSocketClient {
                         meta: inboundMeta
                     )
 
-                    // First successful message = connected
-                    await MainActor.run {
-                        if case .connecting = self?.status {
-                            self?.status = .connected
-                            self?.resolveConnectionWaiters()
-                        } else if case .reconnecting = self?.status {
-                            self?.status = .connected
-                            self?.resolveConnectionWaiters()
+                    // A canceled receive can still return a buffered frame after a replacement
+                    // socket has opened. Only the task that owns the current socket may publish
+                    // frames or mutate shared connection status.
+                    let ownsCurrentSocket = await MainActor.run { [weak self] in
+                        guard let self, self.webSocket === ws else { return false }
+                        if case .connecting = self.status {
+                            self.status = .connected
+                            self.resolveConnectionWaiters()
+                        } else if case .reconnecting = self.status {
+                            self.status = .connected
+                            self.resolveConnectionWaiters()
                         }
+                        return true
+                    }
+                    guard ownsCurrentSocket else {
+                        shouldAttemptReconnect = false
+                        break
                     }
 
                     if case .unknown(let type) = streamMessage.message {
@@ -545,12 +555,20 @@ final class WebSocketClient {
 
                     continuation.yield(frameEvent)
                 } catch {
+                    if Task.isCancelled {
+                        shouldAttemptReconnect = false
+                        break
+                    }
+                    guard let self, self.webSocket === ws else {
+                        shouldAttemptReconnect = false
+                        break
+                    }
+
                     let statusCode = (ws.response as? HTTPURLResponse)?.statusCode
                     if let statusCode {
-                        self?.lastHTTPStatusCode = statusCode
+                        self.lastHTTPStatusCode = statusCode
                     }
-                    if Task.isCancelled { break }
-                    if let self, let statusCode, self.isNonRetryableHandshakeStatus(statusCode) {
+                    if let statusCode, self.isNonRetryableHandshakeStatus(statusCode) {
                         shouldAttemptReconnect = false
                         let metadata = self.receiveFailureMetadata(for: ws, error: error)
                             .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
@@ -559,7 +577,7 @@ final class WebSocketClient {
                             "WebSocket handshake rejected",
                             metadata: metadata
                         )
-                    } else if let self, self.shouldLogReceiveError(error) {
+                    } else if self.shouldLogReceiveError(error) {
                         var metadata = self.receiveFailureMetadata(for: ws, error: error)
                             .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
                         if self.isRecoverableReceiveError(error, ws: ws) {
@@ -584,11 +602,12 @@ final class WebSocketClient {
             }
 
             // Connection lost — attempt reconnect unless the server rejected the endpoint/auth.
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self, self.webSocket === ws else { return }
                 if shouldAttemptReconnect {
-                    self?.attemptReconnect()
+                    self.attemptReconnect()
                 } else {
-                    self?.disconnect()
+                    self.disconnect()
                 }
             }
         }
@@ -609,21 +628,23 @@ final class WebSocketClient {
                         oneShot.resume(returning: error != nil)
                     }
                 }
+                guard !Task.isCancelled, let self, self.webSocket === ws else { break }
 
                 if failed {
                     consecutiveFailures += 1
                     if consecutiveFailures >= 2 {
                         logger.error("Ping watchdog: \(consecutiveFailures) consecutive failures — triggering reconnect")
-                        self?.wsLogError(
+                        self.wsLogError(
                             "Ping watchdog reconnect",
                             metadata: ["failures": String(consecutiveFailures)]
                         )
                         await MainActor.run { [weak self] in
-                            self?.receiveTask?.cancel()
-                            self?.receiveTask = nil
+                            guard let self, self.webSocket === ws else { return }
+                            self.receiveTask?.cancel()
+                            self.receiveTask = nil
                             ws.cancel(with: .goingAway, reason: nil)
-                            self?.webSocket = nil
-                            self?.attemptReconnect()
+                            self.webSocket = nil
+                            self.attemptReconnect()
                         }
                         break
                     }

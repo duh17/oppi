@@ -243,6 +243,11 @@ extension ServerConnection {
         foregroundRecoveryInFlight = true
         defer { foregroundRecoveryInFlight = false }
 
+        // Iroh's local URLSession tasks and cached QUIC connection can survive suspension
+        // long enough to look healthy after the server has timed them out. Reset only the
+        // transport tasks; focused-session continuations stay attached for catch-up.
+        await resetIrohTransportForForegroundRecoveryIfNeeded()
+
         // 0. If a chat session owns a prepared bound stream, keep that focused transport alive.
         // Home/workspace-list refreshes and pre-stream session focus stay HTTP-only.
         if focusedSessionId != nil, focusedSessionStreamEndpointKind == "split_session" {

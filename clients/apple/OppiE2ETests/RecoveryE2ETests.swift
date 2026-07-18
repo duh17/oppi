@@ -68,6 +68,83 @@ final class RecoveryE2ETests: E2ETestCase {
     }
 
     @MainActor
+    func testIrohForegroundRecoveryReplacesTransportWithoutProcessRestart() throws {
+        guard ProcessInfo.processInfo.environment["OPPI_E2E_IROH_PAIRING"] == "1" else {
+            throw XCTSkip("Run with OPPI_E2E_IROH_PAIRING=1 to exercise the Apple Iroh transport")
+        }
+        defer { terminateSharedApp() }
+
+        XCTAssertEqual(waitForTransportPath("iroh"), "iroh")
+        createAndEnterSession()
+        waitForRequiredSplitStreamCapabilities()
+        waitForWebSocketConnected()
+        waitForSessionStreamEndpoint()
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        waitForAckedSubscription(sessionId: sessionId, level: "full")
+        let connectionIDBeforeBackground = waitForWebSocketConnectionID()
+
+        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_start"])
+        defer { _ = try? sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"]) }
+        XCTAssertTrue(
+            waitForElementToExist(app.buttons["chat.stop"], timeout: 10),
+            "Busy chat did not show its stop control before backgrounding"
+        )
+
+        let lifecycleBeforeBackground = e2eLifecycleSnapshot()
+        _ = try backgroundAndActivate(
+            after: lifecycleBeforeBackground,
+            scenario: "iroh_foreground_recovery",
+            cycle: 1
+        )
+
+        XCTAssertEqual(waitForTransportPath("iroh"), "iroh")
+        let connectionIDAfterForeground = waitForWebSocketConnectionID(
+            greaterThan: connectionIDBeforeBackground
+        )
+        XCTAssertGreaterThan(connectionIDAfterForeground, connectionIDBeforeBackground)
+        waitForWebSocketConnected()
+        waitForAckedSubscription(sessionId: sessionId, level: "full")
+        try waitForE2EHarnessSubscriberCount(sessionId: sessionId, 1, timeout: 20)
+
+        let toolCallId = "iroh-foreground-recovery-tool"
+        let marker = "E2E_IROH_FOREGROUND_RECOVERY_OK"
+        let startResponse = try sendE2EHarnessMessage(sessionId: sessionId, [
+            "type": "tool_start",
+            "tool": "read",
+            "toolCallId": toolCallId,
+            "args": ["path": "iroh-foreground-recovery.txt"],
+        ])
+        XCTAssertEqual(startResponse["subscriberCount"] as? Int, 1)
+        let toolRow = app.descendants(matching: .any)["chat.timeline.row.\(toolCallId)"]
+        XCTAssertTrue(
+            waitForElementToExist(toolRow, timeout: 10),
+            "Post-recovery event did not reach the focused-session continuation"
+        )
+        let outputResponse = try sendE2EHarnessMessage(sessionId: sessionId, [
+            "type": "tool_output",
+            "toolCallId": toolCallId,
+            "output": marker,
+        ])
+        XCTAssertEqual(outputResponse["subscriberCount"] as? Int, 1)
+        toolRow.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.16)).tap()
+        XCTAssertTrue(
+            waitForTimelineTextContaining(marker, timeout: 10),
+            "Post-recovery tool output did not render through the preserved continuation"
+        )
+        _ = try sendE2EHarnessMessage(sessionId: sessionId, [
+            "type": "tool_end",
+            "tool": "read",
+            "toolCallId": toolCallId,
+        ])
+
+        navigateBackToWorkspace()
+        XCTAssertFalse(
+            app.descendants(matching: .any)["workspace.sessionList.cachedWarning"].waitForExistence(timeout: 1),
+            "Selected Iroh server still showed cached data after foreground recovery"
+        )
+    }
+
+    @MainActor
     func testRelaunchRecoveryReplaysDurableEventsForFocusedSession() throws {
         createAndEnterSession()
         waitForRequiredSplitStreamCapabilities()

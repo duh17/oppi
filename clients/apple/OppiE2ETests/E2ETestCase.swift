@@ -837,6 +837,26 @@ class E2ETestCase: XCTestCase {
         waitForE2EDiagnostic("e2e.ws.status", timeout: timeout) { $0 == "connected" }
     }
 
+    @discardableResult
+    func waitForTransportPath(_ expected: String, timeout: TimeInterval = 20) -> String {
+        waitForE2EDiagnostic("e2e.transport.path", timeout: timeout) { $0 == expected }
+    }
+
+    func waitForWebSocketConnectionID(
+        greaterThan previous: UInt64 = 0,
+        timeout: TimeInterval = 20
+    ) -> UInt64 {
+        let value = waitForE2EDiagnostic("e2e.ws.connectionID", timeout: timeout) { value in
+            guard let connectionID = UInt64(value) else { return false }
+            return connectionID > previous
+        }
+        guard let connectionID = UInt64(value) else {
+            XCTFail("Malformed WebSocket connection ID diagnostic: \(value)")
+            return previous
+        }
+        return connectionID
+    }
+
     @MainActor
     func e2eLifecycleSnapshot(timeout: TimeInterval = 10) -> E2ELifecycleDiagnosticSnapshot {
         let value = waitForE2EDiagnostic("e2e.lifecycle", timeout: timeout) {
