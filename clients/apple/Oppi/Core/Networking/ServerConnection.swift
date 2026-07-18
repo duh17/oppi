@@ -17,6 +17,7 @@ final class ServerConnection {
     private(set) var apiClient: APIClient?
     private(set) var wsClient: WebSocketClient?
     private var irohManager: IrohConnectionManager?
+    private var irohBackgroundPreparationTask: Task<Void, Never>?
     var dictationStreamAvailable = false
     var appEventStreamAvailable = false
     private(set) var appEventStreamTransportState: ServerHealth.TransportState = .disconnected
@@ -823,13 +824,41 @@ final class ServerConnection {
         await task.value
     }
 
+    /// Discard transport state that can look alive after iOS suspends an Iroh connection.
+    /// Session continuations and the prepared focused endpoint remain intact so the normal
+    /// foreground path can reopen the streams and repair missed events.
+    func resetIrohTransportForForegroundRecoveryIfNeeded() async {
+        guard transportPath == .iroh else { return }
+
+        // A background close is launched from the synchronous scene handler. Join it
+        // before reopening anything so it cannot suspend the replacement connection.
+        if let backgroundPreparation = irohBackgroundPreparationTask {
+            await backgroundPreparation.value
+            irohBackgroundPreparationTask = nil
+        }
+
+        disconnectAppEventStream()
+        streamConsumptionTask?.cancel()
+        streamConsumptionTask = nil
+        wsClient?.disconnect()
+        await irohManager?.prepareForBackground()
+
+        ClientLog.info("Iroh", "Foreground transport reset", metadata: [
+            "transport": "iroh",
+            "focusedStreamPrepared": focusedSessionStreamEndpointKind == "split_session" ? "true" : "false",
+        ])
+    }
+
     /// Send a graceful WS close frame before iOS suspends the app and release
     /// the reusable QUIC connection. The endpoint/listener remain available so
     /// foreground recovery keeps the same Keychain-backed endpoint identity.
     func prepareForBackground() {
         wsClient?.prepareForBackground()
-        if let irohManager {
-            Task { await irohManager.prepareForBackground() }
+        if let irohManager, irohBackgroundPreparationTask == nil {
+            irohBackgroundPreparationTask = Task { @MainActor [weak self] in
+                await irohManager.prepareForBackground()
+                self?.irohBackgroundPreparationTask = nil
+            }
         }
     }
 

@@ -19,6 +19,42 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(!conn.foregroundRecoveryInFlight, "Flag should be reset after completion")
     }
 
+    @Test func reconnectInvalidatesCachedIrohConnectionBeforeRefresh() async throws {
+        let conn = ServerConnection()
+        let credentials = makeTestIrohOnlyCredentials()
+        let iroh = try #require(credentials.transports.iroh)
+        let provider = ForegroundRecoveryIrohProvider()
+        let manager = IrohConnectionManager(iroh: iroh, provider: provider)
+        let localURL = try #require(URL(string: "http://127.0.0.1:41995"))
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        )
+        #expect(configured)
+        conn.setAPIClientForTesting(makeForegroundRecoveryFailingAPIClient())
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true, appEventStream: true)
+        var appEventStarts = 0
+        conn._startAppEventStreamForTesting = { _ in appEventStarts += 1 }
+        conn.startAppEventStreamIfAvailable()
+        #expect(appEventStarts == 1)
+        conn._setActiveSessionIdForTesting("s1")
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
+        let sessionEvents = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s1"] = continuation
+        }
+        conn._connectStreamForTesting = {
+            AsyncStream<StreamFrameEvent> { _ in }
+        }
+
+        await conn.reconnectIfNeeded()
+
+        #expect(await provider.suspendCount() == 1)
+        #expect(conn.sessionEventContinuations["s1"] != nil)
+        #expect(appEventStarts == 2)
+        _ = sessionEvents
+        conn.disconnectStream()
+    }
+
     @Test func reconnectDoesNotTouchReducerTimeline() async {
         // With per-session reducers, the connection has no reducer to touch.
         // This test verifies foreground recovery doesn't crash without one.
@@ -182,4 +218,24 @@ private final class ForegroundRecoveryFailingURLProtocol: URLProtocol, @unchecke
     }
 
     override func stopLoading() {}
+}
+
+private actor ForegroundRecoveryIrohProvider: IrohConnectionProviding {
+    private var suspends = 0
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("No stream expected in foreground recovery unit test")
+    }
+
+    func suspendConnections() async {
+        suspends += 1
+    }
+
+    func shutdown() async {
+        await suspendConnections()
+    }
+
+    func suspendCount() -> Int {
+        suspends
+    }
 }
