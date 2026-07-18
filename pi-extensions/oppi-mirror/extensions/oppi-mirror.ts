@@ -1550,7 +1550,9 @@ function editableAgentSessionForContext(
   ctx: ExtensionContext,
 ): EditableAgentSession | undefined {
   const bridge = getQueueUpdateBridge();
-  return bridge.sessions.get(ctx.sessionManager.getSessionId()) ?? bridge.lastSession;
+  return (
+    bridge.sessions.get(ctx.sessionManager.getSessionId()) ?? bridge.lastSession
+  );
 }
 
 function stateSnapshot(pi: ExtensionAPI, ctx: ExtensionContext) {
@@ -2352,7 +2354,13 @@ const DEFAULT_RECONNECT_DELAY_MS = 2_000;
 const OPPI_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS = 60_000;
 const MIRROR_BRIDGE_MAX_SAFE_PAYLOAD_BYTES = 14 * 1024 * 1024;
 
-export default async function oppiPiMirror(pi: ExtensionAPI) {
+interface TuiMirrorRuntime {
+  startSession(ctx: ExtensionContext): void;
+}
+
+async function createTuiMirrorRuntime(
+  pi: ExtensionAPI,
+): Promise<TuiMirrorRuntime> {
   let latestCtx: ExtensionContext | null = null;
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -4407,17 +4415,11 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
     );
   }
 
-  pi.on(
-    "session_start",
-    guardExtensionCallback(
-      "session_start",
-      (_event: unknown, ctx: ExtensionContext) => {
-        latestCtx = ctx;
-        installExtensionUIProxy(ctx);
-        if (settings.autoStart && isInteractiveTerminalProcess()) connect(ctx);
-      },
-    ),
-  );
+  function startSession(ctx: ExtensionContext): void {
+    latestCtx = ctx;
+    installExtensionUIProxy(ctx);
+    if (settings.autoStart && isInteractiveTerminalProcess()) connect(ctx);
+  }
 
   pi.on(
     "session_shutdown",
@@ -4475,5 +4477,18 @@ export default async function oppiPiMirror(pi: ExtensionAPI) {
         );
       }
     },
+  });
+
+  return { startSession };
+}
+
+export default async function oppiPiMirror(pi: ExtensionAPI): Promise<void> {
+  let runtimePromise: Promise<TuiMirrorRuntime> | undefined;
+
+  pi.on("session_start", async (_event, ctx) => {
+    if (ctx.mode !== "tui") return;
+    runtimePromise ??= createTuiMirrorRuntime(pi);
+    const runtime = await runtimePromise;
+    runtime.startSession(ctx);
   });
 }
