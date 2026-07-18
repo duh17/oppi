@@ -177,12 +177,12 @@ enum UserMessageAttachmentPresentation {
     }
 
     static func parse(rawText: String) -> (visibleText: String, badges: [UserMessageAttachmentBadge], pathPills: [UserMessagePathPill]) {
-        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        let content = rawText.trimmingCharacters(in: .newlines)
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return ("", [], [])
         }
 
-        let (withoutMarker, markerBadges, markerPathPills) = stripMarker(from: trimmed)
+        let (withoutMarker, markerBadges, markerPathPills) = stripMarker(from: content)
         let (withoutAttachedFiles, attachedFilePills) = stripAttachedFilesBlock(from: withoutMarker)
         let (withoutReferenceBlock, referencePathPills) = stripReferenceBlock(from: withoutAttachedFiles)
 
@@ -201,7 +201,7 @@ enum UserMessageAttachmentPresentation {
         text: String,
         uploadedAttachments: [ChatAttachmentRef]
     ) -> String {
-        if text.range(of: attachedFilesHeader) != nil {
+        if UserMessageTextProjection.splitTrailingAttachedFilesBlock(from: text) != nil {
             return text
         }
         return appendAttachedFilesBlock(to: text, attachments: uploadedAttachments)
@@ -355,38 +355,31 @@ enum UserMessageAttachmentPresentation {
     }
 
     private static func stripAttachedFilesBlock(from text: String) -> (String, [UserMessagePathPill]) {
-        guard let range = text.range(of: attachedFilesHeader) else {
+        guard let block = UserMessageTextProjection.splitTrailingAttachedFilesBlock(from: text) else {
             return (text, [])
         }
 
-        let suffixLines = String(text[range.lowerBound...]).components(separatedBy: "\n")
-        let pathPills = suffixLines.dropFirst().compactMap { line -> UserMessagePathPill? in
-            guard line.hasPrefix("- ") else { return nil }
-            guard let separator = line.range(of: ": ") else { return nil }
-            let path = String(line[separator.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !path.isEmpty else { return nil }
+        let pathPills = block.bodyLines.compactMap { line -> UserMessagePathPill? in
+            guard let path = UserMessageTextProjection.attachedFilePath(from: line) else {
+                return nil
+            }
             return UserMessagePathPill(kind: .uploadedFile, path: path)
         }
-
-        let trimmed = String(text[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return (trimmed, pathPills)
+        return (block.visibleText, pathPills)
     }
 
     private static func stripReferenceBlock(from text: String) -> (String, [UserMessagePathPill]) {
-        guard let range = text.range(of: referenceBlockHeader) else {
+        guard let block = UserMessageTextProjection.splitTrailingReferenceBlock(from: text) else {
             return (text, [])
         }
 
-        let suffixLines = String(text[range.lowerBound...]).components(separatedBy: "\n")
-        let pathPills = suffixLines.dropFirst().compactMap { line -> UserMessagePathPill? in
-            guard line.hasPrefix("- ") else { return nil }
-            let path = String(line.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !path.isEmpty else { return nil }
-            return UserMessagePathPill(kind: .repoFile, path: path)
+        let pathPills = block.bodyLines.map { line in
+            UserMessagePathPill(
+                kind: .repoFile,
+                path: String(line.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         }
-
-        let trimmed = String(text[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return (trimmed, pathPills)
+        return (block.visibleText, pathPills)
     }
 }
 

@@ -232,12 +232,147 @@ struct PendingFileReferenceTests {
         #expect(parsed.pathPills.map { $0.label } == ["src/main.swift", "README.md"])
     }
 
+    @Test func attachmentPresentationPreservesInlineReferenceHeaderAndInstructionBullets() {
+        let raw = """
+        Extra focus:
+        Referenced workspace files: - src/main.swift
+
+        Git hygiene:
+        - Do not commit unless explicitly asked.
+        - Inspect the staged diff before committing.
+        """
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == raw)
+        #expect(parsed.pathPills.isEmpty)
+    }
+
+    @Test func attachmentPresentationParsesOnlyWellFormedTrailingReferenceBlock() {
+        let raw = """
+        Keep this instruction visible:
+        - Inspect the staged diff before committing.
+
+        Referenced workspace files:
+        - src/main.swift
+        - README.md
+        """
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == "Keep this instruction visible:\n- Inspect the staged diff before committing.")
+        #expect(parsed.pathPills.map(\.path) == ["src/main.swift", "README.md"])
+    }
+
+    @Test func attachmentPresentationRequiresExactHeaderAndGeneratedBlockBoundary() {
+        let trailingSpaceHeader = "Explain this literal:\n\nReferenced workspace files: \n- Do not commit unless explicitly asked."
+        let adjacentHeader = "Explain this literal:\nReferenced workspace files:\n- Do not commit unless explicitly asked."
+        let leadingSpaceReferenceHeader = " Referenced workspace files:\n- Do not commit unless explicitly asked."
+        let leadingSpaceAttachmentHeader = " Attached files:\n- report.pdf: explanatory prose"
+
+        for raw in [
+            trailingSpaceHeader,
+            adjacentHeader,
+            leadingSpaceReferenceHeader,
+            leadingSpaceAttachmentHeader,
+        ] {
+            let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+            #expect(parsed.visibleText == raw.trimmingCharacters(in: .whitespacesAndNewlines))
+            #expect(parsed.pathPills.isEmpty)
+        }
+    }
+
+    @Test func attachmentPresentationRejectsUnknownAttachmentContinuationProse() {
+        let raw = """
+        Keep all of this visible.
+
+        Attached files:
+        - report.pdf: explanatory prose
+          This is not generated attachment metadata.
+        """
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == raw)
+        #expect(parsed.pathPills.isEmpty)
+    }
+
     @Test func attachmentPresentationExtractsMaterializedAttachmentPaths() {
         let raw = "testing\n\nAttached files:\n- image-1.jpg: .pi/attachments/s1/t1/image-1.jpg\n  MIME: image/jpeg\n  Size: 1 MB"
         let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
 
         #expect(parsed.visibleText == "testing")
         #expect(parsed.pathPills.map { $0.label } == ["image-1.jpg"])
+    }
+
+    @Test func attachmentPresentationHandlesColonInAttachmentNameAndPath() {
+        let raw = "review this\n\nAttached files:\n- notes: final.txt: .pi/attachments/demo/notes: final.txt"
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == "review this")
+        #expect(parsed.pathPills.map(\.path) == [".pi/attachments/demo/notes: final.txt"])
+    }
+
+    @Test func attachmentPresentationRejectsEmptyAttachmentDisplayName() {
+        let raw = "Keep this visible.\n\nAttached files:\n- : ordinary prose"
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == raw)
+        #expect(parsed.pathPills.isEmpty)
+    }
+
+    @Test func attachmentPresentationPreservesInlineAttachedFilesHeaderAndLaterBullets() {
+        let raw = """
+        Attached files: this is explanatory prose.
+
+        Checklist:
+        - report.pdf: should remain normal text
+        - Keep this instruction visible.
+        """
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == raw)
+        #expect(parsed.pathPills.isEmpty)
+    }
+
+    @Test func attachmentPresentationParsesChainedTrailingReferenceAndAttachedFileBlocks() {
+        let raw = """
+        Review the evidence.
+
+        Referenced workspace files:
+        - README.md
+
+        Attached files:
+        - report.pdf: .pi/attachments/demo/report.pdf
+          MIME: application/pdf
+          Size: 2 KB
+        """
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == "Review the evidence.")
+        #expect(parsed.pathPills.map(\.kind) == [.uploadedFile, .repoFile])
+        #expect(parsed.pathPills.map(\.path) == [".pi/attachments/demo/report.pdf", "README.md"])
+    }
+
+    @Test func timelineTextAppendsRealAttachmentsAfterInlineAttachedFilesProse() {
+        let raw = "Attached files: explanatory prose"
+        let timelineText = UserMessageAttachmentPresentation.makeTimelineText(
+            text: raw,
+            uploadedAttachments: [
+                ChatAttachmentRef(
+                    type: "attachment",
+                    id: "att-report",
+                    source: .upload,
+                    name: "report.pdf",
+                    mimeType: "application/pdf",
+                    sizeBytes: 3,
+                    sha256: nil,
+                    kind: .pdf,
+                    workspacePath: ".pi/attachments/demo/report.pdf"
+                )
+            ]
+        )
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: timelineText)
+
+        #expect(parsed.visibleText == raw)
+        #expect(parsed.pathPills.map(\.path) == [".pi/attachments/demo/report.pdf"])
     }
 
     @Test func attachmentPresentationAppendsUploadedAttachmentPathsToDisplayText() {
