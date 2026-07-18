@@ -81,6 +81,49 @@ describe("skills module", () => {
     }
   });
 
+  it("lists extensions named review instead of hiding concrete extension names", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-extension-route-review-"));
+    const cwd = join(root, "workspace");
+    const agentDir = join(root, "agent");
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    writeFileSync(join(agentDir, "extensions", "review.ts"), "export default function () {}\n");
+
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    try {
+      const dispatch = createSkillRoutes(
+        { skillRegistry: { list: vi.fn(() => []) } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const res = makeResponse();
+
+      await dispatch({
+        method: "GET",
+        path: "/extensions",
+        url: new URL(`http://localhost/extensions?cwd=${encodeURIComponent(cwd)}`),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        extensions: Array<{ name: string; enabled: boolean }>;
+      };
+      expect(body.extensions).toContainEqual(
+        expect.objectContaining({ name: "review", enabled: true }),
+      );
+    } finally {
+      if (previousAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("writes project Pi settings when toggling cwd-local skills", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-skill-route-toggle-"));
     const skillDir = join(cwd, ".pi", "skills", "toggle-route-skill");
