@@ -45,6 +45,49 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         )
     }
 
+    func testSlashCommandSuggestionsRemainAvailableMidTurn() throws {
+        createAndEnterSession()
+
+        let chatInput = app.textViews["chat.input"]
+        tap(chatInput, named: "chat input")
+        chatInput.typeText("Write a detailed 500 word essay about the history of computing")
+        tap(app.buttons["chat.send"], named: "send button", timeout: 3)
+
+        let stopButton = app.buttons["chat.stop"]
+        XCTAssertTrue(
+            stopButton.waitForExistence(timeout: 30),
+            "Streaming did not start before checking slash suggestions"
+        )
+
+        tap(chatInput, named: "chat input during active turn")
+        chatInput.typeText("/")
+
+        let reloadSuggestion = app.buttons
+            .matching(NSPredicate(format: "label CONTAINS[c] %@", "/reload"))
+            .firstMatch
+        XCTAssertTrue(
+            reloadSuggestion.waitForExistence(timeout: 10),
+            "Slash command suggestions did not appear during the active turn"
+        )
+        tap(reloadSuggestion, named: "reload slash suggestion")
+        XCTAssertEqual(
+            chatInput.value as? String,
+            "/reload ",
+            "Selecting a slash suggestion did not update the active-turn composer"
+        )
+        XCTAssertTrue(
+            app.buttons["chat.busyMode"].exists,
+            "Selecting a slash command left active-turn Steering/Follow-up mode"
+        )
+
+        chatInput.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 8))
+        XCTAssertTrue(
+            stopButton.waitForExistence(timeout: 3),
+            "Stop action did not return after clearing the selected slash command"
+        )
+        tap(stopButton, named: "stop button")
+    }
+
     func testMultiTurnConversation() throws {
         createAndEnterSession()
 

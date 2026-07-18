@@ -128,10 +128,10 @@ struct ComposerAutocompleteTests {
         )
     }
 
-    @Test func slashBlockedWhenBusy() {
+    @Test func slashAvailableWhenBusy() {
         #expect(
             ComposerAutocomplete.context(for: "/co", isBusy: true)
-            == .none
+            == .slash(query: "co")
         )
     }
 
