@@ -3,6 +3,7 @@ import * as c from "../../ansi.js";
 import { localApiRequest, type LocalApiConnection } from "../local-api-client.js";
 import { codeValue, printDetails, writeJsonEnvelope } from "../output.js";
 import { apiStatus } from "../resources.js";
+import { assertNotSelfTargetingSession } from "../../session-caller-identity.js";
 
 type WaitSession = {
   id: string;
@@ -25,6 +26,7 @@ export async function cmdWait(
 
     const sessionId = positional[0];
     if (!sessionId) throw new Error("session id is required");
+    assertNotSelfTargetingSession([sessionId]);
 
     const expectedStatus = flags.status?.trim() || "stopped";
     const timeoutMs = parseDurationMs(flags.timeout ?? "10m");
