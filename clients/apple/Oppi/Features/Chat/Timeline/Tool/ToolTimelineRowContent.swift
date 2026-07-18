@@ -1099,6 +1099,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         trailingStack.addArrangedSubview(trailingLabel)
         trailingStack.addArrangedSubview(languageBadgeIconView)
 
+        // This scroll view is nested inside a self-sizing timeline cell. Automatic
+        // safe-area insets can shift the entire media surface and its overlays.
+        expandedScrollView.contentInsetAdjustmentBehavior = .never
         expandedContainer.addSubview(expandedScrollView)
         expandedContainer.addSubview(compactHostedSurfaceHostView)
 
