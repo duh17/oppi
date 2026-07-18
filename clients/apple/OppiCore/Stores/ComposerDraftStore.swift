@@ -25,12 +25,29 @@ private struct ComposerDraftFallbackDocument: Codable, Sendable {
 
     var version = currentVersion
     var activeRecord: ComposerDraftRecord?
+    var additionalActiveRecords: [ComposerDraftRecord]?
     var clearTombstones: [ComposerDraftClearTombstone]
 
-    static let empty = Self(activeRecord: nil, clearTombstones: [])
+    static let empty = Self(
+        activeRecord: nil,
+        additionalActiveRecords: nil,
+        clearTombstones: []
+    )
+
+    var activeRecords: [ComposerDraftRecord] {
+        get {
+            guard let activeRecord else { return additionalActiveRecords ?? [] }
+            return [activeRecord] + (additionalActiveRecords ?? [])
+        }
+        set {
+            activeRecord = newValue.first
+            let remaining = Array(newValue.dropFirst())
+            additionalActiveRecords = remaining.isEmpty ? nil : remaining
+        }
+    }
 
     var isEmpty: Bool {
-        activeRecord == nil && clearTombstones.isEmpty
+        activeRecords.isEmpty && clearTombstones.isEmpty
     }
 }
 
@@ -171,6 +188,12 @@ final class ComposerDraftStore {
     @ObservationIgnored private var pendingLegacyDraft: PendingLegacyDraft?
     @ObservationIgnored private var fallbackDocument = ComposerDraftFallbackDocument.empty
 
+    private static let quickSessionDraftKey = ComposerDraftKey(
+        serverID: "__oppi_local__",
+        workspaceID: "__quick_session__",
+        sessionID: "__composer__"
+    )
+
     init(
         fileURL: URL? = nil,
         fileManager: FileManager = .default,
@@ -218,6 +241,31 @@ final class ComposerDraftStore {
 
     func record(for key: ComposerDraftKey) -> ComposerDraftRecord? {
         records[key]
+    }
+
+    var quickSessionDraftText: String {
+        guard let key = Self.quickSessionDraftKey else { return "" }
+        return records[key]?.payload.text ?? ""
+    }
+
+    @discardableResult
+    func setQuickSessionDraftText(_ text: String) -> ComposerDraftRecord? {
+        guard let key = Self.quickSessionDraftKey else { return nil }
+        if text == quickSessionDraftText {
+            return records[key]
+        }
+        return setDraft(.init(text: text, repoPointers: []), for: key)
+    }
+
+    func saveQuickSessionLifecycleFallback() {
+        guard let key = Self.quickSessionDraftKey else { return }
+        saveLifecycleFallback(records[key])
+    }
+
+    @discardableResult
+    func clearQuickSessionDraft(ifRevision revision: UInt64?) -> Bool {
+        guard let key = Self.quickSessionDraftKey, let revision else { return false }
+        return clearDraft(for: key, ifRevision: revision)
     }
 
     @discardableResult
@@ -270,7 +318,10 @@ final class ComposerDraftStore {
     func saveLifecycleFallback(_ record: ComposerDraftRecord?) {
         guard let record, !record.payload.isEmpty else { return }
         latestRevisionByKey[record.key] = max(latestRevisionByKey[record.key] ?? 0, record.revision)
-        fallbackDocument.activeRecord = record
+        var activeRecords = fallbackDocument.activeRecords
+        activeRecords.removeAll { $0.key == record.key }
+        activeRecords.append(record)
+        fallbackDocument.activeRecords = activeRecords
         fallbackDocument.clearTombstones.removeAll {
             $0.key == record.key && $0.clearedRevision < record.revision
         }
@@ -327,7 +378,7 @@ final class ComposerDraftStore {
     }
 
     private func applyLoadedFallback(_ fallback: ComposerDraftFallbackDocument) {
-        if let activeRecord = fallback.activeRecord {
+        for activeRecord in fallback.activeRecords {
             mergeLoadedRecord(activeRecord)
         }
         for tombstone in fallback.clearTombstones {
@@ -343,9 +394,9 @@ final class ComposerDraftStore {
     }
 
     private func recordClearTombstone(for record: ComposerDraftRecord) {
-        fallbackDocument.activeRecord = fallbackDocument.activeRecord?.key == record.key
-            ? nil
-            : fallbackDocument.activeRecord
+        var activeRecords = fallbackDocument.activeRecords
+        activeRecords.removeAll { $0.key == record.key }
+        fallbackDocument.activeRecords = activeRecords
         fallbackDocument.clearTombstones.removeAll { $0.key == record.key }
         fallbackDocument.clearTombstones.append(
             ComposerDraftClearTombstone(
@@ -396,15 +447,14 @@ final class ComposerDraftStore {
     }
 
     private func pruneFallbackDocumentCovered(by snapshot: [ComposerDraftRecord]) {
-        if let activeRecord = fallbackDocument.activeRecord {
+        var activeRecords = fallbackDocument.activeRecords
+        activeRecords.removeAll { activeRecord in
             if let durableRecord = snapshot.first(where: { $0.key == activeRecord.key }) {
-                if !composerDraftRecordIsNewer(activeRecord, than: durableRecord) {
-                    fallbackDocument.activeRecord = nil
-                }
-            } else if fallbackDocument.clearTombstones.contains(where: { $0.key == activeRecord.key }) {
-                fallbackDocument.activeRecord = nil
+                return !composerDraftRecordIsNewer(activeRecord, than: durableRecord)
             }
+            return fallbackDocument.clearTombstones.contains { $0.key == activeRecord.key }
         }
+        fallbackDocument.activeRecords = activeRecords
 
         fallbackDocument.clearTombstones.removeAll { tombstone in
             guard let durableRecord = snapshot.first(where: { $0.key == tombstone.key }) else {

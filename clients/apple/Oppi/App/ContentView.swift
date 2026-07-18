@@ -6,6 +6,7 @@ struct ContentView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.composerDraftStore) private var composerDraftStore
     @State private var quickSessionTrigger = QuickSessionTrigger.shared
     @State private var quickSessionLaunchAccessibilityElement: AnyObject?
 
@@ -155,6 +156,7 @@ struct ContentView: View {
             ? quickSessionLaunchAccessibilityElement
             : nil
         quickSessionLaunchAccessibilityElement = nil
+        composerDraftStore?.saveQuickSessionLifecycleFallback()
         navigation.showQuickSession = false
         QuickSessionTrigger.shared.isPresented = false
         Task { @MainActor in
