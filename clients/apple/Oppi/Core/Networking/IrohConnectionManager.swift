@@ -14,10 +14,22 @@ protocol IrohByteStream: Sendable {
     func reset(errorCode: UInt64) async
 }
 
+enum IrohPathKind: String, Equatable, Sendable {
+    case direct
+    case relay
+    case unknown
+}
+
 struct IrohSelectedPathEvidence: Equatable, Sendable {
     let isIP: Bool
     let isRelay: Bool
     let rttMs: UInt64
+
+    var pathKind: IrohPathKind {
+        if isIP, !isRelay { return .direct }
+        if isRelay, !isIP { return .relay }
+        return .unknown
+    }
 }
 
 protocol IrohConnectionProviding: Sendable {
@@ -89,6 +101,7 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
     private let iroh: IrohServerTransport
     private var connections: [String: Connection] = [:]
     private var connectionTasks: [String: Task<Connection, Error>] = [:]
+    private var selectedPathKinds: [String: IrohPathKind] = [:]
 
     init(iroh: IrohServerTransport) {
         self.iroh = iroh
@@ -99,28 +112,32 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
 
         let connection = try await connection(for: alpn)
         do {
-            return IrohLibByteStream(stream: try await connection.openBi())
+            let stream = try await connection.openBi()
+            recordSelectedPath(connection: connection, alpn: alpn, reason: "stream_open")
+            return IrohLibByteStream(stream: stream)
         } catch {
             // A cached QUIC connection can close between closeReason() and
             // openBi(). Invalidate only that ALPN and reconnect once.
+            IrohTransportTelemetry.recordReconnect(status: "attempt", reason: "open_stream")
             connections.removeValue(forKey: alpn)
             let replacement = try await self.connection(for: alpn)
             do {
-                return IrohLibByteStream(stream: try await replacement.openBi())
+                let stream = try await replacement.openBi()
+                recordSelectedPath(connection: replacement, alpn: alpn, reason: "reconnected")
+                IrohTransportTelemetry.recordReconnect(status: "recovered", reason: "open_stream")
+                return IrohLibByteStream(stream: stream)
             } catch {
+                IrohTransportTelemetry.recordReconnect(
+                    status: "failed",
+                    reason: IrohTransportTelemetry.errorKind(error)
+                )
                 throw IrohTransportError.unavailable("Unable to open Iroh stream: \(error.localizedDescription)")
             }
         }
     }
 
     func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
-        let connection = try await connection(for: alpn)
-        guard let selected = connection.paths().first(where: \.isSelected) else { return nil }
-        return IrohSelectedPathEvidence(
-            isIP: selected.isIp,
-            isRelay: selected.isRelay,
-            rttMs: selected.rttMs
-        )
+        Self.selectedPathEvidence(connection: try await connection(for: alpn))
     }
 
     func suspendConnections() async {
@@ -157,6 +174,7 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
 
         let endpoint = try await boundEndpoint()
         let metadata = iroh
+        let startedAtMs = ChatSessionTelemetry.nowMs()
         let task = Task<Connection, Error> {
             try await Self.connect(endpoint: endpoint, iroh: metadata, alpn: alpn)
         }
@@ -165,11 +183,46 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
             let connected = try await task.value
             connectionTasks.removeValue(forKey: alpn)
             connections[alpn] = connected
+            let evidence = Self.selectedPathEvidence(connection: connected)
+            IrohTransportTelemetry.recordConnection(
+                durationMs: ChatSessionTelemetry.nowMs() - startedAtMs,
+                status: "connected",
+                evidence: evidence
+            )
+            recordSelectedPath(connection: connected, alpn: alpn, reason: "connected")
             return connected
         } catch {
             connectionTasks.removeValue(forKey: alpn)
+            IrohTransportTelemetry.recordConnection(
+                durationMs: ChatSessionTelemetry.nowMs() - startedAtMs,
+                status: "failed",
+                evidence: nil,
+                errorKind: IrohTransportTelemetry.errorKind(error)
+            )
             throw error
         }
+    }
+
+    private func recordSelectedPath(connection: Connection, alpn: String, reason: String) {
+        guard let evidence = Self.selectedPathEvidence(connection: connection) else { return }
+        let current = evidence.pathKind
+        let previous = selectedPathKinds.updateValue(current, forKey: alpn)
+        let transitionFrom = previous != nil && previous != current ? previous : nil
+        guard previous == nil || transitionFrom != nil else { return }
+        IrohTransportTelemetry.recordPath(
+            evidence,
+            reason: reason,
+            transitionFrom: transitionFrom
+        )
+    }
+
+    private static func selectedPathEvidence(connection: Connection) -> IrohSelectedPathEvidence? {
+        guard let selected = connection.paths().first(where: \.isSelected) else { return nil }
+        return IrohSelectedPathEvidence(
+            isIP: selected.isIp,
+            isRelay: selected.isRelay,
+            rttMs: selected.rttMs
+        )
     }
 
     private static func connect(
@@ -318,6 +371,139 @@ actor IrohConnectionManager {
         proxy = nil
         proxyToken = nil
         await provider.shutdown()
+    }
+}
+
+enum IrohTransportTelemetry {
+    static func recordConnection(
+        durationMs: Int64,
+        status: String,
+        evidence: IrohSelectedPathEvidence?,
+        errorKind: String? = nil
+    ) {
+        var tags = [
+            "transport": "iroh",
+            "status": status,
+            "path": evidence?.pathKind.rawValue ?? IrohPathKind.unknown.rawValue,
+        ]
+        if let errorKind { tags["error_kind"] = errorKind }
+        ChatSessionTelemetry.recordTimingMetric(
+            .networkIrohConnectionMs,
+            durationMs: durationMs,
+            tags: tags
+        )
+        ClientLog.info("Iroh", "Connection result", metadata: tags)
+    }
+
+    static func recordPath(
+        _ evidence: IrohSelectedPathEvidence,
+        reason: String,
+        transitionFrom: IrohPathKind?
+    ) {
+        let path = evidence.pathKind
+        let tags = [
+            "transport": "iroh",
+            "path": path.rawValue,
+            "reason": reason,
+        ]
+        ChatSessionTelemetry.recordTimingMetric(
+            .networkIrohPathRttMs,
+            durationMs: Int64(clamping: evidence.rttMs),
+            tags: tags
+        )
+        ClientLog.info("Iroh", "Selected path", metadata: [
+            "transport": "iroh",
+            "path": path.rawValue,
+            "reason": reason,
+            "rttMs": String(evidence.rttMs),
+        ])
+        if let transitionFrom {
+            ChatSessionTelemetry.recordCountMetric(
+                .networkIrohPathTransition,
+                tags: [
+                    "transport": "iroh",
+                    "from": transitionFrom.rawValue,
+                    "to": path.rawValue,
+                ]
+            )
+            ClientLog.info("Iroh", "Path transitioned", metadata: [
+                "transport": "iroh",
+                "from": transitionFrom.rawValue,
+                "to": path.rawValue,
+            ])
+        }
+    }
+
+    static func recordReconnect(status: String, reason: String) {
+        let tags = [
+            "transport": "iroh",
+            "status": status,
+            "reason": reason,
+        ]
+        ChatSessionTelemetry.recordCountMetric(.networkIrohReconnect, tags: tags)
+        ClientLog.info("Iroh", "Reconnect", metadata: tags)
+    }
+
+    static func recordTunnel(
+        durationMs: Int64,
+        requestBytes: Int,
+        responseBytes: Int,
+        status: String
+    ) {
+        let tags = ["transport": "iroh", "status": status]
+        ChatSessionTelemetry.recordTimingMetric(
+            .networkIrohTunnelDurationMs,
+            durationMs: durationMs,
+            tags: tags
+        )
+        guard requestBytes > 0 || responseBytes > 0 else { return }
+        ChatSessionTelemetry.recordCountMetric(
+            .networkIrohTunnelRequestBytes,
+            value: requestBytes,
+            tags: tags
+        )
+        ChatSessionTelemetry.recordCountMetric(
+            .networkIrohTunnelResponseBytes,
+            value: responseBytes,
+            tags: tags
+        )
+    }
+
+    static func recordTunnelError(phase: String, errorKind: String) {
+        ChatSessionTelemetry.recordCountMetric(
+            .networkIrohTunnelError,
+            tags: [
+                "transport": "iroh",
+                "phase": phase,
+                "error_kind": errorKind,
+            ]
+        )
+        ClientLog.warning("Iroh", "Tunnel error", metadata: [
+            "transport": "iroh",
+            "phase": phase,
+            "errorKind": errorKind,
+        ])
+    }
+
+    static func errorKind(_ error: Error) -> String {
+        guard let error = error as? IrohTransportError else {
+            if error is CancellationError { return "cancelled" }
+            return "other"
+        }
+        return switch error {
+        case .unsupportedMetadataVersion: "metadata_version"
+        case .unsupportedALPN: "alpn"
+        case .malformedNodeID: "node_id"
+        case .missingTicket: "missing_ticket"
+        case .malformedTicket: "malformed_ticket"
+        case .ticketPeerMismatch: "ticket_peer"
+        case .remotePeerMismatch: "remote_peer"
+        case .unavailable: "unavailable"
+        case .authentication: "authentication"
+        case .framing: "framing"
+        case .protocolViolation: "protocol"
+        case .listener: "listener"
+        }
     }
 }
 

@@ -120,6 +120,42 @@ describe("telemetry-review svg reporting", () => {
     }
   });
 
+  it("keeps Iroh transport metrics informational and preserves bounded path tags", () => {
+    const telemetryDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-review-"));
+    try {
+      const now = Date.now();
+      writeFileSync(
+        join(telemetryDir, "chat-metrics-2026-07-18.jsonl"),
+        JSON.stringify({
+          buildNumber: "43",
+          samples: [
+            {
+              ts: now,
+              metric: "network.iroh_path_rtt_ms",
+              value: 93,
+              unit: "ms",
+              tags: { transport: "iroh", path: "relay", reason: "connected" },
+            },
+          ],
+        }) + "\n",
+      );
+
+      const data = loadSamples(telemetryDir, 1);
+      const result = review(data, {
+        days: 1,
+        dataDir: "/tmp/oppi-test-data",
+        dictationOnly: false,
+        byTags: ["path"],
+      });
+
+      expect(result.metrics["network.iroh_path_rtt_ms"]?.status).toBe("no_slo");
+      expect(result.metrics["network.iroh_path_rtt_ms"]?.p50).toBe(93);
+      expect(result.breakdowns[0]?.values.relay?.sampleCount).toBe(1);
+    } finally {
+      rmSync(telemetryDir, { recursive: true, force: true });
+    }
+  });
+
   it("buckets trend samples into deterministic p95 windows", () => {
     const endTs = Date.UTC(2026, 4, 13, 12, 0, 0);
     const data = makeReviewData(endTs);

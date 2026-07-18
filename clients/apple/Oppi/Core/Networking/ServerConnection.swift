@@ -338,8 +338,11 @@ final class ServerConnection {
                     selection: selection,
                     tlsCertFingerprint: nil
                 )
+                let evidence = try? await manager?.selectedPathEvidence()
                 ClientLog.info("Iroh", "Transparent tunnel selected", metadata: [
-                    "nodeId": String(iroh.nodeId.prefix(16)),
+                    "transport": "iroh",
+                    "path": evidence?.pathKind.rawValue ?? IrohPathKind.unknown.rawValue,
+                    "rttMs": evidence.map { String($0.rttMs) } ?? "unknown",
                     "metadataVersion": String(iroh.version),
                     "addressMode": iroh.addressMode.rawValue,
                     "fallback": "fail_closed",
@@ -349,7 +352,8 @@ final class ServerConnection {
         } catch {
             logger.error("Iroh transport setup failed closed: \(error.localizedDescription, privacy: .public)")
             ClientLog.error("Iroh", "Transport setup failed closed", metadata: [
-                "error": error.localizedDescription,
+                "transport": "iroh",
+                "errorKind": IrohTransportTelemetry.errorKind(error),
                 "preference": credentials.transports.preference.rawValue,
             ])
             return false
@@ -399,9 +403,7 @@ final class ServerConnection {
             credentials: credentials,
             preferredEndpoint: selection,
             diagnosticRole: "focused_session",
-            diagnosticRemoteIdentity: selection.transportPath == .iroh
-                ? "iroh:\(credentials.transports.iroh.map { String($0.nodeId.prefix(16)) } ?? "unknown")"
-                : nil,
+            diagnosticRemoteIdentity: selection.transportPath == .iroh ? "iroh" : nil,
             tlsCertFingerprint: tlsCertFingerprint
         )
         self.wsClient?.setStreamURL(nil)
@@ -1133,11 +1135,8 @@ final class ServerConnection {
     }
 
     private func diagnosticEndpointMetadata(_ url: URL?, prefix: String) -> [String: String] {
-        if transportPath == .iroh, let iroh = credentials?.transports.iroh {
-            return [
-                "\(prefix)Transport": "iroh",
-                "\(prefix)NodeId": String(iroh.nodeId.prefix(16)),
-            ]
+        if transportPath == .iroh {
+            return ["\(prefix)Transport": "iroh"]
         }
         return ClientLog.endpointMetadata(url, prefix: prefix)
     }
@@ -1191,8 +1190,8 @@ final class ServerConnection {
     }
 
     func streamEndpointHostForMetrics() -> String {
-        if transportPath == .iroh, let nodeID = credentials?.transports.iroh?.nodeId {
-            return "iroh:\(nodeID.prefix(16))"
+        if transportPath == .iroh {
+            return "iroh"
         }
         return endpointSelection?.baseURL.host ?? credentials?.host ?? "unknown"
     }
@@ -1452,9 +1451,7 @@ final class ServerConnection {
             url: streamURL,
             token: credentials.token,
             tlsCertFingerprint: transportPath == .iroh ? nil : credentials.normalizedTLSCertFingerprint,
-            diagnosticRemoteIdentity: transportPath == .iroh
-                ? "iroh:\(credentials.transports.iroh.map { String($0.nodeId.prefix(16)) } ?? "unknown")"
-                : nil
+            diagnosticRemoteIdentity: transportPath == .iroh ? "iroh" : nil
         )
         appEventStreamCoordinator.start(
             connection: self,

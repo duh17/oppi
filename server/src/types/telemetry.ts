@@ -351,6 +351,40 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "count",
     description: "Global app-event stream frame decode failures. Tags: error_kind.",
   },
+
+  // ── Iroh transport ──
+  "network.iroh_connection_ms": {
+    unit: "ms",
+    description: "Iroh QUIC connection setup latency. Tags: transport, status, path, error_kind.",
+  },
+  "network.iroh_path_rtt_ms": {
+    unit: "ms",
+    description: "Selected Iroh path RTT. Tags: transport, path, reason.",
+  },
+  "network.iroh_path_transition": {
+    unit: "count",
+    description: "Selected Iroh path transition count. Tags: transport, from, to.",
+  },
+  "network.iroh_reconnect": {
+    unit: "count",
+    description: "Iroh reconnect attempt/outcome count. Tags: transport, status, reason.",
+  },
+  "network.iroh_tunnel_duration_ms": {
+    unit: "ms",
+    description: "Lifetime of one local HTTP/WebSocket tunnel over Iroh. Tags: transport, status.",
+  },
+  "network.iroh_tunnel_request_bytes": {
+    unit: "count",
+    description: "Observed bytes sent through an Iroh tunnel. Tags: transport, status.",
+  },
+  "network.iroh_tunnel_response_bytes": {
+    unit: "count",
+    description: "Observed bytes received through an Iroh tunnel. Tags: transport, status.",
+  },
+  "network.iroh_tunnel_error": {
+    unit: "count",
+    description: "Iroh tunnel setup or pump error count. Tags: transport, phase, error_kind.",
+  },
   "chat.ask_response_ms": {
     unit: "ms",
     description:
