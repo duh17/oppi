@@ -51,7 +51,10 @@ describe("shared telemetry constants", () => {
       .map((match) => match[1])
       .filter(
         (metric) =>
-          metric.startsWith("chat.") || metric.startsWith("plot.") || metric.startsWith("device."),
+          metric.startsWith("chat.") ||
+          metric.startsWith("plot.") ||
+          metric.startsWith("device.") ||
+          metric.startsWith("network."),
       );
 
     expect([...new Set(iosMetricNames)].sort()).toEqual([...CHAT_METRIC_NAME_VALUES].sort());

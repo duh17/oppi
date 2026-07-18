@@ -169,6 +169,7 @@ final class IrohLoopbackProxy: @unchecked Sendable {
     }
 
     private func bridge(connection: NWConnection, openStream: OpenStream) async {
+        let startedAtMs = ChatSessionTelemetry.nowMs()
         let stream: any IrohByteStream
         let initialRequest: (data: Data, complete: Bool)
         do {
@@ -192,39 +193,74 @@ final class IrohLoopbackProxy: @unchecked Sendable {
             }
         } catch {
             irohProxyLogger.error("Iroh proxy stream setup failed: \(error.localizedDescription, privacy: .public)")
+            IrohTransportTelemetry.recordTunnelError(
+                phase: "setup",
+                errorKind: IrohTransportTelemetry.errorKind(error)
+            )
+            IrohTransportTelemetry.recordTunnel(
+                durationMs: ChatSessionTelemetry.nowMs() - startedAtMs,
+                requestBytes: 0,
+                responseBytes: 0,
+                status: "setup_failed"
+            )
             connection.cancel()
             return
         }
 
+        let byteCounter = IrohTunnelByteCounter(requestBytes: initialRequest.data.count)
+        var status = "completed"
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 if !initialRequest.complete {
                     group.addTask {
-                        try await Self.pumpLocalToIroh(connection: connection, stream: stream)
+                        try await Self.pumpLocalToIroh(
+                            connection: connection,
+                            stream: stream,
+                            counter: byteCounter
+                        )
                     }
                 }
                 group.addTask {
-                    try await Self.pumpIrohToLocal(stream: stream, connection: connection)
+                    try await Self.pumpIrohToLocal(
+                        stream: stream,
+                        connection: connection,
+                        counter: byteCounter
+                    )
                 }
                 try await group.waitForAll()
             }
         } catch is CancellationError {
+            status = "cancelled"
             await stream.reset(errorCode: 2)
         } catch {
+            status = "failed"
             irohProxyLogger.debug("Iroh proxy connection ended: \(error.localizedDescription, privacy: .public)")
+            IrohTransportTelemetry.recordTunnelError(
+                phase: "pump",
+                errorKind: IrohTransportTelemetry.errorKind(error)
+            )
             await stream.reset(errorCode: 2)
         }
+        let byteSnapshot = byteCounter.snapshot()
+        IrohTransportTelemetry.recordTunnel(
+            durationMs: ChatSessionTelemetry.nowMs() - startedAtMs,
+            requestBytes: byteSnapshot.requestBytes,
+            responseBytes: byteSnapshot.responseBytes,
+            status: status
+        )
         connection.cancel()
     }
 
     private static func pumpLocalToIroh(
         connection: NWConnection,
-        stream: any IrohByteStream
+        stream: any IrohByteStream,
+        counter: IrohTunnelByteCounter
     ) async throws {
         while !Task.isCancelled {
             let (data, complete) = try await receive(from: connection)
             if !data.isEmpty {
                 try await stream.write(data)
+                counter.addRequestBytes(data.count)
             }
             if complete {
                 try await stream.finishWriting()
@@ -236,15 +272,31 @@ final class IrohLoopbackProxy: @unchecked Sendable {
 
     private static func pumpIrohToLocal(
         stream: any IrohByteStream,
-        connection: NWConnection
+        connection: NWConnection,
+        counter: IrohTunnelByteCounter
+    ) async throws {
+        try await pumpIrohToLocal(
+            counter: counter,
+            read: { try await stream.read(maxBytes: chunkBytes) },
+            send: { data, isComplete in
+                try await send(data, isComplete: isComplete, over: connection)
+            }
+        )
+    }
+
+    static func pumpIrohToLocal(
+        counter: IrohTunnelByteCounter,
+        read: @escaping @Sendable () async throws -> Data,
+        send: @escaping @Sendable (Data, Bool) async throws -> Void
     ) async throws {
         while !Task.isCancelled {
-            let data = try await stream.read(maxBytes: chunkBytes)
+            let data = try await read()
             if data.isEmpty {
-                try await send(Data(), isComplete: true, over: connection)
+                try await send(Data(), true)
                 return
             }
-            try await send(data, isComplete: false, over: connection)
+            try await send(data, false)
+            counter.addResponseBytes(data.count)
         }
         throw CancellationError()
     }
@@ -420,6 +472,28 @@ final class IrohLoopbackProxy: @unchecked Sendable {
         for waiter in waiters {
             waiter.resume(with: result)
         }
+    }
+}
+
+final class IrohTunnelByteCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requestBytes: Int
+    private var responseBytes = 0
+
+    init(requestBytes: Int = 0) {
+        self.requestBytes = requestBytes
+    }
+
+    func addRequestBytes(_ count: Int) {
+        lock.withLock { requestBytes += count }
+    }
+
+    func addResponseBytes(_ count: Int) {
+        lock.withLock { responseBytes += count }
+    }
+
+    func snapshot() -> (requestBytes: Int, responseBytes: Int) {
+        lock.withLock { (requestBytes, responseBytes) }
     }
 }
 

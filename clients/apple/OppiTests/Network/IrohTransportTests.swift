@@ -77,6 +77,35 @@ struct IrohTransportTests {
         }
     }
 
+    @Test func pathEvidenceUsesOnlyUnambiguousPrivacySafeCategories() {
+        #expect(IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 12).pathKind == .direct)
+        #expect(IrohSelectedPathEvidence(isIP: false, isRelay: true, rttMs: 80).pathKind == .relay)
+        #expect(IrohSelectedPathEvidence(isIP: false, isRelay: false, rttMs: 0).pathKind == .unknown)
+        #expect(IrohSelectedPathEvidence(isIP: true, isRelay: true, rttMs: 0).pathKind == .unknown)
+    }
+
+    @Test func telemetryErrorsCollapseToLowCardinalityKinds() {
+        #expect(IrohTransportTelemetry.errorKind(IrohTransportError.unavailable("private detail")) == "unavailable")
+        #expect(IrohTransportTelemetry.errorKind(IrohTransportError.remotePeerMismatch(
+            expected: "private expected",
+            actual: "private actual"
+        )) == "remote_peer")
+        #expect(IrohTransportTelemetry.errorKind(CancellationError()) == "cancelled")
+    }
+
+    @MainActor
+    @Test func streamMetricsUseOnlyBoundedIrohIdentity() async throws {
+        let connection = ServerConnection()
+        let loopbackURL = try #require(URL(string: "http://127.0.0.1:12345"))
+        let configured = await connection.configureForUse(
+            credentials: credentials(preference: .irohOnly, includeHTTP: false),
+            irohProxyFactory: { _, _ in (nil, loopbackURL) }
+        )
+
+        #expect(configured)
+        #expect(connection.streamEndpointHostForMetrics() == "iroh")
+    }
+
     @Test func localRequestWithoutAuthorizationIsRejected() {
         let request = Data("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8)
         #expect(throws: IrohTransportError.authentication(
@@ -212,6 +241,26 @@ struct IrohTransportTests {
         )
 
         #expect(String(data: request.data, encoding: .utf8)?.contains("Upgrade: websocket") == true)
+    }
+
+    @Test func failedResponsePumpPreservesForwardedByteCount() async {
+        let counter = IrohTunnelByteCounter()
+        let source = FailingIrohResponseSource(
+            firstChunk: Data(repeating: 7, count: 4_096),
+            error: IrohTransportError.unavailable("injected failure")
+        )
+        let sink = ForwardedChunkSink()
+
+        await #expect(throws: IrohTransportError.unavailable("injected failure")) {
+            try await IrohLoopbackProxy.pumpIrohToLocal(
+                counter: counter,
+                read: { try await source.read() },
+                send: { data, _ in await sink.send(data) }
+            )
+        }
+
+        #expect(counter.snapshot().responseBytes == 4_096)
+        #expect(await sink.byteCount() == 4_096)
     }
 
     @Test func authenticatedPrefaceIsBoundedAndRedactable() throws {
@@ -364,6 +413,34 @@ struct IrohConnectionManagerTests {
         }
         #expect(await provider.resetCount() == 1)
     }
+}
+
+private actor FailingIrohResponseSource {
+    private var firstChunk: Data?
+    private let error: IrohTransportError
+
+    init(firstChunk: Data, error: IrohTransportError) {
+        self.firstChunk = firstChunk
+        self.error = error
+    }
+
+    func read() throws -> Data {
+        if let firstChunk {
+            self.firstChunk = nil
+            return firstChunk
+        }
+        throw error
+    }
+}
+
+private actor ForwardedChunkSink {
+    private var bytes = 0
+
+    func send(_ data: Data) {
+        bytes += data.count
+    }
+
+    func byteCount() -> Int { bytes }
 }
 
 private actor FragmentedRequestSource {

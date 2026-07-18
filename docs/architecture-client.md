@@ -123,6 +123,8 @@ For HTTP credentials, clients connect directly to the selected HTTP(S) endpoint.
 
 Iroh-only credentials fail closed. An Iroh-preferred credential that advertises the tunnel also fails closed on malformed metadata, peer mismatch, authentication failure, or protocol failure; it does not silently downgrade after selecting Iroh. Loopback URLs are runtime-only and never become the paired server identity.
 
+Production telemetry records only bounded transport categories: connection latency/outcome, `direct|relay|unknown` path and RTT, path transitions, reconnect outcomes, tunnel duration/bytes, and coarse error kinds. Endpoint IDs, node-ID prefixes, tickets, relay URLs, IP addresses, hostnames, tokens, and raw transport errors must not enter uploaded metrics or client logs.
+
 ```mermaid
 graph TD
   Client[Apple client]

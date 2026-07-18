@@ -406,6 +406,17 @@ const DICTATION_BREAKDOWN_METRICS = new Set<string>([
   "chat.dictation_error",
 ]);
 
+const IROH_INFORMATIONAL_METRICS = [
+  ["network.iroh_connection_ms", "connect"],
+  ["network.iroh_path_rtt_ms", "path_rtt"],
+  ["network.iroh_path_transition", "transitions"],
+  ["network.iroh_reconnect", "reconnects"],
+  ["network.iroh_tunnel_duration_ms", "tunnel_time"],
+  ["network.iroh_tunnel_request_bytes", "tx_bytes"],
+  ["network.iroh_tunnel_response_bytes", "rx_bytes"],
+  ["network.iroh_tunnel_error", "errors"],
+] as const;
+
 function inferUnit(metric: string): string {
   if (metric.endsWith("_ms")) return "ms";
   if (metric.endsWith("_bytes")) return "bytes";
@@ -1404,6 +1415,7 @@ function informationalGroup(metric: string): string {
     return "UX responsiveness drill-down (no SLO)";
   }
   if (AGENT_WORKLOAD_METRICS.has(metric)) return "Agent workload / progress (not UX latency)";
+  if (metric.startsWith("network.iroh_")) return "Iroh transport (no SLO)";
   if (
     metric.startsWith("server.ws_") ||
     metric.startsWith("server.session_") ||
@@ -1583,6 +1595,26 @@ function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
       );
     }
     console.log();
+  }
+
+  if (!args.dictation) {
+    const irohMetrics = IROH_INFORMATIONAL_METRICS.filter(
+      ([metric]) => (result.metrics[metric]?.count ?? 0) > 0,
+    );
+    if (irohMetrics.length > 0) {
+      console.log(`${c.bold}${c.cyan}Iroh Transport${c.reset}`);
+      console.log(
+        `  ${c.dim}Privacy-safe path, reconnect, tunnel, and byte telemetry; informational only.${c.reset}`,
+      );
+      for (const [metric, short] of irohMetrics) {
+        const item = result.metrics[metric];
+        if (!item) continue;
+        console.log(
+          `  ${short.slice(0, 14).padEnd(14)} p50 ${fmtValue(item.p50, item.unit).padStart(8)}  p95 ${fmtValue(item.p95, item.unit).padStart(8)}  n=${item.count}`,
+        );
+      }
+      console.log();
+    }
   }
 
   if (args.dictation && result.breakdowns.length > 0) printBreakdowns(result, c);
