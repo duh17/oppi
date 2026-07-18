@@ -1,6 +1,15 @@
 {
-  "originHash" : "4b54118e0322e1fd36e59c93e856906a07672ea0cc3b454daba931da076ed3d4",
+  "originHash" : "639a58eb5db76f7b014ff459cbd75865cf4dffcd93622b33abceeae89326f6a4",
   "pins" : [
+    {
+      "identity" : "iroh-ffi",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/n0-computer/iroh-ffi.git",
+      "state" : {
+        "revision" : "afcb46d9f583eca81a592eddeae531efe91f3bd1",
+        "version" : "1.0.0"
+      }
+    },
     {
       "identity" : "sparkle",
       "kind" : "remoteSourceControl",
