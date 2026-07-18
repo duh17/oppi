@@ -4,6 +4,34 @@ import { cmdWait } from "../src/cli/commands/wait.js";
 import type { Storage } from "../src/storage.js";
 
 describe("cmdWait", () => {
+  it("rejects managed self-targeting before calling the local API", async () => {
+    const getToken = vi.fn(() => {
+      throw new Error("should not poll");
+    });
+    const storage = { getToken } as unknown as Storage;
+    const previousCallerSessionId = process.env.OPPI_CALLER_SESSION_ID;
+    const previousExitCode = process.exitCode;
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    try {
+      process.env.OPPI_CALLER_SESSION_ID = "sess-1";
+      process.exitCode = undefined;
+      await cmdWait(storage, "session", ["sess-1"], { json: "true" });
+
+      expect(getToken).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(JSON.parse(write.mock.calls.map((call) => String(call[0])).join(""))).toEqual({
+        ok: false,
+        error: { message: "Cannot target the calling Oppi session (sess-1)" },
+      });
+    } finally {
+      write.mockRestore();
+      process.exitCode = previousExitCode;
+      if (previousCallerSessionId === undefined) delete process.env.OPPI_CALLER_SESSION_ID;
+      else process.env.OPPI_CALLER_SESSION_ID = previousCallerSessionId;
+    }
+  });
+
   it("rejects a zero poll interval before calling the local API", async () => {
     const getToken = vi.fn(() => {
       throw new Error("should not poll");
