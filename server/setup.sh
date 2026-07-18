@@ -4,7 +4,7 @@
 #
 # Usage:
 #   bash setup.sh              # install + build + start foreground
-#   bash setup.sh --install    # install as background service (macOS launchd)
+#   bash setup.sh --install    # source-link CLI and install background service (macOS launchd)
 #
 set -euo pipefail
 
@@ -48,8 +48,22 @@ chmod +x dist/src/cli.js
 
 # Start
 if [[ "${1:-}" == "--install" ]]; then
+  if ! command -v npm &>/dev/null; then
+    echo "Error: npm is required to source-link the Oppi development CLI."
+    exit 1
+  fi
+
+  echo "Linking the machine-wide oppi CLI to this source checkout..."
+  npm link --ignore-scripts --no-audit --no-fund
+
+  LINKED_CLI="$(command -v oppi || true)"
+  if [[ -z "$LINKED_CLI" || "$(realpath "$LINKED_CLI")" != "$(realpath dist/src/cli.js)" ]]; then
+    echo "Error: source-linked oppi CLI did not resolve to $(realpath dist/src/cli.js)."
+    exit 1
+  fi
+
   echo ""
-  "$RT" dist/src/cli.js server install
+  oppi server install
 else
   echo ""
   "$RT" dist/src/cli.js serve "$@"
