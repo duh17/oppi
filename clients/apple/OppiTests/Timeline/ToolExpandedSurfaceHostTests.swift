@@ -728,6 +728,85 @@ struct ToolExpandedSurfaceHostTests {
         #expect(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
+    @Test func tallReadMediaKeepsImageAndOpenLabelAlignedInsideRowWidth() async throws {
+        let hostSize = CGSize(width: 390, height: 700)
+        let imageData = try #require(makeReadToolTestImage(size: CGSize(width: 160, height: 474)).pngData())
+        let output = "Read image file [image/png]\n\ndata:image/png;base64,\(imageData.base64EncodedString())"
+        let configuration = makeTimelineToolConfiguration(
+            title: "read /tmp/telemetry-1d.png",
+            expandedContent: .readMedia(
+                output: output,
+                filePath: "/tmp/telemetry-1d.png",
+                startLine: 1,
+                attachments: []
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let collectionView = UICollectionView(
+            frame: CGRect(origin: .zero, size: hostSize),
+            collectionViewLayout: layout
+        )
+        let hostController = UIViewController()
+        hostController.view.frame = CGRect(origin: .zero, size: hostSize)
+        hostController.view.addSubview(collectionView)
+        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let registration = UICollectionView.CellRegistration<UICollectionViewCell, String> { cell, _, _ in
+            cell.contentConfiguration = configuration
+        }
+        let dataSource = UICollectionViewDiffableDataSource<Int, String>(collectionView: collectionView) { cv, indexPath, itemID in
+            cv.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: itemID)
+        }
+        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems(["tool-svg"])
+        await dataSource.apply(snapshot, animatingDifferences: false)
+
+        let ready = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            hostController.view.setNeedsLayout()
+            hostController.view.layoutIfNeeded()
+            collectionView.layoutIfNeeded()
+            guard let cell = collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) else {
+                return false
+            }
+            return readMediaContentImageView(in: cell.contentView) != nil
+        }
+        #expect(ready)
+
+        let cell = try #require(collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
+        let view = try #require(firstToolSubview(ofType: ToolTimelineRowContentView.self, in: cell.contentView))
+        let rowBounds = view.bounds
+        let scrollView = view.expandedScrollView
+        let preview = try #require(firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: view))
+        let openLabel = try #require(timelineAllLabels(in: preview).first { $0.text == "Tap to open full image" })
+        let previewFrame = preview.convert(preview.bounds, to: view)
+        let openLabelFrame = openLabel.convert(openLabel.bounds, to: view)
+
+        #expect(scrollView.contentInsetAdjustmentBehavior == .never)
+        #expect(scrollView.contentOffset.x == -scrollView.adjustedContentInset.left)
+        #expect(scrollView.contentSize.width <= scrollView.bounds.width + 1)
+        #expect(previewFrame.minX >= rowBounds.minX - 1)
+        #expect(previewFrame.maxX <= rowBounds.maxX + 1)
+        #expect(openLabelFrame.minX >= previewFrame.minX - 1)
+        #expect(openLabelFrame.maxX <= previewFrame.maxX + 1)
+
+        let outputURL = try snapshotOutputDirectory("tall-read-media-alignment")
+            .appendingPathComponent("tall-read-media-alignment.png")
+        let screenshot = UIGraphicsImageRenderer(size: hostSize).image { _ in
+            hostController.view.drawHierarchy(
+                in: CGRect(origin: .zero, size: hostSize),
+                afterScreenUpdates: true
+            )
+        }
+        try #require(screenshot.pngData()).write(to: outputURL, options: .atomic)
+        #expect(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
     @Test func svgReadMediaPreviewUsesSingleTapFullscreenActivation() async throws {
         let preview = NativeExpandedInlineImageView(maxPixelSize: 1_600)
         let container = UIView(frame: CGRect(x: 0, y: 0, width: 360, height: 260))
