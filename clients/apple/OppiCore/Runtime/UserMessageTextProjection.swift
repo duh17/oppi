@@ -16,12 +16,14 @@ enum UserMessageTextProjection {
     }
 
     static func visibleText(from rawText: String) -> String {
-        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
+        let content = rawText.trimmingCharacters(in: .newlines)
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "" }
 
-        let withoutMarker = stripMarker(from: trimmed)
-        let withoutAttachedFiles = stripBlock(header: attachedFilesHeader, from: withoutMarker)
-        let withoutReferenceBlock = stripBlock(header: referenceBlockHeader, from: withoutAttachedFiles)
+        let withoutMarker = stripMarker(from: content)
+        let withoutAttachedFiles = splitTrailingAttachedFilesBlock(from: withoutMarker)?.visibleText
+            ?? withoutMarker
+        let withoutReferenceBlock = splitTrailingReferenceBlock(from: withoutAttachedFiles)?.visibleText
+            ?? withoutAttachedFiles
         return withoutReferenceBlock.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -79,8 +81,93 @@ enum UserMessageTextProjection {
         value == "uploadedFile" || value == "reviewFile" || value == "repoFile"
     }
 
-    private static func stripBlock(header: String, from text: String) -> String {
-        guard let range = text.range(of: header) else { return text }
-        return String(text[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    static func splitTrailingReferenceBlock(
+        from text: String
+    ) -> (visibleText: String, bodyLines: [String])? {
+        splitTrailingBlock(header: referenceBlockHeader, from: text) { lines in
+            !lines.isEmpty && lines.allSatisfy { line in
+                guard line.hasPrefix("- ") else { return false }
+                return !line.dropFirst(2).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        }
+    }
+
+    static func splitTrailingAttachedFilesBlock(
+        from text: String
+    ) -> (visibleText: String, bodyLines: [String])? {
+        splitTrailingBlock(header: attachedFilesHeader, from: text) { lines in
+            var hasEntry = false
+            for line in lines {
+                if line.hasPrefix("- ") {
+                    guard attachedFilePath(from: line) != nil else { return false }
+                    hasEntry = true
+                    continue
+                }
+
+                let metadataPrefixes = ["  MIME: ", "  Size: "]
+                guard hasEntry,
+                      let prefix = metadataPrefixes.first(where: { line.hasPrefix($0) }),
+                      !line.dropFirst(prefix.count)
+                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return false
+                }
+            }
+            return hasEntry
+        }
+    }
+
+    static func attachedFilePath(from line: String) -> String? {
+        guard line.hasPrefix("- ") else { return nil }
+        let payload = String(line.dropFirst(2))
+        var candidates: [(displayName: String, path: String)] = []
+        var searchStart = payload.startIndex
+
+        while let separator = payload.range(of: ": ", range: searchStart..<payload.endIndex) {
+            let displayName = String(payload[..<separator.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let path = String(payload[separator.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !displayName.isEmpty, !path.isEmpty {
+                candidates.append((displayName, path))
+            }
+            searchStart = separator.upperBound
+        }
+
+        if let storedAttachment = candidates.first(where: {
+            $0.path.hasPrefix(".pi/attachments/")
+        }) {
+            return storedAttachment.path
+        }
+
+        return candidates.first(where: {
+            ($0.path as NSString).lastPathComponent == $0.displayName
+        })?.path
+    }
+
+    private static func splitTrailingBlock(
+        header: String,
+        from text: String,
+        validatesBody: ([String]) -> Bool
+    ) -> (visibleText: String, bodyLines: [String])? {
+        let content = text.trimmingCharacters(in: .newlines)
+        let lines = content.components(separatedBy: "\n")
+        guard let headerIndex = lines.lastIndex(of: header) else {
+            return nil
+        }
+        if headerIndex > lines.startIndex {
+            let precedingLine = lines[lines.index(before: headerIndex)]
+            guard precedingLine.trimmingCharacters(in: .whitespaces).isEmpty else {
+                return nil
+            }
+        }
+
+        let bodyStart = lines.index(after: headerIndex)
+        let bodyLines = Array(lines[bodyStart...])
+        guard validatesBody(bodyLines) else { return nil }
+
+        let visibleText = lines[..<headerIndex]
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (visibleText, bodyLines)
     }
 }

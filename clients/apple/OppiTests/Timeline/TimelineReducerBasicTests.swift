@@ -175,6 +175,31 @@ struct TimelineReducerBasicTests {
         #expect(UserMessageTextProjection.comparableText(withReferences) == "hello")
     }
 
+    @Test func userMessageProjectionPreservesReservedHeadersUsedAsProse() {
+        let commitPrompt = """
+        Extra focus:
+        Referenced workspace files: - Sources/App.swift
+
+        Git hygiene:
+        - Do not commit unless explicitly asked.
+        """
+        #expect(UserMessageTextProjection.visibleText(from: commitPrompt) == commitPrompt)
+
+        let attachmentProse = """
+        Attached files: explanatory text
+
+        Checklist:
+        - report.pdf: keep this visible
+        """
+        #expect(UserMessageTextProjection.visibleText(from: attachmentProse) == attachmentProse)
+
+        let leadingSpaceHeader = " Referenced workspace files:\n- Keep this instruction visible."
+        #expect(
+            UserMessageTextProjection.visibleText(from: leadingSpaceHeader)
+                == "Referenced workspace files:\n- Keep this instruction visible."
+        )
+    }
+
     @Test func retryStartRendersAsError() {
         let reducer = TimelineReducer()
         reducer.process(.retryStart(sessionId: "s1", attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: "rate limit"))
