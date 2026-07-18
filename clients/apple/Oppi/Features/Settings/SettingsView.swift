@@ -379,7 +379,7 @@ struct SettingsView: View {
             return "Emoji"
         case .genmoji:
             return "Genmoji"
-        case .piText, .golGrid:
+        case .officialPi, .piText, .golGrid:
             return assistantAvatar.displayName
         }
     }

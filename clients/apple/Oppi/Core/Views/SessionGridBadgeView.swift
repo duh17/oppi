@@ -3,8 +3,15 @@ import UIKit
 /// Shared image renderer for assistant avatars.
 @MainActor
 enum AssistantAvatarRenderer {
-    static func render(avatar: AssistantAvatar, sessionId: String, size: CGFloat) -> UIImage {
+    static func render(
+        avatar: AssistantAvatar,
+        sessionId: String,
+        size: CGFloat,
+        themeID: ThemeID? = nil
+    ) -> UIImage {
         switch avatar {
+        case .officialPi:
+            return renderOfficialPi(size: size, themeID: themeID ?? ThemeRuntimeState.currentThemeID())
         case .golGrid:
             return renderGrid(sessionId: sessionId, size: size)
         case .piText:
@@ -17,6 +24,37 @@ enum AssistantAvatarRenderer {
                 return genmojiImage
             }
             return renderText("π", size: size)
+        }
+    }
+
+    private static func renderOfficialPi(size: CGFloat, themeID: ThemeID) -> UIImage {
+        let palette = themeID.palette
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        return renderer.image { context in
+            let canvasScale = size / 800
+            context.cgContext.scaleBy(x: canvasScale, y: canvasScale)
+            UIColor(palette.fg).setFill()
+
+            // Official mark geometry from https://pi.dev/logo-auto.svg.
+            let pMark = UIBezierPath()
+            pMark.move(to: CGPoint(x: 165.29, y: 165.29))
+            pMark.addLine(to: CGPoint(x: 517.36, y: 165.29))
+            pMark.addLine(to: CGPoint(x: 517.36, y: 400))
+            pMark.addLine(to: CGPoint(x: 400, y: 400))
+            pMark.addLine(to: CGPoint(x: 400, y: 517.36))
+            pMark.addLine(to: CGPoint(x: 282.65, y: 517.36))
+            pMark.addLine(to: CGPoint(x: 282.65, y: 634.72))
+            pMark.addLine(to: CGPoint(x: 165.29, y: 634.72))
+            pMark.close()
+            pMark.move(to: CGPoint(x: 282.65, y: 282.65))
+            pMark.addLine(to: CGPoint(x: 282.65, y: 400))
+            pMark.addLine(to: CGPoint(x: 400, y: 400))
+            pMark.addLine(to: CGPoint(x: 400, y: 282.65))
+            pMark.close()
+            pMark.usesEvenOddFillRule = true
+            pMark.fill()
+
+            UIBezierPath(rect: CGRect(x: 517.36, y: 400, width: 117.36, height: 234.72)).fill()
         }
     }
 
@@ -132,6 +170,7 @@ enum AssistantAvatarRenderer {
 /// Renders the assistant avatar as a cached `UIImage` in a `UIImageView`.
 ///
 /// Supports all `AssistantAvatar` types:
+/// - `.officialPi` → official Pi logo mark
 /// - `.piText` → rendered π character
 /// - `.golGrid` → Game of Life grid, unique per session
 /// - `.emoji` → rendered emoji character
@@ -162,6 +201,18 @@ final class SessionGridBadgeView: UIView {
             imageView.topAnchor.constraint(equalTo: topAnchor),
             imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(avatarOrThemeDidChange(_:)),
+            name: .assistantAvatarDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(avatarOrThemeDidChange(_:)),
+            name: .oppiThemeDidChange,
+            object: nil
+        )
     }
 
     @available(*, unavailable)
@@ -171,9 +222,10 @@ final class SessionGridBadgeView: UIView {
         CGSize(width: 18, height: 18)
     }
 
-    /// Call when avatar preference changes to flush stale cached images.
-    static func clearCache() {
-        imageCache.removeAllObjects()
+    @objc private func avatarOrThemeDidChange(_ notification: Notification) {
+        Self.imageCache.removeAllObjects()
+        lastCacheKey = nil
+        updateIfNeeded()
     }
 
     private func updateIfNeeded() {

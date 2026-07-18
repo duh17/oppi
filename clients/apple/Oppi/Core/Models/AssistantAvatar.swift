@@ -3,6 +3,8 @@ import UIKit
 
 /// Avatar style for the assistant icon in chat bubbles and empty state.
 enum AssistantAvatar: Equatable, Sendable {
+    /// Official Pi logo mark from pi.dev.
+    case officialPi
     /// Classic π text character.
     case piText
     /// Game of Life grid forming π — unique per session.
@@ -15,6 +17,7 @@ enum AssistantAvatar: Equatable, Sendable {
 
     var displayName: String {
         switch self {
+        case .officialPi: return "Official Pi"
         case .piText: return "Classic π"
         case .golGrid: return "Grid π"
         case .emoji(let char): return char
@@ -24,6 +27,8 @@ enum AssistantAvatar: Equatable, Sendable {
 
     var pickerDescription: String? {
         switch self {
+        case .officialPi:
+            return "Official Pi logo"
         case .piText:
             return "Monospaced assistant glyph"
         case .golGrid:
@@ -35,6 +40,8 @@ enum AssistantAvatar: Equatable, Sendable {
 
     var cacheIdentifier: String {
         switch self {
+        case .officialPi:
+            return "officialPi"
         case .piText:
             return "piText"
         case .golGrid:
@@ -47,7 +54,7 @@ enum AssistantAvatar: Equatable, Sendable {
     }
 
     /// Built-in choices for the picker (not including user-set emoji/genmoji).
-    static let builtinCases: [AssistantAvatar] = [.piText, .golGrid]
+    static let builtinCases: [AssistantAvatar] = [.officialPi, .piText, .golGrid]
 
     // MARK: - Persistence
 
@@ -59,6 +66,7 @@ enum AssistantAvatar: Equatable, Sendable {
         let defaults = UserDefaults.standard
         let type = defaults.string(forKey: typeKey) ?? "piText"
         switch type {
+        case "officialPi": return .officialPi
         case "piText": return .piText
         case "golGrid": return .golGrid
         case "emoji":
@@ -74,9 +82,12 @@ enum AssistantAvatar: Equatable, Sendable {
         }
     }
 
+    @MainActor
     static func setCurrent(_ avatar: AssistantAvatar) {
         let defaults = UserDefaults.standard
         switch avatar {
+        case .officialPi:
+            defaults.set("officialPi", forKey: typeKey)
         case .piText:
             defaults.set("piText", forKey: typeKey)
         case .golGrid:
@@ -88,7 +99,6 @@ enum AssistantAvatar: Equatable, Sendable {
             defaults.set("genmoji", forKey: typeKey)
             defaults.set(data, forKey: genmojiKey)
         }
+        NotificationCenter.default.post(name: .assistantAvatarDidChange, object: nil)
     }
-
-
 }

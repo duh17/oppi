@@ -34,7 +34,6 @@ struct AvatarPickerView: View {
         Button {
             avatar = option
             AssistantAvatar.setCurrent(option)
-            SessionGridBadgeView.clearCache()
             dismiss()
         } label: {
             HStack(spacing: 12) {
@@ -69,13 +68,11 @@ struct AvatarPickerView: View {
             EmojiInputRow(onSelect: { selectedEmoji in
                 avatar = .emoji(selectedEmoji)
                 AssistantAvatar.setCurrent(.emoji(selectedEmoji))
-                SessionGridBadgeView.clearCache()
                 dismiss()
             }, onSelectGenmoji: { data in
                 if #available(iOS 18.0, *) {
                     avatar = .genmoji(data)
                     AssistantAvatar.setCurrent(.genmoji(data))
-                    SessionGridBadgeView.clearCache()
                     dismiss()
                 }
             })
@@ -137,8 +134,17 @@ struct AssistantAvatarPreview: View {
     var sessionId: String = "assistant-avatar-preview"
     var size: CGFloat = 28
 
+    @Environment(\.themeID) private var themeID
+
     var body: some View {
-        Image(uiImage: AssistantAvatarRenderer.render(avatar: avatar, sessionId: sessionId, size: size * 2))
+        Image(
+            uiImage: AssistantAvatarRenderer.render(
+                avatar: avatar,
+                sessionId: sessionId,
+                size: size * 2,
+                themeID: themeID
+            )
+        )
             .resizable()
             .interpolation(.high)
             .scaledToFit()

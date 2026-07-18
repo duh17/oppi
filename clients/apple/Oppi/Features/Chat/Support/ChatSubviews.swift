@@ -5,12 +5,26 @@ import SwiftUI
 struct ChatEmptyState: View {
     var sessionId: String = ""
     @State private var visible = false
+    @State private var avatar = AssistantAvatar.current
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.themeID) private var themeID
 
     var body: some View {
         Group {
-            let avatar = AssistantAvatar.current
             switch avatar {
+            case .officialPi:
+                Image(
+                    uiImage: AssistantAvatarRenderer.render(
+                        avatar: avatar,
+                        sessionId: sessionId,
+                        size: 112,
+                        themeID: themeID
+                    )
+                )
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 112, height: 112)
             case .golGrid:
                 SessionGridView(sessionId: sessionId)
             case .piText:
@@ -27,6 +41,9 @@ struct ChatEmptyState: View {
         }
         .opacity(visible ? 1 : 0)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onReceive(NotificationCenter.default.publisher(for: .assistantAvatarDidChange)) { _ in
+            avatar = AssistantAvatar.current
+        }
         .task {
             // Delay appearance to avoid flash on existing sessions
             // that briefly have empty items while loading.
