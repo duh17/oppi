@@ -210,4 +210,221 @@ struct StreamingInlineReparseTests {
     }
 }
 
+/// Differential validation modeled after Codex's streaming Markdown suite.
+/// Every committed chunk must produce exactly the same segments as a fresh,
+/// canonical full-document render at that point in the stream.
+@Suite("Streaming markdown differential rendering")
+@MainActor
+struct StreamingMarkdownDifferentialTests {
+    @Test func representativeBlockStreamMatchesCanonicalRenderAfterEveryChunk() {
+        assertIncrementalMatchesCanonical(chunks: [
+            "# Heading\n",
+            "\n",
+            "First paragraph with a [link](https://example.com).\n",
+            "continued on the next line.\n\n",
+            "1. First item\n",
+            "2. Second item\n\n",
+            "> Quoted paragraph\n\n",
+            "```swift\n",
+            "let value = 42\n",
+            "```\n\n",
+            "| Key | Value |\n",
+            "| --- | --- |\n",
+            "| alpha | beta |\n",
+            "\n<div>HTML block</div>\n",
+        ])
+    }
+
+    @Test func growingSingleBlocksMatchCanonicalRenderAfterEveryChunk() {
+        for chunks in [
+            [
+                "A paragraph that keeps growing\n",
+                "without a blank line between chunks.\n",
+                "It stays one top-level block.\n",
+            ],
+            [
+                "| Key | Value |\n",
+                "| --- | --- |\n",
+                "| alpha | beta |\n",
+                "| gamma | delta |\n",
+            ],
+        ] {
+            assertIncrementalMatchesCanonical(chunks: chunks)
+        }
+    }
+
+    @Test func referenceDefinitionRecomputesPreviouslyStableBlocks() {
+        assertIncrementalMatchesCanonical(chunks: [
+            "Earlier [reference][id].\n\n",
+            "An unrelated paragraph.\n\n",
+            "[id]: https://example.com/reference\n",
+            "\n",
+            "Later [reference][id].\n",
+        ])
+    }
+
+    @Test func containerNestedReferenceDefinitionRecomputesStableBlocks() {
+        assertIncrementalMatchesCanonical(chunks: [
+            "Earlier [reference][id].\n\n",
+            "An unrelated paragraph.\n\n",
+            "> [id]: https://example.com/reference\n",
+            "\n",
+            "Later [reference][id].\n",
+        ])
+    }
+
+    @Test func multilineReferenceLabelDoesNotBypassCanonicalValidation() {
+        assertIncrementalMatchesCanonical(chunks: [
+            "Earlier [multi line].\n\n",
+            "An unrelated paragraph.\n\n",
+            "[multi\n",
+            "line]: https://example.com/reference\n",
+            "\n",
+            "Later [multi line].\n",
+        ])
+    }
+
+    @Test func themeChangeRebuildsTheStablePrefix() {
+        let source = AssistantMarkdownSegmentSource()
+        let content = "# Heading\n\nStable paragraph.\n\nMutable tail."
+
+        _ = source.buildSegments(.make(content: content, isStreaming: true, themeID: .dark))
+        let incremental = source.buildSegments(.make(content: content + " More.", isStreaming: true, themeID: .light))
+        let canonical = canonicalSegments(content: content + " More.", themeID: .light)
+
+        #expect(segmentsEqual(incremental, canonical))
+    }
+
+    @Test func sessionContextChangeRebuildsTheStablePrefix() throws {
+        let source = AssistantMarkdownSegmentSource()
+        let initial = "![diagram](/absolute/diagram.svg)\n\nMutable tail."
+        let updated = initial + " More."
+        let baseURL = try #require(URL(string: "https://server.example.com"))
+
+        _ = source.buildSegments(.make(
+            content: initial,
+            isStreaming: true,
+            themeID: .dark,
+            workspaceID: "workspace-a",
+            serverBaseURL: baseURL
+        ))
+        let incremental = source.buildSegments(.make(
+            content: updated,
+            isStreaming: true,
+            themeID: .dark,
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        ))
+        let canonical = canonicalSegments(
+            content: updated,
+            themeID: .dark,
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+
+        #expect(segmentsEqual(incremental, canonical))
+    }
+
+    @Test func sourceContextChangeRebuildsTheStablePrefix() throws {
+        let source = AssistantMarkdownSegmentSource()
+        let initial = "![diagram](images/diagram.svg)\n\nMutable tail."
+        let updated = initial + " More."
+        let baseURL = try #require(URL(string: "https://server.example.com"))
+
+        _ = source.buildSegments(.make(
+            content: initial,
+            isStreaming: true,
+            themeID: .dark,
+            workspaceID: "workspace-a",
+            serverBaseURL: baseURL,
+            sourceFilePath: "docs/one.md"
+        ))
+        let incremental = source.buildSegments(.make(
+            content: updated,
+            isStreaming: true,
+            themeID: .dark,
+            workspaceID: "workspace-b",
+            serverBaseURL: baseURL,
+            sourceFilePath: "guides/two.md"
+        ))
+        let canonical = canonicalSegments(
+            content: updated,
+            themeID: .dark,
+            workspaceID: "workspace-b",
+            serverBaseURL: baseURL,
+            sourceFilePath: "guides/two.md"
+        )
+
+        #expect(segmentsEqual(incremental, canonical))
+    }
+
+    private func assertIncrementalMatchesCanonical(chunks: [String]) {
+        let source = AssistantMarkdownSegmentSource()
+        var content = ""
+
+        for (index, chunk) in chunks.enumerated() {
+            content += chunk
+            let incremental = source.buildSegments(.make(
+                content: content,
+                isStreaming: true,
+                themeID: .dark
+            ))
+            let canonical = canonicalSegments(content: content, themeID: .dark)
+            #expect(
+                segmentsEqual(incremental, canonical),
+                "Incremental render diverged after chunk \(index): \(String(reflecting: chunk))"
+            )
+        }
+    }
+
+    private func canonicalSegments(
+        content: String,
+        themeID: ThemeID,
+        workspaceID: String? = nil,
+        sessionID: String? = nil,
+        serverBaseURL: URL? = nil,
+        sourceFilePath: String? = nil
+    ) -> [FlatSegment] {
+        let sourceDirectory = sourceFilePath.flatMap { path -> String? in
+            let directory = (path as NSString).deletingLastPathComponent
+            return directory.isEmpty || directory == "." ? nil : directory
+        }
+        return FlatSegment.build(
+            from: parseCommonMark(content),
+            themeID: themeID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            serverBaseURL: serverBaseURL,
+            sourceDirectory: sourceDirectory
+        )
+    }
+
+    private func segmentsEqual(_ lhs: [FlatSegment], _ rhs: [FlatSegment]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+
+        return zip(lhs, rhs).allSatisfy { left, right in
+            switch (left, right) {
+            case (.text(let leftText), .text(let rightText)):
+                return NSAttributedString(leftText).isEqual(to: NSAttributedString(rightText))
+            case let (.codeBlock(leftLanguage, leftCode), .codeBlock(rightLanguage, rightCode)):
+                return leftLanguage == rightLanguage && leftCode == rightCode
+            case let (.table(leftHeaders, leftRows), .table(rightHeaders, rightRows)):
+                return leftHeaders == rightHeaders && leftRows == rightRows
+            case (.thematicBreak, .thematicBreak):
+                return true
+            case let (.image(leftAlt, leftURL), .image(rightAlt, rightURL)):
+                return leftAlt == rightAlt && leftURL == rightURL
+            case let (.mermaidDiagram(leftCode), .mermaidDiagram(rightCode)):
+                return leftCode == rightCode
+            case let (.latexBlock(leftCode), .latexBlock(rightCode)):
+                return leftCode == rightCode
+            default:
+                return false
+            }
+        }
+    }
+}
+
 private final class NoOpDelegate: NSObject, UITextViewDelegate {}

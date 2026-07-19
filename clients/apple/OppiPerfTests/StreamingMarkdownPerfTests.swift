@@ -367,6 +367,93 @@ struct StreamingMarkdownPerfBenchmarks {
         #expect(tailNs < fullNs * 0.3, "Tail-only parse should be at least 3× faster for 1000 paragraphs")
     }
 
+    // MARK: - Codex-style cumulative stream benchmark
+
+    /// Replays four committed updates per block and compares the old canonical
+    /// full-document path with the production incremental segment source.
+    /// This matches the scaling shape published with openai/codex#34045.
+    @Test @MainActor func benchmark_codexStyleCumulativeStream() {
+        // Warm parser, renderer, fonts, and UIKit bridging before measurement.
+        let warmup = makeBlockHeavyStreamingUpdates(blockCount: 8)
+        _ = measureCumulativeFullRender(warmup)
+        _ = measureCumulativeIncrementalRender(warmup)
+
+        for blockCount in [32, 128, 512] {
+            let updates = makeBlockHeavyStreamingUpdates(blockCount: blockCount)
+            let fullNs = measureCumulativeFullRender(updates)
+            let incrementalNs = measureCumulativeIncrementalRender(updates)
+            let speedup = fullNs / max(incrementalNs, 1)
+
+            let fullMs = String(format: "%.3f", fullNs / 1_000_000)
+            let incrementalMs = String(format: "%.3f", incrementalNs / 1_000_000)
+            let formattedSpeedup = String(format: "%.1f", speedup)
+            print(
+                "[Perf] Codex-style blocks=\(blockCount) appends=\(updates.count) "
+                    + "full=\(fullMs)ms incremental=\(incrementalMs)ms "
+                    + "speedup=\(formattedSpeedup)×"
+            )
+            print("METRIC codex_style_\(blockCount)_full_ms=\(fullMs)")
+            print("METRIC codex_style_\(blockCount)_incremental_ms=\(incrementalMs)")
+            print("METRIC codex_style_\(blockCount)_speedup=\(formattedSpeedup)")
+
+            #expect(incrementalNs < fullNs, "Incremental rendering should beat cumulative full rendering for \(blockCount) blocks")
+        }
+    }
+
+    private func makeBlockHeavyStreamingUpdates(blockCount: Int) -> [String] {
+        var source = ""
+        var updates: [String] = []
+        updates.reserveCapacity(blockCount * 4)
+
+        for block in 1...blockCount {
+            for chunk in [
+                "## Block \(block)\n",
+                "\n",
+                "Representative paragraph \(block) with **bold**, `code`, and [a link](https://example.com/\(block)).\n",
+                "\n",
+            ] {
+                source += chunk
+                updates.append(source)
+            }
+        }
+        return updates
+    }
+
+    @MainActor
+    private func measureCumulativeFullRender(_ updates: [String]) -> Double {
+        var checksum = 0
+        let start = DispatchTime.now().uptimeNanoseconds
+        for content in updates {
+            let segments = FlatSegment.build(from: parseCommonMark(content), themeID: .dark)
+            checksum &+= segments.count
+        }
+        let elapsed = DispatchTime.now().uptimeNanoseconds &- start
+        Self.consume(checksum)
+        return Double(elapsed)
+    }
+
+    @MainActor
+    private func measureCumulativeIncrementalRender(_ updates: [String]) -> Double {
+        let source = AssistantMarkdownSegmentSource()
+        var checksum = 0
+        let start = DispatchTime.now().uptimeNanoseconds
+        for content in updates {
+            let segments = source.buildSegments(.make(
+                content: content,
+                isStreaming: true,
+                themeID: .dark,
+                textSelectionEnabled: false
+            ))
+            checksum &+= segments.count
+        }
+        let elapsed = DispatchTime.now().uptimeNanoseconds &- start
+        Self.consume(checksum)
+        return Double(elapsed)
+    }
+
+    @inline(never)
+    private static func consume<T>(_ value: T) {}
+
     // MARK: - Boundary extraction overhead
 
     @Test func benchmark_boundaryExtractionOverhead() {

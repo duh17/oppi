@@ -2,6 +2,15 @@ import UIKit
 
 @MainActor
 final class AssistantMarkdownSegmentSource {
+    /// Rendering inputs that affect cached prefix segments independently of source text.
+    private struct SegmentBuildContext: Equatable {
+        let themeID: ThemeID
+        let workspaceID: String?
+        let sessionID: String?
+        let serverBaseURL: URL?
+        let sourceDirectory: String?
+    }
+
     /// Cached state for tail-only re-parsing during streaming.
     private struct StreamingParseState {
         /// UTF-8 byte length of the finalized prefix (content before last block).
@@ -12,17 +21,24 @@ final class AssistantMarkdownSegmentSource {
         var prefixBlocks: [MarkdownBlock]
         /// Pre-built `FlatSegment` array for the finalized prefix.
         var prefixSegments: [FlatSegment]
-        /// Theme used to build `prefixSegments`.
-        var themeID: ThemeID
+        /// Rendering context used to build `prefixSegments`.
+        var buildContext: SegmentBuildContext
         /// Total content UTF-8 byte count when this state was last updated.
         /// Used to skip FNV-1a hash when content only grew (streaming appends).
         var lastContentUTF8ByteCount: Int
     }
 
+    private struct ReferenceDefinitionScanState {
+        var contentUTF8ByteCount: Int
+        var hasPotentialDefinition: Bool
+    }
+
     private var streamingState: StreamingParseState?
+    private var referenceDefinitionScanState: ReferenceDefinitionScanState?
 
     func reset() {
         streamingState = nil
+        referenceDefinitionScanState = nil
     }
 
     func buildSegments(
@@ -150,9 +166,20 @@ final class AssistantMarkdownSegmentSource {
         let sessionID = config.sessionID
         let serverBaseURL = config.serverBaseURL
         let sourceDirectory = config.sourceDirectory
+        let buildContext = SegmentBuildContext(
+            themeID: themeID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            serverBaseURL: serverBaseURL,
+            sourceDirectory: sourceDirectory
+        )
         let contentUTF8 = content.utf8
+        // Reference definitions can retroactively resolve links in already-finalized
+        // blocks. Keep the canonical full-document path while one is present.
+        let requiresCanonicalFullParse = containsPotentialLinkReferenceDefinition(content)
 
-        if let state = streamingState,
+        if !requiresCanonicalFullParse,
+           let state = streamingState,
            state.prefixUTF8ByteCount > 0,
            state.prefixUTF8ByteCount < contentUTF8.count {
             // Fast path: skip FNV-1a hash when content only grew (streaming appends).
@@ -181,7 +208,7 @@ final class AssistantMarkdownSegmentSource {
                 let parseEnd = MarkdownStreamingPerf.timestampNs()
 
                 let prefixSegments: [FlatSegment]
-                if state.themeID == themeID {
+                if state.buildContext == buildContext {
                     prefixSegments = state.prefixSegments
                 } else {
                     prefixSegments = FlatSegment.build(
@@ -237,19 +264,19 @@ final class AssistantMarkdownSegmentSource {
                             prefixContentHash: fnv1a64(bytes: contentUTF8, count: newPrefixByteCount),
                             prefixBlocks: Array((state.prefixBlocks + tailBlocks).dropLast()),
                             prefixSegments: newPrefixSegments,
-                            themeID: themeID,
+                            buildContext: buildContext,
                             lastContentUTF8ByteCount: contentByteCount
                         )
                     } else {
                         streamingState = nil
                     }
-                } else if state.themeID != themeID {
+                } else if state.buildContext != buildContext {
                     streamingState = StreamingParseState(
                         prefixUTF8ByteCount: state.prefixUTF8ByteCount,
                         prefixContentHash: state.prefixContentHash,
                         prefixBlocks: state.prefixBlocks,
                         prefixSegments: prefixSegments,
-                        themeID: themeID,
+                        buildContext: buildContext,
                         lastContentUTF8ByteCount: contentByteCount
                     )
                 }
@@ -279,17 +306,22 @@ final class AssistantMarkdownSegmentSource {
             isStreaming: true
         )
 
-        storeStreamingState(
-            content: content,
-            contentUTF8: contentUTF8,
-            allBlocks: allBlocks,
-            lastBlockLine: lastBlockLine,
-            themeID: themeID,
-            workspaceID: workspaceID,
-            sessionID: sessionID,
-            serverBaseURL: serverBaseURL,
-            sourceDirectory: sourceDirectory
-        )
+        if requiresCanonicalFullParse {
+            streamingState = nil
+        } else {
+            storeStreamingState(
+                content: content,
+                contentUTF8: contentUTF8,
+                allBlocks: allBlocks,
+                lastBlockLine: lastBlockLine,
+                themeID: themeID,
+                workspaceID: workspaceID,
+                sessionID: sessionID,
+                serverBaseURL: serverBaseURL,
+                sourceDirectory: sourceDirectory,
+                buildContext: buildContext
+            )
+        }
 
         return segments
     }
@@ -303,7 +335,8 @@ final class AssistantMarkdownSegmentSource {
         workspaceID: String?,
         sessionID: String?,
         serverBaseURL: URL?,
-        sourceDirectory: String?
+        sourceDirectory: String?,
+        buildContext: SegmentBuildContext
     ) {
         guard allBlocks.count >= 2, lastBlockLine > 1 else {
             streamingState = nil
@@ -331,7 +364,7 @@ final class AssistantMarkdownSegmentSource {
             prefixContentHash: fnv1a64(bytes: contentUTF8, count: byteOffset),
             prefixBlocks: prefixBlocks,
             prefixSegments: prefixSegments,
-            themeID: themeID,
+            buildContext: buildContext,
             lastContentUTF8ByteCount: contentUTF8.count
         )
     }
@@ -422,6 +455,41 @@ final class AssistantMarkdownSegmentSource {
             hash &*= 1_099_511_628_211
         }
         return hash
+    }
+
+    /// Conservatively detects CommonMark link reference definitions by their
+    /// required closing-label delimiter (`]:`). Definitions may be nested in
+    /// containers or use multiline labels, so line-start matching is unsafe.
+    /// False positives only select the slower canonical path.
+    ///
+    /// Streaming source is append-only. Scan only the appended UTF-8 suffix,
+    /// retaining one overlap byte so a delimiter split across ticks is found.
+    private func containsPotentialLinkReferenceDefinition(_ content: String) -> Bool {
+        if referenceDefinitionScanState?.hasPotentialDefinition == true {
+            return true
+        }
+
+        let bytes = content.utf8
+        let previousByteCount = referenceDefinitionScanState?.contentUTF8ByteCount ?? 0
+        let isAppend = bytes.count >= previousByteCount
+        let startOffset = isAppend ? max(0, previousByteCount - 1) : 0
+        let start = bytes.index(bytes.startIndex, offsetBy: startOffset)
+
+        var previousByte: UInt8?
+        var found = false
+        for byte in bytes[start...] {
+            if previousByte == UInt8(ascii: "]"), byte == UInt8(ascii: ":") {
+                found = true
+                break
+            }
+            previousByte = byte
+        }
+
+        referenceDefinitionScanState = ReferenceDefinitionScanState(
+            contentUTF8ByteCount: bytes.count,
+            hasPotentialDefinition: found
+        )
+        return found
     }
 
     /// Count newlines via UTF-8 byte scan. Avoids the `components(separatedBy:)` array allocation.
