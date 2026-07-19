@@ -85,6 +85,7 @@ final class ChatSessionManager {
     /// Keep a workspace hint so history/stream setup does not fall back to an
     /// empty, missing-workspace timeline.
     private var workspaceIdHint: String?
+    private let routeScopeHint: SessionRouteScope?
 
     /// Freshness metadata for chat timeline sync.
     private(set) var lastSuccessfulSyncAt: Date?
@@ -122,15 +123,24 @@ final class ChatSessionManager {
 
     /// Test seam: override session trace fetch used by loadHistory.
     /// Lets tests exercise real history-apply logic without network.
-    var _fetchSessionTraceForTesting: ((_ workspaceId: String, _ sessionId: String) async throws -> (Session, [TraceEvent]))?
+    var _fetchSessionTraceForTesting: ((_ routeScope: SessionRouteScope, _ sessionId: String) async throws -> (Session, [TraceEvent]))?
 
     /// Test seam: override trace save destination for lifecycle snapshot flush.
     var _saveTraceSnapshotForTesting: (([TraceEvent]) async -> Void)?
 
-    init(sessionId: String, workspaceIdHint: String? = nil) {
+    init(
+        sessionId: String,
+        workspaceIdHint: String? = nil,
+        routeScope: SessionRouteScope? = nil
+    ) {
         self.sessionId = sessionId
         let normalizedWorkspaceIdHint = workspaceIdHint?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.workspaceIdHint = normalizedWorkspaceIdHint?.isEmpty == false ? normalizedWorkspaceIdHint : nil
+        let resolvedWorkspaceIdHint = normalizedWorkspaceIdHint?.isEmpty == false
+            ? normalizedWorkspaceIdHint
+            : nil
+        self.workspaceIdHint = resolvedWorkspaceIdHint
+        self.routeScopeHint = routeScope
+            ?? resolvedWorkspaceIdHint.map(SessionRouteScope.workspace)
 
         // Wire per-session coalescer → reducer pipeline.
         coalescer.onFlush = { [weak self] events in
@@ -221,6 +231,18 @@ final class ChatSessionManager {
         return nil
     }
 
+    private func resolveRouteScope(from sessionStore: SessionStore) -> SessionRouteScope? {
+        if routeScopeHint == .control
+            || sessionStore.session(id: sessionId)?.control != nil {
+            return .control
+        }
+        if case .workspace(let workspaceId) = routeScopeHint,
+           !workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .workspace(workspaceId)
+        }
+        return resolveWorkspaceId(from: sessionStore).map(SessionRouteScope.workspace)
+    }
+
     private func workspaceIdForState(from sessionStore: SessionStore) -> String {
         resolveWorkspaceId(from: sessionStore) ?? ""
     }
@@ -247,8 +269,8 @@ final class ChatSessionManager {
             return .bareMessages(streamForTesting)
         }
 
-        guard let workspaceId = resolveWorkspaceId(from: sessionStore),
-              let stream = await connection.streamSession(sessionId, workspaceId: workspaceId) else {
+        guard let routeScope = resolveRouteScope(from: sessionStore),
+              let stream = await connection.streamSession(sessionId, routeScope: routeScope) else {
             return nil
         }
         return .events(stream)
@@ -373,8 +395,8 @@ final class ChatSessionManager {
         guard let stream = await openSessionStream(connection: connection, sessionStore: sessionStore) else {
             markSyncFailed()
             transitionTo(.disconnected(reason: .fatalError))
-            let message = resolveWorkspaceId(from: sessionStore) == nil
-                ? "Missing workspace context"
+            let message = resolveRouteScope(from: sessionStore) == nil
+                ? "Missing session route context"
                 : "Session stream unavailable"
             reducer.process(.error(sessionId: sessionId, message: message))
             return
@@ -774,13 +796,13 @@ final class ChatSessionManager {
             guard !Task.isCancelled else { return }
 
             guard let api = connection.apiClient else { return }
-            guard let workspaceId = self.resolveWorkspaceId(from: sessionStore) else {
-                log.warning("Reconcile skipped for \(self.sessionId): missing workspaceId")
+            guard let routeScope = self.resolveRouteScope(from: sessionStore) else {
+                log.warning("Reconcile skipped for \(self.sessionId): missing route scope")
                 return
             }
 
             do {
-                let (session, _) = try await api.getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId)
+                let (session, _) = try await api.getSession(scope: routeScope, sessionId: sessionId)
                 connection.applyFetchedSessionState(session)
             } catch {
                 log.warning("Reconcile failed: \(error.localizedDescription)")
@@ -818,15 +840,15 @@ final class ChatSessionManager {
             trace = await fetchHook()
             page = tracePage
         } else if let api = connection.apiClient {
-            guard let workspaceId = resolveWorkspaceId(from: connection.sessionStore) else {
-                log.debug("Snapshot flush skipped for \(self.sessionId): missing workspaceId")
+            guard let routeScope = resolveRouteScope(from: connection.sessionStore) else {
+                log.debug("Snapshot flush skipped for \(self.sessionId): missing route scope")
                 return
             }
 
             do {
                 let snapshot = try await fetchTraceHistorySnapshot(
                     api: api,
-                    workspaceId: workspaceId
+                    routeScope: routeScope
                 )
                 trace = snapshot.trace
                 page = snapshot.page
@@ -1024,9 +1046,9 @@ final class ChatSessionManager {
             if let catchUpHook = _loadCatchUpForTesting {
                 response = await catchUpHook(since, currentSeq)
             } else if let api = connection.apiClient {
-                if let workspaceId = resolveWorkspaceId(from: sessionStore) {
+                if let routeScope = resolveRouteScope(from: sessionStore) {
                     response = try? await api.getSessionEvents(
-                        workspaceId: workspaceId,
+                        scope: routeScope,
                         id: sessionId,
                         since: since
                     )
@@ -1113,11 +1135,11 @@ final class ChatSessionManager {
 
     private func fetchTraceHistorySnapshot(
         api: APIClient,
-        workspaceId: String
+        routeScope: SessionRouteScope
     ) async throws -> TraceHistorySnapshot {
         do {
-            let response = try await api.getWorkspaceSessionTracePage(
-                workspaceId: workspaceId,
+            let response = try await api.getSessionTracePage(
+                scope: routeScope,
                 sessionId: sessionId,
                 previewBytes: Self.tracePagePreviewBytes
             )
@@ -1128,8 +1150,8 @@ final class ChatSessionManager {
             )
         } catch {
             guard Self.shouldFallbackToFullTrace(error) else { throw error }
-            let fallback = try await api.getWorkspaceSession(
-                workspaceId: workspaceId,
+            let fallback = try await api.getSession(
+                scope: routeScope,
                 sessionId: sessionId,
                 traceView: .full
             )
@@ -1160,11 +1182,12 @@ final class ChatSessionManager {
         replayID: UUID?,
         allowFirstMessageFallback: Bool = true
     ) async -> TraceSignature? {
-        guard let workspaceId = resolveWorkspaceId(from: sessionStore) else {
+        guard let routeScope = resolveRouteScope(from: sessionStore) else {
             markSyncFailed()
             log.warning("Trace fetch skipped for \(self.sessionId): missing workspaceId")
             return nil
         }
+        let workspaceId = routeScope.workspaceId
 
         let traceFetchStartedMs = ChatSessionTelemetry.nowMs()
 
@@ -1173,12 +1196,12 @@ final class ChatSessionManager {
             let trace: [TraceEvent]
             let page: TracePageMetadata?
             if let fetchHook = _fetchSessionTraceForTesting {
-                (session, trace) = try await fetchHook(workspaceId, sessionId)
+                (session, trace) = try await fetchHook(routeScope, sessionId)
                 page = nil
             } else {
                 let snapshot = try await fetchTraceHistorySnapshot(
                     api: api,
-                    workspaceId: workspaceId
+                    routeScope: routeScope
                 )
                 session = snapshot.session
                 trace = snapshot.trace
@@ -1332,7 +1355,7 @@ final class ChatSessionManager {
         guard reducer.canPrependTracePage else { return false }
         guard let cursor = tracePage?.olderCursor, tracePage?.hasOlder == true else { return false }
         guard let api = connection.apiClient else { return false }
-        guard let workspaceId = resolveWorkspaceId(from: sessionStore) else {
+        guard let routeScope = resolveRouteScope(from: sessionStore) else {
             log.warning("Older trace page skipped for \(self.sessionId): missing workspaceId")
             return false
         }
@@ -1341,8 +1364,8 @@ final class ChatSessionManager {
         defer { isLoadingOlderTracePage = false }
 
         do {
-            let response = try await api.getWorkspaceSessionTracePage(
-                workspaceId: workspaceId,
+            let response = try await api.getSessionTracePage(
+                scope: routeScope,
                 sessionId: sessionId,
                 cursor: cursor,
                 previewBytes: Self.tracePagePreviewBytes
@@ -1365,7 +1388,7 @@ final class ChatSessionManager {
         guard !isLoadingOlderTracePage else { return false }
         guard reducer.canPrependTracePage else { return false }
         guard let api = connection.apiClient else { return false }
-        guard let workspaceId = resolveWorkspaceId(from: sessionStore) else {
+        guard let routeScope = resolveRouteScope(from: sessionStore) else {
             log.warning("Trace page around skipped for \(self.sessionId): missing workspaceId")
             return false
         }
@@ -1374,8 +1397,8 @@ final class ChatSessionManager {
         defer { isLoadingOlderTracePage = false }
 
         do {
-            let response = try await api.getWorkspaceSessionTracePage(
-                workspaceId: workspaceId,
+            let response = try await api.getSessionTracePage(
+                scope: routeScope,
                 sessionId: sessionId,
                 aroundEntryId: entryId,
                 previewBytes: Self.tracePagePreviewBytes

@@ -489,6 +489,8 @@ struct ScheduleEditPrefill: Sendable, Equatable {
 
 struct ScheduleEditView: View {
     @Environment(\.apiClient) private var apiClient
+    @Environment(ServerConnection.self) private var connection
+    @Environment(AppNavigation.self) private var navigation
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(\.dismiss) private var dismiss
@@ -520,6 +522,7 @@ struct ScheduleEditView: View {
 
     @State private var didPopulate = false
     @State private var isSaving = false
+    @State private var isLaunchingOppi = false
     @State private var error: String?
 
     init(
@@ -550,6 +553,20 @@ struct ScheduleEditView: View {
 
     var body: some View {
         Form {
+            if connection.controlSessionsAvailable, apiClient != nil {
+                Section {
+                    UseOppiSessionRow(
+                        supportingText: schedule == nil
+                            ? "Work with Default Agent to create this Schedule."
+                            : "Work with Default Agent to revise this Schedule.",
+                        isLoading: isLaunchingOppi
+                    ) {
+                        Task { await launchOppiSession() }
+                    }
+                    .accessibilityIdentifier("schedule.edit.useOppiSession")
+                }
+            }
+
             Section {
                 TextField("Title", text: $name)
                     .font(.title3.weight(.semibold))
@@ -689,6 +706,41 @@ struct ScheduleEditView: View {
         }
         .onAppear(perform: populateOnce)
         .task { await loadAgentsForPicker() }
+    }
+
+    @MainActor
+    private func launchOppiSession() async {
+        guard let apiClient, !isLaunchingOppi else { return }
+        isLaunchingOppi = true
+        defer { isLaunchingOppi = false }
+        let intent: ControlSessionIntent = schedule == nil ? .create : .revise
+        let targetName = schedule?.name
+        do {
+            let response = try await apiClient.createControlSession(.init(
+                domain: .schedules,
+                intent: intent,
+                targetId: schedule?.id,
+                targetName: targetName,
+                name: intent == .create ? "Create Schedule" : "Revise \(targetName ?? "Schedule")",
+                prompt: ControlSessionStarterPrompt.make(
+                    domain: .schedules,
+                    intent: intent,
+                    targetId: schedule?.id,
+                    targetName: targetName
+                )
+            ))
+            sessionStore.cacheSessionForNavigation(response.session)
+            guard let serverId = connection.currentServerId ?? sessionStore.activeServerId else { return }
+            dismiss()
+            await Task.yield()
+            navigation.openWorkspaceSession(.init(
+                serverId: serverId,
+                sessionId: response.session.id,
+                routeScope: .control
+            ))
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     private var prefillAgentOption: AgentDefinitionSummary? {

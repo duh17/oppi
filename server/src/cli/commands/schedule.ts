@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-
 import { localApiRequest, type LocalApiConnection } from "../local-api-client.js";
 import { createLocalApiCommandContext, handleModelResolvingCliError } from "../command-support.js";
+import { readDefinitionInput } from "../definition-input.js";
 import {
   codeValue,
   nonEmptyDetails,
@@ -87,14 +86,6 @@ async function existingSessionAction(
     sessionId,
     prompt,
   };
-}
-
-function parseJsonFile(path: string): Record<string, unknown> {
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("definition must be a JSON object");
-  }
-  return parsed as Record<string, unknown>;
 }
 
 function querySuffix(params: URLSearchParams): string {
@@ -196,9 +187,7 @@ export async function cmdSchedule(
     if (mode === "update") {
       const id = positional[0];
       if (!id) throw new Error("schedule id is required");
-      const definitionPath = flags.definition?.trim();
-      if (!definitionPath) throw new Error("--definition is required");
-      const definition = parseJsonFile(definitionPath);
+      const definition = readDefinitionInput(flags, { required: true, update: true });
       const result = await call<Record<string, unknown>>(`/schedules/${encodeURIComponent(id)}`, {
         method: "PATCH",
         body: definition,

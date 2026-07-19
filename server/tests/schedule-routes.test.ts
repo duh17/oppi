@@ -435,4 +435,43 @@ describe("schedule routes", () => {
       }),
     ]);
   });
+
+  it("rejects unexpected schedule fields and empty updates", async () => {
+    const schedule = store.createSchedule({
+      name: "Morning check",
+      trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+      action: { type: "new_session", workspaceId: workspace.id, prompt: "Run the checks" },
+    });
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = `/schedules/${schedule.id}`;
+
+    await dispatch({
+      method: "PATCH",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({ name: "Updated", unexpected: true }),
+      res: {} as ServerResponse,
+    });
+    await dispatch({
+      method: "PATCH",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({ trigger: { type: "at", at: 2_000, timeZone: "UTC", unexpected: true } }),
+      res: {} as ServerResponse,
+    });
+    await dispatch({
+      method: "PATCH",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({}),
+      res: {} as ServerResponse,
+    });
+
+    expect(responses).toEqual([]);
+    expect(errors).toEqual([
+      { status: 400, message: "Schedule update has unexpected field: unexpected" },
+      { status: 400, message: "Schedule trigger has unexpected field: unexpected" },
+      { status: 400, message: "Schedule update must include at least one field" },
+    ]);
+  });
 });

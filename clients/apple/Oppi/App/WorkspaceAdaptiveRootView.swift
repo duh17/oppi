@@ -68,6 +68,9 @@ private struct WorkspaceSplitRootView: View {
                     .navigationDestination(for: FileBrowserNavTarget.self) { target in
                         WorkspaceSplitFileBrowserDestinationView(target: target)
                     }
+                    .navigationDestination(for: WorkspaceSessionNavTarget.self) { target in
+                        WorkspaceSessionScopedDestinationView(target: target)
+                    }
                     .navigationDestination(for: WorkspaceLinkedFileNavTarget.self) { target in
                         WorkspaceLinkedFileDestinationView(target: target)
                     }

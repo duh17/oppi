@@ -86,11 +86,15 @@ extension ServerConnection {
     }
 
     func getSessionTraceOutline(workspaceId: String, sessionId: String) async throws -> SessionOutlineSnapshot {
+        try await getSessionTraceOutline(routeScope: .workspace(workspaceId), sessionId: sessionId)
+    }
+
+    func getSessionTraceOutline(routeScope: SessionRouteScope, sessionId: String) async throws -> SessionOutlineSnapshot {
         guard let apiClient else {
             throw CommandRequestError.rejected(command: "trace_outline", reason: "API client unavailable")
         }
-        return try await apiClient.getWorkspaceSessionTraceOutline(
-            workspaceId: workspaceId,
+        return try await apiClient.getSessionTraceOutline(
+            scope: routeScope,
             sessionId: sessionId
         ).outline
     }

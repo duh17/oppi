@@ -197,6 +197,7 @@ describe("Default Agent Oppi tool command policy", () => {
       ["workspace", "update", "oppi", "--name", "Oppi"],
       ["agent", "create", "--name", "Reviewer"],
       ["agent", "update", "default", "--definition", "agent.json"],
+      ["agent", "update", "default", "--definition-json", '{"description":"Short"}'],
       ["session", "create", "--workspace", "oppi", "--prompt", "Review this"],
       ["session", "send", "sess-1", "--text", "hello"],
       ["session", "stop", "sess-1"],
@@ -207,6 +208,7 @@ describe("Default Agent Oppi tool command policy", () => {
       ["worktree", "remove", "wt_feature-review-12345678", "--workspace", "oppi"],
       ["schedule", "create", "--workspace", "oppi", "--prompt", "daily", "--every", "1d"],
       ["schedule", "update", "sch-1", "--definition", "schedule.json"],
+      ["schedule", "update", "sch-1", "--definition-json", '{"name":"Daily"}'],
       ["schedule", "run", "sch-1"],
       ["schedule", "pause", "sch-1"],
       ["schedule", "resume", "sch-1"],
@@ -216,6 +218,41 @@ describe("Default Agent Oppi tool command policy", () => {
         kind: "approved-write",
       });
     }
+  });
+
+  it("redacts long argument values from approved-write display", () => {
+    const definitionJson = JSON.stringify({
+      instructions: { mode: "append", text: "x".repeat(1_000) },
+    });
+
+    const classification = classifyOppiToolCommand([
+      "agent",
+      "update",
+      "default",
+      "--definition-json",
+      definitionJson,
+    ]);
+
+    expect(classification).toMatchObject({ ok: true, kind: "approved-write" });
+    if (!classification.ok) return;
+    expect(classification.displayCommand).toContain("--definition-json");
+    expect(classification.displayCommand).toContain(`[${definitionJson.length} chars]`);
+    expect(classification.displayCommand).not.toContain("xxx");
+  });
+
+  it("rejects oversized inline definitions before approval", () => {
+    const classification = classifyOppiToolCommand([
+      "agent",
+      "update",
+      "default",
+      "--definition-json",
+      JSON.stringify({ description: "x".repeat(65_536) }),
+    ]);
+
+    expect(classification).toEqual({
+      ok: false,
+      reason: "--definition-json exceeds maximum size of 65536 bytes",
+    });
   });
 
   it("requires approval for destructive non-reversible commands", () => {

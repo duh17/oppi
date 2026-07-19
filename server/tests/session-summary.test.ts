@@ -23,6 +23,28 @@ describe("buildSessionSummary", () => {
     expect(summary.lastAgentReplyAt).toBe(1_700_000_123_000);
   });
 
+  it("preserves explicit control-session metadata in list summaries", () => {
+    const summary = buildSessionSummary(
+      makeSession({
+        workspaceId: undefined,
+        control: {
+          domain: "agents",
+          intent: "revise",
+          targetId: "release-reviewer",
+          targetName: "Release Reviewer",
+        },
+      }),
+    );
+
+    expect(summary.workspaceId).toBeUndefined();
+    expect(summary.control).toEqual({
+      domain: "agents",
+      intent: "revise",
+      targetId: "release-reviewer",
+      targetName: "Release Reviewer",
+    });
+  });
+
   it("filters absolute changed file paths from summaries", () => {
     const summary = buildSessionSummary(
       makeSession({

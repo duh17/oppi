@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -268,6 +268,83 @@ describe("SessionLifecycleService", () => {
       expect(result.summarySession).toBeUndefined();
       expect(result.session).toMatchObject({ id: "created-1" });
       expect(result.session).not.toHaveProperty("firstMessage");
+    });
+  });
+
+  describe("createControlSession", () => {
+    it("creates a workspace-less Default Agent session and dispatches its starter prompt", async () => {
+      const createdSession = makeSession({ id: "control-1", workspaceId: undefined });
+      const { service, createSession, saveSession, startSession, sendPrompt } = makeService({
+        forkSession: createdSession,
+      });
+
+      const result = await service.createControlSession({
+        control: {
+          domain: "agents",
+          intent: "revise",
+          targetId: "release-reviewer",
+          targetName: "Release Reviewer",
+        },
+        name: "Revise Release Reviewer",
+        prompt: "Help me revise this Agent.",
+      });
+
+      expect(createSession).toHaveBeenCalledWith("Revise Release Reviewer", undefined);
+      expect(saveSession.mock.calls[0]?.[0]).toMatchObject({
+        id: "control-1",
+        workspaceId: undefined,
+        runtime: "oppi",
+        control: {
+          domain: "agents",
+          intent: "revise",
+          targetId: "release-reviewer",
+          targetName: "Release Reviewer",
+        },
+        launch: {
+          source: "human",
+          agentId: "oppi-default-agent",
+          target: { server: true, displayCwd: "Oppi Control" },
+          tools: { allowed: ["oppi"], noTools: "builtin" },
+        },
+      });
+      expect(startSession).toHaveBeenCalledWith("control-1", undefined);
+      expect(sendPrompt).toHaveBeenCalledWith("control-1", "Help me revise this Agent.", {});
+      expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+        firstMessage: "Help me revise this Agent.",
+        launch: { status: "accepted", promptDispatch: "delivered" },
+      });
+      expect(result.session).toMatchObject({
+        id: "control-1",
+        workspaceId: undefined,
+        contextWindow: 200_000,
+      });
+      expect(result.prompted).toBe(true);
+    });
+
+    it("resumes declared control sessions without a workspace", async () => {
+      const controlSession = makeSession({
+        id: "control-1",
+        workspaceId: undefined,
+        status: "stopped",
+        runtime: "oppi",
+        control: { domain: "workspaces", intent: "create" },
+      });
+      const started = makeSession({
+        ...controlSession,
+        status: "ready",
+      });
+      const { service, startSession } = makeService({ started });
+
+      const result = await service.resumeControlSession(controlSession);
+
+      expect(startSession).toHaveBeenCalledWith("control-1", undefined);
+      expect(result).toMatchObject({ owner: "oppi", startedSession: true });
+      expect(result.session).toMatchObject({
+        id: "control-1",
+        workspaceId: undefined,
+        control: { domain: "workspaces", intent: "create" },
+        status: "ready",
+      });
     });
   });
 
@@ -669,6 +746,23 @@ describe("SessionLifecycleService", () => {
   });
 
   describe("deleteSession", () => {
+    it("does not recreate the internal control cwd when deleting a control session", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-delete-"));
+      const session = makeSession({
+        id: "control-delete-1",
+        workspaceId: undefined,
+        control: { domain: "agents", intent: "create" },
+      });
+      const { service } = makeService({ dataDir });
+
+      try {
+        await service.deleteSession(session);
+        expect(existsSync(join(dataDir, "control-sessions"))).toBe(false);
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
     it("stops active runtimes and deletes session metadata/search rows", async () => {
       const session = makeSession({ id: "delete-1", workspaceId: "ws-1" });
       const { service, stopSessionIfActive, deleteSession, deleteSearchIndexSession } =

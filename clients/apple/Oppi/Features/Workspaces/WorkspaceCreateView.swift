@@ -40,6 +40,7 @@ struct WorkspaceCreateView: View {
 
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(WorkspaceStore.self) private var workspaceStore
+    @Environment(AppNavigation.self) private var navigation
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -64,6 +65,7 @@ struct WorkspaceCreateView: View {
     @State private var showAdvanced = false
     @State private var sandboxMode = false
     @State private var isCreating = false
+    @State private var isLaunchingOppi = false
     @State private var error: String?
     @State private var skillsByLookupKey: [String: [SkillInfo]] = [:]
 
@@ -192,6 +194,20 @@ struct WorkspaceCreateView: View {
                 }
             }
 
+            if let connection = coordinator.connection(for: server.id),
+               connection.controlSessionsAvailable,
+               connection.apiClient != nil {
+                Section {
+                    UseOppiSessionRow(
+                        supportingText: "Work with Default Agent to create a Workspace.",
+                        isLoading: isLaunchingOppi
+                    ) {
+                        Task { await launchOppiSession() }
+                    }
+                    .accessibilityIdentifier("workspace.create.useOppiSession")
+                }
+            }
+
             Section {
                 Toggle("Sandbox", isOn: $sandboxMode)
                 if sandboxMode {
@@ -262,6 +278,35 @@ struct WorkspaceCreateView: View {
         .listStyle(.insetGrouped)
     }
 
+    @MainActor
+    private func launchOppiSession() async {
+        guard let connection = coordinator.connection(for: server.id),
+              let api = connection.apiClient,
+              !isLaunchingOppi else { return }
+        isLaunchingOppi = true
+        defer { isLaunchingOppi = false }
+        do {
+            let response = try await api.createControlSession(.init(
+                domain: .workspaces,
+                intent: .create,
+                targetId: nil,
+                targetName: nil,
+                name: "Create Workspace",
+                prompt: ControlSessionStarterPrompt.make(domain: .workspaces, intent: .create)
+            ))
+            connection.sessionStore.cacheSessionForNavigation(response.session)
+            dismiss()
+            await Task.yield()
+            navigation.openWorkspaceSession(.init(
+                serverId: server.id,
+                sessionId: response.session.id,
+                routeScope: .control
+            ))
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     // MARK: - Step 2: Configure
 
     private var configureView: some View {
@@ -276,6 +321,21 @@ struct WorkspaceCreateView: View {
                             .foregroundStyle(.themeComment)
                     }
                     .padding(.vertical, 4)
+                }
+            }
+
+
+            if let connection = coordinator.connection(for: server.id),
+               connection.controlSessionsAvailable,
+               connection.apiClient != nil {
+                Section {
+                    UseOppiSessionRow(
+                        supportingText: "Work with Default Agent to create a Workspace.",
+                        isLoading: isLaunchingOppi
+                    ) {
+                        Task { await launchOppiSession() }
+                    }
+                    .accessibilityIdentifier("workspace.create.useOppiSession")
                 }
             }
 

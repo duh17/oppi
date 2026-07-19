@@ -68,6 +68,29 @@ const TEST_SESSION_SUMMARY: SessionSummary = {
   ephemeral: TEST_SESSION.ephemeral,
 };
 
+const TEST_CONTROL_SESSION: Session = {
+  ...TEST_SESSION,
+  id: "control-session-1",
+  workspaceId: undefined,
+  workspaceName: undefined,
+  name: "Oppi Control",
+  control: {
+    domain: "agents",
+    intent: "revise",
+    targetId: "agent-reviewer",
+    targetName: "Reviewer",
+  },
+};
+
+const TEST_CONTROL_SESSION_SUMMARY: SessionSummary = {
+  ...TEST_SESSION_SUMMARY,
+  id: TEST_CONTROL_SESSION.id,
+  workspaceId: undefined,
+  workspaceName: undefined,
+  name: TEST_CONTROL_SESSION.name,
+  control: TEST_CONTROL_SESSION.control,
+};
+
 // ── Every ServerMessage variant ──
 
 function buildCanonicalMessages(): Record<string, ServerMessage> {
@@ -90,6 +113,14 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     session_summary: {
       type: "session_summary",
       summary: TEST_SESSION_SUMMARY,
+    },
+    state_control: {
+      type: "state",
+      session: TEST_CONTROL_SESSION,
+    },
+    session_summary_control: {
+      type: "session_summary",
+      summary: TEST_CONTROL_SESSION_SUMMARY,
     },
     session_ended: {
       type: "session_ended",

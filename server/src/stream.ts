@@ -16,6 +16,7 @@ import type { SessionRuntimes } from "./runtime-router.js";
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
+import { isDeclaredControlSession } from "./control-session.js";
 
 /** Services needed by the stream mux — injected by Server. */
 export interface StreamContext {
@@ -203,14 +204,36 @@ export class BoundSessionStreamMux {
     ws: WebSocket,
     upgradeReceivedAt?: number,
   ): Promise<void> {
+    await this.handleScopedWebSocket(workspaceId, sessionId, ws, upgradeReceivedAt);
+  }
+
+  async handleControlWebSocket(
+    sessionId: string,
+    ws: WebSocket,
+    upgradeReceivedAt?: number,
+  ): Promise<void> {
+    await this.handleScopedWebSocket(undefined, sessionId, ws, upgradeReceivedAt);
+  }
+
+  private async handleScopedWebSocket(
+    workspaceId: string | undefined,
+    sessionId: string,
+    ws: WebSocket,
+    upgradeReceivedAt?: number,
+  ): Promise<void> {
     const connectedAt = Date.now();
     const metrics = this.ctx.metrics;
     const owner = this.ctx.storage.getOwnerName();
     const connId = this.nextConnId();
-    const path = `/workspaces/${workspaceId}/sessions/${sessionId}/stream`;
+    const path = workspaceId
+      ? `/workspaces/${workspaceId}/sessions/${sessionId}/stream`
+      : `/control-sessions/${sessionId}/stream`;
 
     const session = this.ctx.storage.getSession(sessionId);
-    if (!session || session.workspaceId !== workspaceId) {
+    const inScope = workspaceId
+      ? session?.workspaceId === workspaceId
+      : session !== undefined && isDeclaredControlSession(session);
+    if (!session || !inScope) {
       ws.close(1008, "Session not found");
       return;
     }

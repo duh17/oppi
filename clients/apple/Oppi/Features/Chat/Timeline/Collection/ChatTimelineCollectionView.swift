@@ -28,6 +28,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let streamingAssistantID: String?
         let sessionId: String
         let workspaceId: String?
+        let routeScope: SessionRouteScope?
         let onFork: (String) -> Void
         let onBackSwipe: () -> Void
         let onShowEarlier: () -> Void
@@ -58,6 +59,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             streamingAssistantID: String?,
             sessionId: String,
             workspaceId: String?,
+            routeScope: SessionRouteScope? = nil,
             onFork: @escaping (String) -> Void,
             onBackSwipe: @escaping () -> Void,
             onShowEarlier: @escaping () -> Void,
@@ -87,6 +89,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.streamingAssistantID = streamingAssistantID
             self.sessionId = sessionId
             self.workspaceId = workspaceId
+            self.routeScope = routeScope
+                ?? workspaceId.map(SessionRouteScope.workspace)
             self.onFork = onFork
             self.onBackSwipe = onBackSwipe
             self.onShowEarlier = onShowEarlier
@@ -192,6 +196,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var workspaceId: String? {
             get { context.workspaceId }
             set { context.workspaceId = newValue }
+        }
+
+        var routeScope: SessionRouteScope? {
+            get { context.routeScope }
+            set { context.routeScope = newValue }
         }
 
         var onFork: ((String) -> Void)? {
@@ -1106,8 +1115,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         private func makeDefaultFetchToolOutput(tool: String) -> ExpandedToolOutputLoader.FetchToolOutput? {
             guard let apiClient = connection?.apiClient,
-                  let workspaceId,
-                  !workspaceId.isEmpty else {
+                  let routeScope else {
                 return nil
             }
 
@@ -1119,7 +1127,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
                 if isShellTool,
                    let fullOutput = try await apiClient.getNonEmptyFullToolOutput(
-                       workspaceId: workspaceId,
+                       scope: routeScope,
                        sessionId: sessionId,
                        toolCallId: toolCallId
                    ) {
@@ -1127,7 +1135,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 }
 
                 return try await apiClient.getNonEmptyToolOutput(
-                    workspaceId: workspaceId,
+                    scope: routeScope,
                     sessionId: sessionId,
                     toolCallId: toolCallId
                 ) ?? ""
