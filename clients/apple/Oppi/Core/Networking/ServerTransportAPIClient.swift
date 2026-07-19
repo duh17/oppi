@@ -19,32 +19,109 @@ enum ServerAuthorization {
 enum ServerTransportAPIClient {
     static func withClient<Result: Sendable>(
         for server: PairedServer,
+        lanEndpointProvider: @Sendable (ServerCredentials) async -> LANDiscoveredEndpoint? = { credentials in
+            await discoverVerifiedLANEndpoint(for: credentials)
+        },
+        managerFactory: @Sendable (IrohServerTransport) -> IrohConnectionManager = { metadata in
+            IrohConnectionManager(iroh: metadata)
+        },
         operation: @Sendable (APIClient) async throws -> Result
     ) async throws -> Result {
-        switch try IrohTransportPolicy.select(credentials: server.credentials) {
-        case .http:
-            guard let baseURL = server.baseURL else {
-                throw IrohTransportError.protocolViolation("HTTP transport has no base URL")
-            }
-            let client = APIClient(
-                baseURL: baseURL,
-                token: server.token,
-                tlsCertFingerprint: server.tlsCertFingerprint
+        let discoveredLANEndpoint: LANDiscoveredEndpoint? = if server.credentials.transports.preference != .irohOnly {
+            await lanEndpointProvider(server.credentials)
+        } else {
+            nil
+        }
+        let plan = try ServerTransportPlanResolver.resolve(
+            credentials: server.credentials,
+            discoveredLANEndpoint: discoveredLANEndpoint
+        )
+
+        switch plan {
+        case .http(let selection):
+            return try await withHTTPClient(
+                for: server,
+                selection: selection,
+                operation: operation
             )
-            return try await operation(client)
 
         case .iroh(let metadata):
-            let manager = IrohConnectionManager(iroh: metadata)
+            let manager = managerFactory(metadata)
+            let baseURL: URL
             do {
-                let baseURL = try await manager.startProxy(token: server.token)
+                baseURL = try await manager.startProxy(token: server.token)
+                // Establish reachability before invoking the operation. This
+                // makes fallback safe even when the operation is mutating.
+                _ = try await manager.selectedPathEvidence()
+            } catch let error as IrohTransportError where error.isFallbackEligible {
+                await manager.shutdown()
+                guard server.credentials.transports.preference == .irohPreferred else {
+                    throw error
+                }
+                let fallback = try ServerTransportPlanResolver.resolve(
+                    credentials: server.credentials,
+                    discoveredLANEndpoint: discoveredLANEndpoint,
+                    suppressIroh: true
+                )
+                guard case .http(let selection) = fallback else { throw error }
+                return try await withHTTPClient(
+                    for: server,
+                    selection: selection,
+                    operation: operation
+                )
+            } catch {
+                await manager.shutdown()
+                throw error
+            }
+
+            do {
                 let client = APIClient(baseURL: baseURL, token: server.token)
                 let result = try await operation(client)
                 await manager.shutdown()
                 return result
             } catch {
+                // The operation has started. Never replay it over HTTP when its
+                // acknowledgement state may be unknown.
                 await manager.shutdown()
                 throw error
             }
         }
+    }
+
+    @MainActor
+    private static func discoverVerifiedLANEndpoint(
+        for credentials: ServerCredentials,
+        timeout: Duration = .milliseconds(300)
+    ) async -> LANDiscoveredEndpoint? {
+        let discovery = LANDiscovery()
+        discovery.start()
+        defer { discovery.stop() }
+
+        let startedAt = ContinuousClock.now
+        while ContinuousClock.now - startedAt < timeout {
+            if let endpoint = discovery.endpoints.first(where: { endpoint in
+                LANEndpointSelection.select(
+                    credentials: credentials,
+                    discoveredEndpoint: endpoint
+                )?.transportPath == .lan
+            }) {
+                return endpoint
+            }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        return nil
+    }
+
+    private static func withHTTPClient<Result: Sendable>(
+        for server: PairedServer,
+        selection: EndpointSelection,
+        operation: @Sendable (APIClient) async throws -> Result
+    ) async throws -> Result {
+        let client = APIClient(
+            baseURL: selection.baseURL,
+            token: server.token,
+            tlsCertFingerprint: server.tlsCertFingerprint
+        )
+        return try await operation(client)
     }
 }

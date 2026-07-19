@@ -6447,7 +6447,7 @@
 			repositoryURL = "https://github.com/n0-computer/iroh-ffi.git";
 			requirement = {
 				kind = exactVersion;
-				version = 1.0.0;
+				version = 1.1.0;
 			};
 		};
 		B8265E560799EE377B30DF67 /* XCRemoteSwiftPackageReference "swift-cmark" */ = {

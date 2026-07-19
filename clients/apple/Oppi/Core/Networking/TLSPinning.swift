@@ -64,8 +64,10 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
 
         if fingerprint == pinnedLeafFingerprint {
             completionHandler(.useCredential, URLCredential(trust: trust))
-        } else if Self.allowsPublicCATrustFallback(forHost: challenge.protectionSpace.host) {
-            // Tailscale leaf certs are public-CA certs and can rotate after pairing.
+        } else if Self.allowsPublicCATrustFallback(
+            forHost: challenge.protectionSpace.host,
+            pinnedLeafFingerprint: pinnedLeafFingerprint
+        ) {
             completionHandler(.performDefaultHandling, nil)
         } else {
             completionHandler(.cancelAuthenticationChallenge, nil)
@@ -81,7 +83,13 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
         return "sha256:\(digest.base64URLEncodedString())"
     }
 
-    static func allowsPublicCATrustFallback(forHost host: String) -> Bool {
+    static func allowsPublicCATrustFallback(
+        forHost host: String,
+        pinnedLeafFingerprint: String? = nil
+    ) -> Bool {
+        // A configured pin is authoritative. Public-CA trust is only the
+        // no-pin mode used by rotating Tailscale certificates.
+        guard normalizeFingerprint(pinnedLeafFingerprint) == nil else { return false }
         let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized.hasSuffix(".ts.net") || normalized.hasSuffix(".beta.tailscale.net")
     }

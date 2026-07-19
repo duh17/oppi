@@ -701,6 +701,12 @@ struct ConnectionCoordinatorTests {
         KeychainService.deleteAllServers()
         let store = ServerStore()
         let coordinator = ConnectionCoordinator(serverStore: store)
+        guard let irohLoopbackURL = URL(string: "http://127.0.0.1:41996") else {
+            preconditionFailure("Static Iroh loopback fixture must be valid")
+        }
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            (nil, irohLoopbackURL)
+        }
         return (coordinator, store)
     }
 

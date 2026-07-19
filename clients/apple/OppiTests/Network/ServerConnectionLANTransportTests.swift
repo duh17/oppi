@@ -102,7 +102,7 @@ struct ServerConnectionLANTransportTests {
         #expect(await connection.apiClient?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
     }
 
-    @Test func lanDiscoveryIsIgnoredWithoutPinnedTLSFingerprint() async {
+    @Test func tailscaleLANUsesPublicCATrustWithoutPinnedLeafFingerprint() async {
         let connection = ServerConnection()
         let credentials = makeCredentials(tlsFingerprint: nil)
         #expect(connection.configure(credentials: credentials) == true)
@@ -116,7 +116,7 @@ struct ServerConnectionLANTransportTests {
             )
         )
 
-        #expect(connection.transportPath == .paired)
+        #expect(connection.transportPath == .lan)
         #expect(await connection.apiClient?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
     }
 

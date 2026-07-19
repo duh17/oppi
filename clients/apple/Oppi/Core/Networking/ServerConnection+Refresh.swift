@@ -238,7 +238,6 @@ extension ServerConnection {
     /// catch-up, and reconnect. Mixing both paths causes double-load races
     /// and visual flashes.
     func reconnectIfNeeded() async {
-        guard let apiClient else { return }
         guard !foregroundRecoveryInFlight else { return }
         foregroundRecoveryInFlight = true
         defer { foregroundRecoveryInFlight = false }
@@ -247,6 +246,8 @@ extension ServerConnection {
         // long enough to look healthy after the server has timed them out. Reset only the
         // transport tasks; focused-session continuations stay attached for catch-up.
         await resetIrohTransportForForegroundRecoveryIfNeeded()
+        await reevaluateIrohPreferredTransportAtBoundary()
+        guard let apiClient else { return }
 
         // 0. If a chat session owns a prepared bound stream, keep that focused transport alive.
         // Home/workspace-list refreshes and pre-stream session focus stay HTTP-only.

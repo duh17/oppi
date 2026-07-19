@@ -154,6 +154,9 @@ final class ConnectionCoordinator {
         }
 
         let connection = ServerConnection()
+        // Feed verified discovery into the policy before initial configuration
+        // so an already-visible private LAN can win over Iroh.
+        connection.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
         guard await configureConnection(connection, credentials: server.credentials) else {
             logger.error("Failed to configure connection for \(server.name, privacy: .public)")
             return nil

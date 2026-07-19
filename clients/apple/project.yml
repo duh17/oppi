@@ -17,7 +17,7 @@ packages:
     from: "0.25.0"
   IrohLib:
     url: https://github.com/n0-computer/iroh-ffi.git
-    exactVersion: "1.0.0"
+    exactVersion: "1.1.0"
 
 options:
   bundleIdPrefix: dev.chenda
