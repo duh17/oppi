@@ -710,7 +710,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "list", summary: "list schedules" },
       { name: "get <id>", summary: "show one schedule" },
       { name: "create", summary: "create a new-session or existing-session schedule" },
-      { name: "update <id>", summary: "patch a schedule from a JSON definition file" },
+      { name: "update <id>", summary: "patch a schedule from a JSON definition" },
       { name: "run <id>", summary: "run a schedule now" },
       { name: "runs <id>", summary: "show run history for a schedule" },
       { name: "pause <id>", summary: "pause future automatic runs" },
@@ -819,19 +819,30 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["schedule", "update"],
     title: "Update schedule",
-    summary: "Patch a schedule from a JSON definition file.",
-    usage: "oppi schedule update <id> --definition <file> [--json]",
+    summary: "Patch a schedule from a JSON definition file or inline JSON object.",
+    usage:
+      "oppi schedule update <id> (--definition <file> | --definition-json <json-object>) [--json]",
     arguments: [{ name: "<id>", summary: "schedule id" }],
     flags: [
       {
         name: "--definition",
         value: "<file>",
         summary: "JSON object with schedule fields to patch",
-        required: true,
+      },
+      {
+        name: "--definition-json",
+        value: "<json-object>",
+        summary: "inline JSON object with schedule fields to patch; maximum 65536 bytes",
       },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi schedule update sch_123 --definition ./schedule.json --json" }],
+    notes: ["Choose exactly one of --definition or --definition-json."],
+    examples: [
+      { command: "oppi schedule update sch_123 --definition ./schedule.json --json" },
+      {
+        command: `oppi schedule update sch_123 --definition-json '{"name":"Daily review"}' --json`,
+      },
+    ],
   },
   {
     path: ["schedule", "run"],
@@ -1316,9 +1327,9 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "get <agent>", summary: "show one saved Agent by id or unique name" },
       {
         name: "create",
-        summary: "create a saved Agent from flags and an optional JSON definition",
+        summary: "create a saved Agent from flags and optional file or inline JSON",
       },
-      { name: "update <agent>", summary: "patch a saved Agent from a JSON definition" },
+      { name: "update <agent>", summary: "patch a saved Agent from file or inline JSON" },
       { name: "archive <agent>", summary: "archive a saved Agent" },
     ],
     notes: [
@@ -1351,39 +1362,59 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["agent", "create"],
     title: "Create saved Agent",
-    summary: "Create a saved Agent from --name and an optional JSON definition file.",
-    usage: "oppi agent create --name <name> [--definition <file>] [--json]",
+    summary: "Create a saved Agent from --name and an optional file or inline JSON definition.",
+    usage:
+      "oppi agent create [--name <name>] [--definition <file> | --definition-json <json-object>] [--json]",
     flags: [
       {
         name: "--name",
         value: "<name>",
         summary: "Agent display name; overrides definition.name",
-        required: true,
       },
       { name: "--definition", value: "<file>", summary: "JSON AgentDefinition fields" },
+      {
+        name: "--definition-json",
+        value: "<json-object>",
+        summary: "inline JSON AgentDefinition fields; maximum 65536 bytes",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
+      "Choose at most one of --definition or --definition-json; --name or definition.name is required.",
       "Definitions cannot include workspace, worktree, schedule, attachments, or other launch-only fields.",
     ],
-    examples: [{ command: "oppi agent create --name Reviewer --definition ./agent.json --json" }],
+    examples: [
+      { command: "oppi agent create --name Reviewer --definition ./agent.json --json" },
+      { command: `oppi agent create --definition-json '{"name":"Reviewer"}' --json` },
+    ],
   },
   {
     path: ["agent", "update"],
     title: "Update saved Agent",
-    summary: "Patch a saved Agent from a JSON definition file.",
-    usage: "oppi agent update <agent> --definition <file> [--json]",
+    summary: "Patch a saved Agent from a JSON definition file or inline JSON object.",
+    usage:
+      "oppi agent update <agent> (--definition <file> | --definition-json <json-object>) [--json]",
     arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
     flags: [
       {
         name: "--definition",
         value: "<file>",
         summary: "JSON AgentDefinition fields to patch",
-        required: true,
+      },
+      {
+        name: "--definition-json",
+        value: "<json-object>",
+        summary: "inline JSON AgentDefinition fields to patch; maximum 65536 bytes",
       },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi agent update Reviewer --definition ./agent-update.json --json" }],
+    notes: ["Choose exactly one of --definition or --definition-json."],
+    examples: [
+      { command: "oppi agent update Reviewer --definition ./agent-update.json --json" },
+      {
+        command: `oppi agent update Reviewer --definition-json '{"description":"Reviews risky diffs"}' --json`,
+      },
+    ],
   },
   {
     path: ["agent", "archive"],

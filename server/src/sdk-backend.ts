@@ -6,8 +6,9 @@
  */
 
 import { safeErrorMessage } from "./log-utils.js";
+import { isDeclaredControlSession } from "./control-session.js";
 import { createLogger } from "./logger.js";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
 
@@ -126,11 +127,44 @@ export function resolveSandboxGuestCwd(workspace: Workspace): string {
   return posix.join("/workspace", sandboxWorkspaceSlug(workspace));
 }
 
+function ensureOwnerOnlyRealDirectory(path: string, errorMessage: string): void {
+  try {
+    mkdirSync(path, { mode: 0o700 });
+  } catch (error: unknown) {
+    if (
+      !(error instanceof Error) ||
+      !("code" in error) ||
+      (error as NodeJS.ErrnoException).code !== "EEXIST"
+    ) {
+      throw error;
+    }
+  }
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(errorMessage);
+  }
+  chmodSync(path, 0o700);
+}
+
 export function resolveSdkSessionCwd(
   workspace?: Workspace,
-  session?: Pick<Session, "worktreeId">,
+  session?: Pick<Session, "workspaceId" | "worktreeId" | "control">,
   options: { dataDir?: string } = {},
 ): string {
+  if (session && isDeclaredControlSession(session)) {
+    if (!options.dataDir) {
+      throw new Error("Control sessions require an Oppi data directory");
+    }
+    const controlSessionsDir = join(options.dataDir, "control-sessions");
+    ensureOwnerOnlyRealDirectory(
+      controlSessionsDir,
+      "Control session cwd parent must be a real directory",
+    );
+    const controlCwd = join(controlSessionsDir, "cwd");
+    ensureOwnerOnlyRealDirectory(controlCwd, "Control session cwd must be a real directory");
+    return controlCwd;
+  }
+
   if (workspace?.runtime !== "sandbox" && workspace && session?.worktreeId) {
     const worktreePath = resolveWorkspaceSessionCwd(workspace, session.worktreeId, options);
     if (worktreePath) return worktreePath;
@@ -155,9 +189,12 @@ export function resolveSdkSessionCwd(
 
 export function resolveSdkSessionDisplayCwd(
   workspace?: Workspace,
-  session?: Pick<Session, "worktreeId">,
+  session?: Pick<Session, "workspaceId" | "worktreeId" | "control">,
   options: { dataDir?: string } = {},
 ): string {
+  if (session && isDeclaredControlSession(session)) {
+    return "Oppi Control";
+  }
   if (workspace?.runtime === "sandbox") {
     return resolveSandboxGuestCwd(workspace);
   }
@@ -478,7 +515,9 @@ export class SdkBackend {
               noPromptTemplates: true,
             }
           : { additionalSkillPaths }),
-        ...(agentDefinition?.resources?.noContextFiles ? { noContextFiles: true } : {}),
+        ...(isDefaultAgentSession || agentDefinition?.resources?.noContextFiles
+          ? { noContextFiles: true }
+          : {}),
         ...(agentDefinition?.instructions?.mode === "replace"
           ? { systemPromptOverride: () => agentDefinition.instructions?.text }
           : {}),

@@ -150,4 +150,102 @@ struct AgentScheduleAPIClientTests {
         #expect(run.sessionId == "sess-1")
         #expect(run.status == .completed)
     }
+
+    @Test func controlSessionCreateUsesDeclaredMetadataAndPrompt() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/control-sessions")
+            let body = try JSONDecoder().decode(APIClient.CreateControlSessionRequest.self, from: requestBodyData(request))
+            #expect(body.domain == .agents)
+            #expect(body.intent == .revise)
+            #expect(body.targetId == "agent-1")
+            #expect(body.targetName == "Reviewer")
+            #expect(body.prompt.contains("--definition-json"))
+            return mockResponse(status: 201, json: """
+            {"session":{"id":"control-1","name":"Oppi Control","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"revise","targetId":"agent-1","targetName":"Reviewer"}},"prompted":true}
+            """)
+        }
+
+        let response = try await client.createControlSession(.init(
+            domain: .agents,
+            intent: .revise,
+            targetId: "agent-1",
+            targetName: "Reviewer",
+            name: "Revise Reviewer",
+            prompt: ControlSessionStarterPrompt.make(
+                domain: .agents,
+                intent: .revise,
+                targetId: "agent-1",
+                targetName: "Reviewer"
+            )
+        ))
+
+        #expect(response.session.control?.domain == .agents)
+        #expect(response.session.workspaceId == nil)
+        #expect(response.prompted == true)
+    }
+
+    @Test func focusedControlOperationsUseControlRouteFamily() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.url?.path == "/control-sessions/control-1/trace-outline")
+            return mockResponse(json: "{}")
+        }
+        _ = try? await client.getSessionTraceOutline(scope: .control, sessionId: "control-1")
+
+        TestURLProtocol.handler = { request in
+            #expect(request.url?.path == "/control-sessions/control-1/events")
+            #expect(request.url?.query == "since=9")
+            return mockResponse(json: "{}")
+        }
+        _ = try? await client.getSessionEvents(scope: .control, id: "control-1", since: 9)
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/control-sessions/control-1/command")
+            return mockResponse(json: "{}")
+        }
+        try await client.sendSessionCommand(
+            scope: .control,
+            sessionId: "control-1",
+            message: .stop()
+        )
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "DELETE")
+            #expect(request.url?.path == "/control-sessions/control-1")
+            return mockResponse(json: "{}")
+        }
+        try await client.deleteSession(scope: .control, sessionId: "control-1")
+    }
+}
+
+@Suite("Control session starter prompts")
+struct ControlSessionStarterPromptTests {
+    @Test func revisionPromptIsDeterministicAndUsesCanonicalDefinitionInput() {
+        let first = ControlSessionStarterPrompt.make(
+            domain: .schedules,
+            intent: .revise,
+            targetId: "schedule-7",
+            targetName: "Nightly review"
+        )
+        let second = ControlSessionStarterPrompt.make(
+            domain: .schedules,
+            intent: .revise,
+            targetId: "schedule-7",
+            targetName: "Nightly review"
+        )
+
+        #expect(first == second)
+        #expect(first.contains("Canonical target ID: schedule-7"))
+        #expect(first.contains("Canonical target name: Nightly review"))
+        #expect(first.contains("--definition-json"))
+        #expect(first.contains("Do not use filesystem tools or temporary files"))
+        #expect(first.contains("wait for explicit approval"))
+    }
 }

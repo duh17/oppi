@@ -77,25 +77,17 @@ describe("agent schedule durable core", () => {
     ).toThrow("Schedule timeZone is invalid: Mars/Phobos");
   });
 
-  it("drops removed approval fields from schedule actions", () => {
-    const schedule = createSchedule({
-      action: {
-        type: "new_session",
-        workspaceId: "ws-1",
-        prompt: "Run automatically",
-        approvalRefs: ["obsolete"],
-      } as AgentScheduleAction & { approvalRefs: string[] },
-    });
-    const run = store.createDueRun(schedule.id, "at:1000");
-
-    const runColumns = Reflect.get(store, "db")
-      .prepare("PRAGMA table_info(agent_schedule_runs)")
-      .all() as Array<{ name?: string }>;
-
-    expect(schedule.action).not.toHaveProperty("approvalRefs");
-    expect(store.getSchedule(schedule.id)?.action).not.toHaveProperty("approvalRefs");
-    expect(run.actionSnapshot).not.toHaveProperty("approvalRefs");
-    expect(runColumns.map((column) => column.name)).not.toContain("approval_refs_json");
+  it("rejects removed approval fields from new schedule definitions", () => {
+    expect(() =>
+      createSchedule({
+        action: {
+          type: "new_session",
+          workspaceId: "ws-1",
+          prompt: "Run automatically",
+          approvalRefs: ["obsolete"],
+        } as AgentScheduleAction & { approvalRefs: string[] },
+      }),
+    ).toThrow("Schedule action has unexpected field: approvalRefs");
   });
 
   it("manual run creates one run with a request id idempotency key", () => {

@@ -1,4 +1,5 @@
 import { trustedSessionAttachmentSourceRoots } from "./chat-attachments.js";
+import { isDeclaredControlSession } from "./control-session.js";
 import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
@@ -175,7 +176,9 @@ export function createSessionCoordinatorBundle(
 
   const resolveWorkspaceRoot = (session: Session): string | null => {
     if (!session.workspaceId) {
-      return null;
+      return isDeclaredControlSession(session)
+        ? resolveSdkSessionCwd(undefined, session, { dataDir: deps.storage.getDataDir() })
+        : null;
     }
     const workspace = deps.storage.getWorkspace(session.workspaceId);
     if (!workspace?.hostMount) {

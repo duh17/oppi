@@ -414,15 +414,14 @@ final class ChatActionHandler {
                 return
             }
 
-            guard let workspaceId = sessionStore.workspaceId(for: sessionId),
-                  !workspaceId.isEmpty else {
-                reducer.process(.error(sessionId: sessionId, message: "Missing workspace context"))
+            guard let routeScope = sessionStore.routeScope(for: sessionId) else {
+                reducer.process(.error(sessionId: sessionId, message: "Missing session route context"))
                 return
             }
 
             do {
-                let updated = try await api.resumeWorkspaceSession(
-                    workspaceId: workspaceId,
+                let updated = try await api.resumeSession(
+                    scope: routeScope,
                     sessionId: sessionId
                 )
                 sessionStore.upsert(updated)
@@ -502,10 +501,9 @@ final class ChatActionHandler {
                 reducer.appendSystemEvent("Session stopped")
             } catch {
                 if let api = connection.apiClient,
-                   let workspaceId = sessionStore.workspaceId(for: sessionId),
-                   !workspaceId.isEmpty {
+                   let routeScope = sessionStore.routeScope(for: sessionId) {
                     do {
-                        let updatedSession = try await api.stopWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId)
+                        let updatedSession = try await api.stopSession(scope: routeScope, sessionId: sessionId)
                         sessionStore.upsert(updatedSession)
                         reducer.appendSystemEvent("Session stopped")
                     } catch {
@@ -887,12 +885,11 @@ final class ChatActionHandler {
                 updated = try await resumeStoppedSessionForTesting(sessionId)
             } else {
                 guard let api = connection.apiClient,
-                      let workspaceId = sessionStore?.workspaceId(for: sessionId),
-                      !workspaceId.isEmpty else {
+                      let routeScope = sessionStore?.routeScope(for: sessionId) else {
                     return false
                 }
-                updated = try await api.resumeWorkspaceSession(
-                    workspaceId: workspaceId,
+                updated = try await api.resumeSession(
+                    scope: routeScope,
                     sessionId: sessionId
                 )
             }

@@ -250,8 +250,46 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         }
         XCTAssertTrue(waitForHittable(createWorkspaceButton, timeout: 10), "Sidebar did not open")
         XCTAssertFalse(app.buttons["workspace.sidebar.close"].exists, "Sidebar should not show a redundant close button")
+        XCTAssertTrue(app.staticTexts["Oppi"].exists, "Sidebar should identify the app-level navigation surface")
+        XCTAssertTrue(app.staticTexts["Workspaces"].exists, "Sidebar should label the workspace collection")
+        XCTAssertTrue(
+            waitForHittable(app.buttons["workspace.agents.open"], timeout: 5),
+            "Agents destination missing from the sidebar"
+        )
+        XCTAssertTrue(
+            waitForHittable(app.buttons["workspace.schedules.open"], timeout: 5),
+            "Schedules destination missing from the sidebar"
+        )
+        XCTAssertTrue(
+            waitForHittable(app.buttons["workspace.create.sidebar.open"], timeout: 5),
+            "New Workspace must remain reachable in the sidebar footer"
+        )
+        XCTAssertTrue(
+            waitForHittable(app.buttons["workspace.settings.open"], timeout: 5),
+            "App Settings must be pinned below New Workspace"
+        )
 
-        try saveLabScreenshot(name: "iphone-workspace-sidebar-e2e")
+        try saveLabScreenshot(name: "iphone-sidebar-agents-schedules-e2e")
+
+        tap(app.buttons["workspace.sidebar.disclosure"], named: "Workspaces disclosure")
+        XCTAssertFalse(
+            app.buttons["workspace.open.\(anchorWorkspaceName)"].exists,
+            "Collapsed Workspaces section must hide workspace rows"
+        )
+        XCTAssertTrue(
+            waitForHittable(createWorkspaceButton, timeout: 5),
+            "New Workspace must remain reachable while Workspaces is collapsed"
+        )
+        XCTAssertTrue(
+            waitForHittable(app.buttons["workspace.settings.open"], timeout: 5),
+            "App Settings must remain reachable while Workspaces is collapsed"
+        )
+        try saveLabScreenshot(name: "iphone-sidebar-workspaces-collapsed-e2e")
+        tap(app.buttons["workspace.sidebar.disclosure"], named: "Workspaces disclosure")
+        XCTAssertTrue(
+            app.buttons["workspace.open.\(anchorWorkspaceName)"].waitForExistence(timeout: 5),
+            "Workspaces disclosure did not expand again"
+        )
 
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.96, dy: 0.50))
             .press(
@@ -261,6 +299,58 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertTrue(
             waitForNotHittable(createWorkspaceButton, timeout: 5),
             "Left swipe did not dismiss the workspace sidebar"
+        )
+    }
+
+    func testAgentCreateSheetLaunchesExistingControlSessionTimeline() throws {
+        XCUIDevice.shared.orientation = .portrait
+
+        openWorkspaceSidebar()
+        tap(app.buttons["workspace.agents.open"], named: "Agents sidebar destination")
+        XCTAssertTrue(app.navigationBars["Agents"].waitForExistence(timeout: 10))
+
+        tap(app.buttons["agents.create.open"], named: "Create Agent")
+        XCTAssertTrue(app.navigationBars["New Agent"].waitForExistence(timeout: 10))
+        let useOppiSession = app.buttons["agent.edit.useOppiSession"]
+        XCTAssertTrue(useOppiSession.waitForExistence(timeout: 10))
+        tap(useOppiSession, named: "Use Oppi Session")
+
+        XCTAssertTrue(
+            app.navigationBars["Create Agent"].waitForExistence(timeout: 15),
+            "Control session did not open in the existing chat destination"
+        )
+        XCTAssertTrue(
+            app.textViews["chat.input"].waitForExistence(timeout: 15),
+            "Existing chat composer did not appear for the control session"
+        )
+        XCTAssertFalse(
+            app.buttons["chat.toolbar.files"].exists,
+            "Workspace-only Files control must stay absent from a control session"
+        )
+        try saveLabScreenshot(name: "iphone-control-session-existing-chat-e2e")
+    }
+
+    func testIPhoneSidebarAgentsAndSchedulesNavigate() throws {
+        XCUIDevice.shared.orientation = .portrait
+
+        openWorkspaceSidebar()
+        tap(app.buttons["workspace.agents.open"], named: "Agents sidebar destination")
+        XCTAssertTrue(
+            app.navigationBars["Agents"].waitForExistence(timeout: 10),
+            "Agents management did not open from the compact sidebar"
+        )
+
+        tap(app.navigationBars["Agents"].buttons.firstMatch, named: "Agents back button")
+        XCTAssertTrue(
+            app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 10),
+            "Sessions inbox did not return after leaving Agents"
+        )
+
+        openWorkspaceSidebar()
+        tap(app.buttons["workspace.schedules.open"], named: "Schedules sidebar destination")
+        XCTAssertTrue(
+            app.navigationBars["Schedules"].waitForExistence(timeout: 10),
+            "Schedules management did not open from the compact sidebar"
         )
     }
 

@@ -195,7 +195,8 @@ export class AgentScheduleStore {
     this.db.close();
   }
 
-  createSchedule(request: CreateAgentScheduleRequest, now = Date.now()): AgentSchedule {
+  createSchedule(input: unknown, now = Date.now()): AgentSchedule {
+    const request = validateCreateAgentScheduleRequest(input);
     const schedule: AgentSchedule = {
       id: generateId(8),
       name: validateName(request.name),
@@ -222,13 +223,10 @@ export class AgentScheduleStore {
     return schedule;
   }
 
-  updateSchedule(
-    scheduleId: string,
-    updates: Partial<Pick<CreateAgentScheduleRequest, "name" | "trigger" | "action">>,
-    now = Date.now(),
-  ): AgentSchedule | undefined {
+  updateSchedule(scheduleId: string, input: unknown, now = Date.now()): AgentSchedule | undefined {
     const current = this.getSchedule(scheduleId);
     if (!current || current.status === "archived") return undefined;
+    const updates = validateAgentScheduleUpdate(input);
 
     const next: AgentSchedule = {
       ...current,
@@ -679,6 +677,7 @@ function actionSummary(action: AgentScheduleAction): AgentScheduleActionSummary 
 }
 
 function validateName(name: string): string {
+  if (typeof name !== "string") throw new Error("Schedule name must be a string");
   const value = name.trim();
   if (value.length === 0) throw new Error("Schedule name is required");
   return value;
@@ -716,6 +715,113 @@ function validateAction(action: AgentScheduleAction): AgentScheduleAction {
     throw new Error("Existing-session schedule action sessionId is required");
   }
   return { ...cleanAction, workspaceId, sessionId: cleanAction.sessionId.trim() };
+}
+
+export function validateCreateAgentScheduleRequest(input: unknown): CreateAgentScheduleRequest {
+  if (!isRecord(input)) throw new Error("Schedule definition must be an object");
+  assertAllowedKeys(input, new Set(["name", "trigger", "action"]), "Schedule definition");
+  return {
+    name: validateName(input.name as string),
+    trigger: validateTriggerShape(input.trigger),
+    action: validateActionShape(input.action),
+  };
+}
+
+export function validateAgentScheduleUpdate(
+  input: unknown,
+): Partial<Pick<CreateAgentScheduleRequest, "name" | "trigger" | "action">> {
+  if (!isRecord(input)) throw new Error("Schedule update must be an object");
+  assertAllowedKeys(input, new Set(["name", "trigger", "action"]), "Schedule update");
+  if (Object.keys(input).length === 0) {
+    throw new Error("Schedule update must include at least one field");
+  }
+  return {
+    ...(input.name !== undefined ? { name: validateName(input.name as string) } : {}),
+    ...(input.trigger !== undefined ? { trigger: validateTriggerShape(input.trigger) } : {}),
+    ...(input.action !== undefined ? { action: validateActionShape(input.action) } : {}),
+  };
+}
+
+function validateTriggerShape(input: unknown): AgentScheduleTrigger {
+  if (!isRecord(input)) throw new Error("Schedule trigger must be an object");
+  if (input.type === "at") {
+    assertAllowedKeys(input, new Set(["type", "at", "timeZone"]), "Schedule trigger");
+    validateRequiredString(input.timeZone, "Schedule trigger timeZone");
+    return validateTrigger(input as unknown as AgentScheduleTrigger);
+  }
+  if (input.type === "every") {
+    assertAllowedKeys(input, new Set(["type", "intervalMs", "timeZone"]), "Schedule trigger");
+    validateRequiredString(input.timeZone, "Schedule trigger timeZone");
+    return validateTrigger(input as unknown as AgentScheduleTrigger);
+  }
+  if (input.type === "cron") {
+    assertAllowedKeys(input, new Set(["type", "expression", "timeZone"]), "Schedule trigger");
+    validateRequiredString(input.expression, "Schedule cron trigger expression");
+    validateRequiredString(input.timeZone, "Schedule trigger timeZone");
+    return validateTrigger(input as unknown as AgentScheduleTrigger);
+  }
+  throw new Error("Schedule trigger type must be at, every, or cron");
+}
+
+function validateActionShape(input: unknown): AgentScheduleAction {
+  if (!isRecord(input)) throw new Error("Schedule action must be an object");
+  if (input.type === "new_session") {
+    assertAllowedKeys(
+      input,
+      new Set(["type", "workspaceId", "prompt", "agentId", "model", "worktreeId", "name"]),
+      "Schedule action",
+    );
+    validateRequiredString(input.workspaceId, "Schedule action workspaceId");
+    validateRequiredString(input.prompt, "Schedule action prompt");
+    for (const key of ["agentId", "model", "worktreeId", "name"] as const) {
+      validateOptionalString(input[key], `Schedule action ${key}`);
+    }
+    return validateAction(input as unknown as AgentScheduleAction);
+  }
+  if (input.type === "existing_session") {
+    assertAllowedKeys(
+      input,
+      new Set(["type", "workspaceId", "sessionId", "prompt", "streamingBehavior"]),
+      "Schedule action",
+    );
+    validateRequiredString(input.workspaceId, "Schedule action workspaceId");
+    validateRequiredString(input.sessionId, "Existing-session schedule action sessionId");
+    validateRequiredString(input.prompt, "Schedule action prompt");
+    if (
+      input.streamingBehavior !== undefined &&
+      input.streamingBehavior !== "steer" &&
+      input.streamingBehavior !== "followUp"
+    ) {
+      throw new Error("Schedule action streamingBehavior must be steer or followUp");
+    }
+    return validateAction(input as unknown as AgentScheduleAction);
+  }
+  throw new Error("Schedule action type must be new_session or existing_session");
+}
+
+function validateRequiredString(value: unknown, label: string): void {
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
+  if (!value.trim()) throw new Error(`${label} is required`);
+}
+
+function validateOptionalString(value: unknown, label: string): void {
+  if (value !== undefined && typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+}
+
+function assertAllowedKeys(
+  input: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  label: string,
+): void {
+  for (const key of Object.keys(input)) {
+    if (!allowed.has(key)) throw new Error(`${label} has unexpected field: ${key}`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function dropRemovedActionFields(action: AgentScheduleAction): AgentScheduleAction {

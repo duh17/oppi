@@ -44,6 +44,16 @@ export interface PiTuiMirrorSessionMetadata {
   protocolVersion?: number;
 }
 
+export type ControlSessionDomain = "agents" | "schedules" | "workspaces";
+export type ControlSessionIntent = "create" | "revise";
+
+export interface ControlSessionMetadata {
+  domain: ControlSessionDomain;
+  intent: ControlSessionIntent;
+  targetId?: string;
+  targetName?: string;
+}
+
 export interface SessionLaunchMetadata {
   source?: "human" | "agent" | "schedule" | "workspace-wrapper" | "api" | "cli";
   agentId?: string;
@@ -155,6 +165,9 @@ export interface Session {
   // separate launch record table.
   launch?: SessionLaunchMetadata;
 
+  // Server-scoped Oppi configuration session. Never infer this from a missing workspace.
+  control?: ControlSessionMetadata;
+
   // Privacy / persistence
   ephemeral?: boolean; // true for in-memory pi sessions (incognito mode)
 }
@@ -191,6 +204,7 @@ export interface SessionSummary {
   mirror?: PiTuiMirrorSessionMetadata;
   /** Pi internal session UUID for generic session identity matching. */
   piSessionId?: string;
+  control?: ControlSessionMetadata;
   ephemeral?: boolean;
   /** Cold-list ask badge count; omitted outside list endpoints. */
   pendingAskCount?: number;

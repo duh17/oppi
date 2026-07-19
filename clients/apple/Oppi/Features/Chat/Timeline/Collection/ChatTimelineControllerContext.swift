@@ -4,6 +4,7 @@ import Foundation
 final class ChatTimelineControllerContext {
     var sessionId = ""
     var workspaceId: String?
+    var routeScope: SessionRouteScope?
     var onFork: ((String) -> Void)?
     var onShowEarlier: (() -> Void)?
     weak var scrollController: ChatScrollController?
@@ -20,12 +21,15 @@ final class ChatTimelineControllerContext {
     let interactionContext = TimelineInteractionContext()
 
     func didChangeSessionScope(for configuration: ChatTimelineCollectionHost.Configuration) -> Bool {
-        sessionId != configuration.sessionId || workspaceId != configuration.workspaceId
+        sessionId != configuration.sessionId
+            || workspaceId != configuration.workspaceId
+            || routeScope != configuration.routeScope
     }
 
     func apply(configuration: ChatTimelineCollectionHost.Configuration) {
         sessionId = configuration.sessionId
         workspaceId = configuration.workspaceId
+        routeScope = configuration.routeScope
         onFork = configuration.onFork
         onShowEarlier = configuration.onShowEarlier
         scrollController = configuration.scrollController

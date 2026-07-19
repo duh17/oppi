@@ -97,6 +97,43 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         try saveLabScreenshot(name: "ipad-file-browser")
     }
 
+    func testIPadSidebarAgentsAndSchedulesNavigate() throws {
+        try prepareIPadLandscapeCanvas()
+
+        let workspaceList = app.scrollViews["workspace.sidebar.scroll"]
+        XCTAssertTrue(workspaceList.waitForExistence(timeout: 15), "Workspace sidebar not visible")
+
+        let agentsButton = app.buttons["workspace.agents.open"]
+        let schedulesButton = app.buttons["workspace.schedules.open"]
+        XCTAssertTrue(agentsButton.waitForExistence(timeout: 10), "Agents destination missing from iPad sidebar")
+        XCTAssertTrue(schedulesButton.waitForExistence(timeout: 10), "Schedules destination missing from iPad sidebar")
+        XCTAssertTrue(app.buttons["workspace.create.sidebar.open"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["workspace.settings.open"].waitForExistence(timeout: 10))
+
+        let workspaceButton = app.buttons["workspace.open.\(anchorWorkspaceName)"]
+        XCTAssertTrue(workspaceButton.waitForExistence(timeout: 10), "Seeded workspace missing from iPad sidebar")
+        tap(workspaceButton, named: "seeded workspace")
+        XCTAssertTrue(workspaceButton.isSelected, "Workspace row did not expose its selected state")
+
+        tap(agentsButton, named: "Agents sidebar destination")
+        XCTAssertTrue(
+            app.navigationBars["Agents"].waitForExistence(timeout: 10),
+            "Agents management did not open in the iPad detail column"
+        )
+        XCTAssertTrue(workspaceList.exists && workspaceList.isHittable, "iPad sidebar disappeared after selecting Agents")
+        XCTAssertTrue(agentsButton.isSelected, "Agents row did not expose its selected state")
+        XCTAssertFalse(workspaceButton.isSelected, "Workspace and Agents rows must not both remain selected")
+        try saveLabScreenshot(name: "ipad-sidebar-agents-selected-e2e")
+
+        tap(schedulesButton, named: "Schedules sidebar destination")
+        XCTAssertTrue(
+            app.navigationBars["Schedules"].waitForExistence(timeout: 10),
+            "Schedules management did not open in the iPad detail column"
+        )
+        XCTAssertTrue(workspaceList.exists && workspaceList.isHittable, "iPad sidebar disappeared after selecting Schedules")
+        XCTAssertTrue(schedulesButton.isSelected, "Schedules row did not expose its selected state")
+    }
+
     private func openWorkspaceCreateForm() {
         showWorkspaceHomeListIfNeeded()
 
