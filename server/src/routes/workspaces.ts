@@ -406,6 +406,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     try {
       const worktree = createWorkspaceWorktree(workspace, body as CreateWorkspaceWorktreeRequest, {
         dataDir: ctx.storage.getDataDir(),
+        reservedWorktreeIds: new Set(workspaceWorktreeSessionCounts(wsId).keys()),
       });
       helpers.json(res, { workspaceId: wsId, worktree }, 201);
     } catch (error) {
@@ -511,14 +512,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
 
     const normalizedWorktreeId = worktreeId.trim();
-    const sessionCounts = workspaceWorktreeSessionCounts(wsId);
     const activeSessionCounts = workspaceWorktreeActiveSessionCounts(wsId);
     try {
       const worktree = removeWorkspaceWorktree(workspace, {
         dataDir: ctx.storage.getDataDir(),
         worktreeId: normalizedWorktreeId,
         force: url.searchParams.get("force") === "true",
-        sessionCount: sessionCounts.get(normalizedWorktreeId) ?? 0,
         activeSessionCount: activeSessionCounts.get(normalizedWorktreeId) ?? 0,
       });
       helpers.json(res, { ok: true, workspaceId: wsId, worktree });
@@ -554,12 +553,25 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
   function workspaceWorktreeActiveSessionCounts(workspaceId: string): Map<string, number> {
     const counts = new Map<string, number>();
-    for (const sessionId of ctx.sessionRuntimes.getActiveSessionIds()) {
-      const session = ctx.sessionRuntimes.getActiveSession(sessionId);
-      if (!session || session.workspaceId !== workspaceId) continue;
-      if (isPiTuiTaskRecordSession(session)) continue;
+    const countedSessionIds = new Set<string>();
+    const addBlockingSession = (session: Session | undefined): void => {
+      if (!session || session.workspaceId !== workspaceId) return;
+      if (countedSessionIds.has(session.id)) return;
+      if (isPiTuiTaskRecordSession(session)) return;
+      if (session.status === "stopped" || session.status === "error") return;
+
+      countedSessionIds.add(session.id);
       const worktreeId = session.worktreeId?.trim() || "main";
       counts.set(worktreeId, (counts.get(worktreeId) ?? 0) + 1);
+    };
+
+    // Removal is synchronous after this snapshot, so no new activation can
+    // interleave on the Node event loop before git worktree remove completes.
+    for (const session of ctx.storage.listAllWorkspaceSessionSnapshots(workspaceId)) {
+      addBlockingSession(session);
+    }
+    for (const sessionId of ctx.sessionRuntimes.getActiveSessionIds()) {
+      addBlockingSession(ctx.sessionRuntimes.getActiveSession(sessionId));
     }
     return counts;
   }

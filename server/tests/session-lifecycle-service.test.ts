@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -334,6 +334,29 @@ describe("SessionLifecycleService", () => {
       expect(result.session).toMatchObject({ runtime: "oppi", status: "ready" });
     });
 
+    it("keeps removed-worktree sessions archived instead of resuming them in main", async () => {
+      const session = makeSession({
+        runtime: "oppi",
+        status: "stopped",
+        worktreeId: "wt_removed",
+      });
+      const { service, startSession } = makeService({
+        dataDir: join(tmpdir(), "oppi-lifecycle-removed-worktree"),
+      });
+
+      await expect(
+        service.resumeWorkspaceSession({
+          session,
+          workspace: makeWorkspace({ hostMount: join(tmpdir(), "oppi-lifecycle-main") }),
+        }),
+      ).rejects.toMatchObject({
+        name: "SessionLifecycleError",
+        statusCode: 409,
+        message: "Session worktree is no longer available",
+      } satisfies Partial<SessionLifecycleError>);
+      expect(startSession).not.toHaveBeenCalled();
+    });
+
     it("returns already-live managed sessions without restarting", async () => {
       const session = makeSession({ runtime: "oppi", status: "ready" });
       const active = makeSession({ id: "sess-1", runtime: "oppi", status: "busy" });
@@ -413,6 +436,29 @@ describe("SessionLifecycleService", () => {
       expect(saveSession).toHaveBeenCalledWith(expect.objectContaining({ runtime: "oppi" }));
       expect(startSession).toHaveBeenCalledWith("sess-1", expect.objectContaining({ id: "ws-1" }));
       expect(result).toMatchObject({ owner: "oppi", startedSession: true });
+    });
+
+    it("does not open removed-worktree sessions in the main checkout", async () => {
+      const session = makeSession({
+        runtime: "oppi",
+        status: "stopped",
+        worktreeId: "wt_removed",
+      });
+      const { service, startSession } = makeService({
+        dataDir: join(tmpdir(), "oppi-lifecycle-removed-worktree"),
+      });
+
+      await expect(
+        service.openFocusedSession({
+          session,
+          workspace: makeWorkspace({ hostMount: join(tmpdir(), "oppi-lifecycle-main") }),
+        }),
+      ).rejects.toMatchObject({
+        name: "SessionLifecycleError",
+        statusCode: 409,
+        message: "Session worktree is no longer available",
+      } satisfies Partial<SessionLifecycleError>);
+      expect(startSession).not.toHaveBeenCalled();
     });
 
     it("keeps the focused stream started-session metric false for active managed sessions", async () => {
@@ -688,6 +734,29 @@ describe("SessionLifecycleService", () => {
           generatedMediaAttachments: false,
         },
       });
+    });
+
+    it("does not delete main-checkout attachments for removed-worktree sessions", async () => {
+      const workspaceDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-removed-worktree-delete-"));
+      const mainAttachment = join(workspaceDir, ".pi", "attachments", "delete-1", "keep.txt");
+      mkdirSync(join(workspaceDir, ".pi", "attachments", "delete-1"), { recursive: true });
+      writeFileSync(mainAttachment, "keep main attachment");
+      const workspace = makeWorkspace({ hostMount: workspaceDir });
+      const session = makeSession({
+        id: "delete-1",
+        workspaceId: workspace.id,
+        worktreeId: "wt_removed",
+      });
+      const { service } = makeService({ workspace });
+
+      try {
+        const result = await service.deleteSession(session);
+
+        expect(result.deleted.workspaceAttachmentCopies).toBe(false);
+        expect(existsSync(mainAttachment)).toBe(true);
+      } finally {
+        rmSync(workspaceDir, { recursive: true, force: true });
+      }
     });
 
     it("reports when session metadata was already absent", async () => {

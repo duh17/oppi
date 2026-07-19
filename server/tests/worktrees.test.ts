@@ -194,6 +194,26 @@ describe("workspace worktrees", () => {
     ).toThrow("path must be a string");
   });
 
+  it("rejects managed worktree ids reserved by retained session history", () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-reserved-history-"));
+    roots.push(dataDir);
+    const branch = "feature/retained-history";
+    const created = createWorkspaceWorktree(workspace, { branch }, { dataDir });
+    removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id });
+
+    expect(() =>
+      createWorkspaceWorktree(
+        workspace,
+        { branch },
+        {
+          dataDir,
+          reservedWorktreeIds: new Set([created.id]),
+        },
+      ),
+    ).toThrow("Worktree id is still referenced by session history");
+  });
+
   it("previews worktree integration without modifying either checkout", () => {
     const { workspace } = makeGitWorkspace();
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-preview-"));
@@ -306,6 +326,29 @@ describe("workspace worktrees", () => {
     expect(
       listWorkspaceWorktrees(workspace, { dataDir }).some((worktree) => worktree.id === created.id),
     ).toBe(false);
+  });
+
+  it("still requires force to remove dirty managed worktrees", () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-dirty-"));
+    roots.push(dataDir);
+    const created = createWorkspaceWorktree(workspace, { branch: "feature/dirty" }, { dataDir });
+    writeFileSync(join(created.path, "dirty.txt"), "uncommitted\n");
+
+    expect(() =>
+      removeWorkspaceWorktree(workspace, {
+        dataDir,
+        worktreeId: created.id,
+      }),
+    ).toThrow("Worktree has uncommitted or untracked changes");
+    expect(existsSync(created.path)).toBe(true);
+
+    removeWorkspaceWorktree(workspace, {
+      dataDir,
+      worktreeId: created.id,
+      force: true,
+    });
+    expect(existsSync(created.path)).toBe(false);
   });
 
   it("refuses to remove managed worktrees with active sessions", () => {

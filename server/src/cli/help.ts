@@ -571,6 +571,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "If the branch already exists, Oppi checks out that branch in a new worktree.",
+      "Retained session history reserves its worktree id, so the same branch or custom path cannot be recreated until that history is deleted.",
       "Custom paths are rejected unless they stay inside the Oppi-managed data-dir root.",
     ],
     examples: [
@@ -659,11 +660,12 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "workspace id or unique name",
         required: true,
       },
-      { name: "--force", summary: "allow removing dirty worktrees or stopped-session history" },
+      { name: "--force", summary: "allow removing dirty worktrees" },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
-      "Remove refuses the main checkout, project-local .pi/worktrees entries, and worktrees with active sessions.",
+      "Remove keeps stopped session history, but refuses the main checkout, project-local .pi/worktrees entries, and worktrees with active sessions.",
+      "Retained history reserves the removed worktree id until that history is deleted.",
     ],
     examples: [{ command: "oppi worktree remove wt_feature-foo-abc12345 --workspace ws_123" }],
   },

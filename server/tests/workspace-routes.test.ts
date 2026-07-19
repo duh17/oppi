@@ -320,6 +320,11 @@ describe("workspaces module", () => {
         storage: {
           getWorkspace: vi.fn(() => workspace),
           getDataDir: vi.fn(() => dataDir),
+          listAllWorkspaceSessionSnapshots: vi.fn(() => []),
+        },
+        sessionRuntimes: {
+          getActiveSessionIds: vi.fn(() => new Set<string>()),
+          getActiveSession: vi.fn(() => undefined),
         },
       } as unknown as RouteContext;
 
@@ -575,7 +580,81 @@ describe("workspaces module", () => {
     }
   });
 
-  it("uses canonical worktree ids for remove session guards", async () => {
+  it("removes clean worktrees without deleting stopped session history", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-stopped-history-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-stopped-history-data-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const worktree = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/stopped-history" },
+        { dataDir },
+      );
+      const stoppedSession = makeRouteSession("stopped-worktree", {
+        status: "stopped",
+        worktreeId: worktree.id,
+      });
+      const listSnapshots = vi.fn(() => [stoppedSession]);
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+          listAllWorkspaceSessionSnapshots: listSnapshots,
+        },
+        sessionRuntimes: {
+          getActiveSessionIds: vi.fn(() => new Set<string>()),
+          getActiveSession: vi.fn(() => undefined),
+        },
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "DELETE",
+        path: `/workspaces/ws-1/worktrees/${worktree.id}`,
+        url: new URL(`http://localhost/workspaces/ws-1/worktrees/${worktree.id}`),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toMatchObject({ ok: true, workspaceId: "ws-1" });
+      expect(existsSync(worktree.path)).toBe(false);
+      expect(listSnapshots()).toEqual([stoppedSession]);
+
+      const recreateRes = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: "/workspaces/ws-1/worktrees",
+        url: new URL("http://localhost/workspaces/ws-1/worktrees"),
+        req: makeRequest({ branch: "feature/stopped-history" }) as never,
+        res: recreateRes as never,
+      });
+      expect(recreateRes.statusCode).toBe(409);
+      expect(JSON.parse(recreateRes.body)).toEqual({
+        error: "Worktree id is still referenced by session history",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses persisted nonterminal sessions and canonical ids for remove guards", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-remove-guard-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-remove-guard-data-"));
     try {
@@ -598,16 +677,19 @@ describe("workspaces module", () => {
         { branch: "feature/remove-guard" },
         { dataDir },
       );
-      const activeSession = makeRouteSession("active-worktree", { worktreeId: worktree.id });
+      const startingSession = makeRouteSession("starting-worktree", {
+        status: "starting",
+        worktreeId: worktree.id,
+      });
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => workspace),
           getDataDir: vi.fn(() => dataDir),
-          listAllWorkspaceSessionSnapshots: vi.fn(() => []),
+          listAllWorkspaceSessionSnapshots: vi.fn(() => [startingSession]),
         },
         sessionRuntimes: {
-          getActiveSessionIds: vi.fn(() => new Set(["active-worktree"])),
-          getActiveSession: vi.fn(() => activeSession),
+          getActiveSessionIds: vi.fn(() => new Set<string>()),
+          getActiveSession: vi.fn(() => undefined),
         },
       } as unknown as RouteContext;
       const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
