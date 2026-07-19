@@ -14,6 +14,7 @@ import {
   type PendingUIRequestProvider,
 } from "./session-attention.js";
 import { buildSessionSummary } from "./session-summary.js";
+import { isDeclaredControlSession } from "./control-session.js";
 import type { Storage } from "./storage.js";
 import type { WorkspaceStoppedTimeBucketSnapshot } from "./storage/session-dao.js";
 import type { LocalSession, Session, SessionSummary, Workspace } from "./types.js";
@@ -117,7 +118,7 @@ export class SessionListService {
     nowMs?: number;
   }): RecentWorkspaceSessionSummariesResult {
     const serverNow = params.nowMs ?? Date.now();
-    const projectedSessions = this.deps.storage
+    const workspaceSessions = this.deps.storage
       .listWorkspaces()
       .flatMap((workspace) =>
         (params.recentDays > 0
@@ -129,12 +130,22 @@ export class SessionListService {
           : this.deps.storage.listAllWorkspaceSessionSnapshots(workspace.id)
         ).filter(isOpenableManagedListSession),
       );
+    const cutoffMs = params.recentDays > 0 ? serverNow - params.recentDays * 86_400_000 : undefined;
+    const controlSessions = this.deps.storage
+      .listSessions()
+      .filter(
+        (session) =>
+          isDeclaredControlSession(session) &&
+          isOpenableManagedListSession(session) &&
+          (cutoffMs === undefined || session.lastActivity >= cutoffMs),
+      );
+    const projectedSessions = [...workspaceSessions, ...controlSessions];
 
     let sessions = this.buildManagedSessionListRows(
       mergeActiveSessionsAcrossWorkspaces(
         this.deps.sessionRuntimes,
         projectedSessions,
-        params.recentDays > 0 ? { cutoffMs: serverNow - params.recentDays * 86_400_000 } : {},
+        cutoffMs === undefined ? {} : { cutoffMs },
       ),
       collectPendingAttentionCounts(this.deps.sessionRuntimes),
     );
@@ -407,7 +418,7 @@ function mergeActiveSessionsAcrossWorkspaces(
   const byId = new Map(projectedSessions.map((session) => [session.id, session]));
   for (const activeSessionId of sessionRuntimes.getActiveSessionIds()) {
     const active = sessionRuntimes.getActiveSession(activeSessionId);
-    if (!active?.workspaceId) {
+    if (!active || (!active.workspaceId && !isDeclaredControlSession(active))) {
       continue;
     }
     if (!sessionMatchesWorkspaceListFilters(active, filters)) {

@@ -579,7 +579,7 @@ private func markFocusedSessionFullySubscribed(_ connection: ServerConnection, s
     _ = await connection.sessionStreamCoordinator.streamSession(
         connection: connection,
         sessionId: sessionId,
-        workspaceId: "w1"
+        routeScope: .workspace("w1")
     )
 }
 

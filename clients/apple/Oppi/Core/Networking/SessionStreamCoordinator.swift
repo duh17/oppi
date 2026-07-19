@@ -59,13 +59,25 @@ final class SessionStreamCoordinator {
         sessionId: String,
         workspaceId: String
     ) async -> AsyncStream<SessionStreamEvent>? {
+        await streamSession(
+            connection: connection,
+            sessionId: sessionId,
+            routeScope: .workspace(workspaceId)
+        )
+    }
+
+    func streamSession(
+        connection: ServerConnection,
+        sessionId: String,
+        routeScope: SessionRouteScope
+    ) async -> AsyncStream<SessionStreamEvent>? {
         guard connection.wsClient != nil else { return nil }
         guard connection.focusedSessionStreamEndpointKind == "split_session" else {
             streamCoordinatorLogger.error("Split session stream unavailable for \(sessionId, privacy: .public)")
             return nil
         }
 
-        activeWorkspaceId = workspaceId
+        activeWorkspaceId = routeScope.workspaceId
         transition(to: .connectingTransport(sessionId: sessionId), event: .beginSession)
         let streamStart = ContinuousClock.now
 

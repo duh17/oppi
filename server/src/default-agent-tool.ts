@@ -11,6 +11,7 @@ import { cmdWorktree } from "./cli/commands/worktree.js";
 import { helpTopicToJson, resolveHelpTopic } from "./cli/help.js";
 import { captureCliOutput, type CliJsonEnvelope } from "./cli/output.js";
 import type { LocalApiConnection } from "./cli/local-api-client.js";
+import { assertInlineDefinitionSize } from "./cli/definition-input.js";
 import { tlsSchemeForConfig } from "./tls.js";
 
 export type OppiToolCommandKind = "read" | "approved-write";
@@ -23,6 +24,7 @@ export type OppiToolCommandClassification =
       action?: string;
       args: string[];
       summary: string;
+      displayCommand: string;
     }
   | { ok: false; reason: string };
 
@@ -112,7 +114,7 @@ export function createDefaultAgentExtensionFactory(options: {
           }
           const approved = await ctx.ui.confirm(
             "Approve Oppi command",
-            [`oppi ${classification.args.join(" ")}`, "", classification.summary].join("\n"),
+            [classification.displayCommand, "", classification.summary].join("\n"),
           );
           if (!approved) {
             return {
@@ -130,9 +132,7 @@ export function createDefaultAgentExtensionFactory(options: {
         }
 
         onUpdate?.({
-          content: [
-            { type: "text" as const, text: `Running oppi ${classification.args.join(" ")}` },
-          ],
+          content: [{ type: "text" as const, text: `Running ${classification.displayCommand}` }],
           details: { args: classification.args, kind: classification.kind },
         });
 
@@ -182,6 +182,12 @@ export function classifyOppiToolCommand(rawArgs: string[]): OppiToolCommandClass
   }
 
   const parsed = parseCliArgs(args);
+  try {
+    assertInlineDefinitionSize(parsed.flags["definition-json"]);
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+  const displayCommand = formatCommandForDisplay(args);
   if (isHelpRequest(parsed)) {
     return {
       ok: true,
@@ -190,6 +196,7 @@ export function classifyOppiToolCommand(rawArgs: string[]): OppiToolCommandClass
       action: parsed.positional[0],
       args,
       summary: "Read Oppi command help.",
+      displayCommand,
     };
   }
 
@@ -200,6 +207,7 @@ export function classifyOppiToolCommand(rawArgs: string[]): OppiToolCommandClass
       command: parsed.command,
       args,
       summary: "Read server status.",
+      displayCommand,
     };
   }
 
@@ -212,6 +220,7 @@ export function classifyOppiToolCommand(rawArgs: string[]): OppiToolCommandClass
       action,
       args,
       summary: `Read ${parsed.command} ${action}.`,
+      displayCommand,
     };
   }
 
@@ -223,6 +232,7 @@ export function classifyOppiToolCommand(rawArgs: string[]): OppiToolCommandClass
       action,
       args,
       summary: `Run destructive Oppi command ${parsed.command} ${action}.`,
+      displayCommand,
     };
   }
 
@@ -234,6 +244,7 @@ export function classifyOppiToolCommand(rawArgs: string[]): OppiToolCommandClass
       action,
       args,
       summary: `Create or modify Oppi state with ${parsed.command} ${action}.`,
+      displayCommand,
     };
   }
 
@@ -386,6 +397,11 @@ function normalizeOppiArgs(rawArgs: string[]): string[] {
 
 function ensureJsonFlag(args: string[]): string[] {
   return args.includes("--json") ? args : [...args, "--json"];
+}
+
+function formatCommandForDisplay(args: string[]): string {
+  const displayed = args.map((arg) => (arg.length > 160 ? `[${arg.length} chars]` : arg));
+  return `oppi ${displayed.join(" ")}`;
 }
 
 function truncateToolOutput(output: string): string {

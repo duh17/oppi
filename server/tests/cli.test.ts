@@ -465,7 +465,12 @@ describe("oppi help", () => {
       },
       {
         args: ["schedule", "update", "--help"],
-        expected: ["Usage: oppi schedule update <id>", "--definition <file>", "--json"],
+        expected: [
+          "Usage: oppi schedule update <id>",
+          "--definition <file>",
+          "--definition-json <json-object>",
+          "--json",
+        ],
       },
       {
         args: ["workspace", "list", "--help"],
@@ -599,11 +604,20 @@ describe("oppi help", () => {
       },
       {
         args: ["agent", "create", "--help"],
-        expected: ["Usage: oppi agent create", "--definition <file>", "--name <name>"],
+        expected: [
+          "Usage: oppi agent create",
+          "--definition <file>",
+          "--definition-json <json-object>",
+          "--name <name>",
+        ],
       },
       {
         args: ["agent", "update", "--help"],
-        expected: ["Usage: oppi agent update <agent>", "--definition <file>"],
+        expected: [
+          "Usage: oppi agent update <agent>",
+          "--definition <file>",
+          "--definition-json <json-object>",
+        ],
       },
       {
         args: ["agent", "archive", "--help"],
@@ -1395,6 +1409,27 @@ describe("oppi local API commands", () => {
           args: ["agent", "update", "agent-1", "--definition", agentUpdatePath, "--json"],
           expected: ["PATCH /agents/agent-1"],
         },
+        {
+          args: [
+            "agent",
+            "create",
+            "--definition-json",
+            '{"name":"Inline Reviewer","description":"Inline create"}',
+            "--json",
+          ],
+          expected: ["POST /agents"],
+        },
+        {
+          args: [
+            "agent",
+            "update",
+            "agent-1",
+            "--definition-json",
+            '{"description":"Inline update"}',
+            "--json",
+          ],
+          expected: ["PATCH /agents/agent-1"],
+        },
         { args: ["agent", "archive", "agent-1", "--json"], expected: ["DELETE /agents/agent-1"] },
         {
           args: ["session", "list", "--json"],
@@ -1611,6 +1646,17 @@ describe("oppi local API commands", () => {
         },
         {
           args: ["schedule", "update", "sch-1", "--definition", definitionPath, "--json"],
+          expected: ["PATCH /schedules/sch-1"],
+        },
+        {
+          args: [
+            "schedule",
+            "update",
+            "sch-1",
+            "--definition-json",
+            '{"name":"Inline schedule"}',
+            "--json",
+          ],
           expected: ["PATCH /schedules/sch-1"],
         },
         {
@@ -1902,6 +1948,22 @@ describe("oppi local API commands", () => {
         description: "Reviews diffs",
         sessionDefaults: { model: "agent-model" },
       });
+      expect(
+        requests.find(
+          (request) =>
+            request.method === "POST" &&
+            request.path === "/agents" &&
+            (request.body as { name?: string }).name === "Inline Reviewer",
+        )?.body,
+      ).toEqual({ name: "Inline Reviewer", description: "Inline create" });
+      expect(
+        requests.find(
+          (request) =>
+            request.method === "PATCH" &&
+            request.path === "/agents/agent-1" &&
+            (request.body as { description?: string }).description === "Inline update",
+        )?.body,
+      ).toEqual({ description: "Inline update" });
       const agentSessionRequest = requests.find(
         (request) => request.method === "POST" && request.path === "/agents/agent-1/sessions",
       );
@@ -1948,6 +2010,59 @@ describe("oppi local API commands", () => {
         (request) => request.method === "PATCH" && request.path === "/schedules/sch-1",
       );
       expect(updateRequest?.body).toEqual({ name: "Updated" });
+      expect(
+        requests.find(
+          (request) =>
+            request.method === "PATCH" &&
+            request.path === "/schedules/sch-1" &&
+            (request.body as { name?: string }).name === "Inline schedule",
+        )?.body,
+      ).toEqual({ name: "Inline schedule" });
+
+      for (const testCase of [
+        {
+          args: [
+            "agent",
+            "update",
+            "agent-1",
+            "--definition",
+            agentUpdatePath,
+            "--definition-json",
+            '{"description":"duplicate"}',
+            "--json",
+          ],
+          message: "exactly one of --definition or --definition-json is required",
+        },
+        {
+          args: ["agent", "update", "agent-1", "--definition-json", "not-json", "--json"],
+          message: "--definition-json must be valid JSON",
+        },
+        {
+          args: ["agent", "update", "agent-1", "--definition-json", "[]", "--json"],
+          message: "definition must be a JSON object",
+        },
+        {
+          args: ["schedule", "update", "sch-1", "--definition-json", "{}", "--json"],
+          message: "definition update must not be empty",
+        },
+        {
+          args: [
+            "schedule",
+            "update",
+            "sch-1",
+            "--definition-json",
+            JSON.stringify({ name: "x".repeat(65_536) }),
+            "--json",
+          ],
+          message: "--definition-json exceeds maximum size of 65536 bytes",
+        },
+      ]) {
+        const before = requests.length;
+        const result = await runAsync(testCase.args, { OPPI_DATA_DIR: cliDir });
+        expect(result.exitCode, testCase.args.slice(0, 3).join(" ")).toBe(1);
+        expect(JSON.parse(result.stdout).error.message).toContain(testCase.message);
+        expect(requests).toHaveLength(before);
+      }
     } finally {
       await new Promise<void>((resolveClose, rejectClose) =>
         api.close((error) => (error ? rejectClose(error) : resolveClose())),

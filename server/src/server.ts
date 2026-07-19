@@ -46,6 +46,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { SkillRegistry } from "./skills.js";
+import { isDeclaredControlSession } from "./control-session.js";
 
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 
@@ -92,6 +93,30 @@ import {
   resolveUploadStoreConfig,
   type UploadStoreConfigResolved,
 } from "./uploads/local-upload-store.js";
+
+export type FocusedSessionStreamPath =
+  | { scope: "workspace"; workspaceId: string; sessionId: string }
+  | { scope: "control"; sessionId: string };
+
+export function matchFocusedSessionStreamPath(path: string): FocusedSessionStreamPath | null {
+  const workspaceMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/);
+  const controlMatch = path.match(/^\/control-sessions\/([^/]+)\/stream$/);
+  try {
+    if (workspaceMatch) {
+      return {
+        scope: "workspace",
+        workspaceId: decodeURIComponent(workspaceMatch[1]),
+        sessionId: decodeURIComponent(workspaceMatch[2]),
+      };
+    }
+    if (controlMatch) {
+      return { scope: "control", sessionId: decodeURIComponent(controlMatch[1]) };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 function hasAuthHeader(header: string | string[] | undefined): boolean {
   if (typeof header === "string") {
@@ -1387,9 +1412,7 @@ export class Server {
       return;
     }
 
-    const sessionStreamMatch = url.pathname.match(
-      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
-    );
+    const sessionStreamMatch = matchFocusedSessionStreamPath(url.pathname);
     const appEventStreamMatch = url.pathname === "/app/events/stream";
     const dictationStreamMatch = url.pathname === "/dictation/stream";
     const mirrorBridgeMatch = url.pathname === "/mirror/v1/bridge";
@@ -1422,14 +1445,26 @@ export class Server {
     const upgradeReceivedAt = Date.now();
     this.wss.handleUpgrade(req, socket, head, (ws) => {
       if (sessionStreamMatch) {
-        const workspaceId = decodeURIComponent(sessionStreamMatch[1]);
-        const sessionId = decodeURIComponent(sessionStreamMatch[2]);
+        const sessionId = sessionStreamMatch.sessionId;
         const session = this.storage.getSession(sessionId);
-        if (!session || session.workspaceId !== workspaceId) {
+        const inScope =
+          sessionStreamMatch.scope === "workspace"
+            ? session?.workspaceId === sessionStreamMatch.workspaceId
+            : session !== undefined && isDeclaredControlSession(session);
+        if (!session || !inScope) {
           ws.close(1008, "Session not found");
           return;
         }
-        this.boundSessionStreamMux.handleWebSocket(workspaceId, sessionId, ws, upgradeReceivedAt);
+        if (sessionStreamMatch.scope === "workspace") {
+          this.boundSessionStreamMux.handleWebSocket(
+            sessionStreamMatch.workspaceId,
+            sessionId,
+            ws,
+            upgradeReceivedAt,
+          );
+        } else {
+          this.boundSessionStreamMux.handleControlWebSocket(sessionId, ws, upgradeReceivedAt);
+        }
         return;
       }
       if (appEventStreamMatch) {

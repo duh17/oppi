@@ -284,7 +284,7 @@ export class SessionMessageQueueCoordinator {
     }
 
     const workspaceRoot = this.deps.resolveWorkspaceRoot?.(active.session);
-    if (!workspaceRoot || !active.session.workspaceId) {
+    if (!workspaceRoot) {
       throw new Error("Attachments require a workspace-backed session");
     }
 

@@ -104,6 +104,13 @@ final class SessionStore {
         session(id: sessionId)?.workspaceId
     }
 
+    func routeScope(for sessionId: String) -> SessionRouteScope? {
+        guard let session = session(id: sessionId) else { return nil }
+        if session.control != nil { return .control }
+        guard let workspaceId = session.workspaceId, !workspaceId.isEmpty else { return nil }
+        return .workspace(workspaceId)
+    }
+
     // ── Cross-server queries ──
 
     // periphery:ignore - used by SessionStoreTests via @testable import
@@ -401,10 +408,13 @@ final class SessionStore {
             targetWorkspaceIds: targetWorkspaceIds,
             summaries: incomingSummaries
         )
+        let incomingControlSessions = incomingSummaries.map(\.session).filter {
+            $0.control != nil && $0.workspaceId == nil && !isDeletedSessionTombstoned($0.id)
+        }
 
         var backing = sessions
         var didMutateBacking = false
-        for session in incomingForWorkspaces {
+        for session in incomingForWorkspaces + incomingControlSessions {
             didMutateBacking = merge(
                 session,
                 into: &backing,
@@ -416,7 +426,7 @@ final class SessionStore {
         }
 
         let currentProjection = listProjectionSessions
-        let nextProjection = recentWorkspaceSnapshot(
+        var nextProjection = recentWorkspaceSnapshot(
             current: currentProjection,
             targetWorkspaceIds: targetWorkspaceIds,
             incomingForWorkspaces: incomingForWorkspaces,
@@ -424,6 +434,13 @@ final class SessionStore {
             preserveRecentWindow: preserveRecentWindow,
             keepUntargetedRows: false
         )
+        for session in incomingControlSessions {
+            _ = merge(session, into: &nextProjection, preserveNewerLifecycle: true)
+        }
+        nextProjection.sort {
+            if $0.lastActivity != $1.lastActivity { return $0.lastActivity > $1.lastActivity }
+            return $0.id < $1.id
+        }
         let didMutateAttention = applyListAttentionCounts(
             from: incomingSummaries,
             replacingWorkspaceIds: targetWorkspaceIds
@@ -721,6 +738,9 @@ final class SessionStore {
         }
         if merged.model == nil || merged.model?.isEmpty == true {
             merged.model = existing.model
+        }
+        if merged.control == nil {
+            merged.control = existing.control
         }
 
         if merged.currentTurnStartedAt == nil,

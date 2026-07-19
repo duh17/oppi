@@ -191,20 +191,22 @@ extension ChatTimelineCollectionHost.Controller {
         // Stored tool attachments belong to the session, not its workspace path.
         // Keep their fetchers available while workspace metadata is still resolving.
         let attachmentFetcher: ((String) async throws -> Data)? = connection.map { connection in
-            { [sessionId] attachmentId in
+            { [sessionId, routeScope] attachmentId in
                 try await connection.fetchSessionAttachmentWhenReady(
                     sessionId: sessionId,
-                    attachmentId: attachmentId
+                    attachmentId: attachmentId,
+                    routeScope: routeScope
                 )
             }
         }
         let attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = connection.map { connection in
-            { [sessionId] attachmentId, mimeType, sourceFileExtension in
+            { [sessionId, routeScope] attachmentId, mimeType, sourceFileExtension in
                 try await connection.makeSessionAttachmentMediaSourceWhenReady(
                     sessionId: sessionId,
                     attachmentId: attachmentId,
                     contentTypeHint: mimeType,
-                    sourceFileExtension: sourceFileExtension
+                    sourceFileExtension: sourceFileExtension,
+                    routeScope: routeScope
                 )
             }
         }

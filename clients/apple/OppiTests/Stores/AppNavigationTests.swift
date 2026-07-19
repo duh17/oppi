@@ -249,6 +249,43 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
+    @Test func controlSessionNeverReceivesWorkspaceFallback() {
+        let target = WorkspaceSessionNavTarget(
+            serverId: "server-1",
+            sessionId: "control-1",
+            routeScope: .control
+        )
+
+        let resolved = target.withWorkspaceIdIfMissing("workspace-1")
+
+        #expect(resolved.routeScope == .control)
+        #expect(resolved.workspaceId == nil)
+    }
+
+    @Test func splitUtilityOwnsPushedControlChatAndBackStack() {
+        let navigation = AppNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceUtility(.agents)
+
+        navigation.openWorkspaceSession(.init(
+            serverId: "server-1",
+            sessionId: "control-1",
+            routeScope: .control
+        ))
+
+        #expect(navigation.splitDetailTarget == .utility(.agents))
+        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitColumnVisibility == .detailOnly)
+
+        navigation.setWorkspaceNavigationPresentation(.stack)
+        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "control-1")
+
+        navigation.setWorkspaceNavigationPresentation(.split)
+        #expect(navigation.splitDetailTarget == .utility(.agents))
+        #expect(navigation.splitDetailPath.count == 1)
+    }
+
     @Test func openSessionPreservesWorkspaceHintFromWorkspaceTarget() {
         let navigation = AppNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
@@ -598,16 +635,22 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .all)
     }
 
-    @Test func hiddenAgentAndScheduleUtilitiesDoNotAppendToStackPath() {
+    @Test func agentAndScheduleUtilitiesAreReleaseEnabledAndAppendToStackPath() {
         let navigation = AppNavigation()
-        navigation.selectedTab = .settings
-        navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+
+        #expect(WorkspaceUtilityNavTarget.agents.isReleaseEnabled)
+        #expect(WorkspaceUtilityNavTarget.schedules.isReleaseEnabled)
 
         navigation.openWorkspaceUtility(.agents)
+
+        #expect(navigation.selectedTab == .workspaces)
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_agents")
+
         navigation.openWorkspaceUtility(.schedules)
 
-        #expect(navigation.selectedTab == .settings)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_schedules")
     }
 
     @Test func visibleUtilitiesStillAppendToStackPath() {
@@ -620,16 +663,26 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspacePath.count == 2)
     }
 
-    @Test func hiddenAgentAndScheduleUtilitiesDoNotReplaceSplitSelection() {
+    @Test func agentAndScheduleUtilitiesReplaceSplitWorkspaceAndDetailSelection() {
         let navigation = AppNavigation()
+        let workspace = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspaceUtility(.appSettings)
+        navigation.openWorkspace(workspace)
 
         navigation.openWorkspaceUtility(.agents)
-        navigation.openWorkspaceUtility(.schedules)
 
         #expect(navigation.workspacePath.count == 0)
-        #expect(navigation.splitDetailTarget == .utility(.appSettings))
+        #expect(navigation.selectedWorkspaceFilter == nil)
+        #expect(navigation.splitSelectedWorkspace == nil)
+        #expect(navigation.splitDetailTarget == .utility(.agents))
+        #expect(navigation.splitColumnVisibility == .all)
+
+        navigation.openWorkspaceUtility(.schedules)
+
+        #expect(navigation.splitDetailTarget == .utility(.schedules))
         #expect(navigation.splitColumnVisibility == .all)
     }
 

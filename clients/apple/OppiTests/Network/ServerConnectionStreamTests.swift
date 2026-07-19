@@ -486,7 +486,7 @@ struct ServerConnectionStreamTests {
         let stream = await conn.sessionStreamCoordinator.streamSession(
             connection: conn,
             sessionId: "s1",
-            workspaceId: "w1"
+            routeScope: .workspace("w1")
         )
         let elapsed = ContinuousClock.now - start
 
@@ -512,7 +512,7 @@ struct ServerConnectionStreamTests {
         let stream = await conn.sessionStreamCoordinator.streamSession(
             connection: conn,
             sessionId: "s1",
-            workspaceId: "w1"
+            routeScope: .workspace("w1")
         )
 
         #expect(stream != nil)
@@ -540,7 +540,7 @@ struct ServerConnectionStreamTests {
         let stream = await conn.sessionStreamCoordinator.streamSession(
             connection: conn,
             sessionId: "s1",
-            workspaceId: "w1"
+            routeScope: .workspace("w1")
         )
         let elapsed = ContinuousClock.now - start
 
@@ -608,7 +608,7 @@ struct ServerConnectionStreamTests {
             await conn.sessionStreamCoordinator.streamSession(
                 connection: conn,
                 sessionId: "s1",
-                workspaceId: "w1"
+                routeScope: .workspace("w1")
             )
         }
 
@@ -673,7 +673,7 @@ struct ServerConnectionStreamTests {
         let stream = await conn.sessionStreamCoordinator.streamSession(
             connection: conn,
             sessionId: "s1",
-            workspaceId: "w1"
+            routeScope: .workspace("w1")
         )
 
         #expect(stream != nil)
@@ -687,6 +687,18 @@ struct ServerConnectionStreamTests {
         let (conn, _) = makeTestConnection(sessionId: "s1")
 
         #expect(conn.makeDictationStreamClient() != nil)
+    }
+
+    @Test func controlSessionStreamUsesControlURL() {
+        let (conn, _) = makeTestConnection(sessionId: "control-1")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+
+        conn.prepareFocusedSessionStreamEndpointForTesting(
+            sessionId: "control-1",
+            routeScope: .control
+        )
+
+        #expect(conn.focusedSessionStreamURLForTesting?.path == "/control-sessions/control-1/stream")
     }
 
 }

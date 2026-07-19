@@ -59,6 +59,18 @@ function canonicalAppEventMessages(): Record<string, AppEventMessage> {
     workspaceId: session.workspaceId,
     emittedAt,
   };
+  const controlSummary: SessionSummary = {
+    ...summary,
+    id: "control-session-1",
+    workspaceId: undefined,
+    workspaceName: undefined,
+    name: "Oppi Control",
+    control: {
+      domain: "schedules",
+      intent: "create",
+      targetName: "Nightly review",
+    },
+  };
 
   return {
     app_events_connected: {
@@ -70,6 +82,12 @@ function canonicalAppEventMessages(): Record<string, AppEventMessage> {
     session_imported: { type: "session_imported", ...sessionBase, summary },
     session_discovered: { type: "session_discovered", ...sessionBase, summary },
     session_summary: { type: "session_summary", ...sessionBase, summary },
+    session_summary_control: {
+      type: "session_summary",
+      sessionId: controlSummary.id,
+      emittedAt,
+      summary: controlSummary,
+    },
     session_deleted: { type: "session_deleted", ...sessionBase },
     session_ended: { type: "session_ended", ...sessionBase, reason: "completed" },
     stop_requested: { type: "stop_requested", ...sessionBase, source: "user" },

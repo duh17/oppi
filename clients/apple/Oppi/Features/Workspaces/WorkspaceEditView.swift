@@ -45,6 +45,9 @@ struct WorkspaceEditView: View {
     }
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(ServerConnection.self) private var connection
+    @Environment(SessionStore.self) private var sessionStore
+    @Environment(AppNavigation.self) private var navigation
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(\.dismiss) private var dismiss
 
@@ -67,6 +70,7 @@ struct WorkspaceEditView: View {
     @State private var skillsError: String?
     @State private var togglingResourceKeys: Set<String> = []
     @State private var isSaving = false
+    @State private var isLaunchingOppi = false
     @State private var error: String?
     @State private var availableModels: [ModelInfo] = []
     @State private var selectedSkillDetail: SkillDetailDestination?
@@ -159,6 +163,18 @@ struct WorkspaceEditView: View {
 
     var body: some View {
         List {
+            if connection.controlSessionsAvailable, apiClient != nil {
+                Section {
+                    UseOppiSessionRow(
+                        supportingText: "Work with Default Agent to revise this Workspace.",
+                        isLoading: isLaunchingOppi
+                    ) {
+                        Task { await launchOppiSession() }
+                    }
+                    .accessibilityIdentifier("workspace.edit.useOppiSession")
+                }
+            }
+
             Section("Details") {
                 TextField("Name", text: $name)
                     .autocorrectionDisabled()
@@ -773,6 +789,39 @@ struct WorkspaceEditView: View {
         } catch {
             self.error = error.localizedDescription
             isSaving = false
+        }
+    }
+
+    @MainActor
+    private func launchOppiSession() async {
+        guard let apiClient, !isLaunchingOppi else { return }
+        isLaunchingOppi = true
+        defer { isLaunchingOppi = false }
+        do {
+            let response = try await apiClient.createControlSession(.init(
+                domain: .workspaces,
+                intent: .revise,
+                targetId: workspace.id,
+                targetName: workspace.name,
+                name: "Revise \(workspace.name)",
+                prompt: ControlSessionStarterPrompt.make(
+                    domain: .workspaces,
+                    intent: .revise,
+                    targetId: workspace.id,
+                    targetName: workspace.name
+                )
+            ))
+            sessionStore.cacheSessionForNavigation(response.session)
+            guard let serverId = connection.currentServerId ?? sessionStore.activeServerId else { return }
+            dismiss()
+            await Task.yield()
+            navigation.openWorkspaceSession(.init(
+                serverId: serverId,
+                sessionId: response.session.id,
+                routeScope: .control
+            ))
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

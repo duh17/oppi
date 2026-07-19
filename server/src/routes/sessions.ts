@@ -14,6 +14,10 @@ import { createSessionListRouteHandlers } from "./session-list-handlers.js";
 import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
+import { isDeclaredControlSession } from "../control-session.js";
+
+const CONTROL_SESSION_DOMAINS = new Set(["agents", "schedules", "workspaces"] as const);
+const CONTROL_SESSION_INTENTS = new Set(["create", "revise"] as const);
 
 const CREATE_SESSION_THINKING_LEVELS = new Set([
   "off",
@@ -76,6 +80,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     handleGenericGetSessionTrace,
     handleGenericGetSessionDialogs,
     handleGenericGetSessionEvents,
+    handleGetFullToolOutputForSession,
+    handleGetToolOutputForSession,
+    handleGetSessionEventsForSession,
+    handleGetSessionForSession,
+    handleGetSessionTracePageForSession,
+    handleGetSessionTraceOutlineForSession,
   } = createSessionTraceRouteHandlers(ctx, helpers, requireWorkspaceSession, requireSession);
   function requireWorkspaceSession(
     workspaceId: string,
@@ -99,6 +109,19 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return null;
     }
 
+    return session;
+  }
+
+  function requireControlSession(sessionId: string, res: ServerResponse): Session | null {
+    const session = ctx.storage.getSession(sessionId);
+    if (!session) {
+      helpers.error(res, 404, "Session not found");
+      return null;
+    }
+    if (!isDeclaredControlSession(session)) {
+      helpers.error(res, 400, "Session is not a control session");
+      return null;
+    }
     return session;
   }
 
@@ -230,6 +253,64 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
   }
 
+  async function handleCreateControlSession(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await helpers.parseBody<{
+      domain?: unknown;
+      intent?: unknown;
+      targetId?: unknown;
+      targetName?: unknown;
+      name?: unknown;
+      prompt?: unknown;
+    }>(req);
+    if (
+      typeof body.domain !== "string" ||
+      !CONTROL_SESSION_DOMAINS.has(body.domain as "agents" | "schedules" | "workspaces") ||
+      typeof body.intent !== "string" ||
+      !CONTROL_SESSION_INTENTS.has(body.intent as "create" | "revise") ||
+      (body.targetId !== undefined &&
+        (typeof body.targetId !== "string" || !body.targetId.trim())) ||
+      (body.targetName !== undefined &&
+        (typeof body.targetName !== "string" || !body.targetName.trim())) ||
+      (body.name !== undefined && typeof body.name !== "string") ||
+      (body.prompt !== undefined && typeof body.prompt !== "string")
+    ) {
+      helpers.error(res, 400, "Invalid control session metadata");
+      return;
+    }
+
+    const targetId = body.targetId?.trim();
+    const targetName = body.targetName?.trim();
+    try {
+      const result = await lifecycle.createControlSession({
+        control: {
+          domain: body.domain as "agents" | "schedules" | "workspaces",
+          intent: body.intent as "create" | "revise",
+          ...(targetId ? { targetId } : {}),
+          ...(targetName ? { targetName } : {}),
+        },
+        name: body.name,
+        prompt: body.prompt,
+      });
+      ctx.appEvents?.emitSessionCreated(result.createdSession);
+      if (result.summarySession) {
+        ctx.appEvents?.emitSessionSummary(result.summarySession);
+      }
+      helpers.json(
+        res,
+        {
+          session: result.session,
+          ...(result.prompted !== undefined ? { prompted: result.prompted } : {}),
+        },
+        201,
+      );
+    } catch (error: unknown) {
+      helpers.error(res, 500, safeErrorMessage(error));
+    }
+  }
+
   function requireSession(sessionId: string, res: ServerResponse): Session | null {
     const session = ctx.storage.getSession(sessionId);
     if (!session) {
@@ -237,6 +318,16 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return null;
     }
 
+    return session;
+  }
+
+  function requireGenericMutableSession(sessionId: string, res: ServerResponse): Session | null {
+    const session = requireSession(sessionId, res);
+    if (!session) return null;
+    if (isDeclaredControlSession(session)) {
+      helpers.error(res, 400, "Use the control-session route for control-session mutations");
+      return null;
+    }
     return session;
   }
 
@@ -407,13 +498,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const session = requireSession(sessionId, res);
+    const session = requireGenericMutableSession(sessionId, res);
     if (!session) return;
     await dispatchSessionCommand(session, req, res);
   }
 
   async function handleGenericStopSession(sessionId: string, res: ServerResponse): Promise<void> {
-    const session = requireSession(sessionId, res);
+    const session = requireGenericMutableSession(sessionId, res);
     if (!session) return;
     await stopKnownSession(session, res);
   }
@@ -426,6 +517,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const session = requireWorkspaceSession(workspaceId, sessionId, res);
     if (!session) return;
 
+    await deleteKnownSession(session, res);
+  }
+
+  async function deleteKnownSession(session: Session, res: ServerResponse): Promise<void> {
     try {
       const result = await lifecycle.deleteSession(session);
       ctx.appEvents?.emitSessionDeleted(result.session);
@@ -440,6 +535,100 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   }
 
   return async ({ method, path, url, req, res }) => {
+    if (path === "/control-sessions" && method === "POST") {
+      await handleCreateControlSession(req, res);
+      return true;
+    }
+
+    const controlCommandMatch = path.match(/^\/control-sessions\/([^/]+)\/command$/);
+    if (controlCommandMatch && method === "POST") {
+      const session = requireControlSession(controlCommandMatch[1], res);
+      if (session) await dispatchSessionCommand(session, req, res);
+      return true;
+    }
+
+    const controlStopMatch = path.match(/^\/control-sessions\/([^/]+)\/stop$/);
+    if (controlStopMatch && method === "POST") {
+      const session = requireControlSession(controlStopMatch[1], res);
+      if (session) await stopKnownSession(session, res);
+      return true;
+    }
+
+    const controlResumeMatch = path.match(/^\/control-sessions\/([^/]+)\/resume$/);
+    if (controlResumeMatch && method === "POST") {
+      const session = requireControlSession(controlResumeMatch[1], res);
+      if (!session) return true;
+      try {
+        const result = await lifecycle.resumeControlSession(session);
+        helpers.json(res, { session: result.session });
+      } catch (error: unknown) {
+        const status = error instanceof SessionLifecycleError ? error.statusCode : 500;
+        helpers.error(res, status, safeErrorMessage(error));
+      }
+      return true;
+    }
+
+    const controlEventsMatch = path.match(/^\/control-sessions\/([^/]+)\/events$/);
+    if (controlEventsMatch && method === "GET") {
+      const session = requireControlSession(controlEventsMatch[1], res);
+      if (session) handleGetSessionEventsForSession(session, url, res);
+      return true;
+    }
+
+    const controlTracePageMatch = path.match(/^\/control-sessions\/([^/]+)\/trace-page$/);
+    if (controlTracePageMatch && method === "GET") {
+      const session = requireControlSession(controlTracePageMatch[1], res);
+      if (session) await handleGetSessionTracePageForSession(req, session, url, res);
+      return true;
+    }
+
+    const controlTraceOutlineMatch = path.match(/^\/control-sessions\/([^/]+)\/trace-outline$/);
+    if (controlTraceOutlineMatch && method === "GET") {
+      const session = requireControlSession(controlTraceOutlineMatch[1], res);
+      if (session) await handleGetSessionTraceOutlineForSession(req, session, res);
+      return true;
+    }
+
+    const controlToolOutputMatch = path.match(
+      /^\/control-sessions\/([^/]+)\/tool-output\/([^/]+)$/,
+    );
+    if (controlToolOutputMatch && method === "GET") {
+      const session = requireControlSession(controlToolOutputMatch[1], res);
+      if (session) {
+        if (url.searchParams.get("full") === "true") {
+          await handleGetFullToolOutputForSession(session, controlToolOutputMatch[2], req, res);
+        } else {
+          await handleGetToolOutputForSession(session, controlToolOutputMatch[2], req, res);
+        }
+      }
+      return true;
+    }
+
+    const controlAttachmentMatch = path.match(
+      /^\/control-sessions\/([^/]+)\/attachments\/([^/]+)$/,
+    );
+    if (controlAttachmentMatch && (method === "GET" || method === "HEAD")) {
+      const session = requireControlSession(controlAttachmentMatch[1], res);
+      if (session) {
+        await handleGetSessionAttachment(session.id, controlAttachmentMatch[2], req, res, method);
+      }
+      return true;
+    }
+
+    const controlSessionMatch = path.match(/^\/control-sessions\/([^/]+)$/);
+    if (controlSessionMatch) {
+      const session = requireControlSession(controlSessionMatch[1], res);
+      if (!session) return true;
+      if (method === "GET") {
+        await handleGetSessionForSession(req, session, url, res);
+        return true;
+      }
+      if (method === "DELETE") {
+        await deleteKnownSession(session, res);
+        return true;
+      }
+    }
+
     // ── Session search ──
     if (path === "/sessions/search" && method === "GET") {
       handleSearchSessions(url, res);

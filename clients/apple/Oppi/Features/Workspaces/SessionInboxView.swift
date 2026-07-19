@@ -81,10 +81,10 @@ private struct SessionInboxViewData {
 
 private struct SessionInboxPendingDelete: Identifiable {
     let serverId: String
-    let workspaceId: String
+    let routeScope: SessionRouteScope
     let session: Session
 
-    var id: String { "\(serverId):\(workspaceId):\(session.id)" }
+    var id: String { "\(serverId):\(session.id)" }
 }
 
 enum WorkspaceCatalogAvailability: Equatable {
@@ -105,6 +105,23 @@ enum WorkspaceCatalogAvailability: Equatable {
         } else {
             self = .loading
         }
+    }
+}
+
+enum WorkspaceSidebarDisclosurePolicy {
+    static let defaultExpanded = true
+}
+
+enum SessionInboxSessionRouting {
+    static func routeScope(for session: Session) -> SessionRouteScope? {
+        if session.control != nil { return .control }
+        guard let workspaceId = session.workspaceId, !workspaceId.isEmpty else { return nil }
+        return .workspace(workspaceId)
+    }
+
+    static func allSessionsContext(for session: Session, workspaceName: String?) -> String? {
+        if session.control != nil { return "Oppi Control" }
+        return session.workspaceName ?? workspaceName
     }
 }
 
@@ -430,11 +447,6 @@ struct SessionInboxView: View {
                 Label("Manage Servers", systemImage: "server.rack")
             }
 
-            Button {
-                navigation.openWorkspaceUtility(.appSettings)
-            } label: {
-                Label("App Settings", systemImage: "gear")
-            }
         } label: {
             ServerSwitcherPill(
                 server: current,
@@ -655,11 +667,11 @@ struct SessionInboxView: View {
             .tint(.themeGreen)
             .accessibilityIdentifier("session.resume.\(item.session.id)")
 
-            if let workspaceId = item.session.workspaceId, !workspaceId.isEmpty {
+            if let routeScope = routeScope(for: item.session) {
                 Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
                     pendingDelete = SessionInboxPendingDelete(
                         serverId: item.serverId,
-                        workspaceId: workspaceId,
+                        routeScope: routeScope,
                         session: item.session
                     )
                 } label: {
@@ -742,7 +754,10 @@ struct SessionInboxView: View {
 
     private func workspaceContext(for item: SessionInboxItem) -> String? {
         guard selectedWorkspace == nil else { return nil }
-        return item.session.workspaceName ?? item.workspace?.name
+        return SessionInboxSessionRouting.allSessionsContext(
+            for: item.session,
+            workspaceName: item.workspace?.name
+        )
     }
 
     private func sessionRowAccessibilityValue(for item: SessionInboxItem) -> String {
@@ -751,11 +766,16 @@ struct SessionInboxView: View {
 
     private func openSession(_ item: SessionInboxItem) {
         var normalized = item.session
-        if normalized.workspaceId == nil || normalized.workspaceId?.isEmpty == true {
+        if normalized.control == nil,
+           normalized.workspaceId == nil || normalized.workspaceId?.isEmpty == true {
             normalized.workspaceId = item.workspace?.id ?? selectedWorkspace?.workspace.id
         }
         if normalized.workspaceName == nil || normalized.workspaceName?.isEmpty == true {
             normalized.workspaceName = item.workspace?.name ?? selectedWorkspace?.workspace.name
+        }
+        guard let routeScope = SessionInboxSessionRouting.routeScope(for: normalized) else {
+            error = "Session route is unavailable"
+            return
         }
         item.connection.sessionStore.cacheSessionForNavigation(normalized)
 
@@ -765,7 +785,7 @@ struct SessionInboxView: View {
             WorkspaceSessionNavTarget(
                 serverId: item.serverId,
                 sessionId: item.session.id,
-                workspaceId: normalized.workspaceId
+                routeScope: routeScope
             ),
             workspace: workspaceTarget
         )
@@ -773,9 +793,9 @@ struct SessionInboxView: View {
 
     private func stopSession(_ item: SessionInboxItem) async {
         guard let api = item.connection.apiClient,
-              let workspaceId = item.session.workspaceId else { return }
+              let routeScope = routeScope(for: item.session) else { return }
         do {
-            let updated = try await api.stopWorkspaceSession(workspaceId: workspaceId, sessionId: item.session.id)
+            let updated = try await api.stopSession(scope: routeScope, sessionId: item.session.id)
             item.connection.sessionStore.upsert(updated)
         } catch {
             self.error = "Stop failed: \(error.localizedDescription)"
@@ -784,9 +804,9 @@ struct SessionInboxView: View {
 
     private func resumeSession(_ item: SessionInboxItem) async {
         guard let api = item.connection.apiClient,
-              let workspaceId = item.session.workspaceId else { return }
+              let routeScope = routeScope(for: item.session) else { return }
         do {
-            let updated = try await api.resumeWorkspaceSession(workspaceId: workspaceId, sessionId: item.session.id)
+            let updated = try await api.resumeSession(scope: routeScope, sessionId: item.session.id)
             item.connection.sessionStore.upsert(updated)
         } catch {
             self.error = "Resume failed: \(error.localizedDescription)"
@@ -799,25 +819,29 @@ struct SessionInboxView: View {
         connection.sessionStore.remove(id: pending.session.id)
         await TimelineCache.shared.removeTrace(pending.session.id, serverId: pending.serverId)
         do {
-            try await api.deleteWorkspaceSession(workspaceId: pending.workspaceId, sessionId: pending.session.id)
-            composerDraftStore?.clearDraft(
-                serverID: pending.serverId,
-                workspaceID: pending.workspaceId,
-                sessionID: pending.session.id
-            )
+            try await api.deleteSession(scope: pending.routeScope, sessionId: pending.session.id)
+            clearComposerDraft(for: pending)
         } catch let apiError as APIError {
             if case .server(let status, _) = apiError, status == 404 {
-                composerDraftStore?.clearDraft(
-                    serverID: pending.serverId,
-                    workspaceID: pending.workspaceId,
-                    sessionID: pending.session.id
-                )
+                clearComposerDraft(for: pending)
             } else {
                 self.error = "Delete failed: \(apiError.localizedDescription)"
             }
         } catch {
             self.error = "Delete failed: \(error.localizedDescription)"
         }
+    }
+
+    private func routeScope(for session: Session) -> SessionRouteScope? {
+        SessionInboxSessionRouting.routeScope(for: session)
+    }
+
+    private func clearComposerDraft(for pending: SessionInboxPendingDelete) {
+        composerDraftStore?.clearDraft(
+            serverID: pending.serverId,
+            workspaceID: pending.routeScope.composerDraftScopeID,
+            sessionID: pending.session.id
+        )
     }
 
     private var newSessionButton: some View {
@@ -1191,6 +1215,8 @@ struct WorkspaceSidebarView: View {
 
     @State private var createSheetContext: WorkspaceCreateSheetContext?
     @State private var pendingCreatedWorkspaceTarget: WorkspaceNavTarget?
+    @AppStorage(AppIdentifiers.workspaceSidebarExpandedKey)
+    private var workspacesExpanded = WorkspaceSidebarDisclosurePolicy.defaultExpanded
 
     private var servers: [PairedServer] {
         serverStore.servers
@@ -1210,7 +1236,42 @@ struct WorkspaceSidebarView: View {
 
             ScrollView(.vertical, showsIndicators: true) {
                 LazyVStack(spacing: 2) {
-                    if let selectedServer {
+                    if ReleaseFeatures.agentAndScheduleManagementEnabled {
+                        sidebarUtilityRow(
+                            .agents,
+                            title: "Agents",
+                            systemImage: "person.crop.circle"
+                        )
+                        sidebarUtilityRow(
+                            .schedules,
+                            title: "Schedules",
+                            systemImage: "clock"
+                        )
+                    }
+
+                    Button {
+                        workspacesExpanded.toggle()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("Workspaces")
+                                .font(.caption.weight(.semibold))
+                            Spacer(minLength: 8)
+                            Image(systemName: workspacesExpanded ? "chevron.down" : "chevron.right")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .foregroundStyle(.themeComment)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 4)
+                    .accessibilityLabel("Workspaces")
+                    .accessibilityValue(workspacesExpanded ? "Expanded" : "Collapsed")
+                    .accessibilityHint(workspacesExpanded ? "Hides workspace rows" : "Shows workspace rows")
+                    .accessibilityIdentifier("workspace.sidebar.disclosure")
+
+                    if workspacesExpanded, let selectedServer {
                         let serverId = selectedServer.id
                         let connection = coordinator.connection(for: serverId)
                         let workspaceStore = connection?.workspaceStore
@@ -1282,9 +1343,12 @@ struct WorkspaceSidebarView: View {
                                 .accessibilityIdentifier(WorkspaceHomeView.workspaceOpenAccessibilityIdentifier(workspaceName: workspace.name))
                                 .accessibilityLabel("Open \(workspace.name)")
                                 .accessibilityValue(workspaceAccessibilityValue(status: status, gitSummary: gitSummary))
+                                .accessibilityAddTraits(
+                                    navigation.selectedWorkspaceFilter == target ? .isSelected : []
+                                )
                             }
                         }
-                    } else {
+                    } else if workspacesExpanded {
                         Text("No server selected")
                             .font(.subheadline)
                             .foregroundStyle(.themeComment)
@@ -1306,6 +1370,10 @@ struct WorkspaceSidebarView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 4)
             }
+
+            sidebarUtilityRow(.appSettings, title: "App Settings", systemImage: "gear")
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(theme.bg.primary.ignoresSafeArea())
@@ -1328,7 +1396,7 @@ struct WorkspaceSidebarView: View {
 
     private var sidebarHeader: some View {
         HStack(alignment: .center, spacing: 12) {
-            Text("Workspaces")
+            Text("Oppi")
                 .font(.title2.weight(.bold))
                 .foregroundStyle(.themeFg)
                 .lineLimit(1)
@@ -1351,6 +1419,50 @@ struct WorkspaceSidebarView: View {
         .padding(.horizontal, 20)
         .padding(.top, 20)
         .padding(.bottom, 12)
+    }
+
+    private func sidebarUtilityRow(
+        _ target: WorkspaceUtilityNavTarget,
+        title: String,
+        systemImage: String
+    ) -> some View {
+        let isSelected = navigation.workspaceNavigationPresentation == .split
+            && navigation.splitDetailTarget == .utility(target)
+
+        return Button {
+            navigation.openWorkspaceUtility(target)
+            onSelect?()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.title3)
+                    .foregroundStyle(isSelected ? .themeBlue : .themeFg)
+                    .frame(width: 32, height: 32)
+
+                Text(title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(isSelected ? .themeBlue : .themeFg)
+
+                Spacer(minLength: 8)
+            }
+            .frame(minHeight: 44)
+            .padding(.vertical, 2)
+            .padding(.horizontal, 8)
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(theme.text.primary.opacity(0.08))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityHint("Opens \(title.lowercased()) management")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityIdentifier(
+            target == .appSettings ? "workspace.settings.open" : "workspace.\(title.lowercased()).open"
+        )
     }
 
     private func newWorkspaceButton(_ selectedServer: PairedServer) -> some View {

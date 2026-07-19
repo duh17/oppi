@@ -8,7 +8,7 @@ import type { AttachmentKind, ChatAttachmentRef, ServerConfig } from "../types.j
 
 export interface UploadRecord {
   id: string;
-  workspaceId: string;
+  workspaceId?: string;
   sessionId?: string;
   status: "created" | "complete" | "failed" | "expired";
   originalName: string;
@@ -289,7 +289,7 @@ export function resolveUploadStoreConfig(config: ServerConfig): UploadStoreConfi
 
 export async function createUploadRecord(args: {
   config: UploadStoreConfigResolved;
-  workspaceId: string;
+  workspaceId?: string;
   sessionId?: string;
   name: string;
   mimeType: string;
@@ -315,7 +315,7 @@ export async function createUploadRecord(args: {
   const id = `upl_${randomBytes(9).toString("hex")}`;
   const record: UploadRecord = {
     id,
-    workspaceId: args.workspaceId,
+    ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
     ...(args.sessionId ? { sessionId: args.sessionId } : {}),
     status: "created",
     originalName: args.name,
@@ -348,19 +348,13 @@ export async function getUploadRecord(
 
 export async function writeUploadContent(args: {
   config: UploadStoreConfigResolved;
-  workspaceId: string;
+  workspaceId?: string;
   sessionId?: string;
   uploadId: string;
   req: IncomingMessage;
 }): Promise<UploadRecord> {
   const record = await getUploadRecord(args.config, args.uploadId);
-  if (
-    !record ||
-    record.workspaceId !== args.workspaceId ||
-    (args.sessionId !== undefined &&
-      record.sessionId !== undefined &&
-      record.sessionId !== args.sessionId)
-  ) {
+  if (!record || record.workspaceId !== args.workspaceId || record.sessionId !== args.sessionId) {
     throw new UploadStoreError(404, "Upload not found");
   }
   if (record.status !== "created") {
@@ -459,7 +453,7 @@ export async function writeUploadContent(args: {
 
 export async function resolveUploadAttachment(args: {
   config: UploadStoreConfigResolved;
-  workspaceId: string;
+  workspaceId?: string;
   sessionId?: string;
   ref: ChatAttachmentRef;
 }): Promise<UploadRecord> {
@@ -467,13 +461,7 @@ export async function resolveUploadAttachment(args: {
     throw new UploadStoreError(400, `Unsupported attachment source: ${args.ref.source}`);
   }
   const record = await getUploadRecord(args.config, args.ref.id);
-  if (
-    !record ||
-    record.workspaceId !== args.workspaceId ||
-    (args.sessionId !== undefined &&
-      record.sessionId !== undefined &&
-      record.sessionId !== args.sessionId)
-  ) {
+  if (!record || record.workspaceId !== args.workspaceId || record.sessionId !== args.sessionId) {
     throw new UploadStoreError(404, "Upload not found");
   }
   if (record.status !== "complete" || !record.blobPath || !record.sizeBytes || !record.sha256) {

@@ -472,6 +472,59 @@ describe("workspace session list routes", () => {
     expect(response.sessions[1]).not.toHaveProperty("warnings");
   });
 
+  it("includes only explicitly declared control sessions in the global recent list", async () => {
+    const mock = createMockContext();
+    const now = Date.parse("2026-05-13T12:00:00Z");
+    mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([
+      makeSession({ id: "workspace-row", lastActivity: now - 1_000 }),
+    ]);
+    mock.storage.listSessions.mockReturnValue([
+      makeSession({ id: "workspace-row", lastActivity: now - 1_000 }),
+      makeSession({
+        id: "control-row",
+        workspaceId: undefined,
+        lastActivity: now,
+        control: { domain: "schedules", intent: "create" },
+      }),
+      makeSession({
+        id: "undeclared-workspace-less",
+        workspaceId: undefined,
+        lastActivity: now + 1_000,
+      }),
+    ]);
+
+    await dispatch(mock, "/sessions/recent", "https://localhost/sessions/recent");
+
+    const response = mock.responses[0]?.data as { sessions: Array<Session> };
+    expect(response.sessions.map((session) => session.id)).toEqual([
+      "control-row",
+      "workspace-row",
+    ]);
+    expect(response.sessions[0]?.control).toEqual({ domain: "schedules", intent: "create" });
+  });
+
+  it("does not leak active control sessions into workspace session collections", async () => {
+    const mock = createMockContext();
+    const control = makeSession({
+      id: "control-row",
+      workspaceId: undefined,
+      status: "busy",
+      control: { domain: "agents", intent: "create" },
+    });
+    mock.sessions.getActiveSessionIds.mockReturnValue([control.id]);
+    mock.sessions.getActiveSession.mockReturnValue(control);
+    mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([]);
+
+    await dispatch(
+      mock,
+      "/workspaces/ws-1/sessions",
+      "https://localhost/workspaces/ws-1/sessions?status=active",
+    );
+
+    const response = mock.responses[0]?.data as { active: Session[] };
+    expect(response.active).toEqual([]);
+  });
+
   it("counts pending mirror extension dialogs as workspace row attention", async () => {
     const mock = createMockContext();
     const now = Date.parse("2026-05-13T12:00:00Z");

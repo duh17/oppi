@@ -1,4 +1,12 @@
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -29,6 +37,42 @@ afterEach(() => {
 describe("resolveSdkSessionCwd", () => {
   it("defaults to home dir when workspace is missing", () => {
     expect(resolveSdkSessionCwd(undefined)).toBe(homedir());
+  });
+
+  it("uses an owner-only internal cwd for declared control sessions", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-cwd-"));
+    const session = {
+      control: { domain: "agents", intent: "create" },
+    } as Pick<Session, "worktreeId" | "control">;
+
+    try {
+      const cwd = resolveSdkSessionCwd(undefined, session, { dataDir });
+      expect(cwd).toBe(join(dataDir, "control-sessions", "cwd"));
+      expect(lstatSync(cwd).isDirectory()).toBe(true);
+      expect(lstatSync(cwd).mode & 0o777).toBe(0o700);
+      expect(resolveSdkSessionDisplayCwd(undefined, session, { dataDir })).toBe("Oppi Control");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symlinked control-session parent before creating the cwd", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-cwd-link-"));
+    const outside = mkdtempSync(join(tmpdir(), "oppi-control-cwd-outside-"));
+    const session = {
+      control: { domain: "schedules", intent: "revise" },
+    } as Pick<Session, "worktreeId" | "control">;
+    symlinkSync(outside, join(dataDir, "control-sessions"));
+
+    try {
+      expect(() => resolveSdkSessionCwd(undefined, session, { dataDir })).toThrow(
+        "Control session cwd parent must be a real directory",
+      );
+      expect(() => lstatSync(join(outside, "cwd"))).toThrow();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it("expands tilde hostMount to an absolute path", () => {
@@ -256,11 +300,7 @@ describe("SdkBackend host extensions", () => {
     mkdirSync(join(cwd, ".pi"), { recursive: true });
     writeFileSync(
       shellPath,
-      [
-        "#!/bin/sh",
-        "export OPPI_CUSTOM_SHELL_PATH_ACTIVE=1",
-        'exec /bin/bash "$@"',
-      ].join("\n"),
+      ["#!/bin/sh", "export OPPI_CUSTOM_SHELL_PATH_ACTIVE=1", 'exec /bin/bash "$@"'].join("\n"),
     );
     chmodSync(shellPath, 0o755);
     writeFileSync(
@@ -320,16 +360,16 @@ describe("SdkBackend host extensions", () => {
 
       expectEffectiveShellCommandPrefix(first, "caller-a");
       expectEffectiveShellCommandPrefix(second, "caller-b");
-      await expect(Promise.all([readCallerIdentity(first), readCallerIdentity(second)])).resolves.toEqual(
-        ["caller-a:preserved:1", "caller-b:preserved:1"],
-      );
+      await expect(
+        Promise.all([readCallerIdentity(first), readCallerIdentity(second)]),
+      ).resolves.toEqual(["caller-a:preserved:1", "caller-b:preserved:1"]);
       for (let reloadCount = 0; reloadCount < 2; reloadCount += 1) {
         await Promise.all([first.reloadResources(), second.reloadResources()]);
         expectEffectiveShellCommandPrefix(first, "caller-a");
         expectEffectiveShellCommandPrefix(second, "caller-b");
-        await expect(Promise.all([readCallerIdentity(first), readCallerIdentity(second)])).resolves.toEqual(
-          ["caller-a:preserved:1", "caller-b:preserved:1"],
-        );
+        await expect(
+          Promise.all([readCallerIdentity(first), readCallerIdentity(second)]),
+        ).resolves.toEqual(["caller-a:preserved:1", "caller-b:preserved:1"]);
       }
       expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBeUndefined();
     } finally {
@@ -782,7 +822,7 @@ describe("SdkBackend.setModel", () => {
 
     expect(result).toEqual({
       success: false,
-      error: "Model \"studio/nope\" is not available. Available models: studio/qwen3-coder",
+      error: 'Model "studio/nope" is not available. Available models: studio/qwen3-coder',
     });
     expect(piSession.setModel).not.toHaveBeenCalled();
   });
@@ -879,8 +919,7 @@ describe("SdkBackend.setModel", () => {
 
     expect(result).toEqual({
       success: false,
-      error:
-        "Model \"gpt\" is not available. Available models: anthropic/claude-sonnet-4-20250514",
+      error: 'Model "gpt" is not available. Available models: anthropic/claude-sonnet-4-20250514',
     });
     expect(piSession.setModel).not.toHaveBeenCalled();
   });

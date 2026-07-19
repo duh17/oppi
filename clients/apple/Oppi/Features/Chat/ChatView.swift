@@ -53,6 +53,7 @@ struct ExtensionSurfaceSessionLink: Equatable {
 struct ChatView: View {
     let sessionId: String
     private let workspaceIdHint: String?
+    private let routeScope: SessionRouteScope?
     private let ownsWorkspacePathBackNavigation: Bool
 
     @Environment(ServerConnection.self) private var connection
@@ -122,14 +123,21 @@ struct ChatView: View {
     init(
         sessionId: String,
         workspaceIdHint: String? = nil,
+        routeScope: SessionRouteScope? = nil,
         initialInputText: String = "",
         initialPendingFiles: [PendingFileReference] = [],
         ownsWorkspacePathBackNavigation: Bool = false
     ) {
         self.sessionId = sessionId
         self.workspaceIdHint = workspaceIdHint
+        self.routeScope = routeScope
+            ?? workspaceIdHint.map(SessionRouteScope.workspace)
         self.ownsWorkspacePathBackNavigation = ownsWorkspacePathBackNavigation
-        _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId, workspaceIdHint: workspaceIdHint))
+        _sessionManager = State(initialValue: ChatSessionManager(
+            sessionId: sessionId,
+            workspaceIdHint: workspaceIdHint,
+            routeScope: self.routeScope
+        ))
         _composerDraftController = State(initialValue: ChatComposerDraftController(
             initialText: initialInputText,
             initialRepoPointers: initialPendingFiles
@@ -206,9 +214,15 @@ struct ChatView: View {
         return fallback?.isEmpty == false ? fallback : nil
     }
 
+    private var focusedRouteScope: SessionRouteScope? {
+        if session?.control != nil { return .control }
+        if let timelineWorkspaceId { return .workspace(timelineWorkspaceId) }
+        return routeScope
+    }
+
     private var composerDraftKey: ComposerDraftKey? {
         guard let serverID = connection.currentServerId ?? sessionStore.activeServerId,
-              let workspaceID = timelineWorkspaceId else {
+              let workspaceID = focusedRouteScope?.composerDraftScopeID else {
             return nil
         }
         return ComposerDraftKey(
@@ -371,6 +385,7 @@ struct ChatView: View {
         ChatTimelineView(
             sessionId: sessionId,
             workspaceId: timelineWorkspaceId,
+            routeScope: focusedRouteScope,
             isBusy: isBusy,
             extensionWorkingState: extensionSurfaceState?.working,
             extensionHiddenThinkingLabel: extensionSurfaceState?.hiddenThinkingLabel,
@@ -592,7 +607,11 @@ struct ChatView: View {
                 // Stand up new session. Detach the draft key before any new
                 // workspace metadata resolves so edits cannot hit the old session.
                 composerDraftController.detachForSessionChange()
-                sessionManager = ChatSessionManager(sessionId: newId, workspaceIdHint: workspaceIdHint)
+                sessionManager = ChatSessionManager(
+                    sessionId: newId,
+                    workspaceIdHint: workspaceIdHint,
+                    routeScope: focusedRouteScope
+                )
                 scrollController = ChatScrollController()
                 reviewComments = ChatReviewCommentsController()
                 activeReviewCommentRequest = nil
@@ -901,6 +920,10 @@ struct ChatView: View {
             return
         }
         if appNavigation.workspaceNavigationPresentation == .split {
+            if appNavigation.splitDetailPath.count > 0 {
+                dismiss()
+                return
+            }
             appNavigation.showSessionInboxInSplit()
             return
         }
@@ -1253,7 +1276,11 @@ struct ChatView: View {
         // The async sessionManager.connect() task starts shortly after onAppear,
         // but users can tap toolbar controls before that task has a chance to
         // refocus the connection on this session.
-        connection.prepareForSessionReentry(sessionId, workspaceIdHint: workspaceIdHint)
+        connection.prepareForSessionReentry(
+            sessionId,
+            workspaceIdHint: workspaceIdHint,
+            routeScope: focusedRouteScope
+        )
 
         sessionManager.markAppeared()
         voiceInputManager.loadPreferences()
@@ -1450,11 +1477,11 @@ struct ChatView: View {
     ) async throws -> [ChatAttachmentRef] {
         let localAttachments = sourceAttachments.filter { $0.source == .image || $0.source == .localFile }
         guard !localAttachments.isEmpty else { return [] }
-        guard let workspaceId = session?.workspaceId else {
-            throw APIError.server(status: 400, message: "Attachments require a workspace-backed session")
-        }
         guard let api = connection.apiClient else {
             throw APIError.server(status: 503, message: "No server connection available")
+        }
+        guard let routeScope = focusedRouteScope else {
+            throw TreeNavigationError.sessionNotReady
         }
 
         let imageAutoResize: Bool
@@ -1496,14 +1523,14 @@ struct ChatView: View {
             }
 
             let upload = try await api.createSessionAttachmentUpload(
-                workspaceId: workspaceId,
+                scope: routeScope,
                 sessionId: sessionId,
                 name: payload.name,
                 mimeType: payload.mimeType,
                 sizeBytes: payload.data.count
             )
             let attachment = try await api.uploadSessionAttachmentContent(
-                workspaceId: workspaceId,
+                scope: routeScope,
                 sessionId: sessionId,
                 attachmentId: upload.uploadId,
                 data: payload.data,
@@ -1844,14 +1871,11 @@ struct ChatView: View {
                 try await connection.getSessionTree(filterMode: filterMode)
             },
             loadOutline: {
-                guard let workspaceId = session?.workspaceId else {
-                    throw CommandRequestError.rejected(
-                        command: "trace_outline",
-                        reason: "Missing workspace context"
-                    )
+                guard let routeScope = focusedRouteScope else {
+                    throw TreeNavigationError.sessionNotReady
                 }
                 return try await connection.getSessionTraceOutline(
-                    workspaceId: workspaceId,
+                    routeScope: routeScope,
                     sessionId: sessionId
                 )
             }

@@ -51,20 +51,33 @@ struct WorkspaceNavTarget: Hashable {
 struct WorkspaceSessionNavTarget: Hashable {
     let serverId: String
     let sessionId: String
-    let workspaceId: String?
+    let routeScope: SessionRouteScope?
 
-    init(serverId: String, sessionId: String, workspaceId: String? = nil) {
+    var workspaceId: String? { routeScope?.workspaceId }
+
+    init(
+        serverId: String,
+        sessionId: String,
+        workspaceId: String? = nil,
+        routeScope: SessionRouteScope? = nil
+    ) {
         self.serverId = serverId
         self.sessionId = sessionId
-        self.workspaceId = Self.normalizedWorkspaceId(workspaceId)
+        if let routeScope {
+            self.routeScope = routeScope
+        } else if let workspaceId = Self.normalizedWorkspaceId(workspaceId) {
+            self.routeScope = .workspace(workspaceId)
+        } else {
+            self.routeScope = nil
+        }
     }
 
     func withWorkspaceIdIfMissing(_ workspaceId: String?) -> WorkspaceSessionNavTarget {
-        guard self.workspaceId == nil else { return self }
+        guard routeScope == nil else { return self }
         return WorkspaceSessionNavTarget(
             serverId: serverId,
             sessionId: sessionId,
-            workspaceId: workspaceId
+            routeScope: Self.normalizedWorkspaceId(workspaceId).map(SessionRouteScope.workspace)
         )
     }
 
@@ -203,6 +216,7 @@ struct WorkspaceSessionScopedDestinationView: View {
                 ChatView(
                     sessionId: target.sessionId,
                     workspaceIdHint: target.workspaceId,
+                    routeScope: target.routeScope,
                     ownsWorkspacePathBackNavigation: true
                 )
                 .withServerScopedEnvironment(connection)

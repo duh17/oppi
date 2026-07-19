@@ -46,6 +46,21 @@ const sessionOperationIds = [
   "createSessionAttachment",
   "putSessionAttachmentContent",
   "createWorkspaceSession",
+  "createControlSession",
+  "getControlSession",
+  "getControlSessionTracePage",
+  "getControlSessionTraceOutline",
+  "deleteControlSession",
+  "stopControlSession",
+  "resumeControlSession",
+  "getControlSessionEvents",
+  "getControlSessionToolOutput",
+  "createControlSessionAttachment",
+  "putControlSessionAttachmentContent",
+  "getControlSessionAttachment",
+  "headControlSessionAttachment",
+  "sendControlSessionCommand",
+  "openControlSessionStream",
   "getWorkspaceSession",
   "getWorkspaceSessionTracePage",
   "getWorkspaceSessionTraceOutline",
@@ -173,6 +188,16 @@ describe("api route registry", () => {
       "/sessions/:sessionId/command",
     );
     expect(normalizeRegisteredPathPattern("/sessions/s1/stop")).toBe("/sessions/:sessionId/stop");
+    expect(normalizeRegisteredPathPattern("/control-sessions")).toBe("/control-sessions");
+    expect(normalizeRegisteredPathPattern("/control-sessions/s1/trace-page")).toBe(
+      "/control-sessions/:sessionId/trace-page",
+    );
+    expect(normalizeRegisteredPathPattern("/control-sessions/s1/tool-output/tc-1")).toBe(
+      "/control-sessions/:sessionId/tool-output/:toolCallId",
+    );
+    expect(normalizeRegisteredPathPattern("/control-sessions/s1/stream")).toBe(
+      "/control-sessions/:sessionId/stream",
+    );
     expect(normalizeRegisteredPathPattern("/agents")).toBe("/agents");
     expect(normalizeRegisteredPathPattern("/agents/reviewer")).toBe("/agents/:agentId");
     expect(normalizeRegisteredPathPattern("/agents/reviewer/sessions")).toBe(
@@ -266,6 +291,21 @@ describe("api route registry", () => {
     expect(route).toMatchObject({
       method: "GET",
       path: "/app/events/stream",
+      surface: "core",
+      auth: "owner",
+      transport: "websocket",
+      nativeClientUses: ["session"],
+    });
+  });
+
+  it("registers the control session stream as an owner-only native WebSocket", () => {
+    const route = apiRouteSpecs.find(
+      (candidate) => candidate.operationId === "openControlSessionStream",
+    );
+
+    expect(route).toMatchObject({
+      method: "GET",
+      path: "/control-sessions/{sessionId}/stream",
       surface: "core",
       auth: "owner",
       transport: "websocket",
