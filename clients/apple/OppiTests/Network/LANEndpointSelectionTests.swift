@@ -31,6 +31,49 @@ struct LANEndpointSelectionTests {
         #expect(result?.transportPath == .paired)
     }
 
+    @Test func irohPreferredIsEligibleForVerifiedLANSelection() throws {
+        let credentials = ServerCredentials(
+            host: "my-server.tail00000.ts.net",
+            port: 7749,
+            token: "dt_iroh",
+            name: "Iroh Preferred",
+            scheme: .https,
+            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
+            tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF",
+            transports: ServerTransports(
+                preference: .irohPreferred,
+                iroh: IrohServerTransport(
+                    version: 99,
+                    nodeId: "",
+                    alpns: ["oppi/http/1"],
+                    addressMode: .ticket,
+                    ticket: nil
+                ),
+                http: HTTPServerTransport(
+                    host: "my-server.tail00000.ts.net",
+                    port: 7749,
+                    scheme: .https,
+                    tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
+                )
+            )
+        )
+        let discovered = LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "SERVERFINGERPRINT",
+            tlsCertFingerprintPrefix: "TLSFINGERPRINT"
+        )
+
+        let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered)
+
+        let selected = try #require(result)
+        #expect(selected.transportPath == .lan)
+        #expect(try ServerTransportPlanResolver.resolve(
+            credentials: credentials,
+            discoveredLANEndpoint: discovered
+        ) == .http(selected))
+    }
+
     @Test func irohOnlyIsNotEligibleForLANSelection() {
         let credentials = ServerCredentials(
             host: "",
@@ -100,7 +143,7 @@ struct LANEndpointSelectionTests {
         #expect(result?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
     }
 
-    @Test func fallsBackToPairedWhenPairedCredentialsLackTLSPin() {
+    @Test func selectsTailscaleLANWithPublicCATrustWhenLeafPinIsAbsent() {
         let credentials = makeCredentials(
             host: "my-server.tail00000.ts.net",
             scheme: .https,
@@ -113,6 +156,46 @@ struct LANEndpointSelectionTests {
             port: 7749,
             serverFingerprintPrefix: "SERVERFINGERPRINT",
             tlsCertFingerprintPrefix: "TLSFINGERPRINT"
+        )
+
+        let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered)
+
+        #expect(result?.transportPath == .lan)
+        #expect(result?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
+    }
+
+    @Test func fallsBackToPairedForUnpinnedNonTailscaleHost() {
+        let credentials = makeCredentials(
+            host: "oppi.example.com",
+            scheme: .https,
+            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
+            tlsFingerprint: nil
+        )
+        let discovered = LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "SERVERFINGERPRINT",
+            tlsCertFingerprintPrefix: nil
+        )
+
+        let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered)
+
+        #expect(result?.transportPath == .paired)
+        #expect(result?.baseURL.absoluteString == "https://oppi.example.com:7749")
+    }
+
+    @Test func fallsBackToPairedForUnpinnedTailscaleHostOnUnexpectedPort() {
+        let credentials = makeCredentials(
+            host: "my-server.tail00000.ts.net",
+            scheme: .https,
+            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
+            tlsFingerprint: nil
+        )
+        let discovered = LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 8443,
+            serverFingerprintPrefix: "SERVERFINGERPRINT",
+            tlsCertFingerprintPrefix: nil
         )
 
         let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered)
@@ -141,7 +224,7 @@ struct LANEndpointSelectionTests {
         #expect(result?.transportPath == .paired)
     }
 
-    @Test func selectsLANWithDiscoveredIPForHTTP() {
+    @Test func rejectsPlaintextLANEvenWhenDiscoveryIdentityMatches() {
         let credentials = makeCredentials(
             host: "my-server.tail00000.ts.net",
             scheme: .http,
@@ -158,9 +241,8 @@ struct LANEndpointSelectionTests {
 
         let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered)
 
-        // HTTP: no TLS cert matching concern, use discovered LAN IP directly
-        #expect(result?.transportPath == .lan)
-        #expect(result?.baseURL.absoluteString == "http://192.168.1.42:7749")
+        #expect(result?.transportPath == .paired)
+        #expect(result?.baseURL.absoluteString == "http://my-server.tail00000.ts.net:7749")
     }
 
     @Test func selectsLANWithDiscoveredIPWhenPairedHostIsIPAddress() {

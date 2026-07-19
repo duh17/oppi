@@ -24,21 +24,22 @@ struct EndpointSelection: Sendable, Equatable {
 enum LANEndpointSelection {
     /// Select connection endpoint for a server.
     ///
-    /// Trust policy (v1): LAN-direct is allowed only when
-    /// 1) discovered server identity prefix matches paired server fingerprint, and
-    /// 2) paired credentials include a pinned TLS leaf fingerprint.
-    ///
-    /// Optional discovered TLS fingerprint prefix (`tfp`) is treated as an extra check
-    /// when present.
+    /// Trust policy (v1): LAN-direct is allowed only when the discovered
+    /// server identity matches the paired identity and HTTPS can authenticate
+    /// the paired endpoint. Self-signed endpoints require the paired leaf pin.
+    /// Tailscale hostnames may instead use system public-CA trust, but only on
+    /// the exact paired port. Optional discovered TLS fingerprint prefix (`tfp`)
+    /// is an extra check when a paired leaf pin exists.
     static func select(
         credentials: ServerCredentials,
         discoveredEndpoint: LANDiscoveredEndpoint?
     ) -> EndpointSelection? {
-        guard case .http = try? IrohTransportPolicy.select(credentials: credentials) else {
-            return nil
-        }
-
-        guard let paired = pairedSelection(from: credentials) else {
+        // Iroh-preferred credentials still permit their signed HTTP transport.
+        // Cross-lane priority is owned by ServerTransportPlanResolver; this
+        // helper only validates and constructs HTTP/LAN endpoint selections.
+        guard credentials.transports.preference != .irohOnly,
+              credentials.transports.http != nil,
+              let paired = pairedSelection(from: credentials) else {
             return nil
         }
 
@@ -59,15 +60,25 @@ enum LANEndpointSelection {
             return paired
         }
 
-        guard let pinnedTLSFingerprint = normalizeFingerprint(credentials.normalizedTLSCertFingerprint) else {
-            logger.warning("LAN rejected: no TLS cert fingerprint in paired credentials")
+        guard credentials.resolvedScheme == .https else {
+            logger.warning("LAN rejected: plaintext HTTP cannot prove the pinned TLS identity")
             return paired
         }
 
-        if let discoveredTLSPrefix = normalizeFingerprint(discoveredEndpoint.tlsCertFingerprintPrefix),
-           !pinnedTLSFingerprint.hasPrefix(discoveredTLSPrefix) {
-            logger.warning("LAN rejected: TLS fingerprint prefix mismatch")
-            return paired
+        if let pinnedTLSFingerprint = normalizeFingerprint(credentials.normalizedTLSCertFingerprint) {
+            if let discoveredTLSPrefix = normalizeFingerprint(discoveredEndpoint.tlsCertFingerprintPrefix),
+               !pinnedTLSFingerprint.hasPrefix(discoveredTLSPrefix) {
+                logger.warning("LAN rejected: TLS fingerprint prefix mismatch")
+                return paired
+            }
+        } else {
+            let pairedPort = paired.baseURL.port ?? 443
+            guard let pairedHost = paired.baseURL.host,
+                  PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: pairedHost),
+                  discoveredEndpoint.port == pairedPort else {
+                logger.warning("LAN rejected: endpoint lacks a pin or exact Tailscale public-CA identity")
+                return paired
+            }
         }
 
         let scheme = credentials.resolvedScheme

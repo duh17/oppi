@@ -1,4 +1,5 @@
 import Foundation
+import IrohLib
 import Testing
 @testable import Oppi
 
@@ -84,6 +85,38 @@ struct IrohTransportTests {
         #expect(IrohSelectedPathEvidence(isIP: true, isRelay: true, rttMs: 0).pathKind == .unknown)
     }
 
+    @Test func connectErrorMappingDowngradesOnlyAvailabilityKinds() {
+        for kind in [
+            IrohErrorKind.connect,
+            .connection,
+            .relay,
+            .closed,
+            .timeout,
+        ] {
+            #expect(IrohLibConnectionProvider.mapConnectError(
+                kind: kind,
+                detail: "private detail"
+            ).isFallbackEligible)
+        }
+
+        for kind in [
+            IrohErrorKind.alpn,
+            .invalidInput,
+            .bind,
+            .keyParsing,
+            .ticketParsing,
+            .stream,
+            .datagram,
+            .callback,
+            .internal,
+        ] {
+            #expect(!IrohLibConnectionProvider.mapConnectError(
+                kind: kind,
+                detail: "private detail"
+            ).isFallbackEligible)
+        }
+    }
+
     @Test func telemetryErrorsCollapseToLowCardinalityKinds() {
         #expect(IrohTransportTelemetry.errorKind(IrohTransportError.unavailable("private detail")) == "unavailable")
         #expect(IrohTransportTelemetry.errorKind(IrohTransportError.remotePeerMismatch(
@@ -103,7 +136,22 @@ struct IrohTransportTests {
         )
 
         #expect(configured)
-        #expect(connection.streamEndpointHostForMetrics() == "iroh")
+        #expect(connection.streamEndpointHostKindForMetrics() == "iroh")
+    }
+
+    @MainActor
+    @Test func streamMetricsBucketHTTPHostInsteadOfUploadingIt() {
+        let connection = ServerConnection()
+        let configured = connection.configure(credentials: ServerCredentials(
+            host: "private-node.tail123.ts.net",
+            port: 7749,
+            token: "dt_test",
+            name: "Test",
+            scheme: .https
+        ))
+
+        #expect(configured)
+        #expect(connection.streamEndpointHostKindForMetrics() == "tailscale")
     }
 
     @Test func localRequestWithoutAuthorizationIsRejected() {

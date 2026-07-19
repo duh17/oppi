@@ -287,8 +287,26 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
     ) async throws -> Connection {
         do {
             return try await endpoint.connect(addr: address, alpn: alpn)
+        } catch let error as IrohError {
+            throw mapConnectError(kind: error.kind(), detail: error.localizedDescription)
         } catch {
-            throw IrohTransportError.unavailable("Iroh peer is unreachable: \(error.localizedDescription)")
+            // Unknown connect failures are not safe downgrade evidence. The
+            // FFI exposes connectivity failures through IrohErrorKind.
+            throw IrohTransportError.protocolViolation(
+                "Unclassified Iroh connection failure: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    static func mapConnectError(kind: IrohErrorKind, detail: String) -> IrohTransportError {
+        switch kind {
+        case .connect, .connection, .relay, .closed, .timeout:
+            return .unavailable("Iroh peer is unreachable: \(detail)")
+        case .alpn:
+            return .protocolViolation("Iroh ALPN negotiation failed: \(detail)")
+        case .invalidInput, .bind, .keyParsing, .ticketParsing,
+             .stream, .datagram, .callback, .internal:
+            return .protocolViolation("Iroh connection failed: \(detail)")
         }
     }
 }

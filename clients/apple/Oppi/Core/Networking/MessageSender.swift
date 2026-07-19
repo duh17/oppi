@@ -29,6 +29,10 @@ final class MessageSender {
     /// Current transport path for telemetry tagging.
     var transportPathProvider: (() -> ConnectionTransportPath)?
 
+    /// Fences retries when ServerConnection replaces the underlying transport.
+    /// A mutation started on one generation must never retry on another.
+    private var transportGeneration: UInt64 = 0
+
     private var targetSessionId: String? {
         focusedSessionProvider?()?.sessionId
     }
@@ -58,6 +62,7 @@ final class MessageSender {
     var _sendMessageForTesting: ((ClientMessage) async throws -> Void)?
     var _sendAckTimeoutForTesting: Duration?
     var _turnSendRetryDelayForTesting: Duration?
+    var _onTurnRetryDelayForTesting: (() -> Void)?
 
     // MARK: - Init
 
@@ -66,6 +71,17 @@ final class MessageSender {
     }
 
     // MARK: - Core Send
+
+    func advanceTransportGeneration() {
+        transportGeneration &+= 1
+        let transitionError = CancellationError()
+        commands.failAllTurnSends(error: transitionError)
+        commands.failAllCommands(error: transitionError)
+    }
+
+    private func requireTransportGeneration(_ expected: UInt64) throws {
+        guard transportGeneration == expected else { throw CancellationError() }
+    }
 
     /// Send any client message through the WebSocket.
     func send(_ message: ClientMessage) async throws {
@@ -147,6 +163,7 @@ final class MessageSender {
             }
         }
 
+        let generation = transportGeneration
         let pending = PendingTurnSend(
             command: command,
             requestId: requestId,
@@ -158,9 +175,12 @@ final class MessageSender {
         var lastError: Error?
 
         for attempt in 1...Self.turnSendMaxAttempts {
+            try requireTransportGeneration(generation)
             if attempt > 1 {
                 pending.resetWaiter()
+                _onTurnRetryDelayForTesting?()
                 try? await Task.sleep(for: _turnSendRetryDelayForTesting ?? Self.turnSendRetryDelay)
+                try requireTransportGeneration(generation)
 
                 // Re-check after sleep: focus may have been cleared by
                 // disconnectSession() during the retry delay.
@@ -176,6 +196,7 @@ final class MessageSender {
                 try await dispatchSend(message(), sessionIdOverride: sessionIdOverride)
             } catch {
                 lastError = error
+                try requireTransportGeneration(generation)
                 if attempt < Self.turnSendMaxAttempts, CommandTracker.isReconnectableSendError(error) {
                     continue
                 }
@@ -191,6 +212,7 @@ final class MessageSender {
                 return
             } catch {
                 lastError = error
+                try requireTransportGeneration(generation)
                 if attempt < Self.turnSendMaxAttempts, Self.isRetryableTurnSendError(error) {
                     continue
                 }
@@ -248,6 +270,7 @@ final class MessageSender {
             throw WebSocketError.notConnected
         }
 
+        let generation = transportGeneration
         let requestId = UUID().uuidString
         let outboundMessage = message(requestId)
         let effectiveTimeout = timeout ?? Self.defaultCommandTimeout(
@@ -271,6 +294,7 @@ final class MessageSender {
                 outcome: "ok"
             )
         } catch {
+            try requireTransportGeneration(generation)
             let errorKind = Self.telemetryErrorKind(from: error)
             recordCommandMetric(
                 metric: .commandSendMs,
@@ -299,6 +323,7 @@ final class MessageSender {
                 command: command,
                 timeout: effectiveTimeout
             )
+            try requireTransportGeneration(generation)
             commands.unregisterCommand(requestId: requestId)
             recordCommandMetric(
                 metric: .commandRoundtripMs,
@@ -309,6 +334,7 @@ final class MessageSender {
             )
             return response.data
         } catch {
+            try requireTransportGeneration(generation)
             recordCommandMetric(
                 metric: .commandRoundtripMs,
                 elapsed: ContinuousClock.now - roundtripStart,
@@ -505,9 +531,11 @@ final class MessageSender {
     }
 
     func sendStop(sessionIdOverride: String? = nil) async throws {
+        let generation = transportGeneration
         var lastError: Error?
 
         for attempt in 1...Self.stopMaxAttempts {
+            try requireTransportGeneration(generation)
             do {
                 _ = try await sendCommandAwaitingResult(
                     command: "stop",
@@ -519,6 +547,7 @@ final class MessageSender {
                 return
             } catch {
                 lastError = error
+                try requireTransportGeneration(generation)
                 guard attempt < Self.stopMaxAttempts,
                       Self.isRetryableStopError(error) else {
                     throw error

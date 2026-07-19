@@ -147,9 +147,9 @@ final class SessionStreamCoordinator {
         scheduleQueueSync(connection: connection, sessionId: sessionId, transport: transport)
 
         let totalMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
-        let endpointHost = connection.streamEndpointHostForMetrics()
+        let endpointHostKind = connection.streamEndpointHostKindForMetrics()
         streamCoordinatorLogger.info(
-            "streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms total=\(totalMs)ms transport=\(transport, privacy: .public) host=\(endpointHost, privacy: .public)"
+            "streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms total=\(totalMs)ms transport=\(transport, privacy: .public) hostKind=\(endpointHostKind, privacy: .public)"
         )
 
         ClientLog.info("StreamSession", "\(sessionId.prefix(8))", metadata: [
@@ -160,7 +160,7 @@ final class SessionStreamCoordinator {
             "totalMs": String(totalMs),
             "transport": transport,
             "streamEndpoint": connection.focusedSessionStreamEndpointKind,
-            "endpointHost": endpointHost,
+            "endpointHostKind": endpointHostKind,
             "connectMs": String(streamOpenMs),
         ])
 

@@ -44,6 +44,773 @@ struct ServerConnectionLifecycleTests {
         #expect(await conn.apiClient?.baseURL == localURL)
     }
 
+    @Test func configureIrohPreferredUsesVerifiedLANBeforeMalformedIroh() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials(
+            iroh: IrohServerTransport(
+                version: 99,
+                nodeId: "",
+                alpns: [IrohTunnelProtocol.alpn],
+                addressMode: .ticket,
+                ticket: nil
+            )
+        )
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        var proxyStarted = false
+
+        let result = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                proxyStarted = true
+                throw IrohTransportError.unavailable("must not start")
+            }
+        )
+
+        #expect(result)
+        #expect(!proxyStarted)
+        #expect(conn.transportPath == .lan)
+        #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
+    }
+
+    @Test func configureIrohPreferredFallsBackOnlyWhenIrohIsUnavailable() async throws {
+        let unavailable = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+
+        let configured = await unavailable.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                throw IrohTransportError.unavailable("relay unreachable")
+            }
+        )
+
+        #expect(configured)
+        #expect(unavailable.transportPath == .paired)
+        #expect(unavailable.irohFallbackActive)
+        #expect(await unavailable.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
+
+        let terminal = ServerConnection()
+        let rejected = await terminal.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                throw IrohTransportError.authentication("token rejected")
+            }
+        )
+
+        #expect(!rejected)
+        #expect(terminal.apiClient == nil)
+        #expect(!terminal.irohFallbackActive)
+    }
+
+    @Test func irohPreferredRetriesStickyFallbackAtExplicitBoundary() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:41993"))
+        var attempts = 0
+
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                attempts += 1
+                if attempts == 1 {
+                    throw IrohTransportError.unavailable("initial outage")
+                }
+                return (nil, localURL)
+            }
+        )
+        #expect(configured)
+        #expect(conn.transportPath == .paired)
+        #expect(conn.irohFallbackActive)
+
+        await conn.reevaluateIrohPreferredTransportAtBoundary()
+
+        #expect(attempts == 2)
+        #expect(conn.transportPath == .iroh)
+        #expect(!conn.irohFallbackActive)
+        #expect(await conn.apiClient?.baseURL == localURL)
+        #expect(await conn.apiClient?.environment.pinnedCertificateFingerprint == nil)
+    }
+
+    @Test func LANDiscoveredDuringInitialIrohProbeWinsBeforeAdoption() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let provider = GatedReachableEvidenceIrohProvider()
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let localURL = try #require(URL(string: "http://127.0.0.1:42007"))
+
+        let configurationTask = Task { @MainActor in
+            await conn.configureForUse(
+                credentials: credentials,
+                irohProxyFactory: { _, _ in (manager, localURL) }
+            )
+        }
+        while !(await provider.evidenceIsWaiting) {
+            await Task.yield()
+        }
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        await provider.releaseEvidence()
+        let configured = await configurationTask.value
+
+        #expect(configured)
+        #expect(conn.transportPath == .lan)
+        #expect(await provider.shutdownCount == 1)
+    }
+
+    @Test func LANDiscoveredDuringActiveIrohProbeWinsAtBoundary() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let provider = SecondEvidenceGateIrohProvider()
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let localURL = try #require(URL(string: "http://127.0.0.1:42008"))
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        )
+        #expect(configured)
+        #expect(conn.transportPath == .iroh)
+
+        let boundaryTask = Task { @MainActor in
+            await conn.reevaluateIrohPreferredTransportAtBoundary()
+        }
+        while !(await provider.secondEvidenceIsWaiting) {
+            await Task.yield()
+        }
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        await provider.releaseSecondEvidence()
+        await boundaryTask.value
+
+        #expect(conn.transportPath == .lan)
+        #expect(await provider.shutdownCount == 1)
+    }
+
+    @Test func LANDiscoveredDuringBoundaryProbeStillWinsOverIroh() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let provider = GatedReachableEvidenceIrohProvider()
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let localURL = try #require(URL(string: "http://127.0.0.1:42006"))
+        var attempts = 0
+
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                attempts += 1
+                if attempts == 1 {
+                    throw IrohTransportError.unavailable("initial outage")
+                }
+                return (manager, localURL)
+            }
+        )
+        #expect(configured)
+        #expect(conn.transportPath == .paired)
+
+        let boundaryTask = Task { @MainActor in
+            await conn.reevaluateIrohPreferredTransportAtBoundary()
+        }
+        while !(await provider.evidenceIsWaiting) {
+            await Task.yield()
+        }
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        await provider.releaseEvidence()
+        await boundaryTask.value
+
+        #expect(conn.transportPath == .lan)
+        #expect(await provider.shutdownCount == 1)
+    }
+
+    @Test func irohPreferredFallsBackWhenBoundaryProbeBecomesUnavailable() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:41994"))
+        let provider = SequencedPathEvidenceProvider(results: [
+            .success(IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)),
+            .failure(IrohTransportError.unavailable("path lost")),
+        ])
+        let metadata = try #require(credentials.transports.iroh)
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        )
+        #expect(configured)
+        #expect(conn.transportPath == .iroh)
+
+        await conn.reevaluateIrohPreferredTransportAtBoundary()
+
+        #expect(conn.transportPath == .paired)
+        #expect(conn.irohFallbackActive)
+        #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
+    }
+
+    @Test func verifiedLANReplacesIrohAtExplicitBoundary() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:41995"))
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (nil, localURL) }
+        )
+        #expect(configured)
+        #expect(conn.transportPath == .iroh)
+
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        #expect(conn.transportPath == .iroh, "Healthy Iroh is not interrupted immediately")
+
+        await conn.reevaluateIrohPreferredTransportAtBoundary()
+
+        #expect(conn.transportPath == .lan)
+        #expect(!conn.irohFallbackActive)
+    }
+
+    @Test func leavingVerifiedLANRetriesIrohAtBoundary() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:41997"))
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (nil, localURL) }
+        )
+        #expect(configured)
+        #expect(conn.transportPath == .lan)
+
+        conn.setDiscoveredLANEndpoint(nil)
+        await conn.reevaluateIrohPreferredTransportAtBoundary(forceIrohRetry: true)
+
+        #expect(conn.transportPath == .iroh)
+        #expect(await conn.apiClient?.baseURL == localURL)
+    }
+
+    @Test func terminalBoundaryFailureDisablesStickyHTTPFallback() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        var attempts = 0
+
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                attempts += 1
+                if attempts == 1 {
+                    throw IrohTransportError.unavailable("initial outage")
+                }
+                throw IrohTransportError.authentication("token rejected")
+            }
+        )
+        #expect(configured)
+        #expect(conn.irohFallbackActive)
+        #expect(conn.apiClient != nil)
+
+        await conn.reevaluateIrohPreferredTransportAtBoundary()
+
+        #expect(attempts == 2)
+        #expect(!conn.irohFallbackActive)
+        #expect(conn.apiClient == nil)
+        #expect(conn.wsClient == nil)
+
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        #expect(conn.apiClient == nil, "Terminal failure remains locked until explicit reconfiguration")
+    }
+
+    @Test func partialIrohSetupFailureShutsDownManager() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:41998"))
+        let provider = TrackingTerminalIrohProvider()
+        let metadata = try #require(credentials.transports.iroh)
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        )
+
+        #expect(!configured)
+        #expect(await provider.shutdownCount == 1)
+        #expect(conn.apiClient == nil)
+    }
+
+    @Test func transportGenerationPreventsTurnRetryAcrossReplacement() async {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("session-1")
+        var attempts = 0
+        conn._sendMessageForTesting = { _ in
+            attempts += 1
+            conn.sender.advanceTransportGeneration()
+        }
+
+        await #expect(throws: CancellationError.self) {
+            try await conn.sendPrompt("do not replay")
+        }
+
+        #expect(attempts == 1)
+    }
+
+    @Test func explicitReconfigurationFencesTurnRetryDuringRetryDelay() async {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("session-1")
+        conn._turnSendRetryDelayForTesting = .milliseconds(1)
+        var attempts = 0
+        conn._sendMessageForTesting = { _ in
+            attempts += 1
+            throw WebSocketError.notConnected
+        }
+        conn.sender._onTurnRetryDelayForTesting = {
+            _ = conn.configure(credentials: ServerCredentials(
+                host: "replacement.ts.net",
+                port: 7749,
+                token: "dt_replacement",
+                name: "Replacement",
+                scheme: .https
+            ))
+        }
+
+        await #expect(throws: CancellationError.self) {
+            try await conn.sendPrompt("must stay on its original transport")
+        }
+
+        #expect(attempts == 1)
+    }
+
+    @Test func failedExplicitReconfigurationPreservesTerminalLockout() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        var attempts = 0
+        let initiallyConfigured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                attempts += 1
+                if attempts == 1 {
+                    throw IrohTransportError.unavailable("initial outage")
+                }
+                throw IrohTransportError.authentication("token rejected")
+            }
+        )
+        #expect(initiallyConfigured)
+
+        await conn.reevaluateIrohPreferredTransportAtBoundary()
+        #expect(conn.apiClient == nil)
+
+        let rejected = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                throw IrohTransportError.authentication("still rejected")
+            }
+        )
+        #expect(!rejected)
+
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        #expect(conn.apiClient == nil, "A failed explicit retry must not clear terminal lockout")
+    }
+
+    @Test func terminalExplicitReconfigurationInvalidatesUsableFallback() async {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let initiallyConfigured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                throw IrohTransportError.unavailable("initial outage")
+            }
+        )
+        #expect(initiallyConfigured)
+        #expect(conn.irohFallbackActive)
+        #expect(conn.apiClient != nil)
+
+        let rejected = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                throw IrohTransportError.authentication("token rejected")
+            }
+        )
+
+        #expect(!rejected)
+        #expect(conn.apiClient == nil)
+        #expect(conn.wsClient == nil)
+        #expect(!conn.irohFallbackActive)
+    }
+
+    @Test func supersededAvailabilityFallbackCannotOverwriteNewerConfiguration() async throws {
+        let conn = ServerConnection()
+        let staleCredentials = makeIrohPreferredCredentials()
+        let middleCredentials = ServerCredentials(
+            host: "middle.ts.net",
+            port: 7749,
+            token: "dt_middle",
+            name: "Middle",
+            scheme: .https,
+            serverFingerprint: "sha256:middle-fp"
+        )
+        let newestCredentials = ServerCredentials(
+            host: "newest.ts.net",
+            port: 7749,
+            token: "dt_newest",
+            name: "Newest",
+            scheme: .https,
+            serverFingerprint: "sha256:newest-fp"
+        )
+        let metadata = try #require(staleCredentials.transports.iroh)
+        let provider = GatedUnavailableShutdownIrohProvider()
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let localURL = try #require(URL(string: "http://127.0.0.1:42005"))
+
+        let staleTask = Task { @MainActor in
+            await conn.configureForUse(
+                credentials: staleCredentials,
+                irohProxyFactory: { _, _ in (manager, localURL) }
+            )
+        }
+        while !(await provider.shutdownIsWaiting) {
+            await Task.yield()
+        }
+
+        let middleTask = Task { @MainActor in
+            await conn.configureForUse(credentials: middleCredentials)
+        }
+        await Task.yield()
+        let newestTask = Task { @MainActor in
+            await conn.configureForUse(credentials: newestCredentials)
+        }
+        await Task.yield()
+        await provider.releaseShutdown()
+        _ = await staleTask.value
+        let middleResult = await middleTask.value
+        let newestResult = await newestTask.value
+
+        #expect(!middleResult)
+        #expect(newestResult)
+        #expect(conn.currentServerId == "sha256:newest-fp")
+        #expect(await conn.apiClient?.baseURL.host == "newest.ts.net")
+    }
+
+    @Test func LANToPairedTransitionFencesSleepingTurnRetry() async {
+        let conn = ServerConnection()
+        let credentials = ServerCredentials(
+            host: "my-server.tail00000.ts.net",
+            port: 7749,
+            token: "dt_test",
+            name: "Test",
+            scheme: .https,
+            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
+            tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
+        )
+        #expect(conn.configure(credentials: credentials))
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "SERVERFINGERPRINT",
+            tlsCertFingerprintPrefix: "TLSFINGERPRINT"
+        ))
+        #expect(conn.transportPath == .lan)
+        conn._setActiveSessionIdForTesting("session-1")
+        conn._turnSendRetryDelayForTesting = .milliseconds(1)
+        var attempts = 0
+        conn._sendMessageForTesting = { _ in
+            attempts += 1
+            throw WebSocketError.notConnected
+        }
+        conn.sender._onTurnRetryDelayForTesting = {
+            conn.setDiscoveredLANEndpoint(nil)
+        }
+
+        await #expect(throws: CancellationError.self) {
+            try await conn.sendPrompt("never retry across LAN handoff")
+        }
+
+        #expect(attempts == 1)
+        #expect(conn.transportPath == .paired)
+    }
+
+    @Test func supersededSetupShutsDownOnlyTheUnadoptedManager() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let firstProvider = TrackingReachableIrohProvider()
+        let adoptedProvider = TrackingReachableIrohProvider()
+        let metadata = try #require(credentials.transports.iroh)
+        let firstManager = IrohConnectionManager(iroh: metadata, provider: firstProvider)
+        let adoptedManager = IrohConnectionManager(iroh: metadata, provider: adoptedProvider)
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42001"))
+        let adoptedURL = try #require(URL(string: "http://127.0.0.1:42002"))
+        let gate = SupersededSetupGate()
+
+        let firstTask = Task { @MainActor in
+            await conn.configureForUse(
+                credentials: credentials,
+                irohProxyFactory: { _, _ in
+                    await gate.waitUntilReleased()
+                    return (firstManager, firstURL)
+                }
+            )
+        }
+        while !gate.isWaiting {
+            await Task.yield()
+        }
+
+        let secondResult = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (adoptedManager, adoptedURL) }
+        )
+        gate.release()
+        let firstResult = await firstTask.value
+
+        #expect(secondResult)
+        #expect(!firstResult)
+        #expect(await firstProvider.shutdownCount == 1)
+        #expect(await adoptedProvider.shutdownCount == 0)
+        #expect(await conn.apiClient?.baseURL == adoptedURL)
+    }
+
+    @Test func supersededSetupDoesNotShutdownManagerAdoptedByNewerSetup() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let provider = TrackingReachableIrohProvider()
+        let metadata = try #require(credentials.transports.iroh)
+        let sharedManager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42003"))
+        let adoptedURL = try #require(URL(string: "http://127.0.0.1:42004"))
+        let gate = SupersededSetupGate()
+
+        let firstTask = Task { @MainActor in
+            await conn.configureForUse(
+                credentials: credentials,
+                irohProxyFactory: { _, _ in
+                    await gate.waitUntilReleased()
+                    return (sharedManager, firstURL)
+                }
+            )
+        }
+        while !gate.isWaiting {
+            await Task.yield()
+        }
+
+        let secondResult = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (sharedManager, adoptedURL) }
+        )
+        gate.release()
+        let firstResult = await firstTask.value
+
+        #expect(secondResult)
+        #expect(!firstResult)
+        #expect(await provider.shutdownCount == 0)
+        #expect(await conn.apiClient?.baseURL == adoptedURL)
+    }
+
+    @Test func leavingVerifiedLANUsesStickyHTTPOnlyAfterIrohUnavailable() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                throw IrohTransportError.unavailable("remote path unavailable")
+            }
+        )
+        #expect(configured)
+        #expect(conn.transportPath == .lan)
+
+        conn.setDiscoveredLANEndpoint(nil)
+        await conn.reevaluateIrohPreferredTransportAtBoundary(forceIrohRetry: true)
+
+        #expect(conn.transportPath == .paired)
+        #expect(conn.irohFallbackActive)
+        #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
+    }
+
+    @Test func existingLANIsIdempotentAtForegroundBoundary() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        let configured = await conn.configureForUse(credentials: credentials)
+        let originalAPIClient = conn.apiClient
+        #expect(configured)
+        #expect(conn.transportPath == .lan)
+
+        await conn.reevaluateIrohPreferredTransportAtBoundary()
+
+        #expect(conn.apiClient === originalAPIClient)
+        #expect(conn.transportPath == .lan)
+    }
+
+    @Test func terminalExplicitFailureWithoutNewManagerShutsDownActiveIrohManager() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:42009"))
+        let provider = TrackingReachableIrohProvider()
+        let metadata = try #require(credentials.transports.iroh)
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        )
+        #expect(configured)
+        #expect(conn.transportPath == .iroh)
+
+        let rejected = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                throw IrohTransportError.authentication("rejected before manager return")
+            }
+        )
+
+        #expect(!rejected)
+        #expect(await provider.shutdownCount == 1)
+        #expect(conn.apiClient == nil)
+        #expect(conn.wsClient == nil)
+    }
+
+    @Test func terminalActiveIrohFailureShutsDownManager() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:41999"))
+        let provider = SequencedPathEvidenceProvider(results: [
+            .success(IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)),
+            .failure(IrohTransportError.authentication("peer rejected")),
+        ])
+        let metadata = try #require(credentials.transports.iroh)
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        )
+        #expect(configured)
+
+        await conn.reevaluateIrohPreferredTransportAtBoundary()
+
+        #expect(await provider.shutdownCount == 1)
+        #expect(conn.apiClient == nil)
+        #expect(conn.wsClient == nil)
+    }
+
+    @Test func stopRetryIsFencedAcrossTransportGeneration() async {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("session-1")
+        var attempts = 0
+        conn._sendMessageForTesting = { _ in
+            attempts += 1
+            conn.sender.advanceTransportGeneration()
+        }
+
+        await #expect(throws: CancellationError.self) {
+            try await conn.sendStop()
+        }
+
+        #expect(attempts == 1)
+    }
+
+    @Test func shortLivedClientFallsBackBeforeRunningOperation() async throws {
+        let credentials = makeIrohPreferredCredentials()
+        let server = try #require(PairedServer(from: credentials))
+        let operationCount = LifecycleOperationCounter()
+
+        let selectedHost = try await ServerTransportAPIClient.withClient(
+            for: server,
+            lanEndpointProvider: { _ in nil },
+            managerFactory: { metadata in
+                IrohConnectionManager(iroh: metadata, provider: UnavailableIrohProvider())
+            },
+            operation: { api in
+                await operationCount.increment()
+                return await api.baseURL.host
+            }
+        )
+
+        #expect(await operationCount.value == 1)
+        #expect(selectedHost == "preferred.tailnet.ts.net")
+    }
+
+    @Test func shortLivedClientUsesVerifiedLANBeforeIroh() async throws {
+        let credentials = makeIrohPreferredCredentials()
+        let server = try #require(PairedServer(from: credentials))
+        let selectedPort = try await ServerTransportAPIClient.withClient(
+            for: server,
+            lanEndpointProvider: { _ in
+                LANDiscoveredEndpoint(
+                    host: "192.168.1.42",
+                    port: 8443,
+                    serverFingerprintPrefix: "preferred-server-fp",
+                    tlsCertFingerprintPrefix: "preferred-tls-fp"
+                )
+            },
+            operation: { api in await api.baseURL.port }
+        )
+
+        #expect(selectedPort == 8443)
+    }
+
+    @Test func shortLivedClientNeverReplaysStartedOperation() async throws {
+        let credentials = makeIrohPreferredCredentials()
+        let server = try #require(PairedServer(from: credentials))
+        let operationCount = LifecycleOperationCounter()
+
+        await #expect(throws: IrohTransportError.unavailable("operation failed")) {
+            _ = try await ServerTransportAPIClient.withClient(
+                for: server,
+                lanEndpointProvider: { _ in nil },
+                managerFactory: { metadata in
+                    IrohConnectionManager(iroh: metadata, provider: ReachableIrohProvider())
+                },
+                operation: { _ in
+                    await operationCount.increment()
+                    throw IrohTransportError.unavailable("operation failed")
+                }
+            )
+        }
+
+        #expect(await operationCount.value == 1)
+    }
+
     @Test func configureIrohOnlyRequiresTunnelMetadataAndFailsClosed() async {
         let conn = ServerConnection()
         var proxyStarted = false
@@ -166,4 +933,237 @@ struct ServerConnectionLifecycleTests {
         #expect(conn.currentServerId == nil)
     }
 
+    private func makeIrohPreferredCredentials(
+        iroh: IrohServerTransport = IrohServerTransport(
+            version: 2,
+            nodeId: "preferred-node-id",
+            alpns: [IrohTunnelProtocol.alpn],
+            addressMode: .nodeId,
+            ticket: nil
+        )
+    ) -> ServerCredentials {
+        ServerCredentials(
+            host: "preferred.tailnet.ts.net",
+            port: 7749,
+            token: "dt_preferred",
+            name: "Preferred",
+            scheme: .https,
+            serverFingerprint: "sha256:preferred-server-fp",
+            tlsCertFingerprint: "sha256:preferred-tls-fp",
+            transports: ServerTransports(
+                preference: .irohPreferred,
+                iroh: iroh,
+                http: HTTPServerTransport(
+                    host: "preferred.tailnet.ts.net",
+                    port: 7749,
+                    scheme: .https,
+                    tlsCertFingerprint: "sha256:preferred-tls-fp"
+                )
+            )
+        )
+    }
+
+}
+
+@MainActor
+private final class SupersededSetupGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var isWaiting = false
+
+    func waitUntilReleased() async {
+        isWaiting = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private actor SecondEvidenceGateIrohProvider: IrohConnectionProviding {
+    private var evidenceCount = 0
+    private var secondEvidenceContinuation: CheckedContinuation<Void, Never>?
+    private(set) var secondEvidenceIsWaiting = false
+    private(set) var shutdownCount = 0
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        evidenceCount += 1
+        if evidenceCount == 2 {
+            secondEvidenceIsWaiting = true
+            await withCheckedContinuation { continuation in
+                secondEvidenceContinuation = continuation
+            }
+        }
+        return IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+    }
+
+    func releaseSecondEvidence() {
+        secondEvidenceContinuation?.resume()
+        secondEvidenceContinuation = nil
+    }
+
+    func suspendConnections() async {}
+
+    func shutdown() async {
+        shutdownCount += 1
+    }
+}
+
+private actor GatedReachableEvidenceIrohProvider: IrohConnectionProviding {
+    private var evidenceContinuation: CheckedContinuation<Void, Never>?
+    private(set) var evidenceIsWaiting = false
+    private(set) var shutdownCount = 0
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        evidenceIsWaiting = true
+        await withCheckedContinuation { continuation in
+            evidenceContinuation = continuation
+        }
+        return IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+    }
+
+    func releaseEvidence() {
+        evidenceContinuation?.resume()
+        evidenceContinuation = nil
+    }
+
+    func suspendConnections() async {}
+
+    func shutdown() async {
+        shutdownCount += 1
+    }
+}
+
+private actor GatedUnavailableShutdownIrohProvider: IrohConnectionProviding {
+    private var shutdownContinuation: CheckedContinuation<Void, Never>?
+    private(set) var shutdownIsWaiting = false
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        throw IrohTransportError.unavailable("path unavailable")
+    }
+
+    func suspendConnections() async {}
+
+    func shutdown() async {
+        shutdownIsWaiting = true
+        await withCheckedContinuation { continuation in
+            shutdownContinuation = continuation
+        }
+    }
+
+    func releaseShutdown() {
+        shutdownContinuation?.resume()
+        shutdownContinuation = nil
+    }
+}
+
+private actor TrackingReachableIrohProvider: IrohConnectionProviding {
+    private(set) var shutdownCount = 0
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+    }
+
+    func suspendConnections() async {}
+
+    func shutdown() async {
+        shutdownCount += 1
+    }
+}
+
+private actor TrackingTerminalIrohProvider: IrohConnectionProviding {
+    private(set) var shutdownCount = 0
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.authentication("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        throw IrohTransportError.authentication("peer rejected")
+    }
+
+    func suspendConnections() async {}
+
+    func shutdown() async {
+        shutdownCount += 1
+    }
+}
+
+private actor SequencedPathEvidenceProvider: IrohConnectionProviding {
+    private var results: [Result<IrohSelectedPathEvidence?, IrohTransportError>]
+    private(set) var shutdownCount = 0
+
+    init(results: [Result<IrohSelectedPathEvidence?, IrohTransportError>]) {
+        self.results = results
+    }
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        guard !results.isEmpty else {
+            throw IrohTransportError.unavailable("test evidence exhausted")
+        }
+        return try results.removeFirst().get()
+    }
+
+    func suspendConnections() async {}
+
+    func shutdown() async {
+        shutdownCount += 1
+    }
+}
+
+private actor LifecycleOperationCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
+    }
+}
+
+private struct UnavailableIrohProvider: IrohConnectionProviding {
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("relay unreachable")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        throw IrohTransportError.unavailable("relay unreachable")
+    }
+
+    func suspendConnections() async {}
+    func shutdown() async {}
+}
+
+private struct ReachableIrohProvider: IrohConnectionProviding {
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+    }
+
+    func suspendConnections() async {}
+    func shutdown() async {}
 }

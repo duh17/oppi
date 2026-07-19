@@ -147,6 +147,14 @@ struct TLSPinningTests {
         #expect(PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "NODE.beta.tailscale.net"))
     }
 
+    @Test("configured pin remains authoritative for Tailscale hostnames")
+    func publicCAFallbackRejectsPinnedTailscaleHost() {
+        #expect(!PinnedServerTrustDelegate.allowsPublicCATrustFallback(
+            forHost: "mac-studio.tail123.ts.net",
+            pinnedLeafFingerprint: "sha256:stable-pin"
+        ))
+    }
+
     @Test("public CA fallback is not allowed for arbitrary hosts")
     func publicCAFallbackRejectsNonTailscaleHosts() {
         #expect(!PinnedServerTrustDelegate.allowsPublicCATrustFallback(forHost: "192.168.68.66"))

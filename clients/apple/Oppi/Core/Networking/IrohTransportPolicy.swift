@@ -58,18 +58,85 @@ enum IrohTransportError: LocalizedError, Equatable, Sendable {
         }
     }
 
-    /// Reserved for a future sticky irohPreferred fallback implementation.
-    /// This wave deliberately does not act on it: once Iroh is selected, all
-    /// failures remain fail-closed rather than changing transport mid-session.
+    /// Only reachability failures may downgrade `irohPreferred` to its signed
+    /// HTTP transport. Keep this switch exhaustive so every new error case gets
+    /// an explicit security decision.
     var isFallbackEligible: Bool {
-        if case .unavailable = self { return true }
-        return false
+        switch self {
+        case .unavailable:
+            true
+        case .unsupportedMetadataVersion,
+             .unsupportedALPN,
+             .malformedNodeID,
+             .missingTicket,
+             .malformedTicket,
+             .ticketPeerMismatch,
+             .remotePeerMismatch,
+             .authentication,
+             .framing,
+             .protocolViolation,
+             .listener:
+            false
+        }
     }
 }
 
 enum ServerTransportSelection: Equatable, Sendable {
     case iroh(IrohServerTransport)
     case http
+}
+
+enum ServerTransportPlan: Equatable, Sendable {
+    case http(EndpointSelection)
+    case iroh(IrohServerTransport)
+}
+
+enum ServerTransportPlanResolver {
+    /// Resolve cross-lane priority without performing network I/O.
+    ///
+    /// A verified LAN endpoint is independent of unused Iroh metadata, so it
+    /// wins for every credential that permits HTTP. Suppressing Iroh is used
+    /// only after an eligible `irohPreferred` availability failure.
+    static func resolve(
+        credentials: ServerCredentials,
+        discoveredLANEndpoint: LANDiscoveredEndpoint?,
+        suppressIroh: Bool = false
+    ) throws -> ServerTransportPlan {
+        if credentials.transports.preference != .irohOnly,
+           let lan = LANEndpointSelection.select(
+               credentials: credentials,
+               discoveredEndpoint: discoveredLANEndpoint
+           ),
+           lan.transportPath == .lan {
+            return .http(lan)
+        }
+
+        if suppressIroh {
+            guard credentials.transports.preference == .irohPreferred,
+                  let http = LANEndpointSelection.select(
+                      credentials: credentials,
+                      discoveredEndpoint: nil
+                  ) else {
+                throw IrohTransportError.protocolViolation(
+                    "Iroh fallback requires a signed HTTP transport"
+                )
+            }
+            return .http(http)
+        }
+
+        switch try IrohTransportPolicy.select(credentials: credentials) {
+        case .http:
+            guard let http = LANEndpointSelection.select(
+                credentials: credentials,
+                discoveredEndpoint: nil
+            ) else {
+                throw IrohTransportError.protocolViolation("HTTP transport has no valid endpoint")
+            }
+            return .http(http)
+        case .iroh(let iroh):
+            return .iroh(iroh)
+        }
+    }
 }
 
 enum IrohTransportPolicy {
