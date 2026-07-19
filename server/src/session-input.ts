@@ -106,10 +106,6 @@ export class SessionInputCoordinator {
       throw new Error(workspaceError);
     }
 
-    if (!active.session.workspaceId) {
-      throw new Error(workspaceError);
-    }
-
     const materialized = await materializeChatAttachments({
       workspaceRoot,
       workspaceId: active.session.workspaceId,

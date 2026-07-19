@@ -29,6 +29,7 @@ final class ServerConnection {
     private(set) var focusedSessionStreamEndpointKind = "none"
     private var focusedSessionStreamSessionId: String?
     private var focusedSessionStreamWorkspaceId: String?
+    private var focusedSessionStreamRouteScope: SessionRouteScope?
     private var focusedSessionStreamURL: URL?
     private(set) var transportPath: ConnectionTransportPath = .paired
 
@@ -111,6 +112,7 @@ final class ServerConnection {
     /// Whether the server has server dictation configured (remote dictation server or another STT backend).
     /// Updated from server capabilities and `stream_connected` messages.
     private(set) var serverDictationAvailable = false
+    private(set) var controlSessionsAvailable = false
 
     // Stores
     let sessionStore = SessionStore()
@@ -455,10 +457,12 @@ final class ServerConnection {
 
     func fetchSessionAttachmentWhenReady(
         sessionId: String,
-        attachmentId: String
+        attachmentId: String,
+        routeScope: SessionRouteScope? = nil
     ) async throws -> Data {
         let apiClient = try await waitForAPIClient()
         return try await apiClient.fetchSessionAttachment(
+            scope: routeScope,
             sessionId: sessionId,
             attachmentId: attachmentId
         )
@@ -468,10 +472,12 @@ final class ServerConnection {
         sessionId: String,
         attachmentId: String,
         contentTypeHint: String?,
-        sourceFileExtension: String?
+        sourceFileExtension: String?,
+        routeScope: SessionRouteScope? = nil
     ) async throws -> AuthenticatedMediaSource {
         let apiClient = try await waitForAPIClient()
         return try await apiClient.makeSessionAttachmentMediaSource(
+            scope: routeScope,
             sessionId: sessionId,
             attachmentId: attachmentId,
             contentTypeHint: contentTypeHint,
@@ -783,6 +789,7 @@ final class ServerConnection {
                 let capabilities = info.capabilities
                 self.dictationStreamAvailable = capabilities?.dictationStream?.version ?? 0 >= 1
                 self.appEventStreamAvailable = capabilities?.appEventStream?.version ?? 0 >= 1
+                self.controlSessionsAvailable = capabilities?.controlSessions?.version ?? 0 >= 1
                 self.missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities
                     .missingRequiredSplitStreamCapabilities(in: capabilities)
                 self.streamCapabilitiesRefreshFailed = false
@@ -1036,6 +1043,7 @@ final class ServerConnection {
         focusedSessionStreamEndpointKind = "none"
         focusedSessionStreamSessionId = nil
         focusedSessionStreamWorkspaceId = nil
+        focusedSessionStreamRouteScope = nil
         focusedSessionStreamURL = nil
         wsClient?.setStreamURL(nil)
     }
@@ -1050,29 +1058,33 @@ final class ServerConnection {
         }
     }
 
-    private func focusedSessionStreamTargetMatches(sessionId: String, workspaceId: String) -> Bool {
+    private func focusedSessionStreamTargetMatches(sessionId: String, routeScope: SessionRouteScope) -> Bool {
         focusedSessionStreamEndpointKind == "split_session"
             && focusedSessionStreamSessionId == sessionId
-            && focusedSessionStreamWorkspaceId == workspaceId
+            && focusedSessionStreamRouteScope == routeScope
     }
 
     /// Open the URL-bound focused session stream.
     func streamSession(_ sessionId: String, workspaceId: String) async -> AsyncStream<SessionStreamEvent>? {
+        await streamSession(sessionId, routeScope: .workspace(workspaceId))
+    }
+
+    func streamSession(_ sessionId: String, routeScope: SessionRouteScope) async -> AsyncStream<SessionStreamEvent>? {
         await refreshStreamCapabilitiesIfNeeded()
         guard hasRequiredSplitStreamCapabilities else {
             recordSessionStreamUnavailable(reason: streamCapabilityUnavailableReason())
             return nil
         }
-        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, workspaceId: workspaceId)
+        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: routeScope)
         return await sessionStreamCoordinator.streamSession(
             connection: self,
             sessionId: sessionId,
-            workspaceId: workspaceId
+            routeScope: routeScope
         )
     }
 
-    private func prepareFocusedSessionStreamEndpoint(sessionId: String, workspaceId: String) {
-        if focusedSessionStreamTargetMatches(sessionId: sessionId, workspaceId: workspaceId) {
+    private func prepareFocusedSessionStreamEndpoint(sessionId: String, routeScope: SessionRouteScope) {
+        if focusedSessionStreamTargetMatches(sessionId: sessionId, routeScope: routeScope) {
             // Keep a live/reconnecting transport for the same bound endpoint,
             // but still recompute the URL below. Endpoint selection may have
             // changed after Wi-Fi/cellular handoff while the session target did not.
@@ -1090,7 +1102,7 @@ final class ServerConnection {
         guard let sessionStreamURL = makeFocusedSessionStreamURL(
             selection: selection,
             sessionId: sessionId,
-            workspaceId: workspaceId
+            routeScope: routeScope
         ) else {
             recordSessionStreamUnavailable(reason: "invalidStreamURL")
             return
@@ -1099,10 +1111,11 @@ final class ServerConnection {
         let previousURL = focusedSessionStreamURL
         focusedSessionStreamEndpointKind = "split_session"
         focusedSessionStreamSessionId = sessionId
-        focusedSessionStreamWorkspaceId = workspaceId
+        focusedSessionStreamWorkspaceId = routeScope.workspaceId
+        focusedSessionStreamRouteScope = routeScope
         focusedSessionStreamURL = sessionStreamURL
         wsClient?.setPreferredEndpoint(selection)
-        wsClient?.setStreamURL(sessionStreamURL, sessionId: sessionId, workspaceId: workspaceId)
+        wsClient?.setStreamURL(sessionStreamURL, sessionId: sessionId, workspaceId: routeScope.workspaceId)
 
         if let previousURL, previousURL != sessionStreamURL {
             var metadata: [String: String] = [
@@ -1118,24 +1131,29 @@ final class ServerConnection {
     private func makeFocusedSessionStreamURL(
         selection: EndpointSelection,
         sessionId: String,
-        workspaceId: String
+        routeScope: SessionRouteScope
     ) -> URL? {
         guard var components = URLComponents(url: selection.baseURL, resolvingAgainstBaseURL: false) else {
             return nil
         }
         components.scheme = selection.baseURL.scheme == "https" ? "wss" : "ws"
-        components.path = "/workspaces/\(workspaceId)/sessions/\(sessionId)/stream"
+        switch routeScope {
+        case .workspace(let workspaceId):
+            components.path = "/workspaces/\(workspaceId)/sessions/\(sessionId)/stream"
+        case .control:
+            components.path = "/control-sessions/\(sessionId)/stream"
+        }
         return components.url
     }
 
     private func refreshPreparedFocusedSessionEndpointAfterEndpointChange() {
         guard focusedSessionStreamEndpointKind == "split_session",
               let sessionId = focusedSessionStreamSessionId,
-              let workspaceId = focusedSessionStreamWorkspaceId else {
+              let routeScope = focusedSessionStreamRouteScope else {
             return
         }
 
-        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, workspaceId: workspaceId)
+        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: routeScope)
     }
 
     private func streamCapabilityUnavailableReason() -> String {
@@ -1308,18 +1326,31 @@ final class ServerConnection {
     /// If we already know the split-stream endpoint for an active session, eagerly
     /// reopen the transport so toolbar actions like Stop work immediately while the
     /// chat view's async connect loop is still spinning up its per-session timeline.
-    func prepareForSessionReentry(_ sessionId: String, workspaceIdHint: String? = nil) {
+    func prepareForSessionReentry(
+        _ sessionId: String,
+        workspaceIdHint: String? = nil,
+        routeScope: SessionRouteScope? = nil
+    ) {
         _onPrepareForSessionReentryForTesting?(sessionId)
         focusSession(sessionId)
 
         let session = sessionStore.session(id: sessionId)
-        guard hasRequiredSplitStreamCapabilities,
-              session?.status != .stopped,
-              let workspaceId = sessionReentryWorkspaceId(for: sessionId, workspaceIdHint: workspaceIdHint) else {
+        guard hasRequiredSplitStreamCapabilities, session?.status != .stopped else {
             return
         }
 
-        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, workspaceId: workspaceId)
+        let resolvedScope: SessionRouteScope?
+        if routeScope == .control || session?.control != nil {
+            resolvedScope = .control
+        } else {
+            resolvedScope = sessionReentryWorkspaceId(
+                for: sessionId,
+                workspaceIdHint: workspaceIdHint
+            ).map(SessionRouteScope.workspace)
+        }
+        guard let resolvedScope else { return }
+
+        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: resolvedScope)
         connectStream()
     }
 
@@ -1406,12 +1437,12 @@ final class ServerConnection {
         sessionId: String,
         payload: ExtensionUIResponsePayload
     ) async throws {
-        let workspaceId = sessionReentryWorkspaceId(for: sessionId)
+        let routeScope = sessionStore.routeScope(for: sessionId)
 
         let focusedStreamReady = isFocusedSession(sessionId) && wsClient?.status == .connected
-        if !focusedStreamReady, let workspaceId, apiClient != nil {
+        if !focusedStreamReady, let routeScope, apiClient != nil {
             try await respondToExtensionUI(
-                workspaceId: workspaceId,
+                routeScope: routeScope,
                 sessionId: sessionId,
                 id: id,
                 payload: payload
@@ -1545,7 +1576,11 @@ final class ServerConnection {
     }
 
     func prepareFocusedSessionStreamEndpointForTesting(sessionId: String, workspaceId: String) {
-        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, workspaceId: workspaceId)
+        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: .workspace(workspaceId))
+    }
+
+    func prepareFocusedSessionStreamEndpointForTesting(sessionId: String, routeScope: SessionRouteScope) {
+        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: routeScope)
     }
 
     var focusedSessionStreamURLForTesting: URL? {

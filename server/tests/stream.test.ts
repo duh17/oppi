@@ -190,6 +190,30 @@ function mirrorRuntimeStubs(
 }
 
 describe("BoundSessionStreamMux", () => {
+  it("opens declared control streams and rejects both workspace and undeclared sessions", async () => {
+    const control = {
+      ...makeSession("control-session"),
+      control: { domain: "agents" as const, intent: "create" as const },
+    };
+    const workspace = makeSession("workspace-session", "w1");
+    const undeclared = makeSession("workspace-less-session");
+    const { ctx } = createMockContext([control, workspace, undeclared]);
+    const mux = new BoundSessionStreamMux(ctx);
+
+    const accepted = new FakeWebSocket();
+    await mux.handleControlWebSocket(control.id, accepted as unknown as WebSocket);
+    expect(accepted.sentOfType("stream_connected")).toHaveLength(1);
+    expect(accepted.sentOfType("connected", control.id)).toHaveLength(1);
+    expect(ctx.sessions.startSession).toHaveBeenCalledWith(control.id, undefined);
+
+    for (const session of [workspace, undeclared]) {
+      const rejected = new FakeWebSocket();
+      await mux.handleControlWebSocket(session.id, rejected as unknown as WebSocket);
+      expect(rejected.closeCode).toBe(1008);
+      expect(rejected.sent).toEqual([]);
+    }
+  });
+
   it("starts the bound session and accepts commands without subscribe", async () => {
     const session = makeSession("sess-bound", "w1");
     const { ctx } = createMockContext([session]);

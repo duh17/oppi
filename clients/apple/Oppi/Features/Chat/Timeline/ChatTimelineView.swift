@@ -48,6 +48,7 @@ struct ChatTimelineView: View {
 
     let sessionId: String
     let workspaceId: String?
+    var routeScope: SessionRouteScope?
     let isBusy: Bool
     let extensionWorkingState: ExtensionWorkingState?
     let extensionHiddenThinkingLabel: String?
@@ -118,6 +119,7 @@ struct ChatTimelineView: View {
                 streamingAssistantID: reducer.streamingAssistantID,
                 sessionId: sessionId,
                 workspaceId: workspaceId,
+                routeScope: routeScope,
                 onFork: onFork,
                 onBackSwipe: onBackSwipe,
                 onShowEarlier: {

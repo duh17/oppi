@@ -30,6 +30,7 @@ enum WorkspaceSplitDetailTarget: Hashable {
 }
 
 enum WorkspaceSplitDetailPathElement: Hashable {
+    case session(WorkspaceSessionNavTarget)
     case fileBrowser(FileBrowserNavTarget)
     case linkedFile(WorkspaceLinkedFileNavTarget)
 }
@@ -253,6 +254,11 @@ final class AppNavigation {
                 )
             }
         case .split:
+            if case .utility = splitDetailTarget {
+                pushSplitDetailSession(resolvedTarget)
+                splitColumnVisibility = .detailOnly
+                return
+            }
             if let workspace {
                 splitSelectedWorkspace = workspace
             }
@@ -322,6 +328,8 @@ final class AppNavigation {
                 routeElement: .utility(target)
             )
         case .split:
+            selectedWorkspaceFilter = nil
+            splitSelectedWorkspace = nil
             splitDetailTarget = .utility(target)
             resetSplitDetailPath()
             splitColumnVisibility = .all
@@ -524,6 +532,8 @@ final class AppNavigation {
         var path = NavigationPath()
         for element in elements {
             switch element {
+            case .session(let target):
+                path.append(target)
             case .fileBrowser(let target):
                 path.append(target)
             case .linkedFile(let target):
@@ -532,6 +542,11 @@ final class AppNavigation {
         }
         splitDetailPathElements = elements
         splitDetailPath = path
+    }
+
+    private func pushSplitDetailSession(_ target: WorkspaceSessionNavTarget) {
+        splitDetailPath.append(target)
+        splitDetailPathElements.append(.session(target))
     }
 
     private func trimSplitDetailElementsToPathCount() {
@@ -696,6 +711,10 @@ final class AppNavigation {
 
         for element in splitDetailPathElements {
             switch element {
+            case .session(let target):
+                path.append(target)
+                contexts.append(Self.sessionDiagnosticContext(target))
+                routeElements.append(.session(target))
             case .fileBrowser(let target):
                 path.append(target)
                 contexts.append(Self.fileBrowserDiagnosticContext(target))
@@ -724,8 +743,12 @@ final class AppNavigation {
             case .workspace(let target):
                 workspace = target
             case .session(let target):
-                detail = .session(target)
-                detailPathElements = []
+                if case .utility = detail {
+                    detailPathElements.append(.session(target))
+                } else {
+                    detail = .session(target)
+                    detailPathElements = []
+                }
             case .fileBrowser(let target):
                 if detail == nil {
                     detail = .fileBrowser(target)

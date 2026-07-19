@@ -1,9 +1,8 @@
 /* eslint-disable no-console */
-import { readFileSync } from "node:fs";
-
 import * as c from "../../ansi.js";
 import type { LocalApiConnection } from "../local-api-client.js";
 import { createLocalApiCommandContext } from "../command-support.js";
+import { readDefinitionInput } from "../definition-input.js";
 import {
   codeValue,
   printDetails,
@@ -70,7 +69,7 @@ export async function cmdAgent(
     }
 
     if (mode === "create") {
-      const definition = readDefinition(flags.definition);
+      const definition = readDefinitionInput(flags);
       if (flags.name) definition.name = flags.name;
       if (!definition.name) throw new Error("--name or definition.name is required");
       const result = await call<Record<string, unknown>>("/agents", {
@@ -93,7 +92,7 @@ export async function cmdAgent(
     if (mode === "update") {
       const reference = positional[0]?.trim();
       if (!reference) throw new Error("agent id or name is required");
-      const definition = readDefinition(flags.definition, { required: true });
+      const definition = readDefinitionInput(flags, { required: true, update: true });
       const result = await call<Record<string, unknown>>(
         `/agents/${encodeURIComponent(reference)}`,
         {
@@ -139,19 +138,4 @@ export async function cmdAgent(
     console.log(c.red(`  Error: ${message}`));
     process.exit(1);
   }
-}
-
-function readDefinition(
-  path: string | undefined,
-  options: { required?: boolean } = {},
-): Record<string, unknown> {
-  if (!path) {
-    if (options.required) throw new Error("--definition is required");
-    return {};
-  }
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("definition must be a JSON object");
-  }
-  return parsed as Record<string, unknown>;
 }

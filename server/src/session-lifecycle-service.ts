@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { access, readFile, realpath, rm, unlink } from "node:fs/promises";
+import { access, lstat, readFile, realpath, rm, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import {
@@ -10,6 +10,8 @@ import {
   type ThinkingLevel,
 } from "./agent-launch-service.js";
 import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
+import { DEFAULT_AGENT_ID } from "./default-agent.js";
+import { isDeclaredControlSession } from "./control-session.js";
 import { isPathWithinRoot } from "./git-utils.js";
 import {
   canResumeStoppedMirrorAsOppi,
@@ -28,7 +30,7 @@ import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { deleteSessionAttachments } from "./session-attachments.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
-import type { ChatAttachmentRef, Session, Workspace } from "./types.js";
+import type { ChatAttachmentRef, ControlSessionMetadata, Session, Workspace } from "./types.js";
 import { resolveWorkspaceWorktree, WorkspaceWorktreeError } from "./worktrees.js";
 
 const LOCAL_SESSION_META_READ_BYTES = 16_384;
@@ -194,6 +196,85 @@ export class SessionLifecycleService {
     };
   }
 
+  async createControlSession(params: {
+    control: ControlSessionMetadata;
+    name?: string;
+    prompt?: string;
+  }): Promise<CreateWorkspaceSessionResult> {
+    const now = Date.now();
+    const session = this.deps.storage.createSession(
+      params.name?.trim() || "Oppi Control",
+      undefined,
+    );
+    session.workspaceId = undefined;
+    session.workspaceName = undefined;
+    session.worktreeId = undefined;
+    session.runtime = "oppi";
+    session.control = { ...params.control };
+    session.launch = {
+      source: "human",
+      agentId: DEFAULT_AGENT_ID,
+      target: { server: true, displayCwd: "Oppi Control" },
+      tools: { allowed: ["oppi"], noTools: "builtin" },
+      status: "launching",
+      requestedAt: now,
+    };
+    this.deps.storage.saveSession(session);
+    const createdSession = this.deps.ensureSessionContextWindow({ ...session });
+
+    const prompt = params.prompt?.trim();
+    if (!prompt) {
+      session.launch = {
+        ...session.launch,
+        status: "accepted",
+        promptDispatch: "not_sent",
+        completedAt: Date.now(),
+      };
+      this.deps.storage.saveSession(session);
+      return {
+        session: this.deps.ensureSessionContextWindow(session),
+        createdSession,
+        launchKind: "created",
+      };
+    }
+
+    try {
+      await this.deps.sessions.startSession(session.id, undefined);
+      await this.deps.sessions.sendPrompt(session.id, prompt, {});
+      session.firstMessage = prompt.slice(0, 200);
+      session.launch = {
+        ...session.launch,
+        status: "accepted",
+        promptDispatch: "delivered",
+        completedAt: Date.now(),
+      };
+      this.deps.storage.saveSession(session);
+      const summarySession = this.deps.ensureSessionContextWindow(session);
+      return {
+        session: summarySession,
+        createdSession,
+        summarySession,
+        prompted: true,
+        launchKind: "created",
+      };
+    } catch (error: unknown) {
+      session.launch = {
+        ...session.launch,
+        status: "failed",
+        promptDispatch: "not_sent",
+        promptError: error instanceof Error ? error.message : String(error),
+        completedAt: Date.now(),
+      };
+      this.deps.storage.saveSession(session);
+      return {
+        session: this.deps.ensureSessionContextWindow(session),
+        createdSession,
+        prompted: false,
+        launchKind: "created",
+      };
+    }
+  }
+
   async resumeWorkspaceSession(params: {
     session: Session;
     workspace: Workspace;
@@ -220,6 +301,27 @@ export class SessionLifecycleService {
     }
 
     const started = await this.deps.sessions.startSession(params.session.id, params.workspace);
+    return {
+      session: this.deps.ensureSessionContextWindow(started),
+      owner: "oppi",
+      startedSession: true,
+    };
+  }
+
+  async resumeControlSession(session: Session): Promise<OpenSessionResult> {
+    if (session.workspaceId !== undefined || !session.control) {
+      throw new SessionLifecycleError("Session is not a control session", 400);
+    }
+    if (this.deps.sessionRuntimes.isSessionLive(session.id)) {
+      const active = this.deps.sessionRuntimes.getActiveSession(session.id);
+      return {
+        session: active ? this.deps.ensureSessionContextWindow(active) : session,
+        owner: "oppi",
+        startedSession: false,
+      };
+    }
+
+    const started = await this.deps.sessions.startSession(session.id, undefined);
     return {
       session: this.deps.ensureSessionContextWindow(started),
       owner: "oppi",
@@ -702,18 +804,26 @@ export class SessionLifecycleService {
     const workspace = session.workspaceId
       ? this.deps.storage.getWorkspace(session.workspaceId)
       : undefined;
-    if (!workspace?.hostMount) return false;
 
     let workRoot: string;
-    try {
-      workRoot = resolveSdkSessionCwd(workspace, session, {
-        dataDir: this.deps.storage.getDataDir(),
-      });
-    } catch (error) {
-      if (error instanceof WorkspaceWorktreeError) return false;
-      throw error;
+    if (isDeclaredControlSession(session)) {
+      workRoot = resolve(this.deps.storage.getDataDir(), "control-sessions", "cwd");
+      if (!(await pathExists(workRoot))) return false;
+      const stat = await lstat(workRoot);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new Error("Control session cwd must be a real directory");
+      }
+    } else {
+      try {
+        workRoot = resolveSdkSessionCwd(workspace, session, {
+          dataDir: this.deps.storage.getDataDir(),
+        });
+      } catch (error) {
+        if (error instanceof WorkspaceWorktreeError) return false;
+        throw error;
+      }
+      if (!(await pathExists(workRoot))) return false;
     }
-    if (!(await pathExists(workRoot))) return false;
 
     const workRootReal = await realpath(workRoot);
     const attachmentsRoot = resolve(workRootReal, ".pi", "attachments");

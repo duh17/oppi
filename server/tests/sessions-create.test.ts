@@ -248,6 +248,182 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
 
 // ─── Tests ───
 
+describe("POST /control-sessions", () => {
+  async function dispatchCreate(
+    mock: MockRouteContext,
+    body: Record<string, unknown>,
+  ): Promise<boolean> {
+    const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+    const req = makeRequestBody(body);
+    const res = {} as ServerResponse;
+    const url = new URL("https://localhost/control-sessions");
+    return dispatcher({ method: "POST", path: "/control-sessions", url, req, res });
+  }
+
+  it("creates a declared workspace-less control session", async () => {
+    const mock = createMockContext();
+
+    expect(
+      await dispatchCreate(mock, {
+        domain: "schedules",
+        intent: "create",
+        name: "Create Schedule",
+        prompt: "Help me create a schedule.",
+      }),
+    ).toBe(true);
+
+    expect(mock.errors).toEqual([]);
+    expect(mock.responses).toHaveLength(1);
+    expect(mock.responses[0]).toMatchObject({
+      status: 201,
+      data: {
+        prompted: true,
+        session: {
+          workspaceId: undefined,
+          control: { domain: "schedules", intent: "create" },
+          launch: { agentId: "oppi-default-agent" },
+        },
+      },
+    });
+    expect(mock.sessions.startSession).toHaveBeenCalledWith(expect.any(String), undefined);
+  });
+
+  it("rejects unknown control domains and intents", async () => {
+    const mock = createMockContext();
+
+    await dispatchCreate(mock, { domain: "themes", intent: "delete" });
+
+    expect(mock.responses).toEqual([]);
+    expect(mock.errors).toEqual([{ status: 400, message: "Invalid control session metadata" }]);
+  });
+
+  it.each([
+    { domain: "agents" },
+    { domain: "agents", intent: "create", targetId: "   " },
+    { domain: "agents", intent: "create", targetName: "" },
+    { domain: "agents", intent: "create", name: 42 },
+    { domain: "agents", intent: "create", prompt: false },
+  ])("rejects malformed control-session fields", async (body) => {
+    const mock = createMockContext();
+
+    await dispatchCreate(mock, body);
+
+    expect(mock.responses).toEqual([]);
+    expect(mock.errors).toEqual([{ status: 400, message: "Invalid control session metadata" }]);
+    expect(mock.storage.createSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("control session route scope", () => {
+  const scopedRoutes = [
+    { method: "GET", suffix: "" },
+    { method: "GET", suffix: "/trace-page" },
+    { method: "GET", suffix: "/trace-outline" },
+    { method: "GET", suffix: "/events" },
+    { method: "GET", suffix: "/tool-output/tool-1" },
+    { method: "GET", suffix: "/attachments/attachment-1" },
+    { method: "POST", suffix: "/command" },
+    { method: "POST", suffix: "/stop" },
+    { method: "POST", suffix: "/resume" },
+    { method: "DELETE", suffix: "" },
+  ] as const;
+
+  it.each([
+    ["workspace session", makeSession({ id: "scoped", workspaceId: "ws-1" })],
+    ["undeclared workspace-less session", makeSession({ id: "scoped", workspaceId: undefined })],
+  ])("rejects every control route for a %s", async (_label, session) => {
+    for (const route of scopedRoutes) {
+      const mock = createMockContext();
+      mock.storage.getSession.mockReturnValue(session);
+      const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+      const path = `/control-sessions/scoped${route.suffix}`;
+
+      const handled = await dispatcher({
+        method: route.method,
+        path,
+        url: new URL(`https://localhost${path}`),
+        req:
+          route.suffix === "/command"
+            ? makeRequestBody({ type: "reload" })
+            : (new PassThrough() as unknown as IncomingMessage),
+        res: {} as ServerResponse,
+      });
+
+      expect(handled, `${route.method} ${path}`).toBe(true);
+      expect(mock.errors, `${route.method} ${path}`).toEqual([
+        { status: 400, message: "Session is not a control session" },
+      ]);
+      expect(mock.responses).toEqual([]);
+      expect(mock.sessions.startSession).not.toHaveBeenCalled();
+      expect(mock.sessions.stopSession).not.toHaveBeenCalled();
+      expect(mock.storage.deleteSession).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([
+    ["POST", "/sessions/control-1/command", { type: "reload" }],
+    ["POST", "/sessions/control-1/stop", {}],
+  ])("rejects generic mutation route %s %s for declared control sessions", async (method, path, body) => {
+    const mock = createMockContext();
+    mock.storage.getSession.mockReturnValue(
+      makeSession({
+        id: "control-1",
+        workspaceId: undefined,
+        control: { domain: "agents", intent: "create" },
+      }),
+    );
+    const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+
+    expect(
+      await dispatcher({
+        method,
+        path,
+        url: new URL(`https://localhost${path}`),
+        req: makeRequestBody(body),
+        res: {} as ServerResponse,
+      }),
+    ).toBe(true);
+
+    expect(mock.responses).toEqual([]);
+    expect(mock.errors).toEqual([
+      { status: 400, message: "Use the control-session route for control-session mutations" },
+    ]);
+    expect(mock.sessions.stopSession).not.toHaveBeenCalled();
+  });
+
+  it("resumes a declared stopped control session without resolving a workspace", async () => {
+    const mock = createMockContext();
+    const session = makeSession({
+      id: "control-1",
+      workspaceId: undefined,
+      status: "stopped",
+      runtime: "oppi",
+      control: { domain: "workspaces", intent: "revise", targetId: "ws-1" },
+    });
+    mock.storage.getSession.mockReturnValue(session);
+    mock.sessions.startSession.mockResolvedValue({ ...session, status: "ready" });
+    const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+    const path = "/control-sessions/control-1/resume";
+
+    await dispatcher({
+      method: "POST",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: new PassThrough() as unknown as IncomingMessage,
+      res: {} as ServerResponse,
+    });
+
+    expect(mock.sessions.startSession).toHaveBeenCalledWith("control-1", undefined);
+    expect(mock.responses).toEqual([
+      {
+        status: 200,
+        data: { session: expect.objectContaining({ id: "control-1", status: "ready" }) },
+      },
+    ]);
+    expect(mock.errors).toEqual([]);
+  });
+});
+
 describe("POST /workspaces/:id/sessions", () => {
   async function dispatchCreate(
     mock: MockRouteContext,
@@ -949,14 +1125,26 @@ describe("workspace-scoped session route ownership", () => {
       path: "/workspaces/ws-1/sessions/foreign-session/diff",
       url: "https://localhost/workspaces/ws-1/sessions/foreign-session/diff?path=file.txt",
     },
+    {
+      name: "control session detail",
+      method: "GET",
+      path: "/workspaces/ws-1/sessions/foreign-session",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session",
+    },
   ] as const;
 
   it.each(wrongWorkspaceRoutes)(
     "rejects wrong-workspace $name route before side effects",
-    async ({ method, path, url }) => {
+    async ({ name, method, path, url }) => {
       const mock = createMockContext();
       mock.storage.getSession.mockReturnValue(
-        makeSession({ id: "foreign-session", workspaceId: "ws-2" }),
+        name === "control session detail"
+          ? makeSession({
+              id: "foreign-session",
+              workspaceId: undefined,
+              control: { domain: "agents", intent: "create" },
+            })
+          : makeSession({ id: "foreign-session", workspaceId: "ws-2" }),
       );
       mock.storage.deleteSession = vi.fn().mockReturnValue(true);
       (mock.ctx as unknown as Record<string, unknown>).searchIndex = {

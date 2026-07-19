@@ -92,4 +92,42 @@ struct SessionRowPresentationBuilderTests {
 
         #expect(counts.askCount == 1)
     }
+
+    @Test func controlSessionUsesOppiControlContextWithoutWorkspace() throws {
+        let data = Data(#"{"id":"control-1","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"workspaces","intent":"create"}}"#.utf8)
+        let session = try JSONDecoder().decode(Session.self, from: data)
+        let summary = try JSONDecoder().decode(SessionSummary.self, from: data)
+        let presentation = SessionRowPresentationBuilder.make(
+            session: session,
+            workspaceContext: session.control == nil ? nil : "Oppi Control"
+        )
+
+        #expect(session.workspaceId == nil)
+        #expect(session.control?.domain == .workspaces)
+        #expect(summary.control == session.control)
+        #expect(summary.session.control == session.control)
+        #expect(SessionInboxSessionRouting.routeScope(for: session) == .control)
+        #expect(SessionRouteScope.control.composerDraftScopeID == "__oppi_control__")
+        #expect(SessionInboxSessionRouting.allSessionsContext(for: session, workspaceName: nil) == "Oppi Control")
+        #expect(presentation.workspaceContext == "Oppi Control")
+
+        let roundTrip = try JSONDecoder().decode(Session.self, from: JSONEncoder().encode(session))
+        #expect(roundTrip == session)
+    }
+
+    @MainActor
+    @Test func globalRecentProjectionRetainsDeclaredControlSession() throws {
+        let data = Data(#"{"id":"control-1","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"create"}}"#.utf8)
+        let session = try JSONDecoder().decode(Session.self, from: data)
+        let store = SessionStore()
+        store.switchServer(to: "server-1")
+
+        store.applyRecentWorkspaceSummaryProjection(
+            workspaceIds: Set(["workspace-1"]),
+            summaries: [SessionSummary(from: session)]
+        )
+
+        #expect(store.listProjectionSessions.map(\.id) == ["control-1"])
+        #expect(store.routeScope(for: "control-1") == .control)
+    }
 }

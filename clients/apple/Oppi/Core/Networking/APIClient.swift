@@ -234,12 +234,25 @@ actor APIClient: ClientLogUploading {
         let catchUpComplete: Bool
     }
 
+    private func focusedSessionPath(scope: SessionRouteScope, sessionId: String) -> String {
+        switch scope {
+        case .workspace(let workspaceId):
+            return "/workspaces/\(workspaceId)/sessions/\(sessionId)"
+        case .control:
+            return "/control-sessions/\(sessionId)"
+        }
+    }
+
     /// Fetch sequenced durable session events after `since` for reconnect catch-up.
     ///
     /// Decodes the response in a single pass using `Decodable` — no intermediate
     /// `JSONValue` tree, no per-event re-encode/re-decode round-trip.
     func getSessionEvents(workspaceId: String, id: String, since: Int) async throws -> SessionEventsResponse {
-        let data = try await get("/workspaces/\(workspaceId)/sessions/\(id)/events?since=\(since)")
+        try await getSessionEvents(scope: .workspace(workspaceId), id: id, since: since)
+    }
+
+    func getSessionEvents(scope: SessionRouteScope, id: String, since: Int) async throws -> SessionEventsResponse {
+        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: id))/events?since=\(since)")
 
         let payload = try JSONDecoder().decode(SessionEventsPayload.self, from: data)
 
@@ -288,7 +301,15 @@ actor APIClient: ClientLogUploading {
         sessionId: String,
         traceView: SessionTraceView = .context
     ) async throws -> (session: Session, trace: [TraceEvent]) {
-        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)?view=\(traceView.rawValue)")
+        try await getSession(scope: .workspace(workspaceId), sessionId: sessionId, traceView: traceView)
+    }
+
+    func getSession(
+        scope: SessionRouteScope,
+        sessionId: String,
+        traceView: SessionTraceView = .context
+    ) async throws -> (session: Session, trace: [TraceEvent]) {
+        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))?view=\(traceView.rawValue)")
         struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
         let response = try JSONDecoder().decode(Response.self, from: data)
         return (response.session, response.trace)
@@ -297,6 +318,22 @@ actor APIClient: ClientLogUploading {
     /// Get a paged workspace session trace for timeline history.
     func getWorkspaceSessionTracePage(
         workspaceId: String,
+        sessionId: String,
+        cursor: String? = nil,
+        aroundEntryId: String? = nil,
+        previewBytes: Int? = nil
+    ) async throws -> SessionTracePageResponse {
+        try await getSessionTracePage(
+            scope: .workspace(workspaceId),
+            sessionId: sessionId,
+            cursor: cursor,
+            aroundEntryId: aroundEntryId,
+            previewBytes: previewBytes
+        )
+    }
+
+    func getSessionTracePage(
+        scope: SessionRouteScope,
         sessionId: String,
         cursor: String? = nil,
         aroundEntryId: String? = nil,
@@ -315,7 +352,7 @@ actor APIClient: ClientLogUploading {
         var components = URLComponents()
         components.queryItems = items.isEmpty ? nil : items
         let query = components.percentEncodedQuery.map { "?\($0)" } ?? ""
-        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/trace-page\(query)")
+        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/trace-page\(query)")
         return try JSONDecoder().decode(SessionTracePageResponse.self, from: data)
     }
 
@@ -324,22 +361,37 @@ actor APIClient: ClientLogUploading {
         workspaceId: String,
         sessionId: String
     ) async throws -> SessionTraceOutlineResponse {
-        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/trace-outline")
+        try await getSessionTraceOutline(scope: .workspace(workspaceId), sessionId: sessionId)
+    }
+
+    func getSessionTraceOutline(
+        scope: SessionRouteScope,
+        sessionId: String
+    ) async throws -> SessionTraceOutlineResponse {
+        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/trace-outline")
         return try JSONDecoder().decode(SessionTraceOutlineResponse.self, from: data)
     }
 
     /// Stop a running workspace session.
     func stopWorkspaceSession(workspaceId: String, sessionId: String) async throws -> Session {
-        let data = try await post("/workspaces/\(workspaceId)/sessions/\(sessionId)/stop", body: EmptyBody())
+        try await stopSession(scope: .workspace(workspaceId), sessionId: sessionId)
+    }
+
+    func stopSession(scope: SessionRouteScope, sessionId: String) async throws -> Session {
+        let data = try await post("\(focusedSessionPath(scope: scope, sessionId: sessionId))/stop", body: EmptyBody())
         struct Response: Decodable { let session: Session? }
         let response = try JSONDecoder().decode(Response.self, from: data)
         if let session = response.session { return session }
-        return try await getWorkspaceSession(workspaceId: workspaceId, sessionId: sessionId).session
+        return try await getSession(scope: scope, sessionId: sessionId).session
     }
 
     /// Delete a workspace session permanently.
     func deleteWorkspaceSession(workspaceId: String, sessionId: String) async throws {
-        _ = try await request("DELETE", path: "/workspaces/\(workspaceId)/sessions/\(sessionId)")
+        try await deleteSession(scope: .workspace(workspaceId), sessionId: sessionId)
+    }
+
+    func deleteSession(scope: SessionRouteScope, sessionId: String) async throws {
+        _ = try await request("DELETE", path: focusedSessionPath(scope: scope, sessionId: sessionId))
     }
 
     /// Send a session command over HTTP when no focused session WebSocket is available.
@@ -348,8 +400,16 @@ actor APIClient: ClientLogUploading {
         sessionId: String,
         message: ClientMessage
     ) async throws {
+        try await sendSessionCommand(scope: .workspace(workspaceId), sessionId: sessionId, message: message)
+    }
+
+    func sendSessionCommand(
+        scope: SessionRouteScope,
+        sessionId: String,
+        message: ClientMessage
+    ) async throws {
         _ = try await post(
-            "/workspaces/\(workspaceId)/sessions/\(sessionId)/command",
+            "\(focusedSessionPath(scope: scope, sessionId: sessionId))/command",
             body: message
         )
     }
@@ -362,8 +422,24 @@ actor APIClient: ClientLogUploading {
         payload: ExtensionUIResponsePayload,
         requestId: String? = nil
     ) async throws {
-        try await sendWorkspaceSessionCommand(
-            workspaceId: workspaceId,
+        try await sendExtensionUIResponse(
+            scope: .workspace(workspaceId),
+            sessionId: sessionId,
+            id: id,
+            payload: payload,
+            requestId: requestId
+        )
+    }
+
+    func sendExtensionUIResponse(
+        scope: SessionRouteScope,
+        sessionId: String,
+        id: String,
+        payload: ExtensionUIResponsePayload,
+        requestId: String? = nil
+    ) async throws {
+        try await sendSessionCommand(
+            scope: scope,
             sessionId: sessionId,
             message: .extensionUIResponse(
                 id: id,
@@ -1081,6 +1157,20 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
     }
 
+    struct CreateControlSessionRequest: Codable, Sendable {
+        let domain: ControlSessionDomain
+        let intent: ControlSessionIntent
+        let targetId: String?
+        let targetName: String?
+        let name: String?
+        let prompt: String
+    }
+
+    func createControlSession(_ request: CreateControlSessionRequest) async throws -> CreateSessionResponse {
+        let data = try await post("/control-sessions", body: request)
+        return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
+    }
+
     /// Response from session creation. Includes `prompted` when a prompt was provided.
     struct CreateSessionResponse: Decodable, Sendable {
         let session: Session
@@ -1113,8 +1203,22 @@ actor APIClient: ClientLogUploading {
         sizeBytes: Int,
         purpose: String = "chat_attachment"
     ) async throws -> CreateUploadResponse {
+        try await createSessionAttachmentUpload(
+            scope: .workspace(workspaceId), sessionId: sessionId, name: name,
+            mimeType: mimeType, sizeBytes: sizeBytes, purpose: purpose
+        )
+    }
+
+    func createSessionAttachmentUpload(
+        scope: SessionRouteScope,
+        sessionId: String,
+        name: String,
+        mimeType: String,
+        sizeBytes: Int,
+        purpose: String = "chat_attachment"
+    ) async throws -> CreateUploadResponse {
         let data = try await post(
-            "/workspaces/\(workspaceId)/sessions/\(sessionId)/attachments",
+            "\(focusedSessionPath(scope: scope, sessionId: sessionId))/attachments",
             body: UploadCreateBody(name: name, mimeType: mimeType, sizeBytes: sizeBytes, purpose: purpose)
         )
         return try JSONDecoder().decode(CreateUploadResponse.self, from: data)
@@ -1127,8 +1231,21 @@ actor APIClient: ClientLogUploading {
         data body: Data,
         contentType: String = "application/octet-stream"
     ) async throws -> ChatAttachmentRef {
+        try await uploadSessionAttachmentContent(
+            scope: .workspace(workspaceId), sessionId: sessionId,
+            attachmentId: attachmentId, data: body, contentType: contentType
+        )
+    }
+
+    func uploadSessionAttachmentContent(
+        scope: SessionRouteScope,
+        sessionId: String,
+        attachmentId: String,
+        data body: Data,
+        contentType: String = "application/octet-stream"
+    ) async throws -> ChatAttachmentRef {
         try await putAttachmentContent(
-            path: "/workspaces/\(workspaceId)/sessions/\(sessionId)/attachments/\(attachmentId)/content",
+            path: "\(focusedSessionPath(scope: scope, sessionId: sessionId))/attachments/\(attachmentId)/content",
             data: body,
             contentType: contentType
         )
@@ -1167,7 +1284,11 @@ actor APIClient: ClientLogUploading {
 
     /// Resume a stopped session in its workspace.
     func resumeWorkspaceSession(workspaceId: String, sessionId: String) async throws -> Session {
-        let data = try await post("/workspaces/\(workspaceId)/sessions/\(sessionId)/resume", body: EmptyBody())
+        try await resumeSession(scope: .workspace(workspaceId), sessionId: sessionId)
+    }
+
+    func resumeSession(scope: SessionRouteScope, sessionId: String) async throws -> Session {
+        let data = try await post("\(focusedSessionPath(scope: scope, sessionId: sessionId))/resume", body: EmptyBody())
         struct Response: Decodable { let session: Session }
         return try JSONDecoder().decode(Response.self, from: data).session
     }
@@ -1199,7 +1320,11 @@ actor APIClient: ClientLogUploading {
     ///
     /// Used to lazy-load evicted tool output when the user expands an old tool call row.
     private func getToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> (output: String, isError: Bool) {
-        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/tool-output/\(toolCallId)")
+        try await getToolOutput(scope: .workspace(workspaceId), sessionId: sessionId, toolCallId: toolCallId)
+    }
+
+    private func getToolOutput(scope: SessionRouteScope, sessionId: String, toolCallId: String) async throws -> (output: String, isError: Bool) {
+        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/tool-output/\(toolCallId)")
         struct Response: Decodable { let output: String; let isError: Bool }
         let response = try JSONDecoder().decode(Response.self, from: data)
         return (response.output, response.isError)
@@ -1212,12 +1337,21 @@ actor APIClient: ClientLogUploading {
         return trimmed.isEmpty ? nil : output
     }
 
+    func getNonEmptyToolOutput(scope: SessionRouteScope, sessionId: String, toolCallId: String) async throws -> String? {
+        let (output, _) = try await getToolOutput(scope: scope, sessionId: sessionId, toolCallId: toolCallId)
+        return output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : output
+    }
+
     /// Fetch raw full (untruncated) tool output from the server temp-file side channel.
     ///
     /// Returns nil when the server no longer has the backing temp file (404).
     private func getFullToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> String? {
+        try await getFullToolOutput(scope: .workspace(workspaceId), sessionId: sessionId, toolCallId: toolCallId)
+    }
+
+    private func getFullToolOutput(scope: SessionRouteScope, sessionId: String, toolCallId: String) async throws -> String? {
         do {
-            let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/tool-output/\(toolCallId)?full=true")
+            let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/tool-output/\(toolCallId)?full=true")
             struct Response: Decodable { let output: String }
             let response = try JSONDecoder().decode(Response.self, from: data)
             return response.output
@@ -1236,12 +1370,31 @@ actor APIClient: ClientLogUploading {
         return trimmed.isEmpty ? nil : output
     }
 
+    func getNonEmptyFullToolOutput(scope: SessionRouteScope, sessionId: String, toolCallId: String) async throws -> String? {
+        guard let output = try await getFullToolOutput(scope: scope, sessionId: sessionId, toolCallId: toolCallId) else { return nil }
+        return output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : output
+    }
+
     /// Fetch a generated session attachment by id.
     ///
     /// Session attachments are server-owned artifacts (for example, voice_speak audio)
     /// stored in the Oppi data directory rather than the workspace checkout.
     func fetchSessionAttachment(sessionId: String, attachmentId: String) async throws -> Data {
-        let url = try makeURL(pathSegments: ["sessions", sessionId, "attachments", attachmentId])
+        try await fetchSessionAttachment(scope: nil, sessionId: sessionId, attachmentId: attachmentId)
+    }
+
+    func fetchSessionAttachment(
+        scope: SessionRouteScope?,
+        sessionId: String,
+        attachmentId: String
+    ) async throws -> Data {
+        let pathSegments: [String]
+        if scope == .control {
+            pathSegments = ["control-sessions", sessionId, "attachments", attachmentId]
+        } else {
+            pathSegments = ["sessions", sessionId, "attachments", attachmentId]
+        }
+        let url = try makeURL(pathSegments: pathSegments)
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
         req.httpMethod = "GET"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -1386,8 +1539,27 @@ actor APIClient: ClientLogUploading {
         contentTypeHint: String? = nil,
         sourceFileExtension: String? = nil
     ) throws -> AuthenticatedMediaSource {
-        AuthenticatedMediaSource(
-            url: try makeURL(pathSegments: ["sessions", sessionId, "attachments", attachmentId]),
+        try makeSessionAttachmentMediaSource(
+            scope: nil,
+            sessionId: sessionId,
+            attachmentId: attachmentId,
+            contentTypeHint: contentTypeHint,
+            sourceFileExtension: sourceFileExtension
+        )
+    }
+
+    func makeSessionAttachmentMediaSource(
+        scope: SessionRouteScope?,
+        sessionId: String,
+        attachmentId: String,
+        contentTypeHint: String? = nil,
+        sourceFileExtension: String? = nil
+    ) throws -> AuthenticatedMediaSource {
+        let pathSegments = scope == .control
+            ? ["control-sessions", sessionId, "attachments", attachmentId]
+            : ["sessions", sessionId, "attachments", attachmentId]
+        return AuthenticatedMediaSource(
+            url: try makeURL(pathSegments: pathSegments),
             authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
             tlsCertFingerprint: tlsCertFingerprint,
             contentTypeHint: contentTypeHint,

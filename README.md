@@ -42,7 +42,9 @@ Extension prompts, confirmations, editor requests, status, and widgets render as
 
 ## Using Oppi
 
-The Workspaces tab opens **All Sessions** for the active server. It keeps **Your Turn** and **Working** up top, groups recent stopped sessions by day, and shows workspace names on rows. Open the workspace sidebar or drawer to browse one workspace's sessions, files, and settings.
+The Workspaces tab opens **All Sessions** for the active server. It keeps **Your Turn** and **Working** up top, groups recent stopped sessions by day, and shows workspace names on rows. Open the Oppi sidebar or drawer to manage saved Agents and schedules, collapse the workspace catalog, open App Settings, or browse one workspace's sessions, files, and settings.
+
+Agent, schedule, and workspace create/edit sheets can open an **Oppi Control** session. It is a normal Oppi timeline backed by the Default Agent: describe the configuration change, review its proposed `oppi` command, and explicitly approve the write. The precise forms remain available in the same sheets.
 
 **Quick Session** starts a session without navigating into a workspace first. Open it from Oppi, Control Center, the Action Button, Spotlight, Siri, or Shortcuts. The Shortcuts **New Session** action can preload optional text and one image into the composer.
 
@@ -144,7 +146,7 @@ oppi token rotate            # rotate owner bearer token
 oppi update                  # update the npm-installed server and CLI
 ```
 
-Saved Agents and schedules are server CLI/API features. Saved Agents hold reusable Agent definitions. Schedules store at/every/cron triggers plus a workspace, saved Agent, or existing-session action and keep run history for manual or approved automatic runs. For the full CLI surface, run `oppi --help` or see [server/README.md](server/README.md).
+Saved Agents and schedules are available from the Oppi sidebar and the server CLI/API. Saved Agents hold reusable Agent definitions. Schedules store at/every/cron triggers plus a workspace, saved Agent, or existing-session action and keep run history for manual or approved automatic runs. Control sessions pass structured Agent and schedule revisions through bounded `--definition-json` arguments instead of temporary files. For the full CLI surface, run `oppi --help` or see [server/README.md](server/README.md).
 
 ## Mac app shell (experimental)
 

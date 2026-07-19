@@ -84,6 +84,29 @@ const FORBIDDEN_AGENT_DEFINITION_KEYS = new Set([
   "attachments",
   "images",
 ]);
+const AGENT_DEFINITION_KEYS = new Set([
+  "name",
+  "description",
+  "instructions",
+  "resources",
+  "sessionDefaults",
+]);
+const INSTRUCTION_KEYS = new Set(["mode", "text"]);
+const RESOURCE_KEYS = new Set([
+  "agentsFiles",
+  "noContextFiles",
+  "skillPaths",
+  "promptTemplateIds",
+  "extensionIds",
+]);
+const AGENTS_FILE_KEYS = new Set(["path", "content"]);
+const SESSION_DEFAULT_KEYS = new Set([
+  "model",
+  "thinkingLevel",
+  "tools",
+  "excludeTools",
+  "noTools",
+]);
 
 export class AgentDefinitionStore {
   private readonly db: SqliteDatabase;
@@ -147,6 +170,10 @@ export class AgentDefinitionStore {
   ): StoredAgentDefinition | undefined {
     const current = this.getAgent(agentId);
     if (!current || current.status === "archived") return undefined;
+    if (!isRecord(patch)) throw new Error("Agent update must be an object");
+    if (Object.keys(patch).length === 0) {
+      throw new Error("Agent update must include at least one field");
+    }
     if (!isDefaultAgentId(current.id) && wouldUseDefaultAgentReservedName(patch)) {
       throw new Error(`${DEFAULT_AGENT_DEFAULT_NAME} is reserved for the default Agent identity`);
     }
@@ -384,6 +411,7 @@ export function validateAgentDefinition(input: unknown): AgentDefinition {
       throw new Error(`Agent definitions cannot include ${key}`);
     }
   }
+  assertAllowedKeys(input, AGENT_DEFINITION_KEYS, "Agent definition");
 
   const name = requireString(input.name, "name");
   const description = validateString(input.description, "description");
@@ -445,6 +473,7 @@ function removeNullValue(record: Record<string, unknown>, key: string): void {
 function validateInstructions(value: unknown): AgentDefinition["instructions"] | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error("instructions must be an object");
+  assertAllowedKeys(value, INSTRUCTION_KEYS, "instructions");
   const mode = value.mode === undefined ? "append" : requireString(value.mode, "instructions.mode");
   if (!INSTRUCTION_MODES.has(mode)) {
     throw new Error("instructions.mode must be append or replace");
@@ -456,6 +485,7 @@ function validateInstructions(value: unknown): AgentDefinition["instructions"] |
 function validateResources(value: unknown): AgentDefinition["resources"] | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error("resources must be an object");
+  assertAllowedKeys(value, RESOURCE_KEYS, "resources");
   return {
     ...(value.agentsFiles !== undefined
       ? { agentsFiles: validateAgentsFiles(value.agentsFiles) }
@@ -484,6 +514,7 @@ function validateAgentsFiles(value: unknown): Array<{ path: string; content: str
   if (!Array.isArray(value)) throw new Error("resources.agentsFiles must be an array");
   return value.map((entry, index) => {
     if (!isRecord(entry)) throw new Error(`resources.agentsFiles[${index}] must be an object`);
+    assertAllowedKeys(entry, AGENTS_FILE_KEYS, `resources.agentsFiles[${index}]`);
     const path = requireString(entry.path, `resources.agentsFiles[${index}].path`);
     if (path.startsWith("/") || path.includes("..")) {
       throw new Error(`resources.agentsFiles[${index}].path must be a relative virtual path`);
@@ -498,6 +529,7 @@ function validateAgentsFiles(value: unknown): Array<{ path: string; content: str
 function validateSessionDefaults(value: unknown): AgentDefinition["sessionDefaults"] | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error("sessionDefaults must be an object");
+  assertAllowedKeys(value, SESSION_DEFAULT_KEYS, "sessionDefaults");
   const thinkingLevel = validateString(value.thinkingLevel, "sessionDefaults.thinkingLevel");
   if (thinkingLevel !== undefined && !THINKING_LEVELS.has(thinkingLevel as ThinkingLevel)) {
     throw new Error("sessionDefaults.thinkingLevel is invalid");
@@ -556,4 +588,14 @@ function validateStringArray(value: unknown, label: string): string[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertAllowedKeys(
+  value: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  label: string,
+): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) throw new Error(`${label} has unexpected field: ${key}`);
+  }
 }

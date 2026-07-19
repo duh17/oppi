@@ -1,5 +1,42 @@
 import SwiftUI
 
+struct UseOppiSessionRow: View {
+    let supportingText: String?
+    let isLoading: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Use Oppi Session")
+                        .foregroundStyle(.themeFg)
+                    if let supportingText {
+                        Text(supportingText)
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 8)
+                if isLoading {
+                    ProgressView()
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                }
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoading)
+        .accessibilityLabel("Use Oppi Session")
+        .accessibilityHint(supportingText ?? "Opens an Oppi session")
+    }
+}
+
 struct AgentManagementView: View {
     @Environment(\.apiClient) private var apiClient
 
@@ -371,6 +408,9 @@ private struct AgentDetailView: View {
 
 private struct AgentEditView: View {
     @Environment(\.apiClient) private var apiClient
+    @Environment(ServerConnection.self) private var connection
+    @Environment(SessionStore.self) private var sessionStore
+    @Environment(AppNavigation.self) private var navigation
     @Environment(\.dismiss) private var dismiss
 
     let agent: StoredAgentDefinition?
@@ -390,6 +430,7 @@ private struct AgentEditView: View {
     @State private var toolsText = ""
     @State private var excludeToolsText = ""
     @State private var isSaving = false
+    @State private var isLaunchingOppi = false
     @State private var error: String?
 
     private let thinkingOptions: [ThinkingLevel] = [.off, .minimal, .low, .medium, .high, .xhigh]
@@ -400,6 +441,20 @@ private struct AgentEditView: View {
 
     var body: some View {
         Form {
+            if connection.controlSessionsAvailable, apiClient != nil {
+                Section {
+                    UseOppiSessionRow(
+                        supportingText: agent == nil
+                            ? "Work with Default Agent to create this Agent."
+                            : "Work with Default Agent to revise this Agent.",
+                        isLoading: isLaunchingOppi
+                    ) {
+                        Task { await launchOppiSession() }
+                    }
+                    .accessibilityIdentifier("agent.edit.useOppiSession")
+                }
+            }
+
             Section("Details") {
                 TextField("Name", text: $name)
                     .autocorrectionDisabled()
@@ -512,6 +567,41 @@ private struct AgentEditView: View {
         noToolsSelection = definition.sessionDefaults?.noTools?.rawValue ?? ""
         toolsText = Self.joinList(definition.sessionDefaults?.tools)
         excludeToolsText = Self.joinList(definition.sessionDefaults?.excludeTools)
+    }
+
+    @MainActor
+    private func launchOppiSession() async {
+        guard let apiClient, !isLaunchingOppi else { return }
+        isLaunchingOppi = true
+        defer { isLaunchingOppi = false }
+        let intent: ControlSessionIntent = agent == nil ? .create : .revise
+        let targetName = agent?.name
+        do {
+            let response = try await apiClient.createControlSession(.init(
+                domain: .agents,
+                intent: intent,
+                targetId: agent?.id,
+                targetName: targetName,
+                name: intent == .create ? "Create Agent" : "Revise \(targetName ?? "Agent")",
+                prompt: ControlSessionStarterPrompt.make(
+                    domain: .agents,
+                    intent: intent,
+                    targetId: agent?.id,
+                    targetName: targetName
+                )
+            ))
+            sessionStore.cacheSessionForNavigation(response.session)
+            guard let serverId = connection.currentServerId ?? sessionStore.activeServerId else { return }
+            dismiss()
+            await Task.yield()
+            navigation.openWorkspaceSession(.init(
+                serverId: serverId,
+                sessionId: response.session.id,
+                routeScope: .control
+            ))
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     @MainActor

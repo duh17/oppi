@@ -1,6 +1,10 @@
 import type { ServerResponse } from "node:http";
 
 import { createAgentScheduleDispatchHooks } from "../agent-schedule-dispatch.js";
+import {
+  validateAgentScheduleUpdate,
+  validateCreateAgentScheduleRequest,
+} from "../agent-schedules.js";
 import type {
   AgentScheduleRun,
   AgentScheduleStore,
@@ -35,7 +39,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     if (method === "POST") {
       try {
         const schedules = getSchedules();
-        const body = await helpers.parseBody<CreateAgentScheduleRequest>(req);
+        const body = validateCreateAgentScheduleRequest(await helpers.parseBody<unknown>(req));
         const normalizedBody = normalizeScheduleRequestTargets(body);
         const now = Date.now();
         const schedule = schedules.createSchedule(normalizedBody, now);
@@ -72,7 +76,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         const schedules = getSchedules();
         const schedule = resolveScheduleSummary(scheduleId, res);
         if (!schedule) return true;
-        const body = await helpers.parseBody<Partial<CreateAgentScheduleRequest>>(req);
+        const body = validateAgentScheduleUpdate(await helpers.parseBody<unknown>(req));
         const normalizedBody: Partial<CreateAgentScheduleRequest> = {
           ...body,
           ...(body.action ? { action: normalizeScheduleActionTarget(body.action) } : {}),

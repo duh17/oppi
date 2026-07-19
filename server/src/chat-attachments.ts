@@ -27,7 +27,7 @@ export interface MaterializeChatAttachmentsResult {
 
 export interface MaterializeChatAttachmentsOptions {
   workspaceRoot: string;
-  workspaceId: string;
+  workspaceId?: string;
   sessionId: string;
   turnId?: string;
   message: string;
@@ -100,6 +100,9 @@ export async function materializeChatAttachments(
     }
 
     if (ref.source === "workspace") {
+      if (!options.workspaceId) {
+        throw new Error(`Workspace attachments require a workspace session: ${ref.id}`);
+      }
       const workspacePath = ref.workspacePath?.trim();
       if (!workspacePath) {
         throw new Error(`workspacePath required for workspace attachment ${ref.id}`);

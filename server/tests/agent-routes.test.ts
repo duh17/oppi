@@ -570,4 +570,57 @@ describe("agent routes", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("rejects unexpected Agent definition fields and empty updates", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-strict-routes-"));
+    try {
+      const store = new AgentDefinitionStore(dataDir);
+      const agent = store.createAgent({ name: "Reviewer" });
+      const dispatch = createAgentRoutes(
+        { storage: { getAgentDefinitionStore: () => store } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+
+      const unexpectedRes = makeResponse();
+      await dispatch({
+        method: "PATCH",
+        path: `/agents/${agent.id}`,
+        url: new URL(`http://localhost/agents/${agent.id}`),
+        req: makeRequest({ description: "Updated", unexpected: true }) as never,
+        res: unexpectedRes as unknown as ServerResponse,
+      });
+      expect(unexpectedRes.statusCode).toBe(400);
+      expect(JSON.parse(unexpectedRes.body)).toEqual({
+        error: "Agent definition has unexpected field: unexpected",
+      });
+
+      const nestedRes = makeResponse();
+      await dispatch({
+        method: "PATCH",
+        path: `/agents/${agent.id}`,
+        url: new URL(`http://localhost/agents/${agent.id}`),
+        req: makeRequest({ sessionDefaults: { model: "model", unexpected: true } }) as never,
+        res: nestedRes as unknown as ServerResponse,
+      });
+      expect(nestedRes.statusCode).toBe(400);
+      expect(JSON.parse(nestedRes.body)).toEqual({
+        error: "sessionDefaults has unexpected field: unexpected",
+      });
+
+      const emptyRes = makeResponse();
+      await dispatch({
+        method: "PATCH",
+        path: `/agents/${agent.id}`,
+        url: new URL(`http://localhost/agents/${agent.id}`),
+        req: makeRequest({}) as never,
+        res: emptyRes as unknown as ServerResponse,
+      });
+      expect(emptyRes.statusCode).toBe(400);
+      expect(JSON.parse(emptyRes.body)).toEqual({
+        error: "Agent update must include at least one field",
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -4,6 +4,11 @@ import Testing
 
 @Suite("Workspace catalog availability")
 struct WorkspaceCatalogAvailabilityTests {
+    @Test func workspaceDisclosureStartsExpandedAndUsesStableStorageKey() {
+        #expect(WorkspaceSidebarDisclosurePolicy.defaultExpanded)
+        #expect(AppIdentifiers.workspaceSidebarExpandedKey == "workspace.sidebar.workspaces.expanded")
+    }
+
     @Test func authoritativeEmptyCatalogIsDistinctFromUnloadedAndFailedCatalogs() {
         #expect(WorkspaceCatalogAvailability(
             hasWorkspaces: false,

@@ -10,6 +10,7 @@ enum AppIdentifiers {
     /// Primary subsystem identifier for os_log, Keychain, and storage keys.
     /// Matches the main app's bundle identifier at runtime.
     static let subsystem: String = Bundle.main.bundleIdentifier ?? "dev.chenda.Oppi"
+    static let workspaceSidebarExpandedKey = "workspace.sidebar.workspaces.expanded"
 }
 
 /// Shipping toggles for first release hardening.
@@ -35,6 +36,5 @@ enum ReleaseFeatures {
     static let voiceInputEnabled = true
 
     /// Native saved-agent and schedule management screens.
-    /// Hidden for TestFlight build 40 until these iOS management flows are ready.
-    static let agentAndScheduleManagementEnabled = false
+    static let agentAndScheduleManagementEnabled = true
 }

@@ -40,6 +40,74 @@ struct PiTuiMirrorSessionMetadata: Codable, Sendable, Equatable {
     var protocolVersion: Int?
 }
 
+enum ControlSessionDomain: String, Codable, Sendable {
+    case agents
+    case schedules
+    case workspaces
+}
+
+enum ControlSessionIntent: String, Codable, Sendable {
+    case create
+    case revise
+}
+
+struct ControlSessionMetadata: Codable, Sendable, Equatable {
+    let domain: ControlSessionDomain
+    let intent: ControlSessionIntent
+    let targetId: String?
+    let targetName: String?
+}
+
+/// Selects the server route family for operations on a focused session.
+enum SessionRouteScope: Sendable, Hashable {
+    case workspace(String)
+    case control
+
+    var workspaceId: String? {
+        guard case .workspace(let id) = self else { return nil }
+        return id
+    }
+
+    var composerDraftScopeID: String {
+        switch self {
+        case .workspace(let id): id
+        case .control: "__oppi_control__"
+        }
+    }
+}
+
+enum ControlSessionStarterPrompt {
+    static func make(
+        domain: ControlSessionDomain,
+        intent: ControlSessionIntent,
+        targetId: String? = nil,
+        targetName: String? = nil
+    ) -> String {
+        let subject = switch domain {
+        case .agents: "saved Agent"
+        case .schedules: "Schedule"
+        case .workspaces: "Workspace"
+        }
+        let target = intent == .revise
+            ? "\nCanonical target ID: \(targetId ?? "unknown")\nCanonical target name: \(targetName ?? "unknown")"
+            : ""
+        let definitionRequirement = switch (domain, intent) {
+        case (.agents, _), (.schedules, .revise):
+            " Pass the approved definition directly with --definition-json."
+        default:
+            ""
+        }
+
+        return """
+        Help the user \(intent == .create ? "create" : "revise") an Oppi \(subject).\(target)
+
+        Act as Default Agent. First inspect the current server state using only approved `oppi` commands. Ask focused questions needed to remove ambiguity. Then summarize the proposed changes and wait for explicit approval before making them. After approval, use the appropriate approved `oppi` command to apply the change.\(definitionRequirement)
+
+        Do not use filesystem tools or temporary files for this task.
+        """
+    }
+}
+
 /// Session model matching server's `Session` type.
 ///
 /// Server sends timestamps as Unix milliseconds (not ISO 8601).
@@ -76,6 +144,7 @@ struct Session: Identifiable, Sendable, Equatable {
     var runtime: SessionRuntimeKind? = nil
     var mirror: PiTuiMirrorSessionMetadata? = nil
     var piSessionId: String? = nil
+    var control: ControlSessionMetadata? = nil
 
     // Privacy / persistence
     var ephemeral: Bool?
@@ -170,6 +239,7 @@ struct SessionSummary: Sendable, Equatable {
     var runtime: SessionRuntimeKind? = nil
     var mirror: PiTuiMirrorSessionMetadata? = nil
     var piSessionId: String? = nil
+    var control: ControlSessionMetadata? = nil
     var ephemeral: Bool?
     var pendingAskCount: Int {
         didSet { hasPendingAskCount = true }
@@ -205,6 +275,7 @@ struct SessionSummary: Sendable, Equatable {
             runtime: runtime,
             mirror: mirror,
             piSessionId: piSessionId,
+            control: control,
             ephemeral: ephemeral
         )
     }
@@ -235,6 +306,7 @@ extension SessionSummary {
         self.runtime = session.runtime
         self.mirror = session.mirror
         self.piSessionId = session.piSessionId
+        self.control = session.control
         self.ephemeral = session.ephemeral
         self.pendingAskCount = 0
         self.hasPendingAskCount = false
@@ -246,7 +318,7 @@ private enum SessionWireCodingKeys: String, CodingKey {
     case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
     case model, messageCount, tokens, cost, changeStats
     case contextTokens, contextWindow, firstMessage, lastMessage
-    case thinkingLevel, runtime, mirror, piSessionId, ephemeral
+    case thinkingLevel, runtime, mirror, piSessionId, control, ephemeral
     case pendingAskCount
 }
 
@@ -274,6 +346,7 @@ private struct DecodedSessionWireFields {
     let runtime: SessionRuntimeKind?
     let mirror: PiTuiMirrorSessionMetadata?
     let piSessionId: String?
+    let control: ControlSessionMetadata?
     let ephemeral: Bool?
 
     init(from container: KeyedDecodingContainer<SessionWireCodingKeys>) throws {
@@ -300,6 +373,7 @@ private struct DecodedSessionWireFields {
         runtime = try container.decodeIfPresent(SessionRuntimeKind.self, forKey: .runtime)
         mirror = try container.decodeIfPresent(PiTuiMirrorSessionMetadata.self, forKey: .mirror)
         piSessionId = try container.decodeIfPresent(String.self, forKey: .piSessionId)
+        control = try container.decodeIfPresent(ControlSessionMetadata.self, forKey: .control)
         ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral)
     }
 }
@@ -330,6 +404,7 @@ private extension DecodedSessionWireFields {
             runtime: runtime,
             mirror: mirror,
             piSessionId: piSessionId,
+            control: control,
             ephemeral: ephemeral
         )
     }
@@ -394,6 +469,7 @@ extension Session: Codable {
         try c.encodeIfPresent(runtime, forKey: .runtime)
         try c.encodeIfPresent(mirror, forKey: .mirror)
         try c.encodeIfPresent(piSessionId, forKey: .piSessionId)
+        try c.encodeIfPresent(control, forKey: .control)
         try c.encodeIfPresent(ephemeral, forKey: .ephemeral)
 
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)

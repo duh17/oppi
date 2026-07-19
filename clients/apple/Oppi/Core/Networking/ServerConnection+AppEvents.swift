@@ -104,9 +104,23 @@ extension ServerConnection {
         id: String,
         payload: ExtensionUIResponsePayload
     ) async throws {
+        try await respondToExtensionUI(
+            routeScope: .workspace(workspaceId),
+            sessionId: sessionId,
+            id: id,
+            payload: payload
+        )
+    }
+
+    func respondToExtensionUI(
+        routeScope: SessionRouteScope,
+        sessionId: String,
+        id: String,
+        payload: ExtensionUIResponsePayload
+    ) async throws {
         guard let apiClient else { throw APIError.invalidResponse }
         try await apiClient.sendExtensionUIResponse(
-            workspaceId: workspaceId,
+            scope: routeScope,
             sessionId: sessionId,
             id: id,
             payload: payload

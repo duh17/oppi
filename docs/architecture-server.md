@@ -151,7 +151,7 @@ The private loopback is an adapter, not another API. Iroh transport code must no
 
 - `routes/identity.ts` — user, server info, pairing, stats, runtime status, provider-auth helpers.
 - `routes/workspaces.ts` — workspace catalog, CRUD, Git status, worktrees, quick actions, review comments.
-- `routes/sessions.ts` — session HTTP boundary for workspace lists, create/import, resume, stop, fork, delete, traces, catch-up, tool output, session files, and diffs. Lifecycle, list, and trace/file policy is delegated to application services.
+- `routes/sessions.ts` — session HTTP boundary for workspace and declared control scopes: create/import, resume, stop, fork, delete, traces, catch-up, tool output, session files, and diffs. Lifecycle, list, and trace/file policy is delegated to application services.
 - `routes/agents.ts` — saved Agent definitions and saved-Agent session launches.
 - `routes/schedules.ts` — schedule CRUD, manual runs, run history, and pause/resume/archive.
 - `routes/uploads.ts` — chat attachment upload records and content.
@@ -162,7 +162,8 @@ WebSocket upgrade paths are explicit:
 
 | Path                                                  | Owner                   | Purpose                                                  |
 | ----------------------------------------------------- | ----------------------- | -------------------------------------------------------- |
-| `/workspaces/:workspaceId/sessions/:sessionId/stream` | `BoundSessionStreamMux` | focused session timeline, commands, queue sync, state    |
+| `/workspaces/:workspaceId/sessions/:sessionId/stream` | `BoundSessionStreamMux` | workspace-focused timeline, commands, queue sync, state  |
+| `/control-sessions/:sessionId/stream`                  | `BoundSessionStreamMux` | control-focused timeline through the same runtime path   |
 | `/app/events/stream`                                  | `AppEventStreamMux`     | app-wide session row and extension UI attention events   |
 | `/dictation/stream`                                   | `DictationStreamMux`    | dictation control and binary audio                       |
 | `/mirror/v1/bridge`                                   | `PiTuiMirrorRuntime`    | terminal Pi TUI mirror registration and command proxying |
@@ -192,11 +193,15 @@ A stopped, disconnected mirror session with a canonical session file can be prom
 - `SessionStopFlowCoordinator` and `SessionStopCoordinator` own abort/stop behavior.
 - `SessionLifecycleCoordinator` handles idle timers and session end cleanup.
 
-`sdk-backend.ts` wraps Pi's `AgentSession`. It resolves workspace cwd, configures sandbox tools when requested, binds extensions through `SdkUiBridge`, injects session attachment helpers, forwards SDK commands, and emits Pi events back into the session projection pipeline.
+`sdk-backend.ts` wraps Pi's `AgentSession`. It resolves workspace cwd, configures sandbox tools when requested, binds extensions through `SdkUiBridge`, injects session attachment helpers, forwards SDK commands, and emits Pi events back into the session projection pipeline. Declared control sessions use an owner-only, non-symlink `$OPPI_DATA_DIR/control-sessions/cwd` and the Default Agent safety definition; undeclared workspace-less sessions do not gain control-session privileges.
 
 ## Saved Agents and schedules
 
 Saved Agent routes persist reusable definitions. Launch-time inputs such as workspace, worktree, prompt, model override, and session name flow through `AgentLaunchService`, which owns idempotency, launch recovery, and prompt dispatch into managed sessions.
+
+A server-scoped Oppi Control session persists explicit `domain`, `intent`, and optional target metadata with no `workspaceId`. `/control-sessions` routes enforce that declaration before reusing the ordinary lifecycle, trace, attachment, command, approval, broadcaster, and focused-stream services. Control sessions remain in the global recent projection but never enter workspace catalogs or counts. The Default Agent's `oppi` tool remains the only allowed tool, and every write keeps its existing explicit approval.
+
+The CLI accepts bounded in-memory `--definition-json` objects for Agent create/update and schedule update, avoiding temporary files without adding filesystem tools. Canonical Agent and schedule validators reject unexpected fields and empty updates at the server boundary.
 
 Schedules persist a trigger plus an action. `AgentScheduleRunner` scans active schedules, materializes due slots, claims due runs with a lease, and dispatches automatic runs through the same launch hooks used by manual schedule runs. Pause or archive a schedule to stop future automatic runs.
 
