@@ -497,7 +497,12 @@ describe("oppi help", () => {
       },
       {
         args: ["worktree", "create", "--help"],
-        expected: ["Usage: oppi worktree create", "--branch <branch>", "OPPI_DATA_DIR"],
+        expected: [
+          "Usage: oppi worktree create",
+          "--branch <branch>",
+          "OPPI_DATA_DIR",
+          "Retained session history reserves its worktree id",
+        ],
       },
       {
         args: ["worktree", "open", "--help"],
@@ -513,7 +518,12 @@ describe("oppi help", () => {
       },
       {
         args: ["worktree", "remove", "--help"],
-        expected: ["Usage: oppi worktree remove <worktree>", "--force", "active sessions"],
+        expected: [
+          "Usage: oppi worktree remove <worktree>",
+          "--force",
+          "active sessions",
+          "Retained history reserves the removed worktree id",
+        ],
       },
       {
         args: ["session", "list", "--help"],

@@ -29,6 +29,7 @@ import { deleteSessionAttachments } from "./session-attachments.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
 import type { ChatAttachmentRef, Session, Workspace } from "./types.js";
+import { resolveWorkspaceWorktree, WorkspaceWorktreeError } from "./worktrees.js";
 
 const LOCAL_SESSION_META_READ_BYTES = 16_384;
 
@@ -197,6 +198,7 @@ export class SessionLifecycleService {
     session: Session;
     workspace: Workspace;
   }): Promise<OpenSessionResult> {
+    this.requireSessionWorktreeAvailable(params.session, params.workspace);
     const session = this.prepareMirrorSessionForOpen(params.session);
     if (session.owner === "pi-tui") {
       const active =
@@ -229,6 +231,7 @@ export class SessionLifecycleService {
     session: Session;
     workspace?: Workspace;
   }): Promise<OpenSessionResult> {
+    this.requireSessionWorktreeAvailable(params.session, params.workspace);
     const session = this.prepareMirrorSessionForOpen(params.session);
     if (session.owner === "pi-tui") {
       const snapshot =
@@ -352,6 +355,7 @@ export class SessionLifecycleService {
     entryId: string;
     name?: string;
   }): Promise<ForkSessionResult> {
+    this.requireSessionWorktreeAvailable(params.sourceSession, params.workspace);
     await this.deps.sessionRuntimes.refreshSessionState(params.sourceSession.id);
 
     const latestSource =
@@ -508,6 +512,20 @@ export class SessionLifecycleService {
 
   private hydratedSnapshot(session: Session): Session {
     return { ...this.deps.ensureSessionContextWindow(session) };
+  }
+
+  private requireSessionWorktreeAvailable(session: Session, workspace?: Workspace): void {
+    const worktreeId = session.worktreeId?.trim();
+    if (!worktreeId || worktreeId === "main") return;
+
+    const worktree = workspace
+      ? resolveWorkspaceWorktree(workspace, worktreeId, {
+          dataDir: this.deps.storage.getDataDir(),
+        })
+      : undefined;
+    if (!worktree) {
+      throw new SessionLifecycleError("Session worktree is no longer available", 409);
+    }
   }
 
   private prepareMirrorSessionForOpen(session: Session): { owner: OpenSessionOwner } {
@@ -686,9 +704,15 @@ export class SessionLifecycleService {
       : undefined;
     if (!workspace?.hostMount) return false;
 
-    const workRoot = resolveSdkSessionCwd(workspace, session, {
-      dataDir: this.deps.storage.getDataDir(),
-    });
+    let workRoot: string;
+    try {
+      workRoot = resolveSdkSessionCwd(workspace, session, {
+        dataDir: this.deps.storage.getDataDir(),
+      });
+    } catch (error) {
+      if (error instanceof WorkspaceWorktreeError) return false;
+      throw error;
+    }
     if (!(await pathExists(workRoot))) return false;
 
     const workRootReal = await realpath(workRoot);

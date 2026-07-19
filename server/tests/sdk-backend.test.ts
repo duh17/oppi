@@ -46,6 +46,19 @@ describe("resolveSdkSessionCwd", () => {
     const workspace = { hostMount: mount } as Workspace;
     expect(resolveSdkSessionCwd(workspace)).toBe(mount);
   });
+
+  it("never falls back to main when a session worktree is unavailable", () => {
+    const mount = mkdtempSync(join(tmpdir(), "oppi-removed-worktree-cwd-"));
+    const workspace = { id: "ws-1", hostMount: mount } as Workspace;
+
+    try {
+      expect(() => resolveSdkSessionCwd(workspace, { worktreeId: "wt_removed" })).toThrow(
+        "Session worktree is no longer available",
+      );
+    } finally {
+      rmSync(mount, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("resolveSdkSessionDisplayCwd", () => {

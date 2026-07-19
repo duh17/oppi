@@ -41,12 +41,12 @@ const INTEGRATION_MODES = new Set<WorkspaceWorktreeIntegrationMode>(["merge", "s
 
 export interface WorkspaceWorktreeLifecycleOptions {
   dataDir: string;
+  reservedWorktreeIds?: ReadonlySet<string>;
 }
 
 export interface RemoveWorkspaceWorktreeOptions extends WorkspaceWorktreeLifecycleOptions {
   worktreeId: string;
   force?: boolean;
-  sessionCount?: number;
   activeSessionCount?: number;
 }
 
@@ -428,12 +428,19 @@ function branchExists(workspaceRoot: string, branch: string): boolean {
 function requireAvailableCreateTarget(
   workspace: Workspace,
   targetId: string,
-  dataDir: string,
+  options: WorkspaceWorktreeLifecycleOptions,
 ): void {
   if (targetId === MAIN_WORKTREE_ID) {
     throw new WorkspaceWorktreeError(400, "Worktree path uses a reserved worktree id");
   }
-  if (listWorkspaceWorktrees(workspace, { dataDir }).some((worktree) => worktree.id === targetId)) {
+  if (options.reservedWorktreeIds?.has(targetId)) {
+    throw new WorkspaceWorktreeError(409, "Worktree id is still referenced by session history");
+  }
+  if (
+    listWorkspaceWorktrees(workspace, { dataDir: options.dataDir }).some(
+      (worktree) => worktree.id === targetId,
+    )
+  ) {
     throw new WorkspaceWorktreeError(409, "Worktree id already exists");
   }
 }
@@ -557,7 +564,7 @@ export function createWorkspaceWorktree(
   const branch = requireBranch(workspaceRoot, request.branch);
   const base = normalizedBase(request.base);
   const target = managedCreatePath(workspace, options.dataDir, branch, request.path);
-  requireAvailableCreateTarget(workspace, target.id, options.dataDir);
+  requireAvailableCreateTarget(workspace, target.id, options);
 
   const args = branchExists(workspaceRoot, branch)
     ? ["worktree", "add", target.path, branch]
@@ -664,9 +671,6 @@ export function removeWorkspaceWorktree(
   }
   if ((options.activeSessionCount ?? 0) > 0) {
     throw new WorkspaceWorktreeError(409, "Cannot remove a worktree with active sessions");
-  }
-  if ((options.sessionCount ?? 0) > 0 && options.force !== true) {
-    throw new WorkspaceWorktreeError(409, "Worktree has sessions; pass force to remove it");
   }
   if (options.force !== true && isWorktreeDirty(worktree.path)) {
     throw new WorkspaceWorktreeError(409, "Worktree has uncommitted or untracked changes");

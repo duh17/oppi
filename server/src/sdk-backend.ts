@@ -55,7 +55,7 @@ import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
-import { resolveWorkspaceSessionCwd } from "./worktrees.js";
+import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
 import { callerSessionIdentityShellPrefix } from "./session-caller-identity.js";
 
 type PiThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
@@ -134,6 +134,7 @@ export function resolveSdkSessionCwd(
   if (workspace?.runtime !== "sandbox" && workspace && session?.worktreeId) {
     const worktreePath = resolveWorkspaceSessionCwd(workspace, session.worktreeId, options);
     if (worktreePath) return worktreePath;
+    throw new WorkspaceWorktreeError(409, "Session worktree is no longer available");
   }
 
   const rawHostMount = workspace?.hostMount?.trim();

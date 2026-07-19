@@ -315,6 +315,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       helpers.json(res, { session: result.session });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Resume failed";
+      if (err instanceof SessionLifecycleError) {
+        helpers.error(res, err.statusCode, message);
+        return;
+      }
       log.error("sessions.resume.failed", {
         sessionId,
         workspaceId,

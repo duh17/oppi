@@ -326,6 +326,59 @@ describe("sessions module", () => {
     }
   });
 
+  it("returns conflict instead of resuming removed-worktree sessions in main", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-session-route-removed-worktree-root-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-route-removed-worktree-data-"));
+    try {
+      const workspace = makeGitWorkspace(root);
+      const session: Session = {
+        id: "stopped-1",
+        workspaceId: workspace.id,
+        worktreeId: "wt_removed",
+        status: "stopped",
+        createdAt: 1,
+        lastActivity: 1,
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+      };
+      const startSession = vi.fn(async () => session);
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getSession: vi.fn(() => session),
+          getDataDir: vi.fn(() => dataDir),
+        },
+        sessions: { startSession },
+        sessionRuntimes: {
+          isSessionConnected: vi.fn(() => false),
+          isSessionLive: vi.fn(() => false),
+        },
+        ensureSessionContextWindow: vi.fn((value: Session) => value),
+      } as unknown as RouteContext;
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "POST",
+        path: "/workspaces/ws-1/sessions/stopped-1/resume",
+        url: new URL("http://localhost/workspaces/ws-1/sessions/stopped-1/resume"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "Session worktree is no longer available",
+      });
+      expect(startSession).not.toHaveBeenCalled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns 404 for workspace sessions in nonexistent workspace", async () => {
     const ctx = {
       storage: {
