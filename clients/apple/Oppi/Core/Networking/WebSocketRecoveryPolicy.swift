@@ -6,15 +6,20 @@ import Foundation
 /// semantics, but should answer transport recovery questions the same way: when
 /// to retry, how long to wait, and which handshake failures are terminal.
 enum WebSocketRecoveryPolicy {
-    static let maxReconnectAttempts = 10
     static let pingInterval: Duration = .seconds(30)
     static let maxConsecutivePingFailures = 2
+
+    /// Persistent stream subscriptions retry until their owner disconnects them.
+    /// Saturating arithmetic avoids a theoretical overflow after years of outage.
+    nonisolated static func nextReconnectAttempt(after attempt: Int) -> Int {
+        attempt == Int.max ? Int.max : attempt + 1
+    }
 
     /// Reconnect delay curve tuned for mobile networking:
     ///
     /// - Attempts 1-3: 500ms (transient — suspension wake, network handoff)
     /// - Attempts 4-6: 2s, 4s, 8s (moderate — server restart, Tailscale reconnect)
-    /// - Attempts 7+:  15s cap (real problems — server down)
+    /// - Attempts 7+:  15s cap while the owning subscription remains intended
     ///
     /// ±25% jitter prevents synchronized retries if multiple connections exist.
     nonisolated static func reconnectDelay(attempt: Int) -> TimeInterval {
@@ -32,6 +37,29 @@ enum WebSocketRecoveryPolicy {
 
     nonisolated static func isNonRetryableHandshakeStatus(_ statusCode: Int) -> Bool {
         [400, 401, 403, 404, 410, 426].contains(statusCode)
+    }
+
+    /// Close codes that report a terminal payload, policy, or WebSocket protocol rejection.
+    /// Transport closures such as abnormalClosure, goingAway, and internalServerError remain
+    /// recoverable because a later connection can succeed without changing the request.
+    nonisolated static func isNonRetryableCloseCode(
+        _ closeCode: URLSessionWebSocketTask.CloseCode
+    ) -> Bool {
+        switch closeCode {
+        case .protocolError,
+             .unsupportedData,
+             .invalidFramePayloadData,
+             .policyViolation,
+             .messageTooBig:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Retry telemetry must remain low-cardinality even though the internal counter is unbounded.
+    nonisolated static func reconnectAttemptTag(_ attempt: Int) -> String {
+        attempt >= 7 ? "7_plus" : String(max(0, attempt))
     }
 
     nonisolated static func isRecoverableReceiveError(

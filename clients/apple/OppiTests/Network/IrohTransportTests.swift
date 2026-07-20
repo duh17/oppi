@@ -124,6 +124,31 @@ struct IrohTransportTests {
             actual: "private actual"
         )) == "remote_peer")
         #expect(IrohTransportTelemetry.errorKind(CancellationError()) == "cancelled")
+        do {
+            _ = try EndpointId.fromString(s: "not-an-endpoint-id")
+            Issue.record("Expected Iroh endpoint parsing to fail")
+        } catch {
+            #expect(IrohTransportTelemetry.errorKind(error) == "key_parsing")
+        }
+    }
+
+    @Test func failedStreamInvalidatesOnlyItsConnectionGeneration() {
+        var generations = IrohConnectionGenerations()
+        let stale = generations.advance(alpn: IrohTunnelProtocol.alpn)
+        let replacement = generations.advance(alpn: IrohTunnelProtocol.alpn)
+
+        let staleInvalidated = generations.invalidateIfCurrent(
+            alpn: IrohTunnelProtocol.alpn,
+            generation: stale
+        )
+        #expect(!staleInvalidated)
+        #expect(generations.isCurrent(alpn: IrohTunnelProtocol.alpn, generation: replacement))
+        let replacementInvalidated = generations.invalidateIfCurrent(
+            alpn: IrohTunnelProtocol.alpn,
+            generation: replacement
+        )
+        #expect(replacementInvalidated)
+        #expect(!generations.isCurrent(alpn: IrohTunnelProtocol.alpn, generation: replacement))
     }
 
     @MainActor

@@ -225,6 +225,17 @@ final class AppEventStreamClient {
                                 extra: ["httpStatusCode": String(statusCode)]
                             )
                         }
+                    } else if WebSocketRecoveryPolicy.isNonRetryableCloseCode(ws.closeCode()) {
+                        shouldAttemptReconnect = false
+                        reconnectReason = "protocol_close"
+                        appEventClientLogger.error("App event stream terminal close code \(ws.closeCode().rawValue, privacy: .public)")
+                        await MainActor.run { [weak self] in
+                            self?.logStreamError(
+                                "Terminal protocol close",
+                                error: error,
+                                extra: ["closeCode": String(ws.closeCode().rawValue)]
+                            )
+                        }
                     } else if WebSocketRecoveryPolicy.isRecoverableReceiveError(error, closeCode: ws.closeCode()) {
                         reconnectReason = "recoverable_receive"
                         appEventClientLogger.info("App event stream recoverable close: \(String(describing: error), privacy: .public)")
@@ -301,7 +312,7 @@ final class AppEventStreamClient {
                 unit: .ms,
                 tags: [
                     "status": "ok",
-                    "attempt": String(attempt),
+                    "attempt": WebSocketRecoveryPolicy.reconnectAttemptTag(attempt),
                     "snapshot_required": snapshotRequired ? "1" : "0",
                 ]
             )
@@ -324,7 +335,7 @@ final class AppEventStreamClient {
         var tags = [
             "status": status,
             "reason": reason,
-            "attempt": String(attempt),
+            "attempt": WebSocketRecoveryPolicy.reconnectAttemptTag(attempt),
         ]
         if let closeCode {
             tags["close_code"] = closeCode
@@ -386,15 +397,10 @@ final class AppEventStreamClient {
             attempt = currentAttempt
         }
 
-        guard attempt < WebSocketRecoveryPolicy.maxReconnectAttempts else {
-            appEventClientLogger.error("App event stream max reconnect attempts reached")
-            recordReconnectMetric(status: "max_attempts", reason: reason, attempt: attempt, closeCode: closeCode)
-            logStreamError("Max reconnect attempts reached", extra: ["reason": reason, "attempt": String(attempt)])
-            disconnect()
-            return
-        }
-
-        let nextAttempt = attempt + 1
+        // This stream owns the list-repair snapshot contract. Keep retrying recoverable
+        // outages until its coordinator explicitly disconnects it; otherwise cached list
+        // state can remain stranded after the transport itself becomes reachable again.
+        let nextAttempt = WebSocketRecoveryPolicy.nextReconnectAttempt(after: attempt)
         reconnectAttempt = nextAttempt
         recordReconnectMetric(status: "scheduled", reason: reason, attempt: nextAttempt, closeCode: closeCode)
         status = .reconnecting(attempt: nextAttempt)
