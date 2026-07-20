@@ -86,6 +86,7 @@ const FORBIDDEN_AGENT_DEFINITION_KEYS = new Set([
 ]);
 const AGENT_DEFINITION_KEYS = new Set([
   "name",
+  "icon",
   "description",
   "instructions",
   "resources",
@@ -414,6 +415,7 @@ export function validateAgentDefinition(input: unknown): AgentDefinition {
   assertAllowedKeys(input, AGENT_DEFINITION_KEYS, "Agent definition");
 
   const name = requireString(input.name, "name");
+  const icon = validateString(input.icon, "icon");
   const description = validateString(input.description, "description");
   const instructions = validateInstructions(input.instructions);
   const resources = validateResources(input.resources);
@@ -421,6 +423,7 @@ export function validateAgentDefinition(input: unknown): AgentDefinition {
 
   return {
     name,
+    ...(icon !== undefined ? { icon } : {}),
     ...(description !== undefined ? { description } : {}),
     ...(instructions !== undefined ? { instructions } : {}),
     ...(resources !== undefined ? { resources } : {}),
@@ -444,6 +447,7 @@ function mergeAgentDefinition(current: AgentDefinition, patch: unknown): AgentDe
       : {}),
   } as Record<string, unknown>;
 
+  removeNullValue(merged, "icon");
   removeNullValue(merged, "description");
   removeNullValue(merged, "instructions");
   removeNullValue(merged, "resources");

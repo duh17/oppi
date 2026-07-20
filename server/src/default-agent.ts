@@ -19,6 +19,7 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
 
 const DEFAULT_AGENT_CUSTOMIZATION_KEYS = new Set([
   "name",
+  "icon",
   "description",
   "instructions",
   "sessionDefaults",
@@ -68,6 +69,7 @@ export function applyDefaultAgentSafetyDefaults(definition: AgentDefinition): Ag
   const sessionDefaults = definition.sessionDefaults ?? {};
   return {
     name: definition.name,
+    ...(definition.icon !== undefined ? { icon: definition.icon } : {}),
     ...(definition.description !== undefined ? { description: definition.description } : {}),
     ...(definition.instructions !== undefined ? { instructions: definition.instructions } : {}),
     resources: { ...DEFAULT_AGENT_DEFINITION.resources },
