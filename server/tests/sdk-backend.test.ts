@@ -575,7 +575,7 @@ describe("SdkBackend host extensions", () => {
 });
 
 describe("SdkBackend saved Agent definitions", () => {
-  it("registers only the Oppi command tool for the Default Agent runtime", async () => {
+  it("registers only the managed Oppi and ask tools for the Default Agent runtime", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-default-agent-runtime-"));
     mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
     writeFileSync(
@@ -585,7 +585,12 @@ describe("SdkBackend saved Agent definitions", () => {
 
     const backend = await SdkBackend.create({
       session: makeSession({
-        launch: { status: "launching", requestedAt: 1, agentId: DEFAULT_AGENT_ID },
+        launch: {
+          status: "launching",
+          requestedAt: 1,
+          agentId: DEFAULT_AGENT_ID,
+          tools: { allowed: ["bash", "oppi"], noTools: "all" },
+        },
       }),
       workspace: {
         id: "w1",
@@ -607,10 +612,12 @@ describe("SdkBackend saved Agent definitions", () => {
       const extensions = resourceLoader.getExtensions().extensions;
 
       expect(
-        extensions.some((ext) => ext.path.startsWith("<inline:") && ext.tools.has("oppi")),
+        extensions.some(
+          (ext) => ext.path.startsWith("<inline:") && ext.tools.has("oppi") && ext.tools.has("ask"),
+        ),
       ).toBe(true);
       expect(extensions.some((ext) => ext.tools.has("extra_tool"))).toBe(false);
-      expect(backend.session.getActiveToolNames()).toEqual(["oppi"]);
+      expect(backend.session.getActiveToolNames()).toEqual(["oppi", "ask"]);
     } finally {
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });

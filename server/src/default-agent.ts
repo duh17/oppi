@@ -3,6 +3,7 @@ import type { AgentDefinition } from "./agent-launch-service.js";
 export const DEFAULT_AGENT_ID = "oppi-default-agent";
 export const DEFAULT_AGENT_ALIAS = "default";
 export const DEFAULT_AGENT_DEFAULT_NAME = "Default Agent";
+export const DEFAULT_AGENT_TOOL_NAMES = ["oppi", "ask"] as const;
 
 export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
   name: DEFAULT_AGENT_DEFAULT_NAME,
@@ -13,7 +14,7 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
   },
   sessionDefaults: {
     noTools: "builtin",
-    tools: ["oppi"],
+    tools: [...DEFAULT_AGENT_TOOL_NAMES],
   },
 };
 

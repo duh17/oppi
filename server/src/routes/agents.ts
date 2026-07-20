@@ -142,6 +142,10 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         helpers.error(res, 400, delegationFieldError);
         return true;
       }
+      if (isDefaultAgentId(agent.id) && hasToolPolicyOverride(body.overrides)) {
+        helpers.error(res, 400, "Default Agent launch overrides cannot change tools");
+        return true;
+      }
       const prompt = parsePromptText(body.prompt);
       if (!prompt) {
         helpers.error(res, 400, "prompt.text required");
@@ -327,6 +331,13 @@ function invalidDelegationFields(
     return "allowNestedDelegation must be a boolean";
   }
   return undefined;
+}
+
+function hasToolPolicyOverride(overrides: CreateAgentSessionRequest["overrides"]): boolean {
+  return (
+    isRecord(overrides) &&
+    ["tools", "excludeTools", "noTools"].some((key) => Object.hasOwn(overrides, key))
+  );
 }
 
 function applyOverrides(

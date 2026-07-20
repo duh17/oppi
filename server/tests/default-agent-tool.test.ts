@@ -3,9 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { classifyOppiToolCommand, runOppiToolCommand } from "../src/default-agent-tool.js";
+import {
+  classifyOppiToolCommand,
+  createDefaultAgentExtensionFactory,
+  runOppiToolCommand,
+} from "../src/default-agent-tool.js";
 import { Storage } from "../src/storage.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 
@@ -140,6 +144,97 @@ describe("Default Agent Oppi tool command runner", () => {
   });
 });
 
+describe("Default Agent managed ask tool", () => {
+  it("uses native structured UI, resets once-per-turn state, and labels fallbacks", async () => {
+    type RegisteredTool = {
+      execute: (
+        toolCallId: string,
+        params: unknown,
+        signal: AbortSignal | undefined,
+        onUpdate: undefined,
+        context: unknown,
+      ) => Promise<{ content: Array<{ type: string; text?: string }>; details?: unknown }>;
+    };
+    const tools = new Map<string, RegisteredTool>();
+    let turnStart: (() => Promise<void>) | undefined;
+    createDefaultAgentExtensionFactory({})({
+      on: (event: string, handler: () => Promise<void>) => {
+        if (event === "turn_start") turnStart = handler;
+      },
+      registerTool: (tool: RegisteredTool & { name: string }) => tools.set(tool.name, tool),
+    } as unknown as never);
+
+    const params = {
+      questions: [
+        {
+          id: "cadence",
+          question: "When should this run?",
+          options: [
+            { value: "weekdays", label: "Weekdays" },
+            { value: "daily", label: "Every day" },
+          ],
+        },
+        {
+          id: "recipients",
+          question: "Who should receive it?",
+          options: [
+            { value: "team", label: "Team" },
+            { value: "owner", label: "Owner" },
+          ],
+          multiSelect: true,
+        },
+      ],
+      allowCustom: true,
+    };
+    const ask = vi.fn(async () => ({
+      answers: { cadence: "weekdays", recipients: ["team", "owner"] },
+      allIgnored: false,
+    }));
+    const tool = tools.get("ask");
+    expect(tool).toBeDefined();
+    if (!tool) return;
+
+    const result = await tool.execute("ask-1", params, undefined, undefined, {
+      hasUI: true,
+      ui: { ask },
+    });
+
+    expect(ask).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ id: "cadence" })]),
+      true,
+      undefined,
+    );
+    expect(result.details).toMatchObject({
+      answers: { cadence: "weekdays", recipients: ["team", "owner"] },
+      allIgnored: false,
+    });
+    await expect(
+      tool.execute("ask-2", params, undefined, undefined, { hasUI: false, ui: {} }),
+    ).rejects.toThrow(/Only one ask call per turn/);
+
+    await turnStart?.();
+    const fallback = await tool.execute("ask-3", params, undefined, undefined, {
+      hasUI: false,
+      ui: {},
+    });
+    expect(fallback.content[0]?.text).toContain("No ask UI available. Defaults:");
+    expect(fallback.content[0]?.text).not.toContain("User answers:");
+
+    await turnStart?.();
+    const controller = new AbortController();
+    controller.abort();
+    const cancelled = await tool.execute("ask-4", params, controller.signal, undefined, {
+      hasUI: true,
+      ui: { ask },
+    });
+    expect(cancelled).toMatchObject({
+      content: [{ text: "Ask request cancelled." }],
+      details: { allIgnored: true, cancelled: true },
+    });
+    expect(ask).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Default Agent Oppi tool command policy", () => {
   it("allows read-only app inspection commands", () => {
     for (const args of [
@@ -155,6 +250,7 @@ describe("Default Agent Oppi tool command policy", () => {
       ["session", "list"],
       ["session", "get", "sess-1"],
       ["session", "search", "regression", "--workspace", "oppi"],
+      ["session", "wait", "sess-1", "--for", "either", "--timeout", "30s", "--poll", "1s"],
       ["session", "inspect", "sess-1", "--turns", "1-3", "--view", "messages"],
       ["session", "read", "sess-1", "--tail", "10"],
       ["session", "inspect", "sess-1", "--view", "response"],

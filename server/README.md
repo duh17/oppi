@@ -202,7 +202,7 @@ Managed host sessions cannot use `oppi session` to target themselves. They may c
 
 ### Saved Agents and schedules
 
-Saved Agents store reusable Agent definitions. Launch inputs such as workspace, worktree, prompt, and session name stay on `oppi session create`, so the same Agent definition can run in different workspaces.
+Saved Agents store reusable Agent definitions. The shipped Default Agent is restricted to the server-managed `oppi` and structured `ask` tools: it can ask native clarifying questions and wait for session status with `oppi session wait`, while state-changing Oppi commands still require explicit approval and filesystem/shell tools remain unavailable. Launch inputs such as workspace, worktree, prompt, and session name stay on `oppi session create`, so the same Agent definition can run in different workspaces.
 
 Schedules store a trigger plus an action. `oppi schedule create` accepts `--at`, `--every`, or `--cron`; actions can start a new session in a workspace or send input to an existing session. The background schedule runner materializes due runs, dispatches active schedules, and records run history. Pause or archive a schedule to stop future automatic runs.
 

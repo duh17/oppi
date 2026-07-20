@@ -38,7 +38,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { CacheMissModelPriceSource } from "./cache-miss.js";
-import { isDefaultAgentId } from "./default-agent.js";
+import { DEFAULT_AGENT_TOOL_NAMES, isDefaultAgentId } from "./default-agent.js";
 import {
   modelCandidatesFromRegistry,
   modelUnavailableMessage,
@@ -666,7 +666,9 @@ export class SdkBackend {
             noTools: agentDefinition.sessionDefaults.noTools,
           }
         : undefined;
-      const launchToolPolicy = session.launch?.tools ?? agentDefaultToolPolicy;
+      const launchToolPolicy = isDefaultAgentSession
+        ? { allowed: [...DEFAULT_AGENT_TOOL_NAMES], noTools: "builtin" as const }
+        : (session.launch?.tools ?? agentDefaultToolPolicy);
       const createResult = await createAgentSession({
         cwd: sessionCwd,
         agentDir: runtimeAgentDir,
