@@ -357,6 +357,14 @@ describe("session sqlite store", () => {
           addedLines: 2,
           removedLines: 3,
         },
+        launch: {
+          source: "agent",
+          agentId: "agent-reviewer",
+          agentVersion: 4,
+          agentIcon: "checkmark.shield",
+          status: "accepted",
+          requestedAt: 1,
+        },
       });
       sqliteStore.close();
       sqliteStore = undefined;
@@ -382,6 +390,11 @@ describe("session sqlite store", () => {
       expect(sessions[0]?.lastAgentReplyAt).toBe(11);
       expect(sessions[0]?.contextTokens).toBe(123);
       expect(sessions[0]?.changeStats?.changedFiles).toEqual(["src/a.ts"]);
+      expect(sessions[0]?.launch).toMatchObject({
+        agentId: "agent-reviewer",
+        agentVersion: 4,
+        agentIcon: "checkmark.shield",
+      });
     } finally {
       sqliteStore?.close();
       rmSync(dataDir, { recursive: true, force: true });

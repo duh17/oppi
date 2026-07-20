@@ -28,6 +28,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let streamingAssistantID: String?
         let sessionId: String
         let workspaceId: String?
+        let agentId: String?
+        let agentIcon: String?
         let routeScope: SessionRouteScope?
         let onFork: (String) -> Void
         let onBackSwipe: () -> Void
@@ -59,6 +61,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             streamingAssistantID: String?,
             sessionId: String,
             workspaceId: String?,
+            agentId: String? = nil,
+            agentIcon: String? = nil,
             routeScope: SessionRouteScope? = nil,
             onFork: @escaping (String) -> Void,
             onBackSwipe: @escaping () -> Void,
@@ -89,6 +93,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.streamingAssistantID = streamingAssistantID
             self.sessionId = sessionId
             self.workspaceId = workspaceId
+            self.agentId = agentId
+            self.agentIcon = agentIcon
             self.routeScope = routeScope
                 ?? workspaceId.map(SessionRouteScope.workspace)
             self.onFork = onFork
@@ -197,6 +203,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             get { context.workspaceId }
             set { context.workspaceId = newValue }
         }
+
+        var agentId: String? { context.agentId }
+        var agentIcon: String? { context.agentIcon }
 
         var routeScope: SessionRouteScope? {
             get { context.routeScope }
@@ -539,6 +548,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         func apply(configuration: Configuration, to collectionView: UICollectionView) {
             let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
+            let agentPresentationChanged = context.didChangeAgentPresentation(for: configuration)
 
             hiddenCount = configuration.hiddenCount
             hasOlderServerPage = configuration.hasOlderServerPage
@@ -570,7 +580,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // closures such as attachment fetchers. Reconfigure visible rows
             // when that scope appears or changes, even if ChatItem values are
             // identical, so expanded media retries with the current workspace.
-            let appearanceChanged = themeChanged || sessionScopeChanged
+            let globalAppearanceChanged = themeChanged || sessionScopeChanged
+            let appearanceChanged = globalAppearanceChanged || agentPresentationChanged
 
             // Only update backgroundColor when theme changed or on first apply.
             if themeChanged {
@@ -830,6 +841,14 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
 
             var forceReconfigureIDs: [String] = []
+            if agentPresentationChanged {
+                forceReconfigureIDs.append(contentsOf:
+                    TimelineSnapshotApplier.assistantPresentationItemIDs(
+                        nextIDs: applyPlan.nextIDs,
+                        nextItemByID: applyPlan.nextItemByID
+                    )
+                )
+            }
             if configuration.showsWorkingIndicator,
                configuration.extensionWorkingState != previousExtensionWorkingState {
                 forceReconfigureIDs.append(ChatTimelineCollectionHost.workingIndicatorID)
@@ -854,7 +873,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 streamingAssistantID: configuration.streamingAssistantID,
                 previousStreamingAssistantID: previousStreamingAssistantID,
                 sessionId: configuration.sessionId,
-                themeChanged: appearanceChanged,
+                themeChanged: globalAppearanceChanged,
                 isBusy: configuration.isBusy,
                 forceReconfigureIDs: forceReconfigureIDs
             )

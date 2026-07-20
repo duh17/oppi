@@ -4,6 +4,8 @@ import SwiftUI
 
 struct ChatEmptyState: View {
     var sessionId: String = ""
+    var agentId: String?
+    var agentIcon: String?
     @State private var visible = false
     @State private var avatar = AssistantAvatar.current
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -11,32 +13,40 @@ struct ChatEmptyState: View {
 
     var body: some View {
         Group {
-            switch avatar {
-            case .officialPi:
-                Image(
-                    uiImage: AssistantAvatarRenderer.render(
-                        avatar: avatar,
-                        sessionId: sessionId,
-                        size: 112,
-                        themeID: themeID
+            switch AssistantIdentityPresentation.resolve(
+                agentId: agentId,
+                agentIcon: agentIcon
+            ) {
+            case .agent:
+                AgentIconView(value: agentIcon, size: 64, frameSize: 112, isDecorative: false)
+            case .globalAvatar:
+                switch avatar {
+                case .officialPi:
+                    Image(
+                        uiImage: AssistantAvatarRenderer.render(
+                            avatar: avatar,
+                            sessionId: sessionId,
+                            size: 112,
+                            themeID: themeID
+                        )
                     )
-                )
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .frame(width: 112, height: 112)
-            case .golGrid:
-                SessionGridView(sessionId: sessionId)
-            case .piText:
-                Text("π")
-                    .font(.appHeroMono)
-                    .foregroundStyle(.themePurple.opacity(0.5))
-            case .emoji(let char):
-                Text(char)
-                    .font(.system(size: 48))
-            case .genmoji:
-                // Genmoji in empty state — fall back to grid
-                SessionGridView(sessionId: sessionId)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(width: 112, height: 112)
+                case .golGrid:
+                    SessionGridView(sessionId: sessionId)
+                case .piText:
+                    Text("π")
+                        .font(.appHeroMono)
+                        .foregroundStyle(.themePurple.opacity(0.5))
+                case .emoji(let char):
+                    Text(char)
+                        .font(.system(size: 48))
+                case .genmoji:
+                    // Genmoji in empty state — fall back to grid
+                    SessionGridView(sessionId: sessionId)
+                }
             }
         }
         .opacity(visible ? 1 : 0)

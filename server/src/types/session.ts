@@ -58,6 +58,8 @@ export interface SessionLaunchMetadata {
   source?: "human" | "agent" | "schedule" | "workspace-wrapper" | "api" | "cli";
   agentId?: string;
   agentVersion?: number;
+  /** Immutable launch-time presentation snapshot; never used for execution identity. */
+  agentIcon?: string;
   parentSessionId?: string;
   /** This session may create children at one additional delegation level. */
   allowsNestedDelegation?: boolean;
@@ -204,6 +206,10 @@ export interface SessionSummary {
   mirror?: PiTuiMirrorSessionMetadata;
   /** Pi internal session UUID for generic session identity matching. */
   piSessionId?: string;
+  /** Saved-Agent identity projected for presentation and generic fallback semantics. */
+  agentId?: string;
+  /** Immutable launch-time icon snapshot; malformed values remain decode-safe. */
+  agentIcon?: string;
   control?: ControlSessionMetadata;
   ephemeral?: boolean;
   /** Cold-list ask badge count; omitted outside list endpoints. */

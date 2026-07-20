@@ -15,6 +15,9 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let itemID: String?
     /// Session ID for the grid badge icon.
     let sessionId: String
+    /// Immutable saved-Agent presentation snapshot for this session.
+    let agentId: String?
+    let agentIcon: String?
     /// Shared interaction context for π text-selection actions.
     let interactionContext: TimelineInteractionContext?
     /// Workspace context for resolving markdown image paths.
@@ -33,6 +36,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         onFork: (() -> Void)?,
         itemID: String? = nil,
         sessionId: String = "",
+        agentId: String? = nil,
+        agentIcon: String? = nil,
         interactionContext: TimelineInteractionContext? = nil,
         workspaceID: String? = nil,
         serverBaseURL: URL? = nil,
@@ -45,6 +50,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.onFork = onFork
         self.itemID = itemID
         self.sessionId = sessionId
+        self.agentId = agentId
+        self.agentIcon = agentIcon
         self.interactionContext = interactionContext
         self.workspaceID = workspaceID
         self.serverBaseURL = serverBaseURL
@@ -225,6 +232,8 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
 
         let palette = ThemeRuntimeState.currentPalette()
         iconBadge.sessionId = configuration.sessionId
+        iconBadge.agentId = configuration.agentId
+        iconBadge.agentIcon = configuration.agentIcon
         bubbleContainer.backgroundColor = UIColor(palette.purple).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
 
         let trimmedText = configuration.text.trimmingCharacters(in: .whitespacesAndNewlines)

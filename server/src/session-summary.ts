@@ -34,6 +34,10 @@ export function buildSessionSummary(session: Session): SessionSummary {
     runtime: session.runtime,
     mirror: session.mirror,
     piSessionId: session.piSessionId,
+    ...(session.launch?.agentId ? { agentId: session.launch.agentId } : {}),
+    ...(session.launch?.agentId && session.launch.agentIcon
+      ? { agentIcon: session.launch.agentIcon }
+      : {}),
     control: session.control,
     ephemeral: session.ephemeral,
   };

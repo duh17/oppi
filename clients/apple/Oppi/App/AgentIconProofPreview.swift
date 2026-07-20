@@ -1,0 +1,255 @@
+#if DEBUG
+import SwiftUI
+
+/// Deterministic UI proof for the Agent icon journey.
+///
+/// The picker, validation model, icon renderer, session row, and chat empty-state
+/// identity are production components. Persistence and session launch stop at
+/// this preview's in-memory boundary so the focused UI test needs no server.
+struct AgentIconProofPreview: View {
+    private enum Destination: Hashable {
+        case detail
+        case sessions
+        case agentChat
+    }
+
+    @State private var agent = Self.makeAgent(icon: nil, version: 1)
+    @State private var isShowingPicker = false
+    @State private var themeStore = ThemeStore()
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Agents") {
+                    NavigationLink(value: Destination.detail) {
+                        HStack(spacing: 12) {
+                            AgentIconView(value: agent.definition.icon, size: 22, frameSize: 30)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(agent.name)
+                                    .font(.headline)
+                                Text(iconSummary)
+                                    .font(.caption)
+                                    .foregroundStyle(.themeComment)
+                            }
+                        }
+                        .frame(minHeight: 44)
+                    }
+                    .accessibilityValue(iconSummary)
+                    .accessibilityIdentifier("agent.proof.agentRow")
+                }
+            }
+            .navigationTitle("Agents")
+            .navigationBarTitleDisplayMode(.inline)
+            .themedListSurface()
+            .navigationDestination(for: Destination.self) { destination in
+                switch destination {
+                case .detail:
+                    detailView
+                case .sessions:
+                    sessionsView
+                case .agentChat:
+                    agentChatView
+                }
+            }
+        }
+        .environment(\.theme, themeStore.appTheme)
+        .environment(\.themeID, themeStore.activeThemeID)
+        .tint(.themeBlue)
+        .preferredColorScheme(themeStore.preferredColorScheme)
+        .onAppear(perform: syncSystemColorScheme)
+        .onChange(of: colorScheme) { _, _ in
+            syncSystemColorScheme()
+        }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+
+    private func syncSystemColorScheme() {
+        themeStore.updateSystemColorScheme(colorScheme)
+    }
+
+    private var detailView: some View {
+        List {
+            Section("Definition") {
+                Button {
+                    isShowingPicker = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Text("Icon")
+                            .foregroundStyle(.themeComment)
+                        Spacer(minLength: 12)
+                        AgentIconView(value: agent.definition.icon, size: 24, frameSize: 32)
+                        Text(iconSummary)
+                            .foregroundStyle(.themeFg)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themeComment)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Icon")
+                .accessibilityValue(iconSummary)
+                .accessibilityIdentifier("agent.proof.detail.icon")
+
+                LabeledContent("Name", value: agent.name)
+                LabeledContent("Version", value: "v\(agent.version)")
+            }
+
+            Section("Start") {
+                NavigationLink(value: Destination.sessions) {
+                    Label("Start Session with Agent", systemImage: "play.circle.fill")
+                }
+                .accessibilityIdentifier("agent.proof.launch")
+            }
+        }
+        .navigationTitle(agent.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .themedListSurface()
+        .sheet(isPresented: $isShowingPicker) {
+            AgentIconPickerView(
+                agent: agent,
+                saveOperation: { icon in
+                    Self.makeAgent(icon: icon, version: agent.version + 1)
+                },
+                onSaved: { updated in
+                    agent = updated
+                }
+            )
+        }
+    }
+
+    private var sessionsView: some View {
+        List {
+            Section("Agent Session") {
+                NavigationLink(value: Destination.agentChat) {
+                    SessionRow(session: agentSession)
+                        .accessibilityElement(children: .combine)
+                }
+                .accessibilityIdentifier("agent.proof.session.agent")
+            }
+
+            Section("Ordinary Session") {
+                SessionRow(session: ordinarySession)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("agent.proof.session.ordinary")
+            }
+        }
+        .navigationTitle("Sessions")
+        .navigationBarTitleDisplayMode(.inline)
+        .themedListSurface()
+    }
+
+    private var agentChatView: some View {
+        VStack(spacing: 20) {
+            HStack(spacing: 8) {
+                AgentIconView(
+                    value: agent.definition.icon,
+                    size: 20,
+                    frameSize: 24,
+                    isDecorative: false
+                )
+                Text(agentSession.displayTitle)
+                    .font(.headline)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("agent.proof.chat.titleIdentity")
+
+            GroupBox("Agent session empty state") {
+                ChatEmptyState(
+                    sessionId: agentSession.id,
+                    agentId: agent.id,
+                    agentIcon: agent.definition.icon
+                )
+                .frame(height: 150)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("agent.proof.chat.agentIdentity")
+
+            GroupBox("Ordinary session comparison") {
+                ChatEmptyState(sessionId: ordinarySession.id)
+                    .frame(height: 96)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Ordinary session uses the global assistant avatar")
+            .accessibilityIdentifier("agent.proof.chat.ordinaryIdentity")
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color.themeBg.ignoresSafeArea())
+        .navigationTitle("Agent Session")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var iconSummary: String {
+        guard let icon = agent.definition.icon else { return "Default" }
+        switch AgentIconContent.resolve(icon) {
+        case .text(let emoji):
+            return "Emoji \(emoji)"
+        case .symbol:
+            return "SF Symbol \(icon)"
+        case .fallback:
+            return "Unavailable"
+        }
+    }
+
+    private var agentSession: Session {
+        Self.makeSession(
+            id: "agent-proof-session",
+            name: "Icon Journey",
+            launch: SessionLaunchMetadata(agentId: agent.id, agentIcon: agent.definition.icon)
+        )
+    }
+
+    private var ordinarySession: Session {
+        Self.makeSession(id: "ordinary-proof-session", name: "Ordinary Session", launch: nil)
+    }
+
+    private static func makeAgent(icon: String?, version: Int) -> StoredAgentDefinition {
+        StoredAgentDefinition(
+            id: "agent-icon-proof",
+            name: "Design Reviewer",
+            icon: icon,
+            description: "Reviews product presentation",
+            status: .active,
+            version: version,
+            definition: AgentDefinition(
+                name: "Design Reviewer",
+                icon: icon,
+                description: "Reviews product presentation"
+            ),
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: Double(version)),
+            archivedAt: nil
+        )
+    }
+
+    private static func makeSession(
+        id: String,
+        name: String,
+        launch: SessionLaunchMetadata?
+    ) -> Session {
+        let now = Date()
+        return Session(
+            id: id,
+            workspaceId: "agent-icon-proof-workspace",
+            workspaceName: "Proof Workspace",
+            name: name,
+            status: .ready,
+            createdAt: now,
+            lastActivity: now,
+            model: "omlx/proof-model",
+            messageCount: 0,
+            tokens: TokenUsage(input: 0, output: 0),
+            cost: 0,
+            contextTokens: nil,
+            contextWindow: nil,
+            firstMessage: nil,
+            lastMessage: nil,
+            thinkingLevel: nil,
+            launch: launch
+        )
+    }
+}
+#endif

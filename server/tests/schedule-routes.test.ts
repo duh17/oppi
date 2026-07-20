@@ -41,7 +41,7 @@ describe("schedule routes", () => {
       name: string;
       status: "active" | "archived";
       version: number;
-      definition: { name: string; sessionDefaults?: { model?: string } };
+      definition: { name: string; icon?: string; sessionDefaults?: { model?: string } };
     }
   >;
   let responses: Array<{ data: unknown; status: number }>;
@@ -65,7 +65,11 @@ describe("schedule routes", () => {
           name: "Reviewer",
           status: "active",
           version: 3,
-          definition: { name: "Reviewer", sessionDefaults: { model: "agent-model" } },
+          definition: {
+            name: "Reviewer",
+            icon: "checkmark.shield",
+            sessionDefaults: { model: "agent-model" },
+          },
         },
       ],
     ]);
@@ -247,6 +251,7 @@ describe("schedule routes", () => {
         source: "schedule",
         agentId: "agent-1",
         agentVersion: 3,
+        agentIcon: "checkmark.shield",
       },
     });
   });

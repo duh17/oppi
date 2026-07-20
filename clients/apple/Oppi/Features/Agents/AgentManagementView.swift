@@ -61,7 +61,22 @@ struct AgentManagementView: View {
                 Section {
                     ForEach(agents) { agent in
                         NavigationLink {
-                            AgentDetailView(agentId: agent.id)
+                            AgentDetailView(agentId: agent.id) { updated in
+                                guard let index = agents.firstIndex(where: { $0.id == updated.id }) else {
+                                    return
+                                }
+                                agents[index] = AgentDefinitionSummary(
+                                    id: updated.id,
+                                    name: updated.name,
+                                    icon: updated.definition.icon,
+                                    description: updated.description,
+                                    status: updated.status,
+                                    version: updated.version,
+                                    createdAt: updated.createdAt,
+                                    updatedAt: updated.updatedAt,
+                                    archivedAt: updated.archivedAt
+                                )
+                            }
                         } label: {
                             AgentSummaryRow(agent: agent)
                         }
@@ -120,10 +135,7 @@ private struct AgentSummaryRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "person.crop.circle")
-                .font(.title3)
-                .foregroundStyle(.themeBlue)
-                .frame(width: 30, height: 30)
+            AgentIconView(value: agent.icon, size: 22, frameSize: 30)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -169,11 +181,13 @@ private struct AgentDetailView: View {
     @Environment(WorkspaceStore.self) private var workspaceStore
 
     let agentId: String
+    let onUpdated: (StoredAgentDefinition) -> Void
 
     @State private var agent: StoredAgentDefinition?
     @State private var isLoading = false
     @State private var error: String?
     @State private var isShowingRevision = false
+    @State private var isShowingIconPicker = false
     @State private var isShowingLaunch = false
     @State private var isShowingSchedule = false
     @State private var isArchiving = false
@@ -186,6 +200,32 @@ private struct AgentDetailView: View {
                     .listRowBackground(Color.themeBg)
             } else if let agent {
                 Section("Definition") {
+                    Button {
+                        isShowingIconPicker = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text("Icon")
+                                .foregroundStyle(.themeComment)
+                            Spacer(minLength: 12)
+                            AgentIconView(value: agent.definition.icon, size: 24, frameSize: 32)
+                            Text(iconSummary(agent.definition.icon))
+                                .font(.subheadline)
+                                .foregroundStyle(.themeFg)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.trailing)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.themeComment)
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Icon")
+                    .accessibilityValue(iconSummary(agent.definition.icon))
+                    .accessibilityHint("Opens the Agent icon picker")
+                    .accessibilityIdentifier("agents.detail.icon")
+
                     detailRow("Name", agent.definition.name)
                     if let description = agent.definition.description, !description.isEmpty {
                         detailRow("Description", description)
@@ -278,6 +318,14 @@ private struct AgentDetailView: View {
         }
         .task(id: agentId) { await loadAgent() }
         .refreshable { await loadAgent() }
+        .sheet(isPresented: $isShowingIconPicker) {
+            if let agent {
+                AgentIconPickerView(agent: agent) { updated in
+                    self.agent = updated
+                    onUpdated(updated)
+                }
+            }
+        }
         .sheet(isPresented: $isShowingRevision) {
             if let agent {
                 GuidedControlSessionSheet(
@@ -316,6 +364,15 @@ private struct AgentDetailView: View {
             Button("OK", role: .cancel) { error = nil }
         } message: {
             Text(error ?? "")
+        }
+    }
+
+    private func iconSummary(_ value: String?) -> String {
+        guard let value else { return "Default" }
+        switch AgentIconContent.resolve(value) {
+        case .text(let emoji): return "Emoji \(emoji)"
+        case .symbol: return "SF Symbol \(value)"
+        case .fallback: return "Unavailable"
         }
     }
 

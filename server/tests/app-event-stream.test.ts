@@ -29,6 +29,14 @@ function makeSession(id = "sess-1", workspaceId = "ws-1"): Session {
     tokens: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 },
     cost: 0.001,
     firstMessage: "Hello",
+    launch: {
+      source: "agent",
+      agentId: "agent-reviewer",
+      agentVersion: 4,
+      agentIcon: "checkmark.shield",
+      status: "accepted",
+      requestedAt: 1_791_649_999_000,
+    },
   };
 }
 
@@ -46,6 +54,8 @@ function makeSessionSummary(session = makeSession()): SessionSummary {
     tokens: session.tokens,
     cost: session.cost,
     firstMessage: session.firstMessage,
+    agentId: session.launch?.agentId,
+    agentIcon: session.launch?.agentIcon,
     pendingAskCount: 0,
   };
 }

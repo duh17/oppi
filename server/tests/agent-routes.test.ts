@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AgentDefinitionStore } from "../src/agent-definitions.js";
 import { DEFAULT_AGENT_ID } from "../src/default-agent.js";
+import { openDatabase } from "../src/sqlite-compat.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
 import { RouteHandler } from "../src/routes/index.js";
@@ -203,11 +204,58 @@ describe("agent routes", () => {
     }
   });
 
+  it("preserves a historical malformed icon on unrelated updates, then allows clearing it", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-historical-icon-"));
+    const databasePath = join(dataDir, "session-state.db");
+    let store = new AgentDefinitionStore(dataDir);
+    try {
+      const agent = store.createAgent({
+        name: "Historian",
+        icon: "sparkles",
+        description: "Original description",
+      });
+      store.close();
+
+      const db = openDatabase(databasePath);
+      db.prepare("UPDATE agent_definitions SET definition_json = ? WHERE id = ?").run(
+        JSON.stringify({
+          name: "Historian",
+          icon: "historical/icon",
+          description: "Original description",
+        }),
+        agent.id,
+      );
+      db.close();
+
+      store = new AgentDefinitionStore(dataDir);
+      const updated = store.updateAgent(agent.id, { description: "Updated description" });
+      expect(updated?.definition).toMatchObject({
+        icon: "historical/icon",
+        description: "Updated description",
+      });
+      expect(() => store.updateAgent(agent.id, { icon: "still/invalid" })).toThrow(
+        /one Unicode emoji or an SF Symbol name/,
+      );
+
+      const cleared = store.updateAgent(agent.id, { icon: null });
+      expect(cleared?.definition).not.toHaveProperty("icon");
+      expect(cleared?.definition.description).toBe("Updated description");
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("updates, persists, returns, and clears a saved Agent icon", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-icon-routes-"));
     const store = new AgentDefinitionStore(dataDir);
     try {
-      const agent = store.createAgent({ name: "Sensei" });
+      const agent = store.createAgent({
+        name: "Sensei",
+        description: "Guides reviews",
+        instructions: { mode: "append", text: "Stay calm." },
+        sessionDefaults: { model: "openai-codex/gpt-5.5" },
+      });
       const dispatch = createAgentRoutes(
         { storage: { getAgentDefinitionStore: () => store } } as unknown as RouteContext,
         createRouteHelpers(),
@@ -222,7 +270,13 @@ describe("agent routes", () => {
         res: updateRes as never,
       });
       expect(updateRes.statusCode).toBe(200);
-      expect(JSON.parse(updateRes.body).agent.definition.icon).toBe("🧘");
+      expect(JSON.parse(updateRes.body).agent.definition).toMatchObject({
+        name: "Sensei",
+        icon: "🧘",
+        description: "Guides reviews",
+        instructions: { mode: "append", text: "Stay calm." },
+        sessionDefaults: { model: "openai-codex/gpt-5.5" },
+      });
 
       const getRes = makeResponse();
       await dispatch({
@@ -234,6 +288,48 @@ describe("agent routes", () => {
       });
       expect(JSON.parse(getRes.body).agent.definition.icon).toBe("🧘");
       expect(store.getAgentVersion(agent.id, 2)?.definition.icon).toBe("🧘");
+
+      const listRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/agents",
+        url: new URL("http://localhost/agents"),
+        req: {} as never,
+        res: listRes as never,
+      });
+      expect(JSON.parse(listRes.body).agents).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: agent.id, icon: "🧘" })]),
+      );
+
+      const sfSymbolRes = makeResponse();
+      await dispatch({
+        method: "PATCH",
+        path: `/agents/${agent.id}`,
+        url: new URL(`http://localhost/agents/${agent.id}`),
+        req: makeRequest({ icon: "  checkmark.shield  " }) as never,
+        res: sfSymbolRes as never,
+      });
+      expect(sfSymbolRes.statusCode).toBe(200);
+      expect(JSON.parse(sfSymbolRes.body).agent.definition.icon).toBe("checkmark.shield");
+
+      for (const invalidIcon of [
+        "two words",
+        "🧘🧘",
+        "not/a/symbol",
+        "x".repeat(129),
+        `😀${"‍😀".repeat(64)}`,
+      ]) {
+        const invalidRes = makeResponse();
+        await dispatch({
+          method: "PATCH",
+          path: `/agents/${agent.id}`,
+          url: new URL(`http://localhost/agents/${agent.id}`),
+          req: makeRequest({ icon: invalidIcon }) as never,
+          res: invalidRes as never,
+        });
+        expect(invalidRes.statusCode).toBe(400);
+        expect(JSON.parse(invalidRes.body).error).toContain("icon");
+      }
 
       const clearRes = makeResponse();
       await dispatch({
@@ -403,6 +499,7 @@ describe("agent routes", () => {
       const store = new AgentDefinitionStore(dataDir);
       const agent = store.createAgent({
         name: "Reviewer",
+        icon: "checkmark.shield",
         sessionDefaults: { model: "agent-model", thinkingLevel: "high" },
       });
       const sessions: Session[] = [];
@@ -484,6 +581,7 @@ describe("agent routes", () => {
           source: "agent",
           agentId: agent.id,
           agentVersion: 1,
+          agentIcon: "checkmark.shield",
           idempotencyKey: "agent-launch-1",
           promptDispatch: "delivered",
         },
@@ -494,6 +592,129 @@ describe("agent routes", () => {
       });
       expect(sendPrompt).toHaveBeenCalledWith(body.receipt.sessionId, "Review this", {});
     } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("launches an Agent with a historical malformed icon under unrelated overrides", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-historical-icon-launch-"));
+    const databasePath = join(dataDir, "session-state.db");
+    let store = new AgentDefinitionStore(dataDir);
+    try {
+      const agent = store.createAgent({
+        name: "Historian",
+        icon: "sparkles",
+        sessionDefaults: { model: "agent-model", thinkingLevel: "high" },
+      });
+      store.close();
+
+      const db = openDatabase(databasePath);
+      db.prepare("UPDATE agent_definitions SET definition_json = ? WHERE id = ?").run(
+        JSON.stringify({
+          name: "Historian",
+          icon: "historical/icon",
+          sessionDefaults: { model: "agent-model", thinkingLevel: "high" },
+        }),
+        agent.id,
+      );
+      db.close();
+
+      store = new AgentDefinitionStore(dataDir);
+      const sessions: Session[] = [];
+      const ctx = {
+        storage: {
+          getAgentDefinitionStore: () => store,
+          getWorkspace: vi.fn((workspaceId: string) =>
+            workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
+          ),
+          getDataDir: vi.fn(() => dataDir),
+          createSession: vi.fn((name?: string, model?: string) => {
+            const session = makeSession({ id: `sess-${sessions.length + 1}`, name, model });
+            sessions.push(structuredClone(session));
+            return session;
+          }),
+          saveSession: vi.fn((session: Session) => {
+            const existing = sessions.findIndex((candidate) => candidate.id === session.id);
+            const copy = structuredClone(session);
+            if (existing >= 0) sessions[existing] = copy;
+            else sessions.push(copy);
+          }),
+          getSession: vi.fn((sessionId: string) =>
+            sessions.find((candidate) => candidate.id === sessionId),
+          ),
+          listSessions: vi.fn(() => sessions),
+          findSessionByLaunchIdempotencyKey: vi.fn(),
+          claimSessionLaunchRecovery: vi.fn(),
+        },
+        sessions: {
+          startSession: vi.fn(async (sessionId: string) => {
+            const session = sessions.find((candidate) => candidate.id === sessionId);
+            if (!session) throw new Error("missing session");
+            return session;
+          }),
+          sendPrompt: vi.fn(async () => undefined),
+        },
+        ensureSessionContextWindow: vi.fn((session: Session) => session),
+      } as unknown as RouteContext;
+      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
+
+      const launch = async (overrides?: Record<string, unknown>): Promise<Session> => {
+        const res = makeResponse();
+        await dispatch({
+          method: "POST",
+          path: `/agents/${agent.id}/sessions`,
+          url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+          req: makeRequest({
+            prompt: { text: "Read history" },
+            target: { workspaceId: "ws-1", worktreeId: "main" },
+            ...(overrides === undefined ? {} : { overrides }),
+          }) as never,
+          res: res as never,
+        });
+        expect(res.statusCode).toBe(201);
+        return (JSON.parse(res.body) as { session: Session }).session;
+      };
+
+      const launches = [
+        await launch(),
+        await launch({ model: "override-model" }),
+        await launch({ thinkingLevel: "low" }),
+      ];
+      expect(launches).toMatchObject([
+        { model: "agent-model", thinkingLevel: "high" },
+        { model: "override-model", thinkingLevel: "high" },
+        { model: "agent-model", thinkingLevel: "low" },
+      ]);
+      for (const launched of launches) {
+        expect(launched.launch?.agentIcon).toBe("historical/icon");
+      }
+
+      for (const [overrides, errorFragment] of [
+        [{ model: "   " }, "model"],
+        [{ thinkingLevel: "turbo" }, "thinkingLevel"],
+        [{ tools: "bash" }, "tools"],
+        [{ excludeTools: [42] }, "excludeTools"],
+        [{ noTools: "none" }, "noTools"],
+      ] as const) {
+        const sessionCount = sessions.length;
+        const res = makeResponse();
+        await dispatch({
+          method: "POST",
+          path: `/agents/${agent.id}/sessions`,
+          url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+          req: makeRequest({
+            prompt: { text: "Read history" },
+            target: { workspaceId: "ws-1", worktreeId: "main" },
+            overrides,
+          }) as never,
+          res: res as never,
+        });
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.body).error).toContain(errorFragment);
+        expect(sessions).toHaveLength(sessionCount);
+      }
+    } finally {
+      store.close();
       rmSync(dataDir, { recursive: true, force: true });
     }
   });

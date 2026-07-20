@@ -186,6 +186,14 @@ final class SessionGridBadgeView: UIView {
         didSet { updateIfNeeded() }
     }
 
+    var agentId: String? {
+        didSet { updateIfNeeded() }
+    }
+
+    var agentIcon: String? {
+        didSet { updateIfNeeded() }
+    }
+
     private var lastCacheKey: String?
 
     override init(frame: CGRect) {
@@ -231,7 +239,17 @@ final class SessionGridBadgeView: UIView {
     private func updateIfNeeded() {
         let avatar = AssistantAvatar.current
         let themeId = ThemeRuntimeState.currentThemeID()
-        let cacheKey = "\(sessionId):\(themeId):\(avatar.cacheIdentifier)"
+        let presentation = AssistantIdentityPresentation.resolve(
+            agentId: agentId,
+            agentIcon: agentIcon
+        )
+        let identity = switch presentation {
+        case .agent(let content):
+            "agent:\(content)"
+        case .globalAvatar:
+            "assistant:\(avatar.cacheIdentifier)"
+        }
+        let cacheKey = "\(sessionId):\(themeId):\(identity)"
         guard cacheKey != lastCacheKey else { return }
         lastCacheKey = cacheKey
 
@@ -240,7 +258,12 @@ final class SessionGridBadgeView: UIView {
             return
         }
 
-        let image = AssistantAvatarRenderer.render(avatar: avatar, sessionId: sessionId, size: 36)
+        let image = switch presentation {
+        case .agent:
+            AgentIconRenderer.render(value: agentIcon, size: 36)
+        case .globalAvatar:
+            AssistantAvatarRenderer.render(avatar: avatar, sessionId: sessionId, size: 36)
+        }
         Self.imageCache.setObject(image, forKey: cacheKey as NSString)
         imageView.image = image
     }

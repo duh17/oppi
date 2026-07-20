@@ -23,6 +23,34 @@ describe("buildSessionSummary", () => {
     expect(summary.lastAgentReplyAt).toBe(1_700_000_123_000);
   });
 
+  it("projects immutable saved-Agent identity and icon metadata", () => {
+    const summary = buildSessionSummary(
+      makeSession({
+        launch: {
+          source: "agent",
+          agentId: "agent-reviewer",
+          agentVersion: 4,
+          agentIcon: "checkmark.shield",
+          status: "accepted",
+          requestedAt: 100,
+        },
+      }),
+    );
+
+    expect(summary).toMatchObject({
+      agentId: "agent-reviewer",
+      agentIcon: "checkmark.shield",
+    });
+    expect(summary).not.toHaveProperty("agentVersion");
+  });
+
+  it("omits Agent presentation metadata for ordinary sessions", () => {
+    const summary = buildSessionSummary(makeSession());
+
+    expect(summary).not.toHaveProperty("agentId");
+    expect(summary).not.toHaveProperty("agentIcon");
+  });
+
   it("preserves explicit control-session metadata in list summaries", () => {
     const summary = buildSessionSummary(
       makeSession({

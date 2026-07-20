@@ -141,6 +141,71 @@ describe("AgentLaunchService", () => {
     expect(saveSession).toHaveBeenCalledTimes(2);
   });
 
+  it("snapshots the saved Agent icon without changing execution identity", async () => {
+    const { service } = makeService();
+
+    const result = await service.launch({
+      agent: { name: "Reviewer", icon: "  checkmark.shield  " },
+      agentId: "agent-reviewer",
+      agentVersion: 4,
+      target: { workspace: makeWorkspace() },
+    });
+
+    expect(result).toMatchObject({
+      kind: "created",
+      session: {
+        launch: {
+          agentId: "agent-reviewer",
+          agentVersion: 4,
+          agentIcon: "checkmark.shield",
+        },
+      },
+    });
+  });
+
+  it("does not attach Agent presentation to workspace-wrapper sessions", async () => {
+    const { service } = makeService();
+
+    const result = await service.launch({
+      agent: { name: "Workspace wrapper", icon: "sparkles" },
+      target: { workspace: makeWorkspace() },
+    });
+
+    expect(result.kind).toBe("created");
+    if (result.kind === "created") {
+      expect(result.session.launch).not.toHaveProperty("agentIcon");
+      expect(result.session.launch).not.toHaveProperty("agentId");
+    }
+  });
+
+  it("keeps the original Agent icon on an idempotent retry", async () => {
+    const existing = makeSession({
+      id: "existing-1",
+      launch: {
+        agentId: "agent-reviewer",
+        agentVersion: 4,
+        agentIcon: "🧘",
+        idempotencyKey: "launch-1",
+        status: "accepted",
+        requestedAt: 900,
+      },
+    });
+    const { service } = makeService({ sessions: [existing] });
+
+    const result = await service.launch({
+      agent: { name: "Reviewer", icon: "checkmark.shield" },
+      agentId: "agent-reviewer",
+      agentVersion: 5,
+      target: { workspace: makeWorkspace() },
+      idempotencyKey: "launch-1",
+    });
+
+    expect(result).toMatchObject({
+      kind: "existing",
+      session: { launch: { agentVersion: 4, agentIcon: "🧘" } },
+    });
+  });
+
   it("stamps managed child sessions with their caller identity", async () => {
     const parent = makeSession({ id: "root-1" });
     const { service } = makeService({ sessions: [parent] });

@@ -742,6 +742,14 @@ final class SessionStore {
         if merged.control == nil {
             merged.control = existing.control
         }
+        if let incomingLaunch = merged.launch {
+            merged.launch = SessionLaunchMetadata(
+                agentId: incomingLaunch.agentId ?? existing.launch?.agentId,
+                agentIcon: incomingLaunch.agentIcon ?? existing.launch?.agentIcon
+            )
+        } else {
+            merged.launch = existing.launch
+        }
 
         if merged.currentTurnStartedAt == nil,
            existing.currentTurnStartedAt != nil,

@@ -159,6 +159,18 @@ enum TimelineSnapshotApplier {
         return merged
     }
 
+    static func assistantPresentationItemIDs(
+        nextIDs: [String],
+        nextItemByID: [String: ChatItem]
+    ) -> [String] {
+        nextIDs.filter { id in
+            guard let item = nextItemByID[id], case .assistantMessage = item else {
+                return false
+            }
+            return true
+        }
+    }
+
     /// Filter out the load-more row from reconfigure during animated applies.
     /// Animated reconfigure causes a crossfade that flickers the "Show N
     /// earlier messages" button at the top of the timeline. The hidden-count

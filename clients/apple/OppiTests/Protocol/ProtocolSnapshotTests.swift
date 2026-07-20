@@ -104,6 +104,20 @@ struct ProtocolSnapshotTests {
         #expect(session.contextTokens == 2300)
         #expect(session.contextWindow == 200000)
         #expect(session.thinkingLevel == "high")
+        #expect(session.launch?.agentId == "agent-reviewer")
+        #expect(session.launch?.agentIcon == "checkmark.shield")
+    }
+
+    @Test func sessionSummaryCarriesAgentPresentationSnapshot() throws {
+        let msg = try decodeMessage("session_summary")
+        guard case .sessionSummary(let summary) = msg else {
+            Issue.record("Expected .sessionSummary")
+            return
+        }
+
+        #expect(summary.agentId == "agent-reviewer")
+        #expect(summary.agentIcon == "checkmark.shield")
+        #expect(summary.session.launch?.agentIcon == "checkmark.shield")
     }
 
     @Test func sessionChangeStats() throws {

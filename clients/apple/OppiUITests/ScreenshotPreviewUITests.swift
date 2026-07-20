@@ -16,6 +16,116 @@ final class ScreenshotPreviewUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testAgentIconCriticalJourneyPreview() throws {
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "agent-icons")
+
+        let agentRow = app.descendants(matching: .any)["agent.proof.agentRow"]
+        XCTAssertTrue(agentRow.waitForExistence(timeout: 5), "Seeded Agent row not visible")
+        agentRow.tap()
+
+        let detailIcon = app.buttons["agent.proof.detail.icon"]
+        XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail icon control not visible")
+        XCTAssertEqual(detailIcon.value as? String, "Default")
+        detailIcon.tap()
+
+        let pickerList = app.collectionViews["agent.iconPicker.list"]
+        let suggestion = app.buttons["agent.iconPicker.suggestion.sparkles"]
+        for _ in 0..<3 where !suggestion.exists {
+            pickerList.swipeUp()
+        }
+        XCTAssertTrue(suggestion.waitForExistence(timeout: 5), "Sparkles suggestion not visible")
+        suggestion.tap()
+
+        let preview = app.descendants(matching: .any)["agent.iconPicker.preview"]
+        for _ in 0..<3 where !preview.exists {
+            pickerList.swipeDown()
+        }
+        XCTAssertTrue(preview.waitForExistence(timeout: 3), "Draft icon preview not visible")
+        XCTAssertTrue(
+            preview.label.localizedCaseInsensitiveContains("sparkles"),
+            "Draft preview did not describe the selected SF Symbol"
+        )
+        saveScreenshot(name: "agent-icons-sf-symbol-preview")
+        app.buttons["agent.iconPicker.save"].tap()
+
+        XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail did not return after saving")
+        XCTAssertEqual(detailIcon.value as? String, "SF Symbol sparkles")
+
+        let backToAgents = app.navigationBars.buttons["Agents"]
+        XCTAssertTrue(backToAgents.waitForExistence(timeout: 3), "Agents back button not visible")
+        backToAgents.tap()
+        XCTAssertTrue(agentRow.waitForExistence(timeout: 3), "Agent list did not return")
+        XCTAssertEqual(agentRow.value as? String, "SF Symbol sparkles")
+        saveScreenshot(name: "agent-icons-sf-symbol-agent-list")
+
+        agentRow.tap()
+        XCTAssertTrue(detailIcon.waitForExistence(timeout: 3), "Agent detail did not reopen")
+        detailIcon.tap()
+
+        let useDefault = app.buttons["agent.iconPicker.default"]
+        for _ in 0..<3 where !useDefault.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(useDefault.waitForExistence(timeout: 3), "Use Default Icon action not visible")
+        useDefault.tap()
+
+        XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail did not return after clearing")
+        XCTAssertEqual(detailIcon.value as? String, "Default")
+
+        detailIcon.tap()
+        let customIcon = app.textFields["agent.iconPicker.custom"]
+        XCTAssertTrue(customIcon.waitForExistence(timeout: 5), "Custom icon field not visible")
+        customIcon.tap()
+        customIcon.typeText("🧘")
+
+        XCTAssertTrue(preview.waitForExistence(timeout: 3), "Emoji draft preview not visible")
+        XCTAssertTrue(preview.label.contains("Emoji 🧘"), "Draft preview did not show the selected emoji")
+        saveScreenshot(name: "agent-icons-emoji-preview")
+        app.buttons["agent.iconPicker.save"].tap()
+
+        XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail did not return after emoji save")
+        XCTAssertEqual(detailIcon.value as? String, "Emoji 🧘")
+        backToAgents.tap()
+        XCTAssertTrue(agentRow.waitForExistence(timeout: 3), "Agent list did not return after emoji save")
+        XCTAssertEqual(agentRow.value as? String, "Emoji 🧘")
+        saveScreenshot(name: "agent-icons-emoji-agent-list")
+
+        agentRow.tap()
+        XCTAssertTrue(detailIcon.waitForExistence(timeout: 3), "Emoji Agent detail did not reopen")
+        XCTAssertEqual(detailIcon.value as? String, "Emoji 🧘")
+
+        let launch = app.buttons["agent.proof.launch"]
+        XCTAssertTrue(launch.waitForExistence(timeout: 5), "Agent launch proof action not visible")
+        launch.tap()
+
+        let agentSession = app.descendants(matching: .any)["agent.proof.session.agent"]
+        let ordinarySession = app.descendants(matching: .any)["agent.proof.session.ordinary"]
+        XCTAssertTrue(agentSession.waitForExistence(timeout: 5), "Agent session row not visible")
+        XCTAssertTrue(ordinarySession.waitForExistence(timeout: 5), "Ordinary session row not visible")
+        XCTAssertTrue(
+            (agentSession.value as? String)?.contains("Launched with a saved Agent") == true,
+            "Agent session row did not expose its saved-Agent identity"
+        )
+        XCTAssertFalse(
+            (ordinarySession.value as? String)?.contains("Launched with a saved Agent") == true,
+            "Ordinary session must retain global assistant identity"
+        )
+        saveScreenshot(name: "agent-icons-emoji-session-identities")
+
+        agentSession.tap()
+        let titleIdentity = app.descendants(matching: .any)["agent.proof.chat.titleIdentity"]
+        let agentIdentity = app.descendants(matching: .any)["agent.proof.chat.agentIdentity"]
+        let ordinaryIdentity = app.descendants(matching: .any)["agent.proof.chat.ordinaryIdentity"]
+        XCTAssertTrue(titleIdentity.waitForExistence(timeout: 5), "Agent icon chat title not visible")
+        XCTAssertTrue(agentIdentity.waitForExistence(timeout: 5), "Agent chat empty-state identity not visible")
+        XCTAssertTrue(ordinaryIdentity.waitForExistence(timeout: 5), "Ordinary avatar comparison not visible")
+        XCTAssertTrue(titleIdentity.label.contains("Emoji 🧘"), "Chat title did not expose the emoji identity")
+        XCTAssertTrue(agentIdentity.label.contains("Emoji 🧘"), "Chat empty state did not expose the emoji identity")
+        XCTAssertEqual(ordinaryIdentity.label, "Ordinary session uses the global assistant avatar")
+        saveScreenshot(name: "agent-icons-emoji-chat-identities")
+    }
+
     func testWorkspaceSidebarGitStatusPreview() throws {
         XCUIDevice.shared.orientation = .portrait
         launchPreview(screen: "workspace-sidebar-git-status")

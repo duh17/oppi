@@ -15,6 +15,7 @@ import { apiStatus } from "../resources.js";
 type AgentRow = {
   id?: string;
   name?: string;
+  icon?: string;
   status?: string;
   version?: number;
   definition?: unknown;
@@ -42,7 +43,10 @@ export async function cmdAgent(
             id: agent.id ?? "?",
             status: agent.status ?? "?",
             title: agent.name ?? "(unnamed)",
-            meta: [agent.version !== undefined ? `v${agent.version}` : "?"],
+            meta: [
+              agent.version !== undefined ? `v${agent.version}` : "?",
+              ...(agent.icon ? [`icon ${agent.icon}`] : []),
+            ],
           })),
           { empty: "No saved Agents configured." },
         );

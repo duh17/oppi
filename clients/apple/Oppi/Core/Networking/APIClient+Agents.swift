@@ -25,12 +25,13 @@ extension APIClient {
             let definition: AgentDefinition
 
             enum CodingKeys: String, CodingKey {
-                case name, description, instructions, resources, sessionDefaults
+                case name, icon, description, instructions, resources, sessionDefaults
             }
 
             func encode(to encoder: Encoder) throws {
                 var c = encoder.container(keyedBy: CodingKeys.self)
                 try c.encode(definition.name, forKey: .name)
+                try encodeNullable(definition.icon, to: &c, forKey: .icon)
                 try encodeNullable(definition.description, to: &c, forKey: .description)
                 try encodeNullable(definition.instructions, to: &c, forKey: .instructions)
                 try encodeNullable(definition.resources, to: &c, forKey: .resources)
@@ -52,6 +53,32 @@ extension APIClient {
 
         let encodedAgentId = try percentEncodePathSegment(agentId)
         let data = try await patch("/agents/\(encodedAgentId)", body: UpdateBody(definition: definition))
+        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+    }
+
+    func updateAgentIcon(agentId: String, icon: String?) async throws -> StoredAgentDefinition {
+        struct IconUpdateBody: Encodable {
+            let icon: String?
+
+            enum CodingKeys: CodingKey {
+                case icon
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                if let icon {
+                    try container.encode(icon, forKey: .icon)
+                } else {
+                    try container.encodeNil(forKey: .icon)
+                }
+            }
+        }
+
+        let encodedAgentId = try percentEncodePathSegment(agentId)
+        let data = try await patch(
+            "/agents/\(encodedAgentId)",
+            body: IconUpdateBody(icon: icon)
+        )
         return try JSONDecoder().decode(AgentResponse.self, from: data).agent
     }
 

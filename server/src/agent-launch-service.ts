@@ -200,6 +200,7 @@ export class AgentLaunchService {
       workspace: request.target.workspace,
     });
     const sessionName = normalizedText(request.sessionName);
+    const agentIcon = request.agentId ? normalizedText(request.agent.icon) : undefined;
     const session: Session = idempotencyKey
       ? {
           id: generateId(8),
@@ -229,8 +230,9 @@ export class AgentLaunchService {
     }
     session.launch = {
       source: request.source ?? "workspace-wrapper",
-      agentId: request.agentId,
-      agentVersion: request.agentVersion,
+      ...(request.agentId ? { agentId: request.agentId } : {}),
+      ...(request.agentVersion !== undefined ? { agentVersion: request.agentVersion } : {}),
+      ...(agentIcon ? { agentIcon } : {}),
       parentSessionId: delegation.parentSessionId,
       allowsNestedDelegation: delegation.allowsNestedDelegation,
       idempotencyKey,

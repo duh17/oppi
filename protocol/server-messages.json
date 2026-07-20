@@ -39,6 +39,15 @@
         "contextWindow": 200000,
         "lastMessage": "I've updated the README with the new API docs.",
         "thinkingLevel": "high",
+        "launch": {
+          "source": "agent",
+          "agentId": "agent-reviewer",
+          "agentVersion": 4,
+          "agentIcon": "checkmark.shield",
+          "status": "accepted",
+          "requestedAt": 1739750399000,
+          "completedAt": 1739750400000
+        },
         "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
         "piSessionFiles": [
           "/tmp/pi-sessions/abc123.jsonl"
@@ -86,6 +95,15 @@
         "contextWindow": 200000,
         "lastMessage": "I've updated the README with the new API docs.",
         "thinkingLevel": "high",
+        "launch": {
+          "source": "agent",
+          "agentId": "agent-reviewer",
+          "agentVersion": 4,
+          "agentIcon": "checkmark.shield",
+          "status": "accepted",
+          "requestedAt": 1739750399000,
+          "completedAt": 1739750400000
+        },
         "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
         "piSessionFiles": [
           "/tmp/pi-sessions/abc123.jsonl"
@@ -126,7 +144,9 @@
         "contextTokens": 2300,
         "contextWindow": 200000,
         "lastMessage": "I've updated the README with the new API docs.",
-        "thinkingLevel": "high"
+        "thinkingLevel": "high",
+        "agentId": "agent-reviewer",
+        "agentIcon": "checkmark.shield"
       }
     },
     "state_control": {
@@ -161,6 +181,15 @@
         "contextWindow": 200000,
         "lastMessage": "I've updated the README with the new API docs.",
         "thinkingLevel": "high",
+        "launch": {
+          "source": "agent",
+          "agentId": "agent-reviewer",
+          "agentVersion": 4,
+          "agentIcon": "checkmark.shield",
+          "status": "accepted",
+          "requestedAt": 1739750399000,
+          "completedAt": 1739750400000
+        },
         "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
         "piSessionFiles": [
           "/tmp/pi-sessions/abc123.jsonl"
@@ -206,6 +235,8 @@
         "contextWindow": 200000,
         "lastMessage": "I've updated the README with the new API docs.",
         "thinkingLevel": "high",
+        "agentId": "agent-reviewer",
+        "agentIcon": "checkmark.shield",
         "control": {
           "domain": "agents",
           "intent": "revise",

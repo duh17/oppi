@@ -175,8 +175,17 @@ struct SessionRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            // Row 1: title + time
+        HStack(alignment: .top, spacing: 8) {
+            if case .agent = AssistantIdentityPresentation.resolve(
+                agentId: session.launch?.agentId,
+                agentIcon: session.launch?.agentIcon
+            ) {
+                AgentIconView(value: session.launch?.agentIcon, size: 20, frameSize: 24)
+                    .padding(.top, 1)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                // Row 1: title + time
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(title)
                     .font(.body)
@@ -272,9 +281,10 @@ struct SessionRow: View {
                 SessionStatusPill(pillVariant)
                     .fixedSize()
             }
-            .font(.caption)
-            .foregroundStyle(.themeFgDim)
-            .lineLimit(1)
+                .font(.caption)
+                .foregroundStyle(.themeFgDim)
+                .lineLimit(1)
+            }
         }
         .padding(.leading, 12)
         .overlay(alignment: .topLeading) {
@@ -292,6 +302,12 @@ struct SessionRow: View {
         .padding(.trailing, 4)
         .padding(.vertical, 2)
         .contentShape(Rectangle())
+        .accessibilityValue(
+            AssistantIdentityPresentation.resolve(
+                agentId: session.launch?.agentId,
+                agentIcon: session.launch?.agentIcon
+            ) == .globalAvatar ? "" : "Launched with a saved Agent"
+        )
     }
 
     @ViewBuilder

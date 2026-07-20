@@ -46,6 +46,24 @@ struct AgentScheduleAPIClientTests {
         return data
     }
 
+    @Test func agentListDecodesSavedIconSummary() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/agents")
+            return mockResponse(json: """
+            {"agents":[{"id":"agent-1","name":"Sensei","icon":"🧘","status":"active","version":2,"createdAt":1000,"updatedAt":2000}]}
+            """)
+        }
+
+        let agents = try await client.listAgents()
+
+        #expect(agents.count == 1)
+        #expect(agents.first?.icon == "🧘")
+    }
+
     @Test func agentCreatePostsDefinitionAndDecodesStoredAgent() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -58,7 +76,7 @@ struct AgentScheduleAPIClientTests {
             #expect(body.instructions?.mode == .append)
             #expect(body.sessionDefaults?.thinkingLevel == .medium)
             return mockResponse(status: 201, json: """
-            {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":1,"definition":{"name":"Reviewer","instructions":{"mode":"append","text":"Review changes."},"sessionDefaults":{"thinkingLevel":"medium"}},"createdAt":1000,"updatedAt":1000}}
+            {"agent":{"id":"agent-1","name":"Reviewer","icon":"🧘","status":"active","version":1,"definition":{"name":"Reviewer","icon":"🧘","instructions":{"mode":"append","text":"Review changes."},"sessionDefaults":{"thinkingLevel":"medium"}},"createdAt":1000,"updatedAt":1000}}
             """)
         }
 
@@ -71,6 +89,8 @@ struct AgentScheduleAPIClientTests {
         )
 
         #expect(agent.id == "agent-1")
+        #expect(agent.icon == "🧘")
+        #expect(agent.definition.icon == "🧘")
         #expect(agent.definition.instructions?.text == "Review changes.")
         #expect(agent.createdAt == Date(timeIntervalSince1970: 1))
     }
@@ -84,6 +104,7 @@ struct AgentScheduleAPIClientTests {
             #expect(request.url?.path == "/agents/agent-1")
             let json = try JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
             #expect(json?["name"] as? String == "Reviewer")
+            #expect(json?["icon"] is NSNull)
             #expect(json?["description"] is NSNull)
             #expect(json?["instructions"] is NSNull)
             #expect(json?["resources"] is NSNull)
@@ -100,6 +121,37 @@ struct AgentScheduleAPIClientTests {
 
         #expect(agent.version == 2)
         #expect(agent.definition.description == nil)
+    }
+
+    @Test func agentIconUpdateSendsOnlyIconForSetAndClear() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        var expectedIcon: String? = "🧘"
+        var requestCount = 0
+        TestURLProtocol.handler = { request in
+            requestCount += 1
+            #expect(request.httpMethod == "PATCH")
+            #expect(request.url?.path == "/agents/agent-1")
+            let json = try #require(
+                JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
+            )
+            #expect(Set(json.keys) == ["icon"])
+            if let expectedIcon {
+                #expect(json["icon"] as? String == expectedIcon)
+            } else {
+                #expect(json["icon"] is NSNull)
+            }
+            return mockResponse(json: """
+            {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":\(requestCount + 1),"definition":{"name":"Reviewer"},"createdAt":1000,"updatedAt":2000}}
+            """)
+        }
+
+        _ = try await client.updateAgentIcon(agentId: "agent-1", icon: "🧘")
+        expectedIcon = nil
+        _ = try await client.updateAgentIcon(agentId: "agent-1", icon: nil)
+
+        #expect(requestCount == 2)
     }
 
     @Test func scheduleDetailDecodesFullPromptAndAction() async throws {
@@ -244,6 +296,186 @@ struct AgentScheduleAPIClientTests {
             return mockResponse(json: "{}")
         }
         try await client.deleteSession(scope: .control, sessionId: "control-1")
+    }
+}
+
+@Suite("Agent icon presentation")
+struct AgentIconPresentationTests {
+    private func storedAgent(icon: String?, version: Int = 2) -> StoredAgentDefinition {
+        StoredAgentDefinition(
+            id: "agent-1",
+            name: "Reviewer",
+            icon: icon,
+            description: nil,
+            status: .active,
+            version: version,
+            definition: AgentDefinition(name: "Reviewer", icon: icon),
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 2),
+            archivedAt: nil
+        )
+    }
+
+    @Test func classifiesTrimmedEmojiAndSymbolCandidatesDeterministically() {
+        #expect(AgentIconValue.classify("  🧘  ") == .emoji("🧘"))
+        #expect(AgentIconValue.classify(" checkmark.shield\n") == .symbolCandidate("checkmark.shield"))
+        #expect(AgentIconValue.classify("🧘🧘") == .invalid(.multipleEmoji))
+        #expect(AgentIconValue.classify(String(repeating: "a", count: 129)) == .invalid(.tooLong))
+        #expect(AgentIconValue.classify("😀" + String(repeating: "‍😀", count: 64)) == .invalid(.tooLong))
+        #expect(AgentIconValue.classify("not/a/symbol") == .invalid(.malformed))
+    }
+
+    @MainActor
+    @Test func pickerPreviewsDraftAndSavesSuccessfulSelection() async {
+        let model = AgentIconPickerModel(savedValue: "🧘")
+        model.selectSuggestion("checkmark.shield")
+
+        #expect(model.previewValue == "checkmark.shield")
+        #expect(model.previewContent == .symbol("checkmark.shield"))
+
+        let result = await model.saveCurrent { icon in
+            #expect(icon == "checkmark.shield")
+            return storedAgent(icon: icon, version: 3)
+        }
+
+        #expect(result?.version == 3)
+        #expect(model.savedValue == "checkmark.shield")
+        #expect(model.draft == "checkmark.shield")
+        #expect(model.errorPresentation == nil)
+    }
+
+    @MainActor
+    @Test func pickerClearUsesDefaultAndResetsPreview() async {
+        let model = AgentIconPickerModel(savedValue: "checkmark.shield")
+
+        let result = await model.useDefault { icon in
+            #expect(icon == nil)
+            return storedAgent(icon: nil, version: 3)
+        }
+
+        #expect(result?.definition.icon == nil)
+        #expect(model.savedValue == nil)
+        #expect(model.previewValue == nil)
+        #expect(model.previewContent == .fallback)
+        #expect(!model.canUseDefault)
+    }
+
+    @MainActor
+    @Test func pickerShowsLiveValidationWithoutRequestingAccessibilityFocusDuringDraftEdits() {
+        let model = AgentIconPickerModel(savedValue: "🧘")
+        model.draft = "not-a-real-symbol"
+
+        #expect(model.previewValue == "not-a-real-symbol")
+        #expect(model.previewContent == .fallback)
+        guard case .validation(let message) = model.errorPresentation else {
+            Issue.record("Expected a validation error presentation")
+            return
+        }
+        #expect(message.contains("isn’t available"))
+        #expect(!model.canSave)
+        #expect(model.accessibilityFocusRequest == nil)
+
+        model.draft = "still-not-a-real-symbol"
+        #expect(model.errorPresentation != nil)
+        #expect(model.accessibilityFocusRequest == nil)
+    }
+
+    @MainActor
+    @Test func pickerRequestsValidationFocusOnlyAfterExplicitSaveAttempt() async {
+        let model = AgentIconPickerModel(savedValue: "🧘")
+        model.draft = "not-a-real-symbol"
+
+        let result = await model.saveCurrent { _ in
+            Issue.record("Invalid drafts must not reach the save operation")
+            return storedAgent(icon: nil)
+        }
+
+        #expect(result == nil)
+        #expect(model.accessibilityFocusRequest?.target == .validation)
+        #expect(model.accessibilityFocusRequest?.sequence == 1)
+
+        model.draft = "still-not-a-real-symbol"
+        #expect(model.accessibilityFocusRequest?.sequence == 1)
+    }
+
+    @MainActor
+    @Test func pickerPreservesDraftAndExposesRetryAfterSaveFailure() async {
+        struct SaveFailure: LocalizedError {
+            var errorDescription: String? { "network unavailable" }
+        }
+
+        let model = AgentIconPickerModel(savedValue: "🧘")
+        model.selectSuggestion("checkmark.shield")
+
+        let failed = await model.saveCurrent { _ in
+            throw SaveFailure()
+        }
+
+        #expect(failed == nil)
+        #expect(model.draft == "checkmark.shield")
+        #expect(model.errorMessage?.contains("network unavailable") == true)
+        guard case .save(let message) = model.errorPresentation else {
+            Issue.record("Expected a save error presentation")
+            return
+        }
+        #expect(message.contains("network unavailable"))
+        #expect(!model.isSaving)
+        #expect(model.canSave)
+        #expect(model.accessibilityFocusRequest?.target == .save)
+        #expect(model.accessibilityFocusRequest?.sequence == 1)
+
+        model.draft = "checkmark.shield "
+        #expect(model.accessibilityFocusRequest?.sequence == 1)
+
+        let retried = await model.saveCurrent { icon in
+            storedAgent(icon: icon, version: 3)
+        }
+        #expect(retried?.version == 3)
+        #expect(model.errorPresentation == nil)
+    }
+
+    @Test func scaledIconContentNeverExceedsItsLayoutBox() {
+        let size = AgentIconSizingPolicy.contentSize(
+            baseSize: 20,
+            scaledSize: 40,
+            frameSize: 24
+        )
+
+        #expect(size <= 24)
+        #expect(size == 18.72)
+    }
+
+    @Test func ordinaryAndAgentSessionIdentityUseTheCorrectPresentation() {
+        #expect(AssistantIdentityPresentation.resolve(agentId: nil, agentIcon: "🧘") == .globalAvatar)
+        #expect(AssistantIdentityPresentation.resolve(agentId: "", agentIcon: "🧘") == .globalAvatar)
+        #expect(AssistantIdentityPresentation.resolve(agentId: "agent-1", agentIcon: "🧘") == .agent(.text("🧘")))
+        #expect(AssistantIdentityPresentation.resolve(agentId: "agent-1", agentIcon: "person.crop.circle") == .agent(.symbol("person.crop.circle")))
+        #expect(AssistantIdentityPresentation.resolve(agentId: "agent-1", agentIcon: "not-a-real-symbol") == .agent(.fallback))
+    }
+
+    @Test func resolvesSupportedIconsAndFallbacks() {
+        #expect(AgentIconContent.resolve("🧘") == .text("🧘"))
+        #expect(AgentIconContent.resolve("👨‍👩‍👧‍👦") == .text("👨‍👩‍👧‍👦"))
+        #expect(AgentIconContent.resolve("👋🏽") == .text("👋🏽"))
+        #expect(AgentIconContent.resolve("🇺🇸") == .text("🇺🇸"))
+        #expect(AgentIconContent.resolve("1️⃣") == .text("1️⃣"))
+        #expect(AgentIconContent.resolve("person.crop.circle") == .symbol("person.crop.circle"))
+        #expect(AgentIconContent.resolve(nil) == .fallback)
+        #expect(AgentIconContent.resolve("   ") == .fallback)
+        #expect(AgentIconContent.resolve("not-a-real-symbol") == .fallback)
+        #expect(AgentIconContent.resolve("你好") == .fallback)
+        #expect(AgentIconContent.resolve("é") == .fallback)
+        #expect(AgentIconContent.resolve("1\u{0301}") == .fallback)
+        #expect(AgentIconContent.resolve("1\u{FE0E}") == .fallback)
+        #expect(AgentIconContent.resolve("1\u{0301}\u{FE0F}") == .fallback)
+        #expect(AgentIconContent.resolve("©\u{20E3}") == .fallback)
+        #expect(AgentIconContent.resolve("🧘\u{FE0E}") == .fallback)
+        #expect(AgentIconContent.resolve("🧘\u{0301}") == .fallback)
+        #expect(AgentIconContent.resolve("🧘\u{200D}") == .fallback)
+        #expect(AgentIconContent.resolve("🧘\u{0301}\u{FE0F}") == .fallback)
+        #expect(AgentIconContent.resolve("1\u{FE0F}\u{FE0F}\u{20E3}") == .fallback)
+        #expect(AgentIconContent.resolve("😀🏽") == .fallback)
+        #expect(AgentIconContent.resolve("🧘 Reviewer") == .fallback)
     }
 }
 
