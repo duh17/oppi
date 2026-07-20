@@ -71,6 +71,7 @@ struct ChatInputBar<ActionRow: View>: View {
     @State private var askCurrentPage = 0
     @State private var askDraftAnswers: [String: AskAnswer] = [:]
     @State private var keepComposerClearedForSubmittedAskRequestID: String?
+    @State private var isBusyModePickerPresented = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Bumped to programmatically focus the text field.
@@ -575,30 +576,8 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var busyModeSelector: some View {
-        Menu {
-            Button {
-                busyStreamingBehavior = .steer
-                FeatureEducationTips.markBusySendModeUsed()
-            } label: {
-                HStack {
-                    Text("Steering")
-                    if busyStreamingBehavior == .steer {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
-
-            Button {
-                busyStreamingBehavior = .followUp
-                FeatureEducationTips.markBusySendModeUsed()
-            } label: {
-                HStack {
-                    Text("Follow-up")
-                    if busyStreamingBehavior == .followUp {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
+        Button {
+            isBusyModePickerPresented = true
         } label: {
             HStack(spacing: 5) {
                 Text(busyStreamingBehavior == .steer ? "Steering" : "Follow-up")
@@ -611,8 +590,47 @@ struct ChatInputBar<ActionRow: View>: View {
             .padding(.vertical, 6)
             .glassEffect(.regular, in: Capsule())
         }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isBusyModePickerPresented, arrowEdge: .bottom) {
+            VStack(spacing: 0) {
+                busyModeOption(.steer, title: "Steering")
+                busyModeOption(.followUp, title: "Follow-up")
+            }
+            .padding(.vertical, 6)
+            .frame(width: 190)
+            .presentationCompactAdaptation(.popover)
+            .presentationBackground(Color.themeSurfaceFill(.popover))
+        }
         .accessibilityIdentifier("chat.busyMode")
         .accessibilityLabel("Busy send mode")
+        .accessibilityValue(busyStreamingBehavior == .steer ? "Steering" : "Follow-up")
+    }
+
+    private func busyModeOption(_ behavior: StreamingBehavior, title: String) -> some View {
+        Button {
+            isBusyModePickerPresented = false
+            FeatureEducationTips.markBusySendModeUsed()
+            guard behavior != busyStreamingBehavior else { return }
+            busyStreamingBehavior = behavior
+        } label: {
+            HStack(spacing: 10) {
+                Text(title)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "checkmark")
+                    .opacity(behavior == busyStreamingBehavior ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+            .font(.body)
+            .foregroundStyle(.themeFg)
+            .padding(.horizontal, 16)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(behavior == busyStreamingBehavior ? "Selected" : "")
+        .accessibilityIdentifier("chat.busyMode.option.\(behavior.rawValue)")
     }
 
     private var attachmentStrip: some View {

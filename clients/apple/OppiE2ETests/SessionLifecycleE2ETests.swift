@@ -88,6 +88,42 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         tap(stopButton, named: "stop button")
     }
 
+    func testBusyModePickerUsesStablePopoverOrderAndSelection() throws {
+        createAndEnterSession()
+
+        let chatInput = app.textViews["chat.input"]
+        tap(chatInput, named: "chat input")
+        chatInput.typeText("Write a detailed 500 word essay about the history of computing")
+        tap(app.buttons["chat.send"], named: "send button", timeout: 3)
+
+        let stopButton = app.buttons["chat.stop"]
+        XCTAssertTrue(
+            stopButton.waitForExistence(timeout: 30),
+            "Streaming did not start before checking the busy mode picker"
+        )
+
+        let picker = app.buttons["chat.busyMode"]
+        tap(picker, named: "busy mode picker", timeout: 5)
+
+        let steering = app.buttons["chat.busyMode.option.steer"]
+        let followUp = app.buttons["chat.busyMode.option.followUp"]
+        XCTAssertTrue(steering.waitForExistence(timeout: 5), "Steering option did not appear")
+        XCTAssertTrue(followUp.waitForExistence(timeout: 5), "Follow-up option did not appear")
+        XCTAssertEqual(steering.label, "Steering")
+        XCTAssertEqual(followUp.label, "Follow-up")
+        XCTAssertLessThan(
+            steering.frame.midY,
+            followUp.frame.midY,
+            "Busy mode picker must keep Steering above Follow-up"
+        )
+        XCTAssertEqual(steering.value as? String, "Selected")
+
+        tap(followUp, named: "Follow-up busy mode", timeout: 5)
+        XCTAssertEqual(picker.value as? String, "Follow-up")
+
+        tap(stopButton, named: "stop button")
+    }
+
     func testMultiTurnConversation() throws {
         createAndEnterSession()
 
