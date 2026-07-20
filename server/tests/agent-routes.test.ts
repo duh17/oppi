@@ -279,7 +279,7 @@ describe("agent routes", () => {
           name: "Default Agent",
           description: expect.stringContaining("Manage Oppi"),
           resources: { noContextFiles: true },
-          sessionDefaults: { noTools: "builtin", tools: ["oppi"] },
+          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask"] },
         },
       });
 
@@ -313,7 +313,7 @@ describe("agent routes", () => {
             model: "openai-codex/gpt-5.5",
             thinkingLevel: "high",
             noTools: "builtin",
-            tools: ["oppi"],
+            tools: ["oppi", "ask"],
           },
         },
       });
@@ -328,6 +328,23 @@ describe("agent routes", () => {
       });
       expect(rejectRes.statusCode).toBe(400);
       expect(JSON.parse(rejectRes.body).error).toContain("sessionDefaults.tools");
+
+      const launchOverrideRes = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: "/agents/default/sessions",
+        url: new URL("http://localhost/agents/default/sessions"),
+        req: makeRequest({
+          prompt: { text: "Run safely" },
+          target: { workspaceId: "ws-1" },
+          overrides: { tools: ["bash"] },
+        }) as never,
+        res: launchOverrideRes as never,
+      });
+      expect(launchOverrideRes.statusCode).toBe(400);
+      expect(JSON.parse(launchOverrideRes.body).error).toBe(
+        "Default Agent launch overrides cannot change tools",
+      );
 
       const resetRes = makeResponse();
       await dispatch({
@@ -345,7 +362,7 @@ describe("agent routes", () => {
         definition: {
           name: "Default Agent",
           resources: { noContextFiles: true },
-          sessionDefaults: { noTools: "builtin", tools: ["oppi"] },
+          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask"] },
         },
       });
     } finally {

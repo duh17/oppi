@@ -10,7 +10,7 @@ import {
   type ThinkingLevel,
 } from "./agent-launch-service.js";
 import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
-import { DEFAULT_AGENT_ID } from "./default-agent.js";
+import { DEFAULT_AGENT_ID, DEFAULT_AGENT_TOOL_NAMES } from "./default-agent.js";
 import { isDeclaredControlSession } from "./control-session.js";
 import { isPathWithinRoot } from "./git-utils.js";
 import {
@@ -218,7 +218,7 @@ export class SessionLifecycleService {
       source: "human",
       agentId: DEFAULT_AGENT_ID,
       target: { server: true, displayCwd: "Oppi Control" },
-      tools: { allowed: ["oppi"], noTools: "builtin" },
+      tools: { allowed: [...DEFAULT_AGENT_TOOL_NAMES], noTools: "builtin" },
       status: "launching",
       requestedAt: now,
     };

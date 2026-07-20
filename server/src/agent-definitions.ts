@@ -343,13 +343,30 @@ export class AgentDefinitionStore {
     }
 
     const safeDefinition = applyDefaultAgentSafetyDefaults(existing.definition);
+    const definitionChanged =
+      JSON.stringify(safeDefinition) !== JSON.stringify(existing.definition);
+    if (definitionChanged) {
+      const nextVersion = existing.version + 1;
+      this.db.transaction(() => {
+        this.db
+          .prepare(
+            `UPDATE agent_definitions
+             SET name = ?, status = 'active', version = ?, definition_json = ?, updated_at = ?, archived_at = NULL
+             WHERE id = ?`,
+          )
+          .run(safeDefinition.name, nextVersion, JSON.stringify(safeDefinition), now, existing.id);
+        this.insertAgentVersion(existing.id, nextVersion, safeDefinition, now);
+      })();
+      return;
+    }
+
     this.db
       .prepare(
         `UPDATE agent_definitions
-         SET name = ?, status = 'active', definition_json = ?, updated_at = ?, archived_at = NULL
+         SET name = ?, status = 'active', definition_json = ?, archived_at = NULL
          WHERE id = ?`,
       )
-      .run(safeDefinition.name, JSON.stringify(safeDefinition), existing.updatedAt, existing.id);
+      .run(safeDefinition.name, JSON.stringify(safeDefinition), existing.id);
   }
 
   private insertAgentVersion(

@@ -14,7 +14,7 @@ This is not a general Pi extension-authoring guide. For pi package layout, lifec
 
 ## Core rule
 
-Oppi does not inject extension tools into SDK sessions. Extension tools, including `ask`, load from Pi's own resource system for the session cwd. There is no `workspace.extensions` allowlist in the current workspace model.
+Ordinary Oppi SDK sessions do not receive injected extension tools. Extension tools, including `ask`, load from Pi's own resource system for the session cwd, and there is no `workspace.extensions` allowlist in the current workspace model. The shipped Default Agent is the narrow exception: its isolated runtime always registers server-managed `oppi` and structured `ask` tools while disabling user/project extensions, skills, prompt templates, context files, and Pi's filesystem/shell built-ins.
 
 Approval behavior is extension-owned. If a session needs approval before an action, use a Pi extension that handles `tool_call` or session events and asks through `ctx.ui`.
 
@@ -249,7 +249,7 @@ Pi resolves the resources for the session cwd. The picker starts with those reso
 
 Enable/disable writes only match Pi-resolved resources. A direct-scan entry that Pi's resolver cannot match can appear in the picker but fail with `Pi resource not found for cwd` if toggled.
 
-Oppi loads the Pi-resolved extensions without injecting an extra Ask tool. Install or enable a Pi extension named `ask` when a workspace needs the ask tool.
+Oppi loads Pi-resolved extensions without injecting an extra Ask tool into ordinary workspace sessions. Install or enable a Pi extension named `ask` when a normal workspace Agent needs it. The shipped Default Agent has its own server-managed `ask` registration because its isolated runtime intentionally disables normal extension discovery.
 
 ## Reload behavior
 
