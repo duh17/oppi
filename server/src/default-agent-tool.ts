@@ -16,6 +16,14 @@ import { tlsSchemeForConfig } from "./tls.js";
 
 export type OppiToolCommandKind = "read" | "approved-write";
 
+export interface OppiToolApprovalDetails {
+  action: string;
+  target?: { label: string; value: string };
+  context?: { label: string; value: string };
+  arguments: string[];
+  bodies: Array<{ label: string; value: string }>;
+}
+
 export type OppiToolCommandClassification =
   | {
       ok: true;
@@ -25,6 +33,8 @@ export type OppiToolCommandClassification =
       args: string[];
       summary: string;
       displayCommand: string;
+      approvalDetails?: OppiToolApprovalDetails;
+      approvalMessage?: string;
     }
   | { ok: false; reason: string };
 
@@ -114,7 +124,7 @@ export function createDefaultAgentExtensionFactory(options: {
           }
           const approved = await ctx.ui.confirm(
             "Approve Oppi command",
-            [classification.displayCommand, "", classification.summary].join("\n"),
+            classification.approvalMessage ?? classification.summary,
           );
           if (!approved) {
             return {
@@ -224,28 +234,29 @@ export function classifyOppiToolCommand(rawArgs: string[]): OppiToolCommandClass
     };
   }
 
+  const indirectBodyError = validateInspectableBody(parsed);
+  if (indirectBodyError) {
+    return { ok: false, reason: indirectBodyError };
+  }
+
   if (isDestructiveCommand(parsed)) {
-    return {
-      ok: true,
-      kind: "approved-write",
-      command: parsed.command,
-      action,
+    return approvedWriteClassification({
+      parsed,
       args,
+      action,
       summary: `Run destructive Oppi command ${parsed.command} ${action}.`,
       displayCommand,
-    };
+    });
   }
 
   if (WRITE_ACTIONS[parsed.command]?.has(action)) {
-    return {
-      ok: true,
-      kind: "approved-write",
-      command: parsed.command,
-      action,
+    return approvedWriteClassification({
+      parsed,
       args,
+      action,
       summary: `Create or modify Oppi state with ${parsed.command} ${action}.`,
       displayCommand,
-    };
+    });
   }
 
   return {
@@ -397,6 +408,166 @@ function normalizeOppiArgs(rawArgs: string[]): string[] {
 
 function ensureJsonFlag(args: string[]): string[] {
   return args.includes("--json") ? args : [...args, "--json"];
+}
+
+function approvedWriteClassification(options: {
+  parsed: ParsedCliArgs;
+  args: string[];
+  action: string;
+  summary: string;
+  displayCommand: string;
+}): Extract<OppiToolCommandClassification, { ok: true }> {
+  const approvalDetails = buildOppiToolApprovalDetails(options.parsed, options.action);
+  return {
+    ok: true,
+    kind: "approved-write",
+    command: options.parsed.command,
+    action: options.action,
+    args: options.args,
+    summary: options.summary,
+    displayCommand: options.displayCommand,
+    approvalDetails,
+    approvalMessage: formatOppiToolApprovalMessage(options.summary, approvalDetails),
+  };
+}
+
+const APPROVAL_BODY_FLAGS: Record<string, { label: string }> = {
+  prompt: { label: "Prompt" },
+  text: { label: "Message" },
+  "definition-json": { label: "Definition" },
+  "system-prompt": { label: "System prompt" },
+};
+
+function validateInspectableBody(parsed: ParsedCliArgs): string | undefined {
+  if (Object.hasOwn(parsed.flags, "definition")) {
+    return "--definition is not allowed for approval because file contents can change; pass the complete body inline with --definition-json";
+  }
+  for (const flag of ["prompt", "text"] as const) {
+    if (parsed.flags[flag] === "@-") {
+      return `--${flag} @- is not allowed for approval; pass the complete body inline with --${flag}`;
+    }
+  }
+  return undefined;
+}
+
+function buildOppiToolApprovalDetails(
+  parsed: ParsedCliArgs,
+  action: string,
+): OppiToolApprovalDetails {
+  const bodies = Object.entries(APPROVAL_BODY_FLAGS).flatMap(([flag, presentation]) =>
+    Object.hasOwn(parsed.flags, flag)
+      ? [{ label: presentation.label, value: parsed.flags[flag] ?? "" }]
+      : [],
+  );
+
+  const workspace = parsed.flags.workspace;
+  const positionalTarget = parsed.positional[1];
+  const flaggedTarget =
+    parsed.command === "schedule" && action === "create" ? parsed.flags.session : undefined;
+  const target = positionalTarget
+    ? { label: targetLabel(parsed.command), value: positionalTarget }
+    : flaggedTarget
+      ? { label: "Session", value: flaggedTarget }
+      : workspace
+        ? { label: "Workspace", value: workspace }
+        : undefined;
+  const context =
+    workspace && target?.label !== "Workspace"
+      ? { label: "Workspace", value: workspace }
+      : undefined;
+
+  const remainingArguments: string[] = [];
+  const remainingPositional = positionalTarget
+    ? parsed.positional.slice(2)
+    : parsed.positional.slice(1);
+  remainingArguments.push(...remainingPositional.map(shellQuoteForDisplay));
+
+  for (const [flag, value] of Object.entries(parsed.flags)) {
+    if (
+      flag === "json" ||
+      flag === "workspace" ||
+      (flag === "session" && flaggedTarget !== undefined) ||
+      Object.hasOwn(APPROVAL_BODY_FLAGS, flag)
+    ) {
+      continue;
+    }
+    remainingArguments.push(`--${flag}`);
+    if (value !== "true") {
+      remainingArguments.push(shellQuoteForDisplay(value));
+    }
+  }
+
+  return {
+    action: `oppi ${shellQuoteForDisplay(parsed.command)} ${shellQuoteForDisplay(action)}`,
+    target,
+    context,
+    arguments: remainingArguments,
+    bodies,
+  };
+}
+
+function targetLabel(command: string): string {
+  switch (command) {
+    case "agent":
+      return "Agent";
+    case "schedule":
+      return "Schedule";
+    case "session":
+      return "Session";
+    case "workspace":
+      return "Workspace";
+    case "worktree":
+      return "Worktree";
+    default:
+      return "Target";
+  }
+}
+
+function formatOppiToolApprovalMessage(summary: string, details: OppiToolApprovalDetails): string {
+  const sections = [summary, "## Command", fencedText(details.action)];
+  if (details.target) {
+    sections.push(`## ${details.target.label}`, fencedText(details.target.value));
+  }
+  if (details.context) {
+    sections.push(`## ${details.context.label}`, fencedText(details.context.value));
+  }
+  if (details.arguments.length > 0) {
+    sections.push("## Arguments", fencedText(details.arguments.join(" ")));
+  }
+  for (const body of details.bodies) {
+    sections.push(`## ${body.label}`, fencedText(body.value));
+  }
+  return sections.join("\n\n");
+}
+
+function fencedText(value: string): string {
+  const longestBacktickRun = longestCharacterRun(value, "`");
+  if (longestBacktickRun < 3) {
+    return `\`\`\`text\n${value}\n\`\`\``;
+  }
+
+  const longestTildeRun = longestCharacterRun(value, "~");
+  if (longestTildeRun < 3) {
+    return `~~~text\n${value}\n~~~`;
+  }
+
+  // Oppi's Markdown parser performs compatibility cleanup on 4+ character
+  // fences. Indented code avoids that path when untrusted content contains
+  // both fence styles, preserving every displayed line as inert code.
+  return value
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+}
+
+function longestCharacterRun(value: string, character: "`" | "~"): number {
+  const pattern = character === "`" ? /`+/g : /~+/g;
+  return Math.max(0, ...Array.from(value.matchAll(pattern), (match) => match[0].length));
+}
+
+function shellQuoteForDisplay(value: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 function formatCommandForDisplay(args: string[]): string {

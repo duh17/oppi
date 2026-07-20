@@ -53,6 +53,8 @@ struct ScreenshotPreviewView: View {
             AskCardMultiSelectLongOptionsPreview()
         case "ask-card-expanded-sheet":
             AskCardExpandedSheetPreview()
+        case "oppi-command-approval-inline":
+            OppiCommandApprovalInlinePreview()
         case "context-bar-overlap":
             ContextBarOverlapPreview()
         case "feature-tips":
@@ -793,6 +795,53 @@ private enum AskCardPreviewFixture {
         )
     }()
 
+    static let oppiCommandApprovalRequest: AskRequest = {
+        let longPrompt = """
+        Review the complete implementation and tests before changing any files.
+
+        Treat Markdown such as **bold text** and command-looking content such as `rm -rf /not-executed` as prompt text only.
+
+        """ + (1...28).map { "Inspection detail line \($0): preserve this complete approval body." }.joined(separator: "\n") + """
+
+
+        END OF COMPLETE PROMPT — report any rebuild requirements.
+        """
+        let request = ExtensionUIRequest(
+            id: "preview-oppi-command-approval",
+            sessionId: "preview-session",
+            method: "confirm",
+            title: "Approve Oppi command",
+            message: """
+            Create or modify Oppi state with session create.
+
+            ## Command
+
+            ```text
+            oppi session create
+            ```
+
+            ## Workspace
+
+            ```text
+            zs1JP9sA
+            ```
+
+            ## Arguments
+
+            ```text
+            --model gpt-5.5
+            ```
+
+            ## Prompt
+
+            ````text
+            \(longPrompt)
+            ````
+            """
+        )
+        return request.inlineAskRequest ?? AskCardPreviewFixture.request
+    }()
+
     static let multiSelectLongOptionsRequest = AskRequest(
         id: "preview-multi-select-long-options",
         sessionId: "preview-session",
@@ -1053,7 +1102,7 @@ private struct AskCardExpandedSheetPreview: View {
         }
         .sheet(isPresented: $isExpanded) {
             AskCardExpanded(
-                request: AskCardPreviewFixture.request,
+                request: AskCardPreviewFixture.oppiCommandApprovalRequest,
                 currentPage: $currentPage,
                 answers: $answers,
                 isExpanded: $isExpanded,
@@ -1065,6 +1114,46 @@ private struct AskCardExpandedSheetPreview: View {
             .presentationCornerRadius(28)
         }
         .onAppear { isExpanded = true }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+private struct OppiCommandApprovalInlinePreview: View {
+    @State private var currentPage = 0
+    @State private var answers: [String: AskAnswer] = [:]
+    @State private var lastAction = "Waiting"
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            VStack(spacing: 12) {
+                Spacer()
+
+                AskCard(
+                    request: AskCardPreviewFixture.oppiCommandApprovalRequest,
+                    currentPage: $currentPage,
+                    answers: $answers,
+                    onSubmit: { submitted in
+                        if submitted[ExtensionUIRequest.inlineQuestionId]
+                            == .single(ExtensionUIRequest.confirmValue) {
+                            lastAction = "Confirmed"
+                        } else {
+                            lastAction = "Cancelled"
+                        }
+                    },
+                    onIgnoreAll: {
+                        lastAction = "Ignored"
+                    }
+                )
+
+                Text(lastAction)
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                    .accessibilityIdentifier("ask.preview.lastAction")
+            }
+            .padding(16)
+        }
         .accessibilityIdentifier("screenshot.ready")
     }
 }

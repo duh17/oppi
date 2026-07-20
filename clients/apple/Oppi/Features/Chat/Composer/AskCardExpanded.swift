@@ -178,9 +178,11 @@ struct AskCardExpanded: View {
 
             AskSelectionModePill(question: question)
 
-            VStack(spacing: 10) {
-                ForEach(question.options, id: \.value) { option in
-                    expandedOptionCard(option, question: question)
+            if !usesPinnedConfirmationActions {
+                VStack(spacing: 10) {
+                    ForEach(question.options, id: \.value) { option in
+                        expandedOptionCard(option, question: question)
+                    }
                 }
             }
 
@@ -339,11 +341,17 @@ struct AskCardExpanded: View {
 
     // MARK: - Footer
 
+    @ViewBuilder
     private var footerBar: some View {
-        VStack(spacing: 0) {
-            Divider()
-                .overlay(theme.text.tertiary.opacity(0.15))
+        if usesPinnedConfirmationActions {
+            pinnedConfirmationFooter
+        } else {
+            standardFooter
+        }
+    }
 
+    private var standardFooter: some View {
+        footerContainer {
             HStack {
                 Button {
                     handleIgnore()
@@ -415,10 +423,89 @@ struct AskCardExpanded: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+        }
+    }
+
+    private var pinnedConfirmationFooter: some View {
+        footerContainer {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    ignoreConfirmationButton
+                    Spacer(minLength: 0)
+                    cancelConfirmationButton
+                    confirmConfirmationButton
+                }
+
+                VStack(spacing: 8) {
+                    confirmConfirmationButton
+                    cancelConfirmationButton
+                    ignoreConfirmationButton
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private var ignoreConfirmationButton: some View {
+        Button("Ignore") {
+            isExpanded = false
+        }
+        .buttonStyle(.plain)
+        .font(.body)
+        .foregroundStyle(.themeComment)
+        .frame(minWidth: 44, minHeight: 44)
+        .accessibilityHint("Closes details without responding")
+        .accessibilityIdentifier("ask.confirmation.ignore")
+    }
+
+    private var cancelConfirmationButton: some View {
+        Button("Cancel") {
+            submitPinnedConfirmation(value: ExtensionUIRequest.cancelValue)
+        }
+        .buttonStyle(.plain)
+        .font(.body.weight(.medium))
+        .foregroundStyle(.themeFg)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 44)
+        .background(theme.bg.highlight, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityIdentifier("ask.confirmation.cancel")
+    }
+
+    private var confirmConfirmationButton: some View {
+        Button("Confirm") {
+            submitPinnedConfirmation(value: ExtensionUIRequest.confirmValue)
+        }
+        .buttonStyle(.plain)
+        .font(.body.weight(.semibold))
+        .foregroundStyle(.themeOnBlue)
+        .padding(.horizontal, 18)
+        .frame(minHeight: 44)
+        .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityIdentifier("ask.confirmation.confirm")
+    }
+
+    private func footerContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            Divider()
+                .overlay(theme.text.tertiary.opacity(0.15))
+            content()
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
         }
         .background(theme.bg.primary)
+    }
+
+    private var usesPinnedConfirmationActions: Bool {
+        Self.usesPinnedConfirmationActions(request)
+    }
+
+    private func submitPinnedConfirmation(value: String) {
+        guard let question = currentQuestion else { return }
+        answers[question.id] = .single(value)
+        suppressKeyboard = false
+        focusedQuestionId = nil
+        isExpanded = false
+        onSubmit(answers)
     }
 
     // MARK: - Navigation
@@ -674,6 +761,16 @@ struct AskCardExpanded: View {
 }
 
 extension AskCardExpanded {
+    static func usesPinnedConfirmationActions(_ request: AskRequest) -> Bool {
+        guard request.responseEncoding == .extensionConfirm,
+              request.questions.count == 1,
+              let question = request.questions.first,
+              !question.multiSelect else { return false }
+        let values = Set(question.options.map(\.value))
+        return values.contains(ExtensionUIRequest.confirmValue)
+            && values.contains(ExtensionUIRequest.cancelValue)
+    }
+
     static func dictationPrefix(for base: String) -> String {
         ComposerShared.dictationPrefix(for: base)
     }

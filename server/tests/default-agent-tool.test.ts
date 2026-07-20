@@ -196,7 +196,6 @@ describe("Default Agent Oppi tool command policy", () => {
       ["workspace", "create", "--name", "Scratch", "--host-mount", "/tmp/scratch"],
       ["workspace", "update", "oppi", "--name", "Oppi"],
       ["agent", "create", "--name", "Reviewer"],
-      ["agent", "update", "default", "--definition", "agent.json"],
       ["agent", "update", "default", "--definition-json", '{"description":"Short"}'],
       ["session", "create", "--workspace", "oppi", "--prompt", "Review this"],
       ["session", "send", "sess-1", "--text", "hello"],
@@ -207,7 +206,6 @@ describe("Default Agent Oppi tool command policy", () => {
       ["worktree", "open", "--workspace", "oppi", "--branch", "feature/review"],
       ["worktree", "remove", "wt_feature-review-12345678", "--workspace", "oppi"],
       ["schedule", "create", "--workspace", "oppi", "--prompt", "daily", "--every", "1d"],
-      ["schedule", "update", "sch-1", "--definition", "schedule.json"],
       ["schedule", "update", "sch-1", "--definition-json", '{"name":"Daily"}'],
       ["schedule", "run", "sch-1"],
       ["schedule", "pause", "sch-1"],
@@ -220,24 +218,167 @@ describe("Default Agent Oppi tool command policy", () => {
     }
   });
 
-  it("redacts long argument values from approved-write display", () => {
-    const definitionJson = JSON.stringify({
-      instructions: { mode: "append", text: "x".repeat(1_000) },
-    });
+  it("keeps compact tool output while exposing complete structured approval details", () => {
+    const prompt = "Review **all** changes.\n\n```sh\nrm -rf /not-executed\n```" + "x".repeat(770);
+    const classification = classifyOppiToolCommand([
+      "session",
+      "create",
+      "--workspace",
+      "zs1JP9sA",
+      "--model",
+      "gpt-5.5",
+      "--prompt",
+      prompt,
+    ]);
 
+    expect(classification).toMatchObject({
+      ok: true,
+      kind: "approved-write",
+      approvalDetails: {
+        action: "oppi session create",
+        target: { label: "Workspace", value: "zs1JP9sA" },
+        arguments: ["--model", "gpt-5.5"],
+        bodies: [{ label: "Prompt", value: prompt }],
+      },
+    });
+    if (!classification.ok) return;
+    expect(classification.displayCommand).toContain(`--prompt [${prompt.length} chars]`);
+    expect(classification.displayCommand).not.toContain("rm -rf");
+    expect(classification.approvalMessage).toContain("## Command");
+    expect(classification.approvalMessage).toContain("## Workspace");
+    expect(classification.approvalMessage).toContain("## Arguments");
+    expect(classification.approvalMessage).toContain("## Prompt");
+    expect(classification.approvalMessage).toContain(prompt);
+    expect(classification.approvalMessage).toContain("~~~text");
+  });
+
+  it("shell-quotes approval arguments and keeps markdown-like values inert", () => {
+    const classification = classifyOppiToolCommand([
+      "session",
+      "send",
+      "session with spaces",
+      "--text",
+      "# Not a heading\n[link](oppi://session/unsafe)\n~~~",
+    ]);
+
+    expect(classification).toMatchObject({
+      ok: true,
+      approvalDetails: {
+        action: "oppi session send",
+        target: { label: "Session", value: "session with spaces" },
+        bodies: [
+          {
+            label: "Message",
+            value: "# Not a heading\n[link](oppi://session/unsafe)\n~~~",
+          },
+        ],
+      },
+    });
+    if (!classification.ok) return;
+    expect(classification.approvalMessage).toContain("session with spaces");
+    expect(classification.approvalMessage).toContain("```text\n# Not a heading");
+  });
+
+  it("uses indented code when a body contains both Markdown fence styles", () => {
+    const prompt = "```\n~~~";
+    const classification = classifyOppiToolCommand([
+      "session",
+      "create",
+      "--workspace",
+      "oppi",
+      "--prompt",
+      prompt,
+    ]);
+
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+    expect(classification.approvalMessage).toContain("## Prompt\n\n    ```\n    ~~~");
+    expect(classification.approvalMessage).not.toContain("````text");
+    expect(classification.approvalMessage).not.toContain("~~~~text");
+  });
+
+  it("rejects indirect bodies that cannot be inspected and executed as the same snapshot", () => {
+    for (const args of [
+      ["agent", "update", "default", "--definition", "agent.json"],
+      ["schedule", "update", "sch-1", "--definition", "schedule.json"],
+      ["session", "create", "--workspace", "oppi", "--prompt", "@-"],
+      ["session", "send", "sess-1", "--text", "@-"],
+    ]) {
+      expect(classifyOppiToolCommand(args), args.join(" ")).toEqual({
+        ok: false,
+        reason: expect.stringContaining("inline"),
+      });
+    }
+  });
+
+  it("separates a positional target from its workspace context", () => {
+    const classification = classifyOppiToolCommand([
+      "worktree",
+      "remove",
+      "wt_feature-review-12345678",
+      "--workspace",
+      "oppi",
+      "--force",
+    ]);
+
+    expect(classification).toMatchObject({
+      ok: true,
+      approvalDetails: {
+        target: { label: "Worktree", value: "wt_feature-review-12345678" },
+        context: { label: "Workspace", value: "oppi" },
+        arguments: ["--force"],
+      },
+    });
+  });
+
+  it("treats a long system prompt as a labeled body", () => {
+    const systemPrompt = "Act safely.\n" + "x".repeat(500);
+    const classification = classifyOppiToolCommand([
+      "workspace",
+      "update",
+      "oppi",
+      "--system-prompt",
+      systemPrompt,
+    ]);
+
+    expect(classification).toMatchObject({
+      ok: true,
+      approvalDetails: {
+        target: { label: "Workspace", value: "oppi" },
+        bodies: [{ label: "System prompt", value: systemPrompt }],
+      },
+    });
+  });
+
+  it("shows every supplied body field instead of hiding effective input", () => {
+    const definition = '{"description":"effective definition"}';
+    const systemPrompt = "effective system prompt";
     const classification = classifyOppiToolCommand([
       "agent",
       "update",
       "default",
+      "--prompt",
+      "decoy prompt",
       "--definition-json",
-      definitionJson,
+      definition,
+      "--system-prompt",
+      systemPrompt,
     ]);
 
-    expect(classification).toMatchObject({ ok: true, kind: "approved-write" });
+    expect(classification).toMatchObject({
+      ok: true,
+      approvalDetails: {
+        bodies: [
+          { label: "Prompt", value: "decoy prompt" },
+          { label: "Definition", value: definition },
+          { label: "System prompt", value: systemPrompt },
+        ],
+      },
+    });
     if (!classification.ok) return;
-    expect(classification.displayCommand).toContain("--definition-json");
-    expect(classification.displayCommand).toContain(`[${definitionJson.length} chars]`);
-    expect(classification.displayCommand).not.toContain("xxx");
+    expect(classification.approvalMessage).toContain("## Prompt");
+    expect(classification.approvalMessage).toContain("## Definition");
+    expect(classification.approvalMessage).toContain("## System prompt");
   });
 
   it("rejects oversized inline definitions before approval", () => {

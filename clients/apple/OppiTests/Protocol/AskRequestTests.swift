@@ -292,6 +292,62 @@ struct AskRequestTests {
         #expect(payload == .cancelled)
     }
 
+    @Test func extensionConfirmPreservesStructuredLongApprovalDetails() throws {
+        let prompt = "Review **all** changes.\n\n```sh\nrm -rf /not-executed\n```" + String(repeating: "x", count: 770)
+        let request = ExtensionUIRequest(
+            id: "confirm-details",
+            sessionId: "s1",
+            method: "confirm",
+            title: "Approve Oppi command",
+            message: """
+            Create or modify Oppi state with session create.
+
+            ## Command
+
+            ```text
+            oppi session create
+            ```
+
+            ## Workspace
+
+            ```text
+            zs1JP9sA
+            ```
+
+            ## Prompt
+
+            ````text
+            \(prompt)
+            ````
+            """
+        )
+
+        let ask = try #require(request.inlineAskRequest)
+        let question = try #require(ask.questions.first?.question)
+
+        #expect(question.contains("## Command"))
+        #expect(question.contains("## Workspace"))
+        #expect(question.contains("## Prompt"))
+        #expect(question.contains(prompt))
+        #expect(ask.responseEncoding == .extensionConfirm)
+    }
+
+    @Test func indentedApprovalBodyPreservesFenceOnlyContent() {
+        let blocks = parseCommonMark("""
+        ## Prompt
+
+            ```
+            ~~~
+        """)
+
+        #expect(blocks.contains { block in
+            if case .codeBlock(_, let code) = block {
+                return code == "```\n~~~"
+            }
+            return false
+        })
+    }
+
     @Test func extensionConfirmInlineResponseMapsConfirmAndCancel() throws {
         let request = ExtensionUIRequest(id: "confirm-1", sessionId: "s1", method: "confirm")
         let ask = try #require(request.askRequest)
