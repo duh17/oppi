@@ -203,6 +203,54 @@ describe("agent routes", () => {
     }
   });
 
+  it("updates, persists, returns, and clears a saved Agent icon", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-icon-routes-"));
+    const store = new AgentDefinitionStore(dataDir);
+    try {
+      const agent = store.createAgent({ name: "Sensei" });
+      const dispatch = createAgentRoutes(
+        { storage: { getAgentDefinitionStore: () => store } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+
+      const updateRes = makeResponse();
+      await dispatch({
+        method: "PATCH",
+        path: `/agents/${agent.id}`,
+        url: new URL(`http://localhost/agents/${agent.id}`),
+        req: makeRequest({ icon: "  🧘  " }) as never,
+        res: updateRes as never,
+      });
+      expect(updateRes.statusCode).toBe(200);
+      expect(JSON.parse(updateRes.body).agent.definition.icon).toBe("🧘");
+
+      const getRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: `/agents/${agent.id}`,
+        url: new URL(`http://localhost/agents/${agent.id}`),
+        req: {} as never,
+        res: getRes as never,
+      });
+      expect(JSON.parse(getRes.body).agent.definition.icon).toBe("🧘");
+      expect(store.getAgentVersion(agent.id, 2)?.definition.icon).toBe("🧘");
+
+      const clearRes = makeResponse();
+      await dispatch({
+        method: "PATCH",
+        path: `/agents/${agent.id}`,
+        url: new URL(`http://localhost/agents/${agent.id}`),
+        req: makeRequest({ icon: null }) as never,
+        res: clearRes as never,
+      });
+      expect(clearRes.statusCode).toBe(200);
+      expect(JSON.parse(clearRes.body).agent.definition).not.toHaveProperty("icon");
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("seeds an overwriteable default Agent identity and can reset customization", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-routes-"));
     try {
@@ -242,6 +290,7 @@ describe("agent routes", () => {
         url: new URL("http://localhost/agents/default"),
         req: makeRequest({
           name: "Home Agent",
+          icon: "🏠",
           description: "Coordinates Oppi from the app home screen",
           instructions: { mode: "append", text: "Prefer short status summaries." },
           sessionDefaults: { model: "openai-codex/gpt-5.5", thinkingLevel: "high" },
@@ -256,6 +305,7 @@ describe("agent routes", () => {
         version: 2,
         definition: {
           name: "Home Agent",
+          icon: "🏠",
           description: "Coordinates Oppi from the app home screen",
           instructions: { mode: "append", text: "Prefer short status summaries." },
           resources: { noContextFiles: true },

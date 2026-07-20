@@ -7,6 +7,7 @@ export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhi
 
 export interface AgentDefinition {
   name: string;
+  icon?: string;
   description?: string;
   instructions?: {
     mode: "append" | "replace";
