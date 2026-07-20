@@ -36,6 +36,7 @@ type GuardCheck = {
   title: string;
   pattern: string;
   fix: string;
+  scanPaths?: string[];
   excludeGlobs?: string[];
 };
 
@@ -108,10 +109,21 @@ const checks: GuardCheck[] = [
     pattern: String.raw`\.foregroundStyle\(\s*Color\.theme`,
     fix: "Use contextual .foregroundStyle(.theme*) shorthand so ThemeShapeStyle resolves from the current SwiftUI environment",
   },
+  {
+    id: "ask-card-snapshot-theme-style",
+    title: "AskCard captures a snapshot theme color",
+    pattern: String.raw`Color\.theme`,
+    fix: "Use contextual .theme* ShapeStyle values, or EnvironmentValues.theme when an API requires a concrete Color, so a mounted AskCard repaints after a theme switch",
+    scanPaths: [
+      "Oppi/Features/Chat/Composer/AskCard.swift",
+      "Oppi/Features/Chat/Composer/AskCardExpanded.swift",
+      "Oppi/Features/Chat/Composer/AskCardShared.swift",
+    ],
+  },
 ];
 
 function ripgrep(check: GuardCheck): string[] {
-  const args = ["-n", "--type", "swift", check.pattern, ...scanPaths];
+  const args = ["-n", "--type", "swift", check.pattern, ...(check.scanPaths ?? scanPaths)];
   for (const glob of [...previewAllowlistGlobs, ...(check.excludeGlobs ?? [])]) {
     args.push("-g", `!${glob}`);
   }
