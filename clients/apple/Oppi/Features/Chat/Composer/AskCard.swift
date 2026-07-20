@@ -73,6 +73,7 @@ struct AskCard: View {
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.theme) private var theme
 
     @State private var isExpanded: Bool = false
     @State private var expandedSheetDetent: PresentationDetent = .large
@@ -127,10 +128,10 @@ struct AskCard: View {
             }
         }
         .padding(.vertical, 10)
-        .background(Color.themeBgDark, in: RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
+        .background(theme.bg.secondary, in: RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
-                .stroke(Color.themeComment.opacity(0.15), lineWidth: 0.5)
+                .stroke(theme.text.tertiary.opacity(0.15), lineWidth: 0.5)
         )
         // No client-side auto-dismiss. The ask card stays open until the user
         // responds or the session lifecycle clears it (agent_end, session_ended,
@@ -256,6 +257,7 @@ struct AskCard: View {
 
     private struct AskCommandPreview: View {
         let command: String
+        @Environment(\.theme) private var theme
 
         var body: some View {
             VStack(alignment: .leading, spacing: 4) {
@@ -273,10 +275,10 @@ struct AskCard: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(theme.bg.highlight, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.themeComment.opacity(0.12), lineWidth: 1)
+                    .stroke(theme.text.tertiary.opacity(0.12), lineWidth: 1)
             )
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Command preview")
@@ -364,7 +366,7 @@ struct AskCard: View {
                 HStack(spacing: 5) {
                     ForEach(0..<totalPages, id: \.self) { index in
                         Circle()
-                            .fill(index == currentPage ? Color.themeBlue : Color.themeComment.opacity(0.3))
+                            .fill(index == currentPage ? theme.accent.blue : theme.text.tertiary.opacity(0.3))
                             .frame(width: 6, height: 6)
                             .onTapGesture {
                                 withAnimation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)) {

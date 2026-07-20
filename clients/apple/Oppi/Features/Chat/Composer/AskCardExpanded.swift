@@ -27,6 +27,7 @@ struct AskCardExpanded: View {
     @State private var keyboardLanguage: String?
     @State private var focusRequestID = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.theme) private var theme
 
     /// Question currently receiving custom dictation text.
     @State private var dictationQuestionId: String?
@@ -61,7 +62,7 @@ struct AskCardExpanded: View {
             navigationHeader
 
             Divider()
-                .overlay(Color.themeComment.opacity(0.15))
+                .overlay(theme.text.tertiary.opacity(0.15))
 
             ZStack {
                 ScrollView {
@@ -85,7 +86,7 @@ struct AskCardExpanded: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             footerBar
         }
-        .background(Color.themeBg.ignoresSafeArea())
+        .background(theme.bg.primary.ignoresSafeArea())
         .onAppear {
             loadCustomTextsFromAnswers()
         }
@@ -256,8 +257,8 @@ struct AskCardExpanded: View {
                         text: customTextBinding(for: question.id),
                         placeholder: "",
                         font: .preferredFont(forTextStyle: .body),
-                        textColor: UIColor(Color.themeFg),
-                        tintColor: UIColor(Color.themeBlue),
+                        textColor: UIColor(theme.text.primary),
+                        tintColor: UIColor(theme.accent.blue),
                         volatileSuffixLength: dictationQuestionId == question.id
                             ? ComposerShared.volatileSuffixLength(manager: voiceInputManager, owner: .askCard)
                             : 0,
@@ -300,10 +301,10 @@ struct AskCardExpanded: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .frame(minHeight: 46)
-            .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: optionCornerRadius))
+            .background(theme.bg.highlight, in: RoundedRectangle(cornerRadius: optionCornerRadius))
             .overlay(
                 RoundedRectangle(cornerRadius: optionCornerRadius)
-                    .stroke(Color.themeComment.opacity(0.12), lineWidth: 1)
+                    .stroke(theme.text.tertiary.opacity(0.12), lineWidth: 1)
             )
             .id("ask-input-\(question.id)")
         }
@@ -341,7 +342,7 @@ struct AskCardExpanded: View {
     private var footerBar: some View {
         VStack(spacing: 0) {
             Divider()
-                .overlay(Color.themeComment.opacity(0.15))
+                .overlay(theme.text.tertiary.opacity(0.15))
 
             HStack {
                 Button {
@@ -417,7 +418,7 @@ struct AskCardExpanded: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
-        .background(Color.themeBg)
+        .background(theme.bg.primary)
     }
 
     // MARK: - Navigation

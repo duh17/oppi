@@ -92,6 +92,7 @@ enum AskCardShared {
 
 struct AskSelectionModePill: View {
     let hint: String?
+    @Environment(\.theme) private var theme
 
     init(question: AskQuestion) {
         hint = AskCardShared.selectionModeHint(for: question)
@@ -108,7 +109,7 @@ struct AskSelectionModePill: View {
             .foregroundStyle(.themeBlue)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.themeBlue.opacity(0.12), in: Capsule())
+            .background(theme.accent.blue.opacity(0.12), in: Capsule())
             .accessibilityIdentifier("ask.selectionMode.multi")
         }
     }
@@ -169,6 +170,8 @@ struct AskOptionChoiceRow: View {
     let isMultiSelect: Bool
     let density: Density
 
+    @Environment(\.theme) private var theme
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             if isMultiSelect {
@@ -207,13 +210,13 @@ struct AskOptionChoiceRow: View {
         .padding(.vertical, density.verticalPadding)
         .frame(maxWidth: .infinity, minHeight: density.minimumHeight, alignment: .leading)
         .background(
-            isSelected ? Color.themeBlue.opacity(0.15) : Color.themeBgHighlight,
+            isSelected ? theme.accent.blue.opacity(0.15) : theme.bg.highlight,
             in: RoundedRectangle(cornerRadius: density.cornerRadius, style: .continuous)
         )
         .overlay(
             RoundedRectangle(cornerRadius: density.cornerRadius, style: .continuous)
                 .stroke(
-                    isSelected ? Color.themeBlue.opacity(0.55) : Color.themeComment.opacity(isMultiSelect ? 0.18 : 0),
+                    isSelected ? theme.accent.blue.opacity(0.55) : theme.text.tertiary.opacity(isMultiSelect ? 0.18 : 0),
                     lineWidth: isMultiSelect ? 1 : 1.5
                 )
         )
@@ -224,9 +227,9 @@ struct AskOptionChoiceRow: View {
     private var multiSelectIndicator: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isSelected ? Color.themeBlue : Color.clear)
+                .fill(isSelected ? theme.accent.blue : .clear)
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(isSelected ? Color.themeBlue : Color.themeComment.opacity(0.75), lineWidth: 1.6)
+                .stroke(isSelected ? theme.accent.blue : theme.text.tertiary.opacity(0.75), lineWidth: 1.6)
             if isSelected {
                 Image(systemName: "checkmark")
                     .font(.caption.weight(.bold))
