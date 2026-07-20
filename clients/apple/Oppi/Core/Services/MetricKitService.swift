@@ -515,11 +515,56 @@ struct MetricKitCrashContext: Codable, Equatable, Sendable {
     let lastStallSequence: Int?
 }
 
+protocol MetricKitCrashContextPersisting: Sendable {
+    func data(forKey key: String) -> Data?
+    func set(_ data: Data, forKey key: String)
+    func removeObject(forKey key: String)
+}
+
+private struct UserDefaultsCrashContextPersistence: MetricKitCrashContextPersisting, @unchecked Sendable {
+    func data(forKey key: String) -> Data? {
+        UserDefaults.standard.data(forKey: key)
+    }
+
+    func set(_ data: Data, forKey key: String) {
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    func removeObject(forKey key: String) {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
 enum MetricKitCrashContextStore {
-    private static let defaultsKey = "oppi.diagnostics.lastActiveContext.v1"
-    private static let postMortemDefaultsKey = "oppi.diagnostics.previousProcessContext.v1"
+    static let currentContextKey = "oppi.diagnostics.lastActiveContext.v1"
+    private static let postMortemContextKey = "oppi.diagnostics.previousProcessContext.v1"
     private static let lock = NSLock()
+    private static let persistenceQueue = DispatchQueue(
+        label: "\(AppIdentifiers.subsystem).crash-context-persistence",
+        qos: .userInitiated
+    )
+    nonisolated(unsafe) private static var persistenceOverride: MetricKitCrashContextPersisting?
+    nonisolated(unsafe) private static var currentContext: MetricKitCrashContext?
+    nonisolated(unsafe) private static var postMortemContext: MetricKitCrashContext?
+    nonisolated(unsafe) private static var nextGeneration: UInt64 = 0
+    nonisolated(unsafe) private static var lastPersistedGeneration: UInt64 = 0
     nonisolated(unsafe) private static var initializedCurrentProcessContext = false
+    private static let launchCurrentContext = decode(
+        UserDefaultsCrashContextPersistence().data(forKey: currentContextKey)
+    )
+    private static let launchPostMortemContext = decode(
+        UserDefaultsCrashContextPersistence().data(forKey: postMortemContextKey)
+    )
+    private static let launchRotationScheduled: Void = {
+        let previous = launchCurrentContext
+        persistenceQueue.async {
+            let persistence = UserDefaultsCrashContextPersistence()
+            if let previous, let data = try? JSONEncoder().encode(previous) {
+                persistence.set(data, forKey: postMortemContextKey)
+            }
+            persistence.removeObject(forKey: currentContextKey)
+        }
+    }()
 
     static func record(sessionId: String?, workspaceId: String?, streamState: String) {
         update { previous in
@@ -678,9 +723,8 @@ enum MetricKitCrashContextStore {
     }
 
     static func snapshot() -> MetricKitCrashContext? {
-        lock.lock()
-        defer { lock.unlock() }
-        return snapshotUnlocked()
+        initializeCurrentProcessContextIfNeeded()
+        return lock.withLock { currentContext }
     }
 
     static func snapshotMetadata() -> [String: String] {
@@ -689,9 +733,8 @@ enum MetricKitCrashContextStore {
     }
 
     static func postMortemSnapshotMetadata() -> [String: String] {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let context = snapshotUnlocked(forKey: postMortemDefaultsKey) ?? snapshotUnlocked() else {
+        initializeCurrentProcessContextIfNeeded()
+        guard let context = lock.withLock({ postMortemContext ?? currentContext }) else {
             return [:]
         }
         return metadata(from: context)
@@ -699,48 +742,116 @@ enum MetricKitCrashContextStore {
 
     // periphery:ignore - used by MetricKit serializer tests via @testable import
     static func clearForTesting() {
-        lock.lock()
-        defer { lock.unlock() }
-        UserDefaults.standard.removeObject(forKey: defaultsKey)
-        UserDefaults.standard.removeObject(forKey: postMortemDefaultsKey)
-        initializedCurrentProcessContext = false
+        persistenceQueue.sync {}
+        lock.withLock {
+            currentContext = nil
+            postMortemContext = nil
+            nextGeneration = 0
+            initializedCurrentProcessContext = true
+        }
+        persistenceQueue.sync {
+            persistence.removeObject(forKey: currentContextKey)
+            persistence.removeObject(forKey: postMortemContextKey)
+            lastPersistedGeneration = 0
+        }
     }
 
     // periphery:ignore - simulates a process boundary without discarding persisted defaults
     static func simulateProcessRelaunchForTesting() {
-        lock.lock()
-        defer { lock.unlock() }
-        initializedCurrentProcessContext = false
+        persistenceQueue.sync {}
+        let previous = lock.withLock { () -> MetricKitCrashContext? in
+            let previous = currentContext
+            postMortemContext = previous ?? postMortemContext
+            currentContext = nil
+            nextGeneration = 0
+            initializedCurrentProcessContext = true
+            return previous
+        }
+        persistenceQueue.sync {
+            if let previous, let data = try? JSONEncoder().encode(previous) {
+                persistence.set(data, forKey: postMortemContextKey)
+            }
+            persistence.removeObject(forKey: currentContextKey)
+            lastPersistedGeneration = 0
+        }
+    }
+
+    // periphery:ignore - deterministic reentrant-persistence regression support
+    static func setPersistenceForTesting(_ persistence: MetricKitCrashContextPersisting?) {
+        persistenceQueue.sync {
+            persistenceOverride = persistence
+        }
+    }
+
+    // periphery:ignore - waits for writes enqueued by synchronous persistence re-entry too
+    static func waitForPersistenceForTesting() async {
+        while true {
+            let persistedGeneration = await withCheckedContinuation { continuation in
+                persistenceQueue.async {
+                    continuation.resume(returning: lastPersistedGeneration)
+                }
+            }
+            let latestGeneration = lock.withLock { nextGeneration }
+            if persistedGeneration >= latestGeneration {
+                return
+            }
+        }
     }
 
     @discardableResult
     private static func update(_ build: (MetricKitCrashContext?) -> MetricKitCrashContext) -> MetricKitCrashContext {
-        lock.lock()
-        defer { lock.unlock() }
-        rotateContextForCurrentProcessIfNeeded()
-        let context = build(snapshotUnlocked())
-        saveUnlocked(context)
-        return context
+        initializeCurrentProcessContextIfNeeded()
+        let versionedContext = lock.withLock { () -> (generation: UInt64, context: MetricKitCrashContext) in
+            nextGeneration &+= 1
+            let context = build(currentContext)
+            currentContext = context
+            return (nextGeneration, context)
+        }
+        schedulePersistence(versionedContext)
+        return versionedContext.context
     }
 
-    private static func rotateContextForCurrentProcessIfNeeded() {
-        guard !initializedCurrentProcessContext else { return }
-        initializedCurrentProcessContext = true
-        let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: defaultsKey) {
-            defaults.set(data, forKey: postMortemDefaultsKey)
-            defaults.removeObject(forKey: defaultsKey)
+    private static var persistence: MetricKitCrashContextPersisting {
+        persistenceOverride ?? UserDefaultsCrashContextPersistence()
+    }
+
+    private static func initializeCurrentProcessContextIfNeeded() {
+        // Accessing this thread-safe static first guarantees launch rotation was
+        // enqueued before any current-process persistence write can be enqueued.
+        _ = launchRotationScheduled
+        lock.withLock {
+            guard !initializedCurrentProcessContext else { return }
+            initializedCurrentProcessContext = true
+            postMortemContext = previousProcessContext(
+                current: launchCurrentContext,
+                existingPostMortem: launchPostMortemContext
+            )
         }
     }
 
-    private static func snapshotUnlocked(forKey key: String = defaultsKey) -> MetricKitCrashContext? {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(MetricKitCrashContext.self, from: data)
+    private static func schedulePersistence(
+        _ versionedContext: (generation: UInt64, context: MetricKitCrashContext)
+    ) {
+        guard let data = try? JSONEncoder().encode(versionedContext.context) else { return }
+        persistenceQueue.async {
+            guard versionedContext.generation > lastPersistedGeneration else { return }
+            persistence.set(data, forKey: currentContextKey)
+            lastPersistedGeneration = versionedContext.generation
+        }
     }
 
-    private static func saveUnlocked(_ context: MetricKitCrashContext) {
-        guard let data = try? JSONEncoder().encode(context) else { return }
-        UserDefaults.standard.set(data, forKey: defaultsKey)
+    // The current key belongs to the immediately previous process. The
+    // postmortem key is only a fallback retained from an older rotation.
+    static func previousProcessContext(
+        current: MetricKitCrashContext?,
+        existingPostMortem: MetricKitCrashContext?
+    ) -> MetricKitCrashContext? {
+        current ?? existingPostMortem
+    }
+
+    private static func decode(_ data: Data?) -> MetricKitCrashContext? {
+        guard let data else { return nil }
+        return try? JSONDecoder().decode(MetricKitCrashContext.self, from: data)
     }
 
     private static func metadata(from context: MetricKitCrashContext) -> [String: String] {
