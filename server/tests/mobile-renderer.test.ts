@@ -15,7 +15,18 @@ function styleOf(segs: StyledSegment[] | undefined, index: number): string | und
 describe("MobileRendererRegistry", () => {
   it("has built-in renderers for all standard tools", () => {
     const reg = new MobileRendererRegistry();
-    for (const tool of ["ask", "bash", "read", "edit", "write", "grep", "find", "ls", "todo"]) {
+    for (const tool of [
+      "ask",
+      "oppi",
+      "bash",
+      "read",
+      "edit",
+      "write",
+      "grep",
+      "find",
+      "ls",
+      "todo",
+    ]) {
       expect(reg.has(tool), `missing renderer for ${tool}`).toBe(true);
     }
   });
@@ -64,6 +75,61 @@ describe("MobileRendererRegistry", () => {
       bad2: null as any,
     });
     expect(reg.size).toBe(before);
+  });
+});
+
+describe("oppi renderer", () => {
+  const reg = new MobileRendererRegistry();
+
+  it("renders the resource, action, and safe search terms instead of an opaque args count", () => {
+    const segs = reg.renderCall("oppi", {
+      args: ["session", "search", "workspace", "search", "--workspace", "oppi"],
+    });
+
+    expect(textOf(segs)).toBe("oppi session search · workspace search");
+    expect(styleOf(segs, 0)).toBe("bold");
+    expect(styleOf(segs, 1)).toBe("accent");
+    expect(styleOf(segs, 2)).toBe("muted");
+  });
+
+  it("normalizes the optional leading oppi accepted by the command classifier", () => {
+    const segs = reg.renderCall("oppi", {
+      args: ["oppi", "session", "search", "workspace"],
+    });
+
+    expect(textOf(segs)).toBe("oppi session search · workspace");
+  });
+
+  it("does not expose malformed flag-first arguments before classification rejects them", () => {
+    const segs = reg.renderCall("oppi", {
+      args: ["--text", "private message"],
+    });
+
+    expect(textOf(segs)).toBe("oppi command");
+    expect(textOf(segs)).not.toContain("private message");
+  });
+
+  it("does not expose inline write bodies in collapsed chrome", () => {
+    const segs = reg.renderCall("oppi", {
+      args: ["session", "send", "sess-1", "--text", "private message"],
+    });
+
+    expect(textOf(segs)).toBe("oppi session send");
+    expect(textOf(segs)).not.toContain("private message");
+  });
+
+  it("shows a concise result count for session search", () => {
+    const segs = reg.renderResult(
+      "oppi",
+      {
+        args: ["session", "search", "workspace"],
+        data: { total_results: 3, results: [{}, {}, {}] },
+      },
+      false,
+    );
+
+    expect(textOf(segs)).toBe("3 results");
+    expect(styleOf(segs, 0)).toBe("success");
   });
 });
 

@@ -18,7 +18,7 @@ import {
 import { discoverLocalSessions, getPiSessionsRoot } from "../local-sessions.js";
 import { hasToolMediaDetails } from "../session-agent-event-media.js";
 import { materializeToolMediaDetails } from "../session-attachments.js";
-import type { AskQuestion, ServerMessage } from "../types.js";
+import type { AskQuestion, ServerMessage, StyledSegment } from "../types.js";
 import type { RouteDispatcher, RouteHelpers, RouteContext } from "./types.js";
 
 const MAX_E2E_UI_MESSAGE_BYTES = 2 * 1024 * 1024;
@@ -620,11 +620,13 @@ function normalizeThinkingDelta(body: Record<string, unknown>): ServerMessage {
 function normalizeToolStart(body: Record<string, unknown>): ServerMessage | null {
   const tool = stringField(body.tool);
   if (!tool) return null;
+  const callSegments = styledSegmentsField(body.callSegments);
   return {
     type: "tool_start",
     tool,
     args: recordField(body.args) ?? {},
     toolCallId: stringField(body.toolCallId),
+    ...(callSegments ? { callSegments } : {}),
   };
 }
 
@@ -647,13 +649,43 @@ function normalizeToolOutput(body: Record<string, unknown>): ServerMessage | nul
 function normalizeToolEnd(body: Record<string, unknown>): ServerMessage | null {
   const tool = stringField(body.tool);
   if (!tool) return null;
+  const resultSegments = styledSegmentsField(body.resultSegments);
   return {
     type: "tool_end",
     tool,
     toolCallId: stringField(body.toolCallId),
     details: recordField(body.details),
     isError: booleanField(body.isError),
+    ...(resultSegments ? { resultSegments } : {}),
   };
+}
+
+function styledSegmentsField(value: unknown): StyledSegment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const allowedStyles = new Set<NonNullable<StyledSegment["style"]>>([
+    "bold",
+    "muted",
+    "dim",
+    "accent",
+    "success",
+    "warning",
+    "error",
+  ]);
+  const segments = value.flatMap((item): StyledSegment[] => {
+    const record = recordField(item);
+    const text = stringField(record?.text);
+    if (text === undefined) return [];
+    const style = stringField(record?.style);
+    return [
+      {
+        text,
+        ...(style && allowedStyles.has(style as NonNullable<StyledSegment["style"]>)
+          ? { style: style as NonNullable<StyledSegment["style"]> }
+          : {}),
+      },
+    ];
+  });
+  return segments.length > 0 ? segments : undefined;
 }
 
 function normalizeExtensionUISettled(
