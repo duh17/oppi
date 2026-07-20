@@ -1,5 +1,75 @@
 import SwiftUI
 
+struct WorkspaceIconOption: Identifiable, Equatable {
+    let symbolName: String
+    let label: String
+
+    var id: String { symbolName }
+}
+
+enum WorkspaceIconCatalog {
+    static let options: [WorkspaceIconOption] = [
+        .init(symbolName: "folder", label: "Folder"),
+        .init(symbolName: "folder.fill", label: "Folder Filled"),
+        .init(symbolName: "square.grid.2x2", label: "Workspace"),
+        .init(symbolName: "rectangle.3.group", label: "Project"),
+        .init(symbolName: "terminal", label: "Terminal"),
+        .init(symbolName: "chevron.left.forwardslash.chevron.right", label: "Code"),
+        .init(symbolName: "curlybraces", label: "Braces"),
+        .init(symbolName: "command", label: "Command"),
+        .init(symbolName: "hammer", label: "Build"),
+        .init(symbolName: "wrench.and.screwdriver", label: "Tools"),
+        .init(symbolName: "ant", label: "Debug"),
+        .init(symbolName: "shippingbox", label: "Package"),
+        .init(symbolName: "cube", label: "Module"),
+        .init(symbolName: "server.rack", label: "Server"),
+        .init(symbolName: "externaldrive", label: "Storage"),
+        .init(symbolName: "cloud", label: "Cloud"),
+        .init(symbolName: "network", label: "Network"),
+        .init(symbolName: "globe", label: "Web"),
+        .init(symbolName: "arrow.triangle.branch", label: "Branch"),
+        .init(symbolName: "point.3.connected.trianglepath.dotted", label: "Graph"),
+        .init(symbolName: "doc.text", label: "Docs"),
+        .init(symbolName: "book.closed", label: "Book"),
+        .init(symbolName: "text.page", label: "Text"),
+        .init(symbolName: "checklist", label: "Checklist"),
+        .init(symbolName: "tray.full", label: "Archive"),
+        .init(symbolName: "brain", label: "AI"),
+        .init(symbolName: "sparkles", label: "Sparkles"),
+        .init(symbolName: "lightbulb", label: "Idea"),
+        .init(symbolName: "bolt", label: "Fast"),
+        .init(symbolName: "flame", label: "Hot"),
+        .init(symbolName: "star", label: "Favorite"),
+        .init(symbolName: "heart", label: "Heart"),
+        .init(symbolName: "flag", label: "Flag"),
+        .init(symbolName: "tag", label: "Tag"),
+        .init(symbolName: "lock", label: "Secure"),
+        .init(symbolName: "shield", label: "Shield"),
+        .init(symbolName: "person.2", label: "Team"),
+        .init(symbolName: "paintbrush", label: "Design"),
+        .init(symbolName: "photo", label: "Media"),
+        .init(symbolName: "music.note", label: "Audio"),
+        .init(symbolName: "gamecontroller", label: "Game"),
+        .init(symbolName: "graduationcap", label: "Learning"),
+        .init(symbolName: "leaf", label: "Nature"),
+        .init(symbolName: "cart", label: "Shop"),
+    ]
+
+    static func filtered(by query: String) -> [WorkspaceIconOption] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return options }
+
+        return options.filter {
+            $0.label.localizedCaseInsensitiveContains(trimmedQuery)
+                || $0.symbolName.localizedCaseInsensitiveContains(trimmedQuery)
+        }
+    }
+
+    static func label(for symbolName: String) -> String? {
+        options.first { $0.symbolName == symbolName }?.label
+    }
+}
+
 // MARK: - WorkspaceIcon
 
 struct WorkspaceIcon: View {
@@ -27,6 +97,116 @@ struct WorkspaceIcon: View {
                 .font(.system(size: size))
                 .foregroundStyle(.themeBlue)
         }
+    }
+}
+
+struct WorkspaceIconPicker: View {
+    @Binding var selection: String
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+
+    private var filteredOptions: [WorkspaceIconOption] {
+        WorkspaceIconCatalog.filtered(by: searchText)
+    }
+
+    var body: some View {
+        List {
+            Section("Current Icon") {
+                HStack(spacing: 12) {
+                    WorkspaceIcon(icon: selection.isEmpty ? nil : selection, size: 28)
+                        .frame(width: 44, height: 44)
+
+                    Text(currentIconName)
+                        .font(WorkspaceIconCatalog.label(for: selection) == nil && !selection.isEmpty ? .body.monospaced() : .body)
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(2)
+                }
+                .accessibilityElement(children: .combine)
+
+                Button {
+                    selection = ""
+                } label: {
+                    Label("Use Default Icon", systemImage: "arrow.counterclockwise")
+                }
+                .disabled(selection.isEmpty)
+                .accessibilityIdentifier("workspace.iconPicker.default")
+            }
+
+            Section {
+                TextField("Emoji or SF Symbol name", text: $selection)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .accessibilityIdentifier("workspace.iconPicker.custom")
+            } footer: {
+                Text("Choose a symbol below, enter an emoji, or paste an SF Symbol name.")
+            }
+
+            Section("SF Symbols") {
+                if filteredOptions.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                        .frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                } else {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 72), spacing: 8)],
+                        spacing: 8
+                    ) {
+                        ForEach(filteredOptions) { option in
+                            symbolButton(option)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .themedListSurface()
+        .navigationTitle("Choose Icon")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, prompt: "Search symbols")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { dismiss() }
+            }
+        }
+    }
+
+    private var currentIconName: String {
+        if selection.isEmpty { return "Default workspace icon" }
+        return WorkspaceIconCatalog.label(for: selection) ?? selection
+    }
+
+    private func symbolButton(_ option: WorkspaceIconOption) -> some View {
+        let isSelected = selection == option.symbolName
+
+        return Button {
+            selection = option.symbolName
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: option.symbolName)
+                    .font(.title3)
+                    .frame(width: 32, height: 28)
+
+                Text(option.label)
+                    .font(.caption2)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+            }
+            .foregroundStyle(isSelected ? .themeBlue : .themeFg)
+            .frame(maxWidth: .infinity, minHeight: 60)
+            .padding(.horizontal, 4)
+            .background(.themeBlue.opacity(isSelected ? 0.14 : 0), in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(.themeBlue.opacity(isSelected ? 0.7 : 0), lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(option.label)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

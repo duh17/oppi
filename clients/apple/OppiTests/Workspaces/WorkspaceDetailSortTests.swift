@@ -167,6 +167,27 @@ struct WorkspaceEditSaveCompletionTests {
     }
 }
 
+@Suite("Workspace icon picker catalog")
+struct WorkspaceIconPickerCatalogTests {
+    @Test func emptySearchReturnsEveryCuratedSymbol() {
+        #expect(WorkspaceIconCatalog.filtered(by: "").count == WorkspaceIconCatalog.options.count)
+    }
+
+    @Test func searchMatchesLabelsAndSymbolNamesCaseInsensitively() {
+        #expect(WorkspaceIconCatalog.filtered(by: "CODE").contains { $0.symbolName == "chevron.left.forwardslash.chevron.right" })
+        #expect(WorkspaceIconCatalog.filtered(by: "branch").contains { $0.symbolName == "arrow.triangle.branch" })
+    }
+
+    @Test func unmatchedSearchReturnsNoSymbols() {
+        #expect(WorkspaceIconCatalog.filtered(by: "definitely-not-an-icon").isEmpty)
+    }
+
+    @Test func curatedSymbolsResolveToHumanFacingLabels() {
+        #expect(WorkspaceIconCatalog.label(for: "chevron.left.forwardslash.chevron.right") == "Code")
+        #expect(WorkspaceIconCatalog.label(for: "🧠") == nil)
+    }
+}
+
 @Suite("Workspace Pi Resource Error Policy")
 struct WorkspacePiResourceErrorPolicyTests {
     @Test func cancellationDoesNotPresentAsSettingsError() {

@@ -74,6 +74,8 @@ struct WorkspaceEditView: View {
     @State private var error: String?
     @State private var availableModels: [ModelInfo] = []
     @State private var selectedSkillDetail: SkillDetailDestination?
+    @State private var isShowingIconPicker = false
+    @State private var iconPickerDetent: PresentationDetent = .large
     @State private var isShowingSystemPromptEditor = false
     @State private var runtime: WorkspaceRuntime?
     @State private var allowedHostsText: String = ""
@@ -131,6 +133,11 @@ struct WorkspaceEditView: View {
         hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var iconDisplayName: String {
+        if icon.isEmpty { return "Default" }
+        return WorkspaceIconCatalog.label(for: icon) ?? icon
+    }
+
     private var canSave: Bool {
         if name.isEmpty || isSaving { return false }
         if !trimmedHostMount.isEmpty {
@@ -181,10 +188,29 @@ struct WorkspaceEditView: View {
                     .accessibilityIdentifier("workspace.edit.name")
                 TextField("Description", text: $description)
                     .accessibilityIdentifier("workspace.edit.description")
-                TextField("Icon (SF Symbol or emoji)", text: $icon)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .accessibilityIdentifier("workspace.edit.icon")
+                Button {
+                    isShowingIconPicker = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Text("Icon")
+                            .foregroundStyle(.themeFg)
+
+                        Spacer(minLength: 12)
+
+                        WorkspaceIcon(icon: icon.isEmpty ? nil : icon, size: 22)
+                            .frame(width: 32, height: 32)
+
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.themeComment)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Workspace icon")
+                .accessibilityValue(iconDisplayName)
+                .accessibilityHint("Opens the icon picker")
+                .accessibilityIdentifier("workspace.edit.icon")
             }
             .selectionDisabled()
 
@@ -338,6 +364,13 @@ struct WorkspaceEditView: View {
         }
         .navigationDestination(item: $selectedSkillDetail) { dest in
             SkillDetailView(skillName: dest.skillName, cwd: dest.cwd)
+        }
+        .sheet(isPresented: $isShowingIconPicker) {
+            NavigationStack {
+                WorkspaceIconPicker(selection: $icon)
+            }
+            .presentationDetents([.medium, .large], selection: $iconPickerDetent)
+            .presentationDragIndicator(.visible)
         }
         .navigationDestination(isPresented: $isShowingSystemPromptEditor) {
             WorkspaceSystemPromptEditorView(systemPrompt: $systemPrompt)
