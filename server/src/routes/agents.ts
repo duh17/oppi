@@ -346,7 +346,7 @@ function applyOverrides(
 ): AgentDefinition {
   if (overrides === undefined) return agent;
   if (!isRecord(overrides)) throw new Error("overrides must be an object");
-  return validateAgentDefinition({
+  const merged = {
     ...agent,
     sessionDefaults: {
       ...(agent.sessionDefaults ?? {}),
@@ -356,7 +356,17 @@ function applyOverrides(
       ...("excludeTools" in overrides ? { excludeTools: overrides.excludeTools } : {}),
       ...("noTools" in overrides ? { noTools: overrides.noTools } : {}),
     },
-  });
+  };
+  if (typeof agent.icon !== "string") return validateAgentDefinition(merged);
+
+  // Launch overrides cannot change presentation. Historical stores may contain an icon
+  // accepted before strict validation, so validate every behavioral field without
+  // revalidating that unchanged string.
+  const { icon: _historicalIcon, ...behavioralDefinition } = merged;
+  return {
+    ...validateAgentDefinition(behavioralDefinition),
+    icon: agent.icon,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

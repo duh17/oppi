@@ -6,6 +6,22 @@ import UIKit
 @Suite("AssistantTimelineRowContentView")
 struct AssistantTimelineRowContentViewTests {
     @MainActor
+    @Test func assistantBadgeUsesAgentIconAndKeepsFixedGeometry() throws {
+        let badge = SessionGridBadgeView()
+        badge.sessionId = "session-1"
+        badge.agentId = "agent-reviewer"
+        badge.agentIcon = "checkmark.shield"
+
+        let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
+        #expect(imageView.image != nil)
+        #expect(badge.intrinsicContentSize == CGSize(width: 18, height: 18))
+
+        badge.agentIcon = "not/a/symbol"
+        #expect(imageView.image != nil)
+        #expect(badge.intrinsicContentSize == CGSize(width: 18, height: 18))
+    }
+
+    @MainActor
     @Test func rendersMarkdownLinksAsClickable() throws {
         let text = "See [the docs](https://example.com) for details"
         let view = AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: text))

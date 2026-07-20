@@ -5,12 +5,15 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { RuntimeDisconnectedError } from "../src/agent-runtime-transport.js";
+import { AgentDefinitionStore } from "../src/agent-definitions.js";
+import { DEFAULT_AGENT_ID } from "../src/default-agent.js";
 import {
   SessionLifecycleError,
   SessionLifecycleService,
   type SessionLifecycleServiceDeps,
 } from "../src/session-lifecycle-service.js";
 import { getPiSessionsRoot } from "../src/local-sessions.js";
+import { buildSessionSummary } from "../src/session-summary.js";
 import type { Session, Workspace } from "../src/types.js";
 
 function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
@@ -49,6 +52,7 @@ function makeService(
     sendPromptError?: Error;
     workspace?: Workspace;
     dataDir?: string;
+    agentDefinitionStore?: AgentDefinitionStore;
   } = {},
 ): {
   service: SessionLifecycleService;
@@ -108,6 +112,19 @@ function makeService(
       getWorkspace,
       listSessions,
       saveSession,
+      getAgentDefinitionStore: () =>
+        options.agentDefinitionStore ??
+        ({
+          getAgent: () => ({
+            id: DEFAULT_AGENT_ID,
+            name: "Default Agent",
+            status: "active",
+            version: 1,
+            definition: { name: "Default Agent" },
+            createdAt: 1,
+            updatedAt: 1,
+          }),
+        } as AgentDefinitionStore),
     },
     sessions: { runCommand, sendPrompt, startSession, stopSession },
     sessionRuntimes: {
@@ -303,6 +320,7 @@ describe("SessionLifecycleService", () => {
         launch: {
           source: "human",
           agentId: "oppi-default-agent",
+          agentVersion: 1,
           target: { server: true, displayCwd: "Oppi Control" },
           tools: { allowed: ["oppi", "ask"], noTools: "builtin" },
         },
@@ -319,6 +337,38 @@ describe("SessionLifecycleService", () => {
         contextWindow: 200_000,
       });
       expect(result.prompted).toBe(true);
+    });
+
+    it("snapshots customized Default Agent presentation through lifecycle and summary", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-agent-presentation-"));
+      const agentDefinitionStore = new AgentDefinitionStore(dataDir);
+      try {
+        const customized = agentDefinitionStore.updateAgent(DEFAULT_AGENT_ID, { icon: "🏠" });
+        expect(customized?.version).toBe(2);
+
+        const { service } = makeService({
+          dataDir,
+          agentDefinitionStore,
+          forkSession: makeSession({ id: "control-agent-icon", workspaceId: undefined }),
+        });
+        const result = await service.createControlSession({
+          control: { domain: "agents", intent: "create" },
+        });
+        const summary = buildSessionSummary(result.session);
+
+        expect(result.session.launch).toMatchObject({
+          agentId: DEFAULT_AGENT_ID,
+          agentVersion: 2,
+          agentIcon: "🏠",
+        });
+        expect(summary).toMatchObject({
+          agentId: DEFAULT_AGENT_ID,
+          agentIcon: "🏠",
+        });
+      } finally {
+        agentDefinitionStore.close();
+        rmSync(dataDir, { recursive: true, force: true });
+      }
     });
 
     it("resumes declared control sessions without a workspace", async () => {

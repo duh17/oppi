@@ -41,6 +41,15 @@ const TEST_SESSION: Session = {
   contextWindow: 200000,
   lastMessage: "I've updated the README with the new API docs.",
   thinkingLevel: "high",
+  launch: {
+    source: "agent",
+    agentId: "agent-reviewer",
+    agentVersion: 4,
+    agentIcon: "checkmark.shield",
+    status: "accepted",
+    requestedAt: 1739750399000,
+    completedAt: 1739750400000,
+  },
   piSessionFile: "/tmp/pi-sessions/abc123.jsonl",
   piSessionFiles: ["/tmp/pi-sessions/abc123.jsonl"],
   piSessionId: "uuid-abc-123",
@@ -65,6 +74,8 @@ const TEST_SESSION_SUMMARY: SessionSummary = {
   firstMessage: TEST_SESSION.firstMessage,
   lastMessage: TEST_SESSION.lastMessage,
   thinkingLevel: TEST_SESSION.thinkingLevel,
+  agentId: TEST_SESSION.launch?.agentId,
+  agentIcon: TEST_SESSION.launch?.agentIcon,
   ephemeral: TEST_SESSION.ephemeral,
 };
 

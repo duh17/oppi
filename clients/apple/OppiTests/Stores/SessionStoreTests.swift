@@ -279,6 +279,45 @@ struct SessionStorePartitioningTests {
         #expect(store.session(id: "s1")?.model == "openai-codex/gpt-5.4")
     }
 
+    @Test func summaryAndFullStateMergesPreserveAgentPresentationSnapshot() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        var launched = makeTestSession(id: "s1", workspaceId: "w1", status: .busy)
+        launched.launch = SessionLaunchMetadata(
+            agentId: "agent-reviewer",
+            agentIcon: "checkmark.shield"
+        )
+        store.upsert(launched)
+
+        let partial = makeTestSession(id: "s1", workspaceId: "w1", status: .ready)
+        store.upsert(partial)
+
+        #expect(store.session(id: "s1")?.launch?.agentId == "agent-reviewer")
+        #expect(store.session(id: "s1")?.launch?.agentIcon == "checkmark.shield")
+        #expect(store.listProjectionSessions.first?.launch?.agentIcon == "checkmark.shield")
+    }
+
+    @Test func partialLaunchMetadataMergesAgentIdentityFieldsIndividually() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        var launched = makeTestSession(id: "s1", workspaceId: "w1", status: .busy)
+        launched.launch = SessionLaunchMetadata(
+            agentId: "agent-reviewer",
+            agentIcon: "checkmark.shield"
+        )
+        store.upsert(launched)
+
+        var sparse = makeTestSession(id: "s1", workspaceId: "w1", status: .ready)
+        sparse.launch = SessionLaunchMetadata(agentId: "agent-reviewer", agentIcon: nil)
+        store.upsert(sparse)
+
+        #expect(store.session(id: "s1")?.launch?.agentId == "agent-reviewer")
+        #expect(store.session(id: "s1")?.launch?.agentIcon == "checkmark.shield")
+        #expect(store.listProjectionSessions.first?.launch?.agentIcon == "checkmark.shield")
+    }
+
     @Test func applyServerSnapshotPreservesWorkspaceContextAndModelWhenSnapshotOmitsThem() {
         let store = SessionStore()
         store.switchServer(to: "srv1")

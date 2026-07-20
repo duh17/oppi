@@ -4,6 +4,8 @@ import Foundation
 final class ChatTimelineControllerContext {
     var sessionId = ""
     var workspaceId: String?
+    var agentId: String?
+    var agentIcon: String?
     var routeScope: SessionRouteScope?
     var onFork: ((String) -> Void)?
     var onShowEarlier: (() -> Void)?
@@ -26,9 +28,17 @@ final class ChatTimelineControllerContext {
             || routeScope != configuration.routeScope
     }
 
+    func didChangeAgentPresentation(
+        for configuration: ChatTimelineCollectionHost.Configuration
+    ) -> Bool {
+        agentId != configuration.agentId || agentIcon != configuration.agentIcon
+    }
+
     func apply(configuration: ChatTimelineCollectionHost.Configuration) {
         sessionId = configuration.sessionId
         workspaceId = configuration.workspaceId
+        agentId = configuration.agentId
+        agentIcon = configuration.agentIcon
         routeScope = configuration.routeScope
         onFork = configuration.onFork
         onShowEarlier = configuration.onShowEarlier

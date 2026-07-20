@@ -180,6 +180,24 @@ struct TimelineSnapshotApplierTests {
         #expect(result == ["tool-1"])
     }
 
+    @Test func agentPresentationChangesTargetOnlyAssistantRows() {
+        let ids = ["user-1", "assistant-1", "tool-1", "thinking-1", "assistant-2"]
+        let items: [String: ChatItem] = [
+            "user-1": .userMessage(id: "user-1", text: "Hello", timestamp: timestamp),
+            "assistant-1": .assistantMessage(id: "assistant-1", text: "Hi", timestamp: timestamp),
+            "tool-1": .toolCall(id: "tool-1", tool: "bash", argsSummary: "", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+            "thinking-1": .thinking(id: "thinking-1", preview: "Thinking", hasMore: false, isDone: true),
+            "assistant-2": .assistantMessage(id: "assistant-2", text: "Done", timestamp: timestamp),
+        ]
+
+        let result = TimelineSnapshotApplier.assistantPresentationItemIDs(
+            nextIDs: ids,
+            nextItemByID: items
+        )
+
+        #expect(result == ["assistant-1", "assistant-2"])
+    }
+
     // MARK: - Animated reconfigure filtering
 
     @Test func loadMoreFilteredFromReconfigureWhenAnimating() {

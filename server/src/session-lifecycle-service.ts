@@ -96,6 +96,7 @@ export interface SessionLifecycleServiceDeps {
     | "getDataDir"
     | "getSession"
     | "getWorkspace"
+    | "getAgentDefinitionStore"
     | "findSessionByLaunchIdempotencyKey"
     | "listSessions"
     | "saveSession"
@@ -204,6 +205,11 @@ export class SessionLifecycleService {
     prompt?: string;
   }): Promise<CreateWorkspaceSessionResult> {
     const now = Date.now();
+    const defaultAgent = this.deps.storage.getAgentDefinitionStore().getAgent(DEFAULT_AGENT_ID);
+    if (!defaultAgent) {
+      throw new SessionLifecycleError("Default Agent is unavailable", 500);
+    }
+    const defaultAgentIcon = defaultAgent.definition.icon?.trim();
     const session = this.deps.storage.createSession(
       params.name?.trim() || "Oppi Control",
       params.model?.trim() || undefined,
@@ -217,6 +223,8 @@ export class SessionLifecycleService {
     session.launch = {
       source: "human",
       agentId: DEFAULT_AGENT_ID,
+      agentVersion: defaultAgent.version,
+      ...(defaultAgentIcon ? { agentIcon: defaultAgentIcon } : {}),
       target: { server: true, displayCwd: "Oppi Control" },
       tools: { allowed: [...DEFAULT_AGENT_TOOL_NAMES], noTools: "builtin" },
       status: "launching",

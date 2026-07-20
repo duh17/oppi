@@ -146,7 +146,7 @@ oppi token rotate            # rotate owner bearer token
 oppi update                  # update the npm-installed server and CLI
 ```
 
-Saved Agents and schedules are available from the Oppi sidebar and the server CLI/API. Saved Agents hold reusable Agent definitions. Schedules store at/every/cron triggers plus a workspace, saved Agent, or existing-session action and keep run history for manual or approved automatic runs. Control sessions pass structured Agent and schedule revisions through bounded `--definition-json` arguments instead of temporary files. For the full CLI surface, run `oppi --help` or see [server/README.md](server/README.md).
+Saved Agents and schedules are available from the Oppi sidebar and the server CLI/API. Saved Agents hold reusable Agent definitions and can use one Unicode emoji or SF Symbol name as an icon. The icon appears in Agent management and sessions launched from that Agent; clearing it uses the generic Agent icon. Schedules store at/every/cron triggers plus a workspace, saved Agent, or existing-session action and keep run history for manual or approved automatic runs. Control sessions pass structured Agent and schedule revisions through bounded `--definition-json` arguments instead of temporary files. For the full CLI surface, run `oppi --help` or see [server/README.md](server/README.md).
 
 ## Mac app shell (experimental)
 

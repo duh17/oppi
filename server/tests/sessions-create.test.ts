@@ -62,6 +62,7 @@ interface MockRouteContext {
   storage: {
     getDataDir: ReturnType<typeof vi.fn>;
     getWorkspace: ReturnType<typeof vi.fn>;
+    getAgentDefinitionStore: ReturnType<typeof vi.fn>;
     createSession: ReturnType<typeof vi.fn>;
     saveSession: ReturnType<typeof vi.fn>;
     getSession: ReturnType<typeof vi.fn>;
@@ -98,6 +99,17 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
   const storage = {
     getDataDir: vi.fn().mockReturnValue("/tmp/oppi-routes-sessions-create-tests"),
     getWorkspace: vi.fn().mockReturnValue(ws),
+    getAgentDefinitionStore: vi.fn().mockReturnValue({
+      getAgent: vi.fn().mockReturnValue({
+        id: "oppi-default-agent",
+        name: "Default Agent",
+        status: "active",
+        version: 3,
+        definition: { name: "Default Agent", icon: "sparkles" },
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    }),
     createSession: vi.fn().mockImplementation((name?: string, model?: string) =>
       makeSession({
         id: `sess-${Date.now()}`,
@@ -286,7 +298,11 @@ describe("POST /control-sessions", () => {
           model: "anthropic/claude-opus-4-8",
           thinkingLevel: "high",
           control: { domain: "schedules", intent: "create" },
-          launch: { agentId: "oppi-default-agent" },
+          launch: {
+            agentId: "oppi-default-agent",
+            agentVersion: 3,
+            agentIcon: "sparkles",
+          },
         },
       },
     });

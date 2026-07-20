@@ -32,6 +32,8 @@ extension ChatTimelineCollectionHost.Controller {
             onFork: nil,
             itemID: itemID,
             sessionId: sessionId,
+            agentId: agentId,
+            agentIcon: agentIcon,
             interactionContext: interactionContext,
             workspaceID: workspaceId,
             serverBaseURL: connection?.apiClient?.baseURL,

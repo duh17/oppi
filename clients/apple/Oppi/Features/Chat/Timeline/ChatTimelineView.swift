@@ -48,6 +48,8 @@ struct ChatTimelineView: View {
 
     let sessionId: String
     let workspaceId: String?
+    var agentId: String? = nil
+    var agentIcon: String? = nil
     var routeScope: SessionRouteScope?
     let isBusy: Bool
     let extensionWorkingState: ExtensionWorkingState?
@@ -119,6 +121,8 @@ struct ChatTimelineView: View {
                 streamingAssistantID: reducer.streamingAssistantID,
                 sessionId: sessionId,
                 workspaceId: workspaceId,
+                agentId: agentId,
+                agentIcon: agentIcon,
                 routeScope: routeScope,
                 onFork: onFork,
                 onBackSwipe: onBackSwipe,
@@ -166,7 +170,11 @@ struct ChatTimelineView: View {
         .background(Color.themeBg)
         .overlay {
             if reducer.items.isEmpty && !isBusy {
-                ChatEmptyState(sessionId: sessionId)
+                ChatEmptyState(
+                    sessionId: sessionId,
+                    agentId: agentId,
+                    agentIcon: agentIcon
+                )
                     .padding(.top, topOverlap)
                     .padding(.bottom, bottomOverlap)
             }

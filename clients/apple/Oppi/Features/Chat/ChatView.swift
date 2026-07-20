@@ -205,6 +205,13 @@ struct ChatView: View {
         return connection.workspaceStore.workspaces.first { $0.id == workspaceId }
     }
 
+    private var assistantIdentityPresentation: AssistantIdentityPresentation {
+        AssistantIdentityPresentation.resolve(
+            agentId: session?.launch?.agentId,
+            agentIcon: session?.launch?.agentIcon
+        )
+    }
+
     private var timelineWorkspaceId: String? {
         let sessionWorkspaceId = session?.workspaceId?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let sessionWorkspaceId, !sessionWorkspaceId.isEmpty {
@@ -385,6 +392,8 @@ struct ChatView: View {
         ChatTimelineView(
             sessionId: sessionId,
             workspaceId: timelineWorkspaceId,
+            agentId: session?.launch?.agentId,
+            agentIcon: session?.launch?.agentIcon,
             routeScope: focusedRouteScope,
             isBusy: isBusy,
             extensionWorkingState: extensionSurfaceState?.working,
@@ -958,7 +967,11 @@ struct ChatView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Rename session")
-        .accessibilityValue(sessionDisplayName)
+        .accessibilityValue(
+            assistantIdentityPresentation == .globalAvatar
+                ? sessionDisplayName
+                : "\(sessionDisplayName), launched with a saved Agent"
+        )
         .contextMenu {
             Button("Copy Session ID", systemImage: "doc.on.doc") {
                 copySessionID()
@@ -1035,6 +1048,14 @@ struct ChatView: View {
     private var sessionTitleLabel: some View {
         VStack(spacing: 1) {
             HStack(spacing: 6) {
+                if case .agent = assistantIdentityPresentation {
+                    AgentIconView(
+                        value: session?.launch?.agentIcon,
+                        size: 18,
+                        frameSize: 20
+                    )
+                }
+
                 Text(sessionDisplayName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.themeFg)

@@ -58,6 +58,13 @@ struct ControlSessionMetadata: Codable, Sendable, Equatable {
     let targetName: String?
 }
 
+/// Presentation-only subset of immutable session launch metadata.
+/// Execution identity remains server-owned through Agent ID and version.
+struct SessionLaunchMetadata: Codable, Sendable, Equatable {
+    var agentId: String?
+    var agentIcon: String?
+}
+
 /// Selects the server route family for operations on a focused session.
 enum SessionRouteScope: Sendable, Hashable {
     case workspace(String)
@@ -162,6 +169,7 @@ struct Session: Identifiable, Sendable, Equatable {
     var mirror: PiTuiMirrorSessionMetadata? = nil
     var piSessionId: String? = nil
     var control: ControlSessionMetadata? = nil
+    var launch: SessionLaunchMetadata? = nil
 
     // Privacy / persistence
     var ephemeral: Bool?
@@ -257,6 +265,8 @@ struct SessionSummary: Sendable, Equatable {
     var mirror: PiTuiMirrorSessionMetadata? = nil
     var piSessionId: String? = nil
     var control: ControlSessionMetadata? = nil
+    var agentId: String? = nil
+    var agentIcon: String? = nil
     var ephemeral: Bool?
     var pendingAskCount: Int {
         didSet { hasPendingAskCount = true }
@@ -293,6 +303,7 @@ struct SessionSummary: Sendable, Equatable {
             mirror: mirror,
             piSessionId: piSessionId,
             control: control,
+            launch: agentId.map { SessionLaunchMetadata(agentId: $0, agentIcon: agentIcon) },
             ephemeral: ephemeral
         )
     }
@@ -324,6 +335,8 @@ extension SessionSummary {
         self.mirror = session.mirror
         self.piSessionId = session.piSessionId
         self.control = session.control
+        self.agentId = session.launch?.agentId
+        self.agentIcon = session.launch?.agentIcon
         self.ephemeral = session.ephemeral
         self.pendingAskCount = 0
         self.hasPendingAskCount = false
@@ -335,7 +348,7 @@ private enum SessionWireCodingKeys: String, CodingKey {
     case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
     case model, messageCount, tokens, cost, changeStats
     case contextTokens, contextWindow, firstMessage, lastMessage
-    case thinkingLevel, runtime, mirror, piSessionId, control, ephemeral
+    case thinkingLevel, runtime, mirror, piSessionId, control, launch, agentId, agentIcon, ephemeral
     case pendingAskCount
 }
 
@@ -364,6 +377,9 @@ private struct DecodedSessionWireFields {
     let mirror: PiTuiMirrorSessionMetadata?
     let piSessionId: String?
     let control: ControlSessionMetadata?
+    let launch: SessionLaunchMetadata?
+    let agentId: String?
+    let agentIcon: String?
     let ephemeral: Bool?
 
     init(from container: KeyedDecodingContainer<SessionWireCodingKeys>) throws {
@@ -391,13 +407,19 @@ private struct DecodedSessionWireFields {
         mirror = try container.decodeIfPresent(PiTuiMirrorSessionMetadata.self, forKey: .mirror)
         piSessionId = try container.decodeIfPresent(String.self, forKey: .piSessionId)
         control = try container.decodeIfPresent(ControlSessionMetadata.self, forKey: .control)
+        launch = try container.decodeIfPresent(SessionLaunchMetadata.self, forKey: .launch)
+        agentId = try container.decodeIfPresent(String.self, forKey: .agentId)
+        agentIcon = try container.decodeIfPresent(String.self, forKey: .agentIcon)
         ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral)
     }
 }
 
 private extension DecodedSessionWireFields {
     func makeSession() -> Session {
-        Session(
+        let presentationLaunch = launch ?? agentId.map {
+            SessionLaunchMetadata(agentId: $0, agentIcon: agentIcon)
+        }
+        return Session(
             id: id,
             workspaceId: workspaceId,
             workspaceName: workspaceName,
@@ -422,6 +444,7 @@ private extension DecodedSessionWireFields {
             mirror: mirror,
             piSessionId: piSessionId,
             control: control,
+            launch: presentationLaunch,
             ephemeral: ephemeral
         )
     }
@@ -487,6 +510,7 @@ extension Session: Codable {
         try c.encodeIfPresent(mirror, forKey: .mirror)
         try c.encodeIfPresent(piSessionId, forKey: .piSessionId)
         try c.encodeIfPresent(control, forKey: .control)
+        try c.encodeIfPresent(launch, forKey: .launch)
         try c.encodeIfPresent(ephemeral, forKey: .ephemeral)
 
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)

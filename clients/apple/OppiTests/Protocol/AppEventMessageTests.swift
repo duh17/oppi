@@ -31,6 +31,8 @@ struct AppEventMessageTests {
             "messageCount": 2,
             "tokens": { "input": 10, "output": 5 },
             "cost": 0.01,
+            "agentId": "agent-reviewer",
+            "agentIcon": "checkmark.shield",
             "pendingAskCount": 0
           }
         }
@@ -46,6 +48,9 @@ struct AppEventMessageTests {
         #expect(summary.status == .busy)
         #expect(summary.pendingAskCount == 0)
         #expect(summary.hasPendingAskCount)
+        #expect(summary.agentId == "agent-reviewer")
+        #expect(summary.agentIcon == "checkmark.shield")
+        #expect(summary.session.launch?.agentIcon == "checkmark.shield")
     }
 
     @Test func decodesExtensionUIRequestWithWorkspaceRouting() throws {
