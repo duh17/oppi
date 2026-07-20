@@ -245,6 +245,105 @@ struct MetricKitSerializerTests {
         #expect(metadata["lastStallDurationMs"] == nil)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func reentrantPersistenceCannotDeadlockCrashContextRecording() async {
+        let persistence = ReentrantCrashContextPersistence()
+        let didReenter = LockedFlag()
+        MetricKitCrashContextStore.clearForTesting()
+        MetricKitCrashContextStore.setPersistenceForTesting(persistence)
+        defer {
+            MetricKitCrashContextStore.setPersistenceForTesting(nil)
+            MetricKitCrashContextStore.clearForTesting()
+        }
+
+        persistence.onSave = { key in
+            guard key == MetricKitCrashContextStore.currentContextKey,
+                  didReenter.claim() else { return }
+
+            // Reproduce the production watchdog stack: persisting queue-sync state
+            // synchronously re-enters lifecycle recording before the save returns.
+            MetricKitCrashContextStore.recordAppContext(
+                sessionId: "session-reentrant",
+                workspaceId: "workspace-reentrant",
+                activeServerId: "server-1",
+                screen: "chat",
+                scenePhase: "background",
+                lifecycleEvent: "scene_phase",
+                lifecycleStep: "begin"
+            )
+        }
+
+        MetricKitCrashContextStore.record(
+            sessionId: "session-reentrant",
+            workspaceId: "workspace-reentrant",
+            streamState: "queueSync.initial"
+        )
+        await MetricKitCrashContextStore.waitForPersistenceForTesting()
+
+        let current = MetricKitCrashContextStore.snapshotMetadata()
+        let persisted = persistence.decodedContext(forKey: MetricKitCrashContextStore.currentContextKey)
+        #expect(didReenter.value)
+        #expect(current["lastLifecycleStep"] == "begin")
+        #expect(persisted?.lifecycleStep == "begin")
+        #expect(persisted?.streamState == "queueSync.initial")
+    }
+
+    @Test func concurrentCrashContextUpdatesPersistTheNewestSnapshot() async {
+        let persistence = ReentrantCrashContextPersistence()
+        MetricKitCrashContextStore.clearForTesting()
+        MetricKitCrashContextStore.setPersistenceForTesting(persistence)
+        defer {
+            MetricKitCrashContextStore.setPersistenceForTesting(nil)
+            MetricKitCrashContextStore.clearForTesting()
+        }
+
+        await withTaskGroup(of: Void.self) { group in
+            for index in 0..<200 {
+                group.addTask {
+                    MetricKitCrashContextStore.record(
+                        sessionId: "session-\(index)",
+                        workspaceId: "workspace-concurrent",
+                        streamState: "state-\(index)"
+                    )
+                }
+            }
+        }
+        await MetricKitCrashContextStore.waitForPersistenceForTesting()
+
+        let current = MetricKitCrashContextStore.snapshot()
+        let persisted = persistence.decodedContext(forKey: MetricKitCrashContextStore.currentContextKey)
+        #expect(current != nil)
+        #expect(persisted == current)
+    }
+
+    @Test func launchPrefersTheImmediatelyPreviousProcessOverOlderPostMortemContext() {
+        MetricKitCrashContextStore.clearForTesting()
+        MetricKitCrashContextStore.recordAppContext(
+            sessionId: "process-n-minus-two",
+            workspaceId: "workspace-old",
+            activeServerId: "server-1",
+            screen: "workspace_inbox_all",
+            scenePhase: "background"
+        )
+        let olderPostMortem = MetricKitCrashContextStore.snapshot()
+
+        MetricKitCrashContextStore.recordAppContext(
+            sessionId: "process-n-minus-one",
+            workspaceId: "workspace-new",
+            activeServerId: "server-1",
+            screen: "chat",
+            scenePhase: "background"
+        )
+        let immediatelyPrevious = MetricKitCrashContextStore.snapshot()
+
+        let selected = MetricKitCrashContextStore.previousProcessContext(
+            current: immediatelyPrevious,
+            existingPostMortem: olderPostMortem
+        )
+        #expect(selected?.sessionId == "process-n-minus-one")
+        #expect(selected?.screen == "chat")
+    }
+
     @Test func previousProcessContextSurvivesFirstContextWriteAfterRelaunch() {
         MetricKitCrashContextStore.clearForTesting()
         MetricKitCrashContextStore.recordAppContext(
@@ -478,6 +577,45 @@ struct MainThreadLagWatchdogTests {
         #expect(evaluation != nil)
         #expect(watchdog.isRunningForTesting())
         watchdog.stop()
+    }
+}
+
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = false
+
+    var value: Bool { lock.withLock { storage } }
+
+    func claim() -> Bool {
+        lock.withLock {
+            guard !storage else { return false }
+            storage = true
+            return true
+        }
+    }
+}
+
+private final class ReentrantCrashContextPersistence: MetricKitCrashContextPersisting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Data] = [:]
+    var onSave: (@Sendable (String) -> Void)?
+
+    func data(forKey key: String) -> Data? {
+        lock.withLock { storage[key] }
+    }
+
+    func set(_ data: Data, forKey key: String) {
+        lock.withLock { storage[key] = data }
+        onSave?(key)
+    }
+
+    func removeObject(forKey key: String) {
+        lock.withLock { storage.removeValue(forKey: key) }
+    }
+
+    func decodedContext(forKey key: String) -> MetricKitCrashContext? {
+        guard let data = data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(MetricKitCrashContext.self, from: data)
     }
 }
 
