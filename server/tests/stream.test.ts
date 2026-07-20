@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { WebSocket } from "ws";
 import { BoundSessionStreamMux, DictationStreamMux, type StreamContext } from "../src/stream.js";
 import type { SessionCatchUpResponse } from "../src/session-broadcast.js";
+import { Storage } from "../src/storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "../src/types.js";
 
 function makeSession(id: string, workspaceId?: string): Session {
@@ -211,6 +215,41 @@ describe("BoundSessionStreamMux", () => {
       await mux.handleControlWebSocket(session.id, rejected as unknown as WebSocket);
       expect(rejected.closeCode).toBe(1008);
       expect(rejected.sent).toEqual([]);
+    }
+  });
+
+  it("opens a control stream after the declared session is reloaded from SQLite", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-control-stream-store-"));
+
+    try {
+      const writer = new Storage(dir);
+      const control = writer.createSession("Persisted control session");
+      control.control = {
+        domain: "schedules",
+        intent: "revise",
+        targetId: "schedule-1",
+        targetName: "Nightly",
+      };
+      writer.saveSession(control);
+
+      const reader = new Storage(dir);
+      const persisted = reader.getSession(control.id);
+      if (!persisted) throw new Error("Expected the control session to survive SQLite reload");
+      expect(persisted.control).toEqual(control.control);
+      expect(persisted.workspaceId).toBeUndefined();
+
+      const { ctx } = createMockContext([persisted]);
+      ctx.storage = reader;
+      const mux = new BoundSessionStreamMux(ctx);
+      const ws = new FakeWebSocket();
+
+      await mux.handleControlWebSocket(control.id, ws as unknown as WebSocket);
+
+      expect(ws.closeCode).toBeUndefined();
+      expect(ws.sentOfType("stream_connected")).toHaveLength(1);
+      expect(ws.sentOfType("connected", control.id)).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 

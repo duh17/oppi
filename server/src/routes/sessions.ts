@@ -263,6 +263,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       targetId?: unknown;
       targetName?: unknown;
       name?: unknown;
+      model?: unknown;
+      thinking?: unknown;
       prompt?: unknown;
     }>(req);
     if (
@@ -275,6 +277,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       (body.targetName !== undefined &&
         (typeof body.targetName !== "string" || !body.targetName.trim())) ||
       (body.name !== undefined && typeof body.name !== "string") ||
+      (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim())) ||
+      (body.thinking !== undefined &&
+        (typeof body.thinking !== "string" ||
+          !CREATE_SESSION_THINKING_LEVELS.has(body.thinking))) ||
       (body.prompt !== undefined && typeof body.prompt !== "string")
     ) {
       helpers.error(res, 400, "Invalid control session metadata");
@@ -292,6 +298,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
           ...(targetName ? { targetName } : {}),
         },
         name: body.name,
+        model: typeof body.model === "string" ? body.model.trim() : undefined,
+        thinking: typeof body.thinking === "string" ? body.thinking : undefined,
         prompt: body.prompt,
       });
       ctx.appEvents?.emitSessionCreated(result.createdSession);

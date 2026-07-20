@@ -153,7 +153,7 @@ The private loopback is an adapter, not another API. Iroh transport code must no
 - `routes/workspaces.ts` — workspace catalog, CRUD, Git status, worktrees, quick actions, review comments.
 - `routes/sessions.ts` — session HTTP boundary for workspace and declared control scopes: create/import, resume, stop, fork, delete, traces, catch-up, tool output, session files, and diffs. Lifecycle, list, and trace/file policy is delegated to application services.
 - `routes/agents.ts` — saved Agent definitions and saved-Agent session launches.
-- `routes/schedules.ts` — schedule CRUD, manual runs, run history, and pause/resume/archive.
+- `routes/schedules.ts` — schedule CRUD, manual runs, run history, and pause/resume/archive/restore.
 - `routes/uploads.ts` — chat attachment upload records and content.
 - `routes/workspace-files.ts` — workspace path, directory, and raw-file routes.
 - `routes/themes.ts`, `routes/skills.ts`, `routes/provider-auth.ts`, `routes/telemetry.ts`, and E2E harness routes.
@@ -199,11 +199,11 @@ A stopped, disconnected mirror session with a canonical session file can be prom
 
 Saved Agent routes persist reusable definitions. Launch-time inputs such as workspace, worktree, prompt, model override, and session name flow through `AgentLaunchService`, which owns idempotency, launch recovery, and prompt dispatch into managed sessions.
 
-A server-scoped Oppi Control session persists explicit `domain`, `intent`, and optional target metadata with no `workspaceId`. `/control-sessions` routes enforce that declaration before reusing the ordinary lifecycle, trace, attachment, command, approval, broadcaster, and focused-stream services. Control sessions remain in the global recent projection but never enter workspace catalogs or counts. The Default Agent's `oppi` tool remains the only allowed tool, and every write keeps its existing explicit approval.
+A server-scoped Oppi Control session persists explicit `domain`, `intent`, and optional target metadata with no `workspaceId`. Creation may set model and thinking overrides for the Default Agent, while a user-selected workspace remains prompt context rather than runtime ownership. `/control-sessions` routes enforce that declaration before reusing the ordinary lifecycle, trace, attachment, command, approval, broadcaster, and focused-stream services. Control sessions remain in the global recent projection but never enter workspace catalogs or counts. The Default Agent's `oppi` tool remains the only allowed tool, and every write keeps its existing explicit approval.
 
 The CLI accepts bounded in-memory `--definition-json` objects for Agent create/update and schedule update, avoiding temporary files without adding filesystem tools. Canonical Agent and schedule validators reject unexpected fields and empty updates at the server boundary.
 
-Schedules persist a trigger plus an action. `AgentScheduleRunner` scans active schedules, materializes due slots, claims due runs with a lease, and dispatches automatic runs through the same launch hooks used by manual schedule runs. Pause or archive a schedule to stop future automatic runs.
+Schedules persist a trigger plus an action. `AgentScheduleRunner` scans active schedules, materializes due slots, claims due runs with a lease, and dispatches automatic runs through the same launch hooks used by manual schedule runs. Pause or archive a schedule to stop future automatic runs. Archived schedules remain listable and can be restored directly to active.
 
 ## Terminal mirror runtime
 

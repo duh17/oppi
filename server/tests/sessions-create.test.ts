@@ -8,6 +8,7 @@ import { PassThrough } from "node:stream";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext, RouteHelpers } from "../src/routes/types.js";
 import { getPiSessionsRoot } from "../src/local-sessions.js";
+import { Storage } from "../src/storage.js";
 import type { Session, Workspace } from "../src/types.js";
 
 // ─── Factories ───
@@ -269,6 +270,8 @@ describe("POST /control-sessions", () => {
         intent: "create",
         name: "Create Schedule",
         prompt: "Help me create a schedule.",
+        model: "anthropic/claude-opus-4-8",
+        thinking: "high",
       }),
     ).toBe(true);
 
@@ -280,12 +283,78 @@ describe("POST /control-sessions", () => {
         prompted: true,
         session: {
           workspaceId: undefined,
+          model: "anthropic/claude-opus-4-8",
+          thinkingLevel: "high",
           control: { domain: "schedules", intent: "create" },
           launch: { agentId: "oppi-default-agent" },
         },
       },
     });
+    expect(mock.storage.createSession).toHaveBeenCalledWith(
+      "Create Schedule",
+      "anthropic/claude-opus-4-8",
+    );
     expect(mock.sessions.startSession).toHaveBeenCalledWith(expect.any(String), undefined);
+  });
+
+  it("immediately serves a newly persisted control session through its trace route", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-session-route-"));
+
+    try {
+      const mock = createMockContext();
+      const persistentStorage = new Storage(dataDir);
+      mock.ctx.storage = persistentStorage;
+
+      await dispatchCreate(mock, {
+        domain: "agents",
+        intent: "revise",
+        targetId: "agent-1",
+        targetName: "Reviewer",
+        name: "Revise Reviewer",
+        prompt: "Inspect and revise the Agent.",
+      });
+
+      const created = mock.responses[0]?.data as { session?: Session } | undefined;
+      const sessionId = created?.session?.id;
+      expect(sessionId).toBeTypeOf("string");
+      expect(persistentStorage.getSession(sessionId!)?.control).toEqual({
+        domain: "agents",
+        intent: "revise",
+        targetId: "agent-1",
+        targetName: "Reviewer",
+      });
+
+      const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+      const tracePath = `/control-sessions/${sessionId}/trace-outline`;
+      const traceRequest = new PassThrough();
+      traceRequest.end();
+      expect(
+        await dispatcher({
+          method: "GET",
+          path: tracePath,
+          url: new URL(`https://localhost${tracePath}`),
+          req: traceRequest as unknown as IncomingMessage,
+          res: {} as ServerResponse,
+        }),
+      ).toBe(true);
+
+      expect(mock.errors).toEqual([]);
+      expect(mock.responses[1]).toMatchObject({
+        status: 200,
+        data: {
+          session: {
+            id: sessionId,
+            control: { domain: "agents", intent: "revise", targetId: "agent-1" },
+          },
+          outline: expect.any(Object),
+        },
+      });
+
+      const freshStorage = new Storage(dataDir);
+      expect(freshStorage.getSession(sessionId!)?.control?.targetName).toBe("Reviewer");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects unknown control domains and intents", async () => {
@@ -303,6 +372,8 @@ describe("POST /control-sessions", () => {
     { domain: "agents", intent: "create", targetName: "" },
     { domain: "agents", intent: "create", name: 42 },
     { domain: "agents", intent: "create", prompt: false },
+    { domain: "agents", intent: "create", model: 42 },
+    { domain: "agents", intent: "create", thinking: "maximum" },
   ])("rejects malformed control-session fields", async (body) => {
     const mock = createMockContext();
 

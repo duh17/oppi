@@ -374,6 +374,33 @@ describe("schedule routes", () => {
     ]);
   });
 
+  it("restores an archived schedule as active", async () => {
+    const schedule = store.createSchedule({
+      name: "Morning check",
+      trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+      action: { type: "new_session", workspaceId: workspace.id, prompt: "Run the checks" },
+    });
+    store.archiveSchedule(schedule.id, 2_000);
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = `/schedules/${schedule.id}/restore`;
+
+    await dispatch({
+      method: "POST",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({}),
+      res: {} as ServerResponse,
+    });
+
+    expect(errors).toEqual([]);
+    expect(responses).toEqual([
+      expect.objectContaining({
+        data: { schedule: expect.objectContaining({ id: schedule.id, status: "active" }) },
+      }),
+    ]);
+    expect(store.getSchedule(schedule.id)?.archivedAt).toBeUndefined();
+  });
+
   it("rejects malformed run history limits", async () => {
     const schedule = store.createSchedule({
       name: "Morning check",

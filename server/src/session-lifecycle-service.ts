@@ -199,18 +199,21 @@ export class SessionLifecycleService {
   async createControlSession(params: {
     control: ControlSessionMetadata;
     name?: string;
+    model?: string;
+    thinking?: string;
     prompt?: string;
   }): Promise<CreateWorkspaceSessionResult> {
     const now = Date.now();
     const session = this.deps.storage.createSession(
       params.name?.trim() || "Oppi Control",
-      undefined,
+      params.model?.trim() || undefined,
     );
     session.workspaceId = undefined;
     session.workspaceName = undefined;
     session.worktreeId = undefined;
     session.runtime = "oppi";
     session.control = { ...params.control };
+    if (params.thinking) session.thinkingLevel = params.thinking;
     session.launch = {
       source: "human",
       agentId: DEFAULT_AGENT_ID,

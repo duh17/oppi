@@ -162,6 +162,10 @@ extension APIClient {
         try await scheduleStateMutation(scheduleId: scheduleId, action: "archive")
     }
 
+    func restoreAgentSchedule(_ scheduleId: String) async throws -> AgentScheduleSummary {
+        try await scheduleStateMutation(scheduleId: scheduleId, action: "restore")
+    }
+
     func runAgentSchedule(_ scheduleId: String) async throws -> AgentScheduleRunSummary {
         struct Body: Encodable {
             let requestId: String

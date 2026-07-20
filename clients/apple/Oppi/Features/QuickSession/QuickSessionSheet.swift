@@ -311,29 +311,7 @@ struct QuickSessionSheet: View {
         Button {
             showWorkspacePicker.toggle()
         } label: {
-            HStack(spacing: 4) {
-                if let selectedWorkspace {
-                    WorkspaceRuntimeIcon(workspace: selectedWorkspace, size: 12, frameSize: 16)
-                } else {
-                    Image(systemName: "folder")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.themeBlue)
-                        .frame(width: 16, height: 16)
-                }
-                Text(selectedWorkspace?.name ?? "Workspace")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.themeComment)
-            }
-            .frame(minHeight: 17)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .glassEffect(.regular, in: Capsule())
-            .frame(minHeight: ComposerInputMetrics.controlDiameter)
-            .contentShape(Rectangle())
+            SessionWorkspacePillLabel(workspace: selectedWorkspace)
         }
         .buttonStyle(.plain)
         .popover(isPresented: $showWorkspacePicker, arrowEdge: .bottom) {

@@ -59,6 +59,8 @@ struct ChatInputBar<ActionRow: View>: View {
     let appliesOuterPadding: Bool
     var alwaysShowActionRow: Bool = false
     var allowsExpansion: Bool = true
+    var allowsAttachments: Bool = true
+    var showsAccessoryRow: Bool = true
     @ViewBuilder let actionRow: () -> ActionRow
 
     @State private var photoSelection: [PhotosPickerItem] = []
@@ -225,7 +227,8 @@ struct ChatInputBar<ActionRow: View>: View {
 
     /// Slack-style inline controls row: hidden until composer is active.
     private var showsComposerActionRow: Bool {
-        Self.shouldShowComposerActionRow(
+        guard showsAccessoryRow else { return false }
+        return Self.shouldShowComposerActionRow(
             alwaysShowActionRow: alwaysShowActionRow,
             isBusy: isBusy,
             isInputFocused: isInputFocused,
@@ -488,7 +491,9 @@ struct ChatInputBar<ActionRow: View>: View {
             if showsComposerActionRow {
                 GlassEffectContainer(spacing: 0) {
                     HStack(spacing: 6) {
-                        attachButton
+                        if allowsAttachments {
+                            attachButton
+                        }
 
                         if showsExpandButton, askRequest != nil {
                             expandButton

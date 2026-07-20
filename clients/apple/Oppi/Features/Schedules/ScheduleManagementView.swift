@@ -4,37 +4,57 @@ struct ScheduleManagementView: View {
     @Environment(\.apiClient) private var apiClient
 
     @State private var schedules: [AgentScheduleSummary] = []
+    @State private var selectedStatus: AgentScheduleStatus = .active
+    @State private var selectedScheduleId: String?
     @State private var isLoading = false
     @State private var error: String?
-    @State private var showEditor = false
+
+    private var visibleSchedules: [AgentScheduleSummary] {
+        schedules.filter { $0.status == selectedStatus }
+    }
 
     var body: some View {
         List {
             if isLoading && schedules.isEmpty {
-                ProgressView("Loading schedules…")
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .listRowBackground(Color.themeBg)
-            } else if schedules.isEmpty {
+                ForEach(0..<2, id: \.self) { _ in
+                    ScheduleCardPlaceholder()
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+            } else if visibleSchedules.isEmpty {
                 ContentUnavailableView(
-                    "No Schedules",
-                    systemImage: "clock.badge.plus",
-                    description: Text("Create timed prompts that launch a fresh session or nudge an existing one.")
+                    selectedStatus.emptyTitle,
+                    systemImage: selectedStatus.emptySystemImage,
+                    description: Text(selectedStatus.emptyDescription)
                 )
-                .listRowBackground(Color.themeBg)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             } else {
-                Section {
-                    ForEach(schedules) { schedule in
-                        NavigationLink {
-                            ScheduleDetailView(scheduleId: schedule.id)
-                        } label: {
-                            ScheduleSummaryRow(schedule: schedule)
-                        }
-                        .accessibilityIdentifier("schedules.row.\(schedule.id)")
+                ForEach(visibleSchedules) { schedule in
+                    Button {
+                        selectedScheduleId = schedule.id
+                    } label: {
+                        ScheduleSummaryCard(schedule: schedule)
                     }
-                } header: {
-                    Text("Schedules")
-                } footer: {
-                    Text("Schedules store timing and a target action. The Agent, workspace, worktree, and prompt are resolved when the run fires.")
+                    .buttonStyle(.plain)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .accessibilityIdentifier("schedules.row.\(schedule.id)")
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        scheduleSwipeAction(schedule)
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+        .navigationDestination(isPresented: scheduleDetailPresented) {
+            if let selectedScheduleId {
+                ScheduleDetailView(scheduleId: selectedScheduleId) { updated in
+                    schedules = schedules.map { $0.id == updated.id ? updated : $0 }
+                    if selectedStatus == .archived, updated.status == .active {
+                        selectedStatus = .active
+                    }
                 }
             }
         }
@@ -43,32 +63,81 @@ struct ScheduleManagementView: View {
         .themedListSurface()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showEditor = true
+                Menu {
+                    Picker("Status", selection: $selectedStatus) {
+                        ForEach(AgentScheduleStatus.allCases, id: \.self) { status in
+                            Text(status.filterTitle).tag(status)
+                        }
+                    }
                 } label: {
-                    Image(systemName: "plus")
+                    Label(selectedStatus.filterTitle, systemImage: "line.3.horizontal.decrease")
                 }
-                .accessibilityLabel("Create Schedule")
-                .accessibilityIdentifier("schedules.create.open")
+                .accessibilityIdentifier("schedules.filter")
             }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                if let error {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.themeRed)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .accessibilityIdentifier("schedules.error")
+                }
+
+                GuidedControlSessionComposer(
+                    domain: .schedules,
+                    intent: .create,
+                    placeholder: "Describe what should happen and when…"
+                )
+            }
+            .background(Color.themeSurfaceFill(.opaqueCard).ignoresSafeArea(edges: .bottom))
         }
         .refreshable { await loadSchedules() }
         .task { await loadSchedules() }
-        .sheet(isPresented: $showEditor) {
-            NavigationStack {
-                ScheduleEditView(schedule: nil) {
-                    await loadSchedules()
-                }
+    }
+
+    private var scheduleDetailPresented: Binding<Bool> {
+        Binding(
+            get: { selectedScheduleId != nil },
+            set: { isPresented in
+                if !isPresented { selectedScheduleId = nil }
             }
+        )
+    }
+
+    @ViewBuilder
+    private func scheduleSwipeAction(_ schedule: AgentScheduleSummary) -> some View {
+        switch schedule.status {
+        case .active:
+            Button {
+                Task { await mutate(schedule, action: .pause) }
+            } label: {
+                Label("Pause", systemImage: "pause.fill")
+            }
+            .tint(.themeOrange)
+        case .paused:
+            Button {
+                Task { await mutate(schedule, action: .resume) }
+            } label: {
+                Label("Resume", systemImage: "play.fill")
+            }
+            .tint(.themeGreen)
+        case .archived:
+            Button {
+                Task { await mutate(schedule, action: .restore) }
+            } label: {
+                Label("Restore", systemImage: "arrow.uturn.backward")
+            }
+            .tint(.themeBlue)
         }
-        .alert("Schedules", isPresented: Binding(
-            get: { error != nil },
-            set: { if !$0 { error = nil } }
-        )) {
-            Button("OK", role: .cancel) { error = nil }
-        } message: {
-            Text(error ?? "")
-        }
+    }
+
+    private enum SummaryMutation {
+        case pause
+        case resume
+        case restore
     }
 
     @MainActor
@@ -88,66 +157,117 @@ struct ScheduleManagementView: View {
             self.error = error.localizedDescription
         }
     }
+
+    @MainActor
+    private func mutate(_ schedule: AgentScheduleSummary, action: SummaryMutation) async {
+        guard let apiClient else { return }
+        do {
+            let updated = switch action {
+            case .pause: try await apiClient.pauseAgentSchedule(schedule.id)
+            case .resume: try await apiClient.resumeAgentSchedule(schedule.id)
+            case .restore: try await apiClient.restoreAgentSchedule(schedule.id)
+            }
+            schedules = schedules.map { $0.id == updated.id ? updated : $0 }
+            if action == .restore { selectedStatus = .active }
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
 }
 
-private struct ScheduleSummaryRow: View {
+private struct ScheduleSummaryCard: View {
     let schedule: AgentScheduleSummary
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: schedule.status == .active ? "clock.badge.checkmark" : "clock")
-                .font(.title3)
-                .foregroundStyle(statusTone.color)
-                .frame(width: 30, height: 30)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(schedule.trigger.scheduleScreenCadence)
+                    .font(.caption.weight(.semibold))
+                    .tracking(0.7)
+                    .foregroundStyle(.themeBlue)
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(schedule.name)
-                        .font(.headline)
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
+                Spacer(minLength: 8)
 
+                if schedule.status != .active {
                     StatusPill(
                         text: schedule.status.rawValue.capitalized,
-                        tone: statusTone,
+                        tone: schedule.status == .paused ? .warning : .neutral,
                         emphasis: .tinted,
                         size: .mini
                     )
                 }
-
-                Text(schedule.trigger.displaySummary)
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-                    .lineLimit(1)
-
-                Text(actionSummary)
-                    .font(.caption2)
-                    .foregroundStyle(.themeComment)
-                    .lineLimit(1)
             }
 
-            Spacer(minLength: 8)
+            Text(schedule.name)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.themeFg)
+                .multilineTextAlignment(.leading)
+                .lineLimit(3)
 
-            Text(schedule.updatedAt.relativeString())
-                .font(.caption2.monospacedDigit())
+            Divider()
+
+            Label(schedule.trigger.scheduleScreenTiming(), systemImage: "calendar")
+                .font(.subheadline)
                 .foregroundStyle(.themeComment)
+                .lineLimit(2)
         }
-        .padding(.vertical, 4)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.themeBgHighlight, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(schedule.name), \(schedule.trigger.scheduleScreenTiming()), \(schedule.status.rawValue)")
+    }
+}
+
+private struct ScheduleCardPlaceholder: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            RoundedRectangle(cornerRadius: 3).fill(.themeComment.opacity(0.16)).frame(width: 72, height: 12)
+            RoundedRectangle(cornerRadius: 5).fill(.themeComment.opacity(0.16)).frame(height: 24)
+            Divider()
+            RoundedRectangle(cornerRadius: 3).fill(.themeComment.opacity(0.12)).frame(width: 160, height: 14)
+        }
+        .padding(18)
+        .redacted(reason: .placeholder)
+        .background(.themeBgHighlight, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+private extension AgentScheduleStatus {
+    static var allCases: [AgentScheduleStatus] { [.active, .paused, .archived] }
+
+    var filterTitle: String {
+        switch self {
+        case .active: "Active"
+        case .paused: "Paused"
+        case .archived: "Archived"
+        }
     }
 
-    private var actionSummary: String {
-        let target = schedule.action.agentId == nil ? schedule.action.type.displayName : "Saved Agent"
-        return "\(target) · \(schedule.action.promptChars) characters"
+    var emptyTitle: String {
+        switch self {
+        case .active: "No Active Schedules"
+        case .paused: "No Paused Schedules"
+        case .archived: "No Archived Schedules"
+        }
     }
 
-    private var statusTone: StatusPillTone {
-        switch schedule.status {
-        case .active:
-            return .success
-        case .paused:
-            return .warning
-        case .archived:
-            return .neutral
+    var emptySystemImage: String {
+        switch self {
+        case .active: "calendar.badge.plus"
+        case .paused: "pause.circle"
+        case .archived: "archivebox"
+        }
+    }
+
+    var emptyDescription: String {
+        switch self {
+        case .active: "Describe what should happen and when below."
+        case .paused: "Schedules you pause will appear here."
+        case .archived: "Archived schedules stay recoverable here."
         }
     }
 }
@@ -159,13 +279,14 @@ private struct ScheduleDetailView: View {
     @Environment(AppNavigation.self) private var navigation
 
     let scheduleId: String
+    let onChanged: (AgentScheduleSummary) -> Void
 
     @State private var schedule: AgentSchedule?
     @State private var runs: [AgentScheduleRunSummary] = []
     @State private var isLoading = false
     @State private var isMutating = false
     @State private var error: String?
-    @State private var showEditor = false
+    @State private var showRevision = false
 
     var body: some View {
         List {
@@ -208,14 +329,24 @@ private struct ScheduleDetailView: View {
                             Label("Resume", systemImage: "play.fill")
                         }
                         .disabled(isMutating)
+                    } else {
+                        Button {
+                            Task { await mutate(.restore) }
+                        } label: {
+                            Label("Restore and Activate", systemImage: "arrow.uturn.backward")
+                        }
+                        .disabled(isMutating)
+                        .accessibilityIdentifier("schedule.detail.restore")
                     }
 
-                    Button(role: .destructive) {
-                        Task { await mutate(.archive) }
-                    } label: {
-                        Label("Archive", systemImage: "archivebox")
+                    if schedule.status != .archived {
+                        Button(role: .destructive) {
+                            Task { await mutate(.archive) }
+                        } label: {
+                            Label("Archive", systemImage: "archivebox")
+                        }
+                        .disabled(isMutating)
                     }
-                    .disabled(isMutating || schedule.status == .archived)
                 }
 
                 Section("Recent Runs") {
@@ -241,7 +372,7 @@ private struct ScheduleDetailView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if schedule != nil {
-                    Button("Edit") { showEditor = true }
+                    Button("Edit") { showRevision = true }
                         .disabled(isMutating)
                         .accessibilityIdentifier("schedule.detail.edit")
                 }
@@ -249,13 +380,15 @@ private struct ScheduleDetailView: View {
         }
         .task(id: scheduleId) { await load() }
         .refreshable { await load() }
-        .sheet(isPresented: $showEditor) {
+        .sheet(isPresented: $showRevision) {
             if let schedule {
-                NavigationStack {
-                    ScheduleEditView(schedule: schedule) {
-                        await load()
-                    }
-                }
+                GuidedControlSessionSheet(
+                    domain: .schedules,
+                    intent: .revise,
+                    targetId: schedule.id,
+                    targetName: schedule.name,
+                    placeholder: "Describe how this Schedule should change…"
+                )
             }
         }
         .alert("Schedule", isPresented: Binding(
@@ -272,6 +405,7 @@ private struct ScheduleDetailView: View {
         case pause
         case resume
         case archive
+        case restore
     }
 
     private func detailRow(_ title: String, _ value: String) -> some View {
@@ -372,6 +506,8 @@ private struct ScheduleDetailView: View {
                 updated = try await apiClient.resumeAgentSchedule(scheduleId)
             case .archive:
                 updated = try await apiClient.archiveAgentSchedule(scheduleId)
+            case .restore:
+                updated = try await apiClient.restoreAgentSchedule(scheduleId)
             }
             if var current = schedule {
                 current.status = updated.status
@@ -379,6 +515,7 @@ private struct ScheduleDetailView: View {
                 current.archivedAt = updated.archivedAt
                 schedule = current
             }
+            onChanged(updated)
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -418,13 +555,10 @@ private struct ScheduleRunRow: View {
                     .frame(width: 24)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(run.kind.rawValue.capitalized)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.themeFg)
-                        StatusPill(text: run.status.rawValue.capitalized, tone: tone, emphasis: .tinted, size: .mini)
-                    }
-                    Text(run.createdAt.relativeString())
+                    Text(run.status.rawValue.capitalized)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.themeFg)
+                    Text("\(run.createdAt.relativeString()) · \(runSourceLabel)")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
                     if let error = run.error {
@@ -447,6 +581,15 @@ private struct ScheduleRunRow: View {
         }
         .buttonStyle(.plain)
         .disabled(run.sessionId == nil)
+    }
+
+    private var runSourceLabel: String {
+        switch run.kind {
+        case .due:
+            return "Scheduled"
+        case .manual:
+            return "Started manually"
+        }
     }
 
     private var tone: StatusPillTone {
@@ -479,612 +622,5 @@ private extension AgentScheduleRunSummary {
         var copy = self
         copy.sessionId = sessionId
         return copy
-    }
-}
-
-struct ScheduleEditPrefill: Sendable, Equatable {
-    var agentId: String?
-    var agentName: String?
-}
-
-struct ScheduleEditView: View {
-    @Environment(\.apiClient) private var apiClient
-    @Environment(ServerConnection.self) private var connection
-    @Environment(AppNavigation.self) private var navigation
-    @Environment(WorkspaceStore.self) private var workspaceStore
-    @Environment(SessionStore.self) private var sessionStore
-    @Environment(\.dismiss) private var dismiss
-
-    let schedule: AgentSchedule?
-    let prefill: ScheduleEditPrefill?
-    let onSaved: () async -> Void
-
-    @State private var name = ""
-    @State private var recurrence: ScheduleRecurrencePreset = .weekly
-    @State private var weeklyDay: ScheduleWeekday = .saturday
-    @State private var repeatTime = ScheduleEditView.defaultRepeatTime()
-    @State private var atDate = Date().addingTimeInterval(3_600)
-    @State private var intervalValue = "1"
-    @State private var intervalUnit: ScheduleIntervalUnit = .hour
-    @State private var cronExpression = "0 8 * * 6"
-    @State private var timeZone = TimeZone.current.identifier
-
-    @State private var agents: [AgentDefinitionSummary] = []
-    @State private var actionKind: AgentScheduleActionKind = .newSession
-    @State private var selectedWorkspaceId = ""
-    @State private var selectedSessionId = ""
-    @State private var selectedAgentId = ""
-    @State private var prompt = ""
-    @State private var model = ""
-    @State private var worktreeId = ""
-    @State private var sessionName = ""
-    @State private var streamingBehavior: ExistingSessionStreamingBehavior = .followUp
-
-    @State private var didPopulate = false
-    @State private var isSaving = false
-    @State private var isLaunchingOppi = false
-    @State private var error: String?
-
-    init(
-        schedule: AgentSchedule?,
-        prefill: ScheduleEditPrefill? = nil,
-        onSaved: @escaping () async -> Void
-    ) {
-        self.schedule = schedule
-        self.prefill = prefill
-        self.onSaved = onSaved
-    }
-
-    private var workspaces: [Workspace] { workspaceStore.workspaces }
-
-    private var sessionsForSelectedWorkspace: [Session] {
-        guard !selectedWorkspaceId.isEmpty else { return [] }
-        return sessionStore.listProjectionSessions(workspaceId: selectedWorkspaceId)
-            .filter { $0.status != .stopped }
-    }
-
-    private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !selectedWorkspaceId.isEmpty
-            && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && (actionKind == .newSession || !selectedSessionId.isEmpty)
-            && !isSaving
-    }
-
-    var body: some View {
-        Form {
-            if connection.controlSessionsAvailable, apiClient != nil {
-                Section {
-                    UseOppiSessionRow(
-                        supportingText: schedule == nil
-                            ? "Work with Default Agent to create this Schedule."
-                            : "Work with Default Agent to revise this Schedule.",
-                        isLoading: isLaunchingOppi
-                    ) {
-                        Task { await launchOppiSession() }
-                    }
-                    .accessibilityIdentifier("schedule.edit.useOppiSession")
-                }
-            }
-
-            Section {
-                TextField("Title", text: $name)
-                    .font(.title3.weight(.semibold))
-                    .accessibilityIdentifier("schedule.edit.name")
-            }
-
-            Section {
-                TextEditor(text: $prompt)
-                    .frame(minHeight: 220)
-                    .accessibilityIdentifier("schedule.edit.prompt")
-            } header: {
-                Text("Agent instructions")
-            } footer: {
-                Text("Write the recurring task as the Agent should receive it. Include data-source limits, safety constraints, and how incomplete data should be qualified.")
-            }
-
-            Section {
-                Picker("Repeat", selection: $recurrence) {
-                    ForEach(ScheduleRecurrencePreset.allCases, id: \.self) { preset in
-                        Text(preset.displayName).tag(preset)
-                    }
-                }
-
-                switch recurrence {
-                case .once:
-                    DatePicker("Date", selection: $atDate, displayedComponents: [.date, .hourAndMinute])
-                case .daily:
-                    DatePicker("Time", selection: $repeatTime, displayedComponents: [.hourAndMinute])
-                case .weekly:
-                    Picker("Day", selection: $weeklyDay) {
-                        ForEach(ScheduleWeekday.allCases, id: \.self) { day in
-                            Text(day.displayName).tag(day)
-                        }
-                    }
-                    DatePicker("Time", selection: $repeatTime, displayedComponents: [.hourAndMinute])
-                    LabeledContent("End repeat", value: "Never")
-                case .interval:
-                    HStack {
-                        TextField("Interval", text: $intervalValue)
-                            .keyboardType(.numberPad)
-                        Picker("Unit", selection: $intervalUnit) {
-                            ForEach(ScheduleIntervalUnit.allCases, id: \.self) { unit in
-                                Text(unit.displayName).tag(unit)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    }
-                case .cron:
-                    TextField("Cron expression", text: $cronExpression)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.body.monospaced())
-                }
-
-                TextField("Time zone", text: $timeZone)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-            } header: {
-                Text("Schedule")
-            } footer: {
-                Text("Daily and weekly repeats are saved as cron schedules. Use Pause or Archive to stop future runs.")
-            }
-
-            Section {
-                Picker("Target", selection: $actionKind) {
-                    Text("New Session").tag(AgentScheduleActionKind.newSession)
-                    Text("Existing Session").tag(AgentScheduleActionKind.existingSession)
-                }
-                .pickerStyle(.segmented)
-
-                Picker("Workspace", selection: $selectedWorkspaceId) {
-                    ForEach(workspaces) { workspace in
-                        Text(workspace.name).tag(workspace.id)
-                    }
-                }
-                .onChange(of: selectedWorkspaceId) { _, _ in
-                    selectedSessionId = sessionsForSelectedWorkspace.first?.id ?? ""
-                }
-
-                if actionKind == .existingSession {
-                    Picker("Session", selection: $selectedSessionId) {
-                        ForEach(sessionsForSelectedWorkspace) { session in
-                            Text(session.displayTitle).tag(session.id)
-                        }
-                    }
-                    Picker("Delivery", selection: $streamingBehavior) {
-                        ForEach(ExistingSessionStreamingBehavior.allCases, id: \.self) { behavior in
-                            Text(behavior.displayName).tag(behavior)
-                        }
-                    }
-                } else {
-                    Picker("Agent", selection: $selectedAgentId) {
-                        Text("None").tag("")
-                        if let prefillAgentOption {
-                            Text(prefillAgentOption.name).tag(prefillAgentOption.id)
-                        }
-                        ForEach(visibleAgents) { agent in
-                            Text(agent.name).tag(agent.id)
-                        }
-                    }
-                    TextField("Session name", text: $sessionName)
-                    TextField("Model override", text: $model)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    TextField("Worktree ID (optional)", text: $worktreeId)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                }
-            } header: {
-                Text("Target")
-            } footer: {
-                Text("A saved Agent supplies reusable instructions and defaults. The prompt above is still sent as the scheduled task.")
-            }
-
-            if let error {
-                Section {
-                    Text(error)
-                        .foregroundStyle(.themeOrange)
-                }
-            }
-        }
-        .navigationTitle(schedule == nil ? "New Schedule" : "Edit Schedule")
-        .navigationBarTitleDisplayMode(.inline)
-        .themedListSurface()
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { dismiss() }
-                    .disabled(isSaving)
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                Button(isSaving ? "Saving…" : "Save") {
-                    Task { await save() }
-                }
-                .disabled(!canSave)
-                .accessibilityIdentifier("schedule.edit.save")
-            }
-        }
-        .onAppear(perform: populateOnce)
-        .task { await loadAgentsForPicker() }
-    }
-
-    @MainActor
-    private func launchOppiSession() async {
-        guard let apiClient, !isLaunchingOppi else { return }
-        isLaunchingOppi = true
-        defer { isLaunchingOppi = false }
-        let intent: ControlSessionIntent = schedule == nil ? .create : .revise
-        let targetName = schedule?.name
-        do {
-            let response = try await apiClient.createControlSession(.init(
-                domain: .schedules,
-                intent: intent,
-                targetId: schedule?.id,
-                targetName: targetName,
-                name: intent == .create ? "Create Schedule" : "Revise \(targetName ?? "Schedule")",
-                prompt: ControlSessionStarterPrompt.make(
-                    domain: .schedules,
-                    intent: intent,
-                    targetId: schedule?.id,
-                    targetName: targetName
-                )
-            ))
-            sessionStore.cacheSessionForNavigation(response.session)
-            guard let serverId = connection.currentServerId ?? sessionStore.activeServerId else { return }
-            dismiss()
-            await Task.yield()
-            navigation.openWorkspaceSession(.init(
-                serverId: serverId,
-                sessionId: response.session.id,
-                routeScope: .control
-            ))
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    private var prefillAgentOption: AgentDefinitionSummary? {
-        guard let agentId = prefill?.agentId, !agentId.isEmpty else { return nil }
-        return AgentDefinitionSummary(
-            id: agentId,
-            name: prefill?.agentName?.nilIfBlank ?? agentId,
-            description: nil,
-            status: .active,
-            version: 1,
-            createdAt: Date(timeIntervalSince1970: 0),
-            updatedAt: Date(timeIntervalSince1970: 0),
-            archivedAt: nil
-        )
-    }
-
-    private var visibleAgents: [AgentDefinitionSummary] {
-        guard let prefillAgentId = prefillAgentOption?.id else { return agents }
-        return agents.filter { $0.id != prefillAgentId }
-    }
-
-    @MainActor
-    private func save() async {
-        guard let apiClient else {
-            error = "Server is offline"
-            return
-        }
-
-        isSaving = true
-        defer { isSaving = false }
-
-        do {
-            let trigger = try buildTrigger()
-            let action = buildAction()
-            let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let schedule {
-                _ = try await apiClient.updateAgentSchedule(
-                    scheduleId: schedule.id,
-                    name: cleanName,
-                    trigger: trigger,
-                    action: action
-                )
-            } else {
-                _ = try await apiClient.createAgentSchedule(
-                    name: cleanName,
-                    trigger: trigger,
-                    action: action
-                )
-            }
-            await onSaved()
-            dismiss()
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func loadAgentsForPicker() async {
-        guard let apiClient else { return }
-        do {
-            agents = try await apiClient.listAgents()
-        } catch {
-            // The schedule can still be edited with an already stored Agent id.
-        }
-    }
-
-    private func populateOnce() {
-        guard !didPopulate else { return }
-        didPopulate = true
-        populate()
-    }
-
-    private func populate() {
-        guard let schedule else {
-            if let agentName = prefill?.agentName?.nilIfBlank {
-                name = "Schedule \(agentName)"
-            } else {
-                name = "Weekly briefing"
-            }
-            selectedWorkspaceId = workspaces.first?.id ?? ""
-            selectedSessionId = sessionsForSelectedWorkspace.first?.id ?? ""
-            selectedAgentId = prefill?.agentId ?? ""
-            recurrence = .weekly
-            weeklyDay = .saturday
-            repeatTime = Self.defaultRepeatTime()
-            return
-        }
-
-        name = schedule.name
-        timeZone = schedule.trigger.timeZone
-        populateRecurrence(from: schedule.trigger)
-
-        switch schedule.action {
-        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name):
-            actionKind = .newSession
-            selectedWorkspaceId = workspaceId
-            selectedAgentId = agentId ?? ""
-            self.prompt = prompt
-            self.model = model ?? ""
-            self.worktreeId = worktreeId ?? ""
-            sessionName = name ?? ""
-        case .existingSession(let workspaceId, let sessionId, let prompt, let streamingBehavior):
-            actionKind = .existingSession
-            selectedWorkspaceId = workspaceId
-            selectedSessionId = sessionId
-            self.prompt = prompt
-            self.streamingBehavior = streamingBehavior ?? .followUp
-        }
-    }
-
-    private func populateRecurrence(from trigger: AgentScheduleTrigger) {
-        switch trigger {
-        case .at(let date, _):
-            recurrence = .once
-            atDate = date
-        case .every(let intervalMs, _):
-            recurrence = .interval
-            let resolved = ScheduleIntervalUnit.valueAndUnit(for: intervalMs)
-            intervalValue = String(resolved.value)
-            intervalUnit = resolved.unit
-        case .cron(let expression, _):
-            cronExpression = expression
-            if let daily = Self.dailyCronTime(expression) {
-                recurrence = .daily
-                repeatTime = Self.dateForTime(hour: daily.hour, minute: daily.minute)
-            } else if let weekly = Self.weeklyCronTime(expression) {
-                recurrence = .weekly
-                repeatTime = Self.dateForTime(hour: weekly.hour, minute: weekly.minute)
-                weeklyDay = weekly.day
-            } else {
-                recurrence = .cron
-            }
-        }
-    }
-
-    private func buildTrigger() throws -> AgentScheduleTrigger {
-        let cleanTimeZone = timeZone.nilIfBlank ?? TimeZone.current.identifier
-        switch recurrence {
-        case .once:
-            return .at(atDate, timeZone: cleanTimeZone)
-        case .daily:
-            let time = Self.hourMinute(from: repeatTime)
-            return .cron(expression: "\(time.minute) \(time.hour) * * *", timeZone: cleanTimeZone)
-        case .weekly:
-            let time = Self.hourMinute(from: repeatTime)
-            return .cron(expression: "\(time.minute) \(time.hour) * * \(weeklyDay.cronValue)", timeZone: cleanTimeZone)
-        case .interval:
-            guard let value = Int64(intervalValue.trimmingCharacters(in: .whitespacesAndNewlines)), value > 0 else {
-                throw ScheduleEditError.invalidInterval
-            }
-            let interval = value.multipliedReportingOverflow(by: intervalUnit.multiplierMs)
-            guard !interval.overflow else { throw ScheduleEditError.intervalTooLarge }
-            return .every(intervalMs: interval.partialValue, timeZone: cleanTimeZone)
-        case .cron:
-            return .cron(expression: cronExpression.trimmingCharacters(in: .whitespacesAndNewlines), timeZone: cleanTimeZone)
-        }
-    }
-
-    private func buildAction() -> AgentScheduleAction {
-        let cleanPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch actionKind {
-        case .newSession:
-            return .newSession(
-                workspaceId: selectedWorkspaceId,
-                prompt: cleanPrompt,
-                agentId: selectedAgentId.nilIfBlank,
-                model: model.nilIfBlank,
-                worktreeId: worktreeId.nilIfBlank,
-                name: sessionName.nilIfBlank
-            )
-        case .existingSession:
-            return .existingSession(
-                workspaceId: selectedWorkspaceId,
-                sessionId: selectedSessionId,
-                prompt: cleanPrompt,
-                streamingBehavior: streamingBehavior
-            )
-        }
-    }
-
-    private static func defaultRepeatTime() -> Date {
-        dateForTime(hour: 8, minute: 0)
-    }
-
-    private static func dateForTime(hour: Int, minute: Int) -> Date {
-        var components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-        components.hour = hour
-        components.minute = minute
-        return Calendar.current.date(from: components) ?? Date()
-    }
-
-    private static func hourMinute(from date: Date) -> (hour: Int, minute: Int) {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
-        return (components.hour ?? 0, components.minute ?? 0)
-    }
-
-    private static func dailyCronTime(_ expression: String) -> (hour: Int, minute: Int)? {
-        let fields = normalizedCronFields(expression)
-        guard fields.count == 5,
-              fields[2] == "*",
-              fields[3] == "*",
-              fields[4] == "*" else { return nil }
-        return cronHourMinute(fields)
-    }
-
-    private static func weeklyCronTime(_ expression: String) -> (day: ScheduleWeekday, hour: Int, minute: Int)? {
-        let fields = normalizedCronFields(expression)
-        guard fields.count == 5,
-              fields[2] == "*",
-              fields[3] == "*",
-              let dayValue = Int(fields[4]),
-              let day = ScheduleWeekday(cronValue: dayValue),
-              let time = cronHourMinute(fields) else { return nil }
-        return (day, time.hour, time.minute)
-    }
-
-    private static func normalizedCronFields(_ expression: String) -> [String] {
-        let fields = expression.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        return fields.count == 6 ? Array(fields.dropFirst()) : fields
-    }
-
-    private static func cronHourMinute(_ fields: [String]) -> (hour: Int, minute: Int)? {
-        guard fields.count >= 2,
-              let minute = Int(fields[0]),
-              let hour = Int(fields[1]),
-              (0...59).contains(minute),
-              (0...23).contains(hour) else { return nil }
-        return (hour, minute)
-    }
-}
-
-private enum ScheduleRecurrencePreset: CaseIterable {
-    case once
-    case daily
-    case weekly
-    case interval
-    case cron
-
-    var displayName: String {
-        switch self {
-        case .once:
-            return "Once"
-        case .daily:
-            return "Daily"
-        case .weekly:
-            return "Weekly"
-        case .interval:
-            return "Every interval"
-        case .cron:
-            return "Cron"
-        }
-    }
-}
-
-private enum ScheduleWeekday: Int, CaseIterable {
-    case sunday = 0
-    case monday = 1
-    case tuesday = 2
-    case wednesday = 3
-    case thursday = 4
-    case friday = 5
-    case saturday = 6
-
-    init?(cronValue: Int) {
-        self.init(rawValue: cronValue == 7 ? 0 : cronValue)
-    }
-
-    var cronValue: Int { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .sunday:
-            return "Sundays"
-        case .monday:
-            return "Mondays"
-        case .tuesday:
-            return "Tuesdays"
-        case .wednesday:
-            return "Wednesdays"
-        case .thursday:
-            return "Thursdays"
-        case .friday:
-            return "Fridays"
-        case .saturday:
-            return "Saturdays"
-        }
-    }
-}
-
-private enum ScheduleIntervalUnit: CaseIterable {
-    case minute
-    case hour
-    case day
-
-    var displayName: String {
-        switch self {
-        case .minute:
-            return "Minutes"
-        case .hour:
-            return "Hours"
-        case .day:
-            return "Days"
-        }
-    }
-
-    var multiplierMs: Int64 {
-        switch self {
-        case .minute:
-            return 60_000
-        case .hour:
-            return 3_600_000
-        case .day:
-            return 86_400_000
-        }
-    }
-
-    static func valueAndUnit(for intervalMs: Int64) -> (value: Int64, unit: ScheduleIntervalUnit) {
-        if intervalMs % ScheduleIntervalUnit.day.multiplierMs == 0 {
-            return (intervalMs / ScheduleIntervalUnit.day.multiplierMs, .day)
-        }
-        if intervalMs % ScheduleIntervalUnit.hour.multiplierMs == 0 {
-            return (intervalMs / ScheduleIntervalUnit.hour.multiplierMs, .hour)
-        }
-        return (max(1, intervalMs / ScheduleIntervalUnit.minute.multiplierMs), .minute)
-    }
-}
-
-private enum ScheduleEditError: LocalizedError {
-    case invalidInterval
-    case intervalTooLarge
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidInterval:
-            return "Interval must be a positive number."
-        case .intervalTooLarge:
-            return "Interval is too large."
-        }
-    }
-}
-
-private extension String {
-    var nilIfBlank: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }

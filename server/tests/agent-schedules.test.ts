@@ -90,6 +90,18 @@ describe("agent schedule durable core", () => {
     ).toThrow("Schedule action has unexpected field: approvalRefs");
   });
 
+  it("restores archived schedules as active and clears archive metadata", () => {
+    const schedule = createSchedule();
+
+    expect(store.archiveSchedule(schedule.id, 2_000)).toMatchObject({
+      status: "archived",
+      archivedAt: 2_000,
+    });
+    const restored = store.restoreSchedule(schedule.id, 3_000);
+    expect(restored).toMatchObject({ status: "active", updatedAt: 3_000 });
+    expect(restored?.archivedAt).toBeUndefined();
+  });
+
   it("manual run creates one run with a request id idempotency key", () => {
     const schedule = createSchedule();
 
