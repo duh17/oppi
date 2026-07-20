@@ -201,11 +201,7 @@ export function createDefaultAgentExtensionFactory(options: {
 
         return {
           content: [{ type: "text" as const, text: truncateToolOutput(result.stdout) }],
-          details: {
-            args: classification.args,
-            kind: classification.kind,
-            data: result.data,
-          },
+          details: buildOppiToolResultDetails(classification, result.data),
         };
       },
     });
@@ -515,6 +511,146 @@ function buildStatusEnvelope(storage: LocalApiConnection): CliJsonEnvelope {
   };
 }
 
+export function buildOppiToolResultDetails(
+  classification: Extract<OppiToolCommandClassification, { ok: true }>,
+  data: unknown,
+): Record<string, unknown> {
+  return {
+    args: classification.args,
+    kind: classification.kind,
+    data,
+    expandedText: truncateToolOutput(formatOppiToolExpandedText(classification, data)),
+    presentationFormat: "markdown",
+  };
+}
+
+export function formatOppiToolExpandedText(
+  classification: Extract<OppiToolCommandClassification, { ok: true }>,
+  data: unknown,
+): string {
+  const titleParts = ["Oppi", classification.command, classification.action].filter(Boolean);
+  const sections = [
+    `# ${titleParts.map((part) => escapeMarkdownInline(part ?? "")).join(" ")}`,
+    "## Command",
+    markdownInlineCode(classification.displayCommand),
+  ];
+
+  if (classification.command === "session" && classification.action === "search") {
+    sections.push(formatSessionSearchResult(data));
+  } else {
+    sections.push("## Result", formatHumanValue(data));
+  }
+
+  return sections.join("\n\n");
+}
+
+function formatSessionSearchResult(data: unknown): string {
+  const payload = asDisplayRecord(data);
+  const rows = Array.isArray(payload?.results) ? payload.results : [];
+  const total = typeof payload?.total_results === "number" ? payload.total_results : rows.length;
+  if (rows.length === 0) return `## Search results (${total})\n\nNo matching sessions.`;
+
+  const renderedRows = rows.map((value, index) => {
+    const row = asDisplayRecord(value) ?? {};
+    const title = singleLineDisplayString(row.title) || `Result ${index + 1}`;
+    const snippet = displayString(row.snippet);
+    const metadata: string[] = [];
+    const sessionId = displayString(row.session_id);
+    const workspaceId = displayString(row.workspace_id);
+    const rank = typeof row.rank === "number" ? row.rank : undefined;
+    if (sessionId) metadata.push(markdownInlineCode(sessionId));
+    if (workspaceId) metadata.push(`workspace ${markdownInlineCode(workspaceId)}`);
+    if (rank !== undefined) metadata.push(`rank ${rank.toFixed(2)}`);
+
+    return [
+      `### ${escapeMarkdownInline(title)}`,
+      snippet ? escapeMarkdownText(snippet) : undefined,
+      metadata.length > 0 ? metadata.join(" · ") : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  });
+
+  return [`## Search results (${total})`, ...renderedRows].join("\n\n");
+}
+
+function formatHumanValue(value: unknown, depth = 0): string {
+  if (value === undefined || value === null) return "No result data.";
+  if (typeof value === "string") return escapeMarkdownText(value);
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "No rows.";
+    return value
+      .map((item) => {
+        const rendered = formatHumanValue(item, depth + 1);
+        return `- ${rendered.replaceAll("\n", "\n  ")}`;
+      })
+      .join("\n");
+  }
+
+  const record = asDisplayRecord(value);
+  if (!record) return escapeMarkdownText(String(value));
+  const entries = Object.entries(record);
+  if (entries.length === 0) return "No details returned.";
+  if (depth >= 3) return markdownInlineCode(JSON.stringify(record));
+
+  return entries
+    .map(([key, item]) => {
+      const label = escapeMarkdownInline(humanizeDisplayKey(key));
+      const rendered = formatHumanValue(item, depth + 1);
+      return `- **${label}:** ${rendered.replaceAll("\n", "\n  ")}`;
+    })
+    .join("\n");
+}
+
+function asDisplayRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function displayString(value: unknown): string {
+  return typeof value === "string" ? sanitizeDisplayText(value).trim() : "";
+}
+
+function singleLineDisplayString(value: unknown): string {
+  return displayString(value).replace(/\s+/g, " ");
+}
+
+function humanizeDisplayKey(key: string): string {
+  const words = singleLineDisplayString(key)
+    .replaceAll("_", " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function escapeMarkdownText(value: string): string {
+  return escapeMarkdownInline(value)
+    .split("\n")
+    .map((line) => (line.length > 0 ? `\u2060${line}` : line))
+    .join("\n");
+}
+
+function escapeMarkdownInline(value: string): string {
+  return sanitizeDisplayText(value).replace(/([\\`*_{}[\]<>|])/g, "\\$1");
+}
+
+function sanitizeDisplayText(value: string): string {
+  return Array.from(value.replaceAll("\r\n", "\n").replaceAll("\r", "\n"))
+    .filter((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return character === "\n" || character === "\t" || codePoint >= 0x20;
+    })
+    .join("");
+}
+
+function markdownInlineCode(value: string): string {
+  if (!value.includes("`")) return `\`${value}\``;
+  return fencedText(value);
+}
+
 function normalizeOppiArgs(rawArgs: string[]): string[] {
   const args = rawArgs.map((arg) => arg.trim()).filter((arg) => arg.length > 0);
   return args[0] === "oppi" ? args.slice(1) : args;
@@ -685,7 +821,22 @@ function shellQuoteForDisplay(value: string): string {
 }
 
 function formatCommandForDisplay(args: string[]): string {
-  const displayed = args.map((arg) => (arg.length > 160 ? `[${arg.length} chars]` : arg));
+  const displayed: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const assignment = arg.match(/^--([^=]+)=(.*)$/s);
+    if (assignment && Object.hasOwn(APPROVAL_BODY_FLAGS, assignment[1])) {
+      displayed.push(`--${assignment[1]}=[${assignment[2].length} chars]`);
+      continue;
+    }
+    displayed.push(arg.length > 160 ? `[${arg.length} chars]` : arg);
+    const flag = arg.startsWith("--") ? arg.slice(2) : "";
+    if (!Object.hasOwn(APPROVAL_BODY_FLAGS, flag)) continue;
+    const body = args[index + 1];
+    if (body === undefined) continue;
+    displayed.push(`[${body.length} chars]`);
+    index += 1;
+  }
   return `oppi ${displayed.join(" ")}`;
 }
 

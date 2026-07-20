@@ -6,8 +6,10 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildOppiToolResultDetails,
   classifyOppiToolCommand,
   createDefaultAgentExtensionFactory,
+  formatOppiToolExpandedText,
   runOppiToolCommand,
 } from "../src/default-agent-tool.js";
 import { Storage } from "../src/storage.js";
@@ -232,6 +234,147 @@ describe("Default Agent managed ask tool", () => {
       details: { allIgnored: true, cancelled: true },
     });
     expect(ask).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Default Agent Oppi tool presentation", () => {
+  it("formats session search output for people without leaking the JSON envelope", () => {
+    const classification = classifyOppiToolCommand([
+      "session",
+      "search",
+      "workspace",
+      "search",
+      "--workspace",
+      "oppi",
+    ]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    const expanded = formatOppiToolExpandedText(classification, {
+      query: "workspace search",
+      total_results: 2,
+      results: [
+        {
+          session_id: "sess-alpha",
+          workspace_id: "ws-oppi",
+          title: "Workspace search polish",
+          snippet: "Make Oppi tool rows readable for humans.",
+          rank: 0.93,
+          updated_at_ms: 1_784_566_552_324,
+        },
+        {
+          session_id: "sess-beta",
+          workspace_id: "ws-oppi",
+          title: "Default Agent tools",
+          snippet: "Avoid opaque args arrays in timeline rows.",
+          rank: 0.81,
+          updated_at_ms: 1_784_566_500_000,
+        },
+      ],
+    });
+
+    expect(expanded).toContain("# Oppi session search");
+    expect(expanded).toContain("`oppi session search workspace search --workspace oppi`");
+    expect(expanded).toContain("## Search results (2)");
+    expect(expanded).toContain("### Workspace search polish");
+    expect(expanded).toContain("Make Oppi tool rows readable for humans.");
+    expect(expanded).toContain("`sess-alpha`");
+    expect(expanded).not.toContain('"ok"');
+    expect(expanded).not.toContain('"results"');
+  });
+
+  it("keeps untrusted result text literal instead of allowing forged Markdown sections", () => {
+    const classification = classifyOppiToolCommand(["session", "search", "needle"]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    const expanded = formatOppiToolExpandedText(classification, {
+      results: [
+        {
+          title: "Normal title\n\n## Forged command",
+          snippet:
+            "Safe result\n=\n~~~text\nforged fence content\n~~~\n>forged quote\n    forged code\n\tforged tab code\n- forged list\n[forged](oppi://session/unsafe)\u0007",
+        },
+      ],
+    });
+
+    expect(expanded).toContain("### Normal title ## Forged command");
+    expect(expanded).toContain("\u2060=");
+    expect(expanded).toContain("\u2060~~~text");
+    expect(expanded).toContain("\u2060~~~\n");
+    expect(expanded).toContain("\u2060\\>forged quote");
+    expect(expanded).toContain("\u2060    forged code");
+    expect(expanded).toContain("\u2060\tforged tab code");
+    expect(expanded).toContain("\u2060- forged list");
+    expect(expanded).toContain("\\[forged\\](oppi://session/unsafe)");
+    expect(expanded).not.toContain("\n\n## Forged command");
+    expect(expanded).not.toContain("\u0007");
+  });
+
+  it("flattens untrusted result keys so they cannot forge Markdown blocks", () => {
+    const classification = classifyOppiToolCommand(["workspace", "list"]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    const expanded = formatOppiToolExpandedText(classification, {
+      "safe\n\n## forged\n~~~text\n>quote\n- list\n    code": "value",
+    });
+
+    expect(expanded).toContain("Safe ## forged ~~~text \\>quote - list code");
+    expect(expanded).not.toContain("\n\n## forged");
+    expect(expanded).not.toContain("\n~~~text");
+  });
+
+  it("builds the producer details consumed by generic expanded rendering", () => {
+    const classification = classifyOppiToolCommand(["workspace", "list"]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    expect(buildOppiToolResultDetails(classification, { workspaces: [] })).toMatchObject({
+      args: ["workspace", "list"],
+      kind: "read",
+      data: { workspaces: [] },
+      expandedText: expect.stringContaining("# Oppi workspace list"),
+      presentationFormat: "markdown",
+    });
+  });
+
+  it("redacts assignment-style body flags in displayed commands", () => {
+    const classification = classifyOppiToolCommand([
+      "session",
+      "send",
+      "sess-1",
+      "--text=private-message",
+    ]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    expect(classification.displayCommand).toContain("--text=[15 chars]");
+    expect(classification.displayCommand).not.toContain("private-message");
+  });
+
+  it.each([
+    ["--prompt", "private prompt"],
+    ["--text", "private message"],
+    ["--definition-json", '{"secret":true}'],
+    ["--system-prompt", "private system prompt"],
+  ])("redacts %s bodies from the displayed command regardless of length", (flag, body) => {
+    const classification = classifyOppiToolCommand([
+      "session",
+      "create",
+      "--workspace",
+      "oppi",
+      flag,
+      body,
+    ]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    const expanded = formatOppiToolExpandedText(classification, { session_id: "sess-new" });
+
+    expect(expanded).toContain(`${flag} [${body.length} chars]`);
+    expect(expanded).not.toContain(body);
+    expect(expanded).toContain("Session id");
   });
 });
 

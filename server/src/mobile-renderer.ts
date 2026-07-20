@@ -392,6 +392,44 @@ function askAnswerLabel(question: Record<string, unknown> | undefined, answer: u
   return askAnswerValueLabel(question, str(answer));
 }
 
+const oppi: MobileToolRenderer = {
+  renderCall(args) {
+    const rawCommandArgs = Array.isArray(args.args) ? args.args.map(str).filter(Boolean) : [];
+    const commandArgs = rawCommandArgs[0] === "oppi" ? rawCommandArgs.slice(1) : rawCommandArgs;
+    const resource = commandArgs[0]?.startsWith("--") ? "command" : commandArgs[0] || "command";
+    const action =
+      resource === "command" || commandArgs[1]?.startsWith("--") ? "" : commandArgs[1] || "";
+    const segments: StyledSegment[] = [
+      { text: "oppi ", style: "bold" },
+      { text: [resource, action].filter(Boolean).join(" "), style: "accent" },
+    ];
+
+    if (resource === "session" && action === "search") {
+      const remaining = commandArgs.slice(2);
+      const firstFlagIndex = remaining.findIndex((part) => part.startsWith("--"));
+      const query = remaining
+        .slice(0, firstFlagIndex < 0 ? remaining.length : firstFlagIndex)
+        .join(" ")
+        .trim();
+      if (query) segments.push({ text: ` · ${firstLine(query, 72)}`, style: "muted" });
+    }
+
+    return segments;
+  },
+  renderResult(details, isError) {
+    if (isError) return [];
+    const payload = asRecord(details);
+    const data = asRecord(payload?.data);
+    const args = Array.isArray(payload?.args) ? payload.args.map(str) : [];
+    if (args[0] === "session" && args[1] === "search") {
+      const count =
+        num(data?.total_results) ?? (Array.isArray(data?.results) ? data.results.length : 0);
+      return [{ text: `${count} ${count === 1 ? "result" : "results"}`, style: "success" }];
+    }
+    return [];
+  },
+};
+
 const ask: MobileToolRenderer = {
   renderCall(args) {
     const qs = Array.isArray(args.questions)
@@ -454,6 +492,7 @@ const ask: MobileToolRenderer = {
 
 const BUILTIN_RENDERERS: Record<string, MobileToolRenderer> = {
   ask,
+  oppi,
   bash,
   read,
   edit,
