@@ -311,10 +311,70 @@ final class ScreenshotPreviewUITests: XCTestCase {
 
         app.terminate()
         launchPreview(screen: "ask-card-expanded-sheet")
-        let expandedOption = app.staticTexts["Run this tool call now"]
-        XCTAssertTrue(expandedOption.waitForExistence(timeout: 5), "Expanded permission gate not visible")
+        let fullPrompt = app.staticTexts.containing(
+            NSPredicate(format: "label CONTAINS %@", "Review the complete implementation and tests")
+        ).firstMatch
+        XCTAssertTrue(fullPrompt.waitForExistence(timeout: 5), "Complete Oppi prompt not visible in expanded approval")
+        let confirm = app.buttons["ask.confirmation.confirm"]
+        let cancel = app.buttons["ask.confirmation.cancel"]
+        let ignore = app.buttons["ask.confirmation.ignore"]
+        XCTAssertTrue(confirm.isHittable, "Confirm should stay pinned for long content")
+        XCTAssertTrue(cancel.isHittable, "Cancel should stay pinned for long content")
+        XCTAssertTrue(ignore.isHittable, "Ignore should stay pinned for long content")
+
+        let promptTail = app.staticTexts.containing(
+            NSPredicate(format: "label CONTAINS %@", "END OF COMPLETE PROMPT")
+        ).firstMatch
+        for _ in 0..<6 where !promptTail.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(promptTail.isHittable, "Long approval content should scroll to its final line")
+        XCTAssertTrue(confirm.isHittable, "Confirm should remain pinned after scrolling")
+        XCTAssertTrue(cancel.isHittable, "Cancel should remain pinned after scrolling")
+        XCTAssertTrue(ignore.isHittable, "Ignore should remain pinned after scrolling")
 
         saveScreenshot(name: "ask-card-expanded-sheet")
+    }
+
+    func testOppiCommandApprovalRequiresDetailsAndRoutesActions() throws {
+        launchPreview(screen: "oppi-command-approval-inline")
+
+        XCTAssertTrue(app.staticTexts["Waiting"].waitForExistence(timeout: 3))
+        tapInlineOption("Confirm")
+        XCTAssertTrue(app.buttons["ask.confirmation.confirm"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Waiting"].exists, "Opening details must not approve")
+
+        app.buttons["ask.confirmation.ignore"].tap()
+        XCTAssertTrue(app.staticTexts["Waiting"].exists, "Ignore should close details without responding")
+
+        app.terminate()
+        launchPreview(screen: "oppi-command-approval-inline")
+        tapInlineOption("Cancel")
+        XCTAssertTrue(app.staticTexts["Cancelled"].waitForExistence(timeout: 3), "Inline Cancel should respond immediately")
+
+        app.terminate()
+        launchPreview(screen: "oppi-command-approval-inline")
+        tapInlineOption("Confirm")
+        app.buttons["ask.confirmation.confirm"].tap()
+        XCTAssertTrue(app.staticTexts["Confirmed"].waitForExistence(timeout: 3))
+
+        app.terminate()
+        launchPreview(screen: "oppi-command-approval-inline")
+        tapInlineOption("Confirm")
+        app.buttons["ask.confirmation.cancel"].tap()
+        XCTAssertTrue(app.staticTexts["Cancelled"].waitForExistence(timeout: 3))
+    }
+
+    func testOppiCommandApprovalAccessibilitySizePreview() throws {
+        launchPreview(
+            screen: "ask-card-expanded-sheet",
+            contentSizeCategory: "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
+        )
+
+        XCTAssertTrue(app.buttons["ask.confirmation.confirm"].isHittable)
+        XCTAssertTrue(app.buttons["ask.confirmation.cancel"].isHittable)
+        XCTAssertTrue(app.buttons["ask.confirmation.ignore"].isHittable)
+        saveScreenshot(name: "oppi-command-approval-accessibility-size")
     }
 
     func testAskCardMultiSelectLongOptionsPreview() throws {
@@ -525,9 +585,20 @@ final class ScreenshotPreviewUITests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func launchPreview(screen: String) {
+    private func tapInlineOption(_ label: String) {
+        let option = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", label))
+            .firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 3), "Inline option \(label) not visible")
+        option.tap()
+    }
+
+    private func launchPreview(screen: String, contentSizeCategory: String? = nil) {
         app = XCUIApplication()
         app.launchArguments.append("--screenshot-preview")
+        if let contentSizeCategory {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSizeCategory]
+        }
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         app.launch()
 

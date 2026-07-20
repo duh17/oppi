@@ -88,6 +88,37 @@ struct AskCardExpandedTests {
         )
     }
 
+    // MARK: - Pinned Confirmation Actions
+
+    @Test("Extension confirmations pin Confirm, Cancel, and Ignore outside long scrolling content")
+    func extensionConfirmUsesPinnedActions() {
+        let request = AskRequest(
+            id: "approval-1",
+            sessionId: "session-1",
+            questions: [
+                AskQuestion(
+                    id: ExtensionUIRequest.inlineQuestionId,
+                    question: "Approve command\n\n## Prompt\n\n" + String(repeating: "detail ", count: 500),
+                    options: [
+                        AskOption(value: ExtensionUIRequest.confirmValue, label: "Confirm"),
+                        AskOption(value: ExtensionUIRequest.cancelValue, label: "Cancel"),
+                    ],
+                    multiSelect: false
+                ),
+            ],
+            allowCustom: false,
+            timeout: nil,
+            responseEncoding: .extensionConfirm
+        )
+
+        #expect(AskCardExpanded.usesPinnedConfirmationActions(request))
+    }
+
+    @Test("Ordinary single-select asks keep options with their question")
+    func ordinaryAskDoesNotUsePinnedConfirmationActions() {
+        #expect(AskCardExpanded.usesPinnedConfirmationActions(Self.singleSelectRequest()) == false)
+    }
+
     // MARK: - Page Count Consistency
 
     @Test("Single-select single question: 1 page, no submit page")
