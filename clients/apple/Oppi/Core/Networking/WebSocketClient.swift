@@ -52,7 +52,6 @@ final class WebSocketClient {
     private let urlSession: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
 
-    private let maxReconnectAttempts = WebSocketRecoveryPolicy.maxReconnectAttempts
     private let pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval
     private let waitForConnectionTimeout: Duration
     private let sendTimeout: Duration
@@ -577,6 +576,15 @@ final class WebSocketClient {
                             "WebSocket handshake rejected",
                             metadata: metadata
                         )
+                    } else if WebSocketRecoveryPolicy.isNonRetryableCloseCode(ws.closeCode) {
+                        shouldAttemptReconnect = false
+                        let metadata = self.receiveFailureMetadata(for: ws, error: error)
+                            .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
+                        logger.error("WebSocket terminal close code \(ws.closeCode.rawValue)")
+                        self.wsLogError(
+                            "WebSocket terminal protocol close",
+                            metadata: metadata
+                        )
                     } else if self.shouldLogReceiveError(error) {
                         var metadata = self.receiveFailureMetadata(for: ws, error: error)
                             .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
@@ -662,14 +670,9 @@ final class WebSocketClient {
         var attempt = 0
         if case .reconnecting(let a) = status { attempt = a }
 
-        guard attempt < maxReconnectAttempts else {
-            logger.error("Max reconnect attempts reached")
-            wsLogError("Max reconnect attempts reached", metadata: consumeReceiveErrorSuppressionMetadata())
-            disconnect()
-            return
-        }
-
-        let nextAttempt = attempt + 1
+        // Persistent subscriptions remain intended until their owner disconnects them.
+        // A prolonged Iroh/network outage must not silently turn that intent off.
+        let nextAttempt = WebSocketRecoveryPolicy.nextReconnectAttempt(after: attempt)
         status = .reconnecting(attempt: nextAttempt)
         let delay = Self.reconnectDelay(attempt: nextAttempt)
 
@@ -696,7 +699,7 @@ final class WebSocketClient {
     ///
     /// - Attempts 1-3: 500ms (transient — suspension wake, network handoff)
     /// - Attempts 4-6: 2s, 4s, 8s (moderate — server restart, Tailscale reconnect)
-    /// - Attempts 7+:  15s cap (real problems — server down)
+    /// - Attempts 7+:  15s cap, retried while the subscription remains intended
     ///
     /// ±25% jitter prevents synchronized retries if multiple connections exist.
     nonisolated static func reconnectDelay(attempt: Int) -> TimeInterval {

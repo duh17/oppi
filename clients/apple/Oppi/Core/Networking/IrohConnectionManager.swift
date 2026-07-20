@@ -45,22 +45,67 @@ extension IrohConnectionProviding {
 
 struct IrohLibByteStream: IrohByteStream {
     let stream: BiStream
+    let onTransportFailure: @Sendable () async -> Void
 
     func write(_ data: Data) async throws {
-        try await stream.send().writeAll(buf: data)
+        do {
+            try await stream.send().writeAll(buf: data)
+        } catch {
+            await onTransportFailure()
+            throw error
+        }
     }
 
     func finishWriting() async throws {
-        try await stream.send().finish()
+        do {
+            try await stream.send().finish()
+        } catch {
+            await onTransportFailure()
+            throw error
+        }
     }
 
     func read(maxBytes: UInt32) async throws -> Data {
-        try await stream.recv().read(sizeLimit: maxBytes)
+        do {
+            return try await stream.recv().read(sizeLimit: maxBytes)
+        } catch {
+            await onTransportFailure()
+            throw error
+        }
     }
 
     func reset(errorCode: UInt64) async {
         try? await stream.send().reset(errorCode: errorCode)
         try? await stream.recv().stop(errorCode: errorCode)
+    }
+}
+
+struct IrohConnectionGenerations: Sendable {
+    private var next: UInt64 = 0
+    private var currentByALPN: [String: UInt64] = [:]
+
+    mutating func advance(alpn: String) -> UInt64 {
+        next &+= 1
+        currentByALPN[alpn] = next
+        return next
+    }
+
+    func current(alpn: String) -> UInt64? {
+        currentByALPN[alpn]
+    }
+
+    func isCurrent(alpn: String, generation: UInt64) -> Bool {
+        currentByALPN[alpn] == generation
+    }
+
+    mutating func invalidateIfCurrent(alpn: String, generation: UInt64) -> Bool {
+        guard currentByALPN[alpn] == generation else { return false }
+        currentByALPN.removeValue(forKey: alpn)
+        return true
+    }
+
+    mutating func removeAll() {
+        currentByALPN.removeAll()
     }
 }
 
@@ -101,6 +146,8 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
     private let iroh: IrohServerTransport
     private var connections: [String: Connection] = [:]
     private var connectionTasks: [String: Task<Connection, Error>] = [:]
+    private var connectionTaskIDs: [String: UUID] = [:]
+    private var connectionGenerations = IrohConnectionGenerations()
     private var selectedPathKinds: [String: IrohPathKind] = [:]
 
     init(iroh: IrohServerTransport) {
@@ -110,23 +157,24 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
     func openStream(alpn: String) async throws -> any IrohByteStream {
         try IrohPeerValidator.validate(iroh, requiredALPN: alpn)
 
-        let connection = try await connection(for: alpn)
+        let lease = try await connection(for: alpn)
         do {
-            let stream = try await connection.openBi()
-            recordSelectedPath(connection: connection, alpn: alpn, reason: "stream_open")
-            return IrohLibByteStream(stream: stream)
+            let stream = try await lease.connection.openBi()
+            recordSelectedPath(connection: lease.connection, alpn: alpn, reason: "stream_open")
+            return makeByteStream(stream, alpn: alpn, generation: lease.generation)
         } catch {
             // A cached QUIC connection can close between closeReason() and
-            // openBi(). Invalidate only that ALPN and reconnect once.
+            // openBi(). Invalidate only the generation that actually failed.
             IrohTransportTelemetry.recordReconnect(status: "attempt", reason: "open_stream")
-            connections.removeValue(forKey: alpn)
+            invalidateConnectionIfCurrent(alpn: alpn, generation: lease.generation)
             let replacement = try await self.connection(for: alpn)
             do {
-                let stream = try await replacement.openBi()
-                recordSelectedPath(connection: replacement, alpn: alpn, reason: "reconnected")
+                let stream = try await replacement.connection.openBi()
+                recordSelectedPath(connection: replacement.connection, alpn: alpn, reason: "reconnected")
                 IrohTransportTelemetry.recordReconnect(status: "recovered", reason: "open_stream")
-                return IrohLibByteStream(stream: stream)
+                return makeByteStream(stream, alpn: alpn, generation: replacement.generation)
             } catch {
+                invalidateConnectionIfCurrent(alpn: alpn, generation: replacement.generation)
                 IrohTransportTelemetry.recordReconnect(
                     status: "failed",
                     reason: IrohTransportTelemetry.errorKind(error)
@@ -137,14 +185,16 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
     }
 
     func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
-        Self.selectedPathEvidence(connection: try await connection(for: alpn))
+        Self.selectedPathEvidence(connection: try await connection(for: alpn).connection)
     }
 
     func suspendConnections() async {
         let active = connections.values
         connections.removeAll()
+        connectionGenerations.removeAll()
         connectionTasks.values.forEach { $0.cancel() }
         connectionTasks.removeAll()
+        connectionTaskIDs.removeAll()
         for connection in active {
             try? connection.close(errorCode: 0, reason: Data("app background".utf8))
         }
@@ -158,31 +208,56 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
         try await IrohAppEndpoint.shared.get()
     }
 
-    private func connection(for alpn: String) async throws -> Connection {
-        if let connection = connections[alpn], connection.closeReason() == nil {
+    private struct ConnectionLease: Sendable {
+        let connection: Connection
+        let generation: UInt64
+    }
+
+    private func connection(for alpn: String) async throws -> ConnectionLease {
+        if let lease = currentLease(alpn: alpn) {
             try IrohPeerValidator.validateConnectedPeer(
                 expectedNodeID: iroh.nodeId,
-                remoteNodeID: connection.remoteId().description
+                remoteNodeID: lease.connection.remoteId().description
             )
-            return connection
+            return lease
         }
         connections.removeValue(forKey: alpn)
 
-        if let task = connectionTasks[alpn] {
-            return try await task.value
+        if let task = connectionTasks[alpn], let taskID = connectionTaskIDs[alpn] {
+            let connected = try await task.value
+            if let lease = currentLease(alpn: alpn), lease.connection.stableId() == connected.stableId() {
+                return lease
+            }
+            guard connectionTaskIDs[alpn] == taskID else { throw CancellationError() }
+            connectionTasks.removeValue(forKey: alpn)
+            connectionTaskIDs.removeValue(forKey: alpn)
+            return register(connection: connected, alpn: alpn)
         }
 
         let endpoint = try await boundEndpoint()
         let metadata = iroh
         let startedAtMs = ChatSessionTelemetry.nowMs()
+        let taskID = UUID()
         let task = Task<Connection, Error> {
             try await Self.connect(endpoint: endpoint, iroh: metadata, alpn: alpn)
         }
         connectionTasks[alpn] = task
+        connectionTaskIDs[alpn] = taskID
         do {
             let connected = try await task.value
+            // Another waiter for this same task may resume first and register the result while
+            // this actor is reentrant. Reuse that lease instead of closing its shared connection
+            // after the waiter clears task bookkeeping.
+            if let lease = currentLease(alpn: alpn), lease.connection.stableId() == connected.stableId() {
+                return lease
+            }
+            guard connectionTaskIDs[alpn] == taskID else {
+                try? connected.close(errorCode: 0, reason: Data("superseded".utf8))
+                throw CancellationError()
+            }
             connectionTasks.removeValue(forKey: alpn)
-            connections[alpn] = connected
+            connectionTaskIDs.removeValue(forKey: alpn)
+            let lease = register(connection: connected, alpn: alpn)
             let evidence = Self.selectedPathEvidence(connection: connected)
             IrohTransportTelemetry.recordConnection(
                 durationMs: ChatSessionTelemetry.nowMs() - startedAtMs,
@@ -190,9 +265,12 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
                 evidence: evidence
             )
             recordSelectedPath(connection: connected, alpn: alpn, reason: "connected")
-            return connected
+            return lease
         } catch {
-            connectionTasks.removeValue(forKey: alpn)
+            if connectionTaskIDs[alpn] == taskID {
+                connectionTasks.removeValue(forKey: alpn)
+                connectionTaskIDs.removeValue(forKey: alpn)
+            }
             IrohTransportTelemetry.recordConnection(
                 durationMs: ChatSessionTelemetry.nowMs() - startedAtMs,
                 status: "failed",
@@ -201,6 +279,45 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
             )
             throw error
         }
+    }
+
+    private func currentLease(alpn: String) -> ConnectionLease? {
+        guard let connection = connections[alpn],
+              connection.closeReason() == nil,
+              let generation = connectionGenerations.current(alpn: alpn) else {
+            return nil
+        }
+        return ConnectionLease(connection: connection, generation: generation)
+    }
+
+    private func register(connection: Connection, alpn: String) -> ConnectionLease {
+        if let current = currentLease(alpn: alpn), current.connection.stableId() == connection.stableId() {
+            return current
+        }
+        connections[alpn] = connection
+        let generation = connectionGenerations.advance(alpn: alpn)
+        return ConnectionLease(connection: connection, generation: generation)
+    }
+
+    private func makeByteStream(
+        _ stream: BiStream,
+        alpn: String,
+        generation: UInt64
+    ) -> IrohLibByteStream {
+        IrohLibByteStream(stream: stream) { [weak self] in
+            await self?.invalidateConnectionIfCurrent(alpn: alpn, generation: generation)
+        }
+    }
+
+    private func invalidateConnectionIfCurrent(alpn: String, generation: UInt64) {
+        guard connectionGenerations.invalidateIfCurrent(alpn: alpn, generation: generation) else {
+            return
+        }
+        if let failed = connections.removeValue(forKey: alpn) {
+            try? failed.close(errorCode: 0, reason: Data("transport failed".utf8))
+        }
+        selectedPathKinds.removeValue(forKey: alpn)
+        IrohTransportTelemetry.recordReconnect(status: "invalidated", reason: "stream_failure")
     }
 
     private func recordSelectedPath(connection: Connection, alpn: String, reason: String) {
@@ -504,10 +621,26 @@ enum IrohTransportTelemetry {
     }
 
     static func errorKind(_ error: Error) -> String {
-        guard let error = error as? IrohTransportError else {
-            if error is CancellationError { return "cancelled" }
-            return "other"
+        if error is CancellationError { return "cancelled" }
+        if let error = error as? IrohLib.IrohError {
+            return switch error.kind() {
+            case .invalidInput: "invalid_input"
+            case .bind: "bind"
+            case .connect: "connect"
+            case .connection: "connection"
+            case .alpn: "alpn"
+            case .keyParsing: "key_parsing"
+            case .ticketParsing: "ticket_parsing"
+            case .relay: "relay"
+            case .stream: "stream"
+            case .datagram: "datagram"
+            case .callback: "callback"
+            case .closed: "closed"
+            case .timeout: "timeout"
+            case .internal: "internal"
+            }
         }
+        guard let error = error as? IrohTransportError else { return "other" }
         return switch error {
         case .unsupportedMetadataVersion: "metadata_version"
         case .unsupportedALPN: "alpn"

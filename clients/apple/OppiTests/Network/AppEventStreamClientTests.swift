@@ -66,6 +66,37 @@ struct AppEventStreamClientTests {
         await consumer.value
     }
 
+    @Test func recoverableFailuresContinuePastFormerRetryCeiling() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let client = try makeClient(factory: factory, reconnectDelay: { _ in 0 })
+        let stream = client.connect()
+        var received: [AppEventMessage] = []
+        let consumer = Task { @MainActor in
+            for await event in stream {
+                received.append(event)
+            }
+        }
+
+        for expectedSocketCount in 2...12 {
+            let socket = try #require(factory.sockets.last)
+            socket.fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
+            #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+                factory.sockets.count == expectedSocketCount
+            })
+        }
+
+        let recoveredSocket = try #require(factory.sockets.last)
+        recoveredSocket.yield(.string(Self.connectedJSON))
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            received == [.connected(serverTime: 42, snapshotRequired: false)]
+        })
+        #expect(client.status == .connected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
     @Test func nonRetryableHandshakeFailureFinishesWithoutOpeningAnotherSocket() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let client = try makeClient(factory: factory, reconnectDelay: { _ in 0 })
@@ -80,6 +111,24 @@ struct AppEventStreamClientTests {
             responseStatusCode: 401,
             closeCode: .policyViolation
         )
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            client.status == .disconnected
+        })
+        #expect(factory.sockets.count == 1)
+        await consumer.value
+    }
+
+    @Test func terminalCloseCodeWithoutHTTPResponseFinishesWithoutRetrying() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let client = try makeClient(factory: factory, reconnectDelay: { _ in 0 })
+        let stream = client.connect()
+        let consumer = Task {
+            for await _ in stream {}
+        }
+
+        let socket = try #require(factory.sockets.first)
+        socket.fail(URLError(.badServerResponse), closeCode: .protocolError)
 
         #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
             client.status == .disconnected
@@ -163,7 +212,7 @@ struct AppEventStreamClientTests {
 @Suite("AppEventStreamCoordinator", .serialized)
 @MainActor
 struct AppEventStreamCoordinatorTests {
-    @Test func reconnectSnapshotCompletesBeforeQueuedLiveEventsApply() async throws {
+    @Test func prolongedOutageReconnectSnapshotCompletesBeforeQueuedLiveEventsApply() async throws {
         let gate = AppEventSnapshotGate()
         let snapshotSession = makeTestSession(id: "s1", workspaceId: "w1", status: .ready)
         let coordinator = AppEventStreamCoordinator { connection in
@@ -177,17 +226,26 @@ struct AppEventStreamCoordinatorTests {
         let client = AppEventStreamClient(
             url: url,
             token: "test-token",
+            reconnectDelay: { _ in 0 },
             webSocketFactory: { request in factory.makeTransport(for: request) }
         )
 
         coordinator.start(connection: connection, client: client, streamURL: url)
-        let socket = try #require(factory.sockets.first)
-        socket.yield(.string(#"{"type":"app_events_connected","serverTime":42,"snapshotRequired":true}"#))
+        for expectedSocketCount in 2...12 {
+            let failedSocket = try #require(factory.sockets.last)
+            failedSocket.fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
+            #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+                factory.sockets.count == expectedSocketCount
+            })
+        }
+
+        let recoveredSocket = try #require(factory.sockets.last)
+        recoveredSocket.yield(.string(#"{"type":"app_events_connected","serverTime":42,"snapshotRequired":true}"#))
 
         #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
             gate.hasStarted
         })
-        socket.yield(.string(#"{"type":"session_deleted","sessionId":"s1","workspaceId":"w1","emittedAt":43}"#))
+        recoveredSocket.yield(.string(#"{"type":"session_deleted","sessionId":"s1","workspaceId":"w1","emittedAt":43}"#))
         #expect(connection.sessionStore.session(id: "s1") != nil)
 
         gate.release()

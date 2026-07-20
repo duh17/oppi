@@ -187,16 +187,48 @@ struct ServerConnectionNetworkPathChangeTests {
 @MainActor
 struct PathChangeReconnectDelaySanityTests {
 
-    @Test func totalReconnectWindowIsReasonable() {
-        // Verify that even without NWPathMonitor intervention,
-        // the full 10-attempt window doesn't exceed ~90s.
-        // With path monitoring, recovery should be < 1s.
-        var total: Double = 0
-        for attempt in 1...10 {
-            total += WebSocketClient.reconnectDelay(attempt: attempt)
+    @Test func persistentSubscriptionsContinuePastFormerAttemptCeiling() {
+        #expect(WebSocketRecoveryPolicy.nextReconnectAttempt(after: 10) == 11)
+        #expect(WebSocketRecoveryPolicy.nextReconnectAttempt(after: 10_000) == 10_001)
+        #expect(WebSocketRecoveryPolicy.nextReconnectAttempt(after: Int.max) == Int.max)
+    }
+
+    @Test func reconnectDelayStaysBoundedDuringProlongedOutage() {
+        // Persistent streams now retry until their owner disconnects them. The
+        // per-attempt cap prevents a prolonged outage from growing unbounded.
+        for attempt in [7, 10, 100, Int.max] {
+            let delay = WebSocketClient.reconnectDelay(attempt: attempt)
+            #expect(delay >= 11.25, "Capped delay should retain jitter lower bound")
+            #expect(delay <= 18.75, "Capped delay should retain jitter upper bound")
         }
-        #expect(total < 100, "Total reconnect window should be under 100s")
-        #expect(total > 10, "Total should reflect escalating backoff")
+    }
+
+    @Test func protocolAndPolicyCloseCodesAreTerminal() {
+        let terminalCodes: [URLSessionWebSocketTask.CloseCode] = [
+            .protocolError,
+            .unsupportedData,
+            .invalidFramePayloadData,
+            .policyViolation,
+            .messageTooBig,
+        ]
+        for closeCode in terminalCodes {
+            #expect(WebSocketRecoveryPolicy.isNonRetryableCloseCode(closeCode))
+        }
+        for closeCode in [
+            URLSessionWebSocketTask.CloseCode.normalClosure,
+            .goingAway,
+            .abnormalClosure,
+            .internalServerError,
+        ] {
+            #expect(!WebSocketRecoveryPolicy.isNonRetryableCloseCode(closeCode))
+        }
+    }
+
+    @Test func reconnectAttemptTelemetryTagHasBoundedCardinality() {
+        #expect(WebSocketRecoveryPolicy.reconnectAttemptTag(0) == "0")
+        #expect(WebSocketRecoveryPolicy.reconnectAttemptTag(6) == "6")
+        #expect(WebSocketRecoveryPolicy.reconnectAttemptTag(7) == "7_plus")
+        #expect(WebSocketRecoveryPolicy.reconnectAttemptTag(Int.max) == "7_plus")
     }
 }
 
