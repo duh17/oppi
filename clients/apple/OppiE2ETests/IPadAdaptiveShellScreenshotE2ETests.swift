@@ -97,6 +97,62 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         try saveLabScreenshot(name: "ipad-file-browser")
     }
 
+    func testWorkspaceIconPickerPersistsSymbolSelection() throws {
+        try prepareIPadLandscapeCanvas()
+
+        let workspaceList = app.scrollViews["workspace.sidebar.scroll"]
+        XCTAssertTrue(workspaceList.waitForExistence(timeout: 15), "Workspace sidebar not visible")
+        workspaceList.swipeDown()
+        XCTAssertTrue(
+            app.staticTexts[anchorWorkspaceName].waitForExistence(timeout: 20),
+            "Seeded iPad workspace did not appear after refresh"
+        )
+
+        let openWorkspaceButton = app.buttons["workspace.open.\(anchorWorkspaceName)"].firstMatch
+        XCTAssertTrue(openWorkspaceButton.waitForExistence(timeout: 10), "iPad workspace open button missing")
+        openWorkspaceButton.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.50)).tap()
+        XCTAssertTrue(
+            app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 15),
+            "Workspace session-list column did not appear"
+        )
+
+        openWorkspaceEditForm()
+        let iconButton = app.buttons["workspace.edit.icon"]
+        tap(iconButton, named: "workspace icon picker")
+
+        XCTAssertTrue(
+            app.navigationBars["Choose Icon"].waitForExistence(timeout: 10),
+            "Workspace icon picker did not open"
+        )
+        XCTAssertTrue(
+            app.textFields["workspace.iconPicker.custom"].waitForExistence(timeout: 5),
+            "Workspace icon picker did not retain custom emoji or symbol entry"
+        )
+
+        let codeSymbol = app.buttons["Code"]
+        XCTAssertTrue(codeSymbol.waitForExistence(timeout: 5), "Code symbol was not available")
+        for _ in 0..<3 where !codeSymbol.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(codeSymbol.isHittable, "Code symbol was not reachable in the picker")
+        codeSymbol.tap()
+        tap(app.navigationBars["Choose Icon"].buttons["Done"], named: "icon picker Done button")
+
+        XCTAssertEqual(iconButton.value as? String, "Code")
+        tap(app.buttons["workspace.edit.save"], named: "workspace save button")
+
+        XCTAssertTrue(
+            app.buttons["workspace.edit.open"].waitForExistence(timeout: 15),
+            "Workspace detail did not return after save"
+        )
+        openWorkspaceEditForm()
+        XCTAssertEqual(
+            app.buttons["workspace.edit.icon"].value as? String,
+            "Code",
+            "Saved workspace symbol did not persist after reopening the editor"
+        )
+    }
+
     func testIPadSidebarAgentsAndSchedulesNavigate() throws {
         try prepareIPadLandscapeCanvas()
 
