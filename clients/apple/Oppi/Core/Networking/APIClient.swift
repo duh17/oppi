@@ -1163,7 +1163,29 @@ actor APIClient: ClientLogUploading {
         let targetId: String?
         let targetName: String?
         let name: String?
+        let model: String?
+        let thinking: ThinkingLevel?
         let prompt: String
+
+        init(
+            domain: ControlSessionDomain,
+            intent: ControlSessionIntent,
+            targetId: String?,
+            targetName: String?,
+            name: String?,
+            model: String? = nil,
+            thinking: ThinkingLevel? = nil,
+            prompt: String
+        ) {
+            self.domain = domain
+            self.intent = intent
+            self.targetId = targetId
+            self.targetName = targetName
+            self.name = name
+            self.model = model
+            self.thinking = thinking
+            self.prompt = prompt
+        }
     }
 
     func createControlSession(_ request: CreateControlSessionRequest) async throws -> CreateSessionResponse {

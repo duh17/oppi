@@ -716,6 +716,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "pause <id>", summary: "pause future automatic runs" },
       { name: "resume <id>", summary: "resume automatic runs" },
       { name: "archive <id>", summary: "archive a schedule" },
+      { name: "restore <id>", summary: "restore an archived schedule as active" },
     ],
     notes: ["Run 'oppi schedule create --help' for exact creation flags."],
     examples: [
@@ -902,6 +903,15 @@ const HELP_TOPICS: HelpTopic[] = [
     arguments: [{ name: "<id>", summary: "schedule id" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     examples: [{ command: "oppi schedule archive sch_123" }],
+  },
+  {
+    path: ["schedule", "restore"],
+    title: "Restore schedule",
+    summary: "Restore an archived schedule and activate future automatic runs.",
+    usage: "oppi schedule restore <id> [--json]",
+    arguments: [{ name: "<id>", summary: "schedule id" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi schedule restore sch_123" }],
   },
   {
     path: ["session"],

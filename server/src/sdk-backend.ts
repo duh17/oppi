@@ -440,7 +440,11 @@ export class SdkBackend {
     const initialHostCwd = resolveSdkSessionCwd(workspace, session, { dataDir: config.dataDir });
     const initialCwd = resolveSdkSessionDisplayCwd(workspace, session, { dataDir: config.dataDir });
     const sandboxMode = workspace?.runtime === "sandbox";
-    const runtimeAssertCwd = sandboxMode ? initialHostCwd : initialCwd;
+    // Pi verifies a saved session's header cwd against a real host directory.
+    // Sandboxes and control sessions deliberately persist a display-only cwd,
+    // so their real cwd must remain available as the verification override.
+    const preserveDisplayCwd = sandboxMode || isDeclaredControlSession(session);
+    const runtimeAssertCwd = preserveDisplayCwd ? initialHostCwd : initialCwd;
     const hostMountError = hostMountValidationError(workspace?.hostMount);
     if (hostMountError) {
       throw new Error(hostMountError);
@@ -714,7 +718,7 @@ export class SdkBackend {
       onEvent,
       session.id,
       config.dataDir,
-      sandboxMode ? { existsCwd: runtimeAssertCwd, displayCwd: initialCwd } : undefined,
+      preserveDisplayCwd ? { existsCwd: runtimeAssertCwd, displayCwd: initialCwd } : undefined,
     );
 
     const preBindMs = Date.now() - createStartMs;

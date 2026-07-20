@@ -130,6 +130,24 @@ struct AgentScheduleAPIClientTests {
         #expect(name == "QA run")
     }
 
+    @Test func scheduleRestorePostsActionAndDecodesActiveSchedule() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/schedules/sch-1/restore")
+            return mockResponse(json: """
+            {"schedule":{"id":"sch-1","name":"Daily QA","status":"active","trigger":{"type":"cron","expression":"0 9 * * *","timeZone":"America/Los_Angeles"},"action":{"type":"new_session","workspaceId":"ws-1","promptChars":6},"createdAt":1000,"updatedAt":3000}}
+            """)
+        }
+
+        let schedule = try await client.restoreAgentSchedule("sch-1")
+
+        #expect(schedule.status == .active)
+        #expect(schedule.archivedAt == nil)
+    }
+
     @Test func scheduleRunNowPostsRequestIdAndDecodesRun() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -163,6 +181,8 @@ struct AgentScheduleAPIClientTests {
             #expect(body.intent == .revise)
             #expect(body.targetId == "agent-1")
             #expect(body.targetName == "Reviewer")
+            #expect(body.model == "anthropic/claude-opus-4-8")
+            #expect(body.thinking == .high)
             #expect(body.prompt.contains("--definition-json"))
             return mockResponse(status: 201, json: """
             {"session":{"id":"control-1","name":"Oppi Control","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"revise","targetId":"agent-1","targetName":"Reviewer"}},"prompted":true}
@@ -175,6 +195,8 @@ struct AgentScheduleAPIClientTests {
             targetId: "agent-1",
             targetName: "Reviewer",
             name: "Revise Reviewer",
+            model: "anthropic/claude-opus-4-8",
+            thinking: .high,
             prompt: ControlSessionStarterPrompt.make(
                 domain: .agents,
                 intent: .revise,
@@ -225,8 +247,66 @@ struct AgentScheduleAPIClientTests {
     }
 }
 
+@Suite("Schedule presentation")
+struct SchedulePresentationTests {
+    @Test func commonCronSchedulesUsePlainLanguage() {
+        let daily = AgentScheduleTrigger.cron(expression: "0 8 * * *", timeZone: "America/Los_Angeles")
+        let twiceDaily = AgentScheduleTrigger.cron(expression: "0 9,17 * * *", timeZone: "America/Los_Angeles")
+        let weekly = AgentScheduleTrigger.cron(expression: "30 9 * * 1", timeZone: "America/Los_Angeles")
+
+        #expect(daily.scheduleScreenCadence == "DAILY")
+        #expect(daily.scheduleScreenTiming(locale: Locale(identifier: "en_US")).contains("Every day · 8:00"))
+        #expect(twiceDaily.scheduleScreenTiming(locale: Locale(identifier: "en_US")).contains("9:00"))
+        #expect(twiceDaily.scheduleScreenTiming(locale: Locale(identifier: "en_US")).contains("5:00"))
+        #expect(weekly.scheduleScreenCadence == "WEEKLY")
+        #expect(weekly.scheduleScreenTiming(locale: Locale(identifier: "en_US")).contains("Mondays · 9:30"))
+    }
+
+    @Test func advancedSchedulesHideImplementationSyntax() {
+        let custom = AgentScheduleTrigger.cron(expression: "0 8 1 * *", timeZone: "UTC")
+        let interval = AgentScheduleTrigger.every(intervalMs: 7_200_000, timeZone: "UTC")
+
+        #expect(custom.scheduleScreenCadence == "CUSTOM")
+        #expect(custom.scheduleScreenTiming(locale: Locale(identifier: "en_US")) == "Custom schedule")
+        #expect(interval.scheduleScreenCadence == "REPEATS")
+        #expect(interval.scheduleScreenTiming(locale: Locale(identifier: "en_US")) == "Every 2h")
+    }
+}
+
 @Suite("Control session starter prompts")
 struct ControlSessionStarterPromptTests {
+    @Test func scheduleCreationPromptCarriesRequestWorkspaceAndClarificationContract() {
+        let prompt = ControlSessionStarterPrompt.make(
+            domain: .schedules,
+            intent: .create,
+            workspaceId: "ws-7",
+            workspaceName: "Dream",
+            userRequest: "Brief me on coaching trends every Monday morning."
+        )
+
+        #expect(prompt.contains("User request:\nBrief me on coaching trends every Monday morning."))
+        #expect(prompt.contains("Canonical workspace ID: ws-7"))
+        #expect(prompt.contains("Canonical workspace name: Dream"))
+        #expect(prompt.contains("`oppi schedule`"))
+        #expect(prompt.contains("schedule behavior or timing is ambiguous"))
+        #expect(prompt.contains("wait for explicit approval"))
+    }
+
+    @Test func agentCreationPromptTeachesTheAgentCommandAndBehaviorClarification() {
+        let prompt = ControlSessionStarterPrompt.make(
+            domain: .agents,
+            intent: .create,
+            workspaceId: "ws-2",
+            workspaceName: "Oppi",
+            userRequest: "Create a careful release reviewer."
+        )
+
+        #expect(prompt.contains("`oppi agent`"))
+        #expect(prompt.contains("Agent behavior is ambiguous"))
+        #expect(prompt.contains("Canonical workspace ID: ws-2"))
+        #expect(prompt.contains("User request:\nCreate a careful release reviewer."))
+    }
+
     @Test func revisionPromptIsDeterministicAndUsesCanonicalDefinitionInput() {
         let first = ControlSessionStarterPrompt.make(
             domain: .schedules,

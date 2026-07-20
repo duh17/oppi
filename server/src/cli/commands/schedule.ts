@@ -204,7 +204,7 @@ export async function cmdSchedule(
       return;
     }
 
-    if (["run", "runs", "pause", "resume", "archive"].includes(mode)) {
+    if (["run", "runs", "pause", "resume", "archive", "restore"].includes(mode)) {
       const id = positional[0];
       if (!id) throw new Error("schedule id is required");
       if (mode === "runs") {
@@ -248,7 +248,9 @@ export async function cmdSchedule(
       return;
     }
 
-    throw new Error("Usage: oppi schedule list|get|create|update|run|runs|pause|resume|archive");
+    throw new Error(
+      "Usage: oppi schedule list|get|create|update|run|runs|pause|resume|archive|restore",
+    );
   } catch (err: unknown) {
     handleModelResolvingCliError(err, jsonOutput);
   }

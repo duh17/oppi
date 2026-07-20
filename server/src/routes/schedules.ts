@@ -99,7 +99,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
 
   function handleScheduleState(
     scheduleId: string,
-    action: "pause" | "resume" | "archive",
+    action: "pause" | "resume" | "archive" | "restore",
     method: string,
     res: ServerResponse,
   ): boolean {
@@ -112,7 +112,9 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         ? schedules.pauseSchedule(resolved.id)
         : action === "resume"
           ? schedules.resumeSchedule(resolved.id)
-          : schedules.archiveSchedule(resolved.id);
+          : action === "archive"
+            ? schedules.archiveSchedule(resolved.id)
+            : schedules.restoreSchedule(resolved.id);
     if (!schedule) {
       helpers.error(res, 404, "Schedule not found");
       return true;
@@ -208,11 +210,11 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return handleManualRun(decodeURIComponent(manualRun[1]), method, req, res);
     }
 
-    const state = path.match(/^\/schedules\/([^/]+)\/(pause|resume|archive)$/);
+    const state = path.match(/^\/schedules\/([^/]+)\/(pause|resume|archive|restore)$/);
     if (state?.[1] && state[2]) {
       return handleScheduleState(
         decodeURIComponent(state[1]),
-        state[2] as "pause" | "resume" | "archive",
+        state[2] as "pause" | "resume" | "archive" | "restore",
         method,
         res,
       );

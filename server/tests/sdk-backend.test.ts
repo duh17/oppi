@@ -180,6 +180,46 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
+describe("SdkBackend control sessions", () => {
+  it("reopens a Default Agent control session through its private cwd", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-reopen-"));
+    const session = makeSession({
+      workspaceId: undefined,
+      control: { domain: "schedules", intent: "revise" },
+      launch: { status: "launching", requestedAt: 1, agentId: DEFAULT_AGENT_ID },
+    });
+    let first: SdkBackend | undefined;
+    let reopened: SdkBackend | undefined;
+
+    try {
+      first = await SdkBackend.create({
+        session,
+        dataDir,
+        agentDefinition: DEFAULT_AGENT_DEFINITION,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+      expect(first.session.sessionManager.getCwd()).toBe("Oppi Control");
+      expect(session.piSessionFile).toBeDefined();
+
+      await first.dispose();
+      reopened = await SdkBackend.create({
+        session,
+        dataDir,
+        agentDefinition: DEFAULT_AGENT_DEFINITION,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(reopened.session.sessionManager.getCwd()).toBe("Oppi Control");
+    } finally {
+      await reopened?.dispose();
+      await first?.dispose();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("SdkBackend sandbox", () => {
   it("does not forward provider auth secrets into the VM", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-secrets-"));

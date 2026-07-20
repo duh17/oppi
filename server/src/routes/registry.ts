@@ -828,6 +828,13 @@ const rawApiRouteSpecs = [
   },
   {
     method: "POST",
+    path: "/schedules/{scheduleId}/restore",
+    operationId: "restoreAgentSchedule",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "POST",
     path: "/schedules/{scheduleId}/run",
     operationId: "runAgentSchedule",
     surface: "core",

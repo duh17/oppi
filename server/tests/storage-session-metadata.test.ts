@@ -56,6 +56,51 @@ describe("storage session metadata format", () => {
     expect(new Storage(dir).getSession(session.id)?.status).toBe("ready");
   });
 
+  it("preserves declared control metadata in cache and across SQLite reopen", () => {
+    const writer = new SessionSqliteStore(dir);
+    const control = {
+      domain: "agents" as const,
+      intent: "revise" as const,
+      targetId: "agent-1",
+      targetName: "Reviewer",
+    };
+
+    try {
+      const session = writer.createSession("Revise Reviewer", "openai/gpt-5");
+      session.control = control;
+      writer.saveSession(session);
+
+      control.targetName = "mutated after save";
+      expect(writer.getSession(session.id)?.control).toEqual({
+        domain: "agents",
+        intent: "revise",
+        targetId: "agent-1",
+        targetName: "Reviewer",
+      });
+    } finally {
+      writer.close();
+    }
+
+    const reader = new SessionSqliteStore(dir);
+    try {
+      expect(reader.listSessions()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            control: {
+              domain: "agents",
+              intent: "revise",
+              targetId: "agent-1",
+              targetName: "Reviewer",
+            },
+          }),
+        ]),
+      );
+      expect(reader.listSessions()[0]?.workspaceId).toBeUndefined();
+    } finally {
+      reader.close();
+    }
+  });
+
   it("persists delegation lineage across SQLite close and reopen", () => {
     const writer = new SessionSqliteStore(dir);
     try {

@@ -81,7 +81,10 @@ enum ControlSessionStarterPrompt {
         domain: ControlSessionDomain,
         intent: ControlSessionIntent,
         targetId: String? = nil,
-        targetName: String? = nil
+        targetName: String? = nil,
+        workspaceId: String? = nil,
+        workspaceName: String? = nil,
+        userRequest: String? = nil
     ) -> String {
         let subject = switch domain {
         case .agents: "saved Agent"
@@ -91,19 +94,33 @@ enum ControlSessionStarterPrompt {
         let target = intent == .revise
             ? "\nCanonical target ID: \(targetId ?? "unknown")\nCanonical target name: \(targetName ?? "unknown")"
             : ""
+        let workspace = workspaceId.map {
+            "\nCanonical workspace ID: \($0)\nCanonical workspace name: \(workspaceName ?? "unknown")"
+        } ?? ""
+        let workflow = switch domain {
+        case .agents:
+            "Use the `oppi agent` command family to list and inspect existing definitions, then create or update the approved definition. If Agent behavior is ambiguous, ask focused questions about responsibilities, boundaries, resources, defaults, and success criteria."
+        case .schedules:
+            "Use the `oppi schedule` command family to list and inspect existing schedules, then create or update the approved schedule. If schedule behavior or timing is ambiguous, ask focused questions about the task, target workspace or session, cadence, time zone, safety constraints, and expected output."
+        case .workspaces:
+            "Use the `oppi workspace` command family to inspect existing workspaces, then create or update the approved workspace. Ask focused questions about paths, runtime, and access when they are ambiguous."
+        }
         let definitionRequirement = switch (domain, intent) {
         case (.agents, _), (.schedules, .revise):
-            " Pass the approved definition directly with --definition-json."
+            " Pass the approved definition directly with `--definition-json`; do not use a definition file."
         default:
             ""
         }
 
+        let request = userRequest?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestBlock = request.flatMap { $0.isEmpty ? nil : "\n\nUser request:\n\($0)" } ?? ""
+
         return """
-        Help the user \(intent == .create ? "create" : "revise") an Oppi \(subject).\(target)
+        Help the user \(intent == .create ? "create" : "revise") an Oppi \(subject).\(target)\(workspace)
 
-        Act as Default Agent. First inspect the current server state using only approved `oppi` commands. Ask focused questions needed to remove ambiguity. Then summarize the proposed changes and wait for explicit approval before making them. After approval, use the appropriate approved `oppi` command to apply the change.\(definitionRequirement)
+        Act as Default Agent. First inspect the current server state using only approved `oppi` commands. \(workflow) Summarize the proposed changes and wait for explicit approval before making them. After approval, apply the change with the appropriate approved `oppi` command.\(definitionRequirement)
 
-        Do not use filesystem tools or temporary files for this task.
+        Do not use filesystem tools or temporary files for this task.\(requestBlock)
         """
     }
 }

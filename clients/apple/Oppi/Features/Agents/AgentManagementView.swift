@@ -43,7 +43,6 @@ struct AgentManagementView: View {
     @State private var agents: [AgentDefinitionSummary] = []
     @State private var isLoading = false
     @State private var error: String?
-    @State private var editorContext: AgentEditorContext?
 
     var body: some View {
         List {
@@ -55,7 +54,7 @@ struct AgentManagementView: View {
                 ContentUnavailableView(
                     "No Agents",
                     systemImage: "person.crop.circle.badge.plus",
-                    description: Text("Create reusable Agent definitions for common session setups.")
+                    description: Text("Describe the Agent you need below. Default Agent will clarify its behavior before creating it.")
                 )
                 .listRowBackground(Color.themeBg)
             } else {
@@ -78,26 +77,15 @@ struct AgentManagementView: View {
         .navigationTitle("Agents")
         .navigationBarTitleDisplayMode(.inline)
         .themedListSurface()
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    editorContext = AgentEditorContext(agent: nil)
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .accessibilityLabel("Create Agent")
-                .accessibilityIdentifier("agents.create.open")
-            }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            GuidedControlSessionComposer(
+                domain: .agents,
+                intent: .create,
+                placeholder: "Describe a new Agent…"
+            )
         }
         .refreshable { await loadAgents() }
         .task { await loadAgents() }
-        .sheet(item: $editorContext) { context in
-            NavigationStack {
-                AgentEditView(agent: context.agent) {
-                    await loadAgents()
-                }
-            }
-        }
         .alert("Agents", isPresented: Binding(
             get: { error != nil },
             set: { if !$0 { error = nil } }
@@ -125,12 +113,6 @@ struct AgentManagementView: View {
             self.error = error.localizedDescription
         }
     }
-}
-
-private struct AgentEditorContext: Identifiable {
-    let agent: StoredAgentDefinition?
-
-    var id: String { agent?.id ?? "new" }
 }
 
 private struct AgentSummaryRow: View {
@@ -191,7 +173,7 @@ private struct AgentDetailView: View {
     @State private var agent: StoredAgentDefinition?
     @State private var isLoading = false
     @State private var error: String?
-    @State private var isShowingEditor = false
+    @State private var isShowingRevision = false
     @State private var isShowingLaunch = false
     @State private var isShowingSchedule = false
     @State private var isArchiving = false
@@ -278,7 +260,7 @@ private struct AgentDetailView: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if agent != nil {
                     Button("Edit") {
-                        isShowingEditor = true
+                        isShowingRevision = true
                     }
                     .accessibilityIdentifier("agents.detail.edit")
 
@@ -296,13 +278,15 @@ private struct AgentDetailView: View {
         }
         .task(id: agentId) { await loadAgent() }
         .refreshable { await loadAgent() }
-        .sheet(isPresented: $isShowingEditor) {
+        .sheet(isPresented: $isShowingRevision) {
             if let agent {
-                NavigationStack {
-                    AgentEditView(agent: agent) {
-                        await loadAgent()
-                    }
-                }
+                GuidedControlSessionSheet(
+                    domain: .agents,
+                    intent: .revise,
+                    targetId: agent.id,
+                    targetName: agent.name,
+                    placeholder: "Describe how this Agent should change…"
+                )
             }
         }
         .sheet(isPresented: $isShowingLaunch) {
@@ -316,14 +300,13 @@ private struct AgentDetailView: View {
         }
         .sheet(isPresented: $isShowingSchedule) {
             if let agent {
-                NavigationStack {
-                    ScheduleEditView(
-                        schedule: nil,
-                        prefill: ScheduleEditPrefill(agentId: agent.id, agentName: agent.name)
-                    ) {
-                        await loadAgent()
-                    }
-                }
+                GuidedControlSessionSheet(
+                    domain: .schedules,
+                    intent: .create,
+                    initialRequest: "Create a schedule that runs saved Agent \(agent.name) (canonical Agent ID: \(agent.id)).",
+                    allowsEmptyRequest: false,
+                    placeholder: "Describe when and how this Agent should run…"
+                )
             }
         }
         .alert("Agent", isPresented: Binding(
@@ -403,269 +386,6 @@ private struct AgentDetailView: View {
         } catch {
             self.error = error.localizedDescription
         }
-    }
-}
-
-private struct AgentEditView: View {
-    @Environment(\.apiClient) private var apiClient
-    @Environment(ServerConnection.self) private var connection
-    @Environment(SessionStore.self) private var sessionStore
-    @Environment(AppNavigation.self) private var navigation
-    @Environment(\.dismiss) private var dismiss
-
-    let agent: StoredAgentDefinition?
-    let onSaved: () async -> Void
-
-    @State private var name = ""
-    @State private var description = ""
-    @State private var instructionMode: AgentInstructionMode = .append
-    @State private var instructions = ""
-    @State private var noContextFiles = false
-    @State private var skillPathsText = ""
-    @State private var promptTemplateIdsText = ""
-    @State private var extensionIdsText = ""
-    @State private var model = ""
-    @State private var thinkingSelection = ""
-    @State private var noToolsSelection = ""
-    @State private var toolsText = ""
-    @State private var excludeToolsText = ""
-    @State private var isSaving = false
-    @State private var isLaunchingOppi = false
-    @State private var error: String?
-
-    private let thinkingOptions: [ThinkingLevel] = [.off, .minimal, .low, .medium, .high, .xhigh]
-
-    private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSaving
-    }
-
-    var body: some View {
-        Form {
-            if connection.controlSessionsAvailable, apiClient != nil {
-                Section {
-                    UseOppiSessionRow(
-                        supportingText: agent == nil
-                            ? "Work with Default Agent to create this Agent."
-                            : "Work with Default Agent to revise this Agent.",
-                        isLoading: isLaunchingOppi
-                    ) {
-                        Task { await launchOppiSession() }
-                    }
-                    .accessibilityIdentifier("agent.edit.useOppiSession")
-                }
-            }
-
-            Section("Details") {
-                TextField("Name", text: $name)
-                    .autocorrectionDisabled()
-                    .accessibilityIdentifier("agent.edit.name")
-                TextField("Description", text: $description, axis: .vertical)
-                    .lineLimit(1...3)
-                    .accessibilityIdentifier("agent.edit.description")
-            }
-
-            Section {
-                Picker("Mode", selection: $instructionMode) {
-                    ForEach(AgentInstructionMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue.capitalized).tag(mode)
-                    }
-                }
-
-                TextEditor(text: $instructions)
-                    .frame(minHeight: 160)
-                    .font(.body.monospaced())
-                    .accessibilityIdentifier("agent.edit.instructions")
-            } header: {
-                Text("Instructions")
-            } footer: {
-                Text("Instructions are stored on the Agent. Workspaces and worktrees are still chosen per launch.")
-            }
-
-            Section {
-                Toggle("Ignore discovered context files", isOn: $noContextFiles)
-                TextField("Skill paths", text: $skillPathsText, axis: .vertical)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                TextField("Prompt template IDs", text: $promptTemplateIdsText, axis: .vertical)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                TextField("Extension IDs", text: $extensionIdsText, axis: .vertical)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-            } header: {
-                Text("Pi Resources")
-            } footer: {
-                Text("Separate values with commas or new lines. Empty fields use normal Pi discovery.")
-            }
-
-            Section {
-                TextField("Model", text: $model)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Picker("Thinking", selection: $thinkingSelection) {
-                    Text("Default").tag("")
-                    ForEach(thinkingOptions, id: \.rawValue) { level in
-                        Text(level.rawValue).tag(level.rawValue)
-                    }
-                }
-                Picker("Tool filter", selection: $noToolsSelection) {
-                    Text("Default").tag("")
-                    ForEach(AgentNoToolsMode.allCases, id: \.self) { mode in
-                        Text(mode.displayName).tag(mode.rawValue)
-                    }
-                }
-                TextField("Allowed tools", text: $toolsText, axis: .vertical)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                TextField("Excluded tools", text: $excludeToolsText, axis: .vertical)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-            } header: {
-                Text("Session Defaults")
-            } footer: {
-                Text("Tool fields use Pi's tools, excludeTools, and noTools names.")
-            }
-
-            if let error {
-                Section {
-                    Text(error)
-                        .foregroundStyle(.themeOrange)
-                }
-            }
-        }
-        .navigationTitle(agent == nil ? "New Agent" : "Edit Agent")
-        .navigationBarTitleDisplayMode(.inline)
-        .themedListSurface()
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { dismiss() }
-                    .disabled(isSaving)
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                Button(isSaving ? "Saving…" : "Save") {
-                    Task { await save() }
-                }
-                .disabled(!canSave)
-                .accessibilityIdentifier("agent.edit.save")
-            }
-        }
-        .onAppear(perform: populate)
-    }
-
-    private func populate() {
-        guard let definition = agent?.definition else { return }
-        name = definition.name
-        description = definition.description ?? ""
-        instructionMode = definition.instructions?.mode ?? .append
-        instructions = definition.instructions?.text ?? ""
-        noContextFiles = definition.resources?.noContextFiles == true
-        skillPathsText = Self.joinList(definition.resources?.skillPaths)
-        promptTemplateIdsText = Self.joinList(definition.resources?.promptTemplateIds)
-        extensionIdsText = Self.joinList(definition.resources?.extensionIds)
-        model = definition.sessionDefaults?.model ?? ""
-        thinkingSelection = definition.sessionDefaults?.thinkingLevel?.rawValue ?? ""
-        noToolsSelection = definition.sessionDefaults?.noTools?.rawValue ?? ""
-        toolsText = Self.joinList(definition.sessionDefaults?.tools)
-        excludeToolsText = Self.joinList(definition.sessionDefaults?.excludeTools)
-    }
-
-    @MainActor
-    private func launchOppiSession() async {
-        guard let apiClient, !isLaunchingOppi else { return }
-        isLaunchingOppi = true
-        defer { isLaunchingOppi = false }
-        let intent: ControlSessionIntent = agent == nil ? .create : .revise
-        let targetName = agent?.name
-        do {
-            let response = try await apiClient.createControlSession(.init(
-                domain: .agents,
-                intent: intent,
-                targetId: agent?.id,
-                targetName: targetName,
-                name: intent == .create ? "Create Agent" : "Revise \(targetName ?? "Agent")",
-                prompt: ControlSessionStarterPrompt.make(
-                    domain: .agents,
-                    intent: intent,
-                    targetId: agent?.id,
-                    targetName: targetName
-                )
-            ))
-            sessionStore.cacheSessionForNavigation(response.session)
-            guard let serverId = connection.currentServerId ?? sessionStore.activeServerId else { return }
-            dismiss()
-            await Task.yield()
-            navigation.openWorkspaceSession(.init(
-                serverId: serverId,
-                sessionId: response.session.id,
-                routeScope: .control
-            ))
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func save() async {
-        guard let apiClient else {
-            error = "Server is offline"
-            return
-        }
-
-        isSaving = true
-        defer { isSaving = false }
-
-        do {
-            let definition = buildDefinition()
-            if let agent {
-                _ = try await apiClient.updateAgent(agentId: agent.id, definition: definition)
-            } else {
-                _ = try await apiClient.createAgent(definition)
-            }
-            await onSaved()
-            dismiss()
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    private func buildDefinition() -> AgentDefinition {
-        let cleanInstructions = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resources = AgentResources(
-            agentsFiles: nil,
-            noContextFiles: noContextFiles ? true : nil,
-            skillPaths: Self.parseList(skillPathsText),
-            promptTemplateIds: Self.parseList(promptTemplateIdsText),
-            extensionIds: Self.parseList(extensionIdsText)
-        )
-        let defaults = AgentSessionDefaults(
-            model: model.nilIfBlank,
-            thinkingLevel: ThinkingLevel(rawValue: thinkingSelection),
-            tools: Self.parseList(toolsText),
-            excludeTools: Self.parseList(excludeToolsText),
-            noTools: AgentNoToolsMode(rawValue: noToolsSelection)
-        )
-
-        return AgentDefinition(
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            description: description.nilIfBlank,
-            instructions: cleanInstructions.isEmpty ? nil : AgentInstructions(mode: instructionMode, text: cleanInstructions),
-            resources: resources.isEmpty ? nil : resources,
-            sessionDefaults: defaults.isEmpty ? nil : defaults
-        )
-    }
-
-    private static func parseList(_ text: String) -> [String]? {
-        let values = text
-            .split { separator in
-                separator == "," || separator == "\n" || separator == "\r"
-            }
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return values.isEmpty ? nil : values
-    }
-
-    private static func joinList(_ values: [String]?) -> String {
-        values?.joined(separator: ", ") ?? ""
     }
 }
 

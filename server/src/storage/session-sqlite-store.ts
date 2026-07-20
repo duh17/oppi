@@ -1067,6 +1067,9 @@ function normalizeDeclaredSession(session: Session): Session {
     normalized.thinkingLevel = session.thinkingLevel;
   }
   normalized.runtime = normalizeStoredSessionRuntimeKind(session.runtime) ?? "oppi";
+  if (session.control !== undefined && session.control !== null) {
+    normalized.control = { ...session.control };
+  }
   if (session.mirror !== undefined && session.mirror !== null) {
     normalized.mirror = session.mirror;
   }

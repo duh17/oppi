@@ -13,6 +13,8 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     nonisolated(unsafe) private var swipeRegressionSessionId: String?
     nonisolated(unsafe) private var swipeRegressionStoppedSessionId: String?
     nonisolated(unsafe) private var themeSwitchSessionId: String?
+    nonisolated(unsafe) private var activeScheduleId: String?
+    nonisolated(unsafe) private var archivedScheduleId: String?
 
     override var e2eLaunchesSessionsInboxOnly: Bool {
         true
@@ -86,6 +88,19 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             for index in 1...18 {
                 _ = try createLabWorkspace(named: "Scroll Workspace \(index)")
             }
+        } else if name.contains("testScheduleScreenCreatesAndRestoresWithSimpleControls") {
+            activeScheduleId = try createScheduleFixture(
+                name: "Daily telemetry review",
+                expression: "0 7 * * *",
+                workspaceId: anchorWorkspaceId
+            )
+            let archivedId = try createScheduleFixture(
+                name: "Archived smoke test",
+                expression: "30 9 * * 1",
+                workspaceId: anchorWorkspaceId
+            )
+            archivedScheduleId = archivedId
+            _ = try e2eLabAPIJSON(method: "POST", path: "/schedules/\(archivedId)/archive")
         }
     }
 
@@ -302,21 +317,29 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
     }
 
-    func testAgentCreateSheetLaunchesExistingControlSessionTimeline() throws {
+    func testAgentGuidedComposerLaunchesExistingControlSessionTimeline() throws {
         XCUIDevice.shared.orientation = .portrait
 
         openWorkspaceSidebar()
         tap(app.buttons["workspace.agents.open"], named: "Agents sidebar destination")
         XCTAssertTrue(app.navigationBars["Agents"].waitForExistence(timeout: 10))
 
-        tap(app.buttons["agents.create.open"], named: "Create Agent")
-        XCTAssertTrue(app.navigationBars["New Agent"].waitForExistence(timeout: 10))
-        let useOppiSession = app.buttons["agent.edit.useOppiSession"]
-        XCTAssertTrue(useOppiSession.waitForExistence(timeout: 10))
-        tap(useOppiSession, named: "Use Oppi Session")
+        XCTAssertFalse(app.buttons["agents.create.open"].exists, "Manual Agent creation button must be absent")
+        XCTAssertTrue(app.buttons["guided.agents.create.workspacePicker"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["session.toolbar.model"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["session.toolbar.thinking"].waitForExistence(timeout: 10))
+        if app.buttons["chat.voiceInput"].exists {
+            XCTAssertTrue(app.buttons["chat.voiceInput"].isHittable, "Agent composer dictation was not usable")
+        }
+
+        let composer = app.textViews["chat.input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), "Agent guided composer did not appear")
+        composer.tap()
+        composer.typeText("Create a release reviewer")
+        tap(app.buttons["chat.send"], named: "Agent guided prompt send")
 
         XCTAssertTrue(
-            app.navigationBars["Create Agent"].waitForExistence(timeout: 15),
+            app.navigationBars["Agent: Create a release reviewer"].waitForExistence(timeout: 15),
             "Control session did not open in the existing chat destination"
         )
         XCTAssertTrue(
@@ -328,6 +351,87 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             "Workspace-only Files control must stay absent from a control session"
         )
         try saveLabScreenshot(name: "iphone-control-session-existing-chat-e2e")
+    }
+
+    func testScheduleScreenCreatesAndRestoresWithSimpleControls() throws {
+        XCUIDevice.shared.orientation = .portrait
+
+        let activeId = try XCTUnwrap(activeScheduleId, "Active schedule was not seeded")
+        let archivedId = try XCTUnwrap(archivedScheduleId, "Archived schedule was not seeded")
+        openWorkspaceSidebar()
+        tap(app.buttons["workspace.schedules.open"], named: "Schedules sidebar destination")
+        XCTAssertTrue(app.navigationBars["Schedules"].waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            app.buttons["schedules.row.\(activeId)"].waitForExistence(timeout: 10),
+            "Active schedule card did not appear"
+        )
+        XCTAssertFalse(
+            app.buttons["schedules.row.\(archivedId)"].exists,
+            "Archived schedule should be hidden by default"
+        )
+        XCTAssertFalse(app.buttons["schedules.more"].exists, "Manual Schedule creation menu must be absent")
+        XCTAssertTrue(app.buttons["guided.schedules.create.workspacePicker"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["session.toolbar.model"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["session.toolbar.thinking"].waitForExistence(timeout: 10))
+        if app.buttons["chat.voiceInput"].exists {
+            XCTAssertTrue(app.buttons["chat.voiceInput"].isHittable, "Schedule composer dictation was not usable")
+        }
+
+        tap(app.buttons["schedules.row.\(activeId)"], named: "active schedule detail")
+        tap(app.buttons["schedule.detail.edit"], named: "guided schedule revision")
+        XCTAssertTrue(app.navigationBars["Revise Daily telemetry review"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["schedule.edit.save"].exists, "Schedule revision must not expose the manual form")
+        tap(app.buttons["Cancel"], named: "dismiss guided revision")
+        tap(app.navigationBars["Daily telemetry review"].buttons.firstMatch, named: "schedule detail back button")
+
+        tap(app.buttons["schedules.filter"], named: "schedule status filter")
+        tap(app.buttons["Archived"], named: "Archived schedules")
+        let archivedRow = app.buttons["schedules.row.\(archivedId)"]
+        XCTAssertTrue(archivedRow.waitForExistence(timeout: 10), "Archived schedule was not recoverable")
+        archivedRow.swipeLeft()
+        tap(app.buttons["Restore"], named: "Restore archived schedule")
+        XCTAssertTrue(
+            app.buttons["schedules.row.\(archivedId)"].waitForExistence(timeout: 10),
+            "Restored schedule did not return to Active"
+        )
+
+        try saveLabScreenshot(name: "iphone-simple-schedules-e2e")
+
+        let expectedWorkspaceId = try e2eWorkspaceId()
+        tap(app.buttons["session.toolbar.model"], named: "schedule model picker")
+        let modelTitle = app.staticTexts["E2E oMLX Model"]
+        XCTAssertTrue(modelTitle.waitForExistence(timeout: 20), "Schedule model picker had no model")
+        let modelIdentifier = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "omlx/")
+        ).firstMatch
+        XCTAssertTrue(modelIdentifier.waitForExistence(timeout: 5), "Schedule model ID was not visible")
+        let selectedModel = modelIdentifier.label
+        tap(modelTitle, named: "schedule model")
+        tap(app.buttons["session.toolbar.thinking"], named: "schedule thinking picker")
+        tap(app.buttons["session.toolbar.thinking.option.high"], named: "High schedule thinking")
+
+        let composer = app.textViews["chat.input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), "Schedule prompt composer did not appear")
+        composer.tap()
+        composer.typeText("Brief me on coaching trends every Monday morning")
+        tap(app.buttons["chat.send"], named: "schedule prompt send")
+
+        XCTAssertTrue(
+            app.navigationBars["Schedule: Brief me on coaching trends every Monday morning"].waitForExistence(timeout: 15),
+            "Schedule prompt did not open the control session"
+        )
+        XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 15))
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        let session = try e2eSession(sessionId: sessionId)
+        XCTAssertNil(session["workspaceId"], "Workspace context must not bind the control-session runtime")
+        XCTAssertEqual(session["thinkingLevel"] as? String, "high")
+        let actualModel = try XCTUnwrap(session["model"] as? String)
+        XCTAssertTrue(actualModel == selectedModel || selectedModel.hasSuffix("/\(actualModel)"))
+        XCTAssertTrue(
+            (session["firstMessage"] as? String)?.contains("Canonical workspace ID: \(expectedWorkspaceId)") == true,
+            "Tailored prompt did not include canonical workspace context"
+        )
     }
 
     func testIPhoneSidebarAgentsAndSchedulesNavigate() throws {
@@ -510,6 +614,28 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             waitForHittable(app.buttons["workspace.sidebar.open"], timeout: 5),
             "Tapping the session card did not dismiss the workspace sidebar"
         )
+    }
+
+    nonisolated private func createScheduleFixture(name: String, expression: String, workspaceId: String) throws -> String {
+        let response = try e2eLabAPIJSON(
+            method: "POST",
+            path: "/schedules",
+            body: [
+                "name": name,
+                "trigger": [
+                    "type": "cron",
+                    "expression": expression,
+                    "timeZone": "America/Los_Angeles",
+                ],
+                "action": [
+                    "type": "new_session",
+                    "workspaceId": workspaceId,
+                    "prompt": name,
+                ],
+            ]
+        )
+        let schedule = try XCTUnwrap(response["schedule"] as? [String: Any])
+        return try XCTUnwrap(schedule["id"] as? String)
     }
 
     private func selectManualTheme(_ themeName: String) {

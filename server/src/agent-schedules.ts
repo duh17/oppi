@@ -266,6 +266,17 @@ export class AgentScheduleStore {
     return this.getSchedule(scheduleId);
   }
 
+  restoreSchedule(scheduleId: string, now = Date.now()): AgentSchedule | undefined {
+    this.db
+      .prepare(
+        `UPDATE agent_schedules
+         SET status = 'active', updated_at = ?, archived_at = NULL
+         WHERE id = ? AND status = 'archived'`,
+      )
+      .run(now, scheduleId);
+    return this.getSchedule(scheduleId);
+  }
+
   getSchedule(scheduleId: string): AgentSchedule | undefined {
     const row = this.db.prepare("SELECT * FROM agent_schedules WHERE id = ?").get(scheduleId) as
       | ScheduleRow
