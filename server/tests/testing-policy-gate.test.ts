@@ -10,6 +10,7 @@ function makeFixture(
     packageScripts?: Record<string, string>;
     gates?: Record<string, string[] | { server?: string[]; apple?: string[] }>;
     docs?: string;
+    requiredTrackedFiles?: string[];
     runner?: "real" | "missing" | "nonStrictE2E";
   } = {},
 ) {
@@ -41,7 +42,17 @@ function makeFixture(
   };
   writeFileSync(
     path.join(serverRoot, "testing-policy.json"),
-    JSON.stringify({ version: 2, gates }, null, 2),
+    JSON.stringify(
+      {
+        version: 2,
+        gates,
+        ...(options.requiredTrackedFiles
+          ? { tooling: { requiredTrackedFiles: options.requiredTrackedFiles } }
+          : {}),
+      },
+      null,
+      2,
+    ),
   );
 
   writeFileSync(
@@ -79,6 +90,19 @@ describe("testing policy gate coherence", () => {
 
     expect(result.errors).toEqual([]);
     expect(result.ok).toBe(true);
+  });
+
+  it("fails when a required testing file is present but untracked", () => {
+    const fixture = makeFixture({ requiredTrackedFiles: ["required-tool.ts"] });
+    try {
+      writeFileSync(path.join(fixture.root, "required-tool.ts"), "export {};\n");
+      const result = checkTestingPolicy({ serverRoot: fixture.serverRoot, repoRoot: fixture.root });
+
+      expect(result.ok).toBe(false);
+      expect(result.errors).toContain("required testing file is not tracked: required-tool.ts");
+    } finally {
+      fixture.cleanup();
+    }
   });
 
   it("fails when the canonical gate runner is missing", () => {

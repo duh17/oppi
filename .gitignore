@@ -20,6 +20,8 @@ scripts/*
 !scripts/duplication-scan.ts
 !scripts/scroll-offset-guard.ts
 !scripts/theme-surface-guard.ts
+!scripts/pre-push-plan.ts
+!scripts/pre-push-plan.test.ts
 clients/apple/scripts/*
 !clients/apple/scripts/check-coverage.sh
 !clients/apple/scripts/sim-pool.sh
@@ -34,6 +36,8 @@ server/scripts/manual/*
 !.github/workflows/
 .github/workflows/*
 !.github/workflows/server.yml
+!.github/workflows/apple.yml
+!.github/workflows/hygiene.yml
 .reviews/
 .internal/
 .pi/

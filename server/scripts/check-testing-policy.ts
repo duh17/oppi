@@ -9,6 +9,13 @@ type GateSpec = string[] | { server?: string[]; apple?: string[] };
 
 type TestingPolicy = {
   gates: Record<string, GateSpec>;
+  ci?: {
+    serverWorkflow?: string;
+    appleWorkflow?: string;
+  };
+  tooling?: {
+    requiredTrackedFiles?: string[];
+  };
 };
 
 type PackageJson = {
@@ -28,6 +35,7 @@ export type TestingPolicyCheckResult = {
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const canonicalRunner = "bun scripts/testing-gates.ts";
 const allowedAppleSteps = new Set([
+  "./scripts/check-coverage.sh",
   "xcodebuild -scheme Oppi build",
   "xcodebuild -scheme OppiUnitTests test -only-testing:OppiTests",
 ]);
@@ -105,6 +113,12 @@ export function checkTestingPolicy(
     scripts["test:gate:nightly-deep"] === `${canonicalRunner} nightly-deep`,
     "package.json script test:gate:nightly-deep drifted from canonical runner",
   );
+  if (policy.gates["ci-coverage"]) {
+    check(
+      scripts["test:gate:ci-coverage"] === `${canonicalRunner} ci-coverage`,
+      "package.json script test:gate:ci-coverage drifted from canonical runner",
+    );
+  }
 
   // 2. Every server gate step must have a corresponding npm script; every Apple
   // gate step must be one the runner knows how to translate to sim-pool.
@@ -129,7 +143,54 @@ export function checkTestingPolicy(
     }
   }
 
-  // 3. Canonical docs must reference policy-as-code, coverage gate, and PR gate.
+  // 3. Required hook/planner/workflow files must exist in a clean checkout.
+  for (const requiredPath of policy.tooling?.requiredTrackedFiles ?? []) {
+    const absolutePath = path.join(repoRoot, requiredPath);
+    check(existsSync(absolutePath), `required testing file missing: ${requiredPath}`);
+    const tracked = spawnSync(
+      "git",
+      ["-C", repoRoot, "ls-files", "--error-unmatch", requiredPath],
+      {
+        encoding: "utf8",
+        stdio: "ignore",
+      },
+    );
+    check(tracked.status === 0, `required testing file is not tracked: ${requiredPath}`);
+  }
+
+  // 4. Declared CI workflows must exist and invoke the threshold-enforced gates.
+  if (policy.ci?.serverWorkflow) {
+    const workflowPath = path.join(repoRoot, policy.ci.serverWorkflow);
+    check(existsSync(workflowPath), `server CI workflow missing: ${policy.ci.serverWorkflow}`);
+    if (existsSync(workflowPath)) {
+      const workflow = readFileSync(workflowPath, "utf8");
+      check(
+        workflow.includes("npm run test:coverage"),
+        "server CI workflow must run test:coverage",
+      );
+      check(
+        workflow.includes("Server CI required"),
+        "server CI workflow must publish its required summary",
+      );
+    }
+  }
+  if (policy.ci?.appleWorkflow) {
+    const workflowPath = path.join(repoRoot, policy.ci.appleWorkflow);
+    check(existsSync(workflowPath), `Apple CI workflow missing: ${policy.ci.appleWorkflow}`);
+    if (existsSync(workflowPath)) {
+      const workflow = readFileSync(workflowPath, "utf8");
+      check(
+        workflow.includes("./scripts/check-coverage.sh"),
+        "Apple CI workflow must run check-coverage.sh",
+      );
+      check(
+        workflow.includes("Apple CI required"),
+        "Apple CI workflow must publish its required summary",
+      );
+    }
+  }
+
+  // 5. Canonical docs must reference policy-as-code, coverage gate, and PR gate.
   check(existsSync(docsReadmePath), "canonical testing docs missing: docs/testing/README.md");
   if (existsSync(docsReadmePath)) {
     const testingReadme = readFileSync(docsReadmePath, "utf8");

@@ -1,0 +1,105 @@
+name: Apple CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - clients/apple/**
+      - protocol/**
+      - server/src/types/protocol.ts
+      - .github/workflows/apple.yml
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect Apple changes
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: dorny/paths-filter@v3.0.2
+        id: filter
+        with:
+          filters: |
+            relevant:
+              - 'clients/apple/**'
+              - 'protocol/**'
+              - 'server/src/types/protocol.ts'
+              - '.github/workflows/apple.yml'
+
+  coverage:
+    name: Apple coverage
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      OPPI_SIM_POOL_COUNT: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.3.11
+
+      - name: Install Apple build tools
+        run: |
+          brew install xcodegen swiftlint
+          xcodegen --version
+          swiftlint version
+          xcodebuild -version
+
+      - name: Verify generated project
+        working-directory: clients/apple
+        run: |
+          xcodegen generate
+          git diff --exit-code -- Oppi.xcodeproj
+
+      - name: Run full iOS unit coverage
+        working-directory: clients/apple
+        run: ./scripts/check-coverage.sh
+
+      - name: Upload Apple test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: apple-coverage-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            clients/apple/build/coverage/**/*.xcresult
+            clients/apple/.build/logs/*.log
+            clients/apple/.build/logs/*.json
+
+  required:
+    name: Apple CI required
+    needs: [changes, coverage]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce relevant coverage result
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          RESULT: ${{ needs.coverage.result }}
+        run: |
+          if [[ "$CHANGES_RESULT" != "success" || ! "$RELEVANT" =~ ^(true|false)$ ]]; then
+            echo "Apple path detection failed (result=$CHANGES_RESULT, relevant=$RELEVANT)." >&2
+            exit 1
+          fi
+          if [[ "$RELEVANT" == "true" && "$RESULT" != "success" ]]; then
+            echo "Apple coverage was required but finished with: $RESULT" >&2
+            exit 1
+          fi
+          echo "Apple coverage requirement satisfied (relevant=$RELEVANT, result=$RESULT)."

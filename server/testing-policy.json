@@ -1,10 +1,14 @@
 {
-  "version": 2,
+  "version": 3,
   "gates": {
-    "pr-fast": [
-      "check",
-      "test:coverage"
-    ],
+    "pr-fast": {
+      "server": ["check", "test"],
+      "apple": ["xcodebuild -scheme OppiUnitTests test -only-testing:OppiTests"]
+    },
+    "ci-coverage": {
+      "server": ["check", "test:coverage"],
+      "apple": ["./scripts/check-coverage.sh"]
+    },
     "nightly-deep": {
       "server": ["check", "test:coverage", "test:e2e:linux"],
       "apple": [
@@ -21,9 +25,20 @@
     }
   },
   "ci": {
-    "note": "GitHub Actions workflows not yet created. Gates run locally.",
-    "prCommand": "cd server && npm run test:gate:pr-fast",
-    "nightlyNote": "Run server npm scripts + apple xcodebuild separately from repo root."
+    "serverWorkflow": ".github/workflows/server.yml",
+    "appleWorkflow": ".github/workflows/apple.yml",
+    "coverageGate": "ci-coverage",
+    "note": "Pre-push is change-aware and non-coverage; GitHub Actions owns full threshold-enforced coverage."
+  },
+  "tooling": {
+    "requiredTrackedFiles": [
+      ".githooks/pre-push",
+      "scripts/pre-push-plan.ts",
+      "scripts/pre-push-plan.test.ts",
+      ".github/workflows/server.yml",
+      ".github/workflows/apple.yml",
+      ".github/workflows/hygiene.yml"
+    ]
   },
   "docs": {
     "canonical": "docs/testing/README.md"
