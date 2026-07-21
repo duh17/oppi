@@ -208,11 +208,6 @@ private struct AgentDetailView: View {
                                 .foregroundStyle(.themeComment)
                             Spacer(minLength: 12)
                             AgentIconView(value: agent.definition.icon, size: 24, frameSize: 32)
-                            Text(iconSummary(agent.definition.icon))
-                                .font(.subheadline)
-                                .foregroundStyle(.themeFg)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.trailing)
                             Image(systemName: "chevron.right")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.themeComment)
@@ -228,27 +223,26 @@ private struct AgentDetailView: View {
 
                     detailRow("Name", agent.definition.name)
                     if let description = agent.definition.description, !description.isEmpty {
-                        detailRow("Description", description)
+                        detailTextBlock("Description", description)
                     }
                     detailRow("Status", agent.status.rawValue.capitalized)
                     detailRow("Version", "v\(agent.version)")
                 }
 
                 if let instructions = agent.definition.instructions {
-                    Section("Instructions") {
-                        detailRow("Mode", instructions.mode.rawValue)
+                    Section(systemPromptTitle(instructions.mode)) {
                         Text(instructions.text)
-                            .font(.caption.monospaced())
                             .foregroundStyle(.themeFg)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
                     }
                 }
 
-                Section("Pi Defaults") {
+                Section("Pi Session Defaults") {
                     let defaults = agent.definition.sessionDefaults
                     detailRow("Model", defaults?.model?.nilIfBlank ?? "Server default")
-                    detailRow("Thinking", defaults?.thinkingLevel?.rawValue ?? "Default")
-                    detailRow("Tools", toolSummary(defaults))
+                    detailRow("Thinking Level", defaults?.thinkingLevel?.rawValue ?? "Default")
+                    toolDefaultRows(defaults)
                 }
 
                 Section("Resources") {
@@ -377,15 +371,53 @@ private struct AgentDetailView: View {
     }
 
     private func detailRow(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .foregroundStyle(.themeComment)
-            Spacer(minLength: 12)
+        LabeledContent {
             Text(value)
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
+        } label: {
+            Text(title)
+                .foregroundStyle(.themeComment)
         }
         .font(.subheadline)
+    }
+
+    private func detailTextBlock(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(.themeComment)
+            Text(value)
+                .foregroundStyle(.themeFg)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func systemPromptTitle(_ mode: AgentInstructionMode) -> String {
+        switch mode {
+        case .append: return "Append System Prompt"
+        case .replace: return "Replace System Prompt"
+        }
+    }
+
+    @ViewBuilder
+    private func toolDefaultRows(_ defaults: AgentSessionDefaults?) -> some View {
+        let allowed = defaults?.tools ?? []
+        let excluded = defaults?.excludeTools ?? []
+        if defaults?.noTools == nil && allowed.isEmpty && excluded.isEmpty {
+            detailRow("Tools", "Default")
+        } else {
+            if let noTools = defaults?.noTools {
+                detailRow("Tools", noTools.displayName)
+            }
+            if !allowed.isEmpty {
+                detailTextBlock("Allowed Tools", allowed.joined(separator: ", "))
+            }
+            if !excluded.isEmpty {
+                detailTextBlock("Excluded Tools", excluded.joined(separator: ", "))
+            }
+        }
     }
 
     @ViewBuilder
@@ -402,15 +434,6 @@ private struct AgentDetailView: View {
         } else {
             detailRow(title, "Default discovery")
         }
-    }
-
-    private func toolSummary(_ defaults: AgentSessionDefaults?) -> String {
-        guard let defaults else { return "Default" }
-        if let noTools = defaults.noTools { return noTools.displayName }
-        let allow = defaults.tools?.count ?? 0
-        let deny = defaults.excludeTools?.count ?? 0
-        if allow == 0 && deny == 0 { return "Default" }
-        return "\(allow) allowed · \(deny) excluded"
     }
 
     @MainActor

@@ -27,6 +27,31 @@ final class ScreenshotPreviewUITests: XCTestCase {
         let detailIcon = app.buttons["agent.proof.detail.icon"]
         XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail icon control not visible")
         XCTAssertEqual(detailIcon.value as? String, "Default")
+        XCTAssertTrue(
+            app.staticTexts["Append System Prompt"].waitForExistence(timeout: 3),
+            "Agent detail must use Pi system-prompt terminology"
+        )
+        XCTAssertTrue(
+            app.staticTexts["Pi Session Defaults"].exists,
+            "Agent detail must identify Pi session defaults explicitly"
+        )
+        XCTAssertTrue(app.staticTexts["Thinking Level"].exists)
+        saveScreenshot(name: "agent-detail-system-prompt")
+
+        let excludedTools = app.staticTexts["Excluded Tools"]
+        for _ in 0..<3 where !excludedTools.exists {
+            app.swipeUp()
+        }
+        XCTAssertTrue(app.staticTexts["Allowed Tools"].exists)
+        XCTAssertTrue(excludedTools.exists)
+        let toolAvailability = app.descendants(matching: .any)["agent.proof.tools.noTools"]
+        XCTAssertTrue(toolAvailability.exists)
+        XCTAssertTrue(toolAvailability.label.contains("No built-in tools"))
+        saveScreenshot(name: "agent-detail-tool-defaults")
+
+        for _ in 0..<3 where !detailIcon.isHittable {
+            app.swipeDown()
+        }
         detailIcon.tap()
 
         let pickerList = app.collectionViews["agent.iconPicker.list"]
@@ -96,6 +121,9 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertEqual(detailIcon.value as? String, "Emoji 🧘")
 
         let launch = app.buttons["agent.proof.launch"]
+        for _ in 0..<3 where !launch.isHittable {
+            app.swipeUp()
+        }
         XCTAssertTrue(launch.waitForExistence(timeout: 5), "Agent launch proof action not visible")
         launch.tap()
 
@@ -124,6 +152,30 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(agentIdentity.label.contains("Emoji 🧘"), "Chat empty state did not expose the emoji identity")
         XCTAssertEqual(ordinaryIdentity.label, "Ordinary session uses the global assistant avatar")
         saveScreenshot(name: "agent-icons-emoji-chat-identities")
+    }
+
+    func testAgentDetailAccessibilityPreview() throws {
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(
+            screen: "agent-icons",
+            contentSizeCategory: "UICTContentSizeCategoryAccessibilityXXXL"
+        )
+
+        let agentRow = app.descendants(matching: .any)["agent.proof.agentRow"]
+        XCTAssertTrue(agentRow.waitForExistence(timeout: 5), "Seeded Agent row not visible")
+        agentRow.tap()
+
+        let detailIcon = app.buttons["agent.proof.detail.icon"]
+        XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail icon control not visible")
+        XCTAssertTrue(app.staticTexts["Description"].exists)
+        saveScreenshot(name: "agent-detail-accessibility-description")
+
+        let systemPrompt = app.staticTexts["Append System Prompt"]
+        for _ in 0..<4 where !systemPrompt.exists {
+            app.swipeUp()
+        }
+        XCTAssertTrue(systemPrompt.exists)
+        saveScreenshot(name: "agent-detail-accessibility-system-prompt")
     }
 
     func testWorkspaceSidebarGitStatusPreview() throws {
