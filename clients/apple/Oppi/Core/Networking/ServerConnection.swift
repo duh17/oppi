@@ -24,7 +24,11 @@ final class ServerConnection {
         String
     ) async throws -> (IrohConnectionManager?, URL))?
     private var irohBoundaryReevaluationInFlight = false
+    private var irohBoundaryReevaluationPending = false
+    private var irohBoundaryReevaluationPendingForceRetry = false
+    private var irohBoundaryReevaluationPendingForceFallback = false
     private var irohTerminalFailureActive = false
+    private var configuredIrohReachabilityTimeout = ServerConnection.irohReachabilityTimeoutDefault
     private var transportConfigurationGeneration: UInt64 = 0
     private var activeTransportConfigurationGenerations: Set<UInt64> = []
     private var supersededIrohManagers: [IrohConnectionManager] = []
@@ -159,6 +163,7 @@ final class ServerConnection {
 
     /// Convenience accessor for command tracker (owned by sender).
     var commands: CommandTracker { sender.commands }
+    static let irohReachabilityTimeoutDefault: Duration = .seconds(8)
     static let initialQueueSyncTimeout: Duration = .seconds(1)
     static let deferredQueueSyncTimeout: Duration = .seconds(3)
     static let deferredQueueSyncDelay: Duration = .milliseconds(250)
@@ -338,6 +343,7 @@ final class ServerConnection {
     @discardableResult
     func configureForUse(
         credentials: ServerCredentials,
+        irohReachabilityTimeout: Duration = ServerConnection.irohReachabilityTimeoutDefault,
         irohProxyFactory: @escaping @MainActor (IrohServerTransport, String) async throws -> (IrohConnectionManager?, URL) = { iroh, token in
             let (manager, url) = try await IrohTransportRegistry.shared.startProxy(iroh: iroh, token: token)
             return (manager, url)
@@ -347,6 +353,7 @@ final class ServerConnection {
         let configurationGeneration = transportConfigurationGeneration
         activeTransportConfigurationGenerations.insert(configurationGeneration)
         configuredIrohProxyFactory = irohProxyFactory
+        configuredIrohReachabilityTimeout = irohReachabilityTimeout
         sender.advanceTransportGeneration()
 
         while let cleanup = pendingSupersededManagerCleanup {
@@ -362,6 +369,7 @@ final class ServerConnection {
         let result = await configureForUseAttempt(
             credentials: credentials,
             configurationGeneration: configurationGeneration,
+            irohReachabilityTimeout: irohReachabilityTimeout,
             irohProxyFactory: irohProxyFactory
         )
         return await finishTransportConfiguration(result, generation: configurationGeneration)
@@ -370,6 +378,7 @@ final class ServerConnection {
     private func configureForUseAttempt(
         credentials: ServerCredentials,
         configurationGeneration: UInt64,
+        irohReachabilityTimeout: Duration,
         irohProxyFactory: @MainActor (IrohServerTransport, String) async throws -> (IrohConnectionManager?, URL)
     ) async -> Bool {
         do {
@@ -389,7 +398,9 @@ final class ServerConnection {
                         queueSupersededIrohManager(manager)
                         return false
                     }
-                    let evidence = try await manager?.selectedPathEvidence()
+                    let evidence = try await manager?.selectedPathEvidence(
+                        timeout: irohReachabilityTimeout
+                    )
                     guard transportConfigurationGeneration == configurationGeneration else {
                         queueSupersededIrohManager(manager)
                         return false
@@ -406,6 +417,11 @@ final class ServerConnection {
                     }
 
                     let selection = EndpointSelection(baseURL: localURL, transportPath: .iroh)
+                    await installActiveIrohFailureHandler(on: manager)
+                    guard transportConfigurationGeneration == configurationGeneration else {
+                        queueSupersededIrohManager(manager)
+                        return false
+                    }
                     irohManager = manager
                     irohFallbackActive = false
                     configureClients(
@@ -1019,9 +1035,40 @@ final class ServerConnection {
     /// Reconsider an `irohPreferred` lane only at an explicit network or
     /// foreground boundary. A healthy fallback remains sticky between these
     /// boundaries, preventing timer-driven transport oscillation.
-    func reevaluateIrohPreferredTransportAtBoundary(forceIrohRetry: Bool = false) async {
-        guard !irohBoundaryReevaluationInFlight,
-              let credentials,
+    func reevaluateIrohPreferredTransportAtBoundary(
+        forceIrohRetry: Bool = false,
+        forceHTTPFallback: Bool = false
+    ) async {
+        if irohBoundaryReevaluationInFlight {
+            irohBoundaryReevaluationPending = true
+            irohBoundaryReevaluationPendingForceRetry = irohBoundaryReevaluationPendingForceRetry || forceIrohRetry
+            irohBoundaryReevaluationPendingForceFallback = irohBoundaryReevaluationPendingForceFallback || forceHTTPFallback
+            return
+        }
+
+        irohBoundaryReevaluationInFlight = true
+        defer { irohBoundaryReevaluationInFlight = false }
+
+        var nextForceRetry = forceIrohRetry
+        var nextForceFallback = forceHTTPFallback
+        repeat {
+            irohBoundaryReevaluationPending = false
+            irohBoundaryReevaluationPendingForceRetry = false
+            irohBoundaryReevaluationPendingForceFallback = false
+            await performIrohPreferredTransportReevaluation(
+                forceIrohRetry: nextForceRetry,
+                forceHTTPFallback: nextForceFallback
+            )
+            nextForceRetry = irohBoundaryReevaluationPendingForceRetry
+            nextForceFallback = irohBoundaryReevaluationPendingForceFallback
+        } while irohBoundaryReevaluationPending
+    }
+
+    private func performIrohPreferredTransportReevaluation(
+        forceIrohRetry: Bool,
+        forceHTTPFallback: Bool
+    ) async {
+        guard let credentials,
               credentials.transports.preference == .irohPreferred,
               let iroh = credentials.transports.iroh,
               let factory = configuredIrohProxyFactory else {
@@ -1029,8 +1076,6 @@ final class ServerConnection {
         }
 
         let configurationGeneration = transportConfigurationGeneration
-        irohBoundaryReevaluationInFlight = true
-        defer { irohBoundaryReevaluationInFlight = false }
 
         if case .http(let lanSelection) = try? ServerTransportPlanResolver.resolve(
             credentials: credentials,
@@ -1041,7 +1086,7 @@ final class ServerConnection {
             await shutdownSetupManager(irohManager)
             guard self.credentials == credentials,
                   transportConfigurationGeneration == configurationGeneration else { return }
-            transitionTransportPreservingRuntime(
+            await transitionTransportPreservingRuntime(
                 credentials: credentials,
                 selection: lanSelection,
                 manager: nil,
@@ -1055,8 +1100,29 @@ final class ServerConnection {
         }
 
         if transportPath == .iroh {
+            if forceHTTPFallback,
+               let selection = try? fallbackHTTPSelection(credentials: credentials) {
+                await shutdownSetupManager(irohManager)
+                guard self.credentials == credentials,
+                      transportConfigurationGeneration == configurationGeneration else { return }
+                await transitionTransportPreservingRuntime(
+                    credentials: credentials,
+                    selection: selection,
+                    manager: nil,
+                    fallbackActive: true
+                )
+                ClientLog.warning("Iroh", "Active tunnel failed; using HTTP fallback", metadata: [
+                    "transport": "iroh",
+                    "fallback": selection.transportPath.rawValue,
+                    "errorKind": "unavailable",
+                ])
+                return
+            }
+
             do {
-                _ = try await irohManager?.selectedPathEvidence()
+                _ = try await irohManager?.selectedPathEvidence(
+                    timeout: configuredIrohReachabilityTimeout
+                )
                 guard self.credentials == credentials,
                       transportConfigurationGeneration == configurationGeneration else { return }
 
@@ -1067,7 +1133,7 @@ final class ServerConnection {
                     await shutdownSetupManager(irohManager)
                     guard self.credentials == credentials,
                           transportConfigurationGeneration == configurationGeneration else { return }
-                    transitionTransportPreservingRuntime(
+                    await transitionTransportPreservingRuntime(
                         credentials: credentials,
                         selection: lanSelection,
                         manager: nil,
@@ -1081,7 +1147,7 @@ final class ServerConnection {
                 await shutdownSetupManager(irohManager)
                 guard self.credentials == credentials,
                       transportConfigurationGeneration == configurationGeneration else { return }
-                transitionTransportPreservingRuntime(
+                await transitionTransportPreservingRuntime(
                     credentials: credentials,
                     selection: selection,
                     manager: nil,
@@ -1113,7 +1179,9 @@ final class ServerConnection {
                 await discardSupersededBoundaryManager(manager)
                 return
             }
-            _ = try await manager?.selectedPathEvidence()
+            _ = try await manager?.selectedPathEvidence(
+                timeout: configuredIrohReachabilityTimeout
+            )
             guard self.credentials == credentials,
                   transportConfigurationGeneration == configurationGeneration else {
                 await discardSupersededBoundaryManager(manager)
@@ -1127,7 +1195,7 @@ final class ServerConnection {
                 await shutdownSetupManager(manager)
                 guard self.credentials == credentials,
                       transportConfigurationGeneration == configurationGeneration else { return }
-                transitionTransportPreservingRuntime(
+                await transitionTransportPreservingRuntime(
                     credentials: credentials,
                     selection: lanSelection,
                     manager: nil,
@@ -1136,7 +1204,7 @@ final class ServerConnection {
                 return
             }
 
-            transitionTransportPreservingRuntime(
+            await transitionTransportPreservingRuntime(
                 credentials: credentials,
                 selection: EndpointSelection(baseURL: localURL, transportPath: .iroh),
                 manager: manager,
@@ -1157,7 +1225,7 @@ final class ServerConnection {
                   transportConfigurationGeneration == configurationGeneration else { return }
             if forceIrohRetry,
                let selection = try? fallbackHTTPSelection(credentials: credentials) {
-                transitionTransportPreservingRuntime(
+                await transitionTransportPreservingRuntime(
                     credentials: credentials,
                     selection: selection,
                     manager: nil,
@@ -1199,12 +1267,31 @@ final class ServerConnection {
         return selection
     }
 
+    private func installActiveIrohFailureHandler(
+        on manager: IrohConnectionManager?
+    ) async {
+        guard let manager else { return }
+        await manager.setAvailabilityFailureHandler { @MainActor [weak self, weak manager] in
+            guard let self,
+                  let manager,
+                  self.irohManager === manager,
+                  self.transportPath == .iroh else {
+                return
+            }
+            ClientLog.warning("Iroh", "Active tunnel unavailable; reevaluating transport", metadata: [
+                "transport": "iroh",
+                "fallback": "pending",
+            ])
+            await self.reevaluateIrohPreferredTransportAtBoundary(forceHTTPFallback: true)
+        }
+    }
+
     private func transitionTransportPreservingRuntime(
         credentials: ServerCredentials,
         selection: EndpointSelection,
         manager: IrohConnectionManager?,
         fallbackActive: Bool
-    ) {
+    ) async {
         let capabilitySnapshot = (
             dictation: dictationStreamAvailable,
             appEvents: appEventStreamAvailable,
@@ -1225,6 +1312,7 @@ final class ServerConnection {
         wsClient?.disconnect()
         disconnectAppEventStream()
 
+        await installActiveIrohFailureHandler(on: manager)
         irohManager = manager
         irohFallbackActive = fallbackActive
         irohTerminalFailureActive = false
@@ -1271,27 +1359,46 @@ final class ServerConnection {
         ])
     }
 
-    /// Discard transport state that can look alive after iOS suspends an Iroh connection.
-    /// Session continuations and the prepared focused endpoint remain intact so the normal
-    /// foreground path can reopen the streams and repair missed events.
+    /// Recreate Iroh's process-wide endpoint after a real background cycle.
+    /// iOS can freeze the endpoint runtime past QUIC's negotiated idle timeout;
+    /// rebuilding with the same Keychain secret preserves identity while replacing
+    /// sockets, relay/discovery state, and timers. HTTP fallback remains usable while
+    /// its dormant Iroh endpoint is repaired for this boundary retry.
     func resetIrohTransportForForegroundRecoveryIfNeeded() async {
-        guard transportPath == .iroh else { return }
+        guard credentials?.transports.iroh != nil else { return }
 
-        // A background close is launched from the synchronous scene handler. Join it
-        // before reopening anything so it cannot suspend the replacement connection.
-        if let backgroundPreparation = irohBackgroundPreparationTask {
-            await backgroundPreparation.value
-            irohBackgroundPreparationTask = nil
+        if transportPath == .iroh {
+            // A background close is launched from the synchronous scene handler. Join it
+            // before reopening anything so it cannot suspend the replacement endpoint.
+            if let backgroundPreparation = irohBackgroundPreparationTask {
+                await backgroundPreparation.value
+                irohBackgroundPreparationTask = nil
+            }
+
+            disconnectAppEventStream()
+            streamConsumptionTask?.cancel()
+            streamConsumptionTask = nil
+            wsClient?.disconnect()
         }
 
-        disconnectAppEventStream()
-        streamConsumptionTask?.cancel()
-        streamConsumptionTask = nil
-        wsClient?.disconnect()
-        await irohManager?.prepareForBackground()
+        var endpointRecycleStatus = "failed"
+        do {
+            if let irohManager {
+                try await irohManager.recycleEndpointAfterSuspension()
+            } else {
+                try await IrohConnectionManager.recycleSharedEndpointAfterSuspension()
+            }
+            endpointRecycleStatus = "rebound"
+        } catch {
+            ClientLog.warning("Iroh", "Foreground endpoint recycle failed", metadata: [
+                "transport": transportPath.rawValue,
+                "errorKind": IrohTransportTelemetry.errorKind(error),
+            ])
+        }
 
         ClientLog.info("Iroh", "Foreground transport reset", metadata: [
-            "transport": "iroh",
+            "transport": transportPath.rawValue,
+            "endpointRecycle": endpointRecycleStatus,
             "focusedStreamPrepared": focusedSessionStreamEndpointKind == "split_session" ? "true" : "false",
         ])
     }

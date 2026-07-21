@@ -336,6 +336,37 @@ struct IrohTransportTests {
         #expect(await sink.byteCount() == 4_096)
     }
 
+    @Test func failedIrohPumpCancelsLocalPeerBeforeWaitingForBlockedUpload() async {
+        let gate = PumpFailureGate()
+        let cancellation = PeerCancellationRecorder()
+
+        let bridge = Task {
+            try await IrohLoopbackProxy.runBidirectionalPumps(
+                includeLocalToIroh: true,
+                localToIroh: { await gate.blockLocalPump() },
+                irohToLocal: {
+                    await gate.signalFailure()
+                    throw IrohTransportError.unavailable("injected Iroh timeout")
+                },
+                cancelPeer: { cancellation.record() },
+                cancelTransport: {}
+            )
+        }
+
+        await gate.waitForFailure()
+        for _ in 0..<100 where !cancellation.wasRecorded() {
+            await Task.yield()
+        }
+        let cancelledBeforeUploadReleased = cancellation.wasRecorded()
+        await gate.releaseLocalPump()
+        _ = try? await bridge.value
+
+        #expect(
+            cancelledBeforeUploadReleased,
+            "An Iroh read failure must close loopback TCP before waiting for an idle WebSocket upload pump"
+        )
+    }
+
     @Test func authenticatedPrefaceIsBoundedAndRedactable() throws {
         let bytes = try IrohTunnelProtocol.makePreface(token: "dt_secret")
         let frame = try IrohFrameCodec.decode(
@@ -431,6 +462,36 @@ struct IrohConnectionManagerTests {
         #expect(await provider.shutdownCount() == 1)
     }
 
+    @Test func timedOutTunnelOpenClearsProviderAndAllowsFreshRetry() async throws {
+        let provider = RecoveringTunnelOpenProvider()
+        let manager = IrohConnectionManager(
+            iroh: IrohServerTransport(
+                version: 2,
+                nodeId: "signed-node",
+                alpns: [IrohTunnelProtocol.alpn],
+                addressMode: .nodeId,
+                ticket: nil
+            ),
+            provider: provider
+        )
+
+        let timedOutOpen = Task {
+            try await manager.openTunnelStream(timeout: .milliseconds(20))
+        }
+        while !(await provider.firstOpenIsWaiting) {
+            await Task.yield()
+        }
+        await #expect(throws: IrohTransportError.unavailable("Iroh connectivity operation timed out")) {
+            _ = try await timedOutOpen.value
+        }
+        #expect(await provider.suspendCount() == 1)
+
+        _ = try await manager.openTunnelStream(timeout: .seconds(1))
+        #expect(await provider.openCount() == 2)
+        await provider.releaseFirstOpen()
+        await manager.shutdown()
+    }
+
     @Test func loopbackProxyCarriesHTTPBytesAfterAuthenticatedPreface() async throws {
         let httpResponse = Data("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello".utf8)
         let provider = RecordingIrohConnectionProvider(responses: [httpResponse])
@@ -488,6 +549,50 @@ struct IrohConnectionManagerTests {
     }
 }
 
+private actor PumpFailureGate {
+    private var failureSignaled = false
+    private var failureWaiters: [CheckedContinuation<Void, Never>] = []
+    private var localPumpReleased = false
+    private var localPumpWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func signalFailure() {
+        failureSignaled = true
+        let waiters = failureWaiters
+        failureWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func waitForFailure() async {
+        guard !failureSignaled else { return }
+        await withCheckedContinuation { failureWaiters.append($0) }
+    }
+
+    func blockLocalPump() async {
+        guard !localPumpReleased else { return }
+        await withCheckedContinuation { localPumpWaiters.append($0) }
+    }
+
+    func releaseLocalPump() {
+        localPumpReleased = true
+        let waiters = localPumpWaiters
+        localPumpWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+}
+
+private final class PeerCancellationRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded = false
+
+    func record() {
+        lock.withLock { recorded = true }
+    }
+
+    func wasRecorded() -> Bool {
+        lock.withLock { recorded }
+    }
+}
+
 private actor FailingIrohResponseSource {
     private var firstChunk: Data?
     private let error: IrohTransportError
@@ -542,6 +647,43 @@ private final class AsyncCounter: @unchecked Sendable {
     func value() -> Int {
         lock.withLock { count }
     }
+}
+
+private actor RecoveringTunnelOpenProvider: IrohConnectionProviding {
+    private var opens = 0
+    private var suspends = 0
+    private(set) var firstOpenIsWaiting = false
+    private var firstOpenContinuation: CheckedContinuation<Void, Never>?
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        opens += 1
+        if opens == 1 {
+            firstOpenIsWaiting = true
+            await withCheckedContinuation { firstOpenContinuation = $0 }
+        }
+        return RecordingIrohByteStream(
+            response: Data(),
+            minimumWritesBeforeResponse: 0,
+            onWrite: { _ in },
+            onReset: {}
+        )
+    }
+
+    func suspendConnections() async {
+        suspends += 1
+    }
+
+    func shutdown() async {
+        await suspendConnections()
+    }
+
+    func releaseFirstOpen() {
+        firstOpenContinuation?.resume()
+        firstOpenContinuation = nil
+    }
+
+    func openCount() -> Int { opens }
+    func suspendCount() -> Int { suspends }
 }
 
 private actor RecordingIrohConnectionProvider: IrohConnectionProviding {

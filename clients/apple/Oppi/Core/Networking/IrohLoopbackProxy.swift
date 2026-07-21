@@ -210,25 +210,25 @@ final class IrohLoopbackProxy: @unchecked Sendable {
         let byteCounter = IrohTunnelByteCounter(requestBytes: initialRequest.data.count)
         var status = "completed"
         do {
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                if !initialRequest.complete {
-                    group.addTask {
-                        try await Self.pumpLocalToIroh(
-                            connection: connection,
-                            stream: stream,
-                            counter: byteCounter
-                        )
-                    }
-                }
-                group.addTask {
+            try await Self.runBidirectionalPumps(
+                includeLocalToIroh: !initialRequest.complete,
+                localToIroh: {
+                    try await Self.pumpLocalToIroh(
+                        connection: connection,
+                        stream: stream,
+                        counter: byteCounter
+                    )
+                },
+                irohToLocal: {
                     try await Self.pumpIrohToLocal(
                         stream: stream,
                         connection: connection,
                         counter: byteCounter
                     )
-                }
-                try await group.waitForAll()
-            }
+                },
+                cancelPeer: { connection.cancel() },
+                cancelTransport: { await stream.reset(errorCode: 2) }
+            )
         } catch is CancellationError {
             status = "cancelled"
             await stream.reset(errorCode: 2)
@@ -249,6 +249,51 @@ final class IrohLoopbackProxy: @unchecked Sendable {
             status: status
         )
         connection.cancel()
+    }
+
+    static func runBidirectionalPumps(
+        includeLocalToIroh: Bool,
+        localToIroh: @escaping @Sendable () async throws -> Void,
+        irohToLocal: @escaping @Sendable () async throws -> Void,
+        cancelPeer: @escaping @Sendable () -> Void,
+        cancelTransport: @escaping @Sendable () async -> Void
+    ) async throws {
+        try await withThrowingTaskGroup(of: PumpDirection.self) { group in
+            if includeLocalToIroh {
+                group.addTask {
+                    try await localToIroh()
+                    return .localToIroh
+                }
+            }
+            group.addTask {
+                try await irohToLocal()
+                return .irohToLocal
+            }
+
+            do {
+                while let completed = try await group.next() {
+                    if completed == .irohToLocal {
+                        cancelPeer()
+                        group.cancelAll()
+                        return
+                    }
+                }
+            } catch {
+                // Release both potentially non-cooperative continuations before the
+                // task-group scope drains: NWConnection.receive on the local side and
+                // the Iroh FFI read on the remote side. Delaying either cancellation
+                // can hide the failure from URLSession or pin this bridge forever.
+                cancelPeer()
+                await cancelTransport()
+                group.cancelAll()
+                throw error
+            }
+        }
+    }
+
+    private enum PumpDirection: Sendable {
+        case localToIroh
+        case irohToLocal
     }
 
     private static func pumpLocalToIroh(
