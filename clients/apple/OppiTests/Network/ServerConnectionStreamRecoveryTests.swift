@@ -92,8 +92,8 @@ struct ServerConnectionStreamRecoveryTests {
 
     @Test func networkPathChangeRecomputesPreparedFocusedStreamURL() async {
         let connection = makeConnection(
-            host: "paired.example",
-            scheme: .http,
+            host: "100.64.0.2",
+            scheme: .https,
             tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
         defer { cleanup(connection) }
@@ -110,13 +110,13 @@ struct ServerConnectionStreamRecoveryTests {
         connection.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
 
         #expect(connection.transportPath == .lan)
-        #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "ws://192.168.1.42:7749/workspaces/w1/sessions/s1/stream")
+        #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "wss://192.168.1.42:7749/workspaces/w1/sessions/s1/stream")
 
         connection.wsClient?._setStatusForTesting(.connected)
         connection.handleNetworkPathChange()
 
         #expect(connection.transportPath == .paired)
-        #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "ws://paired.example:7749/workspaces/w1/sessions/s1/stream")
+        #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "wss://100.64.0.2:7749/workspaces/w1/sessions/s1/stream")
     }
 
     @Test func endpointDiagnosticsRedactHostsAndQueryStrings() {

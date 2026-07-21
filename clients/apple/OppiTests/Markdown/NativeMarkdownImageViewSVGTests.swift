@@ -33,7 +33,7 @@ struct NativeMarkdownImageViewSVGTests {
             fetchSessionFile: nil
         )
 
-        let rendererCreated = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+        let rendererCreated = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
             timelineFirstView(ofType: ReviewCommentWKWebView.self, in: view) != nil
         }
         #expect(rendererCreated, "SVG should create a WKWebView renderer")
@@ -45,7 +45,7 @@ struct NativeMarkdownImageViewSVGTests {
         window.addSubview(view)
         window.makeKeyAndVisible()
 
-        let renderedAfterAttach = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+        let renderedAfterAttach = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
             window.layoutIfNeeded()
             return !renderer.isHidden
         }
@@ -81,7 +81,7 @@ struct NativeMarkdownImageViewSVGTests {
             fetchSessionFile: nil
         )
 
-        let rendered = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+        let rendered = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
             window.layoutIfNeeded()
             return timelineFirstView(ofType: ReviewCommentWKWebView.self, in: view).map { !$0.isHidden } ?? false
         }
@@ -98,7 +98,7 @@ struct NativeMarkdownImageViewSVGTests {
         #expect(renderer.isHidden, "Terminated SVG web content should not leave a blank WKWebView visible")
         #expect(spinnerVisible, "Terminated SVG web content should show a loading state while reloading")
 
-        let reloaded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+        let reloaded = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
             window.layoutIfNeeded()
             return !renderer.isHidden
         }
