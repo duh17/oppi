@@ -74,7 +74,7 @@ function npmStep(step: string): RunStep {
 }
 
 function appleStep(step: string): RunStep {
-  const simPool = path.join(process.env.HOME ?? "", ".pi/agent/skills/oppi-dev/scripts/sim-pool.sh");
+  const simPool = path.join(appleRoot, "scripts", "sim-pool.sh");
   if (!existsSync(simPool)) {
     throw new Error(`Apple gate requires simulator pool script at ${simPool}`);
   }
@@ -94,6 +94,14 @@ function appleStep(step: string): RunStep {
         "Oppi",
         "build",
       ],
+      cwd: appleRoot,
+    };
+  }
+
+  if (step === "./scripts/check-coverage.sh") {
+    return {
+      label: `apple:${step}`,
+      command: ["bash", "./scripts/check-coverage.sh"],
       cwd: appleRoot,
     };
   }
@@ -198,7 +206,9 @@ try {
     throw new Error(`Gate '${gateName}' has no runnable steps for platform '${platform}'`);
   }
 
-  console.log(`[test-gate] running '${gateName}' (${steps.length} step${steps.length === 1 ? "" : "s"})`);
+  console.log(
+    `[test-gate] running '${gateName}' (${steps.length} step${steps.length === 1 ? "" : "s"})`,
+  );
   for (const step of steps) runStep(step);
   console.log(`\n[test-gate] '${gateName}' passed`);
 } catch (error) {

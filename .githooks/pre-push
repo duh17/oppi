@@ -1,61 +1,53 @@
 #!/usr/bin/env bash
-# Pre-push gate: enforce test coverage thresholds before pushing.
-# Server: vitest coverage thresholds (statements/branches/functions/lines)
-# iOS: per-layer logic coverage thresholds via check-coverage.sh
+# Fast pre-push gate. Local work proves compilation/static correctness and runs
+# change-related server tests; full server and Apple coverage is enforced in CI.
 #
 # Bypass: git push --no-verify
 
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-CHECK_COVERAGE="$REPO_ROOT/clients/apple/scripts/check-coverage.sh"
 SIM_POOL="$REPO_ROOT/clients/apple/scripts/sim-pool.sh"
+PLANNER="$REPO_ROOT/scripts/pre-push-plan.ts"
+GATE_VERSION="4"
+ZERO_OID="0000000000000000000000000000000000000000"
+CACHE_DIR="$(git rev-parse --git-dir)/oppi/pre-push-cache/v${GATE_VERSION}"
 
 report_ios_coverage_result() {
   local status="$1"
   case "$status" in
-    0)
-      echo "iOS coverage gate passed."
-      return 0
-      ;;
+    0) echo "iOS coverage gate passed."; return 0 ;;
     2)
-      echo ""
       echo "BLOCKED: iOS logic layer coverage below threshold."
-      echo "See .internal/testing/coverage-baseline.md for layer targets."
       return 1
       ;;
     *)
-      echo ""
       echo "ERROR: iOS coverage could not be collected or analyzed (status $status)."
-      echo "No coverage shortfall was established. Inspect the sim-pool summary and log above."
+      echo "No coverage shortfall was established."
       return 1
       ;;
   esac
 }
 
 run_self_test() {
+  bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL"
+  bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts"
+  (cd "$REPO_ROOT/server" && npm exec --offline -- vitest run tests/testing-policy-gate.test.ts \
+    --reporter=dot --silent=passed-only)
   "$SIM_POOL" self-test
 
   local output status
   set +e
-  output="$(report_ios_coverage_result 3)"
-  status=$?
+  output="$(report_ios_coverage_result 3)"; status=$?
   set -e
-  [[ "$status" -eq 1 ]]
-  [[ "$output" == *"No coverage shortfall was established."* ]]
-  [[ "$output" != *"below threshold"* ]]
-
+  [[ "$status" -eq 1 && "$output" == *"No coverage shortfall established."* ]] \
+    || [[ "$status" -eq 1 && "$output" == *"No coverage shortfall was established."* ]]
   set +e
-  output="$(report_ios_coverage_result 2)"
-  status=$?
+  output="$(report_ios_coverage_result 2)"; status=$?
   set -e
-  [[ "$status" -eq 1 ]]
-  [[ "$output" == *"below threshold"* ]]
-
-  output="$(report_ios_coverage_result 0)"
-  [[ "$output" == "iOS coverage gate passed." ]]
-
-  echo "pre-push iOS coverage classification self-test passed."
+  [[ "$status" -eq 1 && "$output" == *"below threshold"* ]]
+  [[ "$(report_ios_coverage_result 0)" == "iOS coverage gate passed." ]]
+  echo "pre-push self-test passed."
 }
 
 if [[ "${1:-}" == "--self-test" ]]; then
@@ -63,67 +55,279 @@ if [[ "${1:-}" == "--self-test" ]]; then
   exit 0
 fi
 
-# Determine which files differ from the remote tracking branch
-REMOTE="$1"
-REMOTE_REF=$(git rev-parse --verify "${REMOTE}/main" 2>/dev/null || echo "")
-if [ -z "$REMOTE_REF" ]; then
-  echo "pre-push: no remote ref found for ${REMOTE}/main — running all gates."
-  SERVER_CHANGED="yes"
-  SWIFT_CHANGED="yes"
-else
-  SERVER_CHANGED=$(git diff --name-only "$REMOTE_REF"..HEAD | grep '^server/' || true)
-  SWIFT_CHANGED=$(git diff --name-only "$REMOTE_REF"..HEAD | grep -E '\.swift$' || true)
+if [[ "${1:-}" == "--plan" ]]; then
+  shift
+  exec bun "$PLANNER" "$@"
+fi
+
+REMOTE_NAME="${1:-origin}"
+PATHS_FILE="$(mktemp -t oppi-pre-push-paths.XXXXXX)"
+trap 'rm -f "$PATHS_FILE"' EXIT
+HEAD_SHA="$(git rev-parse HEAD)"
+BASE_SHA=""
+PUSH_ROWS=0
+MULTIPLE_BASES=0
+RANGE_KEY_INPUT=""
+
+append_range() {
+  local base="$1"
+  local tip="$2"
+  git diff --name-only --diff-filter=ACMRD -z "$base" "$tip" >> "$PATHS_FILE"
+  RANGE_KEY_INPUT+="${base}:${tip};"
+  if [[ -z "$BASE_SHA" ]]; then
+    BASE_SHA="$base"
+  elif [[ "$BASE_SHA" != "$base" ]]; then
+    MULTIPLE_BASES=1
+  fi
+}
+
+while read -r local_ref local_oid remote_ref remote_oid; do
+  [[ -n "${local_ref:-}" ]] || continue
+  PUSH_ROWS=$((PUSH_ROWS + 1))
+  [[ "$local_oid" != "$ZERO_OID" ]] || continue
+
+  local_commit="$(git rev-parse "${local_oid}^{commit}" 2>/dev/null || true)"
+  [[ -n "$local_commit" ]] || continue
+  if [[ "$local_commit" != "$HEAD_SHA" ]]; then
+    echo "pre-push: refusing to test non-HEAD ref $local_ref ($local_commit)." >&2
+    echo "Push it from a worktree where that commit is checked out." >&2
+    exit 1
+  fi
+
+  if [[ "$remote_oid" == "$ZERO_OID" ]]; then
+    remote_main="$(git rev-parse --verify "refs/remotes/${REMOTE_NAME}/main" 2>/dev/null || true)"
+    base="$(git merge-base "$local_commit" "$remote_main" 2>/dev/null || true)"
+    if [[ -z "$base" ]]; then
+      base="$(git hash-object -t tree /dev/null)"
+    fi
+  else
+    base="$(git rev-parse "${remote_oid}^{commit}" 2>/dev/null || echo "$remote_oid")"
+  fi
+  append_range "$base" "$local_commit"
+done
+
+# Manual invocation has no stdin. Plan against the tracking main branch.
+if [[ "$PUSH_ROWS" -eq 0 ]]; then
+  remote_main="$(git rev-parse --verify "refs/remotes/${REMOTE_NAME}/main" 2>/dev/null || true)"
+  if [[ -z "$remote_main" ]]; then
+    base="$(git hash-object -t tree /dev/null)"
+  else
+    base="$remote_main"
+  fi
+  append_range "$base" "$HEAD_SHA"
+fi
+
+if [[ ! -s "$PATHS_FILE" ]]; then
+  echo "pre-push: no changed files in pushed refs."
+  exit 0
+fi
+
+SERVER_MODE="none"
+APPLE_MODE="none"
+MAC_CHANGED=0
+HARNESS_CHANGED=0
+CHANGED_COUNT=0
+PLAN_OUTPUT=""
+if ! PLAN_OUTPUT="$(bun "$PLANNER" --paths0-file "$PATHS_FILE" --format shell)"; then
+  echo "pre-push: planner failed." >&2
+  exit 1
+fi
+while IFS='=' read -r key value; do
+  case "$key" in
+    SERVER_MODE) SERVER_MODE="$value" ;;
+    APPLE_MODE) APPLE_MODE="$value" ;;
+    MAC_CHANGED) MAC_CHANGED="$value" ;;
+    HARNESS_CHANGED) HARNESS_CHANGED="$value" ;;
+    CHANGED_COUNT) CHANGED_COUNT="$value" ;;
+  esac
+done <<< "$PLAN_OUTPUT"
+
+case "$SERVER_MODE" in none|changed|full) ;; *) echo "pre-push: invalid server plan." >&2; exit 1 ;; esac
+case "$APPLE_MODE" in none|unit|all) ;; *) echo "pre-push: invalid Apple plan." >&2; exit 1 ;; esac
+[[ "$MAC_CHANGED" =~ ^[01]$ && "$HARNESS_CHANGED" =~ ^[01]$ && "$CHANGED_COUNT" =~ ^[1-9][0-9]*$ ]] || {
+  echo "pre-push: incomplete planner output." >&2
+  exit 1
+}
+
+if [[ "$MULTIPLE_BASES" -eq 1 && "$SERVER_MODE" == "changed" ]]; then
+  SERVER_MODE="full"
+fi
+
+mkdir -p "$CACHE_DIR"
+TOOLCHAIN_KEY="$(printf '%s\n' "$(bun --version)" "$(node --version)" "$(xcodebuild -version 2>/dev/null || true)" | shasum -a 256 | cut -d' ' -f1)"
+PUSH_PATHS_KEY="$(shasum -a 256 "$PATHS_FILE" | cut -d' ' -f1)"
+
+lane_has_dirty_paths() {
+  local lane="$1"
+  local dirty_file
+  dirty_file="$(mktemp -t oppi-pre-push-dirty.XXXXXX)"
+  git diff --name-only -z HEAD > "$dirty_file"
+  git ls-files --others --exclude-standard -z >> "$dirty_file"
+  if [[ ! -s "$dirty_file" ]]; then
+    rm -f "$dirty_file"
+    return 1
+  fi
+
+  local dirty_server="none" dirty_apple="none" dirty_mac=0 dirty_harness=0 dirty_plan=""
+  if ! dirty_plan="$(bun "$PLANNER" --paths0-file "$dirty_file" --format shell)"; then
+    echo "[$lane] dirty-path planner failed; blocking cache use." >&2
+    rm -f "$dirty_file"
+    return 0
+  fi
+  while IFS='=' read -r key value; do
+    case "$key" in
+      SERVER_MODE) dirty_server="$value" ;;
+      APPLE_MODE) dirty_apple="$value" ;;
+      MAC_CHANGED) dirty_mac="$value" ;;
+      HARNESS_CHANGED) dirty_harness="$value" ;;
+    esac
+  done <<< "$dirty_plan"
+
+  case "$dirty_server" in none|changed|full) ;; *) echo "[$lane] invalid dirty server plan." >&2; rm -f "$dirty_file"; return 0 ;; esac
+  case "$dirty_apple" in none|unit|all) ;; *) echo "[$lane] invalid dirty Apple plan." >&2; rm -f "$dirty_file"; return 0 ;; esac
+  if [[ ! "$dirty_mac" =~ ^[01]$ || ! "$dirty_harness" =~ ^[01]$ ]]; then
+    echo "[$lane] incomplete dirty-path plan; blocking cache use." >&2
+    rm -f "$dirty_file"
+    return 0
+  fi
+
+  local overlaps=1
+  case "$lane" in
+    server) [[ "$dirty_server" != "none" ]] && overlaps=0 ;;
+    apple) [[ "$dirty_apple" != "none" ]] && overlaps=0 ;;
+    mac) [[ "$dirty_mac" -eq 1 ]] && overlaps=0 ;;
+    harness) [[ "$dirty_harness" -eq 1 ]] && overlaps=0 ;;
+  esac
+
+  if [[ "$overlaps" -eq 0 ]]; then
+    echo "[$lane] relevant uncommitted paths prevent authoritative validation:" >&2
+    while IFS= read -r -d '' path; do
+      printf '  %q\n' "$path" >&2
+    done < "$dirty_file"
+  fi
+  rm -f "$dirty_file"
+  return "$overlaps"
+}
+
+ensure_lane_clean() {
+  local lane="$1"
+  if lane_has_dirty_paths "$lane"; then
+    echo "[$lane] commit or move the relevant changes to another worktree before pushing." >&2
+    return 1
+  fi
+}
+
+cache_path() {
+  local lane="$1"
+  local lane_mode key
+  case "$lane" in
+    server) lane_mode="$SERVER_MODE" ;;
+    apple) lane_mode="$APPLE_MODE" ;;
+    mac) lane_mode="$MAC_CHANGED" ;;
+    harness) lane_mode="$HARNESS_CHANGED" ;;
+  esac
+  key="$(printf '%s\n' "$GATE_VERSION" "$HEAD_SHA" "$RANGE_KEY_INPUT" "$PUSH_PATHS_KEY" "$lane" "$lane_mode" "$TOOLCHAIN_KEY" | shasum -a 256 | cut -d' ' -f1)"
+  echo "$CACHE_DIR/${lane}-${key}.pass"
+}
+
+run_cached() {
+  local lane="$1"
+  shift
+  local marker status=0
+  ensure_lane_clean "$lane" || return $?
+  marker="$(cache_path "$lane")"
+  if [[ -f "$marker" ]]; then
+    echo "[$lane] cache hit"
+    return 0
+  fi
+  echo "[$lane] starting"
+  "$@" || status=$?
+  [[ "$status" -eq 0 ]] || return "$status"
+  ensure_lane_clean "$lane" || return $?
+  : > "$marker.tmp.$$"
+  mv "$marker.tmp.$$" "$marker"
+  echo "[$lane] passed"
+}
+
+run_harness_gate() {
+  run_self_test
+}
+
+run_server_gate() {
+  (cd "$REPO_ROOT/server" && npm run check:server)
+  local log_dir test_log
+  log_dir="$(git rev-parse --git-dir)/oppi/pre-push-logs"
+  mkdir -p "$log_dir"
+  test_log="$log_dir/server-$(date +%Y%m%d-%H%M%S).log"
+  echo "[server] test log: $test_log"
+
+  set +e
+  if [[ "$SERVER_MODE" == "full" ]]; then
+    (cd "$REPO_ROOT/server" && npm test -- --reporter=dot --silent=passed-only \
+      --exclude tests/policy-fuzz-perf.test.ts) >"$test_log" 2>&1
+  else
+    (cd "$REPO_ROOT/server" && npm exec --offline -- vitest run --changed "$BASE_SHA" --passWithNoTests \
+      --reporter=dot --silent=passed-only --exclude tests/policy-fuzz-perf.test.ts) >"$test_log" 2>&1
+  fi
+  local status=$?
+  set -e
+
+  if [[ "$status" -ne 0 ]]; then
+    echo "[server] tests failed; inspect $test_log" >&2
+    return "$status"
+  fi
+  grep -E '^ Test Files|^      Tests|^   Duration' "$test_log" || true
+}
+
+run_apple_gate() {
+  local scheme="OppiUnitTests"
+  if [[ "$APPLE_MODE" == "all" ]]; then
+    scheme="Oppi"
+  fi
+  (cd "$REPO_ROOT/clients/apple" && "$SIM_POOL" run -- \
+    xcodebuild -project Oppi.xcodeproj -scheme "$scheme" build-for-testing)
+}
+
+run_mac_gate() {
+  (cd "$REPO_ROOT/clients/apple" && xcodebuild \
+    -project Oppi.xcodeproj -scheme OppiMac build-for-testing \
+    -destination 'platform=macOS' \
+    -derivedDataPath .build/pre-push-mac \
+    CODE_SIGNING_ALLOWED=NO)
+}
+
+echo "pre-push: $CHANGED_COUNT changed paths; server=$SERVER_MODE apple=$APPLE_MODE mac=$MAC_CHANGED harness=$HARNESS_CHANGED"
+
+PIDS=()
+LANES=()
+if [[ "$HARNESS_CHANGED" -eq 1 ]]; then
+  run_cached harness run_harness_gate & PIDS+=("$!"); LANES+=("harness")
+fi
+if [[ "$SERVER_MODE" != "none" ]]; then
+  run_cached server run_server_gate & PIDS+=("$!"); LANES+=("server")
+fi
+if [[ "$APPLE_MODE" != "none" ]]; then
+  run_cached apple run_apple_gate & PIDS+=("$!"); LANES+=("apple")
 fi
 
 FAILED=0
-
-# --- Server coverage gate ---
-
-if [ -n "$SERVER_CHANGED" ]; then
-  echo ""
-  echo "=== Server coverage gate ==="
-  echo "Running npm run test:coverage..."
-  if (cd "$REPO_ROOT/server" && npm run test:coverage --silent); then
-    echo "Server coverage gate passed."
-  else
-    echo ""
-    echo "BLOCKED: server coverage below threshold."
-    echo "Check vitest.config.ts for current thresholds."
+for index in "${!PIDS[@]}"; do
+  if ! wait "${PIDS[$index]}"; then
+    echo "[${LANES[$index]}] FAILED" >&2
     FAILED=1
   fi
-else
-  echo "No server changes — skipping server coverage gate."
-fi
+done
 
-# --- iOS coverage gate ---
-
-if [ -n "$SWIFT_CHANGED" ]; then
-  echo ""
-  echo "=== iOS coverage gate ==="
-  if [ ! -f "$CHECK_COVERAGE" ]; then
-    echo "ERROR: repository iOS coverage harness not found at $CHECK_COVERAGE."
+if [[ "$FAILED" -eq 0 && "$MAC_CHANGED" -eq 1 ]]; then
+  if ! run_cached mac run_mac_gate; then
+    echo "[mac] FAILED" >&2
     FAILED=1
-  else
-    echo "Running iOS unit tests with coverage..."
-    set +e
-    bash "$CHECK_COVERAGE"
-    IOS_COVERAGE_STATUS=$?
-    set -e
-
-    if ! report_ios_coverage_result "$IOS_COVERAGE_STATUS"; then
-      FAILED=1
-    fi
   fi
-else
-  echo "No Swift changes — skipping iOS coverage gate."
 fi
 
-# --- Summary ---
-
-echo ""
-if [ "$FAILED" -ne 0 ]; then
-  echo "Pre-push gate FAILED. Fix the reported test, coverage, or harness failure before pushing."
+if [[ "$FAILED" -ne 0 ]]; then
+  echo "Pre-push gate FAILED. Full coverage remains a CI responsibility." >&2
   exit 1
 fi
 
-echo "Pre-push gate passed."
+echo "Pre-push gate passed. Full coverage will run in CI."

@@ -5,9 +5,14 @@ Canonical test commands for the Oppi monorepo.
 ## Policy as code
 
 - Gate policy: `server/testing-policy.json`
-- Gate runner: `cd server && npm run test:gate:pr-fast`
-- PR fast gate currently runs `check` and `test:coverage`.
-- Coverage thresholds live in `server/vitest.config.ts`; use the gate output as the current source of truth.
+- Change-aware local gate: `.githooks/pre-push`
+- Explicit full non-coverage gate: `cd server && npm run test:gate:pr-fast`
+- Full threshold-enforced coverage: GitHub Actions and `cd server && npm run test:gate:ci-coverage` (`test:coverage` on the server)
+- Coverage thresholds live in `server/vitest.config.ts` and `clients/apple/scripts/check-coverage.sh`.
+
+The local hook reads the refs Git is actually pushing, classifies their changed paths, and runs platform checks concurrently. Server changes run static checks plus Vitest's affected tests; server configuration and protocol changes run the full non-coverage suite. Apple changes compile the affected test bundles with the repository simulator pool. Each lane requires its relevant worktree paths to match the pushed commit. Successful lanes are cached by commit, pushed range, lane mode, path set, and toolchain so a retry does not repeat completed work.
+
+Full server and Apple unit coverage runs in `.github/workflows/server.yml` and `.github/workflows/apple.yml`. Coverage is deliberately asynchronous; pre-push keeps compile, static-analysis, architecture, and affected-test failures local. On pull requests, both workflows always publish stable `Server CI required` and `Apple CI required` checks while running expensive coverage only for relevant paths. Those two summary checks can be required globally. Main-branch push runs remain path-filtered. `.github/workflows/hygiene.yml` runs secret and file-size checks for every push and pull request.
 
 ## Server
 
@@ -129,13 +134,13 @@ xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test \
 
 ### iOS coverage gate
 
-The repository owns the simulator and coverage scripts used by the pre-push gate. First run the focused harness self-test. It verifies retry result-bundle paths and failure classification without launching a simulator:
+The repository owns the simulator and coverage scripts used by Apple CI. First run the focused harness self-test. It verifies path classification, retry result-bundle handling, and failure classification without launching a simulator:
 
 ```bash
 ./.githooks/pre-push --self-test
 ```
 
-Then run the real unit-test coverage gate through the simulator pool:
+Then run the same full unit-test coverage gate used by CI:
 
 ```bash
 cd clients/apple
@@ -144,7 +149,7 @@ cd clients/apple
 
 `check-coverage.sh` returns `2` only when collected coverage is below an enforced logic-layer threshold. Test, simulator, result-bundle, `xccov`, and report-analysis failures use other nonzero statuses. A failed collection is not a coverage shortfall.
 
-The tracked pre-push hook is `.githooks/pre-push`. Install it into a clone's configured hook directory after reviewing any existing local hook:
+The tracked pre-push hook is `.githooks/pre-push`. It does not collect coverage; it runs the faster local checks described above. Install it into a clone's configured hook directory after reviewing any existing local hook:
 
 ```bash
 install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"
