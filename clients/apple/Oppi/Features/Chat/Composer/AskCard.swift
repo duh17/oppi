@@ -299,11 +299,6 @@ struct AskCard: View {
         let isSelected = AskCardShared.isOptionSelected(option, in: question, answers: answers)
 
         return Button {
-            if Self.requiresExpandedConfirmation(request: request, option: option) {
-                AppHaptics.toolbarExpansion()
-                isExpanded = true
-                return
-            }
             AskCardShared.handleOptionTap(option, question: question, answers: $answers) {
                 if isSingleQuestionSingleSelect {
                     submitAnswers(answers, surface: "inline")
@@ -622,11 +617,6 @@ extension AskCard {
     private static func normalizedCommandPreview(_ command: String) -> String? {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
-    }
-
-    static func requiresExpandedConfirmation(request: AskRequest, option: AskOption) -> Bool {
-        request.responseEncoding == .extensionConfirm
-            && option.value == ExtensionUIRequest.confirmValue
     }
 
     static func usesInlineQuestionPreview(
