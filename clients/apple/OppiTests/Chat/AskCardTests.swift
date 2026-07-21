@@ -182,31 +182,6 @@ struct AskCardTests {
         #expect(display.commandPreview == "npm test -- --runInBand")
     }
 
-    @Test("Inline confirmation requires expanded details before approval")
-    func inlineConfirmationRequiresExpandedDetails() {
-        let request = AskRequest(
-            id: "approval-1",
-            sessionId: "session-1",
-            questions: [],
-            allowCustom: false,
-            timeout: nil,
-            responseEncoding: .extensionConfirm
-        )
-
-        #expect(AskCard.requiresExpandedConfirmation(
-            request: request,
-            option: AskOption(value: ExtensionUIRequest.confirmValue, label: "Confirm")
-        ))
-        #expect(AskCard.requiresExpandedConfirmation(
-            request: request,
-            option: AskOption(value: ExtensionUIRequest.cancelValue, label: "Cancel")
-        ) == false)
-        #expect(AskCard.requiresExpandedConfirmation(
-            request: Self.singleSelectRequest(),
-            option: AskOption(value: "unit", label: "Unit")
-        ) == false)
-    }
-
     @Test("Inline question display leaves ordinary questions unchanged")
     func inlineQuestionDisplayLeavesOrdinaryQuestionUnchanged() {
         let display = AskCard.inlineQuestionDisplay(for: "Pick an option")

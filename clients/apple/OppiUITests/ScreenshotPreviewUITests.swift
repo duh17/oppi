@@ -446,33 +446,17 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "ask-card-expanded-sheet")
     }
 
-    func testOppiCommandApprovalRequiresDetailsAndRoutesActions() throws {
+    func testOppiCommandApprovalRoutesInlineActionsImmediately() throws {
         launchPreview(screen: "oppi-command-approval-inline")
 
         XCTAssertTrue(app.staticTexts["Waiting"].waitForExistence(timeout: 3))
         tapInlineOption("Confirm")
-        XCTAssertTrue(app.buttons["ask.confirmation.confirm"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Waiting"].exists, "Opening details must not approve")
-
-        app.buttons["ask.confirmation.ignore"].tap()
-        XCTAssertTrue(app.staticTexts["Waiting"].exists, "Ignore should close details without responding")
+        XCTAssertTrue(app.staticTexts["Confirmed"].waitForExistence(timeout: 3), "Inline Confirm should respond immediately")
 
         app.terminate()
         launchPreview(screen: "oppi-command-approval-inline")
         tapInlineOption("Cancel")
         XCTAssertTrue(app.staticTexts["Cancelled"].waitForExistence(timeout: 3), "Inline Cancel should respond immediately")
-
-        app.terminate()
-        launchPreview(screen: "oppi-command-approval-inline")
-        tapInlineOption("Confirm")
-        app.buttons["ask.confirmation.confirm"].tap()
-        XCTAssertTrue(app.staticTexts["Confirmed"].waitForExistence(timeout: 3))
-
-        app.terminate()
-        launchPreview(screen: "oppi-command-approval-inline")
-        tapInlineOption("Confirm")
-        app.buttons["ask.confirmation.cancel"].tap()
-        XCTAssertTrue(app.staticTexts["Cancelled"].waitForExistence(timeout: 3))
     }
 
     func testOppiCommandApprovalAccessibilitySizePreview() throws {
