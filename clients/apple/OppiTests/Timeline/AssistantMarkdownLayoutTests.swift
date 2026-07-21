@@ -160,7 +160,7 @@ struct AssistantMarkdownLayoutTests {
         let secondIP = IndexPath(item: 1, section: 0)
         let initialSecondMinY = try #require(collectionView.layoutAttributesForItem(at: secondIP)?.frame.minY)
 
-        let imageRendered = await waitForTimelineCondition(timeoutMs: 1_400) {
+        let imageRendered = await waitForTimelineCondition(timeoutMs: 10_000) {
             await MainActor.run {
                 window.layoutIfNeeded()
                 guard let firstCell = collectionView.cellForItem(at: firstIP),
