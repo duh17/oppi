@@ -923,7 +923,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "list", summary: "list sessions" },
       { name: "get <id>", summary: "show session metadata" },
       { name: "create", summary: "launch a workspace session" },
-      { name: "send <id>", summary: "send text; --steer/--follow-up while a turn streams" },
+      { name: "send <id>", summary: "send text; steer a busy turn or queue a follow-up" },
       { name: "abort <id>", summary: "abort the current turn" },
       { name: "dialogs <id>", summary: "list pending ask/extension-UI dialogs" },
       { name: "respond <id>", summary: "answer a pending dialog" },
@@ -945,13 +945,13 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "trace-outline <id>", summary: "show a trace outline" },
     ],
     notes: [
-      "Steer a streaming turn with 'send <id> --text ... --steer' (interrupt) or '--follow-up' (queue).",
+      "Plain 'send' prompts an idle session and steers a busy session at the next turn boundary; use '--follow-up' to wait until current work finishes.",
       "Orchestrate with 'watch <id...>' for live transitions and 'wait <id>' to block on one condition.",
       "Inspect history progressively: 'inspect <id> --view summary' for counts, '--view outline' to choose turns, then '--view messages' or '--view tools'.",
     ],
     examples: [
       { command: "oppi session watch sess_123 --until idle" },
-      { command: 'oppi session send sess_123 --text "focus on the failing test" --steer' },
+      { command: 'oppi session send sess_123 --text "focus on the failing test"' },
       { command: "oppi session inspect sess_123 --view outline" },
     ],
   },
@@ -990,22 +990,26 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["session", "send"],
     title: "Send to session",
-    summary: "Send text as a prompt, or steer/queue a streaming turn.",
+    summary: "Prompt an idle session, steer a busy session, or queue a follow-up.",
     usage: "oppi session send <id> --text <text> [--steer | --follow-up] [--json]",
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [
       { name: "--text", value: "<text>", summary: "message text to send", required: true },
-      { name: "--steer", summary: "interrupt the current streaming turn" },
-      { name: "--follow-up", summary: "queue the message after the current turn" },
+      { name: "--steer", summary: "require a busy session and steer at the next turn boundary" },
+      {
+        name: "--follow-up",
+        summary: "require a busy session and wait until current work finishes",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
       "Pass @- to --text to read the message from stdin.",
-      "A plain prompt needs an idle session; on a busy session it errors with a steer/follow-up hint.",
+      "Without a delivery flag, send prompts an idle session and steers a busy session after its current tool calls, before the next model turn.",
+      "Use --follow-up for work that should begin only after the agent finishes its current work.",
     ],
     examples: [
-      { command: 'oppi session send sess_123 --text "Run tests"' },
-      { command: 'oppi session send sess_123 --text "stop and lint first" --steer' },
+      { command: 'oppi session send sess_123 --text "Focus on the failing test"' },
+      { command: 'oppi session send sess_123 --text "Afterward, summarize the fix" --follow-up' },
     ],
   },
   {

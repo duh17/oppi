@@ -27,15 +27,19 @@ describe("session interaction command contract", () => {
     );
   });
 
-  it("posts encoded session input with the selected command type", async () => {
+  it.each([
+    ["prompt", { type: "prompt", message: "hello", streamingBehavior: "steer" }],
+    ["steer", { type: "steer", message: "hello" }],
+    ["follow_up", { type: "follow_up", message: "hello" }],
+  ] as const)("posts encoded %s session input with its delivery behavior", async (kind, body) => {
     const call = vi.fn().mockResolvedValue({ messages: [] });
 
-    const result = await sendSessionInput("session/one", "follow_up", "later", call);
+    const result = await sendSessionInput("session/one", kind, "hello", call);
 
     expect(result).toEqual({ messages: [] });
     expect(call).toHaveBeenCalledWith("/sessions/session%2Fone/command", {
       method: "POST",
-      body: { type: "follow_up", message: "later" },
+      body,
     });
   });
 
