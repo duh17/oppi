@@ -14,15 +14,28 @@ struct LocalSessionRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 3) {
-                // Row 1: name
-                Text(session.displayTitle)
-                    .font(.body)
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
+        HStack(alignment: .top, spacing: 8) {
+            SessionIdentityIconView(sessionId: session.piSessionId)
+                .frame(width: 20, height: 20)
+                .frame(width: 24, height: 24)
+                .padding(.top, 1)
 
-                // Row 2: model + message count + terminal badge
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(session.displayTitle)
+                        .font(.body)
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+
+                    Spacer(minLength: 4)
+
+                    Text(session.lastModified.relativeString())
+                        .font(.caption2)
+                        .foregroundStyle(.themeComment)
+                        .fixedSize()
+                }
+
                 HStack(spacing: 6) {
                     Text("Terminal")
                         .font(.caption2.weight(.medium))
@@ -50,14 +63,9 @@ struct LocalSessionRow: View {
                 .foregroundStyle(.themeFgDim)
                 .lineLimit(1)
             }
-
-            Spacer(minLength: 4)
-
-            // Trailing: relative time — same position as SessionRow
-            Text(session.lastModified.relativeString())
-                .font(.caption2)
-                .foregroundStyle(.themeComment)
         }
+        .padding(.leading, 12)
+        .padding(.trailing, 4)
         .id(themeID)
         .padding(.vertical, 2)
     }
