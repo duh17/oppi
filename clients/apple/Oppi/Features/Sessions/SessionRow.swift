@@ -176,13 +176,8 @@ struct SessionRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            if case .agent = AssistantIdentityPresentation.resolve(
-                agentId: session.launch?.agentId,
-                agentIcon: session.launch?.agentIcon
-            ) {
-                AgentIconView(value: session.launch?.agentIcon, size: 20, frameSize: 24)
-                    .padding(.top, 1)
-            }
+            identityIcon
+                .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 3) {
                 // Row 1: title + time
@@ -302,12 +297,16 @@ struct SessionRow: View {
         .padding(.trailing, 4)
         .padding(.vertical, 2)
         .contentShape(Rectangle())
-        .accessibilityValue(
-            AssistantIdentityPresentation.resolve(
-                agentId: session.launch?.agentId,
-                agentIcon: session.launch?.agentIcon
-            ) == .globalAvatar ? "" : "Launched with a saved Agent"
+    }
+
+    private var identityIcon: some View {
+        SessionIdentityIconView(
+            sessionId: session.id,
+            agentId: session.launch?.agentId,
+            agentIcon: session.launch?.agentIcon
         )
+        .frame(width: 20, height: 20)
+        .frame(width: 24, height: 24)
     }
 
     @ViewBuilder
@@ -427,6 +426,32 @@ struct SessionRow: View {
             return .themeOrange
         }
         return .themeGreen
+    }
+}
+
+struct SessionIdentityIconView: UIViewRepresentable {
+    let sessionId: String
+    var agentId: String?
+    var agentIcon: String?
+
+    func makeUIView(context: Context) -> SessionGridBadgeView {
+        let view = SessionGridBadgeView()
+        view.isAccessibilityElement = true
+        view.accessibilityTraits = .image
+        return view
+    }
+
+    func updateUIView(_ view: SessionGridBadgeView, context: Context) {
+        view.sessionId = sessionId
+        view.agentId = agentId
+        view.agentIcon = agentIcon
+
+        switch AssistantIdentityPresentation.resolve(agentId: agentId, agentIcon: agentIcon) {
+        case .globalAvatar:
+            view.accessibilityLabel = "Pi"
+        case .agent(let content):
+            view.accessibilityLabel = "Saved Agent, \(content.accessibilityDescription)"
+        }
     }
 }
 

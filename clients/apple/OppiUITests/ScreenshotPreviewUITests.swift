@@ -104,12 +104,12 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(agentSession.waitForExistence(timeout: 5), "Agent session row not visible")
         XCTAssertTrue(ordinarySession.waitForExistence(timeout: 5), "Ordinary session row not visible")
         XCTAssertTrue(
-            (agentSession.value as? String)?.contains("Launched with a saved Agent") == true,
+            agentSession.label.contains("Saved Agent"),
             "Agent session row did not expose its saved-Agent identity"
         )
-        XCTAssertFalse(
-            (ordinarySession.value as? String)?.contains("Launched with a saved Agent") == true,
-            "Ordinary session must retain global assistant identity"
+        XCTAssertTrue(
+            ordinarySession.label.contains("Pi"),
+            "Ordinary session row must expose the selected Pi avatar identity"
         )
         saveScreenshot(name: "agent-icons-emoji-session-identities")
 
