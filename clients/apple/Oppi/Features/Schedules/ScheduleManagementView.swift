@@ -92,7 +92,6 @@ struct ScheduleManagementView: View {
                     placeholder: "Describe what should happen and when…"
                 )
             }
-            .background(Color.themeSurfaceFill(.opaqueCard).ignoresSafeArea(edges: .bottom))
         }
         .refreshable { await loadSchedules() }
         .task { await loadSchedules() }

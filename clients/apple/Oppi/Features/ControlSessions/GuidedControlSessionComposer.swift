@@ -109,7 +109,6 @@ struct GuidedControlSessionComposer: View {
             }
         }
         .padding(.top, 8)
-        .background(Color.themeSurfaceFill(.opaqueCard).ignoresSafeArea(edges: .bottom))
         .sheet(isPresented: $showModelPicker) {
             ModelPickerSheet(currentModel: effectiveModelId, onSelect: selectModel)
         }
