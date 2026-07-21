@@ -79,8 +79,6 @@ struct AgentIconProofPreview: View {
                             .foregroundStyle(.themeComment)
                         Spacer(minLength: 12)
                         AgentIconView(value: agent.definition.icon, size: 24, frameSize: 32)
-                        Text(iconSummary)
-                            .foregroundStyle(.themeFg)
                         Image(systemName: "chevron.right")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.themeComment)
@@ -94,7 +92,42 @@ struct AgentIconProofPreview: View {
                 .accessibilityIdentifier("agent.proof.detail.icon")
 
                 LabeledContent("Name", value: agent.name)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Description")
+                        .font(.subheadline)
+                        .foregroundStyle(.themeComment)
+                    Text(agent.definition.description ?? "")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                LabeledContent("Status", value: "Active")
                 LabeledContent("Version", value: "v\(agent.version)")
+            }
+
+            if let instructions = agent.definition.instructions {
+                Section(instructions.mode == .append ? "Append System Prompt" : "Replace System Prompt") {
+                    Text(instructions.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            Section("Pi Session Defaults") {
+                LabeledContent("Model", value: agent.definition.sessionDefaults?.model ?? "Server default")
+                LabeledContent(
+                    "Thinking Level",
+                    value: agent.definition.sessionDefaults?.thinkingLevel?.rawValue ?? "Default"
+                )
+                if let noTools = agent.definition.sessionDefaults?.noTools {
+                    LabeledContent("Tools", value: noTools.displayName)
+                        .accessibilityIdentifier("agent.proof.tools.noTools")
+                }
+                if let allowed = agent.definition.sessionDefaults?.tools, !allowed.isEmpty {
+                    toolList("Allowed Tools", values: allowed)
+                }
+                if let excluded = agent.definition.sessionDefaults?.excludeTools, !excluded.isEmpty {
+                    toolList("Excluded Tools", values: excluded)
+                }
             }
 
             Section("Start") {
@@ -182,6 +215,16 @@ struct AgentIconProofPreview: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    private func toolList(_ title: String, values: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(.themeComment)
+            Text(values.joined(separator: ", "))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var iconSummary: String {
         guard let icon = agent.definition.icon else { return "Default" }
         switch AgentIconContent.resolve(icon) {
@@ -211,13 +254,24 @@ struct AgentIconProofPreview: View {
             id: "agent-icon-proof",
             name: "Design Reviewer",
             icon: icon,
-            description: "Reviews product presentation",
+            description: "Reviews product presentation and checks interface hierarchy, alignment, and platform fit.",
             status: .active,
             version: version,
             definition: AgentDefinition(
                 name: "Design Reviewer",
                 icon: icon,
-                description: "Reviews product presentation"
+                description: "Reviews product presentation and checks interface hierarchy, alignment, and platform fit.",
+                instructions: AgentInstructions(
+                    mode: .append,
+                    text: "Review the interface as a product designer. Prioritize hierarchy, alignment, and native platform conventions."
+                ),
+                sessionDefaults: AgentSessionDefaults(
+                    model: "gpt-5.6-terra",
+                    thinkingLevel: .medium,
+                    tools: ["read", "bash"],
+                    excludeTools: ["browser"],
+                    noTools: .builtin
+                )
             ),
             createdAt: Date(timeIntervalSince1970: 1),
             updatedAt: Date(timeIntervalSince1970: Double(version)),
