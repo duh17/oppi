@@ -14,6 +14,7 @@ export type PrePushPlan = {
 };
 
 const gatePolicyPaths = new Set([
+  ".gitignore",
   ".githooks/pre-push",
   "scripts/pre-push-plan.ts",
   "scripts/pre-push-plan.test.ts",
