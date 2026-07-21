@@ -124,6 +124,10 @@ describe("Oppi documentation prompt hint", () => {
       ).runtime.services.resourceLoader;
 
       expect(resourceLoader.getAppendSystemPrompt()).toEqual([OPPI_CLI_SYSTEM_PROMPT_HINT]);
+      expect(OPPI_CLI_SYSTEM_PROMPT_HINT).toContain(
+        "prompts an idle session and steers a busy session",
+      );
+      expect(OPPI_CLI_SYSTEM_PROMPT_HINT).toContain("--follow-up");
       expect(OPPI_CLI_SYSTEM_PROMPT_HINT).not.toContain("alias");
     } finally {
       await backend.dispose();

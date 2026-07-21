@@ -195,6 +195,18 @@ describe("CLI app-state API boundary", () => {
     }
   });
 
+  it("documents plain send as prompt-when-idle and steer-when-busy", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-send-help-"));
+    try {
+      const { stdout, code } = await runCliResult(["session", "send", "--help"], dataDir);
+      expect(code).toBe(0);
+      expect(stdout).toContain("prompts an idle session and steers a busy session");
+      expect(stdout).toContain("--follow-up");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps config set able to repair an invalid config without opening app-state storage", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-invalid-config-repair-"));
     try {
@@ -410,10 +422,14 @@ describe("CLI app-state API boundary", () => {
     expect(stdout).toContain("No trace entries found.");
   });
 
-  it("maps send --steer / --follow-up and abort to runtime command types", async () => {
+  it("defaults send to prompt-or-steer and preserves explicit delivery commands", async () => {
     await withOrchApi(
       (res) => sendJson(res, { messages: [] }),
       async ({ dataDir, requests }) => {
+        await runCliResult(
+          ["session", "send", "sess-1", "--text", "default", "--json"],
+          dataDir,
+        );
         await runCliResult(
           ["session", "send", "sess-1", "--text", "hi", "--steer", "--json"],
           dataDir,
@@ -424,10 +440,15 @@ describe("CLI app-state API boundary", () => {
         );
         await runCliResult(["session", "abort", "sess-1", "--json"], dataDir);
 
-        const commandTypes = requests
+        const commandBodies = requests
           .filter((request) => request.path === "/sessions/sess-1/command")
-          .map((request) => request.body?.type);
-        expect(commandTypes).toEqual(["steer", "follow_up", "abort"]);
+          .map((request) => request.body);
+        expect(commandBodies).toEqual([
+          { type: "prompt", message: "default", streamingBehavior: "steer" },
+          { type: "steer", message: "hi" },
+          { type: "follow_up", message: "later" },
+          { type: "abort" },
+        ]);
       },
     );
   });
@@ -558,9 +579,10 @@ describe("CLI app-state API boundary", () => {
           "message piped over stdin\n",
         );
         expect(code).toBe(0);
-        expect(requests[0]?.body).toMatchObject({
+        expect(requests[0]?.body).toEqual({
           type: "prompt",
           message: "message piped over stdin\n",
+          streamingBehavior: "steer",
         });
       },
     );

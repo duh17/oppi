@@ -34,11 +34,14 @@ export async function sendSessionInput(
   try {
     return await call<Record<string, unknown>>(`/sessions/${encodeURIComponent(id)}/command`, {
       method: "POST",
-      body: { type: commandType, message: text },
+      body: {
+        type: commandType,
+        message: text,
+        ...(commandType === "prompt" ? { streamingBehavior: "steer" } : {}),
+      },
     });
   } catch (err) {
-    // The runtime rejects a plain prompt on a streaming turn. Point the operator at the
-    // steering flags that map to the runtime's steer/follow_up command types.
+    // Keep older or incompatible runtimes actionable if they reject the prompt-or-steer form.
     if (commandType === "prompt" && err instanceof Error && /idle session/i.test(err.message)) {
       err.message = `${err.message}. Retry with --steer to interrupt the current turn or --follow-up to queue after it.`;
     }
