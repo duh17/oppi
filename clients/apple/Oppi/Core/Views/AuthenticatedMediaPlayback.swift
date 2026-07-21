@@ -105,7 +105,10 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
 
     init(source: AuthenticatedMediaSource) {
         self.source = source
-        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: source.tlsCertFingerprint)
+        trustDelegate = PinnedServerTrustDelegate(
+            pinnedLeafFingerprint: source.tlsCertFingerprint,
+            expectedServerName: source.tlsServerName
+        )
         super.init()
     }
 

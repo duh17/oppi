@@ -20,17 +20,20 @@ struct OppiClientEnvironment: Equatable, Sendable {
     let baseURL: URL
     let bearerToken: String
     let pinnedCertificateFingerprint: String?
+    let tlsServerName: String?
     let processOwnership: ProcessOwnership
 
     init(
         baseURL: URL,
         bearerToken: String,
         pinnedCertificateFingerprint: String? = nil,
+        tlsServerName: String? = nil,
         processOwnership: ProcessOwnership = .clientOnly
     ) {
         self.baseURL = baseURL
         self.bearerToken = bearerToken
         self.pinnedCertificateFingerprint = pinnedCertificateFingerprint
+        self.tlsServerName = tlsServerName
         self.processOwnership = processOwnership
     }
 

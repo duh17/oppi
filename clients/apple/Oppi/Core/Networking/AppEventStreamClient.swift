@@ -90,6 +90,7 @@ final class AppEventStreamClient {
         url: URL,
         token: String,
         tlsCertFingerprint: String? = nil,
+        tlsServerName: String? = nil,
         diagnosticRemoteIdentity: String? = nil,
         reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = WebSocketRecoveryPolicy.reconnectDelay,
         webSocketFactory: ((URLRequest) -> AppEventWebSocketTransport)? = nil
@@ -98,7 +99,10 @@ final class AppEventStreamClient {
         self.token = token
         self.reconnectDelay = reconnectDelay
         self.diagnosticRemoteIdentity = diagnosticRemoteIdentity
-        self.trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
+        self.trustDelegate = PinnedServerTrustDelegate(
+            pinnedLeafFingerprint: tlsCertFingerprint,
+            expectedServerName: tlsServerName
+        )
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60
         let urlSession = URLSession(configuration: config, delegate: trustDelegate, delegateQueue: nil)

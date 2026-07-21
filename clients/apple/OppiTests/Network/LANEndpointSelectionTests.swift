@@ -99,7 +99,7 @@ struct LANEndpointSelectionTests {
         #expect(result == nil)
     }
 
-    @Test func selectsLANWithPairedHostnameForHTTPS() {
+    @Test func selectsDiscoveredLANIPForPinnedHTTPS() {
         let credentials = makeCredentials(
             host: "my-server.tail00000.ts.net",
             scheme: .https,
@@ -116,10 +116,10 @@ struct LANEndpointSelectionTests {
 
         let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered)
 
-        // HTTPS + hostname-based paired host: use paired hostname (not discovered IP)
-        // so the TLS cert CN/SAN matches. Tailscale routes over LAN when on same network.
+        // The paired leaf pin authenticates the discovered endpoint directly;
+        // retaining the Tailscale hostname here would not be LAN transport.
         #expect(result?.transportPath == .lan)
-        #expect(result?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
+        #expect(result?.baseURL.absoluteString == "https://192.168.1.42:7749")
     }
 
     @Test func fallsBackToPairedWhenServerFingerprintPrefixDoesNotMatch() {
@@ -143,7 +143,7 @@ struct LANEndpointSelectionTests {
         #expect(result?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
     }
 
-    @Test func selectsTailscaleLANWithPublicCATrustWhenLeafPinIsAbsent() {
+    @Test func unpinnedTailscaleCertificateUsesSignedNameOverLANIP() {
         let credentials = makeCredentials(
             host: "my-server.tail00000.ts.net",
             scheme: .https,
@@ -161,7 +161,8 @@ struct LANEndpointSelectionTests {
         let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered)
 
         #expect(result?.transportPath == .lan)
-        #expect(result?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
+        #expect(result?.baseURL.absoluteString == "https://192.168.1.42:7749")
+        #expect(result?.tlsServerName == "my-server.tail00000.ts.net")
     }
 
     @Test func fallsBackToPairedForUnpinnedNonTailscaleHost() {
@@ -267,7 +268,7 @@ struct LANEndpointSelectionTests {
         #expect(result?.baseURL.absoluteString == "https://192.168.1.42:7749")
     }
 
-    @Test func usesDiscoveredPortWithPairedHostname() {
+    @Test func usesDiscoveredIPAndPortForPinnedLAN() {
         let credentials = makeCredentials(
             host: "my-server.tail00000.ts.net",
             scheme: .https,
@@ -284,9 +285,8 @@ struct LANEndpointSelectionTests {
 
         let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered)
 
-        // Hostname from paired creds, but port from discovery
         #expect(result?.transportPath == .lan)
-        #expect(result?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:8443")
+        #expect(result?.baseURL.absoluteString == "https://192.168.1.42:8443")
     }
 
     @Test func allowsLANWhenDiscoveredTLSPrefixIsMissingButServerMatches() {
@@ -307,7 +307,7 @@ struct LANEndpointSelectionTests {
         let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered)
 
         #expect(result?.transportPath == .lan)
-        #expect(result?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
+        #expect(result?.baseURL.absoluteString == "https://192.168.1.42:7749")
     }
 
     @Test func invalidDiscoveredPortFallsBackToPaired() {

@@ -38,6 +38,16 @@ struct ConnectionCoordinatorTests {
         #expect(result == true)
     }
 
+    @Test func missingBonjourCandidateUsesPairedTransport() async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:no-lan-wait", name: "Cellular")
+        coordinator.serverStore.addOrUpdate(server)
+
+        let connection = await coordinator.ensureConnectionReady(for: server)
+
+        #expect(connection.transportPath == .paired)
+    }
+
     // MARK: - Per-Server Connection Isolation
 
     @Test func eachServerGetsOwnConnection() {
@@ -176,6 +186,96 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.activeConnection.credentials?.baseURL == nil)
 
         await coordinator.removeServer(id: server.id)
+    }
+
+    @Test func initialIrohPreferredPreparationWaitsForVerifiedLAN() async throws {
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeIrohPreferredCredentials(token: "dt_lan_first")
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        var lanHookCalled = false
+        coordinator._initialLANEndpointForTesting = { serverId in
+            lanHookCalled = true
+            #expect(serverId == server.id)
+            return LANDiscoveredEndpoint(
+                host: "192.168.1.42",
+                port: 7749,
+                serverFingerprintPrefix: "SERVERFINGERPRINT",
+                tlsCertFingerprintPrefix: "TLSFINGERPRINT"
+            )
+        }
+        var irohStarted = false
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            irohStarted = true
+            return (nil, try #require(URL(string: "http://127.0.0.1:41996")))
+        }
+
+        let connection = await coordinator.ensureConnectionReady(for: server)
+
+        #expect(lanHookCalled)
+        #expect(!irohStarted)
+        #expect(connection.transportPath == .lan)
+        #expect(await connection.apiClient?.baseURL.absoluteString == "https://192.168.1.42:7749")
+    }
+
+    @Test func LANDiscoveredDuringInitialIrohSetupWinsBeforePublication() async throws {
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeIrohPreferredCredentials(token: "dt_late_lan")
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        var discoveryChecks = 0
+        coordinator._initialLANEndpointForTesting = { _ in
+            discoveryChecks += 1
+            guard discoveryChecks > 1 else { return nil }
+            return LANDiscoveredEndpoint(
+                host: "192.168.1.42",
+                port: 7749,
+                serverFingerprintPrefix: "SERVERFINGERPRINT",
+                tlsCertFingerprintPrefix: "TLSFINGERPRINT"
+            )
+        }
+        var irohStarted = false
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            irohStarted = true
+            return (nil, try #require(URL(string: "http://127.0.0.1:41996")))
+        }
+
+        let connection = await coordinator.ensureConnectionReady(for: server)
+
+        #expect(irohStarted)
+        #expect(discoveryChecks == 3)
+        #expect(connection.transportPath == .lan)
+        #expect(await connection.apiClient?.baseURL.absoluteString == "https://192.168.1.42:7749")
+    }
+
+    @Test func LANRemovedDuringInitialSetupIsClearedBeforePublication() async throws {
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeIrohPreferredCredentials(token: "dt_removed_lan")
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        var discoveryChecks = 0
+        coordinator._initialLANEndpointForTesting = { _ in
+            discoveryChecks += 1
+            guard discoveryChecks == 1 else { return nil }
+            return LANDiscoveredEndpoint(
+                host: "192.168.1.42",
+                port: 7749,
+                serverFingerprintPrefix: "SERVERFINGERPRINT",
+                tlsCertFingerprintPrefix: "TLSFINGERPRINT"
+            )
+        }
+        var irohStarted = false
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            irohStarted = true
+            return (nil, try #require(URL(string: "http://127.0.0.1:41996")))
+        }
+
+        let connection = await coordinator.ensureConnectionReady(for: server)
+
+        #expect(discoveryChecks == 3)
+        #expect(irohStarted)
+        #expect(connection.transportPath == .iroh)
+        #expect(await connection.apiClient?.baseURL.host == "127.0.0.1")
     }
 
     // MARK: - Cross-Server Queries
@@ -696,6 +796,34 @@ struct ConnectionCoordinatorTests {
 
     // MARK: - Helpers
 
+    private func makeIrohPreferredCredentials(token: String) -> ServerCredentials {
+        ServerCredentials(
+            host: "studio.tailnet.ts.net",
+            port: 7749,
+            token: token,
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
+            tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF",
+            transports: ServerTransports(
+                preference: .irohPreferred,
+                iroh: IrohServerTransport(
+                    version: 2,
+                    nodeId: "iroh-node",
+                    alpns: [IrohTunnelProtocol.alpn],
+                    addressMode: .nodeId,
+                    ticket: nil
+                ),
+                http: HTTPServerTransport(
+                    host: "studio.tailnet.ts.net",
+                    port: 7749,
+                    scheme: .https,
+                    tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
+                )
+            )
+        )
+    }
+
     private func makeCoordinator() -> (ConnectionCoordinator, ServerStore) {
         UserDefaults.standard.removeObject(forKey: "pairedServerIds")
         KeychainService.deleteAllServers()
@@ -707,6 +835,7 @@ struct ConnectionCoordinatorTests {
         coordinator._irohProxyFactoryForTesting = { _, _ in
             (nil, irohLoopbackURL)
         }
+        coordinator._initialLANEndpointForTesting = { _ in nil }
         return (coordinator, store)
     }
 

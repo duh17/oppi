@@ -9,14 +9,32 @@ struct AuthenticatedMediaSource: Sendable {
     let url: URL
     let authorizationHeaderValue: String
     let tlsCertFingerprint: String?
+    let tlsServerName: String?
     let contentTypeHint: String?
     let sourceFileExtension: String?
+
+    init(
+        url: URL,
+        authorizationHeaderValue: String,
+        tlsCertFingerprint: String?,
+        tlsServerName: String? = nil,
+        contentTypeHint: String?,
+        sourceFileExtension: String?
+    ) {
+        self.url = url
+        self.authorizationHeaderValue = authorizationHeaderValue
+        self.tlsCertFingerprint = tlsCertFingerprint
+        self.tlsServerName = tlsServerName
+        self.contentTypeHint = contentTypeHint
+        self.sourceFileExtension = sourceFileExtension
+    }
 
     var identity: String {
         [
             url.absoluteString,
             authorizationIdentity,
             tlsCertFingerprint ?? "",
+            tlsServerName ?? "",
             contentTypeHint ?? "",
             sourceFileExtension ?? ""
         ].joined(separator: "|")

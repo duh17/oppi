@@ -51,6 +51,7 @@ final class ConnectionCoordinator {
         String
     ) async throws -> (IrohConnectionManager?, URL))?
     var _onConnectionPreparedForTesting: ((String, ServerConnection) -> Void)?
+    var _initialLANEndpointForTesting: (@MainActor (String) async -> LANDiscoveredEndpoint?)?
     #endif
 
     private let lanDiscovery = LANDiscovery()
@@ -136,12 +137,13 @@ final class ConnectionCoordinator {
 
     private func prepareConnection(for server: PairedServer) async -> ServerConnection? {
         let serverId = server.id
+        let initialLANEndpoint = await initialLANEndpoint(for: server)
         if let existing = connections[serverId] {
             if existing.credentials != server.credentials {
                 logger.warning("Reconfiguring connection for re-paired server \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
                 existing.disconnectStream()
                 existing.disconnectAppEventStream()
-                existing.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
+                existing.setDiscoveredLANEndpoint(initialLANEndpoint)
                 guard await configureConnection(existing, credentials: server.credentials) else {
                     logger.error("Failed to reconfigure connection for \(server.name, privacy: .public)")
                     return nil
@@ -155,12 +157,17 @@ final class ConnectionCoordinator {
 
         let connection = ServerConnection()
         // Feed verified discovery into the policy before initial configuration
-        // so an already-visible private LAN can win over Iroh.
-        connection.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
+        // so private LAN wins over Iroh at the initial transport boundary.
+        connection.setDiscoveredLANEndpoint(initialLANEndpoint)
         guard await configureConnection(connection, credentials: server.credentials) else {
             logger.error("Failed to configure connection for \(server.name, privacy: .public)")
             return nil
         }
+        await reconcileLANDiscoveredDuringTransportSetup(
+            connection: connection,
+            server: server,
+            initialEndpoint: initialLANEndpoint
+        )
         initializeStores(for: connection, serverId: serverId)
         #if DEBUG
         _onConnectionPreparedForTesting?(serverId, connection)
@@ -168,6 +175,37 @@ final class ConnectionCoordinator {
         connections[serverId] = connection
         logger.warning("Created ready connection for \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
         return connection
+    }
+
+    private func initialLANEndpoint(for server: PairedServer) async -> LANDiscoveredEndpoint? {
+        guard server.credentials.transports.preference != .irohOnly else { return nil }
+        let endpoint = bestLANEndpoint(forServerId: server.id)
+        #if DEBUG
+        if endpoint == nil, let testEndpoint = _initialLANEndpointForTesting {
+            return await testEndpoint(server.id)
+        }
+        #endif
+        return endpoint
+    }
+
+    private func reconcileLANDiscoveredDuringTransportSetup(
+        connection: ServerConnection,
+        server: PairedServer,
+        initialEndpoint: LANDiscoveredEndpoint?
+    ) async {
+        guard server.credentials.transports.preference != .irohOnly else { return }
+        var reconciledEndpoint = initialEndpoint
+        while true {
+            let latestEndpoint = await initialLANEndpoint(for: server)
+            guard latestEndpoint != reconciledEndpoint else { return }
+
+            // This connection is not published yet, so Bonjour updates during
+            // transport setup cannot reach it through the normal callback.
+            // Repeat after each transition to close that asynchronous window.
+            let transition = connection.setDiscoveredLANEndpoint(latestEndpoint)
+            await transition?.value
+            reconciledEndpoint = latestEndpoint
+        }
     }
 
     private func configureConnection(
@@ -178,6 +216,7 @@ final class ConnectionCoordinator {
         if let factory = _irohProxyFactoryForTesting {
             return await connection.configureForUse(
                 credentials: credentials,
+                lanReachabilityProbe: { _, _ in true },
                 irohProxyFactory: factory
             )
         }
@@ -189,7 +228,6 @@ final class ConnectionCoordinator {
         connection.sessionStore.switchServer(to: serverId)
         connection.askRequestStore.switchServer(to: serverId)
         connection.workspaceStore.switchServer(to: serverId)
-        connection.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
     }
 
     func prepareAllConnectionsReady() async {
@@ -333,7 +371,15 @@ final class ConnectionCoordinator {
 #if DEBUG
     // periphery:ignore - used by OppiTests via @testable import
     func _applyLANDiscoveryForTesting(_ endpoints: [LANDiscoveredEndpoint]) {
-        applyLANDiscovery(endpoints)
+        for server in serverStore.servers {
+            let endpoint = bestLANEndpoint(forServerId: server.id, candidates: endpoints)
+            guard let connection = connections[server.id] else { continue }
+            if let endpoint {
+                connection._adoptVerifiedLANEndpointForTesting(endpoint)
+            } else {
+                connection.setDiscoveredLANEndpoint(nil)
+            }
+        }
     }
 
     // periphery:ignore - used by OppiTests via @testable import
