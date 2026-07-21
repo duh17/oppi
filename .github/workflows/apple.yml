@@ -53,18 +53,11 @@ jobs:
         with:
           bun-version: 1.3.11
 
-      - name: Install Apple build tools
+      - name: Install SwiftLint
         run: |
-          brew install xcodegen swiftlint
-          xcodegen --version
+          brew install swiftlint
           swiftlint version
           xcodebuild -version
-
-      - name: Verify generated project
-        working-directory: clients/apple
-        run: |
-          xcodegen generate
-          git diff --exit-code -- Oppi.xcodeproj
 
       - name: Run full iOS unit coverage
         working-directory: clients/apple
