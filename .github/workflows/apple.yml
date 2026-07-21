@@ -55,7 +55,7 @@ jobs:
 
       - name: Verify Apple build tools
         run: |
-          brew install ripgrep
+          brew install ripgrep swiftlint
           rg --version
           swiftlint version
           xcodebuild -version
