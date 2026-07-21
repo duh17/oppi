@@ -36,11 +36,13 @@ protocol IrohConnectionProviding: Sendable {
     func openStream(alpn: String) async throws -> any IrohByteStream
     func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence?
     func suspendConnections() async
+    func recycleEndpoint() async throws
     func shutdown() async
 }
 
 extension IrohConnectionProviding {
     func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? { nil }
+    func recycleEndpoint() async throws {}
 }
 
 struct IrohLibByteStream: IrohByteStream {
@@ -117,11 +119,21 @@ private actor IrohAppEndpoint {
 
     private var endpoint: Endpoint?
     private var endpointTask: Task<Endpoint, Error>?
+    private var generation: UInt64 = 0
 
     func get() async throws -> Endpoint {
         if let endpoint, !endpoint.isClosed() { return endpoint }
-        if let endpointTask { return try await endpointTask.value }
+        if let endpointTask {
+            let awaitedGeneration = generation
+            let created = try await endpointTask.value
+            guard generation == awaitedGeneration else {
+                try? await created.close()
+                throw IrohTransportError.unavailable("Iroh endpoint binding was superseded")
+            }
+            return created
+        }
 
+        let bindingGeneration = generation
         let task = Task<Endpoint, Error> {
             let secret = try IrohEndpointSecretStore.loadOrCreateSecretBytes()
             return try await Endpoint.bind(options: EndpointOptions(secretKey: secret))
@@ -129,14 +141,40 @@ private actor IrohAppEndpoint {
         endpointTask = task
         do {
             let created = try await task.value
+            guard generation == bindingGeneration else {
+                try? await created.close()
+                throw CancellationError()
+            }
             endpoint = created
             endpointTask = nil
-            irohManagerLogger.info("Iroh endpoint ready: \(created.id().fmtShort(), privacy: .public)")
+            irohManagerLogger.info(
+                "Iroh endpoint ready: \(created.id().fmtShort(), privacy: .public), generation=\(bindingGeneration)"
+            )
             return created
         } catch {
-            endpointTask = nil
+            if generation == bindingGeneration {
+                endpointTask = nil
+            }
             throw IrohTransportError.unavailable("Unable to start Iroh endpoint: \(error.localizedDescription)")
         }
+    }
+
+    /// iOS can suspend the endpoint's runtime past the negotiated QUIC idle timeout.
+    /// Rebind with the same Keychain secret so identity remains stable while sockets,
+    /// relay state, discovery state, and timers are recreated like a process restart.
+    func recycleAfterSuspension() async throws {
+        generation &+= 1
+        let recycledGeneration = generation
+        let staleEndpoint = endpoint
+        let staleBinding = endpointTask
+        endpoint = nil
+        endpointTask = nil
+        staleBinding?.cancel()
+        if let staleEndpoint, !staleEndpoint.isClosed() {
+            try await staleEndpoint.close()
+        }
+        _ = try await get()
+        irohManagerLogger.info("Iroh endpoint recycled after suspension, generation=\(recycledGeneration)")
     }
 }
 
@@ -198,6 +236,10 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
         for connection in active {
             try? connection.close(errorCode: 0, reason: Data("app background".utf8))
         }
+    }
+
+    func recycleEndpoint() async throws {
+        try await IrohAppEndpoint.shared.recycleAfterSuspension()
     }
 
     func shutdown() async {
@@ -431,10 +473,14 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
 /// Persistent per-server owner used by pairing frames and the HTTP/WebSocket
 /// tunnel. The proxy is app-local and its URL is never written to credentials.
 actor IrohConnectionManager {
+    static let connectivityTimeoutDefault: Duration = .seconds(8)
+
     let iroh: IrohServerTransport
     private let provider: any IrohConnectionProviding
     private var proxy: IrohLoopbackProxy?
     private var proxyToken: String?
+    private var availabilityFailureHandler: (@MainActor @Sendable () async -> Void)?
+    private var availabilityFailureReportingSuspended = false
 
     init(
         iroh: IrohServerTransport,
@@ -482,8 +528,11 @@ actor IrohConnectionManager {
         let preface = try IrohTunnelProtocol.makePreface(token: token)
         let proxy = IrohLoopbackProxy(
             expectedAuthorization: ServerAuthorization.headerValue(token: token)
-        ) { [provider] in
-            let stream = try await provider.openStream(alpn: IrohTunnelProtocol.alpn)
+        ) { [weak self] in
+            guard let self else {
+                throw IrohTransportError.unavailable("Iroh connection manager was released")
+            }
+            let stream = try await self.openTunnelStream()
             try await stream.write(preface)
             return stream
         }
@@ -493,19 +542,169 @@ actor IrohConnectionManager {
         return url
     }
 
-    func selectedPathEvidence() async throws -> IrohSelectedPathEvidence? {
-        try await provider.selectedPathEvidence(alpn: IrohTunnelProtocol.alpn)
+    func selectedPathEvidence(
+        timeout: Duration = IrohConnectionManager.connectivityTimeoutDefault
+    ) async throws -> IrohSelectedPathEvidence? {
+        let probe = Task { [provider] in
+            try await provider.selectedPathEvidence(alpn: IrohTunnelProtocol.alpn)
+        }
+        return try await waitForConnectivityOperation(probe, timeout: timeout)
+    }
+
+    func openTunnelStream(
+        timeout: Duration = IrohConnectionManager.connectivityTimeoutDefault
+    ) async throws -> any IrohByteStream {
+        let opening = Task { [provider] in
+            try await provider.openStream(alpn: IrohTunnelProtocol.alpn)
+        }
+        do {
+            return try await waitForConnectivityOperation(opening, timeout: timeout)
+        } catch let error as IrohTransportError where error.isFallbackEligible {
+            // A post-configuration tunnel failure must reach the transport owner;
+            // otherwise URLSession retries the same unavailable Iroh lane forever.
+            if !availabilityFailureReportingSuspended,
+               let availabilityFailureHandler {
+                Task { await availabilityFailureHandler() }
+            }
+            throw error
+        }
+    }
+
+    func setAvailabilityFailureHandler(
+        _ handler: (@MainActor @Sendable () async -> Void)?
+    ) {
+        availabilityFailureHandler = handler
+    }
+
+    private func waitForConnectivityOperation<Value: Sendable>(
+        _ operation: Task<Value, Error>,
+        timeout: Duration
+    ) async throws -> Value {
+        do {
+            return try await IrohReachabilityProbeDeadline.wait(
+                for: operation,
+                timeout: timeout
+            )
+        } catch is IrohConnectivityDeadlineExceeded {
+            // The Iroh FFI operation may not cooperate with Swift task cancellation.
+            // Clear its cached connection/task generation before returning so a later
+            // URLSession reconnect starts a fresh dial instead of joining the zombie.
+            await provider.suspendConnections()
+            throw IrohTransportError.unavailable("Iroh connectivity operation timed out")
+        }
     }
 
     func prepareForBackground() async {
         await provider.suspendConnections()
     }
 
+    func recycleEndpointAfterSuspension(
+        timeout: Duration = IrohConnectionManager.connectivityTimeoutDefault
+    ) async throws {
+        availabilityFailureReportingSuspended = true
+        defer { availabilityFailureReportingSuspended = false }
+
+        await provider.suspendConnections()
+        let recycling = Task { [provider] in
+            try await provider.recycleEndpoint()
+        }
+        do {
+            _ = try await IrohReachabilityProbeDeadline.wait(
+                for: recycling,
+                timeout: timeout
+            )
+        } catch is IrohConnectivityDeadlineExceeded {
+            throw IrohTransportError.unavailable("Iroh endpoint recycle timed out")
+        }
+    }
+
+    static func recycleSharedEndpointAfterSuspension(
+        timeout: Duration = IrohConnectionManager.connectivityTimeoutDefault
+    ) async throws {
+        let recycling = Task {
+            try await IrohAppEndpoint.shared.recycleAfterSuspension()
+        }
+        do {
+            _ = try await IrohReachabilityProbeDeadline.wait(
+                for: recycling,
+                timeout: timeout
+            )
+        } catch is IrohConnectivityDeadlineExceeded {
+            throw IrohTransportError.unavailable("Iroh endpoint recycle timed out")
+        }
+    }
+
     func shutdown() async {
         proxy?.stop()
         proxy = nil
         proxyToken = nil
+        availabilityFailureHandler = nil
         await provider.shutdown()
+    }
+}
+
+private enum IrohReachabilityProbeDeadline {
+    static func wait<Value: Sendable>(
+        for operation: Task<Value, Error>,
+        timeout: Duration
+    ) async throws -> Value {
+        try await withCheckedThrowingContinuation { continuation in
+            let resolution = IrohProbeResolution(continuation)
+
+            let timeoutTask = Task {
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    return
+                }
+                if resolution.resolve(.failure(IrohConnectivityDeadlineExceeded())) {
+                    operation.cancel()
+                }
+            }
+            resolution.setTimeoutTask(timeoutTask)
+            Task {
+                _ = resolution.resolve(await operation.result)
+            }
+        }
+    }
+}
+
+private struct IrohConnectivityDeadlineExceeded: Error {}
+
+private final class IrohProbeResolution<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var timeoutTask: Task<Void, Never>?
+
+    init(_ continuation: CheckedContinuation<Value, Error>) {
+        self.continuation = continuation
+    }
+
+    func setTimeoutTask(_ task: Task<Void, Never>) {
+        lock.lock()
+        if continuation == nil {
+            lock.unlock()
+            task.cancel()
+            return
+        }
+        timeoutTask = task
+        lock.unlock()
+    }
+
+    @discardableResult
+    func resolve(_ result: Result<Value, Error>) -> Bool {
+        lock.lock()
+        guard let continuation else {
+            lock.unlock()
+            return false
+        }
+        self.continuation = nil
+        let timeoutTask = self.timeoutTask
+        self.timeoutTask = nil
+        lock.unlock()
+        timeoutTask?.cancel()
+        continuation.resume(with: result)
+        return true
     }
 }
 

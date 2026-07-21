@@ -106,6 +106,63 @@ struct ServerConnectionLifecycleTests {
         #expect(!terminal.irohFallbackActive)
     }
 
+    @Test func irohPreferredFallsBackWhenReachabilityProbeExceedsDeadline() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let provider = GatedReachableEvidenceIrohProvider()
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let localURL = try #require(URL(string: "http://127.0.0.1:42010"))
+
+        let configurationTask = Task { @MainActor in
+            await conn.configureForUse(
+                credentials: credentials,
+                irohReachabilityTimeout: .milliseconds(20),
+                irohProxyFactory: { _, _ in (manager, localURL) }
+            )
+        }
+        while !(await provider.evidenceIsWaiting) {
+            await Task.yield()
+        }
+
+        let configured = await configurationTask.value
+
+        #expect(configured)
+        #expect(conn.transportPath == .paired)
+        #expect(conn.irohFallbackActive)
+        #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
+        #expect(await provider.suspendCount == 1, "A timed-out probe must discard the poisoned provider connection")
+        await provider.releaseEvidence()
+    }
+
+    @Test func activeIrohTunnelFailureEscalatesToPreferredHTTPFallback() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let provider = ReachableThenUnavailableOpenProvider()
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let localURL = try #require(URL(string: "http://127.0.0.1:42011"))
+
+        let configured = await conn.configureForUse(
+            credentials: credentials,
+            irohReachabilityTimeout: .milliseconds(20),
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        )
+        #expect(configured)
+        #expect(conn.transportPath == .iroh)
+
+        await #expect(throws: IrohTransportError.unavailable("active tunnel unavailable")) {
+            _ = try await manager.openTunnelStream(timeout: .milliseconds(20))
+        }
+        for _ in 0..<100 where conn.transportPath == .iroh {
+            await Task.yield()
+        }
+
+        #expect(conn.transportPath == .paired)
+        #expect(conn.irohFallbackActive)
+        #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
+    }
+
     @Test func irohPreferredRetriesStickyFallbackAtExplicitBoundary() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
@@ -238,6 +295,34 @@ struct ServerConnectionLifecycleTests {
 
         #expect(conn.transportPath == .lan)
         #expect(await provider.shutdownCount == 1)
+    }
+
+    @Test func overlappingBoundaryReevaluationsCoalesceInsteadOfDroppingRecovery() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let provider = CoalescedBoundaryIrohProvider()
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let localURL = try #require(URL(string: "http://127.0.0.1:42012"))
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        ))
+
+        let firstBoundary = Task { @MainActor in
+            await conn.reevaluateIrohPreferredTransportAtBoundary()
+        }
+        while !(await provider.secondEvidenceIsWaiting) {
+            await Task.yield()
+        }
+        await conn.reevaluateIrohPreferredTransportAtBoundary()
+        await provider.releaseSecondEvidence()
+        await firstBoundary.value
+
+        #expect(await provider.evidenceCount == 3)
+        #expect(conn.transportPath == .paired)
+        #expect(conn.irohFallbackActive)
     }
 
     @Test func irohPreferredFallsBackWhenBoundaryProbeBecomesUnavailable() async throws {
@@ -983,6 +1068,36 @@ private final class SupersededSetupGate {
     }
 }
 
+private actor CoalescedBoundaryIrohProvider: IrohConnectionProviding {
+    private var secondEvidenceContinuation: CheckedContinuation<Void, Never>?
+    private(set) var evidenceCount = 0
+    private(set) var secondEvidenceIsWaiting = false
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        evidenceCount += 1
+        if evidenceCount == 2 {
+            secondEvidenceIsWaiting = true
+            await withCheckedContinuation { secondEvidenceContinuation = $0 }
+        }
+        if evidenceCount == 3 {
+            throw IrohTransportError.unavailable("coalesced boundary detects outage")
+        }
+        return IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+    }
+
+    func releaseSecondEvidence() {
+        secondEvidenceContinuation?.resume()
+        secondEvidenceContinuation = nil
+    }
+
+    func suspendConnections() async {}
+    func shutdown() async {}
+}
+
 private actor SecondEvidenceGateIrohProvider: IrohConnectionProviding {
     private var evidenceCount = 0
     private var secondEvidenceContinuation: CheckedContinuation<Void, Never>?
@@ -1019,6 +1134,7 @@ private actor SecondEvidenceGateIrohProvider: IrohConnectionProviding {
 private actor GatedReachableEvidenceIrohProvider: IrohConnectionProviding {
     private var evidenceContinuation: CheckedContinuation<Void, Never>?
     private(set) var evidenceIsWaiting = false
+    private(set) var suspendCount = 0
     private(set) var shutdownCount = 0
 
     func openStream(alpn: String) async throws -> any IrohByteStream {
@@ -1038,7 +1154,9 @@ private actor GatedReachableEvidenceIrohProvider: IrohConnectionProviding {
         evidenceContinuation = nil
     }
 
-    func suspendConnections() async {}
+    func suspendConnections() async {
+        suspendCount += 1
+    }
 
     func shutdown() async {
         shutdownCount += 1
@@ -1070,6 +1188,20 @@ private actor GatedUnavailableShutdownIrohProvider: IrohConnectionProviding {
         shutdownContinuation?.resume()
         shutdownContinuation = nil
     }
+}
+
+private actor ReachableThenUnavailableOpenProvider: IrohConnectionProviding {
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("active tunnel unavailable")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        // A dial/path probe can look healthy while opening a real stream fails.
+        IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+    }
+
+    func suspendConnections() async {}
+    func shutdown() async {}
 }
 
 private actor TrackingReachableIrohProvider: IrohConnectionProviding {

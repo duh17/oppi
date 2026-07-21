@@ -49,6 +49,7 @@ struct ServerConnectionForegroundRecoveryTests {
         await conn.reconnectIfNeeded()
 
         #expect(await provider.suspendCount() == 1)
+        #expect(await provider.endpointRecycleCount() == 1)
         #expect(conn.sessionEventContinuations["s1"] != nil)
         #expect(appEventStarts == 2)
         _ = sessionEvents
@@ -222,6 +223,7 @@ private final class ForegroundRecoveryFailingURLProtocol: URLProtocol, @unchecke
 
 private actor ForegroundRecoveryIrohProvider: IrohConnectionProviding {
     private var suspends = 0
+    private var endpointRecycles = 0
 
     func openStream(alpn: String) async throws -> any IrohByteStream {
         throw IrohTransportError.unavailable("No stream expected in foreground recovery unit test")
@@ -231,11 +233,19 @@ private actor ForegroundRecoveryIrohProvider: IrohConnectionProviding {
         suspends += 1
     }
 
+    func recycleEndpoint() async throws {
+        endpointRecycles += 1
+    }
+
     func shutdown() async {
         await suspendConnections()
     }
 
     func suspendCount() -> Int {
         suspends
+    }
+
+    func endpointRecycleCount() -> Int {
+        endpointRecycles
     }
 }
