@@ -1338,7 +1338,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   ): void {
     const matched = this.bridgeCommandDriver.resolveResult(connection, message, () => {
       if (message.state) {
-        this.applyBridgeState(this.requireActive(connection.sessionId), message.state, connection);
+        const active = this.requireActive(connection.sessionId);
+        const stateChanged = this.applyBridgeState(active, message.state, connection);
+        if (stateChanged) {
+          this.broadcast(connection.sessionId, { type: "state", session: active.session });
+        }
       }
     });
     if (matched) return;

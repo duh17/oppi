@@ -1072,6 +1072,34 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     });
   });
 
+  it("broadcasts idle state returned by a mirrored abort command", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    ws.receive({ type: "state", state: { isIdle: false } });
+
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    const abortPromise = runtime.sendAbort(sessionId);
+    const command = latestCommand(ws);
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { aborted: true, queue: { version: 0, steering: [], followUp: [] } },
+      state: { isIdle: true },
+    });
+
+    await expect(abortPromise).resolves.toBeUndefined();
+    expect(runtime.getActiveSession(sessionId)?.status).toBe("ready");
+    expect(received).toContainEqual(
+      expect.objectContaining({
+        type: "state",
+        session: expect.objectContaining({ id: sessionId, status: "ready" }),
+      }),
+    );
+  });
+
   it("settles an in-flight command once when the mirror disconnects", async () => {
     const { runtime, sessions } = makeRuntime();
     const { ws, sessionId } = connectBridge(runtime);
