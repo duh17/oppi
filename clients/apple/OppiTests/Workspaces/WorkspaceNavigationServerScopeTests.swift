@@ -361,6 +361,7 @@ struct WorkspaceNavigationServerScopeTests {
             .environment(activeConnection.gitStatusStore)
             .environment(activeConnection.fileIndexStore)
             .environment(activeConnection.messageQueueStore)
+            .environment(AppNavigation())
             .environment(serverStore)
         )
 
