@@ -55,10 +55,15 @@ jobs:
 
       - name: Verify Apple build tools
         run: |
-          brew install ripgrep swiftlint
+          brew install ripgrep swiftlint xcodegen
           rg --version
           swiftlint version
+          xcodegen --version
           xcodebuild -version
+
+      - name: Generate the ephemeral Xcode project
+        working-directory: clients/apple
+        run: xcodegen generate
 
       - name: Run full iOS unit coverage
         working-directory: clients/apple
