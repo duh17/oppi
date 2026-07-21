@@ -8,9 +8,11 @@ import Security
 /// system trust handling.
 final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     private let pinnedLeafFingerprint: String?
+    private(set) var expectedServerName: String?
 
-    init(pinnedLeafFingerprint: String?) {
+    init(pinnedLeafFingerprint: String?, expectedServerName: String? = nil) {
         self.pinnedLeafFingerprint = Self.normalizeFingerprint(pinnedLeafFingerprint)
+        self.expectedServerName = expectedServerName?.trimmingCharacters(in: .whitespacesAndNewlines)
         super.init()
     }
 
@@ -49,7 +51,23 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
         }
 
         guard let pinnedLeafFingerprint else {
-            completionHandler(.performDefaultHandling, nil)
+            guard let expectedServerName,
+                  !expectedServerName.isEmpty,
+                  Self.allowsPublicCATrustFallback(forHost: expectedServerName) else {
+                completionHandler(.performDefaultHandling, nil)
+                return
+            }
+
+            // URLSession connected to a discovered LAN IP. Re-evaluate the
+            // server's public certificate against the exact hostname carried
+            // in signed pairing metadata instead of the IP protection space.
+            let policy = SecPolicyCreateSSL(true, expectedServerName as CFString)
+            guard SecTrustSetPolicies(trust, policy) == errSecSuccess,
+                  SecTrustEvaluateWithError(trust, nil) else {
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
+            completionHandler(.useCredential, URLCredential(trust: trust))
             return
         }
 

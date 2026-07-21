@@ -20,21 +20,35 @@ enum ServerTransportAPIClient {
     static func withClient<Result: Sendable>(
         for server: PairedServer,
         lanEndpointProvider: @Sendable (ServerCredentials) async -> LANDiscoveredEndpoint? = { credentials in
-            await discoverVerifiedLANEndpoint(for: credentials)
+            await discoverLANCandidate(for: credentials)
+        },
+        lanReachabilityProbe: @Sendable (EndpointSelection, ServerCredentials) async -> Bool = { selection, credentials in
+            await LANEndpointSelection.isReachable(selection, credentials: credentials)
         },
         managerFactory: @Sendable (IrohServerTransport) -> IrohConnectionManager = { metadata in
             IrohConnectionManager(iroh: metadata)
         },
         operation: @Sendable (APIClient) async throws -> Result
     ) async throws -> Result {
-        let discoveredLANEndpoint: LANDiscoveredEndpoint? = if server.credentials.transports.preference != .irohOnly {
+        let discoveredLANCandidate: LANDiscoveredEndpoint? = if server.credentials.transports.preference != .irohOnly {
             await lanEndpointProvider(server.credentials)
         } else {
             nil
         }
+        let verifiedLANEndpoint: LANDiscoveredEndpoint?
+        if let discoveredLANCandidate,
+           let selection = LANEndpointSelection.select(
+               credentials: server.credentials,
+               discoveredEndpoint: discoveredLANCandidate
+           ), selection.transportPath == .lan,
+           await lanReachabilityProbe(selection, server.credentials) {
+            verifiedLANEndpoint = discoveredLANCandidate
+        } else {
+            verifiedLANEndpoint = nil
+        }
         let plan = try ServerTransportPlanResolver.resolve(
             credentials: server.credentials,
-            discoveredLANEndpoint: discoveredLANEndpoint
+            discoveredLANEndpoint: verifiedLANEndpoint
         )
 
         switch plan {
@@ -60,7 +74,7 @@ enum ServerTransportAPIClient {
                 }
                 let fallback = try ServerTransportPlanResolver.resolve(
                     credentials: server.credentials,
-                    discoveredLANEndpoint: discoveredLANEndpoint,
+                    discoveredLANEndpoint: verifiedLANEndpoint,
                     suppressIroh: true
                 )
                 guard case .http(let selection) = fallback else { throw error }
@@ -89,7 +103,7 @@ enum ServerTransportAPIClient {
     }
 
     @MainActor
-    private static func discoverVerifiedLANEndpoint(
+    private static func discoverLANCandidate(
         for credentials: ServerCredentials,
         timeout: Duration = .milliseconds(300)
     ) async -> LANDiscoveredEndpoint? {
@@ -117,11 +131,12 @@ enum ServerTransportAPIClient {
         selection: EndpointSelection,
         operation: @Sendable (APIClient) async throws -> Result
     ) async throws -> Result {
-        let client = APIClient(
+        let client = APIClient(environment: OppiClientEnvironment(
             baseURL: selection.baseURL,
-            token: server.token,
-            tlsCertFingerprint: server.tlsCertFingerprint
-        )
+            bearerToken: server.token,
+            pinnedCertificateFingerprint: server.tlsCertFingerprint,
+            tlsServerName: selection.tlsServerName
+        ))
         return try await operation(client)
     }
 }

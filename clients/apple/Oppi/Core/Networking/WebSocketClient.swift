@@ -43,6 +43,7 @@ final class WebSocketClient {
     private let receiveErrorLogCooldownNs: UInt64 = 60_000_000_000
 
     let credentials: ServerCredentials
+    var configuredTLSServerName: String? { trustDelegate.expectedServerName }
     private var preferredEndpoint: EndpointSelection?
     private var streamURL: URL?
     private var diagnosticSessionId: String?
@@ -67,6 +68,7 @@ final class WebSocketClient {
         diagnosticRole: String = "focused_session",
         diagnosticRemoteIdentity: String? = nil,
         tlsCertFingerprint: String? = nil,
+        tlsServerName: String? = nil,
         waitForConnectionTimeout: Duration = .seconds(3),
         sendTimeout: Duration = .seconds(5)
     ) {
@@ -76,8 +78,10 @@ final class WebSocketClient {
         self.diagnosticRemoteIdentity = diagnosticRemoteIdentity
         self.waitForConnectionTimeout = waitForConnectionTimeout
         self.sendTimeout = sendTimeout
+        let pinnedFingerprint = tlsCertFingerprint ?? credentials.normalizedTLSCertFingerprint
         self.trustDelegate = PinnedServerTrustDelegate(
-            pinnedLeafFingerprint: tlsCertFingerprint ?? credentials.normalizedTLSCertFingerprint
+            pinnedLeafFingerprint: pinnedFingerprint,
+            expectedServerName: tlsServerName
         )
         let config = URLSessionConfiguration.default
         // No timeout for WebSocket — we handle keepalive ourselves

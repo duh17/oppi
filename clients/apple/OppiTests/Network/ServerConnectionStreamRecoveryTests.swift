@@ -96,10 +96,9 @@ struct ServerConnectionStreamRecoveryTests {
             scheme: .http,
             tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
-        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         defer { cleanup(connection) }
 
-        connection.setDiscoveredLANEndpoint(
+        connection._adoptVerifiedLANEndpointForTesting(
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -107,6 +106,7 @@ struct ServerConnectionStreamRecoveryTests {
                 tlsCertFingerprintPrefix: "TLSFINGERPRINT"
             )
         )
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
 
         #expect(connection.transportPath == .lan)

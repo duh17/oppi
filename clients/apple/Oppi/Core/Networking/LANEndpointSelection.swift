@@ -19,6 +19,19 @@ struct LANDiscoveredEndpoint: Sendable, Equatable {
 struct EndpointSelection: Sendable, Equatable {
     let baseURL: URL
     let transportPath: ConnectionTransportPath
+    /// Hostname from signed pairing metadata used to evaluate public-CA TLS
+    /// while the TCP connection targets a Bonjour-discovered LAN IP.
+    let tlsServerName: String?
+
+    init(
+        baseURL: URL,
+        transportPath: ConnectionTransportPath,
+        tlsServerName: String? = nil
+    ) {
+        self.baseURL = baseURL
+        self.transportPath = transportPath
+        self.tlsServerName = tlsServerName
+    }
 }
 
 enum LANEndpointSelection {
@@ -65,12 +78,14 @@ enum LANEndpointSelection {
             return paired
         }
 
+        let tlsServerName: String?
         if let pinnedTLSFingerprint = normalizeFingerprint(credentials.normalizedTLSCertFingerprint) {
             if let discoveredTLSPrefix = normalizeFingerprint(discoveredEndpoint.tlsCertFingerprintPrefix),
                !pinnedTLSFingerprint.hasPrefix(discoveredTLSPrefix) {
                 logger.warning("LAN rejected: TLS fingerprint prefix mismatch")
                 return paired
             }
+            tlsServerName = nil
         } else {
             let pairedPort = paired.baseURL.port ?? 443
             guard let pairedHost = paired.baseURL.host,
@@ -79,24 +94,14 @@ enum LANEndpointSelection {
                 logger.warning("LAN rejected: endpoint lacks a pin or exact Tailscale public-CA identity")
                 return paired
             }
+            // TCP targets the LAN IP, while trust is evaluated against the exact
+            // signed Tailscale hostname. This is actual LAN transport without
+            // weakening public-CA hostname authentication.
+            tlsServerName = pairedHost
         }
 
         let scheme = credentials.resolvedScheme
-
-        // When using HTTPS with a hostname-based TLS cert (e.g. Tailscale),
-        // keep the paired hostname in the URL instead of the discovered LAN
-        // IP. The cert's CN/SAN won't match a raw IP, and iOS rejects the
-        // connection in Release builds. The LAN discovery still confirms
-        // server presence + port; Tailscale routes directly over LAN when
-        // both peers share the same network.
-        let lanHost: String
-        if scheme == .https, !credentials.host.isEmpty,
-           credentials.host.contains(".") && !credentials.host.allSatisfy({ $0.isNumber || $0 == "." }) {
-            // Paired host is a hostname (not an IP) — use it for TLS compat
-            lanHost = credentials.host
-        } else {
-            lanHost = discoveredEndpoint.host
-        }
+        let lanHost = discoveredEndpoint.host
 
         guard let lanBaseURL = URL(string: "\(scheme.rawValue)://\(lanHost):\(discoveredEndpoint.port)") else {
             return paired
@@ -106,8 +111,27 @@ enum LANEndpointSelection {
 
         return EndpointSelection(
             baseURL: lanBaseURL,
-            transportPath: .lan
+            transportPath: .lan,
+            tlsServerName: tlsServerName
         )
+    }
+
+    static func isReachable(
+        _ selection: EndpointSelection,
+        credentials: ServerCredentials,
+        timeoutInterval: TimeInterval = 2
+    ) async -> Bool {
+        let client = APIClient(environment: OppiClientEnvironment(
+            baseURL: selection.baseURL,
+            bearerToken: credentials.token,
+            pinnedCertificateFingerprint: credentials.normalizedTLSCertFingerprint,
+            tlsServerName: selection.tlsServerName
+        ))
+        do {
+            return try await client.health(timeoutInterval: timeoutInterval)
+        } catch {
+            return false
+        }
     }
 
     private static func pairedSelection(from credentials: ServerCredentials) -> EndpointSelection? {

@@ -35,6 +35,9 @@ struct IrohSelectedPathEvidence: Equatable, Sendable {
 protocol IrohConnectionProviding: Sendable {
     func openStream(alpn: String) async throws -> any IrohByteStream
     func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence?
+    func setEstablishedStreamFailureHandler(
+        _ handler: (@Sendable () async -> Void)?
+    ) async
     func suspendConnections() async
     func recycleEndpoint() async throws
     func shutdown() async
@@ -42,6 +45,9 @@ protocol IrohConnectionProviding: Sendable {
 
 extension IrohConnectionProviding {
     func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? { nil }
+    func setEstablishedStreamFailureHandler(
+        _ handler: (@Sendable () async -> Void)?
+    ) async {}
     func recycleEndpoint() async throws {}
 }
 
@@ -108,6 +114,39 @@ struct IrohConnectionGenerations: Sendable {
 
     mutating func removeAll() {
         currentByALPN.removeAll()
+    }
+}
+
+/// Coalesces endpoint replacement across every paired server. Closing the shared
+/// endpoint fails all of its connections, so manager-local coalescing alone can
+/// otherwise turn one failure into a cascade of consecutive endpoint rebinds.
+actor IrohEndpointRecycleCoordinator {
+    static let shared = IrohEndpointRecycleCoordinator()
+
+    private var inFlight: Task<Void, Error>?
+    private var recycleGeneration: UInt64 = 0
+
+    func currentGeneration() -> UInt64 {
+        recycleGeneration
+    }
+
+    func run(
+        _ operation: @escaping @Sendable () async throws -> Void
+    ) async throws {
+        if let inFlight {
+            return try await inFlight.value
+        }
+
+        recycleGeneration &+= 1
+        let task = Task { try await operation() }
+        inFlight = task
+        do {
+            try await task.value
+            inFlight = nil
+        } catch {
+            inFlight = nil
+            throw error
+        }
     }
 }
 
@@ -187,6 +226,7 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
     private var connectionTaskIDs: [String: UUID] = [:]
     private var connectionGenerations = IrohConnectionGenerations()
     private var selectedPathKinds: [String: IrohPathKind] = [:]
+    private var establishedStreamFailureHandler: (@Sendable () async -> Void)?
 
     init(iroh: IrohServerTransport) {
         self.iroh = iroh
@@ -226,6 +266,12 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
         Self.selectedPathEvidence(connection: try await connection(for: alpn).connection)
     }
 
+    func setEstablishedStreamFailureHandler(
+        _ handler: (@Sendable () async -> Void)?
+    ) async {
+        establishedStreamFailureHandler = handler
+    }
+
     func suspendConnections() async {
         let active = connections.values
         connections.removeAll()
@@ -239,7 +285,9 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
     }
 
     func recycleEndpoint() async throws {
-        try await IrohAppEndpoint.shared.recycleAfterSuspension()
+        try await IrohEndpointRecycleCoordinator.shared.run {
+            try await IrohAppEndpoint.shared.recycleAfterSuspension()
+        }
     }
 
     func shutdown() async {
@@ -355,11 +403,21 @@ actor IrohLibConnectionProvider: IrohConnectionProviding {
         guard connectionGenerations.invalidateIfCurrent(alpn: alpn, generation: generation) else {
             return
         }
-        if let failed = connections.removeValue(forKey: alpn) {
+        let failed = connections.removeValue(forKey: alpn)
+        // Iroh FFI maps both connection loss and stream-local reset into a Stream
+        // read/write error. closeReason is the documented discriminator: only a
+        // terminal Connection error warrants replacing the process-wide endpoint.
+        let connectionWasLost = failed?.closeReason() != nil
+        if let failed {
             try? failed.close(errorCode: 0, reason: Data("transport failed".utf8))
         }
         selectedPathKinds.removeValue(forKey: alpn)
         IrohTransportTelemetry.recordReconnect(status: "invalidated", reason: "stream_failure")
+        if connectionWasLost, let establishedStreamFailureHandler {
+            // Do not hold the failing stream's read/write call open while endpoint
+            // recovery runs. The loopback proxy must close its local TCP peer first.
+            Task { await establishedStreamFailureHandler() }
+        }
     }
 
     private func recordSelectedPath(connection: Connection, alpn: String, reason: String) {
@@ -480,7 +538,10 @@ actor IrohConnectionManager {
     private var proxy: IrohLoopbackProxy?
     private var proxyToken: String?
     private var availabilityFailureHandler: (@MainActor @Sendable () async -> Void)?
+    private var establishedStreamFailureHandler: (@MainActor @Sendable () async -> Void)?
     private var availabilityFailureReportingSuspended = false
+    private var establishedStreamFailureReportInFlight = false
+    private var observedSharedRecycleGeneration: UInt64 = 0
 
     init(
         iroh: IrohServerTransport,
@@ -545,20 +606,26 @@ actor IrohConnectionManager {
     func selectedPathEvidence(
         timeout: Duration = IrohConnectionManager.connectivityTimeoutDefault
     ) async throws -> IrohSelectedPathEvidence? {
+        let operationGeneration = await IrohEndpointRecycleCoordinator.shared.currentGeneration()
         let probe = Task { [provider] in
             try await provider.selectedPathEvidence(alpn: IrohTunnelProtocol.alpn)
         }
-        return try await waitForConnectivityOperation(probe, timeout: timeout)
+        let evidence = try await waitForConnectivityOperation(probe, timeout: timeout)
+        observedSharedRecycleGeneration = operationGeneration
+        return evidence
     }
 
     func openTunnelStream(
         timeout: Duration = IrohConnectionManager.connectivityTimeoutDefault
     ) async throws -> any IrohByteStream {
+        let operationGeneration = await IrohEndpointRecycleCoordinator.shared.currentGeneration()
         let opening = Task { [provider] in
             try await provider.openStream(alpn: IrohTunnelProtocol.alpn)
         }
         do {
-            return try await waitForConnectivityOperation(opening, timeout: timeout)
+            let stream = try await waitForConnectivityOperation(opening, timeout: timeout)
+            observedSharedRecycleGeneration = operationGeneration
+            return stream
         } catch let error as IrohTransportError where error.isFallbackEligible {
             // A post-configuration tunnel failure must reach the transport owner;
             // otherwise URLSession retries the same unavailable Iroh lane forever.
@@ -570,10 +637,37 @@ actor IrohConnectionManager {
         }
     }
 
-    func setAvailabilityFailureHandler(
-        _ handler: (@MainActor @Sendable () async -> Void)?
-    ) {
-        availabilityFailureHandler = handler
+    func setAvailabilityFailureHandlers(
+        tunnelOpen: (@MainActor @Sendable () async -> Void)?,
+        establishedStream: (@MainActor @Sendable () async -> Void)?
+    ) async {
+        availabilityFailureHandler = tunnelOpen
+        establishedStreamFailureHandler = establishedStream
+        observedSharedRecycleGeneration = await IrohEndpointRecycleCoordinator.shared.currentGeneration()
+        await provider.setEstablishedStreamFailureHandler { [weak self] in
+            await self?.reportEstablishedStreamFailure()
+        }
+    }
+
+    private func reportEstablishedStreamFailure() async {
+        guard !availabilityFailureReportingSuspended,
+              !establishedStreamFailureReportInFlight else { return }
+
+        // Reserve ownership before awaiting the process-wide actor so another
+        // callback cannot enter through actor reentrancy.
+        establishedStreamFailureReportInFlight = true
+        defer { establishedStreamFailureReportInFlight = false }
+
+        let sharedGeneration = await IrohEndpointRecycleCoordinator.shared.currentGeneration()
+        guard sharedGeneration == observedSharedRecycleGeneration else {
+            // Another manager replaced the process-wide endpoint. This report
+            // belongs to a connection invalidated by that planned teardown.
+            observedSharedRecycleGeneration = sharedGeneration
+            return
+        }
+
+        guard let establishedStreamFailureHandler else { return }
+        await establishedStreamFailureHandler()
     }
 
     private func waitForConnectivityOperation<Value: Sendable>(
@@ -613,6 +707,7 @@ actor IrohConnectionManager {
                 for: recycling,
                 timeout: timeout
             )
+            observedSharedRecycleGeneration = await IrohEndpointRecycleCoordinator.shared.currentGeneration()
         } catch is IrohConnectivityDeadlineExceeded {
             throw IrohTransportError.unavailable("Iroh endpoint recycle timed out")
         }
@@ -622,7 +717,9 @@ actor IrohConnectionManager {
         timeout: Duration = IrohConnectionManager.connectivityTimeoutDefault
     ) async throws {
         let recycling = Task {
-            try await IrohAppEndpoint.shared.recycleAfterSuspension()
+            try await IrohEndpointRecycleCoordinator.shared.run {
+                try await IrohAppEndpoint.shared.recycleAfterSuspension()
+            }
         }
         do {
             _ = try await IrohReachabilityProbeDeadline.wait(
@@ -639,6 +736,8 @@ actor IrohConnectionManager {
         proxy = nil
         proxyToken = nil
         availabilityFailureHandler = nil
+        establishedStreamFailureHandler = nil
+        await provider.setEstablishedStreamFailureHandler(nil)
         await provider.shutdown()
     }
 }

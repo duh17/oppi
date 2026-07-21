@@ -492,6 +492,156 @@ struct IrohConnectionManagerTests {
         await manager.shutdown()
     }
 
+    @Test func overlappingEstablishedFailureReportsCoalesceDuringRecovery() async {
+        let provider = EstablishedFailureCallbackProvider()
+        let manager = IrohConnectionManager(
+            iroh: IrohServerTransport(
+                version: 2,
+                nodeId: "signed-node",
+                alpns: [IrohTunnelProtocol.alpn],
+                addressMode: .nodeId,
+                ticket: nil
+            ),
+            provider: provider
+        )
+        let gate = EstablishedFailureReportGate()
+        await manager.setAvailabilityFailureHandlers(
+            tunnelOpen: nil,
+            establishedStream: { await gate.handleReport() }
+        )
+
+        let first = Task { await provider.reportFailure() }
+        await gate.waitForFirstReport()
+        await provider.reportFailure()
+        await gate.releaseFirstReport()
+        await first.value
+
+        #expect(await gate.reportCount == 1)
+        await manager.shutdown()
+    }
+
+    @Test func plannedSharedRecycleDoesNotEscalateOldConnectionFailure() async throws {
+        let provider = EstablishedFailureCallbackProvider()
+        let manager = IrohConnectionManager(
+            iroh: IrohServerTransport(
+                version: 2,
+                nodeId: "signed-node",
+                alpns: [IrohTunnelProtocol.alpn],
+                addressMode: .nodeId,
+                ticket: nil
+            ),
+            provider: provider
+        )
+        let counter = AsyncCounter()
+        await manager.setAvailabilityFailureHandlers(
+            tunnelOpen: nil,
+            establishedStream: { counter.increment() }
+        )
+
+        try await IrohEndpointRecycleCoordinator.shared.run {}
+        await provider.reportFailure()
+
+        #expect(counter.value() == 0)
+        await manager.shutdown()
+    }
+
+    @Test func inFlightSharedRecycleSuppressesPlannedFailuresAcrossManagers() async throws {
+        let firstProvider = EstablishedFailureCallbackProvider()
+        let secondProvider = EstablishedFailureCallbackProvider()
+        let metadata = IrohServerTransport(
+            version: 2,
+            nodeId: "signed-node",
+            alpns: [IrohTunnelProtocol.alpn],
+            addressMode: .nodeId,
+            ticket: nil
+        )
+        let firstManager = IrohConnectionManager(iroh: metadata, provider: firstProvider)
+        let secondManager = IrohConnectionManager(iroh: metadata, provider: secondProvider)
+        let firstCounter = AsyncCounter()
+        let secondCounter = AsyncCounter()
+        await firstManager.setAvailabilityFailureHandlers(
+            tunnelOpen: nil,
+            establishedStream: { firstCounter.increment() }
+        )
+        await secondManager.setAvailabilityFailureHandlers(
+            tunnelOpen: nil,
+            establishedStream: { secondCounter.increment() }
+        )
+        let gate = EndpointRecycleSingleFlightGate()
+        let recycling = Task {
+            try await IrohEndpointRecycleCoordinator.shared.run {
+                await gate.blockOperation()
+            }
+        }
+        await gate.waitUntilBlocked()
+
+        await firstProvider.reportFailure()
+        await secondProvider.reportFailure()
+        #expect(firstCounter.value() == 0)
+        #expect(secondCounter.value() == 0)
+
+        await gate.releaseOperation()
+        try await recycling.value
+        await firstManager.shutdown()
+        await secondManager.shutdown()
+    }
+
+    @Test func recyclePublishedDuringStreamOpenDoesNotRelabelOldStream() async throws {
+        let provider = RecoveringTunnelOpenProvider()
+        let manager = IrohConnectionManager(
+            iroh: IrohServerTransport(
+                version: 2,
+                nodeId: "signed-node",
+                alpns: [IrohTunnelProtocol.alpn],
+                addressMode: .nodeId,
+                ticket: nil
+            ),
+            provider: provider
+        )
+        let counter = AsyncCounter()
+        await manager.setAvailabilityFailureHandlers(
+            tunnelOpen: nil,
+            establishedStream: { counter.increment() }
+        )
+        let opening = Task { try await manager.openTunnelStream() }
+        while !(await provider.firstOpenIsWaiting) {
+            await Task.yield()
+        }
+
+        try await IrohEndpointRecycleCoordinator.shared.run {}
+        await provider.releaseFirstOpen()
+        _ = try await opening.value
+        await provider.reportFailure()
+
+        #expect(counter.value() == 0)
+        await manager.shutdown()
+    }
+
+    @Test func endpointRecycleIsSingleFlightAcrossManagers() async throws {
+        let gate = EndpointRecycleSingleFlightGate()
+        let operationCount = AsyncCounter()
+
+        let first = Task {
+            try await IrohEndpointRecycleCoordinator.shared.run {
+                operationCount.increment()
+                await gate.blockOperation()
+            }
+        }
+        await gate.waitUntilBlocked()
+        let second = Task {
+            try await IrohEndpointRecycleCoordinator.shared.run {
+                operationCount.increment()
+            }
+        }
+        for _ in 0..<20 { await Task.yield() }
+
+        #expect(operationCount.value() == 1)
+        await gate.releaseOperation()
+        try await first.value
+        try await second.value
+        #expect(operationCount.value() == 1)
+    }
+
     @Test func loopbackProxyCarriesHTTPBytesAfterAuthenticatedPreface() async throws {
         let httpResponse = Data("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello".utf8)
         let provider = RecordingIrohConnectionProvider(responses: [httpResponse])
@@ -546,6 +696,76 @@ struct IrohConnectionManagerTests {
             )
         }
         #expect(await provider.resetCount() == 1)
+    }
+}
+
+private actor EstablishedFailureCallbackProvider: IrohConnectionProviding {
+    private var failureHandler: (@Sendable () async -> Void)?
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func setEstablishedStreamFailureHandler(
+        _ handler: (@Sendable () async -> Void)?
+    ) async {
+        failureHandler = handler
+    }
+
+    func reportFailure() async {
+        await failureHandler?()
+    }
+
+    func suspendConnections() async {}
+    func shutdown() async {}
+}
+
+private actor EstablishedFailureReportGate {
+    private(set) var reportCount = 0
+    private var firstReportWaiters: [CheckedContinuation<Void, Never>] = []
+    private var firstReleaseContinuation: CheckedContinuation<Void, Never>?
+
+    func handleReport() async {
+        reportCount += 1
+        guard reportCount == 1 else { return }
+        let waiters = firstReportWaiters
+        firstReportWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        await withCheckedContinuation { firstReleaseContinuation = $0 }
+    }
+
+    func waitForFirstReport() async {
+        guard reportCount == 0 else { return }
+        await withCheckedContinuation { firstReportWaiters.append($0) }
+    }
+
+    func releaseFirstReport() {
+        firstReleaseContinuation?.resume()
+        firstReleaseContinuation = nil
+    }
+}
+
+private actor EndpointRecycleSingleFlightGate {
+    private var blocked = false
+    private var blockedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func blockOperation() async {
+        blocked = true
+        let waiters = blockedWaiters
+        blockedWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func waitUntilBlocked() async {
+        guard !blocked else { return }
+        await withCheckedContinuation { blockedWaiters.append($0) }
+    }
+
+    func releaseOperation() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
     }
 }
 
@@ -652,6 +872,7 @@ private final class AsyncCounter: @unchecked Sendable {
 private actor RecoveringTunnelOpenProvider: IrohConnectionProviding {
     private var opens = 0
     private var suspends = 0
+    private var failureHandler: (@Sendable () async -> Void)?
     private(set) var firstOpenIsWaiting = false
     private var firstOpenContinuation: CheckedContinuation<Void, Never>?
 
@@ -680,6 +901,16 @@ private actor RecoveringTunnelOpenProvider: IrohConnectionProviding {
     func releaseFirstOpen() {
         firstOpenContinuation?.resume()
         firstOpenContinuation = nil
+    }
+
+    func setEstablishedStreamFailureHandler(
+        _ handler: (@Sendable () async -> Void)?
+    ) async {
+        failureHandler = handler
+    }
+
+    func reportFailure() async {
+        await failureHandler?()
     }
 
     func openCount() -> Int { opens }

@@ -20,7 +20,12 @@ final class DictationStreamClient: DictationTransport {
     private var receiveTask: Task<Void, Never>?
     private var continuation: AsyncStream<ServerMessage>.Continuation?
 
-    init?(baseURL: URL, token: String, tlsCertFingerprint: String?) {
+    init?(
+        baseURL: URL,
+        token: String,
+        tlsCertFingerprint: String?,
+        tlsServerName: String? = nil
+    ) {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             return nil
         }
@@ -34,7 +39,10 @@ final class DictationStreamClient: DictationTransport {
         config.timeoutIntervalForRequest = 60
         self.urlSession = URLSession(
             configuration: config,
-            delegate: PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint),
+            delegate: PinnedServerTrustDelegate(
+                pinnedLeafFingerprint: tlsCertFingerprint,
+                expectedServerName: tlsServerName
+            ),
             delegateQueue: nil
         )
     }

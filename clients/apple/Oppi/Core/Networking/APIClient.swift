@@ -37,7 +37,10 @@ actor APIClient: ClientLogUploading {
         self.baseURL = environment.baseURL
         self.token = environment.bearerToken
         self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
-        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: environment.pinnedCertificateFingerprint)
+        trustDelegate = PinnedServerTrustDelegate(
+            pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
+            expectedServerName: environment.tlsServerName
+        )
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
@@ -59,7 +62,10 @@ actor APIClient: ClientLogUploading {
         self.baseURL = environment.baseURL
         self.token = environment.bearerToken
         self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
-        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: environment.pinnedCertificateFingerprint)
+        trustDelegate = PinnedServerTrustDelegate(
+            pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
+            expectedServerName: environment.tlsServerName
+        )
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
@@ -81,7 +87,10 @@ actor APIClient: ClientLogUploading {
         self.baseURL = environment.baseURL
         self.token = environment.bearerToken
         self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
-        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: environment.pinnedCertificateFingerprint)
+        trustDelegate = PinnedServerTrustDelegate(
+            pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
+            expectedServerName: environment.tlsServerName
+        )
         session = URLSession(
             configuration: configuration,
             delegate: trustDelegate,
@@ -106,7 +115,10 @@ actor APIClient: ClientLogUploading {
         self.baseURL = environment.baseURL
         self.token = environment.bearerToken
         self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
-        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: environment.pinnedCertificateFingerprint)
+        trustDelegate = PinnedServerTrustDelegate(
+            pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
+            expectedServerName: environment.tlsServerName
+        )
         session = URLSession(
             configuration: configuration,
             delegate: trustDelegate,
@@ -118,7 +130,21 @@ actor APIClient: ClientLogUploading {
 
     /// Check server reachability.
     func health() async throws -> Bool {
-        let (_, response) = try await request("GET", path: "/health")
+        try await performHealth(timeoutInterval: nil)
+    }
+
+    func health(timeoutInterval: TimeInterval) async throws -> Bool {
+        try await performHealth(timeoutInterval: timeoutInterval)
+    }
+
+    private func performHealth(timeoutInterval: TimeInterval?) async throws -> Bool {
+        var request = try URLRequest(url: makeURL(path: "/health"))
+        request.httpMethod = "GET"
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
+        ServerAuthorization.apply(token: token, to: &request)
+        let (_, response) = try await session.data(for: request)
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
@@ -1531,6 +1557,7 @@ actor APIClient: ClientLogUploading {
             ),
             authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
             tlsCertFingerprint: tlsCertFingerprint,
+            tlsServerName: environment.tlsServerName,
             contentTypeHint: contentTypeHint,
             sourceFileExtension: sourceFileExtension
         )
@@ -1549,6 +1576,7 @@ actor APIClient: ClientLogUploading {
             url: try makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path),
             authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
             tlsCertFingerprint: tlsCertFingerprint,
+            tlsServerName: environment.tlsServerName,
             contentTypeHint: contentTypeHint,
             sourceFileExtension: sourceFileExtension
         )
@@ -1584,6 +1612,7 @@ actor APIClient: ClientLogUploading {
             url: try makeURL(pathSegments: pathSegments),
             authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
             tlsCertFingerprint: tlsCertFingerprint,
+            tlsServerName: environment.tlsServerName,
             contentTypeHint: contentTypeHint,
             sourceFileExtension: sourceFileExtension
         )
