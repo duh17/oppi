@@ -1,6 +1,6 @@
 {
   "name": "oppi-server",
-  "version": "0.44.1",
+  "version": "0.45.0",
   "description": "Self-hosted server for the Oppi mobile coding agent",
   "type": "module",
   "main": "dist/src/cli.js",
@@ -49,6 +49,8 @@
     "dev": "tsx watch src/cli.ts serve",
     "start": "node dist/src/cli.js serve",
     "prepublishOnly": "npm run build",
+    "prepack": "npm run check:pi-release-versions",
+    "check:pi-release-versions": "node scripts/check-pi-release-versions.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --exclude tests/policy-fuzz-perf.test.ts",
     "test:watch": "vitest",
@@ -96,16 +98,17 @@
   },
   "dependencies": {
     "@earendil-works/gondolin": "0.12.0",
-    "@earendil-works/pi-ai": "0.80.10",
-    "@earendil-works/pi-coding-agent": "0.80.10",
-    "@earendil-works/pi-tui": "0.80.10",
+    "@earendil-works/pi-ai": "0.81.1",
+    "@earendil-works/pi-coding-agent": "0.81.1",
+    "@earendil-works/pi-tui": "0.81.1",
     "@number0/iroh": "1.0.0",
     "diff-match-patch": "^1.0.5",
     "typebox": "1.1.28",
     "ws": "8.21.0"
   },
   "overrides": {
-    "fast-xml-builder": "^1.1.9"
+    "fast-xml-builder": "^1.1.9",
+    "protobufjs": "7.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
