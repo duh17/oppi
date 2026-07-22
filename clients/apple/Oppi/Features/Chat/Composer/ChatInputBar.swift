@@ -533,8 +533,14 @@ struct ChatInputBar<ActionRow: View>: View {
             request: request,
             currentPage: $askCurrentPage,
             answers: $askDraftAnswers,
-            onSubmit: { answers in onAskSubmit?(answers) },
-            onIgnoreAll: { onAskIgnoreAll?() },
+            onSubmit: { answers in
+                onAskSubmit?(answers)
+                dismissKeyboard()
+            },
+            onIgnoreAll: {
+                onAskIgnoreAll?()
+                dismissKeyboard()
+            },
             voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil
         )
     }
@@ -1134,12 +1140,14 @@ struct ChatInputBar<ActionRow: View>: View {
         if askRequest != nil {
             onAskIgnoreAll?()
             FeatureEducationTips.markPromptAnswered()
+            dismissKeyboard()
             return
         }
         if isBusy {
             FeatureEducationTips.markBusySendModeUsed()
         }
         onSend()
+        dismissKeyboard()
     }
 
     private func handleAskComposerSendIfNeeded() -> Bool {
@@ -1160,6 +1168,7 @@ struct ChatInputBar<ActionRow: View>: View {
             keepComposerClearedForSubmittedAskRequestID = askRequest?.id
             onAskSubmit?(transition.answers)
             FeatureEducationTips.markPromptAnswered()
+            dismissKeyboard()
         } else {
             withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
                 askCurrentPage = transition.nextPage
