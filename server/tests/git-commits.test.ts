@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { CommitDiffError, getCommitFileDiff } from "../src/git-commits.js";
+import { CommitDiffError, getCommitDetail, getCommitFileDiff } from "../src/git-commits.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -18,6 +18,33 @@ async function createRepo(): Promise<string> {
   git(dir, ["config", "user.name", "Test User"]);
   return dir;
 }
+
+describe("getCommitDetail", () => {
+  it("returns the full commit message including its body", async () => {
+    const dir = await createRepo();
+
+    await writeFile(join(dir, "README.md"), "seed\n");
+    git(dir, ["add", "README.md"]);
+    git(dir, ["commit", "-m", "initial"]);
+
+    await writeFile(join(dir, "README.md"), "updated\n");
+    git(dir, ["add", "README.md"]);
+    git(dir, [
+      "commit",
+      "-m",
+      "docs: explain contributor workflow",
+      "-m",
+      "Ask contributors to open an issue before submitting a pull request.",
+    ]);
+
+    const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
+    const detail = await getCommitDetail(dir, sha);
+
+    expect(detail.message).toBe(
+      "docs: explain contributor workflow\n\nAsk contributors to open an issue before submitting a pull request.",
+    );
+  });
+});
 
 describe("getCommitFileDiff", () => {
   it("renders tiny commit diffs for large text files", async () => {

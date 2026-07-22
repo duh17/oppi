@@ -187,7 +187,7 @@ export async function getCommitDetail(dir: string, sha: string): Promise<GitComm
     git(resolved, [
       "log",
       "-1",
-      `--format=%h${FIELD_SEP}%s${FIELD_SEP}%aI${FIELD_SEP}%an <%ae>`,
+      `--format=%h${FIELD_SEP}%B${FIELD_SEP}%aI${FIELD_SEP}%an <%ae>`,
       sha,
     ]),
     git(resolved, ["diff-tree", "--no-commit-id", "-r", "--numstat", sha]),
@@ -258,7 +258,7 @@ export async function getCommitDetail(dir: string, sha: string): Promise<GitComm
 
   return {
     sha: metaParts[0],
-    message: metaParts[1],
+    message: metaParts[1].trimEnd(),
     date: metaParts[2],
     author: metaParts[3],
     files,

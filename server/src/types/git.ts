@@ -33,7 +33,7 @@ export interface GitCommitFileInfo extends GitFileChange {
 export interface GitCommitDetail {
   /** Short SHA (7-char) */
   sha: string;
-  /** Commit subject line */
+  /** Full commit message, including subject and body. */
   message: string;
   /** ISO timestamp */
   date: string;
