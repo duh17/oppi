@@ -803,7 +803,7 @@ struct AppNavigationShellRoutingTests {
             "person.crop.circle",
             "clock",
             "sparkles.rectangle.stack",
-            "puzzlepiece.extension",
+            "shippingbox",
         ])
         #expect(items.map(\.accessibilityLabel) == [
             "Agents",

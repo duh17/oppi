@@ -150,7 +150,7 @@ enum WorkspaceSidebarPrimaryUtilities {
         .init(
             target: .extensions,
             title: "Extensions",
-            systemImage: "puzzlepiece.extension",
+            systemImage: "shippingbox",
             accessibilityLabel: "Open Extensions",
             accessibilityIdentifier: "workspace.extensions.open",
             minimumHitHeight: 44
