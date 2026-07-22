@@ -1,7 +1,9 @@
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { generateId } from "../id.js";
+import { ICON_ASSET_ID_PATTERN, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
 import type { Session, SessionChangeStats } from "../types.js";
@@ -21,6 +23,11 @@ const SCHEMA_VERSION = "8";
 
 interface SessionJsonRow {
   session_json: string;
+}
+
+interface SessionIconMigrationRow extends SessionJsonRow {
+  id: string;
+  launch_metadata_json: string | null;
 }
 
 interface SessionProjectionRow {
@@ -294,6 +301,38 @@ export class SessionSqliteStore {
     return sortSessions(Array.from(this.ensureCache().values()));
   }
 
+  /**
+   * Scan both durable launch copies independently. This intentionally does not
+   * depend on full Session decoding: a stale or malformed session_json row must
+   * not hide a valid tagged Genmoji reference in launch_metadata_json, and a
+   * stale launch projection must not hide the session copy either.
+   */
+  listReferencedIconAssetIds(): Set<string> {
+    const rows = this.db
+      .prepare("SELECT session_json, launch_metadata_json FROM session_state_sessions")
+      .all() as Array<{
+      session_json: string;
+      launch_metadata_json: string | null;
+    }>;
+    const assetIds = new Set<string>();
+
+    for (const row of rows) {
+      try {
+        collectStoredIconAssetIds(JSON.parse(row.session_json) as unknown, assetIds);
+      } catch {
+        // The independent launch projection may still carry the reference.
+      }
+      if (row.launch_metadata_json) {
+        try {
+          collectStoredIconAssetIds(JSON.parse(row.launch_metadata_json) as unknown, assetIds);
+        } catch {
+          // The session copy may still carry the reference.
+        }
+      }
+    }
+    return assetIds;
+  }
+
   listSessionsWithoutWorkspace(): Session[] {
     const rows = this.db
       .prepare(
@@ -452,6 +491,7 @@ export class SessionSqliteStore {
     this.ensureSessionColumns();
     this.ensureSessionIndexesAndSchemaVersion();
     this.backfillMissingSessionJson();
+    this.migrateStoredIconChoices();
   }
 
   private createCurrentSchema(): void {
@@ -577,6 +617,36 @@ export class SessionSqliteStore {
       for (const row of rows) {
         const session = normalizeDeclaredSession(buildProjectedSession(row));
         update.run(JSON.stringify(session), row.id);
+      }
+    })();
+  }
+
+  private migrateStoredIconChoices(): void {
+    const rows = this.db
+      .prepare("SELECT id, session_json, launch_metadata_json FROM session_state_sessions")
+      .all() as SessionIconMigrationRow[];
+    const update = this.db.prepare(
+      `UPDATE session_state_sessions
+       SET session_json = ?, launch_metadata_json = ?
+       WHERE id = ?`,
+    );
+
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const sessionCopy = parseStoredSessionCopy(row.session_json);
+        const launchCopy = parseStoredLaunchCopy(row.launch_metadata_json);
+        if (!sessionCopy || !launchCopy) continue;
+        // The two columns are independent durable copies. Compare their raw
+        // launch values before migration so distinct malformed/future values
+        // that both normalize to Default can never overwrite one another.
+        if (!isDeepStrictEqual(sessionCopy.rawLaunch, launchCopy.rawLaunch)) continue;
+
+        const migratedSession = { ...sessionCopy.session, launch: sessionCopy.launch };
+        const sessionJson = JSON.stringify(migratedSession);
+        const launchJson = JSON.stringify(launchCopy.launch);
+        if (sessionJson !== row.session_json || launchJson !== row.launch_metadata_json) {
+          update.run(sessionJson, launchJson, row.id);
+        }
       }
     })();
   }
@@ -1083,10 +1153,7 @@ function normalizeDeclaredSession(session: Session): Session {
     normalized.piSessionId = session.piSessionId;
   }
   if (session.launch !== undefined && session.launch !== null) {
-    normalized.launch = session.launch;
-  }
-  if (session.launch !== undefined && session.launch !== null) {
-    normalized.launch = session.launch;
+    normalized.launch = normalizeStoredLaunchIcon(session.launch) as unknown as Session["launch"];
   }
   if (session.ephemeral === true) {
     normalized.ephemeral = true;
@@ -1098,10 +1165,100 @@ function normalizeDeclaredSession(session: Session): Session {
   return normalized;
 }
 
+interface ParsedStoredSessionCopy {
+  session: Record<string, unknown>;
+  rawLaunch: Record<string, unknown>;
+  launch: Record<string, unknown>;
+}
+
+interface ParsedStoredLaunchCopy {
+  rawLaunch: Record<string, unknown>;
+  launch: Record<string, unknown>;
+}
+
+function parseStoredSessionCopy(rawJson: string): ParsedStoredSessionCopy | undefined {
+  try {
+    const session = JSON.parse(rawJson) as unknown;
+    if (!isRecord(session) || !isRecord(session.launch)) return undefined;
+    const launch = normalizeStoredLaunchIcon(session.launch, true);
+    if (!launch) return undefined;
+    return { session, rawLaunch: session.launch, launch };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseStoredLaunchCopy(rawJson: string | null): ParsedStoredLaunchCopy | undefined {
+  if (rawJson === null) return undefined;
+  try {
+    const rawLaunch = JSON.parse(rawJson) as unknown;
+    if (!isRecord(rawLaunch)) return undefined;
+    const launch = normalizeStoredLaunchIcon(rawLaunch, true);
+    if (!launch) return undefined;
+    return { rawLaunch, launch };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Strip internal bookkeeping fields from changeStats before caching.
- * The full data is still written to SQLite in session_json/change_stats_json.
+ * GC is deliberately more conservative than protocol decoding. Any valid
+ * opaque asset ID found in parsed stored JSON may be a future or malformed
+ * Genmoji reference, so retaining a false positive is safer than deleting a
+ * blob still named by either durable launch copy.
  */
+function collectStoredIconAssetIds(value: unknown, assetIds: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectStoredIconAssetIds(entry, assetIds);
+    return;
+  }
+  if (!isRecord(value)) return;
+
+  if (typeof value.assetId === "string" && ICON_ASSET_ID_PATTERN.test(value.assetId)) {
+    assetIds.add(value.assetId);
+  }
+  for (const nested of Object.values(value)) collectStoredIconAssetIds(nested, assetIds);
+}
+
+/** Normalize historical icon values inside otherwise opaque launch metadata. */
+function normalizeStoredLaunchIcon(
+  value: unknown,
+  preserveOpaqueTaggedIcon = false,
+): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const launch = { ...value };
+  const agentId = typeof launch.agentId === "string" ? launch.agentId.trim() : "";
+  if (agentId) {
+    launch.agentIcon = preserveOpaqueTaggedIcon
+      ? migrateDurableLaunchIcon(launch.agentIcon)
+      : migrateIconChoice(launch.agentIcon);
+  } else {
+    delete launch.agentIcon;
+  }
+  return launch;
+}
+
+/**
+ * Durable launch snapshots are forward-compatible storage, not a protocol
+ * validation boundary. Preserve tagged values that this version cannot decode
+ * so startup migration cannot erase future fields or syntactic asset references.
+ */
+function migrateDurableLaunchIcon(value: unknown): unknown {
+  if (isRecord(value) && typeof value.kind === "string") {
+    try {
+      return validateIconChoice(value);
+    } catch {
+      return value;
+    }
+  }
+  return migrateIconChoice(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Strip internal change-stat bookkeeping before exposing cached sessions. */
 function stripInternalFields(session: Session): Session {
   const stats = session.changeStats;
   if (!stats?._fileLineCounts && !stats?._sessionCreatedFiles) {

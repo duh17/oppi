@@ -17,7 +17,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let sessionId: String
     /// Immutable saved-Agent presentation snapshot for this session.
     let agentId: String?
-    let agentIcon: String?
+    let agentIcon: IconChoice?
+    let iconAssetCache: IconAssetCache?
     /// Shared interaction context for π text-selection actions.
     let interactionContext: TimelineInteractionContext?
     /// Workspace context for resolving markdown image paths.
@@ -37,7 +38,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         itemID: String? = nil,
         sessionId: String = "",
         agentId: String? = nil,
-        agentIcon: String? = nil,
+        agentIcon: IconChoice? = nil,
+        iconAssetCache: IconAssetCache? = nil,
         interactionContext: TimelineInteractionContext? = nil,
         workspaceID: String? = nil,
         serverBaseURL: URL? = nil,
@@ -52,6 +54,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.sessionId = sessionId
         self.agentId = agentId
         self.agentIcon = agentIcon
+        self.iconAssetCache = iconAssetCache
         self.interactionContext = interactionContext
         self.workspaceID = workspaceID
         self.serverBaseURL = serverBaseURL
@@ -231,6 +234,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         accessibilityIdentifier = configuration.itemID.map { "chat.timeline.assistant.\($0)" }
 
         let palette = ThemeRuntimeState.currentPalette()
+        iconBadge.iconAssetCache = configuration.iconAssetCache
         iconBadge.sessionId = configuration.sessionId
         iconBadge.agentId = configuration.agentId
         iconBadge.agentIcon = configuration.agentIcon

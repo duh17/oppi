@@ -1,3 +1,5 @@
+import type { IconChoice } from "./icon.js";
+
 // ─── Workspaces ───
 
 export type WorkspaceSystemPromptMode = "append";
@@ -13,7 +15,7 @@ export interface WorkspaceSandboxConfig {
 export interface WorkspaceMutableConfig {
   name: string; // "coding", "research"
   description?: string; // shown in workspace picker
-  icon?: string; // SF Symbol name or emoji
+  icon: IconChoice;
 
   // Context
   systemPrompt?: string; // Workspace prompt text appended to the Pi prompt

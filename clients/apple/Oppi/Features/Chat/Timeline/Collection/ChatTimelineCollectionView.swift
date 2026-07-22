@@ -29,7 +29,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let sessionId: String
         let workspaceId: String?
         let agentId: String?
-        let agentIcon: String?
+        let agentIcon: IconChoice?
         let routeScope: SessionRouteScope?
         let onFork: (String) -> Void
         let onBackSwipe: () -> Void
@@ -62,7 +62,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             sessionId: String,
             workspaceId: String?,
             agentId: String? = nil,
-            agentIcon: String? = nil,
+            agentIcon: IconChoice? = nil,
             routeScope: SessionRouteScope? = nil,
             onFork: @escaping (String) -> Void,
             onBackSwipe: @escaping () -> Void,
@@ -205,7 +205,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         }
 
         var agentId: String? { context.agentId }
-        var agentIcon: String? { context.agentIcon }
+        var agentIcon: IconChoice? { context.agentIcon }
 
         var routeScope: SessionRouteScope? {
             get { context.routeScope }

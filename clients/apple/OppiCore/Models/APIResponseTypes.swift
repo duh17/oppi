@@ -16,7 +16,7 @@ struct PairDeviceResponse: Decodable {
 struct CreateWorkspaceRequest: Encodable {
     let name: String
     var description: String?
-    var icon: String?
+    var icon: IconChoice = .defaultValue
     var systemPrompt: String?
     var systemPromptMode: WorkspaceSystemPromptMode?
     var hostMount: String?

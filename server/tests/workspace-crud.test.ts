@@ -85,7 +85,7 @@ describe("Storage.createWorkspace", () => {
     const ws = storage.createWorkspace(
       createReq({
         description: "A coding workspace",
-        icon: "terminal",
+        icon: { kind: "symbol", name: "terminal" },
         systemPrompt: "Be helpful",
         systemPromptMode: "append",
         hostMount: "~/workspace/oppi",
@@ -94,7 +94,7 @@ describe("Storage.createWorkspace", () => {
     );
 
     expect(ws.description).toBe("A coding workspace");
-    expect(ws.icon).toBe("terminal");
+    expect(ws.icon).toEqual({ kind: "symbol", name: "terminal" });
     expect(ws.runtime).toBeUndefined();
     expect(ws.systemPrompt).toBe("Be helpful");
     expect(ws.systemPromptMode).toBe("append");
@@ -283,10 +283,14 @@ describe("Storage.updateWorkspace", () => {
   });
 
   it("updates icon", () => {
-    const ws = storage.createWorkspace(createReq({ icon: "terminal" }));
-    const updated = storage.updateWorkspace(ws.id, { icon: "magnifyingglass" });
+    const ws = storage.createWorkspace(
+      createReq({ icon: { kind: "symbol", name: "terminal" } }),
+    );
+    const updated = storage.updateWorkspace(ws.id, {
+      icon: { kind: "symbol", name: "magnifyingglass" },
+    });
 
-    expect(updated!.icon).toBe("magnifyingglass");
+    expect(updated!.icon).toEqual({ kind: "symbol", name: "magnifyingglass" });
   });
 
   it("ignores legacy resource updates", () => {
@@ -369,14 +373,14 @@ describe("Storage.updateWorkspace", () => {
       createReq({
         name: "keep-me",
         description: "original desc",
-        icon: "terminal",
+        icon: { kind: "symbol", name: "terminal" },
       }),
     );
 
     const updated = storage.updateWorkspace(ws.id, { description: "new desc" });
 
     expect(updated!.name).toBe("keep-me");
-    expect(updated!.icon).toBe("terminal");
+    expect(updated!.icon).toEqual({ kind: "symbol", name: "terminal" });
     expect(updated!.description).toBe("new desc");
   });
 

@@ -1,5 +1,7 @@
 /* eslint-disable no-console */
 import * as c from "../../ansi.js";
+import { formatIconChoice } from "../../icon-choice.js";
+import type { IconChoice } from "../../types.js";
 import type { LocalApiConnection } from "../local-api-client.js";
 import { createLocalApiCommandContext } from "../command-support.js";
 import { readDefinitionInput } from "../definition-input.js";
@@ -15,7 +17,7 @@ import { apiStatus } from "../resources.js";
 type AgentRow = {
   id?: string;
   name?: string;
-  icon?: string;
+  icon?: IconChoice;
   status?: string;
   version?: number;
   definition?: unknown;
@@ -45,7 +47,7 @@ export async function cmdAgent(
             title: agent.name ?? "(unnamed)",
             meta: [
               agent.version !== undefined ? `v${agent.version}` : "?",
-              ...(agent.icon ? [`icon ${agent.icon}`] : []),
+              ...(agent.icon ? [`icon ${formatIconChoice(agent.icon)}`] : []),
             ],
           })),
           { empty: "No saved Agents configured." },

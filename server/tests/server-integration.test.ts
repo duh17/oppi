@@ -18,6 +18,7 @@ import {
   listCatalogedLocalSessions,
 } from "../src/local-sessions.js";
 import { Storage } from "../src/storage.js";
+import { structuralHeifFixture } from "./harness/heic-fixture.js";
 import { WebSocket } from "ws";
 
 let dataDir: string;
@@ -179,6 +180,57 @@ describe("auth", () => {
   it("accepts requests with correct token", async () => {
     const res = await get("/me");
     expect(res.status).toBe(200);
+  });
+});
+
+// ── Icon assets through the global auth shell ──
+
+describe("icon asset global auth shell", () => {
+  it("rejects missing and wrong tokens and accepts the owner token for POST, GET, and HEAD", async () => {
+    const bytes = structuralHeifFixture();
+    const postRequest = (authorization?: string) =>
+      fetch(`${baseUrl}/icon-assets`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "image/heic",
+          ...(authorization ? { Authorization: authorization } : {}),
+        },
+        body: bytes,
+      });
+
+    const unauthorizedPost = await postRequest();
+    expect(unauthorizedPost.status).toBe(401);
+
+    const wrongTokenPost = await postRequest("Bearer sk_wrong_icon_token");
+    expect(wrongTokenPost.status).toBe(401);
+
+    const authorizedPost = await postRequest(`Bearer ${token}`);
+    expect(authorizedPost.status).toBe(201);
+    const { asset } = (await authorizedPost.json()) as { asset: { assetId: string } };
+
+    for (const method of ["GET", "HEAD"] as const) {
+      const path = `${baseUrl}/icon-assets/${asset.assetId}`;
+      const unauthorized = await fetch(path, { method });
+      expect(unauthorized.status, `${method} without token`).toBe(401);
+
+      const wrongToken = await fetch(path, {
+        method,
+        headers: { Authorization: "Bearer sk_wrong_icon_token" },
+      });
+      expect(wrongToken.status, `${method} with wrong token`).toBe(401);
+
+      const authorized = await fetch(path, {
+        method,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(authorized.status, `${method} with owner token`).toBe(200);
+      expect(authorized.headers.get("content-type")).toBe("image/heic");
+      if (method === "GET") {
+        expect(Buffer.from(await authorized.arrayBuffer())).toEqual(bytes);
+      } else {
+        expect((await authorized.arrayBuffer()).byteLength).toBe(0);
+      }
+    }
   });
 });
 

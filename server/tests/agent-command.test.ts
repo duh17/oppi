@@ -16,7 +16,7 @@ const response = {
     {
       id: "agent-1",
       name: "Sensei",
-      icon: "🧘",
+      icon: { kind: "emoji", value: "🧘" },
       status: "active",
       version: 2,
       createdAt: 1,
@@ -35,7 +35,7 @@ describe("agent list command", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
       await cmdAgent(storage, "list", [], {});
-      expect(log.mock.calls.flat().join("\n")).toContain("icon 🧘");
+      expect(log.mock.calls.flat().join("\n")).toContain("icon emoji 🧘");
     } finally {
       log.mockRestore();
     }
@@ -48,7 +48,7 @@ describe("agent list command", () => {
 
     expect(JSON.parse(stdout)).toMatchObject({
       ok: true,
-      data: { agents: [{ id: "agent-1", icon: "🧘" }] },
+      data: { agents: [{ id: "agent-1", icon: { kind: "emoji", value: "🧘" } }] },
     });
   });
 });

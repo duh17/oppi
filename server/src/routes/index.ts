@@ -8,6 +8,7 @@ import { createWorkspaceRoutes } from "./workspaces.js";
 import { createAgentRoutes } from "./agents.js";
 import { createSessionRoutes } from "./sessions.js";
 import { createUploadRoutes } from "./uploads.js";
+import { createIconAssetRoutes } from "./icon-assets.js";
 import { createThemeRoutes } from "./themes.js";
 import { createTelemetryRoutes } from "./telemetry.js";
 import { createWorkspaceFileRoutes } from "./workspace-files.js";
@@ -27,6 +28,7 @@ export class RouteHandler {
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),
       createAgentRoutes(this.ctx, this.helpers),
+      createIconAssetRoutes(this.ctx, this.helpers),
       createUploadRoutes(this.ctx, this.helpers),
       createSessionRoutes(this.ctx, this.helpers),
       createTelemetryRoutes(this.ctx, this.helpers),

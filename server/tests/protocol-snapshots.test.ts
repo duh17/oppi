@@ -45,7 +45,7 @@ const TEST_SESSION: Session = {
     source: "agent",
     agentId: "agent-reviewer",
     agentVersion: 4,
-    agentIcon: "checkmark.shield",
+    agentIcon: { kind: "symbol", name: "checkmark.shield" },
     status: "accepted",
     requestedAt: 1739750399000,
     completedAt: 1739750400000,
@@ -133,6 +133,48 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       type: "session_summary",
       summary: TEST_CONTROL_SESSION_SUMMARY,
     },
+    state_icon_default: {
+      type: "state",
+      session: {
+        ...TEST_SESSION,
+        launch: { ...TEST_SESSION.launch, agentIcon: { kind: "default" } },
+      },
+    },
+    state_icon_emoji: {
+      type: "state",
+      session: {
+        ...TEST_SESSION,
+        launch: { ...TEST_SESSION.launch, agentIcon: { kind: "emoji", value: "🧘" } },
+      },
+    },
+    state_icon_genmoji: {
+      type: "state",
+      session: {
+        ...TEST_SESSION,
+        launch: {
+          ...TEST_SESSION.launch,
+          agentIcon: {
+            kind: "genmoji",
+            assetId: `ia_${"A".repeat(43)}`,
+            contentDescription: "A smiling fox",
+          },
+        },
+      },
+    },
+    state_icon_malformed: {
+      type: "state",
+      session: {
+        ...TEST_SESSION,
+        launch: { ...TEST_SESSION.launch, agentIcon: { kind: "emoji", value: "not emoji" } },
+      },
+    } as unknown as ServerMessage,
+    state_icon_future: {
+      type: "state",
+      session: {
+        ...TEST_SESSION,
+        launch: { ...TEST_SESSION.launch, agentIcon: { kind: "animated", version: 2 } },
+      },
+    } as unknown as ServerMessage,
     session_ended: {
       type: "session_ended",
       reason: "Process exited with code 0",

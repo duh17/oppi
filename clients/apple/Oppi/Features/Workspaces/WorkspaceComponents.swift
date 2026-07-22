@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct WorkspaceIconOption: Identifiable, Equatable {
     let symbolName: String
@@ -73,35 +74,116 @@ enum WorkspaceIconCatalog {
 // MARK: - WorkspaceIcon
 
 struct WorkspaceIcon: View {
-    let icon: String?
+    let icon: IconChoice?
     let size: CGFloat
-
-    /// Whether the icon string looks like an SF Symbol name.
-    private var isSFSymbol: Bool {
-        guard let icon, !icon.isEmpty else { return false }
-        return icon.allSatisfy { $0.isASCII }
-    }
+    var assetCache: IconAssetCache? = nil
+    @Environment(\.iconAssetCache) private var environmentAssetCache
+    @State private var loadedGenmoji: UIImage?
+    @State private var activeLoadIdentity: IconAssetViewLoadIdentity?
 
     var body: some View {
-        if let icon, !icon.isEmpty {
-            if isSFSymbol {
-                Image(systemName: icon)
-                    .font(.system(size: size))
+        Group {
+            switch icon ?? .defaultValue {
+            case .emoji(let value):
+                Text(value)
+            case .symbol(let name) where UIImage(systemName: name) != nil:
+                Image(systemName: name)
                     .foregroundStyle(.themeBlue)
-            } else {
-                Text(icon)
-                    .font(.system(size: size))
+            case .genmoji:
+                if let loadedGenmoji {
+                    Image(uiImage: loadedGenmoji)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    defaultIcon
+                }
+            case .defaultValue, .symbol:
+                defaultIcon
             }
-        } else {
-            Image(systemName: "square.grid.2x2")
-                .font(.system(size: size))
-                .foregroundStyle(.themeBlue)
+        }
+        .font(.system(size: size))
+        .task(id: IconAssetLoadKey(
+            assetId: icon?.assetId,
+            cache: assetCache ?? environmentAssetCache
+        )) {
+            let cache = assetCache ?? environmentAssetCache
+            let identity = IconAssetViewLoadIdentity(
+                key: IconAssetLoadKey(assetId: icon?.assetId, cache: cache),
+                requestID: UUID()
+            )
+            activeLoadIdentity = identity
+            guard case .genmoji(let assetId, _) = icon,
+                  let cache else {
+                loadedGenmoji = nil
+                return
+            }
+            await loadIconAssetForView(
+                assetId: assetId,
+                size: size * 2,
+                cache: cache,
+                identity: identity,
+                currentIdentity: { activeLoadIdentity },
+                assign: { loadedGenmoji = $0 }
+            )
+        }
+    }
+
+    private var defaultIcon: some View {
+        Image(systemName: "square.grid.2x2")
+            .foregroundStyle(.themeBlue)
+    }
+}
+
+func draftIconChoice(_ value: String) -> IconChoice {
+    switch AgentIconValue.classify(value) {
+    case .emoji(let emoji): return .emoji(emoji)
+    case .symbolCandidate(let name): return .symbol(name)
+    case .invalid: return .defaultValue
+    }
+}
+
+extension IconChoice {
+    var draftText: String {
+        switch self {
+        case .emoji(let value): return value
+        case .symbol(let name): return name
+        case .defaultValue, .genmoji: return ""
         }
     }
 }
 
+struct WorkspaceIconPickerSelection: Equatable, Sendable {
+    var value: IconChoice
+
+    var draftText: String {
+        get { value.draftText }
+        set { value = draftIconChoice(newValue) }
+    }
+
+    var currentIconName: String {
+        switch value {
+        case .defaultValue:
+            return "Default workspace icon"
+        case .emoji(let emoji):
+            return emoji
+        case .symbol(let name):
+            return WorkspaceIconCatalog.label(for: name) ?? name
+        case .genmoji(_, let contentDescription):
+            return contentDescription
+        }
+    }
+
+    mutating func selectSymbol(_ symbolName: String) {
+        value = .symbol(symbolName)
+    }
+
+    mutating func useDefault() {
+        value = .defaultValue
+    }
+}
+
 struct WorkspaceIconPicker: View {
-    @Binding var selection: String
+    @Binding var selection: WorkspaceIconPickerSelection
 
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
@@ -114,27 +196,27 @@ struct WorkspaceIconPicker: View {
         List {
             Section("Current Icon") {
                 HStack(spacing: 12) {
-                    WorkspaceIcon(icon: selection.isEmpty ? nil : selection, size: 28)
+                    WorkspaceIcon(icon: selection.value, size: 28)
                         .frame(width: 44, height: 44)
 
-                    Text(currentIconName)
-                        .font(WorkspaceIconCatalog.label(for: selection) == nil && !selection.isEmpty ? .body.monospaced() : .body)
+                    Text(selection.currentIconName)
+                        .font(currentIconNameUsesMonospacedFont ? .body.monospaced() : .body)
                         .foregroundStyle(.themeFg)
                         .lineLimit(2)
                 }
                 .accessibilityElement(children: .combine)
 
                 Button {
-                    selection = ""
+                    selection.useDefault()
                 } label: {
                     Label("Use Default Icon", systemImage: "arrow.counterclockwise")
                 }
-                .disabled(selection.isEmpty)
+                .disabled(selection.value == .defaultValue)
                 .accessibilityIdentifier("workspace.iconPicker.default")
             }
 
             Section {
-                TextField("Emoji or SF Symbol name", text: $selection)
+                TextField("Emoji or SF Symbol name", text: $selection.draftText)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .accessibilityIdentifier("workspace.iconPicker.custom")
@@ -172,16 +254,16 @@ struct WorkspaceIconPicker: View {
         }
     }
 
-    private var currentIconName: String {
-        if selection.isEmpty { return "Default workspace icon" }
-        return WorkspaceIconCatalog.label(for: selection) ?? selection
+    private var currentIconNameUsesMonospacedFont: Bool {
+        guard case .symbol(let name) = selection.value else { return false }
+        return WorkspaceIconCatalog.label(for: name) == nil
     }
 
     private func symbolButton(_ option: WorkspaceIconOption) -> some View {
-        let isSelected = selection == option.symbolName
+        let isSelected = selection.value == .symbol(option.symbolName)
 
         return Button {
-            selection = option.symbolName
+            selection.selectSymbol(option.symbolName)
         } label: {
             VStack(spacing: 6) {
                 Image(systemName: option.symbolName)
@@ -214,10 +296,11 @@ struct WorkspaceRuntimeIcon: View {
     let workspace: Workspace
     let size: CGFloat
     let frameSize: CGFloat
+    var assetCache: IconAssetCache? = nil
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            WorkspaceIcon(icon: workspace.icon, size: size)
+            WorkspaceIcon(icon: workspace.icon, size: size, assetCache: assetCache)
                 .frame(width: frameSize, height: frameSize)
 
             if workspace.runtime == .sandbox {

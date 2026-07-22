@@ -1,7 +1,20 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 import { generateId } from "../id.js";
+import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
 import type {
@@ -14,6 +27,17 @@ import type {
 import type { ConfigStore } from "./config-store.js";
 
 const log = createLogger({ base: { component: "workspace_store" } });
+
+export type WorkspaceMigrationFaultPhase =
+  | "after_temp_write"
+  | "after_temp_fsync"
+  | "before_rename"
+  | "after_rename";
+
+export interface WorkspaceStoreOptions {
+  /** Deterministic fault seam for startup migration recovery tests. */
+  faultInjector?: (phase: WorkspaceMigrationFaultPhase) => void;
+}
 
 function normalizeNameList(values: string[] | undefined): string[] | undefined {
   if (!values) {
@@ -87,7 +111,13 @@ function normalizeSystemPromptMode(_value: unknown): WorkspaceSystemPromptMode {
 }
 
 export class WorkspaceStore {
-  constructor(private readonly configStore: ConfigStore) {}
+  constructor(
+    private readonly configStore: ConfigStore,
+    private readonly iconAssetExists?: (assetId: string) => boolean,
+    private readonly options: WorkspaceStoreOptions = {},
+  ) {
+    this.migrateStoredIconChoices();
+  }
 
   private getWorkspacePath(workspaceId: string): string {
     return join(this.configStore.getWorkspacesDir(), `${workspaceId}.json`);
@@ -101,7 +131,7 @@ export class WorkspaceStore {
       id,
       name: req.name,
       description: normalizeOptionalString(req.description),
-      icon: normalizeOptionalString(req.icon),
+      icon: this.validateWorkspaceIcon(req.icon),
       systemPrompt: normalizeOptionalString(req.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
       hostMount: normalizeHostMount(req.hostMount),
@@ -135,7 +165,7 @@ export class WorkspaceStore {
       id: typeof raw.id === "string" ? raw.id : "unknown",
       name: typeof raw.name === "string" ? raw.name : "",
       description: normalizeOptionalString(raw.description),
-      icon: normalizeOptionalString(raw.icon),
+      icon: migrateIconChoice(raw.icon),
       systemPrompt: normalizeOptionalString(raw.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(raw.systemPromptMode),
       hostMount: normalizeHostMount(raw.hostMount),
@@ -203,7 +233,7 @@ export class WorkspaceStore {
     if (updates.name !== undefined) workspace.name = updates.name;
     if (updates.description !== undefined)
       workspace.description = normalizeOptionalString(updates.description);
-    if (updates.icon !== undefined) workspace.icon = normalizeOptionalString(updates.icon);
+    if (updates.icon !== undefined) workspace.icon = this.validateWorkspaceIcon(updates.icon);
     if (updates.systemPrompt !== undefined)
       workspace.systemPrompt = normalizeOptionalString(updates.systemPrompt);
     if (updates.systemPromptMode !== undefined)
@@ -226,6 +256,42 @@ export class WorkspaceStore {
     return workspace;
   }
 
+  private validateWorkspaceIcon(value: unknown): Workspace["icon"] {
+    if (value === undefined) return DEFAULT_ICON_CHOICE;
+    return validateIconChoice(value, { assetExists: this.iconAssetExists });
+  }
+
+  private migrateStoredIconChoices(): void {
+    const dir = this.configStore.getWorkspacesDir();
+    if (!existsSync(dir)) return;
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith(".json")) continue;
+      const path = join(dir, file);
+      try {
+        const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+        if (!isWorkspaceRecord(raw)) {
+          log.error("workspace_store.icon_migration.invalid_workspace_shape", {
+            workspaceFilePath: path,
+            topLevelType: workspaceTopLevelType(raw),
+          });
+          continue;
+        }
+        const migratedIcon = migrateIconChoice(raw.icon);
+        if (JSON.stringify(raw.icon) === JSON.stringify(migratedIcon)) continue;
+        replaceWorkspaceMigrationFile(
+          path,
+          Buffer.from(JSON.stringify({ ...raw, icon: migratedIcon }, null, 2)),
+          this.options.faultInjector,
+        );
+      } catch (err: unknown) {
+        log.error("workspace_store.icon_migration.failed", {
+          workspaceFilePath: path,
+          error: safeErrorMessage(err),
+        });
+      }
+    }
+  }
+
   deleteWorkspace(workspaceId: string): boolean {
     const path = this.getWorkspacePath(workspaceId);
     if (!existsSync(path)) {
@@ -234,5 +300,87 @@ export class WorkspaceStore {
 
     rmSync(path);
     return true;
+  }
+}
+
+function isWorkspaceRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function workspaceTopLevelType(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function replaceWorkspaceMigrationFile(
+  path: string,
+  bytes: Buffer,
+  faultInjector?: (phase: WorkspaceMigrationFaultPhase) => void,
+): void {
+  const directory = dirname(path);
+  const original = readFileSync(path);
+  const temporaryPath = join(directory, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+  let descriptor: number | undefined;
+  let renamed = false;
+
+  try {
+    descriptor = openSync(temporaryPath, "wx", 0o600);
+    writeFileSync(descriptor, bytes);
+    faultInjector?.("after_temp_write");
+    fsyncSync(descriptor);
+    faultInjector?.("after_temp_fsync");
+    closeSync(descriptor);
+    descriptor = undefined;
+
+    faultInjector?.("before_rename");
+    renameSync(temporaryPath, path);
+    renamed = true;
+    faultInjector?.("after_rename");
+    syncWorkspaceDirectory(directory);
+  } catch (error) {
+    if (renamed) {
+      try {
+        restoreWorkspaceMigrationFile(path, original);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Workspace icon migration failed and its original could not be restored",
+        );
+      }
+    }
+    throw error;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    // This exact random path is owned by this migration attempt. Never scan or
+    // remove another process's temporary files here.
+    rmSync(temporaryPath, { force: true });
+  }
+}
+
+function restoreWorkspaceMigrationFile(path: string, bytes: Buffer): void {
+  const directory = dirname(path);
+  const temporaryPath = join(directory, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(temporaryPath, "wx", 0o600);
+    writeFileSync(descriptor, bytes);
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    renameSync(temporaryPath, path);
+    syncWorkspaceDirectory(directory);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    rmSync(temporaryPath, { force: true });
+  }
+}
+
+function syncWorkspaceDirectory(directory: string): void {
+  const descriptor = openSync(directory, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
   }
 }

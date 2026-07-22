@@ -4,6 +4,27 @@ import Testing
 
 @Suite("AppEventMessage decoding")
 struct AppEventMessageTests {
+    private var snapshotURL: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("protocol/app-event-messages.json")
+    }
+
+    private func decodeSnapshot(_ key: String) throws -> AppEventMessage {
+        let data = try Data(contentsOf: snapshotURL)
+        let root = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        let messages = try #require(root["messages"] as? [String: Any])
+        let value = try #require(messages[key])
+        let messageData = try JSONSerialization.data(withJSONObject: value)
+        return try JSONDecoder().decode(AppEventMessage.self, from: messageData)
+    }
+
     @Test func decodesConnectionFrame() throws {
         let event = try AppEventMessage.decode(from: #"{"type":"app_events_connected","serverTime":1791650000000,"snapshotRequired":true}"#)
 
@@ -32,7 +53,7 @@ struct AppEventMessageTests {
             "tokens": { "input": 10, "output": 5 },
             "cost": 0.01,
             "agentId": "agent-reviewer",
-            "agentIcon": "checkmark.shield",
+            "agentIcon": {"kind":"symbol","name":"checkmark.shield"},
             "pendingAskCount": 0
           }
         }
@@ -49,8 +70,32 @@ struct AppEventMessageTests {
         #expect(summary.pendingAskCount == 0)
         #expect(summary.hasPendingAskCount)
         #expect(summary.agentId == "agent-reviewer")
-        #expect(summary.agentIcon == "checkmark.shield")
-        #expect(summary.session.launch?.agentIcon == "checkmark.shield")
+        #expect(summary.agentIcon == .symbol("checkmark.shield"))
+        #expect(summary.session.launch?.agentIcon == .symbol("checkmark.shield"))
+    }
+
+    @Test func parentAppEventsPreserveIconFallbackAcrossEveryTaggedAndFutureCase() throws {
+        let assetId = "ia_" + String(repeating: "A", count: 43)
+        let cases: [(String, IconChoice)] = [
+            ("session_summary_icon_default", .defaultValue),
+            ("session_summary_icon_emoji", .emoji("🧘")),
+            ("session_summary_icon_genmoji", .genmoji(
+                assetId: assetId,
+                contentDescription: "A smiling fox"
+            )),
+            ("session_summary_icon_malformed", .defaultValue),
+            ("session_summary_icon_future", .defaultValue),
+        ]
+
+        for (key, expected) in cases {
+            let event = try decodeSnapshot(key)
+            guard case .sessionSummary(_, _, _, let summary) = event else {
+                Issue.record("Expected .sessionSummary for \(key), got \(event)")
+                continue
+            }
+            #expect(summary.agentIcon == expected)
+            #expect(summary.session.launch?.agentIcon == expected)
+        }
     }
 
     @Test func decodesExtensionUIRequestWithWorkspaceRouting() throws {

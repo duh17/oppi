@@ -1396,6 +1396,7 @@ const HELP_TOPICS: HelpTopic[] = [
     notes: [
       "Choose at most one of --definition or --definition-json; --name or definition.name is required.",
       "Definitions cannot include workspace, worktree, schedule, attachments, or other launch-only fields.",
+      "definition.icon uses the tagged default, emoji, symbol, or Genmoji asset-reference object.",
     ],
     examples: [
       { command: "oppi agent create --name Reviewer --definition ./agent.json --json" },

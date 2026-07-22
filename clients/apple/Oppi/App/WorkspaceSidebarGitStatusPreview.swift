@@ -165,7 +165,7 @@ struct WorkspaceSidebarGitStatusPreview: View {
             id: id,
             name: name,
             description: description,
-            icon: icon,
+            icon: .symbol(icon),
             systemPrompt: nil,
             hostMount: "~/workspace/\(id)",
             gitStatusEnabled: true,

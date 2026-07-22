@@ -343,7 +343,9 @@ describe("SessionLifecycleService", () => {
       const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-agent-presentation-"));
       const agentDefinitionStore = new AgentDefinitionStore(dataDir);
       try {
-        const customized = agentDefinitionStore.updateAgent(DEFAULT_AGENT_ID, { icon: "🏠" });
+        const customized = agentDefinitionStore.updateAgent(DEFAULT_AGENT_ID, {
+          icon: { kind: "emoji", value: "🏠" },
+        });
         expect(customized?.version).toBe(2);
 
         const { service } = makeService({
@@ -359,11 +361,11 @@ describe("SessionLifecycleService", () => {
         expect(result.session.launch).toMatchObject({
           agentId: DEFAULT_AGENT_ID,
           agentVersion: 2,
-          agentIcon: "🏠",
+          agentIcon: { kind: "emoji", value: "🏠" },
         });
         expect(summary).toMatchObject({
           agentId: DEFAULT_AGENT_ID,
-          agentIcon: "🏠",
+          agentIcon: { kind: "emoji", value: "🏠" },
         });
       } finally {
         agentDefinitionStore.close();

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct WorkspaceShellList: View {
@@ -558,9 +559,10 @@ struct WorkspaceSessionSummaryRow: View {
 
 private extension Workspace {
     var iconSymbolName: String {
-        guard let icon, !icon.isEmpty, icon.unicodeScalars.allSatisfy({ $0.isASCII }) else {
+        guard case .symbol(let name) = icon,
+              NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil else {
             return "folder"
         }
-        return icon
+        return name
     }
 }

@@ -302,6 +302,7 @@ extension View {
         self
             .environment(connection)
             .environment(\.apiClient, connection.apiClient)
+            .environment(\.iconAssetCache, connection.iconAssetCache)
             .environment(connection.chatState)
             .environment(connection.sessionStore)
             .environment(connection.workspaceStore)

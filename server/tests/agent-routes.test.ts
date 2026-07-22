@@ -204,14 +204,14 @@ describe("agent routes", () => {
     }
   });
 
-  it("preserves a historical malformed icon on unrelated updates, then allows clearing it", () => {
+  it("migrates a historical malformed icon to Default before unrelated updates", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-historical-icon-"));
     const databasePath = join(dataDir, "session-state.db");
     let store = new AgentDefinitionStore(dataDir);
     try {
       const agent = store.createAgent({
         name: "Historian",
-        icon: "sparkles",
+        icon: { kind: "symbol", name: "sparkles" },
         description: "Original description",
       });
       store.close();
@@ -230,15 +230,15 @@ describe("agent routes", () => {
       store = new AgentDefinitionStore(dataDir);
       const updated = store.updateAgent(agent.id, { description: "Updated description" });
       expect(updated?.definition).toMatchObject({
-        icon: "historical/icon",
+        icon: { kind: "default" },
         description: "Updated description",
       });
-      expect(() => store.updateAgent(agent.id, { icon: "still/invalid" })).toThrow(
-        /one Unicode emoji or an SF Symbol name/,
-      );
+      expect(() =>
+        store.updateAgent(agent.id, { icon: { kind: "symbol", name: "still/invalid" } }),
+      ).toThrow(/icon.name/);
 
-      const cleared = store.updateAgent(agent.id, { icon: null });
-      expect(cleared?.definition).not.toHaveProperty("icon");
+      const cleared = store.updateAgent(agent.id, { icon: { kind: "default" } });
+      expect(cleared?.definition.icon).toEqual({ kind: "default" });
       expect(cleared?.definition.description).toBe("Updated description");
     } finally {
       store.close();
@@ -266,13 +266,13 @@ describe("agent routes", () => {
         method: "PATCH",
         path: `/agents/${agent.id}`,
         url: new URL(`http://localhost/agents/${agent.id}`),
-        req: makeRequest({ icon: "  🧘  " }) as never,
+        req: makeRequest({ icon: { kind: "emoji", value: "  🧘  " } }) as never,
         res: updateRes as never,
       });
       expect(updateRes.statusCode).toBe(200);
       expect(JSON.parse(updateRes.body).agent.definition).toMatchObject({
         name: "Sensei",
-        icon: "🧘",
+        icon: { kind: "emoji", value: "🧘" },
         description: "Guides reviews",
         instructions: { mode: "append", text: "Stay calm." },
         sessionDefaults: { model: "openai-codex/gpt-5.5" },
@@ -286,8 +286,14 @@ describe("agent routes", () => {
         req: {} as never,
         res: getRes as never,
       });
-      expect(JSON.parse(getRes.body).agent.definition.icon).toBe("🧘");
-      expect(store.getAgentVersion(agent.id, 2)?.definition.icon).toBe("🧘");
+      expect(JSON.parse(getRes.body).agent.definition.icon).toEqual({
+        kind: "emoji",
+        value: "🧘",
+      });
+      expect(store.getAgentVersion(agent.id, 2)?.definition.icon).toEqual({
+        kind: "emoji",
+        value: "🧘",
+      });
 
       const listRes = makeResponse();
       await dispatch({
@@ -298,7 +304,9 @@ describe("agent routes", () => {
         res: listRes as never,
       });
       expect(JSON.parse(listRes.body).agents).toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: agent.id, icon: "🧘" })]),
+        expect.arrayContaining([
+          expect.objectContaining({ id: agent.id, icon: { kind: "emoji", value: "🧘" } }),
+        ]),
       );
 
       const sfSymbolRes = makeResponse();
@@ -306,18 +314,21 @@ describe("agent routes", () => {
         method: "PATCH",
         path: `/agents/${agent.id}`,
         url: new URL(`http://localhost/agents/${agent.id}`),
-        req: makeRequest({ icon: "  checkmark.shield  " }) as never,
+        req: makeRequest({ icon: { kind: "symbol", name: "  checkmark.shield  " } }) as never,
         res: sfSymbolRes as never,
       });
       expect(sfSymbolRes.statusCode).toBe(200);
-      expect(JSON.parse(sfSymbolRes.body).agent.definition.icon).toBe("checkmark.shield");
+      expect(JSON.parse(sfSymbolRes.body).agent.definition.icon).toEqual({
+        kind: "symbol",
+        name: "checkmark.shield",
+      });
 
       for (const invalidIcon of [
         "two words",
-        "🧘🧘",
-        "not/a/symbol",
-        "x".repeat(129),
-        `😀${"‍😀".repeat(64)}`,
+        { kind: "emoji", value: "🧘🧘" },
+        { kind: "symbol", name: "not/a/symbol" },
+        { kind: "symbol", name: "x".repeat(129) },
+        { kind: "future" },
       ]) {
         const invalidRes = makeResponse();
         await dispatch({
@@ -336,11 +347,11 @@ describe("agent routes", () => {
         method: "PATCH",
         path: `/agents/${agent.id}`,
         url: new URL(`http://localhost/agents/${agent.id}`),
-        req: makeRequest({ icon: null }) as never,
+        req: makeRequest({ icon: { kind: "default" } }) as never,
         res: clearRes as never,
       });
       expect(clearRes.statusCode).toBe(200);
-      expect(JSON.parse(clearRes.body).agent.definition).not.toHaveProperty("icon");
+      expect(JSON.parse(clearRes.body).agent.definition.icon).toEqual({ kind: "default" });
     } finally {
       store.close();
       rmSync(dataDir, { recursive: true, force: true });
@@ -386,7 +397,7 @@ describe("agent routes", () => {
         url: new URL("http://localhost/agents/default"),
         req: makeRequest({
           name: "Home Agent",
-          icon: "🏠",
+          icon: { kind: "emoji", value: "🏠" },
           description: "Coordinates Oppi from the app home screen",
           instructions: { mode: "append", text: "Prefer short status summaries." },
           sessionDefaults: { model: "openai-codex/gpt-5.5", thinkingLevel: "high" },
@@ -401,7 +412,7 @@ describe("agent routes", () => {
         version: 2,
         definition: {
           name: "Home Agent",
-          icon: "🏠",
+          icon: { kind: "emoji", value: "🏠" },
           description: "Coordinates Oppi from the app home screen",
           instructions: { mode: "append", text: "Prefer short status summaries." },
           resources: { noContextFiles: true },
@@ -499,7 +510,7 @@ describe("agent routes", () => {
       const store = new AgentDefinitionStore(dataDir);
       const agent = store.createAgent({
         name: "Reviewer",
-        icon: "checkmark.shield",
+        icon: { kind: "symbol", name: "checkmark.shield" },
         sessionDefaults: { model: "agent-model", thinkingLevel: "high" },
       });
       const sessions: Session[] = [];
@@ -581,7 +592,7 @@ describe("agent routes", () => {
           source: "agent",
           agentId: agent.id,
           agentVersion: 1,
-          agentIcon: "checkmark.shield",
+          agentIcon: { kind: "symbol", name: "checkmark.shield" },
           idempotencyKey: "agent-launch-1",
           promptDispatch: "delivered",
         },
@@ -603,7 +614,7 @@ describe("agent routes", () => {
     try {
       const agent = store.createAgent({
         name: "Historian",
-        icon: "sparkles",
+        icon: { kind: "symbol", name: "sparkles" },
         sessionDefaults: { model: "agent-model", thinkingLevel: "high" },
       });
       store.close();
@@ -686,7 +697,7 @@ describe("agent routes", () => {
         { model: "agent-model", thinkingLevel: "low" },
       ]);
       for (const launched of launches) {
-        expect(launched.launch?.agentIcon).toBe("historical/icon");
+        expect(launched.launch?.agentIcon).toEqual({ kind: "default" });
       }
 
       for (const [overrides, errorFragment] of [

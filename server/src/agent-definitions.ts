@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { generateId } from "./id.js";
+import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "./icon-choice.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import type { AgentDefinition, ThinkingLevel } from "./agent-launch-service.js";
 import {
@@ -31,7 +32,7 @@ export interface StoredAgentDefinition {
 export interface AgentDefinitionSummary {
   id: string;
   name: string;
-  icon?: string;
+  icon: NonNullable<AgentDefinition["icon"]>;
   description?: string;
   status: AgentDefinitionStatus;
   version: number;
@@ -109,15 +110,14 @@ const SESSION_DEFAULT_KEYS = new Set([
   "excludeTools",
   "noTools",
 ]);
-const SF_SYMBOL_NAME_PATTERN = /^[A-Za-z0-9.-]+$/;
-const EMOJI_PATTERN = /^\p{Emoji}$/u;
-const EMOJI_PRESENTATION_PATTERN = /^\p{Emoji_Presentation}$/u;
-const EMOJI_MODIFIER_BASE_PATTERN = /^\p{Emoji_Modifier_Base}$/u;
-
 export class AgentDefinitionStore {
   private readonly db: SqliteDatabase;
 
-  constructor(dataDir: string, dbPath?: string) {
+  constructor(
+    dataDir: string,
+    dbPath?: string,
+    private readonly iconAssetExists?: (assetId: string) => boolean,
+  ) {
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     }
@@ -127,6 +127,7 @@ export class AgentDefinitionStore {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
+    this.migrateStoredIconChoices();
     this.ensureDefaultAgent();
   }
 
@@ -136,6 +137,7 @@ export class AgentDefinitionStore {
 
   createAgent(input: unknown, now = Date.now()): StoredAgentDefinition {
     const definition = validateAgentDefinition(input);
+    this.assertIconAssetExists(definition);
     if (isDefaultAgentReservedName(definition.name)) {
       throw new Error(`${DEFAULT_AGENT_DEFAULT_NAME} is reserved for the default Agent identity`);
     }
@@ -190,6 +192,7 @@ export class AgentDefinitionStore {
     const nextDefinition = isDefaultAgentId(current.id)
       ? applyDefaultAgentSafetyDefaults(mergedDefinition)
       : mergedDefinition;
+    this.assertIconAssetExists(nextDefinition);
     const nextVersion = current.version + 1;
     this.db.transaction(() => {
       this.db
@@ -294,6 +297,47 @@ export class AgentDefinitionStore {
     return this.listAgents(options).map(agentSummary);
   }
 
+  listAgentVersions(): StoredAgentDefinitionVersion[] {
+    const rows = this.db
+      .prepare("SELECT * FROM agent_definition_versions ORDER BY id ASC, version ASC")
+      .all() as AgentVersionRow[];
+    return rows.map(agentVersionFromRow);
+  }
+
+  private migrateStoredIconChoices(): void {
+    const currentRows = this.db.prepare("SELECT * FROM agent_definitions").all() as AgentRow[];
+    const versionRows = this.db
+      .prepare("SELECT * FROM agent_definition_versions")
+      .all() as AgentVersionRow[];
+    const updateCurrent = this.db.prepare(
+      "UPDATE agent_definitions SET definition_json = ? WHERE id = ?",
+    );
+    const updateVersion = this.db.prepare(
+      "UPDATE agent_definition_versions SET definition_json = ? WHERE id = ? AND version = ?",
+    );
+
+    this.db.transaction(() => {
+      for (const row of currentRows) {
+        const migrated = migrateStoredDefinitionJson(row.definition_json);
+        if (migrated !== row.definition_json) updateCurrent.run(migrated, row.id);
+      }
+      for (const row of versionRows) {
+        const migrated = migrateStoredDefinitionJson(row.definition_json);
+        if (migrated !== row.definition_json) updateVersion.run(migrated, row.id, row.version);
+      }
+    })();
+  }
+
+  private assertIconAssetExists(definition: AgentDefinition): void {
+    if (
+      definition.icon?.kind === "genmoji" &&
+      this.iconAssetExists &&
+      !this.iconAssetExists(definition.icon.assetId)
+    ) {
+      throw new Error("icon asset not found");
+    }
+  }
+
   private ensureSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agent_definitions (
@@ -391,7 +435,7 @@ export function agentSummary(agent: StoredAgentDefinition): AgentDefinitionSumma
   return {
     id: agent.id,
     name: agent.name,
-    ...(agent.definition.icon ? { icon: agent.definition.icon } : {}),
+    icon: agent.definition.icon ?? DEFAULT_ICON_CHOICE,
     ...(agent.definition.description ? { description: agent.definition.description } : {}),
     status: agent.status,
     version: agent.version,
@@ -444,7 +488,7 @@ export function validateAgentDefinition(input: unknown): AgentDefinition {
 
   return {
     name,
-    ...(icon !== undefined ? { icon } : {}),
+    icon,
     ...(description !== undefined ? { description } : {}),
     ...(instructions !== undefined ? { instructions } : {}),
     ...(resources !== undefined ? { resources } : {}),
@@ -456,18 +500,7 @@ function validateAgentDefinitionUpdate(
   current: AgentDefinition,
   patch: Record<string, unknown>,
 ): AgentDefinition {
-  const merged = mergeAgentDefinition(current, patch);
-  if (Object.prototype.hasOwnProperty.call(patch, "icon") || typeof current.icon !== "string") {
-    return validateAgentDefinition(merged);
-  }
-
-  // Historical stores may contain icons accepted before strict icon validation.
-  // Preserve an unchanged string while validating every field the patch can alter.
-  const { icon: _historicalIcon, ...withoutIcon } = merged;
-  return {
-    ...validateAgentDefinition(withoutIcon),
-    icon: current.icon,
-  };
+  return validateAgentDefinition(mergeAgentDefinition(current, patch));
 }
 
 function mergeAgentDefinition(current: AgentDefinition, patch: unknown): AgentDefinition {
@@ -596,89 +629,21 @@ function validateSessionDefaults(value: unknown): AgentDefinition["sessionDefaul
   };
 }
 
-function validateAgentIcon(value: unknown): string | undefined {
-  const icon = validateString(value, "icon");
-  if (icon === undefined) return undefined;
-
-  const scalars = Array.from(icon);
-  if (scalars.length > 128) {
-    throw new Error("icon must not exceed 128 Unicode scalars");
-  }
-  if (isSingleEmojiSequence(scalars)) return icon;
-  if (SF_SYMBOL_NAME_PATTERN.test(icon)) return icon;
-  throw new Error("icon must be one Unicode emoji or an SF Symbol name");
+function validateAgentIcon(value: unknown): AgentDefinition["icon"] {
+  if (value === undefined || value === null) return DEFAULT_ICON_CHOICE;
+  return validateIconChoice(value);
 }
 
-function isSingleEmojiSequence(scalars: string[]): boolean {
-  const codePoint = (scalar: string): number => scalar.codePointAt(0) ?? 0;
-  const keycapBase = (scalar: string): boolean => {
-    const value = codePoint(scalar);
-    return value === 0x23 || value === 0x2a || (value >= 0x30 && value <= 0x39);
-  };
-
-  if (
-    scalars.length === 2 &&
-    keycapBase(scalars[0] ?? "") &&
-    codePoint(scalars[1] ?? "") === 0x20e3
-  ) {
-    return true;
+function migrateStoredDefinitionJson(rawJson: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    return rawJson;
   }
-  if (
-    scalars.length === 3 &&
-    keycapBase(scalars[0] ?? "") &&
-    codePoint(scalars[1] ?? "") === 0xfe0f &&
-    codePoint(scalars[2] ?? "") === 0x20e3
-  ) {
-    return true;
-  }
-
-  const isRegionalIndicator = (scalar: string): boolean => {
-    const value = codePoint(scalar);
-    return value >= 0x1f1e6 && value <= 0x1f1ff;
-  };
-  if (scalars.some(isRegionalIndicator)) {
-    return scalars.length === 2 && scalars.every(isRegionalIndicator);
-  }
-
-  if (
-    codePoint(scalars[0] ?? "") === 0x1f3f4 &&
-    scalars.length >= 3 &&
-    codePoint(scalars[scalars.length - 1] ?? "") === 0xe007f
-  ) {
-    return scalars.slice(1, -1).every((scalar) => {
-      const value = codePoint(scalar);
-      return value >= 0xe0061 && value <= 0xe007a;
-    });
-  }
-
-  const consumeComponent = (start: number): number | undefined => {
-    const base = scalars[start];
-    if (!base || !EMOJI_PATTERN.test(base)) return undefined;
-
-    let index = start + 1;
-    let hasEmojiVariation = false;
-    if (codePoint(scalars[index] ?? "") === 0xfe0f) {
-      hasEmojiVariation = true;
-      index += 1;
-    }
-    if (!EMOJI_PRESENTATION_PATTERN.test(base) && !hasEmojiVariation) return undefined;
-
-    const modifier = codePoint(scalars[index] ?? "");
-    if (modifier >= 0x1f3fb && modifier <= 0x1f3ff) {
-      if (!EMOJI_MODIFIER_BASE_PATTERN.test(base)) return undefined;
-      index += 1;
-    }
-    return index;
-  };
-
-  let index = consumeComponent(0);
-  if (index === undefined) return false;
-  while (index < scalars.length) {
-    if (codePoint(scalars[index] ?? "") !== 0x200d) return false;
-    index = consumeComponent(index + 1);
-    if (index === undefined) return false;
-  }
-  return true;
+  if (!isRecord(parsed)) return rawJson;
+  const migrated = { ...parsed, icon: migrateIconChoice(parsed.icon) };
+  return JSON.stringify(migrated);
 }
 
 function requireString(

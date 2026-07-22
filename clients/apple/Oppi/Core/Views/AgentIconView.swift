@@ -4,16 +4,19 @@ import UIKit
 enum AgentIconContent: Equatable {
     case symbol(String)
     case text(String)
+    case genmoji(assetId: String, contentDescription: String)
     case fallback
 
-    static func resolve(_ value: String?) -> Self {
-        switch AgentIconValue.classify(value) {
+    static func resolve(_ value: IconChoice?) -> Self {
+        switch value ?? .defaultValue {
+        case .defaultValue:
+            return .fallback
         case .emoji(let emoji):
             return .text(emoji)
-        case .symbolCandidate(let name):
+        case .symbol(let name):
             return UIImage(systemName: name) == nil ? .fallback : .symbol(name)
-        case .invalid:
-            return .fallback
+        case .genmoji(let assetId, let contentDescription):
+            return .genmoji(assetId: assetId, contentDescription: contentDescription)
         }
     }
 
@@ -23,6 +26,8 @@ enum AgentIconContent: Equatable {
             return "SF Symbol \(name.replacingOccurrences(of: ".", with: " "))"
         case .text(let emoji):
             return "Emoji \(emoji)"
+        case .genmoji(_, let contentDescription):
+            return contentDescription
         case .fallback:
             return "Default Agent icon"
         }
@@ -33,9 +38,40 @@ enum AssistantIdentityPresentation: Equatable {
     case globalAvatar
     case agent(AgentIconContent)
 
-    static func resolve(agentId: String?, agentIcon: String?) -> Self {
+    static func resolve(agentId: String?, agentIcon: IconChoice?) -> Self {
         guard agentId?.isEmpty == false else { return .globalAvatar }
         return .agent(AgentIconContent.resolve(agentIcon))
+    }
+}
+
+struct IconAssetViewLoadIdentity: Equatable {
+    let key: IconAssetLoadKey
+    let requestID: UUID
+}
+
+@MainActor
+func loadIconAssetForView(
+    assetId: String,
+    size: CGFloat,
+    cache: IconAssetCache,
+    identity: IconAssetViewLoadIdentity,
+    currentIdentity: @MainActor () -> IconAssetViewLoadIdentity?,
+    assign: @MainActor (UIImage?) -> Void
+) async {
+    guard currentIdentity() == identity else { return }
+    assign(nil)
+
+    do {
+        let image = try await cache.image(assetId: assetId, size: size)
+        try Task.checkCancellation()
+        guard currentIdentity() == identity else { return }
+        assign(image)
+    } catch is CancellationError {
+        // A replacement `.task(id:)` owns the state now. Never let the
+        // cancelled request clear a newer image.
+    } catch {
+        guard !Task.isCancelled, currentIdentity() == identity else { return }
+        assign(nil)
     }
 }
 
@@ -51,22 +87,28 @@ enum AgentIconSizingPolicy {
 }
 
 struct AgentIconView: View {
-    let value: String?
+    let value: IconChoice?
     let size: CGFloat
     let frameSize: CGFloat?
     let isDecorative: Bool
+    let assetCache: IconAssetCache?
+    @Environment(\.iconAssetCache) private var environmentAssetCache
+    @State private var loadedGenmoji: UIImage?
+    @State private var activeLoadIdentity: IconAssetViewLoadIdentity?
     @ScaledMetric(relativeTo: .body) private var scaledSize: CGFloat = 20
 
     init(
-        value: String?,
+        value: IconChoice?,
         size: CGFloat,
         frameSize: CGFloat? = nil,
-        isDecorative: Bool = true
+        isDecorative: Bool = true,
+        assetCache: IconAssetCache? = nil
     ) {
         self.value = value
         self.size = size
         self.frameSize = frameSize
         self.isDecorative = isDecorative
+        self.assetCache = assetCache
         _scaledSize = ScaledMetric(wrappedValue: size, relativeTo: .body)
     }
 
@@ -86,6 +128,15 @@ struct AgentIconView: View {
                     .foregroundStyle(.themeBlue)
             case .text(let text):
                 Text(text)
+            case .genmoji:
+                if let loadedGenmoji {
+                    Image(uiImage: loadedGenmoji)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    Image(systemName: "person.crop.circle")
+                        .foregroundStyle(.themeBlue)
+                }
             case .fallback:
                 Image(systemName: "person.crop.circle")
                     .foregroundStyle(.themeBlue)
@@ -95,12 +146,36 @@ struct AgentIconView: View {
         .frame(width: frameSize ?? size, height: frameSize ?? size)
         .accessibilityHidden(isDecorative)
         .accessibilityLabel(isDecorative ? "" : AgentIconContent.resolve(value).accessibilityDescription)
+        .task(id: IconAssetLoadKey(
+            assetId: value?.assetId,
+            cache: assetCache ?? environmentAssetCache
+        )) {
+            let cache = assetCache ?? environmentAssetCache
+            let identity = IconAssetViewLoadIdentity(
+                key: IconAssetLoadKey(assetId: value?.assetId, cache: cache),
+                requestID: UUID()
+            )
+            activeLoadIdentity = identity
+            guard case .genmoji(let assetId, _) = value,
+                  let cache else {
+                loadedGenmoji = nil
+                return
+            }
+            await loadIconAssetForView(
+                assetId: assetId,
+                size: displaySize * 2,
+                cache: cache,
+                identity: identity,
+                currentIdentity: { activeLoadIdentity },
+                assign: { loadedGenmoji = $0 }
+            )
+        }
     }
 }
 
 @MainActor
 enum AgentIconRenderer {
-    static func render(value: String?, size: CGFloat) -> UIImage {
+    static func render(value: IconChoice?, size: CGFloat) -> UIImage {
         switch AgentIconContent.resolve(value) {
         case .symbol(let name):
             let configuration = UIImage.SymbolConfiguration(pointSize: size * 0.78, weight: .medium)
@@ -109,7 +184,7 @@ enum AgentIconRenderer {
                 ?? fallback(size: size)
         case .text(let emoji):
             return renderText(emoji, size: size)
-        case .fallback:
+        case .genmoji, .fallback:
             return fallback(size: size)
         }
     }

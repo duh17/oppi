@@ -361,7 +361,7 @@ describe("session sqlite store", () => {
           source: "agent",
           agentId: "agent-reviewer",
           agentVersion: 4,
-          agentIcon: "checkmark.shield",
+          agentIcon: { kind: "symbol", name: "checkmark.shield" },
           status: "accepted",
           requestedAt: 1,
         },
@@ -393,7 +393,7 @@ describe("session sqlite store", () => {
       expect(sessions[0]?.launch).toMatchObject({
         agentId: "agent-reviewer",
         agentVersion: 4,
-        agentIcon: "checkmark.shield",
+        agentIcon: { kind: "symbol", name: "checkmark.shield" },
       });
     } finally {
       sqliteStore?.close();

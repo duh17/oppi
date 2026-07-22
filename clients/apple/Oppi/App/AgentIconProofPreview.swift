@@ -13,7 +13,7 @@ struct AgentIconProofPreview: View {
         case agentChat
     }
 
-    @State private var agent = Self.makeAgent(icon: nil, version: 1)
+    @State private var agent = Self.makeAgent(icon: .defaultValue, version: 1)
     @State private var isShowingPicker = false
     @State private var themeStore = ThemeStore()
     @Environment(\.colorScheme) private var colorScheme
@@ -226,14 +226,15 @@ struct AgentIconProofPreview: View {
     }
 
     private var iconSummary: String {
-        guard let icon = agent.definition.icon else { return "Default" }
-        switch AgentIconContent.resolve(icon) {
+        switch AgentIconContent.resolve(agent.definition.icon) {
         case .text(let emoji):
             return "Emoji \(emoji)"
-        case .symbol:
-            return "SF Symbol \(icon)"
+        case .symbol(let name):
+            return "SF Symbol \(name)"
+        case .genmoji(_, let contentDescription):
+            return contentDescription
         case .fallback:
-            return "Unavailable"
+            return "Default"
         }
     }
 
@@ -249,7 +250,7 @@ struct AgentIconProofPreview: View {
         Self.makeSession(id: "ordinary-proof-session", name: "Ordinary Session", launch: nil)
     }
 
-    private static func makeAgent(icon: String?, version: Int) -> StoredAgentDefinition {
+    private static func makeAgent(icon: IconChoice, version: Int) -> StoredAgentDefinition {
         StoredAgentDefinition(
             id: "agent-icon-proof",
             name: "Design Reviewer",

@@ -286,7 +286,7 @@ struct SessionStorePartitioningTests {
         var launched = makeTestSession(id: "s1", workspaceId: "w1", status: .busy)
         launched.launch = SessionLaunchMetadata(
             agentId: "agent-reviewer",
-            agentIcon: "checkmark.shield"
+            agentIcon: .symbol("checkmark.shield")
         )
         store.upsert(launched)
 
@@ -294,8 +294,8 @@ struct SessionStorePartitioningTests {
         store.upsert(partial)
 
         #expect(store.session(id: "s1")?.launch?.agentId == "agent-reviewer")
-        #expect(store.session(id: "s1")?.launch?.agentIcon == "checkmark.shield")
-        #expect(store.listProjectionSessions.first?.launch?.agentIcon == "checkmark.shield")
+        #expect(store.session(id: "s1")?.launch?.agentIcon == .symbol("checkmark.shield"))
+        #expect(store.listProjectionSessions.first?.launch?.agentIcon == .symbol("checkmark.shield"))
     }
 
     @Test func partialLaunchMetadataMergesAgentIdentityFieldsIndividually() {
@@ -305,7 +305,7 @@ struct SessionStorePartitioningTests {
         var launched = makeTestSession(id: "s1", workspaceId: "w1", status: .busy)
         launched.launch = SessionLaunchMetadata(
             agentId: "agent-reviewer",
-            agentIcon: "checkmark.shield"
+            agentIcon: .symbol("checkmark.shield")
         )
         store.upsert(launched)
 
@@ -314,8 +314,8 @@ struct SessionStorePartitioningTests {
         store.upsert(sparse)
 
         #expect(store.session(id: "s1")?.launch?.agentId == "agent-reviewer")
-        #expect(store.session(id: "s1")?.launch?.agentIcon == "checkmark.shield")
-        #expect(store.listProjectionSessions.first?.launch?.agentIcon == "checkmark.shield")
+        #expect(store.session(id: "s1")?.launch?.agentIcon == .symbol("checkmark.shield"))
+        #expect(store.listProjectionSessions.first?.launch?.agentIcon == .symbol("checkmark.shield"))
     }
 
     @Test func applyServerSnapshotPreservesWorkspaceContextAndModelWhenSnapshotOmitsThem() {

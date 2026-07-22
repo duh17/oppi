@@ -430,9 +430,11 @@ struct SessionRow: View {
 }
 
 struct SessionIdentityIconView: UIViewRepresentable {
+    @Environment(\.iconAssetCache) private var iconAssetCache
+
     let sessionId: String
     var agentId: String?
-    var agentIcon: String?
+    var agentIcon: IconChoice?
 
     func makeUIView(context: Context) -> SessionGridBadgeView {
         let view = SessionGridBadgeView()
@@ -442,6 +444,7 @@ struct SessionIdentityIconView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: SessionGridBadgeView, context: Context) {
+        view.iconAssetCache = iconAssetCache
         view.sessionId = sessionId
         view.agentId = agentId
         view.agentIcon = agentIcon
@@ -452,6 +455,10 @@ struct SessionIdentityIconView: UIViewRepresentable {
         case .agent(let content):
             view.accessibilityLabel = "Saved Agent, \(content.accessibilityDescription)"
         }
+    }
+
+    static func dismantleUIView(_ view: SessionGridBadgeView, coordinator: Void) {
+        view.prepareForReuse()
     }
 }
 

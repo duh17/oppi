@@ -106,6 +106,8 @@ const sessionOperationIds = new Set<string>([
   "headControlSessionAttachment",
   "sendControlSessionCommand",
   "openControlSessionStream",
+  "getIconAsset",
+  "headIconAsset",
 ]);
 
 const settingsOperationIds = new Set<string>([
@@ -141,6 +143,9 @@ const settingsOperationIds = new Set<string>([
   "getTheme",
   "uploadMetricKitPayload",
   "uploadChatMetrics",
+  "createIconAsset",
+  "getIconAsset",
+  "headIconAsset",
 ]);
 
 function nativeClientUsesFor(operationId: string): readonly NativeClientUse[] | undefined {
@@ -731,6 +736,28 @@ const rawApiRouteSpecs = [
     path: "/local-sessions",
     operationId: "listLocalSessions",
     surface: "internal",
+    auth: "owner",
+  },
+
+  {
+    method: "POST",
+    path: "/icon-assets",
+    operationId: "createIconAsset",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "GET",
+    path: "/icon-assets/{assetId}",
+    operationId: "getIconAsset",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "HEAD",
+    path: "/icon-assets/{assetId}",
+    operationId: "headIconAsset",
+    surface: "core",
     auth: "owner",
   },
 

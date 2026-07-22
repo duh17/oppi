@@ -5,6 +5,7 @@
  * domain-specific type definitions live under `./types/`.
  */
 
+export type * from "./types/icon.js";
 export type * from "./types/workspace.js";
 export type * from "./types/worktree.js";
 export * from "./types/session.js";

@@ -105,7 +105,7 @@ struct ProtocolSnapshotTests {
         #expect(session.contextWindow == 200000)
         #expect(session.thinkingLevel == "high")
         #expect(session.launch?.agentId == "agent-reviewer")
-        #expect(session.launch?.agentIcon == "checkmark.shield")
+        #expect(session.launch?.agentIcon == .symbol("checkmark.shield"))
     }
 
     @Test func sessionSummaryCarriesAgentPresentationSnapshot() throws {
@@ -116,8 +116,31 @@ struct ProtocolSnapshotTests {
         }
 
         #expect(summary.agentId == "agent-reviewer")
-        #expect(summary.agentIcon == "checkmark.shield")
-        #expect(summary.session.launch?.agentIcon == "checkmark.shield")
+        #expect(summary.agentIcon == .symbol("checkmark.shield"))
+        #expect(summary.session.launch?.agentIcon == .symbol("checkmark.shield"))
+    }
+
+    @Test func parentServerMessagesPreserveIconFallbackAcrossEveryTaggedAndFutureCase() throws {
+        let assetId = "ia_" + String(repeating: "A", count: 43)
+        let cases: [(String, IconChoice)] = [
+            ("state_icon_default", .defaultValue),
+            ("state_icon_emoji", .emoji("🧘")),
+            ("state_icon_genmoji", .genmoji(
+                assetId: assetId,
+                contentDescription: "A smiling fox"
+            )),
+            ("state_icon_malformed", .defaultValue),
+            ("state_icon_future", .defaultValue),
+        ]
+
+        for (key, expected) in cases {
+            let message = try decodeMessage(key)
+            guard case .state(let session) = message else {
+                Issue.record("Expected .state for \(key), got \(message.typeLabel)")
+                continue
+            }
+            #expect(session.launch?.agentIcon == expected)
+        }
     }
 
     @Test func sessionChangeStats() throws {

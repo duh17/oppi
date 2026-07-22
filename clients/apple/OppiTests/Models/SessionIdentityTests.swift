@@ -18,7 +18,7 @@ struct SessionIdentityTests {
           "launch": {
             "agentId": "agent-reviewer",
             "agentVersion": 4,
-            "agentIcon": "checkmark.shield",
+            "agentIcon": {"kind":"symbol","name":"checkmark.shield"},
             "status": "accepted",
             "requestedAt": 900
           }
@@ -35,7 +35,7 @@ struct SessionIdentityTests {
           "tokens": { "input": 0, "output": 0 },
           "cost": 0,
           "agentId": "agent-reviewer",
-          "agentIcon": "checkmark.shield"
+          "agentIcon": {"kind":"symbol","name":"checkmark.shield"}
         }
         """.utf8)
 
@@ -43,10 +43,10 @@ struct SessionIdentityTests {
         let summary = try JSONDecoder().decode(SessionSummary.self, from: summaryJSON)
 
         #expect(session.launch?.agentId == "agent-reviewer")
-        #expect(session.launch?.agentIcon == "checkmark.shield")
+        #expect(session.launch?.agentIcon == .symbol("checkmark.shield"))
         #expect(summary.agentId == "agent-reviewer")
-        #expect(summary.agentIcon == "checkmark.shield")
-        #expect(summary.session.launch?.agentIcon == "checkmark.shield")
+        #expect(summary.agentIcon == .symbol("checkmark.shield"))
+        #expect(summary.session.launch?.agentIcon == .symbol("checkmark.shield"))
     }
 
     @Test func missingOrMalformedAgentIconRemainsDecodeSafe() throws {
@@ -54,7 +54,7 @@ struct SessionIdentityTests {
         {"id":"old","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}
         """.utf8)
         let malformedJSON = Data("""
-        {"id":"bad","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"agentId":"agent-1","agentIcon":"not/a/symbol"}
+        {"id":"bad","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"agentId":"agent-1","agentIcon":{"kind":"future","payload":"ignored"}}
         """.utf8)
 
         let old = try JSONDecoder().decode(SessionSummary.self, from: oldJSON)
@@ -63,7 +63,7 @@ struct SessionIdentityTests {
         #expect(old.agentId == nil)
         #expect(old.agentIcon == nil)
         #expect(malformed.agentId == "agent-1")
-        #expect(malformed.agentIcon == "not/a/symbol")
+        #expect(malformed.agentIcon == .defaultValue)
         #expect(AgentIconContent.resolve(malformed.agentIcon) == .fallback)
     }
 

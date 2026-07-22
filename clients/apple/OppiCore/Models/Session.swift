@@ -62,7 +62,7 @@ struct ControlSessionMetadata: Codable, Sendable, Equatable {
 /// Execution identity remains server-owned through Agent ID and version.
 struct SessionLaunchMetadata: Codable, Sendable, Equatable {
     var agentId: String?
-    var agentIcon: String?
+    var agentIcon: IconChoice?
 }
 
 /// Selects the server route family for operations on a focused session.
@@ -266,7 +266,7 @@ struct SessionSummary: Sendable, Equatable {
     var piSessionId: String? = nil
     var control: ControlSessionMetadata? = nil
     var agentId: String? = nil
-    var agentIcon: String? = nil
+    var agentIcon: IconChoice? = nil
     var ephemeral: Bool?
     var pendingAskCount: Int {
         didSet { hasPendingAskCount = true }
@@ -379,7 +379,7 @@ private struct DecodedSessionWireFields {
     let control: ControlSessionMetadata?
     let launch: SessionLaunchMetadata?
     let agentId: String?
-    let agentIcon: String?
+    let agentIcon: IconChoice?
     let ephemeral: Bool?
 
     init(from container: KeyedDecodingContainer<SessionWireCodingKeys>) throws {
@@ -409,7 +409,7 @@ private struct DecodedSessionWireFields {
         control = try container.decodeIfPresent(ControlSessionMetadata.self, forKey: .control)
         launch = try container.decodeIfPresent(SessionLaunchMetadata.self, forKey: .launch)
         agentId = try container.decodeIfPresent(String.self, forKey: .agentId)
-        agentIcon = try container.decodeIfPresent(String.self, forKey: .agentIcon)
+        agentIcon = try container.decodeIfPresent(IconChoice.self, forKey: .agentIcon)
         ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral)
     }
 }

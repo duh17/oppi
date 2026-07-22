@@ -1749,7 +1749,7 @@ actor APIClient: ClientLogUploading {
         return try await session.data(for: req)
     }
 
-    private func request(_ method: String, path: String, body: Data, contentType: String) async throws -> (Data, URLResponse) {
+    func request(_ method: String, path: String, body: Data, contentType: String) async throws -> (Data, URLResponse) {
         var req = try URLRequest(url: makeURL(path: path))
         req.httpMethod = method
         ServerAuthorization.apply(token: token, to: &req)

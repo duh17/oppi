@@ -771,7 +771,7 @@ struct WorkspaceCreateView: View {
         let request = CreateWorkspaceRequest(
             name: name,
             description: description.isEmpty ? nil : description,
-            icon: icon.isEmpty ? nil : icon,
+            icon: draftIconChoice(icon),
             hostMount: trimmedHostMount.isEmpty ? nil : trimmedHostMount,
             gitStatusEnabled: gitStatusEnabled,
             runtime: sandboxMode ? .sandbox : nil,

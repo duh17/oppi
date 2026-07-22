@@ -49,7 +49,7 @@ struct ChatTimelineView: View {
     let sessionId: String
     let workspaceId: String?
     var agentId: String? = nil
-    var agentIcon: String? = nil
+    var agentIcon: IconChoice? = nil
     var routeScope: SessionRouteScope?
     let isBusy: Bool
     let extensionWorkingState: ExtensionWorkingState?

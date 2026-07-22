@@ -4,7 +4,11 @@ import type {
   WorkspaceSystemPromptMode,
 } from "./workspace.js";
 
-export interface CreateWorkspaceRequest extends Omit<WorkspaceMutableConfig, "systemPromptMode"> {
+export interface CreateWorkspaceRequest extends Omit<
+  WorkspaceMutableConfig,
+  "systemPromptMode" | "icon"
+> {
+  icon?: WorkspaceMutableConfig["icon"];
   /** Ignored compatibility field from older Oppi clients. Pi settings own skill discovery. */
   skills?: string[];
   /** Ignored compatibility field from older Oppi clients. Pi settings own extension discovery. */
@@ -14,7 +18,6 @@ export interface CreateWorkspaceRequest extends Omit<WorkspaceMutableConfig, "sy
 
 type NullableWorkspaceUpdateKey =
   | "description"
-  | "icon"
   | "systemPrompt"
   | "hostMount"
   | "defaultModel"
@@ -28,7 +31,7 @@ export interface UpdateWorkspaceRequest extends Partial<
   /** Ignored compatibility field from older Oppi clients. Pi settings own extension discovery. */
   extensions?: string[];
   description?: string | null;
-  icon?: string | null;
+  icon?: WorkspaceMutableConfig["icon"];
   systemPrompt?: string | null;
   hostMount?: string | null;
   defaultModel?: string | null;

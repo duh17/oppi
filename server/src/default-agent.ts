@@ -1,4 +1,5 @@
 import type { AgentDefinition } from "./agent-launch-service.js";
+import { DEFAULT_ICON_CHOICE } from "./icon-choice.js";
 
 export const DEFAULT_AGENT_ID = "oppi-default-agent";
 export const DEFAULT_AGENT_ALIAS = "default";
@@ -7,6 +8,7 @@ export const DEFAULT_AGENT_TOOL_NAMES = ["oppi", "ask"] as const;
 
 export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
   name: DEFAULT_AGENT_DEFAULT_NAME,
+  icon: DEFAULT_ICON_CHOICE,
   description:
     "Manage Oppi workspaces, Agents, schedules, and sessions with explicit approval before changes.",
   resources: {

@@ -145,7 +145,7 @@ describe("AgentLaunchService", () => {
     const { service } = makeService();
 
     const result = await service.launch({
-      agent: { name: "Reviewer", icon: "  checkmark.shield  " },
+      agent: { name: "Reviewer", icon: { kind: "symbol", name: "checkmark.shield" } },
       agentId: "agent-reviewer",
       agentVersion: 4,
       target: { workspace: makeWorkspace() },
@@ -157,7 +157,7 @@ describe("AgentLaunchService", () => {
         launch: {
           agentId: "agent-reviewer",
           agentVersion: 4,
-          agentIcon: "checkmark.shield",
+          agentIcon: { kind: "symbol", name: "checkmark.shield" },
         },
       },
     });
@@ -167,7 +167,7 @@ describe("AgentLaunchService", () => {
     const { service } = makeService();
 
     const result = await service.launch({
-      agent: { name: "Workspace wrapper", icon: "sparkles" },
+      agent: { name: "Workspace wrapper", icon: { kind: "symbol", name: "sparkles" } },
       target: { workspace: makeWorkspace() },
     });
 
@@ -184,7 +184,7 @@ describe("AgentLaunchService", () => {
       launch: {
         agentId: "agent-reviewer",
         agentVersion: 4,
-        agentIcon: "🧘",
+        agentIcon: { kind: "emoji", value: "🧘" },
         idempotencyKey: "launch-1",
         status: "accepted",
         requestedAt: 900,
@@ -193,7 +193,7 @@ describe("AgentLaunchService", () => {
     const { service } = makeService({ sessions: [existing] });
 
     const result = await service.launch({
-      agent: { name: "Reviewer", icon: "checkmark.shield" },
+      agent: { name: "Reviewer", icon: { kind: "symbol", name: "checkmark.shield" } },
       agentId: "agent-reviewer",
       agentVersion: 5,
       target: { workspace: makeWorkspace() },
@@ -202,7 +202,7 @@ describe("AgentLaunchService", () => {
 
     expect(result).toMatchObject({
       kind: "existing",
-      session: { launch: { agentVersion: 4, agentIcon: "🧘" } },
+      session: { launch: { agentVersion: 4, agentIcon: { kind: "emoji", value: "🧘" } } },
     });
   });
 

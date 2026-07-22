@@ -12,7 +12,7 @@ struct MacWorkspaceSnapshotStoreTests {
             id: "ws-1",
             name: "Oppi",
             description: nil,
-            icon: "folder",
+            icon: .symbol("folder"),
             systemPrompt: nil,
             hostMount: "/Users/chenda/workspace/oppi",
             defaultModel: nil,

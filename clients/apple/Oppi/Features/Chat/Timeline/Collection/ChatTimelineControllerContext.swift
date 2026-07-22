@@ -5,7 +5,7 @@ final class ChatTimelineControllerContext {
     var sessionId = ""
     var workspaceId: String?
     var agentId: String?
-    var agentIcon: String?
+    var agentIcon: IconChoice?
     var routeScope: SessionRouteScope?
     var onFork: ((String) -> Void)?
     var onShowEarlier: (() -> Void)?

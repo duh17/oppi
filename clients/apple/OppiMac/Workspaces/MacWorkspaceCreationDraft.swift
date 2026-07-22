@@ -63,7 +63,7 @@ struct MacWorkspaceCreationDraft: Equatable, Sendable {
         return CreateWorkspaceRequest(
             name: trimmedName,
             description: trimmedDescription.isEmpty ? nil : trimmedDescription,
-            icon: nil,
+            icon: .defaultValue,
             systemPrompt: nil,
             systemPromptMode: nil,
             hostMount: trimmedHostMount.isEmpty ? nil : trimmedHostMount,

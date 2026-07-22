@@ -1,7 +1,40 @@
 import Foundation
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
+
+@MainActor
+private func hierarchySnapshot(_ view: UIView) -> Data {
+    UIGraphicsImageRenderer(bounds: view.bounds).image { context in
+        view.layer.render(in: context.cgContext)
+    }.pngData() ?? Data()
+}
+
+private actor IconAssetFetchGateForTimeline {
+    private var continuations: [CheckedContinuation<Data, Never>] = []
+    private var ids: [String] = []
+
+    func record(_ id: String) {
+        ids.append(id)
+    }
+
+    func recordedIDs() -> [String] {
+        ids
+    }
+
+    func wait() async -> Data {
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func open() {
+        let pending = continuations
+        continuations.removeAll()
+        pending.forEach { $0.resume(returning: Data([1])) }
+    }
+}
 
 @Suite("AssistantTimelineRowContentView")
 struct AssistantTimelineRowContentViewTests {
@@ -10,15 +43,143 @@ struct AssistantTimelineRowContentViewTests {
         let badge = SessionGridBadgeView()
         badge.sessionId = "session-1"
         badge.agentId = "agent-reviewer"
-        badge.agentIcon = "checkmark.shield"
+        badge.agentIcon = .symbol("checkmark.shield")
 
         let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
         #expect(imageView.image != nil)
         #expect(badge.intrinsicContentSize == CGSize(width: 18, height: 18))
 
-        badge.agentIcon = "not/a/symbol"
+        badge.agentIcon = .symbol("not/a/symbol")
         #expect(imageView.image != nil)
         #expect(badge.intrinsicContentSize == CGSize(width: 18, height: 18))
+    }
+
+    @MainActor
+    @Test func serverScopedCacheLoadsAgentWorkspaceAndSessionSwiftUISurfaces() async throws {
+        let gate = IconAssetFetchGateForTimeline()
+        let expectedImage = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
+            UIColor.systemPink.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        }
+        let cache = IconAssetCache(
+            fetch: { assetId in
+                await gate.record(assetId)
+                return await gate.wait()
+            },
+            decode: { _, _ in (expectedImage, NSObject()) }
+        )
+        let connection = ServerConnection()
+        connection.setIconAssetCacheForTesting(cache)
+        let agentAssetId = "ia_" + String(repeating: "A", count: 43)
+        let workspaceAssetId = "ia_" + String(repeating: "B", count: 43)
+        let sessionAssetId = "ia_" + String(repeating: "C", count: 43)
+        let workspace = Workspace(
+            id: "workspace-1",
+            name: "Workspace",
+            icon: .genmoji(assetId: workspaceAssetId, contentDescription: "Workspace glyph"),
+            createdAt: .now,
+            updatedAt: .now
+        )
+        let root = VStack {
+            AgentIconView(
+                value: .genmoji(assetId: agentAssetId, contentDescription: "Agent glyph"),
+                size: 24
+            )
+            WorkspaceRuntimeIcon(workspace: workspace, size: 24, frameSize: 32)
+            SessionIdentityIconView(
+                sessionId: "session-1",
+                agentId: "agent-1",
+                agentIcon: .genmoji(assetId: sessionAssetId, contentDescription: "Session glyph")
+            )
+        }
+        .frame(width: 160, height: 160)
+        .withServerScopedEnvironment(connection)
+        let controller = UIHostingController(rootView: root)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        controller.view.layoutIfNeeded()
+
+        for _ in 0..<100 {
+            if await gate.recordedIDs().count == 3 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let before = hierarchySnapshot(controller.view)
+        #expect(Set(await gate.recordedIDs()) == Set([agentAssetId, workspaceAssetId, sessionAssetId]))
+
+        await gate.open()
+        var after = before
+        for _ in 0..<100 {
+            await Task.yield()
+            controller.view.layoutIfNeeded()
+            after = hierarchySnapshot(controller.view)
+            if after != before { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(after != before)
+    }
+
+    @MainActor
+    @Test func fetchedGenmojiReplacesFallbackInChatUIKitBadge() async throws {
+        let expectedImage = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
+            UIColor.systemPink.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        }
+        let cache = IconAssetCache(
+            fetch: { _ in Data([1, 2, 3]) },
+            decode: { _, _ in (expectedImage, NSObject()) }
+        )
+        let assetId = "ia_" + String(repeating: "A", count: 43)
+        let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
+            text: "Loaded icon",
+            isStreaming: false,
+            canFork: false,
+            onFork: nil,
+            sessionId: "session-1",
+            agentId: "agent-1",
+            agentIcon: .genmoji(assetId: assetId, contentDescription: "Pink icon"),
+            iconAssetCache: cache
+        ))
+        let badge = try #require(timelineFirstView(ofType: SessionGridBadgeView.self, in: view))
+        let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
+        #expect(imageView.image !== expectedImage)
+
+        for _ in 0..<50 {
+            if imageView.image === expectedImage { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(imageView.image === expectedImage)
+    }
+
+    @MainActor
+    @Test func badgeCancelsStaleGenmojiLoadWhenReused() async throws {
+        let gate = IconAssetFetchGateForTimeline()
+        let cache = IconAssetCache(
+            fetch: { assetId in
+                await gate.record(assetId)
+                return await gate.wait()
+            },
+            decode: { _, _ in
+                let image = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).image { _ in }
+                return (image, NSObject())
+            }
+        )
+        let firstId = "ia_" + String(repeating: "A", count: 43)
+        let badge = SessionGridBadgeView()
+        badge.iconAssetCache = cache
+        badge.agentId = "agent-1"
+        badge.agentIcon = .genmoji(assetId: firstId, contentDescription: "First")
+        await Task.yield()
+
+        badge.agentIcon = .emoji("🧘")
+        await gate.open()
+        for _ in 0..<20 { await Task.yield() }
+
+        #expect(await gate.recordedIDs() == [firstId])
+        #expect(badge.currentGenmojiAssetIDForTesting == nil)
     }
 
     @MainActor

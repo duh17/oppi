@@ -59,6 +59,8 @@ const sessionOperationIds = [
   "putControlSessionAttachmentContent",
   "getControlSessionAttachment",
   "headControlSessionAttachment",
+  "getIconAsset",
+  "headIconAsset",
   "sendControlSessionCommand",
   "openControlSessionStream",
   "getWorkspaceSession",
@@ -135,6 +137,9 @@ const settingsOperationIds = [
   "getTheme",
   "uploadMetricKitPayload",
   "uploadChatMetrics",
+  "createIconAsset",
+  "getIconAsset",
+  "headIconAsset",
 ];
 
 describe("api route registry", () => {

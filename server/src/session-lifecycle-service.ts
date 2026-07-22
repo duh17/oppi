@@ -209,7 +209,7 @@ export class SessionLifecycleService {
     if (!defaultAgent) {
       throw new SessionLifecycleError("Default Agent is unavailable", 500);
     }
-    const defaultAgentIcon = defaultAgent.definition.icon?.trim();
+    const defaultAgentIcon = defaultAgent.definition.icon;
     const session = this.deps.storage.createSession(
       params.name?.trim() || "Oppi Control",
       params.model?.trim() || undefined,

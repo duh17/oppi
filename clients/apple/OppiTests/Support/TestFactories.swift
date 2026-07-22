@@ -93,7 +93,7 @@ func makeTestWorkspace(
     id: String = "w1",
     name: String = "Workspace",
     description: String? = nil,
-    icon: String? = nil,
+    icon: IconChoice = .defaultValue,
     systemPrompt: String? = nil,
     systemPromptMode: WorkspaceSystemPromptMode = .append,
     hostMount: String? = nil,

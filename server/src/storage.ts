@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createLogger } from "./logger.js";
 import { AgentDefinitionStore } from "./agent-definitions.js";
+import { iconAssetId } from "./icon-choice.js";
 import { AgentScheduleStore } from "./agent-schedules.js";
 import { openDatabase } from "./sqlite-compat.js";
 import { AuthStore } from "./storage/auth-store.js";
@@ -26,6 +27,11 @@ import type {
   WorkspaceSessionSummarySnapshot,
   WorkspaceStoppedTimeBucketSnapshot,
 } from "./storage/session-dao.js";
+import {
+  ICON_ASSET_ORPHAN_GRACE_MS,
+  IconAssetStore,
+  type IconAssetRecord,
+} from "./storage/icon-asset-store.js";
 import { SessionSqliteStore } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import type {
@@ -81,6 +87,7 @@ export class Storage {
   private readonly configStore: ConfigStore;
   private readonly authStore: AuthStore;
   private readonly sessionStore: SessionSqliteStore;
+  private readonly iconAssetStore: IconAssetStore;
   private readonly agentDefinitionStore: AgentDefinitionStore;
   private readonly scheduleStore: AgentScheduleStore;
   private readonly workspaceStore: WorkspaceStore;
@@ -89,11 +96,24 @@ export class Storage {
     this.configStore = new ConfigStore(dataDir ?? DEFAULT_DATA_DIR);
     this.authStore = new AuthStore(this.configStore);
     this.sessionStore = new SessionSqliteStore(this.configStore.getDataDir());
-    this.agentDefinitionStore = new AgentDefinitionStore(this.configStore.getDataDir());
+    this.iconAssetStore = new IconAssetStore(this.configStore.getDataDir());
+    this.agentDefinitionStore = new AgentDefinitionStore(
+      this.configStore.getDataDir(),
+      undefined,
+      (assetId) => this.iconAssetStore.has(assetId),
+    );
     this.scheduleStore = new AgentScheduleStore(this.configStore.getDataDir());
     this.cleanupServerReviewCommentState();
-    this.workspaceStore = new WorkspaceStore(this.configStore);
+    this.workspaceStore = new WorkspaceStore(this.configStore, (assetId) =>
+      this.iconAssetStore.has(assetId),
+    );
     this.migrateLegacyWorkspaceSessions();
+    // Reconcile only after Agent current/version history, workspaces, and
+    // immutable session launch snapshots are all available.
+    this.cleanupUnreferencedIconAssets(undefined, {
+      now: Date.now(),
+      graceMs: ICON_ASSET_ORPHAN_GRACE_MS,
+    });
   }
 
   /**
@@ -391,7 +411,10 @@ export class Storage {
   }
 
   deleteSession(sessionId: string): boolean {
-    return this.sessionStore.deleteSession(sessionId);
+    const previousAssetId = iconAssetId(this.sessionStore.getSession(sessionId)?.launch?.agentIcon);
+    const deleted = this.sessionStore.deleteSession(sessionId);
+    if (deleted && previousAssetId) this.cleanupUnreferencedIconAssets(new Set([previousAssetId]));
+    return deleted;
   }
 
   // ─── Workspaces ───
@@ -413,17 +436,62 @@ export class Storage {
   }
 
   updateWorkspace(workspaceId: string, updates: UpdateWorkspaceRequest): Workspace | undefined {
-    return this.workspaceStore.updateWorkspace(workspaceId, updates);
+    const previousAssetId = iconAssetId(this.workspaceStore.getWorkspace(workspaceId)?.icon);
+    const workspace = this.workspaceStore.updateWorkspace(workspaceId, updates);
+    if (workspace && previousAssetId) {
+      this.cleanupUnreferencedIconAssets(new Set([previousAssetId]));
+    }
+    return workspace;
   }
 
   deleteWorkspace(workspaceId: string): boolean {
-    return this.workspaceStore.deleteWorkspace(workspaceId);
+    const previousAssetId = iconAssetId(this.workspaceStore.getWorkspace(workspaceId)?.icon);
+    const deleted = this.workspaceStore.deleteWorkspace(workspaceId);
+    if (deleted && previousAssetId) this.cleanupUnreferencedIconAssets(new Set([previousAssetId]));
+    return deleted;
   }
 
   // ─── Agent definitions ───
 
   getAgentDefinitionStore(): AgentDefinitionStore {
     return this.agentDefinitionStore;
+  }
+
+  // ─── Icon assets ───
+
+  getIconAssetStore(): IconAssetStore {
+    return this.iconAssetStore;
+  }
+
+  putIconAsset(bytes: Buffer, declaredContentType: string | undefined): IconAssetRecord {
+    // Reclaim only grace-expired abandoned uploads before enforcing the hard
+    // quota. Fresh picker drafts retain their full save window.
+    this.cleanupUnreferencedIconAssets(undefined, {
+      now: Date.now(),
+      graceMs: ICON_ASSET_ORPHAN_GRACE_MS,
+    });
+    return this.iconAssetStore.put(bytes, declaredContentType);
+  }
+
+  cleanupUnreferencedIconAssets(
+    candidateAssetIds?: ReadonlySet<string>,
+    options: { now?: number; graceMs?: number } = {},
+  ): string[] {
+    const referenced = new Set<string>();
+    const add = (assetId: string | undefined): void => {
+      if (assetId) referenced.add(assetId);
+    };
+    for (const agent of this.agentDefinitionStore.listAgents({ includeArchived: true })) {
+      add(iconAssetId(agent.definition.icon));
+    }
+    for (const version of this.agentDefinitionStore.listAgentVersions()) {
+      add(iconAssetId(version.definition.icon));
+    }
+    for (const workspace of this.workspaceStore.listWorkspaces()) add(iconAssetId(workspace.icon));
+    for (const assetId of this.sessionStore.listReferencedIconAssetIds()) add(assetId);
+
+    return this.iconAssetStore.collectUnreferenced(referenced, candidateAssetIds, options)
+      .removedAssetIds;
   }
 
   // ─── Agent schedules ───

@@ -30,7 +30,7 @@ describe("buildSessionSummary", () => {
           source: "agent",
           agentId: "agent-reviewer",
           agentVersion: 4,
-          agentIcon: "checkmark.shield",
+          agentIcon: { kind: "symbol", name: "checkmark.shield" },
           status: "accepted",
           requestedAt: 100,
         },
@@ -39,7 +39,7 @@ describe("buildSessionSummary", () => {
 
     expect(summary).toMatchObject({
       agentId: "agent-reviewer",
-      agentIcon: "checkmark.shield",
+      agentIcon: { kind: "symbol", name: "checkmark.shield" },
     });
     expect(summary).not.toHaveProperty("agentVersion");
   });

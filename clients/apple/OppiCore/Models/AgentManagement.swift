@@ -105,7 +105,7 @@ struct AgentSessionDefaults: Codable, Sendable, Equatable {
 
 struct AgentDefinition: Codable, Sendable, Equatable {
     var name: String
-    var icon: String?
+    var icon: IconChoice
     var description: String?
     var instructions: AgentInstructions?
     var resources: AgentResources?
@@ -113,7 +113,7 @@ struct AgentDefinition: Codable, Sendable, Equatable {
 
     init(
         name: String,
-        icon: String? = nil,
+        icon: IconChoice = .defaultValue,
         description: String? = nil,
         instructions: AgentInstructions? = nil,
         resources: AgentResources? = nil,
@@ -126,12 +126,36 @@ struct AgentDefinition: Codable, Sendable, Equatable {
         self.resources = resources
         self.sessionDefaults = sessionDefaults
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, icon, description, instructions, resources, sessionDefaults
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        icon = try container.decodeIfPresent(IconChoice.self, forKey: .icon) ?? .defaultValue
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        instructions = try container.decodeIfPresent(AgentInstructions.self, forKey: .instructions)
+        resources = try container.decodeIfPresent(AgentResources.self, forKey: .resources)
+        sessionDefaults = try container.decodeIfPresent(AgentSessionDefaults.self, forKey: .sessionDefaults)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(icon, forKey: .icon)
+        try container.encodeIfPresent(description, forKey: .description)
+        try container.encodeIfPresent(instructions, forKey: .instructions)
+        try container.encodeIfPresent(resources, forKey: .resources)
+        try container.encodeIfPresent(sessionDefaults, forKey: .sessionDefaults)
+    }
 }
 
 struct AgentDefinitionSummary: Identifiable, Sendable, Equatable {
     let id: String
     var name: String
-    var icon: String?
+    var icon: IconChoice
     var description: String?
     var status: AgentDefinitionStatus
     var version: Int
@@ -143,7 +167,7 @@ struct AgentDefinitionSummary: Identifiable, Sendable, Equatable {
 struct StoredAgentDefinition: Identifiable, Sendable, Equatable {
     let id: String
     var name: String
-    var icon: String?
+    var icon: IconChoice
     var description: String?
     var status: AgentDefinitionStatus
     var version: Int
@@ -162,7 +186,7 @@ extension AgentDefinitionSummary: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
-        icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        icon = try c.decodeIfPresent(IconChoice.self, forKey: .icon) ?? .defaultValue
         description = try c.decodeIfPresent(String.self, forKey: .description)
         status = try c.decode(AgentDefinitionStatus.self, forKey: .status)
         version = try c.decode(Int.self, forKey: .version)
@@ -175,7 +199,7 @@ extension AgentDefinitionSummary: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
         try c.encode(name, forKey: .name)
-        try c.encodeIfPresent(icon, forKey: .icon)
+        try c.encode(icon, forKey: .icon)
         try c.encodeIfPresent(description, forKey: .description)
         try c.encode(status, forKey: .status)
         try c.encode(version, forKey: .version)
@@ -194,7 +218,7 @@ extension StoredAgentDefinition: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
-        icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        icon = try c.decodeIfPresent(IconChoice.self, forKey: .icon) ?? .defaultValue
         description = try c.decodeIfPresent(String.self, forKey: .description)
         status = try c.decode(AgentDefinitionStatus.self, forKey: .status)
         version = try c.decode(Int.self, forKey: .version)
@@ -208,7 +232,7 @@ extension StoredAgentDefinition: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
         try c.encode(name, forKey: .name)
-        try c.encodeIfPresent(icon, forKey: .icon)
+        try c.encode(icon, forKey: .icon)
         try c.encodeIfPresent(description, forKey: .description)
         try c.encode(status, forKey: .status)
         try c.encode(version, forKey: .version)

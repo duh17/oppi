@@ -15,6 +15,7 @@ final class ServerConnection {
 
     // Networking
     private(set) var apiClient: APIClient?
+    private(set) var iconAssetCache: IconAssetCache?
     private(set) var wsClient: WebSocketClient?
     private var irohManager: IrohConnectionManager?
     private var irohBackgroundPreparationTask: Task<Void, Never>?
@@ -611,7 +612,7 @@ final class ServerConnection {
                 tlsCertFingerprint: tlsCertFingerprint
             )
         )
-        self.apiClient = apiClient
+        installAPIClient(apiClient)
         self.wsClient = WebSocketClient(
             credentials: credentials,
             preferredEndpoint: selection,
@@ -651,6 +652,12 @@ final class ServerConnection {
         self.streamCapabilitiesRefreshFailed = false
         self.clearFocusedSessionStreamEndpoint()
         self.transportPath = transportPath
+    }
+
+    private func installAPIClient(_ client: APIClient?) {
+        apiClient = client
+        iconAssetCache?.removeAll()
+        iconAssetCache = client.map(IconAssetCache.init(apiClient:))
     }
 
     private func makeClientEnvironment(
@@ -835,9 +842,9 @@ final class ServerConnection {
         }
 
         if previousSelection?.baseURL != selection.baseURL {
-            apiClient = APIClient(
+            installAPIClient(APIClient(
                 environment: makeClientEnvironment(selection: selection, credentials: credentials)
-            )
+            ))
             if appEventStreamAvailable {
                 disconnectAppEventStream()
                 startAppEventStreamIfAvailable()
@@ -1529,7 +1536,7 @@ final class ServerConnection {
         sender.advanceTransportGeneration()
         disconnectStream()
         disconnectAppEventStream()
-        apiClient = nil
+        installAPIClient(nil)
         wsClient = nil
         endpointSelection = nil
         irohManager = nil
@@ -2303,7 +2310,11 @@ final class ServerConnection {
     }
 
     func setAPIClientForTesting(_ client: APIClient?) {
-        apiClient = client
+        installAPIClient(client)
+    }
+
+    func setIconAssetCacheForTesting(_ cache: IconAssetCache?) {
+        iconAssetCache = cache
     }
 
     func prepareFocusedSessionStreamEndpointForTesting(sessionId: String, workspaceId: String) {

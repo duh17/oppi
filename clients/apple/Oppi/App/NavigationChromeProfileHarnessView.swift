@@ -454,7 +454,7 @@ private struct NavigationChromeChatFilesReproHarnessView: View {
         id: "nav-chrome-repro-workspace",
         name: "e2e-workspace",
         description: nil,
-        icon: "square.grid.2x2",
+        icon: .symbol("square.grid.2x2"),
         systemPrompt: nil,
         hostMount: "/tmp/oppi-repro",
         defaultModel: nil,

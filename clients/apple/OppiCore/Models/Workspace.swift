@@ -22,7 +22,7 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     let id: String
     var name: String
     var description: String?
-    var icon: String?           // SF Symbol name or emoji
+    var icon: IconChoice = .defaultValue
 
     // Context
     var systemPrompt: String?
@@ -133,7 +133,7 @@ extension Workspace: Codable {
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         description = try c.decodeIfPresent(String.self, forKey: .description)
-        icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        icon = try c.decodeIfPresent(IconChoice.self, forKey: .icon) ?? .defaultValue
         hostMount = try c.decodeIfPresent(String.self, forKey: .hostMount)
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
@@ -155,7 +155,7 @@ extension Workspace: Codable {
         try c.encode(id, forKey: .id)
         try c.encode(name, forKey: .name)
         try c.encodeIfPresent(description, forKey: .description)
-        try c.encodeIfPresent(icon, forKey: .icon)
+        try c.encode(icon, forKey: .icon)
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
         try c.encode(systemPromptMode, forKey: .systemPromptMode)
         try c.encodeIfPresent(hostMount, forKey: .hostMount)

@@ -20,7 +20,7 @@ enum AssistantAvatarRenderer {
             return renderEmoji(char, size: size)
         case .genmoji(let data):
             if #available(iOS 18.0, *),
-               let genmojiImage = renderGenmoji(data: data, size: size) {
+               let genmojiImage = renderLocalAssistantGenmoji(data: data, size: size) {
                 return genmojiImage
             }
             return renderText("π", size: size)
@@ -128,7 +128,10 @@ enum AssistantAvatarRenderer {
     }
 
     @available(iOS 18.0, *)
-    private static func renderGenmoji(data: Data, size: CGFloat) -> UIImage? {
+    private static func renderLocalAssistantGenmoji(data: Data, size: CGFloat) -> UIImage? {
+        // These bytes originate from the local official emoji keyboard picker,
+        // which supplied NSAdaptiveImageGlyph.imageContent. Remote Agent and
+        // workspace assets use IconAssetCache's failable ImageIO path instead.
         let glyph = NSAdaptiveImageGlyph(imageContent: data)
 
         // Render via UITextView which has native Genmoji support
@@ -190,11 +193,26 @@ final class SessionGridBadgeView: UIView {
         didSet { updateIfNeeded() }
     }
 
-    var agentIcon: String? {
+    var agentIcon: IconChoice? {
         didSet { updateIfNeeded() }
     }
 
+    var iconAssetCache: IconAssetCache? {
+        didSet {
+            guard iconAssetCache !== oldValue else { return }
+            loadTask?.cancel()
+            lastCacheKey = nil
+            updateIfNeeded()
+        }
+    }
+
     private var lastCacheKey: String?
+    private var loadTask: Task<Void, Never>?
+    private var currentGenmojiAssetID: String?
+
+    #if DEBUG
+        var currentGenmojiAssetIDForTesting: String? { currentGenmojiAssetID }
+    #endif
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -226,6 +244,19 @@ final class SessionGridBadgeView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Not supported") }
 
+    deinit {
+        loadTask?.cancel()
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    func prepareForReuse() {
+        loadTask?.cancel()
+        loadTask = nil
+        lastCacheKey = nil
+        currentGenmojiAssetID = nil
+        imageView.image = nil
+    }
+
     override var intrinsicContentSize: CGSize {
         CGSize(width: 18, height: 18)
     }
@@ -252,19 +283,46 @@ final class SessionGridBadgeView: UIView {
         let cacheKey = "\(sessionId):\(themeId):\(identity)"
         guard cacheKey != lastCacheKey else { return }
         lastCacheKey = cacheKey
+        loadTask?.cancel()
+        loadTask = nil
+        currentGenmojiAssetID = nil
 
         if let cached = Self.imageCache.object(forKey: cacheKey as NSString) {
             imageView.image = cached
             return
         }
 
-        let image = switch presentation {
+        switch presentation {
+        case .agent(.genmoji(let assetId, _)):
+            imageView.image = AgentIconRenderer.render(value: .defaultValue, size: 36)
+            guard let iconAssetCache else { return }
+            currentGenmojiAssetID = assetId
+            loadTask = Task { @MainActor [weak self, iconAssetCache] in
+                guard let image = try? await iconAssetCache.image(assetId: assetId, size: 36),
+                      !Task.isCancelled,
+                      let self,
+                      self.lastCacheKey == cacheKey,
+                      self.currentGenmojiAssetID == assetId else {
+                    return
+                }
+                Self.imageCache.setObject(image, forKey: cacheKey as NSString)
+                self.imageView.image = image
+                self.loadTask = nil
+            }
+
         case .agent:
-            AgentIconRenderer.render(value: agentIcon, size: 36)
+            let image = AgentIconRenderer.render(value: agentIcon, size: 36)
+            Self.imageCache.setObject(image, forKey: cacheKey as NSString)
+            imageView.image = image
+
         case .globalAvatar:
-            AssistantAvatarRenderer.render(avatar: avatar, sessionId: sessionId, size: 36)
+            let image = AssistantAvatarRenderer.render(
+                avatar: avatar,
+                sessionId: sessionId,
+                size: 36
+            )
+            Self.imageCache.setObject(image, forKey: cacheKey as NSString)
+            imageView.image = image
         }
-        Self.imageCache.setObject(image, forKey: cacheKey as NSString)
-        imageView.image = image
     }
 }

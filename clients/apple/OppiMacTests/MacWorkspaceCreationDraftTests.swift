@@ -45,7 +45,7 @@ struct MacWorkspaceCreationDraftTests {
             id: "ws-1",
             name: "Oppi",
             description: "Main repo",
-            icon: nil,
+            icon: .defaultValue,
             systemPrompt: nil,
             hostMount: "/Users/chenda/workspace/oppi",
             defaultModel: "openai/gpt-5.5",

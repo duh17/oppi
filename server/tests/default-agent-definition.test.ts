@@ -42,7 +42,7 @@ describe("shipped Default Agent definition", () => {
       DEFAULT_AGENT_ID,
       {
         name: "Home Agent",
-        icon: "🏠",
+        icon: { kind: "emoji", value: "🏠" },
         description: "Customized description",
         instructions: { mode: "append", text: "Keep replies short." },
         sessionDefaults: { model: "openai-codex/gpt-5.5", thinkingLevel: "high" },
@@ -75,7 +75,7 @@ describe("shipped Default Agent definition", () => {
         version: 3,
         definition: {
           name: "Home Agent",
-          icon: "🏠",
+          icon: { kind: "emoji", value: "🏠" },
           description: "Customized description",
           instructions: { mode: "append", text: "Keep replies short." },
           resources: { noContextFiles: true },

@@ -1,5 +1,8 @@
 import Foundation
+import ImageIO
 import Testing
+import UIKit
+import UniformTypeIdentifiers
 @testable import Oppi
 
 // swiftlint:disable force_unwrapping non_optional_string_data_conversion
@@ -54,14 +57,14 @@ struct AgentScheduleAPIClientTests {
             #expect(request.httpMethod == "GET")
             #expect(request.url?.path == "/agents")
             return mockResponse(json: """
-            {"agents":[{"id":"agent-1","name":"Sensei","icon":"🧘","status":"active","version":2,"createdAt":1000,"updatedAt":2000}]}
+            {"agents":[{"id":"agent-1","name":"Sensei","icon":{"kind":"emoji","value":"🧘"},"status":"active","version":2,"createdAt":1000,"updatedAt":2000}]}
             """)
         }
 
         let agents = try await client.listAgents()
 
         #expect(agents.count == 1)
-        #expect(agents.first?.icon == "🧘")
+        #expect(agents.first?.icon == .emoji("🧘"))
     }
 
     @Test func agentCreatePostsDefinitionAndDecodesStoredAgent() async throws {
@@ -73,10 +76,11 @@ struct AgentScheduleAPIClientTests {
             #expect(request.url?.path == "/agents")
             let body = try JSONDecoder().decode(AgentDefinition.self, from: requestBodyData(request))
             #expect(body.name == "Reviewer")
+            #expect(body.icon == .defaultValue)
             #expect(body.instructions?.mode == .append)
             #expect(body.sessionDefaults?.thinkingLevel == .medium)
             return mockResponse(status: 201, json: """
-            {"agent":{"id":"agent-1","name":"Reviewer","icon":"🧘","status":"active","version":1,"definition":{"name":"Reviewer","icon":"🧘","instructions":{"mode":"append","text":"Review changes."},"sessionDefaults":{"thinkingLevel":"medium"}},"createdAt":1000,"updatedAt":1000}}
+            {"agent":{"id":"agent-1","name":"Reviewer","icon":{"kind":"emoji","value":"🧘"},"status":"active","version":1,"definition":{"name":"Reviewer","icon":{"kind":"emoji","value":"🧘"},"instructions":{"mode":"append","text":"Review changes."},"sessionDefaults":{"thinkingLevel":"medium"}},"createdAt":1000,"updatedAt":1000}}
             """)
         }
 
@@ -89,8 +93,8 @@ struct AgentScheduleAPIClientTests {
         )
 
         #expect(agent.id == "agent-1")
-        #expect(agent.icon == "🧘")
-        #expect(agent.definition.icon == "🧘")
+        #expect(agent.icon == .emoji("🧘"))
+        #expect(agent.definition.icon == .emoji("🧘"))
         #expect(agent.definition.instructions?.text == "Review changes.")
         #expect(agent.createdAt == Date(timeIntervalSince1970: 1))
     }
@@ -104,7 +108,8 @@ struct AgentScheduleAPIClientTests {
             #expect(request.url?.path == "/agents/agent-1")
             let json = try JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
             #expect(json?["name"] as? String == "Reviewer")
-            #expect(json?["icon"] is NSNull)
+            let icon = json?["icon"] as? [String: Any]
+            #expect(icon?["kind"] as? String == "default")
             #expect(json?["description"] is NSNull)
             #expect(json?["instructions"] is NSNull)
             #expect(json?["resources"] is NSNull)
@@ -127,7 +132,7 @@ struct AgentScheduleAPIClientTests {
         let client = makeClient()
         defer { cleanup() }
 
-        var expectedIcon: String? = "🧘"
+        var expectedKind = "emoji"
         var requestCount = 0
         TestURLProtocol.handler = { request in
             requestCount += 1
@@ -137,21 +142,65 @@ struct AgentScheduleAPIClientTests {
                 JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
             )
             #expect(Set(json.keys) == ["icon"])
-            if let expectedIcon {
-                #expect(json["icon"] as? String == expectedIcon)
-            } else {
-                #expect(json["icon"] is NSNull)
+            let icon = try #require(json["icon"] as? [String: Any])
+            #expect(icon["kind"] as? String == expectedKind)
+            if expectedKind == "emoji" {
+                #expect(icon["value"] as? String == "🧘")
             }
             return mockResponse(json: """
             {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":\(requestCount + 1),"definition":{"name":"Reviewer"},"createdAt":1000,"updatedAt":2000}}
             """)
         }
 
-        _ = try await client.updateAgentIcon(agentId: "agent-1", icon: "🧘")
-        expectedIcon = nil
-        _ = try await client.updateAgentIcon(agentId: "agent-1", icon: nil)
+        _ = try await client.updateAgentIcon(agentId: "agent-1", icon: .emoji("🧘"))
+        expectedKind = "default"
+        _ = try await client.updateAgentIcon(agentId: "agent-1", icon: .defaultValue)
 
         #expect(requestCount == 2)
+    }
+
+    @Test func iconAssetUploadSendsAuthenticatedDeclaredHEIFBody() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        let body = Data([0, 1, 2, 3])
+        let assetId = "ia_" + String(repeating: "A", count: 43)
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/icon-assets")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
+            #expect(request.value(forHTTPHeaderField: "Content-Type") == "image/heic")
+            #expect(requestBodyData(request) == body)
+            return mockResponse(status: 201, json: """
+            {"asset":{"assetId":"\(assetId)","sha256":"abc","sizeBytes":4,"contentType":"image/heic","createdAt":1000}}
+            """)
+        }
+
+        let asset = try await client.uploadIconAsset(data: body, contentType: "image/heic")
+
+        #expect(asset.assetId == assetId)
+        #expect(asset.sizeBytes == body.count)
+    }
+
+    @Test func iconAssetFetchUsesAuthenticatedOpaqueAssetRoute() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        let assetId = "ia_" + String(repeating: "A", count: 43)
+        let expected = Data([4, 5, 6])
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/icon-assets/\(assetId)")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
+            return (expected, HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "image/heic"]
+            )!)
+        }
+
+        #expect(try await client.fetchIconAsset(assetId: assetId) == expected)
     }
 
     @Test func scheduleDetailDecodesFullPromptAndAction() async throws {
@@ -299,9 +348,408 @@ struct AgentScheduleAPIClientTests {
     }
 }
 
+private actor IconAssetFetchCounter {
+    private var count = 0
+
+    func increment() {
+        count += 1
+    }
+
+    func value() -> Int {
+        count
+    }
+}
+
+private actor IconAssetFetchGate {
+    private var continuations: [CheckedContinuation<Data, Never>] = []
+
+    func wait() async -> Data {
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func open(with data: Data) {
+        let pending = continuations
+        continuations.removeAll()
+        pending.forEach { $0.resume(returning: data) }
+    }
+}
+
+private actor IconAssetCompletionState {
+    private(set) var wasCancelled = false
+
+    func markCancelled() {
+        wasCancelled = true
+    }
+}
+
+private actor IconAssetResultGate {
+    private var continuations: [String: CheckedContinuation<Data, Error>] = [:]
+    private var requested: [String] = []
+
+    func wait(for assetId: String) async throws -> Data {
+        requested.append(assetId)
+        return try await withCheckedThrowingContinuation { continuation in
+            continuations[assetId] = continuation
+        }
+    }
+
+    func requestedIDs() -> [String] {
+        requested
+    }
+
+    func succeed(_ assetId: String, data: Data) {
+        continuations.removeValue(forKey: assetId)?.resume(returning: data)
+    }
+
+    func fail(_ assetId: String) {
+        continuations.removeValue(forKey: assetId)?.resume(
+            throwing: APIError.server(status: 500, message: "injected failure")
+        )
+    }
+}
+
+private enum HEIFFixtureError: Error {
+    case context
+    case destination
+    case finalize
+}
+
+/// Runtime-generated with Core Graphics + ImageIO so production decoder tests
+/// have deterministic provenance and do not embed an opaque binary fixture.
+private func imageIOHEIFFixture(
+    width: Int,
+    height: Int,
+    visible: Bool
+) throws -> Data {
+    let bytesPerRow = width * 4
+    var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
+    guard let context = pixels.withUnsafeMutableBytes({ storage in
+        CGContext(
+            data: storage.baseAddress,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+    }) else { throw HEIFFixtureError.context }
+    if visible {
+        context.setFillColor(UIColor.systemPink.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    }
+    guard let image = context.makeImage() else { throw HEIFFixtureError.context }
+
+    let output = NSMutableData()
+    guard let destination = CGImageDestinationCreateWithData(
+        output,
+        UTType.heic.identifier as CFString,
+        1,
+        nil
+    ) else { throw HEIFFixtureError.destination }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else { throw HEIFFixtureError.finalize }
+    return output as Data
+}
+
+@Suite("Icon asset cache")
+@MainActor
+struct IconAssetCacheTests {
+    private func decodedImage() -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        }
+    }
+
+    @Test func serverConnectionOwnsACacheForItsConfiguredAPIClient() {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TestURLProtocol.self]
+        let client = APIClient(
+            baseURL: URL(string: "http://localhost:7749")!,
+            token: "sk_test",
+            configuration: configuration
+        )
+        let connection = ServerConnection()
+
+        connection.setAPIClientForTesting(client)
+
+        #expect(connection.iconAssetCache != nil)
+    }
+
+    @Test func decodedCacheCostUsesRasterBytesAndSaturatesOverflow() {
+        #expect(IconAssetCache.decodedByteCost(bytesPerRow: 256, height: 128) == 32_768)
+        #expect(IconAssetCache.decodedByteCost(bytesPerRow: .max, height: 2) == .max)
+        #expect(IconAssetCache.decodedByteCost(bytesPerRow: 0, height: 128) == 0)
+    }
+
+    @Test func reusesDecodedAssetForTheSameIDAndSize() async throws {
+        let counter = IconAssetFetchCounter()
+        let cache = IconAssetCache(
+            fetch: { _ in
+                await counter.increment()
+                return Data([1, 2, 3])
+            },
+            decode: { _, _ in (decodedImage(), NSObject()) }
+        )
+
+        let first = try await cache.image(assetId: "ia_test", size: 32)
+        let second = try await cache.image(assetId: "ia_test", size: 32)
+
+        #expect(await counter.value() == 1)
+        #expect(first === second)
+    }
+
+    @Test func cancellationStopsAnAbandonedFetchBeforeDecode() async {
+        let cache = IconAssetCache(
+            fetch: { _ in
+                try await Task.sleep(for: .seconds(30))
+                return Data([1])
+            },
+            decode: { _, _ in
+                Issue.record("Cancelled fetch must not decode")
+                return (decodedImage(), NSObject())
+            }
+        )
+
+        let task = Task { try await cache.image(assetId: "ia_slow", size: 32) }
+        await Task.yield()
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            Issue.record("Expected cancellation")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
+
+    @Test func concurrentMissesCoalesceAndOneConsumerCanCancelIndependently() async throws {
+        let counter = IconAssetFetchCounter()
+        let gate = IconAssetFetchGate()
+        let firstCompletion = IconAssetCompletionState()
+        let cache = IconAssetCache(
+            fetch: { _ in
+                await counter.increment()
+                return await gate.wait()
+            },
+            decode: { _, _ in (decodedImage(), NSObject()) }
+        )
+
+        let first = Task {
+            do {
+                _ = try await cache.image(assetId: "ia_shared", size: 32)
+            } catch is CancellationError {
+                await firstCompletion.markCancelled()
+            }
+        }
+        let second = Task { try await cache.image(assetId: "ia_shared", size: 32) }
+        for _ in 0..<20 {
+            if await counter.value() > 0 { break }
+            await Task.yield()
+        }
+
+        #expect(await counter.value() == 1)
+        first.cancel()
+        for _ in 0..<20 {
+            if await firstCompletion.wasCancelled { break }
+            await Task.yield()
+        }
+        #expect(await firstCompletion.wasCancelled)
+
+        await gate.open(with: Data([1, 2, 3]))
+        _ = try await second.value
+        _ = await first.result
+        #expect(await counter.value() == 1)
+    }
+
+    @Test func rapidAssetReplacementCannotClearTheNewerResultWithAStaleFailure() async throws {
+        let gate = IconAssetResultGate()
+        let firstID = "ia_" + String(repeating: "A", count: 43)
+        let secondID = "ia_" + String(repeating: "B", count: 43)
+        let secondImage = decodedImage()
+        let cache = IconAssetCache(
+            fetch: { try await gate.wait(for: $0) },
+            decode: { data, _ in
+                #expect(data == Data([2]))
+                return (secondImage, NSObject())
+            }
+        )
+        let firstIdentity = IconAssetViewLoadIdentity(
+            key: IconAssetLoadKey(assetId: firstID, cache: cache),
+            requestID: UUID()
+        )
+        var currentIdentity = firstIdentity
+        var loadedImage: UIImage?
+
+        let first = Task { @MainActor in
+            await loadIconAssetForView(
+                assetId: firstID,
+                size: 32,
+                cache: cache,
+                identity: firstIdentity,
+                currentIdentity: { currentIdentity },
+                assign: { loadedImage = $0 }
+            )
+        }
+        for _ in 0..<50 where await gate.requestedIDs().isEmpty { await Task.yield() }
+
+        let secondIdentity = IconAssetViewLoadIdentity(
+            key: IconAssetLoadKey(assetId: secondID, cache: cache),
+            requestID: UUID()
+        )
+        currentIdentity = secondIdentity
+        let second = Task { @MainActor in
+            await loadIconAssetForView(
+                assetId: secondID,
+                size: 32,
+                cache: cache,
+                identity: secondIdentity,
+                currentIdentity: { currentIdentity },
+                assign: { loadedImage = $0 }
+            )
+        }
+        for _ in 0..<50 where !(await gate.requestedIDs()).contains(secondID) { await Task.yield() }
+        await gate.succeed(secondID, data: Data([2]))
+        await second.value
+        #expect(loadedImage === secondImage)
+
+        await gate.fail(firstID)
+        await first.value
+        #expect(loadedImage === secondImage)
+    }
+
+    @Test func serverCacheReplacementCannotAssignTheOldCachesResult() async throws {
+        let assetID = "ia_" + String(repeating: "C", count: 43)
+        let oldGate = IconAssetResultGate()
+        let newGate = IconAssetResultGate()
+        let oldImage = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).image { _ in }
+        let newImage = decodedImage()
+        let oldCache = IconAssetCache(
+            fetch: { try await oldGate.wait(for: $0) },
+            decode: { _, _ in (oldImage, NSObject()) }
+        )
+        let newCache = IconAssetCache(
+            fetch: { try await newGate.wait(for: $0) },
+            decode: { _, _ in (newImage, NSObject()) }
+        )
+        let oldIdentity = IconAssetViewLoadIdentity(
+            key: IconAssetLoadKey(assetId: assetID, cache: oldCache),
+            requestID: UUID()
+        )
+        var currentIdentity = oldIdentity
+        var loadedImage: UIImage?
+
+        let oldRequest = Task { @MainActor in
+            await loadIconAssetForView(
+                assetId: assetID,
+                size: 32,
+                cache: oldCache,
+                identity: oldIdentity,
+                currentIdentity: { currentIdentity },
+                assign: { loadedImage = $0 }
+            )
+        }
+        for _ in 0..<50 where await oldGate.requestedIDs().isEmpty { await Task.yield() }
+
+        let newIdentity = IconAssetViewLoadIdentity(
+            key: IconAssetLoadKey(assetId: assetID, cache: newCache),
+            requestID: UUID()
+        )
+        currentIdentity = newIdentity
+        let newRequest = Task { @MainActor in
+            await loadIconAssetForView(
+                assetId: assetID,
+                size: 32,
+                cache: newCache,
+                identity: newIdentity,
+                currentIdentity: { currentIdentity },
+                assign: { loadedImage = $0 }
+            )
+        }
+        for _ in 0..<50 where await newGate.requestedIDs().isEmpty { await Task.yield() }
+        await newGate.succeed(assetID, data: Data([2]))
+        await newRequest.value
+        #expect(loadedImage === newImage)
+
+        await oldGate.succeed(assetID, data: Data([1]))
+        await oldRequest.value
+        #expect(loadedImage === newImage)
+        #expect(loadedImage !== oldImage)
+    }
+
+    @Test func productionRemoteDecoderAcceptsVisibleGeneratedHEIF() throws {
+        let data = try imageIOHEIFFixture(width: 64, height: 64, visible: true)
+        let decoded = try IconAssetCache.decodeRemoteHEIF(data: data, size: 32)
+
+        #expect(decoded.image.size.width > 0)
+        #expect(decoded.image.size.height > 0)
+    }
+
+    @Test func productionRemoteDecoderRejectsTransparentBlankHEIF() throws {
+        let data = try imageIOHEIFFixture(width: 64, height: 64, visible: false)
+
+        #expect(throws: Error.self) {
+            _ = try IconAssetCache.decodeRemoteHEIF(data: data, size: 32)
+        }
+    }
+
+    @Test func productionRemoteDecoderRejectsInvalidRenderSizes() throws {
+        let data = try imageIOHEIFFixture(width: 64, height: 64, visible: true)
+
+        for size in [CGFloat.zero, -1, 513, .infinity, .nan] {
+            #expect(throws: Error.self) {
+                _ = try IconAssetCache.decodeRemoteHEIF(data: data, size: size)
+            }
+        }
+    }
+
+    @Test func productionRemoteDecoderRejectsOversizedDimensions() throws {
+        let data = try imageIOHEIFFixture(width: 4_097, height: 1, visible: true)
+
+        #expect(throws: Error.self) {
+            _ = try IconAssetCache.decodeRemoteHEIF(data: data, size: 32)
+        }
+    }
+
+    @Test func productionRemoteDecoderRejectsMalformedAndTruncatedHEIF() throws {
+        let valid = try imageIOHEIFFixture(width: 64, height: 64, visible: true)
+        for data in [Data([1, 2, 3, 4]), Data(valid.prefix(valid.count / 2))] {
+            #expect(throws: Error.self) {
+                _ = try IconAssetCache.decodeRemoteHEIF(data: data, size: 32)
+            }
+        }
+    }
+
+    @Test func emptyAndOversizedResponsesFailBeforeDecode() async {
+        for data in [Data(), Data(repeating: 0, count: 2 * 1024 * 1024 + 1)] {
+            let cache = IconAssetCache(
+                fetch: { _ in data },
+                decode: { _, _ in
+                    Issue.record("Invalid bytes must not decode")
+                    return (decodedImage(), NSObject())
+                }
+            )
+
+            do {
+                _ = try await cache.image(assetId: "ia_invalid", size: 32)
+                Issue.record("Expected invalid asset data to fail")
+            } catch let APIError.server(status, _) {
+                #expect(status == 422)
+            } catch {
+                Issue.record("Expected APIError.server, got \(error)")
+            }
+        }
+    }
+}
+
 @Suite("Agent icon presentation")
 struct AgentIconPresentationTests {
-    private func storedAgent(icon: String?, version: Int = 2) -> StoredAgentDefinition {
+    private func storedAgent(icon: IconChoice = .defaultValue, version: Int = 2) -> StoredAgentDefinition {
         StoredAgentDefinition(
             id: "agent-1",
             name: "Reviewer",
@@ -327,34 +775,34 @@ struct AgentIconPresentationTests {
 
     @MainActor
     @Test func pickerPreviewsDraftAndSavesSuccessfulSelection() async {
-        let model = AgentIconPickerModel(savedValue: "🧘")
+        let model = AgentIconPickerModel(savedValue: .emoji("🧘"))
         model.selectSuggestion("checkmark.shield")
 
-        #expect(model.previewValue == "checkmark.shield")
+        #expect(model.previewValue == .symbol("checkmark.shield"))
         #expect(model.previewContent == .symbol("checkmark.shield"))
 
         let result = await model.saveCurrent { icon in
-            #expect(icon == "checkmark.shield")
+            #expect(icon == .symbol("checkmark.shield"))
             return storedAgent(icon: icon, version: 3)
         }
 
         #expect(result?.version == 3)
-        #expect(model.savedValue == "checkmark.shield")
+        #expect(model.savedValue == .symbol("checkmark.shield"))
         #expect(model.draft == "checkmark.shield")
         #expect(model.errorPresentation == nil)
     }
 
     @MainActor
     @Test func pickerClearUsesDefaultAndResetsPreview() async {
-        let model = AgentIconPickerModel(savedValue: "checkmark.shield")
+        let model = AgentIconPickerModel(savedValue: .symbol("checkmark.shield"))
 
         let result = await model.useDefault { icon in
-            #expect(icon == nil)
-            return storedAgent(icon: nil, version: 3)
+            #expect(icon == .defaultValue)
+            return storedAgent(icon: .defaultValue, version: 3)
         }
 
-        #expect(result?.definition.icon == nil)
-        #expect(model.savedValue == nil)
+        #expect(result?.definition.icon == .defaultValue)
+        #expect(model.savedValue == .defaultValue)
         #expect(model.previewValue == nil)
         #expect(model.previewContent == .fallback)
         #expect(!model.canUseDefault)
@@ -362,10 +810,10 @@ struct AgentIconPresentationTests {
 
     @MainActor
     @Test func pickerShowsLiveValidationWithoutRequestingAccessibilityFocusDuringDraftEdits() {
-        let model = AgentIconPickerModel(savedValue: "🧘")
+        let model = AgentIconPickerModel(savedValue: .emoji("🧘"))
         model.draft = "not-a-real-symbol"
 
-        #expect(model.previewValue == "not-a-real-symbol")
+        #expect(model.previewValue == .symbol("not-a-real-symbol"))
         #expect(model.previewContent == .fallback)
         guard case .validation(let message) = model.errorPresentation else {
             Issue.record("Expected a validation error presentation")
@@ -382,12 +830,12 @@ struct AgentIconPresentationTests {
 
     @MainActor
     @Test func pickerRequestsValidationFocusOnlyAfterExplicitSaveAttempt() async {
-        let model = AgentIconPickerModel(savedValue: "🧘")
+        let model = AgentIconPickerModel(savedValue: .emoji("🧘"))
         model.draft = "not-a-real-symbol"
 
         let result = await model.saveCurrent { _ in
             Issue.record("Invalid drafts must not reach the save operation")
-            return storedAgent(icon: nil)
+            return storedAgent()
         }
 
         #expect(result == nil)
@@ -404,7 +852,7 @@ struct AgentIconPresentationTests {
             var errorDescription: String? { "network unavailable" }
         }
 
-        let model = AgentIconPickerModel(savedValue: "🧘")
+        let model = AgentIconPickerModel(savedValue: .emoji("🧘"))
         model.selectSuggestion("checkmark.shield")
 
         let failed = await model.saveCurrent { _ in
@@ -446,36 +894,32 @@ struct AgentIconPresentationTests {
     }
 
     @Test func ordinaryAndAgentSessionIdentityUseTheCorrectPresentation() {
-        #expect(AssistantIdentityPresentation.resolve(agentId: nil, agentIcon: "🧘") == .globalAvatar)
-        #expect(AssistantIdentityPresentation.resolve(agentId: "", agentIcon: "🧘") == .globalAvatar)
-        #expect(AssistantIdentityPresentation.resolve(agentId: "agent-1", agentIcon: "🧘") == .agent(.text("🧘")))
-        #expect(AssistantIdentityPresentation.resolve(agentId: "agent-1", agentIcon: "person.crop.circle") == .agent(.symbol("person.crop.circle")))
-        #expect(AssistantIdentityPresentation.resolve(agentId: "agent-1", agentIcon: "not-a-real-symbol") == .agent(.fallback))
+        #expect(AssistantIdentityPresentation.resolve(agentId: nil, agentIcon: .emoji("🧘")) == .globalAvatar)
+        #expect(AssistantIdentityPresentation.resolve(agentId: "", agentIcon: .emoji("🧘")) == .globalAvatar)
+        #expect(AssistantIdentityPresentation.resolve(agentId: "agent-1", agentIcon: .emoji("🧘")) == .agent(.text("🧘")))
+        #expect(AssistantIdentityPresentation.resolve(agentId: "agent-1", agentIcon: .symbol("person.crop.circle")) == .agent(.symbol("person.crop.circle")))
+        #expect(AssistantIdentityPresentation.resolve(agentId: "agent-1", agentIcon: .symbol("not-a-real-symbol")) == .agent(.fallback))
     }
 
     @Test func resolvesSupportedIconsAndFallbacks() {
-        #expect(AgentIconContent.resolve("🧘") == .text("🧘"))
-        #expect(AgentIconContent.resolve("👨‍👩‍👧‍👦") == .text("👨‍👩‍👧‍👦"))
-        #expect(AgentIconContent.resolve("👋🏽") == .text("👋🏽"))
-        #expect(AgentIconContent.resolve("🇺🇸") == .text("🇺🇸"))
-        #expect(AgentIconContent.resolve("1️⃣") == .text("1️⃣"))
-        #expect(AgentIconContent.resolve("person.crop.circle") == .symbol("person.crop.circle"))
+        let assetId = "ia_" + String(repeating: "A", count: 43)
+
+        #expect(AgentIconContent.resolve(.emoji("🧘")) == .text("🧘"))
+        #expect(AgentIconContent.resolve(.emoji("👨‍👩‍👧‍👦")) == .text("👨‍👩‍👧‍👦"))
+        #expect(AgentIconContent.resolve(.emoji("👋🏽")) == .text("👋🏽"))
+        #expect(AgentIconContent.resolve(.emoji("🇺🇸")) == .text("🇺🇸"))
+        #expect(AgentIconContent.resolve(.emoji("1️⃣")) == .text("1️⃣"))
+        #expect(AgentIconContent.resolve(.symbol("person.crop.circle")) == .symbol("person.crop.circle"))
         #expect(AgentIconContent.resolve(nil) == .fallback)
-        #expect(AgentIconContent.resolve("   ") == .fallback)
-        #expect(AgentIconContent.resolve("not-a-real-symbol") == .fallback)
-        #expect(AgentIconContent.resolve("你好") == .fallback)
-        #expect(AgentIconContent.resolve("é") == .fallback)
-        #expect(AgentIconContent.resolve("1\u{0301}") == .fallback)
-        #expect(AgentIconContent.resolve("1\u{FE0E}") == .fallback)
-        #expect(AgentIconContent.resolve("1\u{0301}\u{FE0F}") == .fallback)
-        #expect(AgentIconContent.resolve("©\u{20E3}") == .fallback)
-        #expect(AgentIconContent.resolve("🧘\u{FE0E}") == .fallback)
-        #expect(AgentIconContent.resolve("🧘\u{0301}") == .fallback)
-        #expect(AgentIconContent.resolve("🧘\u{200D}") == .fallback)
-        #expect(AgentIconContent.resolve("🧘\u{0301}\u{FE0F}") == .fallback)
-        #expect(AgentIconContent.resolve("1\u{FE0F}\u{FE0F}\u{20E3}") == .fallback)
-        #expect(AgentIconContent.resolve("😀🏽") == .fallback)
-        #expect(AgentIconContent.resolve("🧘 Reviewer") == .fallback)
+        #expect(AgentIconContent.resolve(.defaultValue) == .fallback)
+        #expect(AgentIconContent.resolve(.symbol("not-a-real-symbol")) == .fallback)
+        #expect(AgentIconContent.resolve(.genmoji(
+            assetId: assetId,
+            contentDescription: "A smiling fox"
+        )) == .genmoji(
+            assetId: assetId,
+            contentDescription: "A smiling fox"
+        ))
     }
 }
 

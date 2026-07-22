@@ -105,7 +105,7 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
         name: "Default Agent",
         status: "active",
         version: 3,
-        definition: { name: "Default Agent", icon: "sparkles" },
+        definition: { name: "Default Agent", icon: { kind: "symbol", name: "sparkles" } },
         createdAt: 1,
         updatedAt: 1,
       }),
@@ -301,7 +301,7 @@ describe("POST /control-sessions", () => {
           launch: {
             agentId: "oppi-default-agent",
             agentVersion: 3,
-            agentIcon: "sparkles",
+            agentIcon: { kind: "symbol", name: "sparkles" },
           },
         },
       },

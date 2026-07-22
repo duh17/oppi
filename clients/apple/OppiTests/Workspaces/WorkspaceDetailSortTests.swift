@@ -186,6 +186,34 @@ struct WorkspaceIconPickerCatalogTests {
         #expect(WorkspaceIconCatalog.label(for: "chevron.left.forwardslash.chevron.right") == "Code")
         #expect(WorkspaceIconCatalog.label(for: "🧠") == nil)
     }
+
+    @Test func existingGenmojiRemainsThePickerSelectionUntilExplicitReplacement() {
+        let genmoji = IconChoice.genmoji(
+            assetId: "ia_" + String(repeating: "A", count: 43),
+            contentDescription: "A smiling fox"
+        )
+        var selection = WorkspaceIconPickerSelection(value: genmoji)
+
+        #expect(selection.value == genmoji)
+        #expect(selection.currentIconName == "A smiling fox")
+        #expect(selection.draftText.isEmpty)
+
+        selection.selectSymbol("folder")
+        #expect(selection.value == .symbol("folder"))
+    }
+
+    @Test func existingGenmojiOnlyClearsAfterExplicitDefaultSelection() {
+        let genmoji = IconChoice.genmoji(
+            assetId: "ia_" + String(repeating: "B", count: 43),
+            contentDescription: "Blue bird"
+        )
+        var selection = WorkspaceIconPickerSelection(value: genmoji)
+
+        #expect(selection.value.jsonValue == genmoji.jsonValue)
+        selection.useDefault()
+        #expect(selection.value == .defaultValue)
+        #expect(selection.currentIconName == "Default workspace icon")
+    }
 }
 
 @Suite("Workspace Pi Resource Error Policy")

@@ -1,3 +1,5 @@
+import type { IconChoice } from "./icon.js";
+
 // ─── Sessions ───
 
 export interface TokenUsage {
@@ -59,7 +61,7 @@ export interface SessionLaunchMetadata {
   agentId?: string;
   agentVersion?: number;
   /** Immutable launch-time presentation snapshot; never used for execution identity. */
-  agentIcon?: string;
+  agentIcon?: IconChoice;
   parentSessionId?: string;
   /** This session may create children at one additional delegation level. */
   allowsNestedDelegation?: boolean;
@@ -209,7 +211,7 @@ export interface SessionSummary {
   /** Saved-Agent identity projected for presentation and generic fallback semantics. */
   agentId?: string;
   /** Immutable launch-time icon snapshot; malformed values remain decode-safe. */
-  agentIcon?: string;
+  agentIcon?: IconChoice;
   control?: ControlSessionMetadata;
   ephemeral?: boolean;
   /** Cold-list ask badge count; omitted outside list endpoints. */

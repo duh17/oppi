@@ -5,7 +5,7 @@ import SwiftUI
 struct ChatEmptyState: View {
     var sessionId: String = ""
     var agentId: String?
-    var agentIcon: String?
+    var agentIcon: IconChoice?
     @State private var visible = false
     @State private var avatar = AssistantAvatar.current
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

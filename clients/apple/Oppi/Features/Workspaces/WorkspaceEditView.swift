@@ -53,7 +53,7 @@ struct WorkspaceEditView: View {
 
     @State private var name: String = ""
     @State private var description: String = ""
-    @State private var icon: String = ""
+    @State private var icon = WorkspaceIconPickerSelection(value: .defaultValue)
     @State private var hostMount: String = ""
     @State private var systemPrompt: String = ""
     @State private var gitStatusEnabled: Bool = true
@@ -134,8 +134,12 @@ struct WorkspaceEditView: View {
     }
 
     private var iconDisplayName: String {
-        if icon.isEmpty { return "Default" }
-        return WorkspaceIconCatalog.label(for: icon) ?? icon
+        switch icon.value {
+        case .defaultValue: return "Default"
+        case .emoji(let value): return value
+        case .symbol(let name): return WorkspaceIconCatalog.label(for: name) ?? name
+        case .genmoji(_, let contentDescription): return contentDescription
+        }
     }
 
     private var canSave: Bool {
@@ -197,7 +201,7 @@ struct WorkspaceEditView: View {
 
                         Spacer(minLength: 12)
 
-                        WorkspaceIcon(icon: icon.isEmpty ? nil : icon, size: 22)
+                        WorkspaceIcon(icon: icon.value, size: 22)
                             .frame(width: 32, height: 32)
 
                         Image(systemName: "chevron.right")
@@ -608,7 +612,7 @@ struct WorkspaceEditView: View {
 
         name = source.name
         description = source.description ?? ""
-        icon = source.icon ?? ""
+        icon = WorkspaceIconPickerSelection(value: source.icon)
         hostMount = source.hostMount ?? ""
         hostMountStatus = nil
         hostMountValidationMessage = nil
@@ -802,7 +806,7 @@ struct WorkspaceEditView: View {
         let request = UpdateWorkspaceRequest(
             name: name,
             description: nullableJSONString(description),
-            icon: nullableJSONString(icon),
+            icon: icon.value.jsonValue,
             systemPrompt: nullableJSONString(systemPrompt),
             systemPromptMode: .append,
             hostMount: nullableJSONString(trimmedHostMount),

@@ -33,7 +33,7 @@ function makeSession(id = "sess-1", workspaceId = "ws-1"): Session {
       source: "agent",
       agentId: "agent-reviewer",
       agentVersion: 4,
-      agentIcon: "checkmark.shield",
+      agentIcon: { kind: "symbol", name: "checkmark.shield" },
       status: "accepted",
       requestedAt: 1_791_649_999_000,
     },
@@ -98,6 +98,38 @@ function canonicalAppEventMessages(): Record<string, AppEventMessage> {
       emittedAt,
       summary: controlSummary,
     },
+    session_summary_icon_default: {
+      type: "session_summary",
+      ...sessionBase,
+      summary: { ...summary, agentIcon: { kind: "default" } },
+    },
+    session_summary_icon_emoji: {
+      type: "session_summary",
+      ...sessionBase,
+      summary: { ...summary, agentIcon: { kind: "emoji", value: "🧘" } },
+    },
+    session_summary_icon_genmoji: {
+      type: "session_summary",
+      ...sessionBase,
+      summary: {
+        ...summary,
+        agentIcon: {
+          kind: "genmoji",
+          assetId: `ia_${"A".repeat(43)}`,
+          contentDescription: "A smiling fox",
+        },
+      },
+    },
+    session_summary_icon_malformed: {
+      type: "session_summary",
+      ...sessionBase,
+      summary: { ...summary, agentIcon: { kind: "emoji", value: "not emoji" } },
+    } as unknown as AppEventMessage,
+    session_summary_icon_future: {
+      type: "session_summary",
+      ...sessionBase,
+      summary: { ...summary, agentIcon: { kind: "animated", version: 2 } },
+    } as unknown as AppEventMessage,
     session_deleted: { type: "session_deleted", ...sessionBase },
     session_ended: { type: "session_ended", ...sessionBase, reason: "completed" },
     stop_requested: { type: "stop_requested", ...sessionBase, source: "user" },

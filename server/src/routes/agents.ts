@@ -12,6 +12,7 @@ import {
   type StoredAgentDefinition,
 } from "../agent-definitions.js";
 import { isDefaultAgentId } from "../default-agent.js";
+import { iconAssetId } from "../icon-choice.js";
 import { safeErrorMessage } from "../log-utils.js";
 import type { ChatAttachmentRef, Session } from "../types.js";
 import { normalizeSessionWorktreeId } from "../worktrees.js";
@@ -65,11 +66,15 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       try {
         const agent = resolveAgent(reference, res);
         if (!agent) return true;
+        const previousAssetId = iconAssetId(agent.definition.icon);
         const body = await helpers.parseBody<unknown>(req);
         const updated = agentStore().updateAgent(agent.id, body);
         if (!updated) {
           helpers.error(res, 404, "Agent not found");
           return true;
+        }
+        if (previousAssetId) {
+          ctx.storage.cleanupUnreferencedIconAssets(new Set([previousAssetId]));
         }
         helpers.json(res, { agent: serializeAgent(updated) });
       } catch (error) {
@@ -357,16 +362,7 @@ function applyOverrides(
       ...("noTools" in overrides ? { noTools: overrides.noTools } : {}),
     },
   };
-  if (typeof agent.icon !== "string") return validateAgentDefinition(merged);
-
-  // Launch overrides cannot change presentation. Historical stores may contain an icon
-  // accepted before strict validation, so validate every behavioral field without
-  // revalidating that unchanged string.
-  const { icon: _historicalIcon, ...behavioralDefinition } = merged;
-  return {
-    ...validateAgentDefinition(behavioralDefinition),
-    icon: agent.icon,
-  };
+  return validateAgentDefinition(merged);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

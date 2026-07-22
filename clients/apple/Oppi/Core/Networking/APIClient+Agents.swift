@@ -3,6 +3,22 @@ import Foundation
 // MARK: - Agents & Schedules
 
 extension APIClient {
+    func uploadIconAsset(data body: Data, contentType: String) async throws -> IconAssetRecord {
+        let (data, response) = try await request(
+            "POST",
+            path: "/icon-assets",
+            body: body,
+            contentType: contentType
+        )
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(IconAssetUploadResponse.self, from: data).asset
+    }
+
+    func fetchIconAsset(assetId: String) async throws -> Data {
+        let encodedAssetId = try percentEncodePathSegment(assetId)
+        return try await get("/icon-assets/\(encodedAssetId)")
+    }
+
     func listAgents(includeArchived: Bool = false) async throws -> [AgentDefinitionSummary] {
         let suffix = includeArchived ? "?includeArchived=true" : ""
         let data = try await get("/agents\(suffix)")
@@ -31,7 +47,7 @@ extension APIClient {
             func encode(to encoder: Encoder) throws {
                 var c = encoder.container(keyedBy: CodingKeys.self)
                 try c.encode(definition.name, forKey: .name)
-                try encodeNullable(definition.icon, to: &c, forKey: .icon)
+                try c.encode(definition.icon, forKey: .icon)
                 try encodeNullable(definition.description, to: &c, forKey: .description)
                 try encodeNullable(definition.instructions, to: &c, forKey: .instructions)
                 try encodeNullable(definition.resources, to: &c, forKey: .resources)
@@ -56,22 +72,9 @@ extension APIClient {
         return try JSONDecoder().decode(AgentResponse.self, from: data).agent
     }
 
-    func updateAgentIcon(agentId: String, icon: String?) async throws -> StoredAgentDefinition {
+    func updateAgentIcon(agentId: String, icon: IconChoice) async throws -> StoredAgentDefinition {
         struct IconUpdateBody: Encodable {
-            let icon: String?
-
-            enum CodingKeys: CodingKey {
-                case icon
-            }
-
-            func encode(to encoder: Encoder) throws {
-                var container = encoder.container(keyedBy: CodingKeys.self)
-                if let icon {
-                    try container.encode(icon, forKey: .icon)
-                } else {
-                    try container.encodeNil(forKey: .icon)
-                }
-            }
+            let icon: IconChoice
         }
 
         let encodedAgentId = try percentEncodePathSegment(agentId)

@@ -636,6 +636,44 @@ struct ServerCredentialsInviteSecurityTests {
     }
 }
 
+// MARK: - IconChoice Codable
+
+@Suite("IconChoice Codable")
+struct IconChoiceCodableTests {
+    @Test func roundTripsEveryTaggedCase() throws {
+        let assetId = "ia_" + String(repeating: "A", count: 43)
+        let choices: [IconChoice] = [
+            .defaultValue,
+            .emoji("🧘"),
+            .symbol("checkmark.shield"),
+            .genmoji(assetId: assetId, contentDescription: "A smiling fox"),
+        ]
+
+        for choice in choices {
+            let encoded = try JSONEncoder().encode(choice)
+            let decoded = try JSONDecoder().decode(IconChoice.self, from: encoded)
+            #expect(decoded == choice)
+        }
+    }
+
+    @Test func malformedAndUnknownCasesDecodeAsDefault() throws {
+        let payloads = [
+            #"{"kind":"future","payload":"ignored"}"#,
+            #"{"kind":"emoji","value":"not emoji"}"#,
+            #"{"kind":"symbol","name":"not/a/symbol"}"#,
+            #"{"kind":"genmoji","assetId":"../../etc/passwd","contentDescription":"bad"}"#,
+            #"{"kind":"genmoji","assetId":"ia_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","contentDescription":"   "}"#,
+            #""historical-string""#,
+            #"null"#,
+        ]
+
+        for payload in payloads {
+            let decoded = try JSONDecoder().decode(IconChoice.self, from: Data(payload.utf8))
+            #expect(decoded == .defaultValue)
+        }
+    }
+}
+
 // MARK: - Workspace Codable
 
 @Suite("Workspace Codable")
@@ -647,7 +685,7 @@ struct WorkspaceCodableTests {
             "id": "w1",
             "name": "Development",
             "description": "Dev workspace",
-            "icon": "hammer",
+            "icon": {"kind":"symbol","name":"hammer"},
             "skills": ["searxng", "fetch"],
             "systemPrompt": "You are helpful",
             "systemPromptMode": "append",
@@ -663,7 +701,7 @@ struct WorkspaceCodableTests {
         #expect(ws.id == "w1")
         #expect(ws.name == "Development")
         #expect(ws.description == "Dev workspace")
-        #expect(ws.icon == "hammer")
+        #expect(ws.icon == .symbol("hammer"))
         #expect(ws.systemPrompt == "You are helpful")
         #expect(ws.systemPromptMode == .append)
         #expect(ws.hostMount == "/Users/me/workspace")
@@ -685,7 +723,7 @@ struct WorkspaceCodableTests {
 
         #expect(ws.id == "w2")
         #expect(ws.description == nil)
-        #expect(ws.icon == nil)
+        #expect(ws.icon == .defaultValue)
         #expect(ws.systemPrompt == nil)
         #expect(ws.systemPromptMode == .append)
         #expect(ws.hostMount == nil)
@@ -695,7 +733,7 @@ struct WorkspaceCodableTests {
         let json = """
         {
             "id": "w3", "name": "RT",
-            "description": "test", "icon": "star",
+            "description": "test", "icon": {"kind":"symbol","name":"star"},
             "skills": ["fetch"],
             "systemPrompt": "prompt", "systemPromptMode": "append", "hostMount": "/work",
             "extensionMode": "explicit", "extensions": ["custom-ext"],

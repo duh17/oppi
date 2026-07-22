@@ -24,7 +24,7 @@ struct AgentIconPickerAccessibilityFocusRequest: Equatable {
 
 @MainActor @Observable
 final class AgentIconPickerModel {
-    private(set) var savedValue: String?
+    private(set) var savedValue: IconChoice
     var draft: String {
         didSet {
             if draft != oldValue {
@@ -37,26 +37,29 @@ final class AgentIconPickerModel {
     private(set) var accessibilityFocusRequest: AgentIconPickerAccessibilityFocusRequest?
     private var accessibilityFocusSequence = 0
 
-    init(savedValue: String?) {
-        let normalized = savedValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let saved = normalized?.isEmpty == false ? normalized : nil
-        self.savedValue = saved
-        self.draft = saved ?? ""
+    init(savedValue: IconChoice) {
+        self.savedValue = savedValue
+        switch savedValue {
+        case .emoji(let value): self.draft = value
+        case .symbol(let name): self.draft = name
+        case .defaultValue, .genmoji: self.draft = ""
+        }
     }
 
-    var previewValue: String? {
-        let value = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
+    var previewValue: IconChoice? {
+        normalizedDraft
     }
 
     var previewContent: AgentIconContent {
         AgentIconContent.resolve(previewValue)
     }
 
-    var normalizedDraft: String? {
+    var normalizedDraft: IconChoice? {
         switch AgentIconValue.classify(draft) {
-        case .emoji(let value), .symbolCandidate(let value):
-            return value
+        case .emoji(let value):
+            return .emoji(value)
+        case .symbolCandidate(let value):
+            return .symbol(value)
         case .invalid:
             return nil
         }
@@ -79,7 +82,7 @@ final class AgentIconPickerModel {
         if let errorMessage {
             return .save(errorMessage)
         }
-        if previewValue != nil || savedValue != nil,
+        if previewValue != nil || savedValue != .defaultValue,
            let validationMessage {
             return .validation(validationMessage)
         }
@@ -100,7 +103,7 @@ final class AgentIconPickerModel {
     }
 
     var canUseDefault: Bool {
-        savedValue != nil && !isSaving
+        savedValue != .defaultValue && !isSaving
     }
 
     func selectSuggestion(_ symbolName: String) {
@@ -109,7 +112,7 @@ final class AgentIconPickerModel {
     }
 
     func saveCurrent(
-        using operation: (String?) async throws -> StoredAgentDefinition
+        using operation: (IconChoice) async throws -> StoredAgentDefinition
     ) async -> StoredAgentDefinition? {
         guard !isSaving else { return nil }
         guard validationMessage == nil, let normalizedDraft else {
@@ -121,15 +124,15 @@ final class AgentIconPickerModel {
     }
 
     func useDefault(
-        using operation: (String?) async throws -> StoredAgentDefinition
+        using operation: (IconChoice) async throws -> StoredAgentDefinition
     ) async -> StoredAgentDefinition? {
         guard canUseDefault else { return nil }
-        return await save(nil, using: operation)
+        return await save(.defaultValue, using: operation)
     }
 
     private func save(
-        _ value: String?,
-        using operation: (String?) async throws -> StoredAgentDefinition
+        _ value: IconChoice,
+        using operation: (IconChoice) async throws -> StoredAgentDefinition
     ) async -> StoredAgentDefinition? {
         isSaving = true
         errorMessage = nil
@@ -138,7 +141,11 @@ final class AgentIconPickerModel {
         do {
             let updated = try await operation(value)
             savedValue = value
-            draft = value ?? ""
+            switch value {
+            case .emoji(let emoji): draft = emoji
+            case .symbol(let name): draft = name
+            case .defaultValue, .genmoji: draft = ""
+            }
             return updated
         } catch {
             errorMessage = "Couldn’t save icon. \(error.localizedDescription)"
@@ -179,14 +186,14 @@ struct AgentIconPickerView: View {
 
     let agentId: String
     let onSaved: (StoredAgentDefinition) -> Void
-    private let saveOperation: ((String?) async throws -> StoredAgentDefinition)?
+    private let saveOperation: ((IconChoice) async throws -> StoredAgentDefinition)?
 
     @State private var model: AgentIconPickerModel
     @AccessibilityFocusState private var errorFocus: AgentIconPickerAccessibilityFocusTarget?
 
     init(
         agent: StoredAgentDefinition,
-        saveOperation: ((String?) async throws -> StoredAgentDefinition)? = nil,
+        saveOperation: ((IconChoice) async throws -> StoredAgentDefinition)? = nil,
         onSaved: @escaping (StoredAgentDefinition) -> Void
     ) {
         agentId = agent.id
@@ -267,7 +274,7 @@ struct AgentIconPickerView: View {
                     .padding(.vertical, 4)
                 }
 
-                if model.savedValue != nil {
+                if model.savedValue != .defaultValue {
                     Section {
                         Button {
                             Task { await useDefaultIcon() }
@@ -337,15 +344,17 @@ struct AgentIconPickerView: View {
         iconDescription(value: model.previewValue, content: model.previewContent)
     }
 
-    private func iconDescription(value: String?, content: AgentIconContent) -> String {
-        guard let value else { return "Default Agent icon" }
+    private func iconDescription(value: IconChoice?, content: AgentIconContent) -> String {
+        guard let value, value != .defaultValue else { return "Default Agent icon" }
         switch content {
         case .text(let emoji):
             return "Emoji \(emoji)"
-        case .symbol:
-            return "SF Symbol \(value)"
+        case .symbol(let name):
+            return "SF Symbol \(name)"
+        case .genmoji(_, let contentDescription):
+            return contentDescription
         case .fallback:
-            return "Unavailable · \(value)"
+            return "Unavailable icon"
         }
     }
 
@@ -358,7 +367,7 @@ struct AgentIconPickerView: View {
     }
 
     private func suggestionButton(_ suggestion: Suggestion) -> some View {
-        let selected = model.normalizedDraft == suggestion.symbolName
+        let selected = model.normalizedDraft == .symbol(suggestion.symbolName)
         return Button {
             model.selectSuggestion(suggestion.symbolName)
         } label: {

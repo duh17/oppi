@@ -1,13 +1,13 @@
 import { generateId } from "./id.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
-import type { ChatAttachmentRef, Session, Workspace } from "./types.js";
+import type { ChatAttachmentRef, IconChoice, Session, Workspace } from "./types.js";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 export interface AgentDefinition {
   name: string;
-  icon?: string;
+  icon?: IconChoice;
   description?: string;
   instructions?: {
     mode: "append" | "replace";
@@ -200,7 +200,7 @@ export class AgentLaunchService {
       workspace: request.target.workspace,
     });
     const sessionName = normalizedText(request.sessionName);
-    const agentIcon = request.agentId ? normalizedText(request.agent.icon) : undefined;
+    const agentIcon = request.agentId ? request.agent.icon : undefined;
     const session: Session = idempotencyKey
       ? {
           id: generateId(8),

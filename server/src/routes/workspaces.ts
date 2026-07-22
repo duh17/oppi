@@ -17,6 +17,7 @@ import {
 } from "../git-commits.js";
 import { getGitStatus, getWorkspaceGitSummary } from "../git-status.js";
 import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "../local-sessions.js";
+import { safeErrorMessage } from "../log-utils.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "../oppi-cli-prompt.js";
 import {
   isOppiCliPromptEnabled,
@@ -245,8 +246,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const workspace = ctx.storage.createWorkspace(body);
-    helpers.json(res, { workspace }, 201);
+    try {
+      const workspace = ctx.storage.createWorkspace(body);
+      helpers.json(res, { workspace }, 201);
+    } catch (error) {
+      helpers.error(res, 400, safeErrorMessage(error));
+    }
   }
 
   function handleGetWorkspace(wsId: string, res: ServerResponse): void {
@@ -298,13 +303,17 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const updated = ctx.storage.updateWorkspace(wsId, body);
-    if (!updated) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
+    try {
+      const updated = ctx.storage.updateWorkspace(wsId, body);
+      if (!updated) {
+        helpers.error(res, 404, "Workspace not found");
+        return;
+      }
 
-    helpers.json(res, { workspace: updated });
+      helpers.json(res, { workspace: updated });
+    } catch (error) {
+      helpers.error(res, 400, safeErrorMessage(error));
+    }
   }
 
   function handleDeleteWorkspace(wsId: string, res: ServerResponse): void {

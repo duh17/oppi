@@ -96,7 +96,8 @@ struct QuickSessionSheet: View {
             QuickSessionWorkspacePickerSection(
                 id: serverId,
                 name: coordinator.serverStore.server(for: serverId)?.name ?? serverId,
-                workspaces: (grouped[serverId] ?? []).map(\.workspace)
+                workspaces: (grouped[serverId] ?? []).map(\.workspace),
+                iconAssetCache: coordinator.connection(for: serverId)?.iconAssetCache
             )
         }
     }
@@ -605,6 +606,7 @@ private struct QuickSessionWorkspacePickerSection: Identifiable {
     let id: String
     let name: String
     let workspaces: [Workspace]
+    let iconAssetCache: IconAssetCache?
 }
 
 private struct QuickSessionWorkspacePicker: View {
@@ -648,7 +650,8 @@ private struct QuickSessionWorkspacePicker: View {
                                     } label: {
                                         QuickSessionWorkspacePickerRow(
                                             workspace: workspace,
-                                            isSelected: isSelected(workspace, serverId: section.id)
+                                            isSelected: isSelected(workspace, serverId: section.id),
+                                            iconAssetCache: section.iconAssetCache
                                         )
                                     }
                                     .buttonStyle(QuickSessionWorkspacePickerRowButtonStyle())
@@ -688,10 +691,16 @@ private struct QuickSessionWorkspacePicker: View {
 private struct QuickSessionWorkspacePickerRow: View {
     let workspace: Workspace
     let isSelected: Bool
+    let iconAssetCache: IconAssetCache?
 
     var body: some View {
         HStack(spacing: 12) {
-            WorkspaceRuntimeIcon(workspace: workspace, size: 18, frameSize: 30)
+            WorkspaceRuntimeIcon(
+                workspace: workspace,
+                size: 18,
+                frameSize: 30,
+                assetCache: iconAssetCache
+            )
                 .frame(width: 30, height: 30)
 
             Text(workspace.name)
