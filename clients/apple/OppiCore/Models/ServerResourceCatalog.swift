@@ -1,0 +1,198 @@
+import Foundation
+
+/// Server-authored origin for a server-global Pi resource.
+///
+/// The server owns this classification so clients never infer it from a path.
+enum ServerResourceProvenanceKind: String, Codable, Sendable, Equatable {
+    case builtIn
+    case piAgent
+    case agents
+    case userSettings
+    case package
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = Self(rawValue: rawValue) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+struct ServerResourceProvenance: Codable, Sendable, Equatable {
+    let kind: ServerResourceProvenanceKind
+    let label: String
+}
+
+enum ServerSkillState: String, Codable, Sendable, Equatable {
+    case enabled
+    case disabled
+    case error
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = Self(rawValue: rawValue) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+struct ServerSkillSummary: Codable, Sendable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    let description: String
+    let provenance: ServerResourceProvenance
+    let path: String?
+    /// Safe package identity supplied by the server. Never derive this from a path.
+    let packageName: String?
+    let state: ServerSkillState
+    let loadError: String?
+    let warnings: [String]
+
+    init(
+        id: String,
+        name: String,
+        description: String,
+        provenance: ServerResourceProvenance,
+        path: String?,
+        packageName: String? = nil,
+        state: ServerSkillState,
+        loadError: String?,
+        warnings: [String]
+    ) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.provenance = provenance
+        self.path = path
+        self.packageName = packageName
+        self.state = state
+        self.loadError = loadError
+        self.warnings = warnings
+    }
+}
+
+struct ServerSkillDetail: Codable, Sendable, Equatable {
+    let summary: ServerSkillSummary
+    let skillMarkdown: String
+    let files: [String]
+}
+
+struct ServerSkillsCatalog: Codable, Sendable, Equatable {
+    let skills: [ServerSkillSummary]
+}
+
+enum ServerExtensionKind: String, Codable, Sendable, Equatable {
+    case builtIn
+    case file
+    case directory
+    case package
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = Self(rawValue: rawValue) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+enum ServerExtensionState: String, Codable, Sendable, Equatable {
+    case on
+    case off
+    case error
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = Self(rawValue: rawValue) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    let description: String?
+    let kind: ServerExtensionKind
+    let provenance: ServerResourceProvenance
+    let path: String?
+    /// Safe package identity supplied by the server. Never derive this from a path.
+    let packageName: String?
+    let state: ServerExtensionState
+    let loadError: String?
+    let warnings: [String]
+    let isRemovable: Bool
+
+    init(
+        id: String,
+        name: String,
+        description: String?,
+        kind: ServerExtensionKind,
+        provenance: ServerResourceProvenance,
+        path: String?,
+        packageName: String? = nil,
+        state: ServerExtensionState,
+        loadError: String?,
+        warnings: [String],
+        isRemovable: Bool
+    ) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.kind = kind
+        self.provenance = provenance
+        self.path = path
+        self.packageName = packageName
+        self.state = state
+        self.loadError = loadError
+        self.warnings = warnings
+        self.isRemovable = isRemovable
+    }
+
+    /// The built-in identity is a server contract, not a display-name or path heuristic.
+    var isBuiltInOppi: Bool {
+        id == "oppi" && kind == .builtIn && provenance.kind == .builtIn
+    }
+}
+
+struct ServerExtensionDetail: Codable, Sendable, Equatable {
+    let summary: ServerExtensionSummary
+    let contributedTools: [String]?
+    let contributedCommands: [String]?
+}
+
+enum OppiApprovalPolicy: String, Codable, Sendable, Equatable {
+    case confirmDestructiveOnly
+    case confirmAllChanges
+    case readOnly
+}
+
+struct OppiExtensionConfiguration: Codable, Sendable, Equatable {
+    let enabled: Bool
+    let approvalPolicy: OppiApprovalPolicy
+    let revision: Int
+}
+
+struct ServerExtensionCatalog: Codable, Sendable, Equatable {
+    let extensions: [ServerExtensionSummary]
+    let oppiConfiguration: OppiExtensionConfiguration
+}

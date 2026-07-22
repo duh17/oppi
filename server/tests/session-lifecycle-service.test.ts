@@ -53,6 +53,7 @@ function makeService(
     workspace?: Workspace;
     dataDir?: string;
     agentDefinitionStore?: AgentDefinitionStore;
+    onStartSession?: () => void;
   } = {},
 ): {
   service: SessionLifecycleService;
@@ -92,7 +93,10 @@ function makeService(
   const sendPrompt = vi.fn(async () => {
     if (options.sendPromptError) throw options.sendPromptError;
   });
-  const startSession = vi.fn(async () => options.started ?? makeSession({ status: "ready" }));
+  const startSession = vi.fn(async () => {
+    options.onStartSession?.();
+    return options.started ?? makeSession({ status: "ready" });
+  });
   const stopSession = vi.fn(async () => {
     if (options.stopError) throw options.stopError;
   });
@@ -434,7 +438,7 @@ describe("SessionLifecycleService", () => {
       expect(saveSession).not.toHaveBeenCalled();
     });
 
-    it("promotes stopped disconnected mirror sessions before resuming through the SDK", async () => {
+    it("promotes stopped disconnected mirrors before managed construction reads latest settings", async () => {
       const mirrorSession = makeSession({
         runtime: "pi-tui",
         status: "stopped",
@@ -442,7 +446,13 @@ describe("SessionLifecycleService", () => {
         piSessionFile: "/tmp/stopped-mirror.jsonl",
       });
       const started = makeSession({ runtime: "oppi", status: "ready" });
-      const { service, startSession, saveSession } = makeService({ started });
+      let currentSettings = { enabled: false, approvalPolicy: "confirmDestructiveOnly" as const };
+      const settingsReadAtManagedConstruction = vi.fn(() => currentSettings);
+      const { service, startSession, saveSession } = makeService({
+        started,
+        onStartSession: settingsReadAtManagedConstruction,
+      });
+      currentSettings = { enabled: true, approvalPolicy: "confirmDestructiveOnly" };
 
       const result = await service.resumeWorkspaceSession({
         session: mirrorSession,
@@ -459,6 +469,10 @@ describe("SessionLifecycleService", () => {
         }),
       );
       expect(startSession).toHaveBeenCalledWith("sess-1", expect.objectContaining({ id: "ws-1" }));
+      expect(settingsReadAtManagedConstruction).toHaveReturnedWith({
+        enabled: true,
+        approvalPolicy: "confirmDestructiveOnly",
+      });
       expect(result).toMatchObject({ owner: "oppi", startedSession: true });
       expect(result.session).toMatchObject({ runtime: "oppi", status: "ready" });
     });

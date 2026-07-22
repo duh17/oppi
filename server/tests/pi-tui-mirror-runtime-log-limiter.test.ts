@@ -25,9 +25,10 @@ class FakeBridgeWebSocket extends EventEmitter {
 function taskRecordHello(bridgeId: string): Record<string, unknown> {
   return {
     type: "hello",
-    protocolVersion: 1,
+    protocolVersion: 2,
     bridgeId,
     cwd: "/tmp/oppi-mirror-test",
+    capabilities: ["input_preflight:v1"],
     state: {
       piSessionId: "pi-task",
       sessionName: "general-purpose#738f21e6",

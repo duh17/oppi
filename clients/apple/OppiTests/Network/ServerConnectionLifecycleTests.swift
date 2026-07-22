@@ -1325,6 +1325,7 @@ struct ServerConnectionLifecycleTests {
         let result = conn.switchServer(to: server)
         #expect(result == true)
         #expect(conn.currentServerId == "sha256:studio-fp")
+        #expect(conn.serverResourceStore.activeServerId == "sha256:studio-fp")
         #expect(conn.apiClient != nil)
     }
 

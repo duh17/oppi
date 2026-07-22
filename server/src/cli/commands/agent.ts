@@ -10,6 +10,7 @@ import {
   printDetails,
   printList,
   printNextCommands,
+  setCapturedCliExitCode,
   writeJsonEnvelope,
 } from "../output.js";
 import { apiStatus } from "../resources.js";
@@ -138,7 +139,7 @@ export async function cmdAgent(
     const status = apiStatus(error);
     if (jsonOutput) {
       writeJsonEnvelope({ ok: false, error: { message, ...(status ? { status } : {}) } });
-      process.exitCode = 1;
+      setCapturedCliExitCode(1);
       return;
     }
     console.log(c.red(`  Error: ${message}`));

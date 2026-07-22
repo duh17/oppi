@@ -16,6 +16,25 @@ enum WorkspaceNavigationPresentation: Sendable, Equatable {
     case split
 }
 
+enum ServerResourceDetailKind: Hashable, Sendable {
+    case skill
+    case `extension`
+}
+
+/// Server identity travels with every resource route so a server switch or
+/// adaptive-layout transition can never issue a detail request to the wrong host.
+struct ServerResourceDetailNavTarget: Hashable, Sendable {
+    let serverId: String
+    let kind: ServerResourceDetailKind
+    let resourceId: String
+}
+
+struct ServerSkillFileNavTarget: Hashable, Sendable {
+    let serverId: String
+    let resourceId: String
+    let path: String
+}
+
 /// Detail-column target for the regular-width workspace split shell.
 ///
 /// The sidebar keeps the workspace catalog visible. The detail pane hosts the
@@ -33,6 +52,8 @@ enum WorkspaceSplitDetailPathElement: Hashable {
     case session(WorkspaceSessionNavTarget)
     case fileBrowser(FileBrowserNavTarget)
     case linkedFile(WorkspaceLinkedFileNavTarget)
+    case serverResourceDetail(ServerResourceDetailNavTarget)
+    case serverSkillFile(ServerSkillFileNavTarget)
 }
 
 struct WorkspaceConfigurationNavTarget: Hashable {
@@ -46,6 +67,8 @@ private enum WorkspaceStackRouteElement: Hashable {
     case linkedFile(WorkspaceLinkedFileNavTarget)
     case workspaceConfiguration(WorkspaceNavTarget)
     case utility(WorkspaceUtilityNavTarget)
+    case serverResourceDetail(ServerResourceDetailNavTarget)
+    case serverSkillFile(ServerSkillFileNavTarget)
     case unknown
 }
 
@@ -336,6 +359,38 @@ final class AppNavigation {
         }
     }
 
+    func openServerResourceDetail(_ target: ServerResourceDetailNavTarget) {
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.serverResourceDetailDiagnosticContext(target),
+                routeElement: .serverResourceDetail(target)
+            )
+        case .split:
+            splitDetailPath.append(target)
+            splitDetailPathElements.append(.serverResourceDetail(target))
+            splitColumnVisibility = .all
+        }
+    }
+
+    func openServerSkillFile(_ target: ServerSkillFileNavTarget) {
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.serverSkillFileDiagnosticContext,
+                routeElement: .serverSkillFile(target)
+            )
+        case .split:
+            splitDetailPath.append(target)
+            splitDetailPathElements.append(.serverSkillFile(target))
+            splitColumnVisibility = .all
+        }
+    }
+
     func openWorkspaceConfiguration(_ target: WorkspaceNavTarget) {
         selectedTab = .workspaces
         selectedWorkspaceFilter = target
@@ -538,6 +593,10 @@ final class AppNavigation {
                 path.append(target)
             case .linkedFile(let target):
                 path.append(target)
+            case .serverResourceDetail(let target):
+                path.append(target)
+            case .serverSkillFile(let target):
+                path.append(target)
             }
         }
         splitDetailPathElements = elements
@@ -651,6 +710,8 @@ final class AppNavigation {
         let label = switch target {
         case .schedules: "schedules"
         case .agents: "agents"
+        case .skills: "skills"
+        case .extensions: "extensions"
         case .manageServers: "manage_servers"
         case .appSettings: "app_settings"
         }
@@ -660,6 +721,22 @@ final class AppNavigation {
             workspaceId: nil
         )
     }
+
+    private static func serverResourceDetailDiagnosticContext(
+        _ target: ServerResourceDetailNavTarget
+    ) -> WorkspaceStackDiagnosticContext {
+        WorkspaceStackDiagnosticContext(
+            screen: target.kind == .skill ? "server_skill_detail" : "server_extension_detail",
+            sessionId: nil,
+            workspaceId: nil
+        )
+    }
+
+    private static let serverSkillFileDiagnosticContext = WorkspaceStackDiagnosticContext(
+        screen: "server_skill_file",
+        sessionId: nil,
+        workspaceId: nil
+    )
 
     private func stackStateForCurrentSplitSelection() -> (
         path: NavigationPath,
@@ -723,6 +800,14 @@ final class AppNavigation {
                 path.append(target)
                 contexts.append(Self.linkedFileDiagnosticContext(target))
                 routeElements.append(.linkedFile(target))
+            case .serverResourceDetail(let target):
+                path.append(target)
+                contexts.append(Self.serverResourceDetailDiagnosticContext(target))
+                routeElements.append(.serverResourceDetail(target))
+            case .serverSkillFile(let target):
+                path.append(target)
+                contexts.append(Self.serverSkillFileDiagnosticContext)
+                routeElements.append(.serverSkillFile(target))
             }
         }
 
@@ -768,6 +853,10 @@ final class AppNavigation {
             case .utility(let target):
                 detail = target.isReleaseEnabled ? .utility(target) : nil
                 detailPathElements = []
+            case .serverResourceDetail(let target):
+                detailPathElements.append(.serverResourceDetail(target))
+            case .serverSkillFile(let target):
+                detailPathElements.append(.serverSkillFile(target))
             case .unknown:
                 break
             }

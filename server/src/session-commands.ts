@@ -18,6 +18,7 @@ import { readSessionTreeFilterMode, serializeSessionTree } from "./session-tree.
 import { extensionNameForAllowlist } from "./extension-loader.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import type { Session, ServerMessage } from "./types.js";
+import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 
 const log = createLogger({ base: { component: "session_commands" } });
 
@@ -245,7 +246,7 @@ type SessionCommandHandler = (
   cmd: Record<string, unknown>,
 ) => unknown | Promise<unknown>;
 
-const IDLE_ONLY_COMMANDS = new Set(["compact", "navigate_tree"]);
+const IDLE_ONLY_COMMANDS = new Set(["compact", "navigate_tree", "reload"]);
 
 function assertIdleForCommand(active: CommandSessionState, commandType: string): void {
   if (!IDLE_ONLY_COMMANDS.has(commandType)) {
@@ -438,13 +439,15 @@ export class SessionCommandCoordinator {
     return SessionCommandCoordinator.ALLOWED_COMMANDS.has(commandType);
   }
 
-  sendCommand(key: string, command: Record<string, unknown>): void {
+  sendCommand(
+    key: string,
+    command: Record<string, unknown>,
+    permit?: SessionRuntimeTransactionPermit,
+    onPreflightAccepted?: () => void,
+  ): void | Promise<void> {
     const active = this.deps.getActiveSession(key);
-    if (!active) {
-      return;
-    }
-
-    this.routeSdkCommand(active.sdkBackend, command);
+    if (!active) return;
+    return this.routeSdkCommand(active.sdkBackend, command, permit, onPreflightAccepted);
   }
 
   async sendCommandAsync(key: string, command: Record<string, unknown>): Promise<unknown> {
@@ -457,7 +460,7 @@ export class SessionCommandCoordinator {
     assertIdleForCommand(active, type);
 
     if (type === "reload") {
-      this.deps.reloadRuntimeConfig?.();
+      return active.sdkBackend.reloadResources(this.deps.reloadRuntimeConfig);
     }
 
     const backendHandler = SessionCommandCoordinator.SERVER_LOGIC_HANDLERS.get(type);
@@ -552,30 +555,46 @@ export class SessionCommandCoordinator {
     }
   }
 
-  private routeSdkCommand(backend: SdkBackend, command: Record<string, unknown>): void {
+  private routeSdkCommand(
+    backend: SdkBackend,
+    command: Record<string, unknown>,
+    permit?: SessionRuntimeTransactionPermit,
+    onPreflightAccepted?: () => void,
+  ): void | Promise<void> {
     const type = command.type as string;
     switch (type) {
-      case "prompt":
-        backend.prompt(command.message as string, {
+      case "prompt": {
+        const options = {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
           streamingBehavior: command.streamingBehavior as "steer" | "followUp" | undefined,
-        });
-        break;
-      case "steer":
-        backend.prompt(command.message as string, {
+          ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
+        };
+        return permit
+          ? backend.prompt(command.message as string, options, permit)
+          : backend.prompt(command.message as string, options);
+      }
+      case "steer": {
+        const options = {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
-          streamingBehavior: "steer",
-        });
-        break;
-      case "follow_up":
-        backend.prompt(command.message as string, {
+          streamingBehavior: "steer" as const,
+          ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
+        };
+        return permit
+          ? backend.prompt(command.message as string, options, permit)
+          : backend.prompt(command.message as string, options);
+      }
+      case "follow_up": {
+        const options = {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
-          streamingBehavior: "followUp",
-        });
-        break;
+          streamingBehavior: "followUp" as const,
+          ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
+        };
+        return permit
+          ? backend.prompt(command.message as string, options, permit)
+          : backend.prompt(command.message as string, options);
+      }
       case "abort":
-        void backend.abort();
-        break;
+        return backend.abort();
       default:
         log.warn("session_commands.unhandled_fire_and_forget_command", {
           commandType: type,

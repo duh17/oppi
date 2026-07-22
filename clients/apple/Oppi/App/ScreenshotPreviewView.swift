@@ -23,6 +23,16 @@ struct ScreenshotPreviewView: View {
         switch ScreenshotPreviewConfig.screen {
         case "workspace-edit":
             WorkspaceEditPreview()
+        case "server-resources-skills":
+            ServerResourcesScreenshotPreview(screen: .skills)
+        case "server-resources-extensions":
+            ServerResourcesScreenshotPreview(screen: .extensions)
+        case "server-resources-cached-offline":
+            ServerResourcesScreenshotPreview(screen: .cachedOffline)
+        case "server-resources-oppi":
+            ServerResourcesScreenshotPreview(screen: .oppi)
+        case "server-resources-oppi-pending":
+            ServerResourcesScreenshotPreview(screen: .oppiPending)
         case "agent-icons":
             AgentIconProofPreview()
         case "agent-icons-save-failure":

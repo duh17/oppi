@@ -610,7 +610,7 @@ describe("MirrorQueueProjection", () => {
     const projection = new MirrorQueueProjection(queue(4, ["existing"]));
 
     const replacement = projection.queueFromDrafts(
-      2,
+      4,
       [{ id: "edited", message: "edited steer", createdAt: 12 }],
       [{ id: "follow", message: "edited follow", createdAt: 13 }],
     );
@@ -621,5 +621,73 @@ describe("MirrorQueueProjection", () => {
       steering: [{ id: "edited", message: "edited steer", createdAt: 12 }],
       followUp: [{ id: "follow", message: "edited follow", createdAt: 13 }],
     });
+  });
+
+  it("reaches MAX_SAFE_INTEGER once, then rejects stale and current retries without overflow", () => {
+    const maxVersion = Number.MAX_SAFE_INTEGER;
+    const projection = new MirrorQueueProjection(queue(maxVersion - 1, ["before max"]));
+
+    const atMax = projection.queueFromDrafts(
+      maxVersion - 1,
+      [{ id: "at-max", message: "at max", createdAt: 2 }],
+      [],
+    );
+    projection.replace(atMax);
+    expect(projection.snapshot()).toEqual({
+      version: maxVersion,
+      steering: [{ id: "at-max", message: "at max", createdAt: 2 }],
+      followUp: [],
+    });
+
+    expect(() =>
+      projection.queueFromDrafts(maxVersion - 1, [{ id: "stale", message: "stale" }], []),
+    ).toThrow(`Queue version mismatch: expected ${maxVersion}, got ${maxVersion - 1}`);
+
+    for (const id of ["exhausted", "exhausted-retry"]) {
+      expect(() => projection.queueFromDrafts(maxVersion, [{ id, message: id }], [])).toThrow(
+        `Queue version exhausted at ${maxVersion}; start a new session to reset the queue counter`,
+      );
+      expect(projection.snapshot()).toEqual({
+        version: maxVersion,
+        steering: [{ id: "at-max", message: "at max", createdAt: 2 }],
+        followUp: [],
+      });
+    }
+  });
+
+  it.each([
+    [
+      "runtime reconciliation",
+      (projection: MirrorQueueProjection) =>
+        projection.reconcileRuntimeSnapshot({ steering: ["changed"], followUp: [] }),
+    ],
+    ["clear", (projection: MirrorQueueProjection) => projection.clear()],
+    [
+      "optimistic enqueue",
+      (projection: MirrorQueueProjection) => projection.enqueueOptimistic("steer", "changed"),
+    ],
+    ["started item", (projection: MirrorQueueProjection) => projection.markStarted("at max")],
+  ] as const)("rejects %s at version exhaustion before mutating projection", (_name, mutate) => {
+    const maxVersion = Number.MAX_SAFE_INTEGER;
+    const initial = queue(maxVersion, ["at max"]);
+    const projection = new MirrorQueueProjection(initial);
+
+    expect(() => mutate(projection)).toThrow(
+      `Queue version exhausted at ${maxVersion}; start a new session to reset the queue counter`,
+    );
+    expect(projection.snapshot()).toEqual(initial);
+  });
+
+  it("rejects unsafe replacement and initial queue versions", () => {
+    const unsafe = queue(Number.MAX_SAFE_INTEGER + 1, ["unsafe"]);
+    expect(() => new MirrorQueueProjection(unsafe)).toThrow(
+      "Queue version must be a nonnegative safe integer",
+    );
+
+    const projection = new MirrorQueueProjection(queue(1, ["trusted"]));
+    expect(() => projection.replace(unsafe)).toThrow(
+      "Queue version must be a nonnegative safe integer",
+    );
+    expect(projection.snapshot()).toEqual(queue(1, ["trusted"]));
   });
 });

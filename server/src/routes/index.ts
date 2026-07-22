@@ -15,6 +15,7 @@ import { createWorkspaceFileRoutes } from "./workspace-files.js";
 import { createProviderAuthRoutes } from "./provider-auth.js";
 import { createScheduleRoutes } from "./schedules.js";
 import { createE2EUIHarnessRoutes } from "./e2e-ui-harness.js";
+import { createServerResourceRoutes } from "./server-resources.js";
 
 export type { RouteContext } from "./types.js";
 
@@ -25,6 +26,7 @@ export class RouteHandler {
   constructor(private readonly ctx: RouteContext) {
     this.dispatchers = [
       createIdentityRoutes(this.ctx, this.helpers),
+      createServerResourceRoutes(this.ctx, this.helpers),
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),
       createAgentRoutes(this.ctx, this.helpers),

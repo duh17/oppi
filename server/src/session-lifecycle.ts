@@ -4,6 +4,7 @@ import type { SdkBackend } from "./sdk-backend.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
+import { safeErrorMessage } from "./log-utils.js";
 
 export interface SessionLifecycleSessionState extends ExtensionUIState {
   session: Session;
@@ -33,7 +34,11 @@ export class SessionLifecycleCoordinator {
 
   constructor(private readonly deps: SessionLifecycleCoordinatorDeps) {}
 
-  async handleSessionEnd(key: string, reason: string): Promise<void> {
+  async handleSessionEnd(
+    key: string,
+    reason: string,
+    stopConfirmationReason?: string,
+  ): Promise<void> {
     const active = this.deps.getActiveSession(key);
     if (!active) {
       return;
@@ -43,39 +48,99 @@ export class SessionLifecycleCoordinator {
     const metricReason = isIdleTimeout ? "idle_timeout" : normalizeEndReason(reason);
     this.deps.metrics?.record("server.session_end", 1, { reason: metricReason });
 
-    const pendingStop = this.deps.clearPendingStop(active);
-    if (pendingStop?.mode === "terminate") {
-      this.deps.broadcast(key, {
-        type: "stop_confirmed",
-        source: pendingStop.source,
-        reason: "Session terminated",
+    const failures: Array<{ phase: string; message: string }> = [];
+    const recordFailure = (phase: string, error: unknown): void => {
+      const message = safeErrorMessage(error);
+      failures.push({ phase, message });
+      log.error(`session_lifecycle.${phase}.failed`, {
+        sessionId: active.session.id,
+        workspaceId: active.workspaceId,
+        reason,
+        attemptedStatus: "stopped",
+        durableRecovery:
+          active.pendingStop?.mode === "terminate"
+            ? "persisted_stopping_marker_retry_stop"
+            : "retry_terminal_persistence",
+        error: message,
       });
-    } else if (pendingStop?.mode === "abort") {
-      this.deps.broadcast(key, {
-        type: "stop_failed",
-        source: "server",
-        reason: `Session ended before stop completed (${reason})`,
-      });
-    }
+    };
 
     active.session.status = "stopped";
     active.session.currentTurnStartedAt = undefined;
-    this.deps.persistSessionNow(key, active.session);
-
-    clearExtensionUIState(active);
-
-    if (!active.sdkBackend.isDisposed) {
-      await active.sdkBackend.dispose();
+    try {
+      // A terminate request persists `stopping` before backend cleanup. If this
+      // final write fails, that durable marker remains retryable while runtime
+      // ownership is still detached below.
+      this.deps.persistSessionNow(key, active.session);
+    } catch (error) {
+      recordFailure("final_persistence", error);
     }
 
-    this.deps.broadcast(key, { type: "session_ended", reason });
-    this.clearIdleTimer(key);
-    this.deps.removeActiveSession(key);
+    try {
+      clearExtensionUIState(active);
+    } catch (error) {
+      recordFailure("extension_ui_cleanup", error);
+    }
 
-    this.deps.releaseSession({
-      workspaceId: active.workspaceId,
-      sessionId: active.session.id,
-    });
+    if (!active.sdkBackend.isDisposed) {
+      try {
+        await active.sdkBackend.dispose();
+      } catch (error) {
+        recordFailure("backend_disposal", error);
+      }
+    }
+
+    this.clearIdleTimer(key);
+    try {
+      this.deps.releaseSession({
+        workspaceId: active.workspaceId,
+        sessionId: active.session.id,
+      });
+    } catch (error) {
+      recordFailure("workspace_release", error);
+    }
+
+    const pendingStop = this.deps.clearPendingStop(active);
+    try {
+      if (pendingStop?.mode === "terminate") {
+        const persistenceFailure = failures.find(
+          (failure) => failure.phase === "final_persistence",
+        );
+        if (persistenceFailure) {
+          this.deps.broadcast(key, {
+            type: "stop_failed",
+            source: "server",
+            reason: `Failed to persist stopped session: ${persistenceFailure.message}`,
+          });
+        } else if (failures.length > 0) {
+          const failure = failures[0];
+          this.deps.broadcast(key, {
+            type: "stop_failed",
+            source: "server",
+            reason: `Failed to finalize stopped session (${failure?.phase}): ${failure?.message}`,
+          });
+        } else {
+          this.deps.broadcast(key, {
+            type: "stop_confirmed",
+            source: pendingStop.source,
+            reason: stopConfirmationReason || "Session terminated",
+          });
+        }
+      } else if (pendingStop?.mode === "abort") {
+        this.deps.broadcast(key, {
+          type: "stop_failed",
+          source: "server",
+          reason: `Session ended before stop completed (${reason})`,
+        });
+      }
+
+      this.deps.broadcast(key, { type: "session_ended", reason });
+    } finally {
+      // Active ownership is the final in-memory teardown step because terminal
+      // events need the active broadcaster state. Never let persistence,
+      // disposal, or observer failures strand that ownership.
+      this.deps.removeActiveSession(key);
+    }
   }
 
   resetIdleTimer(key: string): void {

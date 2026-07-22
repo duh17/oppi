@@ -112,6 +112,52 @@ enum WorkspaceSidebarDisclosurePolicy {
     static let defaultExpanded = true
 }
 
+struct WorkspaceSidebarPrimaryUtilityItem: Equatable {
+    let target: WorkspaceUtilityNavTarget
+    let title: String
+    let systemImage: String
+    let accessibilityLabel: String
+    let accessibilityIdentifier: String
+    let minimumHitHeight: CGFloat
+}
+
+enum WorkspaceSidebarPrimaryUtilities {
+    static let items: [WorkspaceSidebarPrimaryUtilityItem] = [
+        .init(
+            target: .agents,
+            title: "Agents",
+            systemImage: "person.crop.circle",
+            accessibilityLabel: "Agents",
+            accessibilityIdentifier: "workspace.agents.open",
+            minimumHitHeight: 44
+        ),
+        .init(
+            target: .schedules,
+            title: "Schedules",
+            systemImage: "clock",
+            accessibilityLabel: "Schedules",
+            accessibilityIdentifier: "workspace.schedules.open",
+            minimumHitHeight: 44
+        ),
+        .init(
+            target: .skills,
+            title: "Skills",
+            systemImage: "sparkles.rectangle.stack",
+            accessibilityLabel: "Open Skills",
+            accessibilityIdentifier: "workspace.skills.open",
+            minimumHitHeight: 44
+        ),
+        .init(
+            target: .extensions,
+            title: "Extensions",
+            systemImage: "puzzlepiece.extension",
+            accessibilityLabel: "Open Extensions",
+            accessibilityIdentifier: "workspace.extensions.open",
+            minimumHitHeight: 44
+        ),
+    ]
+}
+
 enum SessionInboxSessionRouting {
     static func routeScope(for session: Session) -> SessionRouteScope? {
         if session.control != nil { return .control }
@@ -342,6 +388,10 @@ struct SessionInboxView: View {
                     ScheduleManagementView()
                 case .agents:
                     AgentManagementView()
+                case .skills:
+                    ServerSkillsView()
+                case .extensions:
+                    ServerExtensionsView()
                 case .manageServers:
                     ServerView()
                 case .appSettings:
@@ -350,6 +400,12 @@ struct SessionInboxView: View {
             } else {
                 EmptyView()
             }
+        }
+        .navigationDestination(for: ServerResourceDetailNavTarget.self) { target in
+            ServerResourceDetailDestinationView(target: target)
+        }
+        .navigationDestination(for: ServerSkillFileNavTarget.self) { target in
+            ServerSkillFileScopedDestinationView(target: target)
         }
     }
 
@@ -1236,17 +1292,11 @@ struct WorkspaceSidebarView: View {
 
             ScrollView(.vertical, showsIndicators: true) {
                 LazyVStack(spacing: 2) {
-                    if ReleaseFeatures.agentAndScheduleManagementEnabled {
-                        sidebarUtilityRow(
-                            .agents,
-                            title: "Agents",
-                            systemImage: "person.crop.circle"
-                        )
-                        sidebarUtilityRow(
-                            .schedules,
-                            title: "Schedules",
-                            systemImage: "clock"
-                        )
+                    ForEach(
+                        WorkspaceSidebarPrimaryUtilities.items.filter { $0.target.isReleaseEnabled },
+                        id: \.target
+                    ) { item in
+                        sidebarUtilityRow(item)
                     }
 
                     Button {
@@ -1421,10 +1471,24 @@ struct WorkspaceSidebarView: View {
         .padding(.bottom, 12)
     }
 
+    private func sidebarUtilityRow(_ item: WorkspaceSidebarPrimaryUtilityItem) -> some View {
+        sidebarUtilityRow(
+            item.target,
+            title: item.title,
+            systemImage: item.systemImage,
+            accessibilityLabel: item.accessibilityLabel,
+            accessibilityIdentifier: item.accessibilityIdentifier,
+            minimumHitHeight: item.minimumHitHeight
+        )
+    }
+
     private func sidebarUtilityRow(
         _ target: WorkspaceUtilityNavTarget,
         title: String,
-        systemImage: String
+        systemImage: String,
+        accessibilityLabel: String? = nil,
+        accessibilityIdentifier: String? = nil,
+        minimumHitHeight: CGFloat = 44
     ) -> some View {
         let isSelected = navigation.workspaceNavigationPresentation == .split
             && navigation.splitDetailTarget == .utility(target)
@@ -1445,7 +1509,7 @@ struct WorkspaceSidebarView: View {
 
                 Spacer(minLength: 8)
             }
-            .frame(minHeight: 44)
+            .frame(minHeight: minimumHitHeight)
             .padding(.vertical, 2)
             .padding(.horizontal, 8)
             .background {
@@ -1457,11 +1521,12 @@ struct WorkspaceSidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title)
+        .accessibilityLabel(accessibilityLabel ?? title)
         .accessibilityHint("Opens \(title.lowercased()) management")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier(
-            target == .appSettings ? "workspace.settings.open" : "workspace.\(title.lowercased()).open"
+            accessibilityIdentifier
+                ?? (target == .appSettings ? "workspace.settings.open" : "workspace.\(title.lowercased()).open")
         )
     }
 

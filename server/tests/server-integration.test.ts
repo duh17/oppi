@@ -1101,6 +1101,69 @@ describe("extensions API", () => {
   });
 });
 
+// ── Server-scoped Skills and Extensions ──
+
+describe("server resource API", () => {
+  it("uses the shared owner-auth shell and serves the global catalogs", async () => {
+    const unauthorized = await get("/server/resources/extensions", false);
+    expect(unauthorized.status).toBe(401);
+
+    const skills = await get("/server/resources/skills");
+    expect(skills.status).toBe(200);
+    expect((await skills.json()).skills).toBeInstanceOf(Array);
+
+    const extensions = await get("/server/resources/extensions");
+    expect(extensions.status).toBe(200);
+    const body = (await extensions.json()) as {
+      extensions: Array<{ id: string; kind: string; path?: string }>;
+      oppiConfiguration: { enabled: boolean; approvalPolicy: string; revision: number };
+    };
+    expect(body.extensions[0]).toMatchObject({ id: "oppi", kind: "builtIn" });
+    expect(body.extensions[0]).not.toHaveProperty("path");
+    expect(body.oppiConfiguration).toEqual({
+      enabled: false,
+      approvalPolicy: "confirmDestructiveOnly",
+      revision: 0,
+    });
+  });
+
+  it("replaces the full Oppi configuration and returns a stale-write conflict", async () => {
+    const current = await get("/server/extensions/oppi/config");
+    expect(current.status).toBe(200);
+    const before = (await current.json()) as { revision: number };
+
+    const updated = await put("/server/extensions/oppi/config", {
+      enabled: true,
+      approvalPolicy: "readOnly",
+      baseRevision: before.revision,
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toEqual({
+      enabled: true,
+      approvalPolicy: "readOnly",
+      revision: before.revision + 1,
+    });
+
+    const stale = await put("/server/extensions/oppi/config", {
+      enabled: false,
+      approvalPolicy: "confirmAllChanges",
+      baseRevision: before.revision,
+    });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({
+      error: "Oppi extension configuration changed",
+      code: "revision_conflict",
+      current: { enabled: true, approvalPolicy: "readOnly", revision: before.revision + 1 },
+    });
+  });
+
+  it("rejects cwd on the server-global catalog", async () => {
+    const response = await get("/server/resources/skills?cwd=%2Ftmp");
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toBeTypeOf("string");
+  });
+});
+
 // ── Host directories ──
 
 describe("host directories API", () => {

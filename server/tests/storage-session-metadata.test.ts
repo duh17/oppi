@@ -140,8 +140,8 @@ describe("storage session metadata format", () => {
     session.runtime = "pi-tui";
     session.mirror = {
       status: "connected",
-      capabilities: ["prompt", "abort"],
-      protocolVersion: 1,
+      capabilities: ["prompt", "abort", "input_preflight:v1"],
+      protocolVersion: 2,
       terminal: {
         bridgeId: "bridge-1",
         hostname: "mac-studio",

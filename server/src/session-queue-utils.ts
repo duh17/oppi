@@ -91,14 +91,41 @@ export function queueItemStartedMessage(
   };
 }
 
+/** Queue versions are protocol counters: never negative, fractional, or lossy. */
+export function isQueueVersion(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+export const QUEUE_VERSION_INVALID_ERROR = "Queue version must be a nonnegative safe integer";
+export const QUEUE_VERSION_EXHAUSTED_ERROR = `Queue version exhausted at ${Number.MAX_SAFE_INTEGER}; start a new session to reset the queue counter`;
+
+export function assertQueueVersion(value: unknown): asserts value is number {
+  if (!isQueueVersion(value)) {
+    throw new Error(QUEUE_VERSION_INVALID_ERROR);
+  }
+}
+
+/**
+ * Queue versions never wrap: wrapping would let a pre-rollover stale CAS match
+ * again. Exhaustion is recoverable by starting a new session, whose queue starts
+ * at version zero. Callers must compute the next version before mutating state.
+ */
+export function nextQueueVersion(value: unknown): number {
+  assertQueueVersion(value);
+  if (value === Number.MAX_SAFE_INTEGER) {
+    throw new Error(QUEUE_VERSION_EXHAUSTED_ERROR);
+  }
+  return value + 1;
+}
+
 export function parseQueueState(value: unknown): MessageQueueState | undefined {
   const record = asRecord(value);
   const queue = asRecord(record?.queue) ?? record;
   if (!queue) return undefined;
-  const version = typeof queue.version === "number" ? queue.version : undefined;
+  const version = queue.version;
   const steering = parseQueueItems(queue.steering);
   const followUp = parseQueueItems(queue.followUp);
-  if (version === undefined || !steering || !followUp) return undefined;
+  if (!isQueueVersion(version) || !steering || !followUp) return undefined;
   return { version, steering, followUp };
 }
 
@@ -114,6 +141,8 @@ export function assertQueueBaseVersion(
   queue: Pick<MutableMessageQueueState, "version">,
   baseVersion: number,
 ): void {
+  assertQueueVersion(queue.version);
+  assertQueueVersion(baseVersion);
   if (baseVersion !== queue.version) {
     throw new Error(`Queue version mismatch: expected ${queue.version}, got ${baseVersion}`);
   }
@@ -189,27 +218,14 @@ export function dequeueQueueItemByText<T extends MessageQueueItem>(
   const dequeue = (kind: MessageQueueKind, list: T[]): StartedQueueItem<T> | null => {
     const index = list.findIndex((item) => matches(item, normalized));
     if (index === -1) return null;
+    const nextVersion = nextQueueVersion(queue.version);
     const [item] = list.splice(index, 1);
     if (!item) return null;
-    queue.version += 1;
+    queue.version = nextVersion;
     return { kind, item, queueVersion: queue.version };
   };
 
   return dequeue("steer", queue.steering) ?? dequeue("follow_up", queue.followUp);
-}
-
-export function removeQueueItemStartedByRuntime<T extends MessageQueueItem>(
-  queue: MutableMessageQueueState<T>,
-  kind: MessageQueueKind,
-  item: Pick<MessageQueueItem, "id" | "message">,
-  queueVersion: number,
-): void {
-  queue.version = queueVersion;
-  const target = kind === "steer" ? queue.steering : queue.followUp;
-  const index = target.findIndex(
-    (candidate) => candidate.id === item.id || candidate.message === item.message,
-  );
-  if (index !== -1) target.splice(index, 1);
 }
 
 export function extractQueuedUserText(

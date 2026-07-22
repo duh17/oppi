@@ -127,10 +127,11 @@ function makeMirrorHarness(): {
   runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
   ws.receive({
     type: "hello",
-    protocolVersion: 1,
+    protocolVersion: 2,
     bridgeId: "bridge-1",
     workspaceId: "w1",
     cwd: "/tmp/oppi-runtime-parity",
+    capabilities: ["input_preflight:v1"],
     state: {
       piSessionId: "pi-1",
       sessionFile: "/tmp/oppi-runtime-parity/session.jsonl",

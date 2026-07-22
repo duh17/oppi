@@ -283,10 +283,13 @@ describe("turn delivery idempotency", () => {
       requestId: "req-follow-up-stale-ready",
     });
 
-    expect(prompt).toHaveBeenCalledWith("continue", {
-      images: undefined,
-      streamingBehavior: "followUp",
-    });
+    expect(prompt).toHaveBeenCalledWith(
+      "continue",
+      expect.objectContaining({
+        images: undefined,
+        streamingBehavior: "followUp",
+      }),
+    );
   });
 
   it("rejects compact and navigate_tree while session is busy", async () => {

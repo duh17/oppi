@@ -13,7 +13,7 @@ This page covers the Apple client structure. Server route, runtime, and storage 
 The Apple client owns:
 
 - paired-server credentials and endpoint selection,
-- the global sessions inbox, workspace sidebar, workspace detail navigation, and focused-session navigation,
+- the global sessions inbox, workspace sidebar, server-global Skills and Extensions, workspace detail navigation, and focused-session navigation,
 - focused session stream setup and recovery,
 - app-event stream consumption and HTTP snapshot repair,
 - per-session chat timeline state and rendering,
@@ -45,7 +45,8 @@ graph TD
 
   subgraph State[State]
     SessionStore[SessionStore<br/>full state + list projection]
-    WorkspaceStore[WorkspaceStore<br/>catalog + summaries]
+    WorkspaceStore[WorkspaceStore<br/>workspace catalog + summaries]
+    ResourceStore[ServerResourceStore<br/>server-global Skills + Extensions]
     ExtensionUIState[Extension UI state<br/>AskRequestStore + dialogs/surfaces]
     ToolOutputStore[ToolOutputStore<br/>large tool output]
   end
@@ -55,6 +56,7 @@ graph TD
     Inbox[SessionInboxView]
     Detail[WorkspaceDetailView]
     Archive[WorkspaceStoppedSessionsSection]
+    Resources[Skills and Extensions<br/>list + detail flows]
     Review[Workspace review<br/>quick actions]
   end
 
@@ -77,6 +79,7 @@ graph TD
   Connection --> Focus
   Connection --> SessionStore
   Connection --> WorkspaceStore
+  Connection --> ResourceStore
   Connection --> ExtensionUIState
   Connection --> ChatManager
   Sidebar --> WorkspaceStore
@@ -86,6 +89,8 @@ graph TD
   Detail --> SessionStore
   Detail --> API
   Archive --> API
+  ResourceStore --> Resources
+  Resources --> API
   Review --> API
   ChatManager --> Reducer
   Reducer --> ToolOutputStore
@@ -107,7 +112,8 @@ graph TD
 | `MessageSender`                          | command request IDs, acks, retries, command result waiters                                                                  | session list rendering                |
 | `ChatSessionManager`                     | per-session connection loop, cached/paged trace loading, catch-up, reducer/coalescer ownership                              | global app-event routing              |
 | `SessionStore`                           | full session cache, cold list projection, per-server partitions, unread completion state                                    | workspace catalog                     |
-| `WorkspaceStore`                         | workspace catalog, skill catalog, workspace summaries, per-server freshness                                                 | full session lifecycle                |
+| `WorkspaceStore`                         | workspace catalog, workspace-effective skill choices used by workspace create/edit flows, workspace summaries, per-server freshness | full session lifecycle or server-global extension state |
+| `ServerResourceStore`                    | independent per-server global Skill and Extension snapshots, cached-first loading, normal toggle rollback, serialized full-CAS Oppi configuration writes | workspace overrides, session lifecycle, or UI grouping |
 | `AskRequestStore` and extension UI state | pending asks, sheet dialogs, status/widget/native-surface state                                                             | server-side permission policy         |
 | `TimelineReducer` + `DeltaCoalescer`     | timeline model and live delta coalescing                                                                                    | UIKit rendering and network           |
 
@@ -153,7 +159,7 @@ The global app event stream and focused session stream are intentionally separat
 
 ## Workspace navigation flow
 
-The Workspaces tab opens the global `SessionInboxView` for the active server. The root shows active sessions under **Your Turn** and **Working**, plus stopped sessions from the three most recent calendar days. Today's stopped group is expanded; earlier day groups are collapsed. Stopped incognito sessions are omitted because they have no resumable history. Workspace rows include workspace context; declared control-session rows use `Oppi Control`. Selecting a workspace from the sidebar opens `WorkspaceDetailView` over the global inbox, where older stopped history remains available. Selecting any session opens the same focused chat without reading a Pi JSONL file.
+The Workspaces tab opens the global `SessionInboxView` for the active server. The sidebar orders its direct destinations as **Agents**, **Schedules**, **Skills**, **Extensions**, then **Workspaces**. Skills and Extensions are separate server-global utilities; there is no combined Resources destination. The root shows active sessions under **Your Turn** and **Working**, plus stopped sessions from the three most recent calendar days. Today's stopped group is expanded; earlier day groups are collapsed. Stopped incognito sessions are omitted because they have no resumable history. Workspace rows include workspace context; declared control-session rows use `Oppi Control`. Selecting a workspace from the sidebar opens `WorkspaceDetailView` over the global inbox, where older stopped history remains available. Selecting any session opens the same focused chat without reading a Pi JSONL file.
 
 ```mermaid
 graph TD
@@ -179,7 +185,7 @@ graph TD
   Detail --> Chat
 ```
 
-`WorkspaceStore` owns the workspace catalog and sidebar summaries, including the optional compact Git summary requested by the Apple catalog client. A main-checkout `workspace_git_changed` invalidation repairs that compact summary through authenticated HTTP while preserving the last trustworthy value on failure. `SessionStore` owns session rows and exposes `listProjectionSessions` for the global inbox, workspace detail, and quick-session lists. The global inbox reads the server selected in its toolbar, groups that server's active rows by attention and execution state, and groups the already-fetched recent stopped projection by calendar day without another request. View-driven refreshes target the selected server so an unavailable inactive host cannot delay the inbox; app launch and foreground recovery may still refresh the broader connection pool. `WorkspaceDetailView` applies a workspace and worktree scope, refreshes the hot stopped range, exposes importable local sessions, and keeps older archive buckets in view state until loaded. The shared sidebar places saved Agents and schedules above a persisted Workspaces disclosure, retains the existing New Workspace row, and pins App Settings below it. Compact selection dismisses the drawer and pushes the management view; split selection keeps the sidebar visible, clears any workspace selection, and opens the management view in the detail column. Existing Agent, schedule, and workspace create/edit sheets expose a capability-gated `Use Oppi Session` row. It launches a declared server-scoped session and then opens the ordinary chat destination. On iPad that chat is pushed on the selected management utility's detail stack, so the utility remains selected. Stack navigation pushes workspace detail and chat over the inbox; split navigation keeps the workspace sidebar beside the selected detail and preserves the equivalent route when the layout changes. `WorkspaceAdaptiveRootView` consumes guided first-workspace requests and `oppi://workspace` payloads so both presentations open the same workspace creation sheet. List views must not read the full `SessionStore.sessions` array because hot timeline updates can change full session state without changing row-level summary data.
+`WorkspaceStore` owns the workspace catalog and sidebar summaries, including the optional compact Git summary requested by the Apple catalog client. A main-checkout `workspace_git_changed` invalidation repairs that compact summary through authenticated HTTP while preserving the last trustworthy value on failure. `SessionStore` owns session rows and exposes `listProjectionSessions` for the global inbox, workspace detail, and quick-session lists. The global inbox reads the server selected in its toolbar, groups that server's active rows by attention and execution state, and groups the already-fetched recent stopped projection by calendar day without another request. View-driven refreshes target the selected server so an unavailable inactive host cannot delay the inbox; app launch and foreground recovery may still refresh the broader connection pool. `WorkspaceDetailView` applies a workspace and worktree scope, refreshes the hot stopped range, exposes importable local sessions, and keeps older archive buckets in view state until loaded. The shared sidebar places saved Agents, schedules, Skills, and Extensions above a persisted Workspaces disclosure, retains the New Workspace row, and pins App Settings below it. Compact selection dismisses the drawer and pushes the management view; split selection keeps the sidebar visible, clears any workspace selection, and opens the management view in the detail column. Resource detail targets carry `serverId`, resource kind, and opaque resource ID. Skill-file targets also carry the server ID and opaque skill ID. `AppNavigation` records utility → detail → file route metadata so stack/split transitions preserve every level without issuing a request to the newly active but wrong server. Existing Agent, schedule, and workspace create/edit sheets expose a capability-gated `Use Oppi Session` row. It launches a declared server-scoped session and then opens the ordinary chat destination. On iPad that chat is pushed on the selected management utility's detail stack, so the utility remains selected. Stack navigation pushes workspace detail and chat over the inbox; split navigation keeps the workspace sidebar beside the selected detail and preserves the equivalent route when the layout changes. `WorkspaceAdaptiveRootView` consumes guided first-workspace requests and `oppi://workspace` payloads so both presentations open the same workspace creation sheet. List views must not read the full `SessionStore.sessions` array because hot timeline updates can change full session state without changing row-level summary data.
 
 ## Focused session flow
 
@@ -262,7 +268,7 @@ These rules are enforced by `server/scripts/check-architecture-boundaries.ts` du
 - `clients/apple/OppiCore/**` non-adapter files must not import UIKit, AppKit, SwiftUI, ActivityKit, UserNotifications, Speech, AVFoundation, WebKit, or MetricKit. Put platform-specific code under `OppiCore/PlatformAdapters/**` or an app-specific adapter.
 - `clients/apple/Oppi/Core/Views/**` and `clients/apple/Oppi/Features/Chat/Timeline/**` must not reference `APIClient` or `WebSocketClient` directly.
 - Workspace and quick-session list views must read `SessionStore.listProjectionSessions` or `listProjectionSessions(workspaceId:)`, not full `SessionStore.sessions`.
-- `SessionStore`, `WorkspaceStore`, and shared stores under `clients/apple/OppiCore/Stores/**` must not depend on each other. Cross-store workflows belong in `ServerConnection` or a small service.
+- `SessionStore`, `WorkspaceStore`, `ServerResourceStore`, and shared stores under `clients/apple/OppiCore/Stores/**` must not depend on each other. Cross-store workflows belong in `ServerConnection` or a small service.
 - Generic extension UI rendering and routing must not branch on concrete tool names, extension names, status keys, widget keys, or display names. Add semantic protocol metadata at the producer boundary instead.
 - SwiftUI foreground, fill, and stroke styling must use the environment-resolved `.theme*` `ShapeStyle` shorthand. `Color.theme*` is a runtime snapshot for APIs that require a concrete `Color` or a UIKit/AppKit bridge. Persistent list and panel modifiers must read `theme` or `themeID` from the environment so mounted content repaints after a theme switch. `scripts/theme-surface-guard.ts` enforces the shorthand boundary during the iOS architecture check.
 
@@ -286,6 +292,7 @@ Keep these high-churn client modules small and explicit:
 | Focused WebSocket transport | `clients/apple/Oppi/Core/Networking/WebSocketClient.swift`, `SessionStreamCoordinator.swift`, `MessageSender.swift`; shared state in `clients/apple/OppiCore/Runtime/FocusedSessionStore.swift` and `SessionStreamCatchUpTracker.swift` |
 | App event stream            | `clients/apple/Oppi/Core/Networking/AppEventStreamClient.swift`, `AppEventStreamCoordinator.swift`, `ServerConnection+AppEvents.swift`                                |
 | Workspace catalog and sidebar | `clients/apple/Oppi/Core/Services/WorkspaceStore.swift`, shared file index and freshness/health state in `clients/apple/OppiCore/Stores/**`, `SessionInboxView.swift` |
+| Server Skills and Extensions | `clients/apple/Oppi/Core/Services/ServerResourceStore.swift`, `APIClient+ServerResources.swift`, `clients/apple/Oppi/Features/Skills/**`, `clients/apple/Oppi/Features/Extensions/**` |
 | Global sessions inbox       | `clients/apple/Oppi/Features/Workspaces/SessionInboxView.swift`, `SessionRow.swift`, `SessionRowPresentation.swift`                                                   |
 | Workspace detail list       | `clients/apple/Oppi/Features/Workspaces/WorkspaceDetailView.swift`, `WorkspaceStoppedSessionsSection.swift`                                                          |
 | Session store               | `clients/apple/Oppi/Core/Services/SessionStore.swift`; shared ask/queue/review state in `clients/apple/OppiCore/Stores/**`                                             |

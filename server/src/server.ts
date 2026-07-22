@@ -47,6 +47,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { SkillRegistry } from "./skills.js";
 import { isDeclaredControlSession } from "./control-session.js";
+import { ServerResourceService } from "./server-resource-service.js";
 
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 
@@ -411,6 +412,7 @@ export class Server {
   private storage: Storage;
   private sessions: SessionManager;
   private skillRegistry: SkillRegistry;
+  private readonly serverResources: ServerResourceService;
   private skillsInitialized = false;
   private reportedMissingWorkspaceSkills = new Set<string>();
   private push: PushClient;
@@ -481,6 +483,14 @@ export class Server {
     const config = storage.getConfig();
     const identity = ensureIdentityMaterial(identityConfigForDataDir(dataDir));
     this.identityFingerprint = identity.fingerprint;
+    this.serverResources = new ServerResourceService({
+      dataDir,
+      agentDir: getAgentDir(),
+      oppiSettings: {
+        get: () => this.storage.getOppiExtensionSettings(),
+        getLoadError: () => this.storage.getOppiExtensionSettingsLoadError(),
+      },
+    });
     // Server operational metrics collector (event-driven latencies, counts).
     this.opsMetrics = new ServerMetricCollector(
       new JsonlMetricWriter(join(dataDir, "diagnostics", "telemetry")),
@@ -740,6 +750,7 @@ export class Server {
       sessions: this.sessions,
       sessionRuntimes: this.sessionRuntimes,
       skillRegistry: this.skillRegistry,
+      serverResources: this.serverResources,
       providerAuth: this.providerAuth,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),

@@ -10,6 +10,7 @@ import type { ProviderAuthManager } from "../provider-auth/provider-auth-manager
 import type { CodexUsageStatus } from "../codex-usage.js";
 import type { AppEventEmitter } from "../app-event-stream.js";
 import type { SessionRuntimes } from "../runtime-router.js";
+import type { ServerResourceService } from "../server-resource-service.js";
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {
@@ -17,6 +18,7 @@ export interface RouteContext {
   sessions: SessionManager;
   sessionRuntimes: SessionRuntimes;
   skillRegistry: SkillRegistry;
+  serverResources: ServerResourceService;
   providerAuth: ProviderAuthManager;
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;

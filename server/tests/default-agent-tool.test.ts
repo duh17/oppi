@@ -146,6 +146,42 @@ describe("Default Agent Oppi tool command runner", () => {
   });
 });
 
+describe("Default Agent extension isolation", () => {
+  it("registers only oppi and ask and hard-codes confirm-all for control mutations", async () => {
+    type RegisteredTool = {
+      execute: (
+        toolCallId: string,
+        params: unknown,
+        signal: AbortSignal | undefined,
+        onUpdate: undefined,
+        context: unknown,
+      ) => Promise<{ content: Array<{ type: string; text?: string }>; details?: unknown }>;
+    };
+    const tools = new Map<string, RegisteredTool>();
+    createDefaultAgentExtensionFactory({ callerSessionId: "control-test" })({
+      on: () => undefined,
+      registerTool: (tool: RegisteredTool & { name: string }) => tools.set(tool.name, tool),
+    } as unknown as never);
+
+    expect([...tools.keys()]).toEqual(["oppi", "ask"]);
+    const confirm = vi.fn(async () => false);
+    const oppi = tools.get("oppi");
+    expect(oppi).toBeDefined();
+    if (!oppi) return;
+
+    const result = await oppi.execute(
+      "oppi-1",
+      { args: ["session", "stop", "sess-1"] },
+      undefined,
+      undefined,
+      { hasUI: true, ui: { confirm } },
+    );
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ details: { cancelled: true, reason: "declined" } });
+  });
+});
+
 describe("Default Agent managed ask tool", () => {
   it("uses native structured UI, resets once-per-turn state, and labels fallbacks", async () => {
     type RegisteredTool = {
@@ -159,7 +195,7 @@ describe("Default Agent managed ask tool", () => {
     };
     const tools = new Map<string, RegisteredTool>();
     let turnStart: (() => Promise<void>) | undefined;
-    createDefaultAgentExtensionFactory({})({
+    createDefaultAgentExtensionFactory({ callerSessionId: "control-test" })({
       on: (event: string, handler: () => Promise<void>) => {
         if (event === "turn_start") turnStart = handler;
       },
@@ -339,43 +375,46 @@ describe("Default Agent Oppi tool presentation", () => {
     });
   });
 
-  it("redacts assignment-style body flags in displayed commands", () => {
-    const classification = classifyOppiToolCommand([
-      "session",
-      "send",
-      "sess-1",
-      "--text=private-message",
-    ]);
-    expect(classification).toMatchObject({ ok: true });
-    if (!classification.ok) return;
-
-    expect(classification.displayCommand).toContain("--text=[15 chars]");
-    expect(classification.displayCommand).not.toContain("private-message");
+  it("rejects assignment-style body flags", () => {
+    expect(
+      classifyOppiToolCommand(["session", "send", "sess-1", "--text=private-message"]),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("Assignment-style") });
   });
 
   it.each([
-    ["--prompt", "private prompt"],
-    ["--text", "private message"],
-    ["--definition-json", '{"secret":true}'],
-    ["--system-prompt", "private system prompt"],
-  ])("redacts %s bodies from the displayed command regardless of length", (flag, body) => {
-    const classification = classifyOppiToolCommand([
-      "session",
-      "create",
-      "--workspace",
-      "oppi",
-      flag,
-      body,
-    ]);
-    expect(classification).toMatchObject({ ok: true });
-    if (!classification.ok) return;
+    {
+      flag: "--prompt",
+      body: "private prompt",
+      args: ["session", "create", "--workspace", "oppi", "--prompt", "private prompt"],
+    },
+    {
+      flag: "--text",
+      body: "private message",
+      args: ["session", "send", "sess-1", "--text", "private message"],
+    },
+    {
+      flag: "--definition-json",
+      body: '{"description":"secret"}',
+      args: ["agent", "update", "default", "--definition-json", '{"description":"secret"}'],
+    },
+    {
+      flag: "--system-prompt",
+      body: "private system prompt",
+      args: ["workspace", "update", "oppi", "--system-prompt", "private system prompt"],
+    },
+  ])(
+    "redacts $flag bodies from the displayed command regardless of length",
+    ({ flag, body, args }) => {
+      const classification = classifyOppiToolCommand(args);
+      expect(classification).toMatchObject({ ok: true });
+      if (!classification.ok) return;
 
-    const expanded = formatOppiToolExpandedText(classification, { session_id: "sess-new" });
+      const expanded = formatOppiToolExpandedText(classification, { updated: true });
 
-    expect(expanded).toContain(`${flag} [${body.length} chars]`);
-    expect(expanded).not.toContain(body);
-    expect(expanded).toContain("Session id");
-  });
+      expect(expanded).toContain(`${flag} [${body.length} chars]`);
+      expect(expanded).not.toContain(body);
+    },
+  );
 });
 
 describe("Default Agent Oppi tool command policy", () => {
@@ -589,9 +628,7 @@ describe("Default Agent Oppi tool command policy", () => {
     });
   });
 
-  it("shows every supplied body field instead of hiding effective input", () => {
-    const definition = '{"description":"effective definition"}';
-    const systemPrompt = "effective system prompt";
+  it("rejects body fields that are unsupported for the selected action", () => {
     const classification = classifyOppiToolCommand([
       "agent",
       "update",
@@ -599,25 +636,13 @@ describe("Default Agent Oppi tool command policy", () => {
       "--prompt",
       "decoy prompt",
       "--definition-json",
-      definition,
-      "--system-prompt",
-      systemPrompt,
+      '{"description":"effective definition"}',
     ]);
 
     expect(classification).toMatchObject({
-      ok: true,
-      approvalDetails: {
-        bodies: [
-          { label: "Prompt", value: "decoy prompt" },
-          { label: "Definition", value: definition },
-          { label: "System prompt", value: systemPrompt },
-        ],
-      },
+      ok: false,
+      reason: expect.stringContaining("Unsupported flag"),
     });
-    if (!classification.ok) return;
-    expect(classification.approvalMessage).toContain("## Prompt");
-    expect(classification.approvalMessage).toContain("## Definition");
-    expect(classification.approvalMessage).toContain("## System prompt");
   });
 
   it("rejects oversized inline definitions before approval", () => {

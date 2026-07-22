@@ -11,6 +11,7 @@ import {
   printDetails,
   printList,
   printNextCommands,
+  setCapturedCliExitCode,
   writeJsonEnvelope,
 } from "../output.js";
 import { apiStatus, listWorkspacesForCli, resolveWorkspaceForCli } from "../resources.js";
@@ -112,7 +113,7 @@ export async function cmdWorkspace(
         ok: false,
         error: { message, ...(apiStatus(error) ? { status: apiStatus(error) } : {}) },
       });
-      process.exitCode = 1;
+      setCapturedCliExitCode(1);
       return;
     }
     console.log(c.red(`  Error: ${message}`));

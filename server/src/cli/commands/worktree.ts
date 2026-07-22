@@ -6,6 +6,7 @@ import {
   nonEmptyDetails,
   printDetails,
   printList,
+  setCapturedCliExitCode,
   writeJsonEnvelope,
 } from "../output.js";
 import {
@@ -137,7 +138,7 @@ export async function cmdWorktree(
     const status = apiStatus(error);
     if (jsonOutput) {
       writeJsonEnvelope({ ok: false, error: { message, ...(status ? { status } : {}) } });
-      process.exitCode = 1;
+      setCapturedCliExitCode(1);
       return;
     }
     console.log(c.red(`  Error: ${message}`));

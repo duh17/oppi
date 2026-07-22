@@ -111,6 +111,15 @@ const settingsOperationIds = [
   "getDailyServerStats",
   "getAutoTitleConfig",
   "setAutoTitleConfig",
+  "listServerSkills",
+  "getServerSkill",
+  "getServerSkillFile",
+  "setServerSkillEnabled",
+  "listServerExtensions",
+  "getServerExtension",
+  "setServerExtensionEnabled",
+  "getOppiExtensionConfig",
+  "setOppiExtensionConfig",
   "createWorkspace",
   "updateWorkspace",
   "deleteWorkspace",
@@ -235,6 +244,16 @@ describe("api route registry", () => {
     expect(normalizeRegisteredPathPattern("/server/stats/daily/2026-05-19")).toBe(
       "/server/stats/daily/:date",
     );
+    expect(
+      normalizeRegisteredPathPattern(
+        "/server/resources/skills/skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/file",
+      ),
+    ).toBe("/server/resources/skills/:skillId/file");
+    expect(
+      normalizeRegisteredPathPattern(
+        "/server/resources/extensions/extension_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/enabled",
+      ),
+    ).toBe("/server/resources/extensions/:extensionId/enabled");
   });
 
   it("tracks native client route uses", () => {

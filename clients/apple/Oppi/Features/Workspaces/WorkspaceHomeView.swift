@@ -143,6 +143,9 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
 enum WorkspaceUtilityNavTarget: Hashable {
     case schedules
     case agents
+    /// Placeholder roots; dedicated navigation destinations land with the catalog views.
+    case skills
+    case extensions
     case manageServers
     case appSettings
 
@@ -150,7 +153,7 @@ enum WorkspaceUtilityNavTarget: Hashable {
         switch self {
         case .schedules, .agents:
             ReleaseFeatures.agentAndScheduleManagementEnabled
-        case .manageServers, .appSettings:
+        case .skills, .extensions, .manageServers, .appSettings:
             true
         }
     }
@@ -306,6 +309,7 @@ extension View {
             .environment(connection.chatState)
             .environment(connection.sessionStore)
             .environment(connection.workspaceStore)
+            .environment(connection.serverResourceStore)
             .environment(connection.askRequestStore)
             .environment(connection.audioPlayer)
             .environment(connection.gitStatusStore)
@@ -482,6 +486,8 @@ struct WorkspaceHomeView: View {
                     ScheduleManagementView()
                 case .agents:
                     AgentManagementView()
+                case .skills, .extensions:
+                    EmptyView()
                 case .manageServers:
                     ServerView()
                 case .appSettings:

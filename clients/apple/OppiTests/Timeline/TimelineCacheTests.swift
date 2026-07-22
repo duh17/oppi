@@ -132,6 +132,140 @@ struct TimelineCacheTests {
         #expect(loadedGlobal == nil)
     }
 
+    @Test func resourceCatalogNamespacingPreservesIndependentServerSnapshots() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+        defer { try? fileManager.removeItem(at: base) }
+
+        let cache = TimelineCache(rootURL: root)
+        let studio = ServerResourceCatalogSnapshot(
+            skills: [],
+            extensions: [],
+            oppiConfiguration: OppiExtensionConfiguration(
+                enabled: true,
+                approvalPolicy: .confirmAllChanges,
+                revision: 4
+            ),
+            savedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let mini = ServerResourceCatalogSnapshot(
+            skills: [],
+            extensions: [],
+            oppiConfiguration: OppiExtensionConfiguration(
+                enabled: false,
+                approvalPolicy: .readOnly,
+                revision: 9
+            ),
+            savedAt: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+
+        await cache.saveServerResourceCatalog(studio, serverId: "sha256:studio")
+        await cache.saveServerResourceCatalog(mini, serverId: "sha256:mini")
+
+        #expect(await cache.loadServerResourceCatalog(serverId: "sha256:studio") == studio)
+        #expect(await cache.loadServerResourceCatalog(serverId: "sha256:mini") == mini)
+        #expect(await cache.loadServerResourceCatalog(serverId: "sha256:other") == nil)
+    }
+
+    @Test func resourceCatalogRoundTripPreservesIndependentLoadedAndFreshnessState() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+        defer { try? fileManager.removeItem(at: base) }
+
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_010)
+        let cache = TimelineCache(rootURL: root)
+        let partial = ServerResourceCatalogSnapshot(
+            skills: [],
+            extensions: [],
+            oppiConfiguration: nil,
+            savedAt: savedAt,
+            skillsLoaded: true,
+            extensionsLoaded: false,
+            skillsSavedAt: savedAt,
+            extensionsSavedAt: nil,
+            oppiRequiresAuthoritativeRefresh: false
+        )
+
+        await cache.saveServerResourceCatalog(partial, serverId: "sha256:partial")
+        let loaded = await cache.loadServerResourceCatalog(serverId: "sha256:partial")
+
+        #expect(loaded == partial)
+        #expect(loaded?.skillsLoaded == true)
+        #expect(loaded?.extensionsLoaded == false)
+        #expect(loaded?.skillsSavedAt == savedAt)
+        #expect(loaded?.extensionsSavedAt == nil)
+        #expect(loaded?.oppiConfiguration == nil)
+        #expect(loaded?.oppiRequiresAuthoritativeRefresh == false)
+    }
+
+    @Test func resourceCatalogRoundTripPreservesAuthoritativeOppiRefreshLockout() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+        defer { try? fileManager.removeItem(at: base) }
+
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_015)
+        let cache = TimelineCache(rootURL: root)
+        let locked = ServerResourceCatalogSnapshot(
+            skills: [],
+            extensions: [],
+            oppiConfiguration: OppiExtensionConfiguration(
+                enabled: false,
+                approvalPolicy: .confirmDestructiveOnly,
+                revision: 5
+            ),
+            savedAt: savedAt,
+            skillsLoaded: false,
+            extensionsLoaded: true,
+            skillsSavedAt: nil,
+            extensionsSavedAt: savedAt,
+            oppiRequiresAuthoritativeRefresh: true
+        )
+
+        await cache.saveServerResourceCatalog(locked, serverId: "sha256:locked")
+
+        #expect(await cache.loadServerResourceCatalog(serverId: "sha256:locked") == locked)
+        #expect(
+            await cache.loadServerResourceCatalog(serverId: "sha256:locked")?
+                .oppiRequiresAuthoritativeRefresh == true
+        )
+    }
+
+    @Test func resourceCatalogDecodesExistingCompleteSnapshotAsBothHalvesLoaded() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+        let serverDirectory = root.appending(path: "servers/sha256:existing", directoryHint: .isDirectory)
+        let catalogURL = serverDirectory.appending(path: "resource-catalog.json")
+        defer { try? fileManager.removeItem(at: base) }
+
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_020)
+        let legacy = ExistingCompleteResourceSnapshot(
+            skills: [],
+            extensions: [],
+            oppiConfiguration: OppiExtensionConfiguration(
+                enabled: false,
+                approvalPolicy: .confirmDestructiveOnly,
+                revision: 3
+            ),
+            savedAt: savedAt
+        )
+        let cache = TimelineCache(rootURL: root)
+        try fileManager.createDirectory(at: serverDirectory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(legacy).write(to: catalogURL, options: .atomic)
+
+        let loaded = await cache.loadServerResourceCatalog(serverId: "sha256:existing")
+
+        #expect(loaded?.skillsLoaded == true)
+        #expect(loaded?.extensionsLoaded == true)
+        #expect(loaded?.skillsSavedAt == savedAt)
+        #expect(loaded?.extensionsSavedAt == savedAt)
+        #expect(loaded?.oppiConfiguration == legacy.oppiConfiguration)
+        #expect(loaded?.oppiRequiresAuthoritativeRefresh == false)
+    }
+
     @Test func traceNamespacingIsolatesServersWithIdenticalSessionIds() async throws {
         let fileManager = FileManager.default
         let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
@@ -315,4 +449,11 @@ struct TimelineCacheTests {
             thinking: nil
         )
     }
+}
+
+private struct ExistingCompleteResourceSnapshot: Encodable {
+    let skills: [ServerSkillSummary]
+    let extensions: [ServerExtensionSummary]
+    let oppiConfiguration: OppiExtensionConfiguration
+    let savedAt: Date
 }

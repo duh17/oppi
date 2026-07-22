@@ -12,6 +12,7 @@ import {
   nonEmptyDetails,
   printDetails,
   printList,
+  setCapturedCliExitCode,
   writeJsonEnvelope,
 } from "../output.js";
 import { inferWorkspaceIdFromCwdForCli, resolveWorkspaceIdForCli } from "../resources.js";
@@ -51,6 +52,11 @@ import { parseWatchCondition, runSessionWatch, watchSessions } from "./session-w
 
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
 
+export interface SessionCliCallerContext {
+  /** Immutable for one in-process command; shell callers continue using the environment fallback. */
+  callerSessionId?: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -61,6 +67,7 @@ export async function cmdSession(
   positional: string[],
   flags: Record<string, string>,
   cwd = process.cwd(),
+  callerContext: SessionCliCallerContext = {},
 ): Promise<void> {
   const requestedMode = action || "list";
   const mode = requestedMode === "start" ? "create" : requestedMode;
@@ -71,7 +78,8 @@ export async function cmdSession(
   try {
     flags = normalizeSessionFlagAliases(mode, flags);
     assertSessionFlags(mode, flags);
-    assertNotSelfTargetingSession(sessionTargetsForMode(mode, positional));
+    const callerSessionId = callerContext.callerSessionId ?? callerSessionIdFromEnvironment();
+    assertNotSelfTargetingSession(sessionTargetsForMode(mode, positional), callerSessionId);
 
     if (mode === "list") {
       const result = await listSessions(storage, flags, call);
@@ -116,7 +124,7 @@ export async function cmdSession(
     }
 
     if (mode === "create") {
-      await createSession(storage, flags, jsonOutput);
+      await createSession(storage, flags, jsonOutput, callerSessionId);
       return;
     }
 
@@ -501,24 +509,26 @@ async function createSession(
   storage: LocalApiConnection,
   flags: Record<string, string>,
   jsonOutput: boolean,
+  parentSessionId?: string,
 ): Promise<void> {
   const workspaceRef = flags.workspace?.trim();
   const promptText =
     flags.prompt === undefined ? undefined : resolvePromptInput(flags.prompt, "--prompt");
   if (!workspaceRef || promptText === undefined) {
     const message = "--workspace and --prompt are required";
-    if (jsonOutput) writeJsonEnvelope({ ok: false, error: { message } });
-    else {
+    if (jsonOutput) {
+      writeJsonEnvelope({ ok: false, error: { message } });
+      setCapturedCliExitCode(1);
+    } else {
       console.log(c.red(`  Error: ${message}`));
       console.log(c.dim("  Usage: oppi session create --workspace <id> --prompt <text> [--json]"));
+      process.exitCode = 1;
     }
-    process.exitCode = 1;
     return;
   }
   const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef);
   const resolvedModel = await resolveModelFlagForCli(storage, flags.model);
   const savedAgent = savedAgentReference(flags.agent);
-  const parentSessionId = callerSessionIdFromEnvironment();
   const allowNestedDelegation = flags["allow-nested-delegation"] === "true";
   const result = savedAgent
     ? await localApiRequest<{ session: Session; receipt?: Record<string, unknown> }>(

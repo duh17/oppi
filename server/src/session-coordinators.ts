@@ -31,13 +31,14 @@ import {
   SessionStopFlowCoordinator,
   type SessionStopFlowSessionState,
 } from "./session-stop-flow.js";
-import { SessionStopCoordinator } from "./session-stop.js";
+import { SessionStopCoordinator, type SessionStopTimers } from "./session-stop.js";
 import { SessionTurnCoordinator } from "./session-turns.js";
 import type { Storage } from "./storage.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type { ServerConfig, ServerMessage, Session } from "./types.js";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
+import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 
 export type { SessionCatchUpResponse };
 
@@ -69,16 +70,23 @@ export interface SessionCoordinatorBundleDeps {
   stopAbortTimeoutMs: number;
   stopAbortRetryTimeoutMs: number;
   stopSessionGraceMs: number;
+  stopSessionBoundMs: number;
+  stopTimers?: SessionStopTimers;
   getContextWindowResolver: () => ((modelId: string) => number) | null;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
   emitSessionEvent: (payload: SessionBroadcastEvent) => void;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
-  onSessionEnd: (key: string, reason: string) => void;
+  onSessionEnd: (key: string, reason: string, stopConfirmationReason?: string) => Promise<void>;
   persistSessionNow: (key: string, session: Session) => void;
   markSessionDirty: (key: string) => void;
   resetIdleTimer: (key: string) => void;
   bootstrapSessionState: (key: string) => Promise<void>;
-  sendCommand: (key: string, command: Record<string, unknown>) => void;
+  sendCommand: (
+    key: string,
+    command: Record<string, unknown>,
+    permit?: SessionRuntimeTransactionPermit,
+    onPreflightAccepted?: () => void,
+  ) => void | Promise<void>;
   sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>;
   broadcast: (key: string, message: ServerMessage) => void;
   stopSession: (sessionId: string) => Promise<void>;
@@ -112,10 +120,12 @@ export function createSessionCoordinatorBundle(
       getActiveSession: (key) => deps.active.get(key),
       persistSessionNow: (key, session) => broadcaster.persistSessionNow(key, session),
       broadcast: (key, message) => broadcaster.broadcast(key, message),
-      handleSessionEnd: (key, reason) => deps.onSessionEnd(key, reason),
+      handleSessionEnd: (key, reason, stopConfirmationReason) =>
+        deps.onSessionEnd(key, reason, stopConfirmationReason),
     },
     deps.stopAbortTimeoutMs,
     deps.stopAbortRetryTimeoutMs,
+    deps.stopTimers,
   );
 
   const stateCoordinator = new SessionStateCoordinator({
@@ -202,7 +212,8 @@ export function createSessionCoordinatorBundle(
     config: deps.config,
     getActiveSession: (key) => deps.active.get(key) as SessionInputSessionState | undefined,
     turnCoordinator,
-    sendCommand: (key, command) => deps.sendCommand(key, command),
+    sendCommand: (key, command, permit, onPreflightAccepted) =>
+      deps.sendCommand(key, command, permit, onPreflightAccepted),
     uploadStoreConfig,
     enqueueQueuedMessage: (key, kind, message, attachments, idHint, sdkMessage, sdkImages) =>
       queueCoordinator.enqueueQueuedMessage(
@@ -216,6 +227,7 @@ export function createSessionCoordinatorBundle(
       ),
     resolveWorkspaceRoot,
     onFirstMessage: deps.onFirstMessage,
+    assertModelTurnAdmissionAllowed: (key) => queueCoordinator.assertModelTurnAdmissionAllowed(key),
   });
 
   const agentEventCoordinator = new SessionAgentEventCoordinator({
@@ -239,10 +251,13 @@ export function createSessionCoordinatorBundle(
       getActiveSession: (key) => deps.active.get(key) as SessionStopFlowSessionState | undefined,
       stopCoordinator,
       broadcast: (key, message) => deps.broadcast(key, message),
-      sendCommand: (key, command) => deps.sendCommand(key, command),
-      clearQueueOnAbort: (key) => queueCoordinator.clearQueueOnAbort(key),
+      clearQueueOnAbort: (key, permit) => queueCoordinator.clearQueueOnAbort(key, permit),
+      acceptQueueClearOnAbort: (clear) => queueCoordinator.acceptQueueClearOnAbort(clear),
+      restoreQueueAfterAbortFailure: (clear, permit) =>
+        queueCoordinator.restoreQueueAfterAbortFailure(clear, permit),
     },
     deps.stopSessionGraceMs,
+    deps.stopSessionBoundMs,
   );
 
   return {

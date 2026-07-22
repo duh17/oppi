@@ -10,7 +10,7 @@ import {
   modelResolutionErrorEnvelope,
   printModelResolutionError,
 } from "./model-resolution.js";
-import { writeJsonEnvelope } from "./output.js";
+import { setCapturedCliExitCode, writeJsonEnvelope } from "./output.js";
 import { apiStatus } from "./resources.js";
 
 export function createLocalApiCommandContext(
@@ -40,7 +40,7 @@ export function handleModelResolvingCliError(err: unknown, jsonOutput: boolean):
         ? modelResolutionErrorEnvelope(err)
         : { message, ...(status ? { status } : {}) },
     });
-    process.exitCode = 1;
+    setCapturedCliExitCode(1);
     return;
   }
   if (isCliModelResolutionError(err)) {

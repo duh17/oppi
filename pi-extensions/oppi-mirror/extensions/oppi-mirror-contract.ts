@@ -1,3 +1,33 @@
+export const OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION = 2;
+export const OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY = "input_preflight:v1";
+export const OPPI_MIRROR_QUEUE_VERSION_MISMATCH_CODE = "queue_version_mismatch";
+export const OPPI_MIRROR_QUEUE_VERSION_EXHAUSTED_CODE =
+  "queue_version_exhausted";
+export const OPPI_MIRROR_QUEUE_VERSION_INVALID_ERROR =
+  "Queue version must be a nonnegative safe integer";
+export const OPPI_MIRROR_QUEUE_VERSION_EXHAUSTED_ERROR = `Queue version exhausted at ${Number.MAX_SAFE_INTEGER}; start a new session to reset the queue counter`;
+
+export function isOppiMirrorQueueVersion(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+export function assertOppiMirrorQueueVersion(
+  value: unknown,
+): asserts value is number {
+  if (!isOppiMirrorQueueVersion(value)) {
+    throw new Error(OPPI_MIRROR_QUEUE_VERSION_INVALID_ERROR);
+  }
+}
+
+/** Never wrap: a repeated version could make a pre-rollover stale CAS current again. */
+export function nextOppiMirrorQueueVersion(value: unknown): number {
+  assertOppiMirrorQueueVersion(value);
+  if (value === Number.MAX_SAFE_INTEGER) {
+    throw new Error(OPPI_MIRROR_QUEUE_VERSION_EXHAUSTED_ERROR);
+  }
+  return value + 1;
+}
+
 export const OPPI_MIRROR_SERVER_REMOTE_COMMANDS = [
   "get_state",
   "get_messages",
@@ -56,6 +86,7 @@ export const OPPI_MIRROR_CAPABILITIES = [
   "bash_abort",
   "state",
   "extension_ui_proxy",
+  OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY,
 ] as const;
 
 const BRIDGE_COMMAND_SET = new Set<string>(OPPI_MIRROR_BRIDGE_COMMANDS);

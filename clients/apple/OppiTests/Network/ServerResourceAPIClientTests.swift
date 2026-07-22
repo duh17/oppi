@@ -1,0 +1,245 @@
+import Foundation
+import Testing
+@testable import Oppi
+
+@Suite("Server resource API client", .serialized)
+struct ServerResourceAPIClientTests {
+    @Test func listSkillsUsesGlobalRouteWithoutCwdAndDecodesCatalog() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/server/resources/skills")
+            #expect(request.url?.query == nil)
+            return mockResponse(json: """
+            {"skills":[{"id":"skill_abc","name":"Release","description":"Review releases.","provenance":{"kind":"package","label":"Configured package source"},"packageName":"@scope/review-tools","state":"enabled","warnings":[]}]}
+            """)
+        }
+
+        let skills = try await client.listServerSkills()
+
+        #expect(skills.map(\.id) == ["skill_abc"])
+        #expect(skills.first?.state == .enabled)
+        #expect(skills.first?.packageName == "@scope/review-tools")
+    }
+
+    @Test func skillDetailAndFileSafelyEncodeOpaqueIDAndFilePath() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+        let resourceID = "skill a/b?c"
+        let filePath = "nested dir/ü?notes.md"
+        var requestCount = 0
+
+        TestURLProtocol.handler = { request in
+            requestCount += 1
+            let url = try #require(request.url)
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            if requestCount == 1 {
+                #expect(components?.percentEncodedPath == "/server/resources/skills/skill%20a%2Fb%3Fc")
+                return mockResponse(json: """
+                {"summary":{"id":"skill a/b?c","name":"Release","description":"Review releases.","provenance":{"kind":"piAgent","label":"~/.pi/agent/skills"},"state":"enabled","warnings":[]},"skillMarkdown":"# Release","files":[]}
+                """)
+            }
+
+            #expect(components?.percentEncodedPath == "/server/resources/skills/skill%20a%2Fb%3Fc/file")
+            #expect(components?.queryItems?.first(where: { $0.name == "path" })?.value == filePath)
+            return mockResponse(json: #"{"content":"notes"}"#)
+        }
+
+        let detail = try await client.getServerSkill(id: resourceID)
+        let content = try await client.getServerSkillFile(id: resourceID, path: filePath)
+
+        #expect(detail.summary.id == resourceID)
+        #expect(content == "notes")
+        #expect(requestCount == 2)
+    }
+
+    @Test func normalEnablePutsBooleanAndDecodesAuthoritativeSummaries() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+        var requestCount = 0
+
+        TestURLProtocol.handler = { request in
+            requestCount += 1
+            #expect(request.httpMethod == "PUT")
+            let body = try JSONDecoder().decode(EnabledRequest.self, from: requestBodyData(request))
+            #expect(body.enabled)
+
+            if requestCount == 1 {
+                #expect(request.url?.path == "/server/resources/skills/skill_abc/enabled")
+                return mockResponse(json: """
+                {"id":"skill_abc","name":"Release","description":"Review releases.","provenance":{"kind":"piAgent","label":"~/.pi/agent/skills"},"state":"enabled","warnings":[]}
+                """)
+            }
+
+            #expect(request.url?.path == "/server/resources/extensions/extension_abc/enabled")
+            return mockResponse(json: """
+            {"id":"extension_abc","name":"Review helpers","kind":"file","provenance":{"kind":"userSettings","label":"Pi user settings"},"state":"on","warnings":[],"isRemovable":false}
+            """)
+        }
+
+        let skill = try await client.setServerSkillEnabled(id: "skill_abc", enabled: true)
+        let serverExtension = try await client.setServerExtensionEnabled(id: "extension_abc", enabled: true)
+
+        #expect(skill.state == .enabled)
+        #expect(serverExtension.state == .on)
+        #expect(requestCount == 2)
+    }
+
+    @Test func extensionsCatalogAndDetailUseGlobalRoutes() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+        var requestCount = 0
+
+        TestURLProtocol.handler = { request in
+            requestCount += 1
+            if requestCount == 1 {
+                #expect(request.httpMethod == "GET")
+                #expect(request.url?.path == "/server/resources/extensions")
+                #expect(request.url?.query == nil)
+                return mockResponse(json: """
+                {"extensions":[{"id":"oppi","name":"Oppi","description":"Server-owned controls.","kind":"builtIn","provenance":{"kind":"builtIn","label":"Built-in extension"},"state":"off","warnings":[],"isRemovable":false}],"oppiConfiguration":{"enabled":false,"approvalPolicy":"confirmDestructiveOnly","revision":0}}
+                """)
+            }
+
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/server/resources/extensions/oppi")
+            return mockResponse(json: """
+            {"summary":{"id":"oppi","name":"Oppi","description":"Server-owned controls.","kind":"builtIn","provenance":{"kind":"builtIn","label":"Built-in extension"},"state":"off","warnings":[],"isRemovable":false}}
+            """)
+        }
+
+        let catalog = try await client.listServerExtensions()
+        let detail = try await client.getServerExtension(id: "oppi")
+
+        #expect(catalog.extensions.first?.path == nil)
+        #expect(catalog.oppiConfiguration.revision == 0)
+        #expect(detail.summary.kind == .builtIn)
+    }
+
+    @Test func oppiConfigurationPutUsesFullCASBodyAndDecodesAuthoritativeResponse() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "PUT")
+            #expect(request.url?.path == "/server/extensions/oppi/config")
+            let body = try JSONDecoder().decode(OppiConfigurationRequest.self, from: requestBodyData(request))
+            #expect(body.enabled)
+            #expect(body.approvalPolicy == .confirmAllChanges)
+            #expect(body.baseRevision == 7)
+            return mockResponse(json: """
+            {"enabled":true,"approvalPolicy":"confirmAllChanges","revision":8}
+            """)
+        }
+
+        let configuration = try await client.setOppiExtensionConfiguration(
+            enabled: true,
+            approvalPolicy: .confirmAllChanges,
+            baseRevision: 7
+        )
+
+        #expect(configuration == OppiExtensionConfiguration(
+            enabled: true,
+            approvalPolicy: .confirmAllChanges,
+            revision: 8
+        ))
+    }
+
+    @Test func oppiConfigurationGetUsesDedicatedRoute() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/server/extensions/oppi/config")
+            return mockResponse(json: #"{"enabled":false,"approvalPolicy":"readOnly","revision":12}"#)
+        }
+
+        let configuration = try await client.getOppiExtensionConfiguration()
+
+        #expect(configuration.approvalPolicy == .readOnly)
+        #expect(configuration.revision == 12)
+    }
+
+    @Test func revisionConflictUsesExistingAPIErrorConvention() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+
+        TestURLProtocol.handler = { _ in
+            mockResponse(status: 409, json: """
+            {"error":"Oppi extension configuration changed","code":"revision_conflict","current":{"enabled":false,"approvalPolicy":"readOnly","revision":8}}
+            """)
+        }
+
+        do {
+            _ = try await client.setOppiExtensionConfiguration(
+                enabled: true,
+                approvalPolicy: .confirmAllChanges,
+                baseRevision: 7
+            )
+            Issue.record("Expected revision conflict")
+        } catch let APIError.server(status, message) {
+            #expect(status == 409)
+            #expect(message == "Oppi extension configuration changed")
+        }
+    }
+
+    private struct EnabledRequest: Decodable {
+        let enabled: Bool
+    }
+
+    private struct OppiConfigurationRequest: Decodable {
+        let enabled: Bool
+        let approvalPolicy: OppiApprovalPolicy
+        let baseRevision: Int
+    }
+
+    private func makeClient() -> APIClient {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TestURLProtocol.self]
+        guard let baseURL = URL(string: "http://localhost:7749") else {
+            fatalError("Invalid test URL")
+        }
+        return APIClient(baseURL: baseURL, token: "sk_test", configuration: configuration)
+    }
+
+    private func mockResponse(status: Int = 200, json: String) -> (Data, HTTPURLResponse) {
+        guard let url = URL(string: "http://localhost:7749") else {
+            fatalError("Invalid response URL")
+        }
+        guard let response = HTTPURLResponse(
+            url: url,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        ) else {
+            fatalError("Could not construct HTTP response")
+        }
+        return (Data(json.utf8), response)
+    }
+
+    private func requestBodyData(_ request: URLRequest) -> Data {
+        if let body = request.httpBody {
+            return body
+        }
+
+        guard let stream = request.httpBodyStream else {
+            return Data()
+        }
+        stream.open()
+        defer { stream.close() }
+
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 1_024)
+        while stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: buffer.count)
+            if read <= 0 {
+                break
+            }
+            data.append(contentsOf: buffer.prefix(read))
+        }
+        return data
+    }
+}

@@ -15,14 +15,27 @@ export function makeSdkBackendStub(): {
 
   const steeringMessages: string[] = [];
   const followUpMessages: string[] = [];
+  let queueAuthorityGeneration = 0;
 
-  const prompt = vi.fn((text: string, opts?: { streamingBehavior?: "steer" | "followUp" }) => {
-    if (opts?.streamingBehavior === "steer") {
-      steeringMessages.push(text);
-    } else if (opts?.streamingBehavior === "followUp") {
-      followUpMessages.push(text);
-    }
-  });
+  const prompt = vi.fn(
+    async (
+      text: string,
+      opts?: {
+        streamingBehavior?: "steer" | "followUp";
+        images?: unknown[];
+        onPreflightAccepted?: () => void;
+      },
+    ) => {
+      if (opts?.streamingBehavior === "steer") {
+        steeringMessages.push(text);
+        queueAuthorityGeneration += 1;
+      } else if (opts?.streamingBehavior === "followUp") {
+        followUpMessages.push(text);
+        queueAuthorityGeneration += 1;
+      }
+      opts?.onPreflightAccepted?.();
+    },
+  );
 
   const session = {
     setThinkingLevel: vi.fn(),
@@ -38,24 +51,67 @@ export function makeSdkBackendStub(): {
     setAutoRetryEnabled: vi.fn(),
     abortRetry: vi.fn(),
     abortBash: vi.fn(),
-    steer: vi.fn(async (text: string) => {
+    dispose: vi.fn(),
+    steer: vi.fn(async (text: string, images?: unknown[]) => {
+      void images;
       steeringMessages.push(text);
+      queueAuthorityGeneration += 1;
     }),
-    followUp: vi.fn(async (text: string) => {
+    followUp: vi.fn(async (text: string, images?: unknown[]) => {
+      void images;
       followUpMessages.push(text);
+      queueAuthorityGeneration += 1;
     }),
     clearQueue: vi.fn(() => {
       steeringMessages.length = 0;
       followUpMessages.length = 0;
+      queueAuthorityGeneration += 1;
       return { steering: [], followUp: [] };
     }),
     getSteeringMessages: vi.fn(() => [...steeringMessages]),
     getFollowUpMessages: vi.fn(() => [...followUpMessages]),
   };
 
-  let sdkBackend = {
+  const sdkBackend = {
     prompt,
     abort,
+    withRuntimeLifecycleTransaction: vi.fn(
+      async (_name: string, operation: (permit: { mode: "exclusive" }) => Promise<unknown>) =>
+        operation({ mode: "exclusive" }),
+    ),
+    isRuntimeLifecycleTransactionExclusive: false,
+    captureEmergencyDisposalForStop: vi.fn(() => () => {
+      (sdkBackend as { isDisposed: boolean }).isDisposed = true;
+      session.dispose();
+      return {
+        disposal: "forced" as const,
+        cause: "lifecycle_timeout" as const,
+        operation: "stop" as const,
+        timeoutMs: 6_000,
+      };
+    }),
+    captureQueuedModelTurnsAuthority: vi.fn(() => ({
+      generation: queueAuthorityGeneration,
+    })),
+    assertQueuedModelTurnsAuthority: vi.fn((authority: { generation: number }) => {
+      if (authority.generation !== queueAuthorityGeneration) {
+        throw new Error("Pi queue authority changed");
+      }
+    }),
+    clearQueuedModelTurns: vi.fn(() => session.clearQueue()),
+    replaceQueuedModelTurns: vi.fn(
+      async (batch: {
+        prompt?: { message: string; images?: unknown[] };
+        steering: Array<{ message: string; images?: unknown[] }>;
+        followUp: Array<{ message: string; images?: unknown[] }>;
+      }) => {
+        session.clearQueue();
+        for (const item of batch.steering) await session.steer(item.message, item.images);
+        for (const item of batch.followUp) await session.followUp(item.message, item.images);
+        if (batch.prompt) await prompt(batch.prompt.message, { images: batch.prompt.images });
+        return { generation: queueAuthorityGeneration };
+      },
+    ),
     setModel: vi.fn(async () => ({ success: true })),
     newSession: vi.fn(async () => ({ cancelled: false })),
     fork: vi.fn(async () => ({ cancelled: false })),
@@ -87,6 +143,7 @@ export function makeSdkBackendStub(): {
       listener();
     }
     shutdownCleanupListeners.clear();
+    return { disposal: "graceful" as const };
   });
   (sdkBackend as { dispose: typeof dispose }).dispose = dispose;
 

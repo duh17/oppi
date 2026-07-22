@@ -1696,7 +1696,7 @@ actor APIClient: ClientLogUploading {
         return data
     }
 
-    private func get(url: URL) async throws -> Data {
+    func get(url: URL) async throws -> Data {
         let (data, response) = try await request("GET", url: url)
         try checkStatus(response, data: data)
         return data
@@ -1718,6 +1718,12 @@ actor APIClient: ClientLogUploading {
         return data
     }
 
+    func put<T: Encodable>(url: URL, body: T) async throws -> Data {
+        let (data, response) = try await request("PUT", url: url, body: body)
+        try checkStatus(response, data: data)
+        return data
+    }
+
     func request(_ method: String, path: String) async throws -> (Data, URLResponse) {
         var req = try URLRequest(url: makeURL(path: path))
         req.httpMethod = method
@@ -1730,6 +1736,21 @@ actor APIClient: ClientLogUploading {
         var req = URLRequest(url: url)
         req.httpMethod = method
         ServerAuthorization.apply(token: token, to: &req)
+        logger.debug("\(method) \(url.path)")
+        return try await session.data(for: req)
+    }
+
+    private func request<T: Encodable>(
+        _ method: String,
+        url: URL,
+        body: T,
+        encoder: JSONEncoder? = nil
+    ) async throws -> (Data, URLResponse) {
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        ServerAuthorization.apply(token: token, to: &req)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try (encoder ?? JSONEncoder()).encode(body)
         logger.debug("\(method) \(url.path)")
         return try await session.data(for: req)
     }
@@ -1855,7 +1876,7 @@ actor APIClient: ClientLogUploading {
         )
     }
 
-    private func makeURL(
+    func makeURL(
         pathSegments: [String],
         appendedPath: String? = nil,
         queryItems: [URLQueryItem] = [],

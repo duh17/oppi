@@ -24,6 +24,7 @@ import {
   type AgentSessionRuntime,
   type CreateAgentSessionRuntimeFactory,
   type ExtensionContext,
+  type InlineExtension,
   type ResourceDiagnostic,
   type Skill,
   type ToolDefinition,
@@ -46,6 +47,12 @@ import {
 } from "./model-resolution.js";
 import { createDefaultAgentExtensionFactory } from "./default-agent-tool.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
+import {
+  DEFAULT_OPPI_EXTENSION_SETTINGS,
+  freezeOppiExtensionSettingsSnapshot,
+  type OppiExtensionSettingsSnapshot,
+} from "./oppi-extension-settings.js";
+import { createOppiToolExtensionFactory } from "./oppi-tool-extension.js";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -58,6 +65,10 @@ import type { ReadonlyMount } from "./gondolin-manager.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
 import { callerSessionIdentityShellPrefix } from "./session-caller-identity.js";
+import {
+  SessionRuntimeTransaction,
+  type SessionRuntimeTransactionPermit,
+} from "./session-runtime-transaction.js";
 
 type PiThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
 type AttachmentToolExecute = ToolDefinition["execute"] & {
@@ -324,6 +335,95 @@ export interface SdkBackendConfig {
   agentDefinition?: AgentDefinition;
   /** Server settings that affect Oppi-owned SDK sessions. */
   serverConfig?: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
+  /** Reads one atomic built-in Oppi settings snapshot for each ordinary runtime rebuild. */
+  getOppiExtensionSettings?: () => OppiExtensionSettingsSnapshot;
+}
+
+type OppiExtensionSettingsHolder = {
+  snapshot: OppiExtensionSettingsSnapshot;
+};
+
+type QueuedModelTurnInput = {
+  message: string;
+  images?: Array<{ type: "image"; data: string; mimeType: string }>;
+};
+
+export type QueuedModelTurnBatch = {
+  prompt?: QueuedModelTurnInput;
+  steering: QueuedModelTurnInput[];
+  followUp: QueuedModelTurnInput[];
+};
+
+export interface QueuedModelTurnsAuthority {
+  readonly generation: number;
+}
+
+export class QueuedModelTurnsAuthorityError extends Error {
+  constructor(readonly phase: "before_replay" | "during_replay" | "after_replay") {
+    super(`Pi queue authority changed ${phase.replaceAll("_", " ")}`);
+    this.name = "QueuedModelTurnsAuthorityError";
+  }
+}
+
+export const QUEUE_RECONCILIATION_REQUIRED_ERROR =
+  "Queue reconciliation required: retry setQueue from the last acknowledged queue version";
+
+export const SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS = 5_000;
+
+type SdkRuntimeLifecycleOperation = "reload" | "new_session" | "switch_session" | "fork" | "stop";
+
+type SdkBackendForcedDisposeResult = {
+  disposal: "forced";
+  /** Local cleanup failures retained even when Pi cleanup has a stronger primary cause. */
+  diagnosticReason?: string;
+} & (
+  | {
+      cause: "extension_shutdown_timeout";
+      timeoutMs: number;
+    }
+  | {
+      cause: "runtime_dispose_error";
+    }
+  | {
+      cause: "lifecycle_timeout";
+      operation: "reload" | "stop";
+      timeoutMs: number;
+    }
+  | {
+      cause: "local_cleanup_error";
+    }
+);
+
+export type SdkBackendDisposeResult = { disposal: "graceful" } | SdkBackendForcedDisposeResult;
+
+export class QueuedModelTurnsReconciliationError extends Error {
+  constructor(
+    readonly replacementError: unknown,
+    readonly rollbackError: unknown,
+  ) {
+    super(
+      `Queue reconciliation required: ${safeErrorMessage(replacementError)} and ${safeErrorMessage(rollbackError)}; retry setQueue from the last acknowledged queue version`,
+    );
+    this.name = "QueuedModelTurnsReconciliationError";
+  }
+}
+
+function reserveOppiToolPolicy(options: {
+  allowed?: readonly string[];
+  excluded?: readonly string[];
+  noTools?: "all" | "builtin";
+}): { allowed?: string[]; excluded?: string[]; noTools?: "all" | "builtin" } {
+  const allowed = options.allowed
+    ? [...new Set([...options.allowed, "oppi"])]
+    : options.noTools === "all"
+      ? ["oppi"]
+      : undefined;
+  const excluded = options.excluded?.filter((name) => name !== "oppi");
+  return {
+    ...(allowed ? { allowed } : {}),
+    ...(excluded && excluded.length > 0 ? { excluded } : {}),
+    ...(options.noTools ? { noTools: options.noTools } : {}),
+  };
 }
 
 const log = createLogger({ base: { component: "sdk_backend" } });
@@ -355,6 +455,8 @@ function syncSessionIdentityFromManager(session: Session, manager: PiSessionMana
 export class SdkBackend {
   private static readonly DEFAULT_STEERING_MODE = "all" as const;
   private static readonly DEFAULT_FOLLOW_UP_MODE = "one-at-a-time" as const;
+  /** Maximum graceful cleanup time within the documented stop bound. */
+  static readonly RUNTIME_LIFECYCLE_TIMEOUT_MS = SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private static _gondolinManager: any;
 
@@ -362,12 +464,20 @@ export class SdkBackend {
   private unsub: (() => void) | null = null;
   private readonly emitEvent: (event: SessionBackendEvent) => void;
   private readonly uiBridge: SdkUiBridge;
-  private shutdownCleanupPromise: Promise<void> | null = null;
+  private shutdownCleanupPromise: Promise<SdkBackendDisposeResult> | null = null;
+  private forcedDisposalResult: SdkBackendDisposeResult | undefined;
   private readonly sessionCwdExistsOverride?: string;
   private readonly sessionManagerDisplayCwd?: string;
   private readonly oppiSessionId: string;
   private readonly dataDir?: string;
+  private readonly oppiSettingsHolder?: OppiExtensionSettingsHolder;
+  private readonly getOppiExtensionSettings?: () => OppiExtensionSettingsSnapshot;
+  private runtimeTransaction = new SessionRuntimeTransaction();
+  private requestedExclusiveOperations: Array<{ name: string }> = [];
+  private queueReconciliationRequired = false;
+  private queueAuthorityGeneration = 0;
   private disposed = false;
+  private localCleanupFailures: string[] = [];
 
   private constructor(
     runtime: AgentSessionRuntime,
@@ -375,11 +485,17 @@ export class SdkBackend {
     oppiSessionId: string,
     dataDir?: string,
     cwdOverrides?: { existsCwd: string; displayCwd: string },
+    oppiRuntimeSettings?: {
+      holder: OppiExtensionSettingsHolder;
+      get: () => OppiExtensionSettingsSnapshot;
+    },
   ) {
     this.runtime = runtime;
     this.emitEvent = emitEvent;
     this.oppiSessionId = oppiSessionId;
     this.dataDir = dataDir;
+    this.oppiSettingsHolder = oppiRuntimeSettings?.holder;
+    this.getOppiExtensionSettings = oppiRuntimeSettings?.get;
     this.sessionCwdExistsOverride = cwdOverrides?.existsCwd;
     this.sessionManagerDisplayCwd = cwdOverrides?.displayCwd;
     this.uiBridge = new SdkUiBridge(emitEvent, () => this.disposed);
@@ -459,12 +575,41 @@ export class SdkBackend {
 
     const agentDefinition = config.agentDefinition;
     const isDefaultAgentSession = isDefaultAgentId(session.launch?.agentId ?? "");
+    const isolatedControlRuntime = isDeclaredControlSession(session) || isDefaultAgentSession;
+    const controlToolRuntime = isolatedControlRuntime && !sandboxMode;
+    const ordinaryManagedRuntime =
+      !sandboxMode && !isolatedControlRuntime && (session.runtime ?? "oppi") !== "pi-tui";
+    const getOppiExtensionSettings =
+      config.getOppiExtensionSettings ?? (() => DEFAULT_OPPI_EXTENSION_SETTINGS);
+    const oppiSettingsHolder: OppiExtensionSettingsHolder = {
+      snapshot: DEFAULT_OPPI_EXTENSION_SETTINGS,
+    };
+    const ordinaryOppiExtension: InlineExtension | undefined = ordinaryManagedRuntime
+      ? {
+          name: "oppi",
+          factory: (pi) => {
+            const snapshot = oppiSettingsHolder.snapshot;
+            if (!snapshot.enabled) return;
+            return createOppiToolExtensionFactory({
+              ...(config.dataDir !== undefined ? { dataDir: config.dataDir } : {}),
+              policySnapshot: snapshot,
+              identity: "ordinary",
+              callerSessionId: session.id,
+            })(pi);
+          },
+        }
+      : undefined;
     const createRuntimeFactory: CreateAgentSessionRuntimeFactory = async ({
       cwd,
       agentDir: runtimeAgentDir,
       sessionManager,
       sessionStartEvent,
     }) => {
+      if (ordinaryManagedRuntime) {
+        oppiSettingsHolder.snapshot = freezeOppiExtensionSettingsSnapshot(
+          getOppiExtensionSettings(),
+        );
+      }
       const hostCwd = sandboxMode ? initialHostCwd : cwd;
       const guestCwd = sandboxMode && workspace ? resolveSandboxGuestCwd(workspace) : cwd;
       const sessionCwd = sandboxMode ? guestCwd : cwd;
@@ -508,18 +653,38 @@ export class SdkBackend {
         appendSystemPrompt: baseAppendSystemPrompt,
         extensionFactories: [
           createLifecycleJournalExtension(sessionManager),
-          ...(isDefaultAgentSession
-            ? [createDefaultAgentExtensionFactory({ dataDir: config.dataDir })]
-            : []),
+          ...(controlToolRuntime
+            ? [
+                createDefaultAgentExtensionFactory({
+                  dataDir: config.dataDir,
+                  callerSessionId: session.id,
+                }),
+              ]
+            : ordinaryOppiExtension
+              ? [ordinaryOppiExtension]
+              : []),
         ],
-        ...(isDefaultAgentSession
+        ...(ordinaryManagedRuntime
+          ? {
+              extensionsOverride: (base) =>
+                oppiSettingsHolder.snapshot.enabled
+                  ? base
+                  : {
+                      ...base,
+                      extensions: base.extensions.filter(
+                        (extension) => extension.path !== "<inline:oppi>",
+                      ),
+                    },
+            }
+          : {}),
+        ...(isolatedControlRuntime
           ? {
               noExtensions: true,
               noSkills: true,
               noPromptTemplates: true,
             }
           : { additionalSkillPaths }),
-        ...(isDefaultAgentSession || agentDefinition?.resources?.noContextFiles
+        ...(isolatedControlRuntime || agentDefinition?.resources?.noContextFiles
           ? { noContextFiles: true }
           : {}),
         ...(agentDefinition?.instructions?.mode === "replace"
@@ -666,9 +831,17 @@ export class SdkBackend {
             noTools: agentDefinition.sessionDefaults.noTools,
           }
         : undefined;
-      const launchToolPolicy = isDefaultAgentSession
+      const launchToolPolicy = controlToolRuntime
         ? { allowed: [...DEFAULT_AGENT_TOOL_NAMES], noTools: "builtin" as const }
         : (session.launch?.tools ?? agentDefaultToolPolicy);
+      const configuredToolPolicy = {
+        allowed: launchToolPolicy?.allowed ?? workspaceTools,
+        excluded: launchToolPolicy?.excluded,
+        noTools: launchToolPolicy?.noTools ?? (sandboxTools ? ("builtin" as const) : undefined),
+      };
+      const effectiveToolPolicy = ordinaryManagedRuntime
+        ? reserveOppiToolPolicy(configuredToolPolicy)
+        : configuredToolPolicy;
       const createResult = await createAgentSession({
         cwd: sessionCwd,
         agentDir: runtimeAgentDir,
@@ -680,17 +853,9 @@ export class SdkBackend {
         resourceLoader: loader,
         sessionStartEvent,
         ...(sandboxTools ? { customTools: sandboxTools } : {}),
-        ...(launchToolPolicy?.noTools
-          ? { noTools: launchToolPolicy.noTools }
-          : sandboxTools
-            ? { noTools: "builtin" as const }
-            : {}),
-        ...(launchToolPolicy?.allowed
-          ? { tools: launchToolPolicy.allowed }
-          : workspaceTools
-            ? { tools: workspaceTools }
-            : {}),
-        ...(launchToolPolicy?.excluded ? { excludeTools: launchToolPolicy.excluded } : {}),
+        ...(effectiveToolPolicy.noTools ? { noTools: effectiveToolPolicy.noTools } : {}),
+        ...(effectiveToolPolicy.allowed ? { tools: effectiveToolPolicy.allowed } : {}),
+        ...(effectiveToolPolicy.excluded ? { excludeTools: effectiveToolPolicy.excluded } : {}),
       });
 
       SdkBackend.applyDefaultQueueModes(createResult.session);
@@ -721,6 +886,12 @@ export class SdkBackend {
       session.id,
       config.dataDir,
       preserveDisplayCwd ? { existsCwd: runtimeAssertCwd, displayCwd: initialCwd } : undefined,
+      ordinaryManagedRuntime
+        ? {
+            holder: oppiSettingsHolder,
+            get: getOppiExtensionSettings,
+          }
+        : undefined,
     );
 
     const preBindMs = Date.now() - createStartMs;
@@ -758,6 +929,9 @@ export class SdkBackend {
   private subscribeToCurrentSession(): void {
     this.unsub?.();
     this.unsub = this.piSession.subscribe((event: AgentSessionEvent) => {
+      if (event.type === "queue_update") {
+        this.queueAuthorityGeneration = (this.queueAuthorityGeneration ?? 0) + 1;
+      }
       this.emitEvent(event);
     });
   }
@@ -881,93 +1055,406 @@ export class SdkBackend {
     return this.uiBridge.respond(response);
   }
 
-  async reloadResources(): Promise<{ success: true }> {
-    if (this.disposed) {
-      throw new Error("Session backend is disposed");
-    }
+  async reloadResources(reloadRuntimeConfig?: () => void): Promise<{ success: true }> {
+    return this.withExclusiveRuntimeOperation("reload", async () => {
+      this.assertRuntimeIdle("reload");
+      reloadRuntimeConfig?.();
 
-    await this.piSession.reload();
-    SdkBackend.applyDefaultQueueModes(this.piSession);
-    this.installSessionAttachmentToolHelpers();
-    return { success: true };
+      const holder = this.oppiSettingsHolder;
+      const getSettings = this.getOppiExtensionSettings;
+      const previousSnapshot = holder?.snapshot;
+      if (holder && getSettings) {
+        // Read before Pi emits session_shutdown so provider/storage failures leave
+        // the old extension runner and its captured policy untouched.
+        holder.snapshot = freezeOppiExtensionSettingsSnapshot(getSettings());
+      }
+
+      try {
+        await this.reloadCurrentSessionWithinLifecycleBound();
+      } catch (error) {
+        if (holder && previousSnapshot) holder.snapshot = previousSnapshot;
+        throw error;
+      }
+
+      SdkBackend.applyDefaultQueueModes(this.piSession);
+      this.installSessionAttachmentToolHelpers();
+      return { success: true };
+    });
   }
 
   async newSession(): Promise<{ cancelled: boolean }> {
-    if (this.disposed) {
-      return { cancelled: true };
-    }
-
-    const parentSession = this.piSession.sessionFile;
-    const result = await this.runtime.newSession({ parentSession });
-    if (!result.cancelled) {
-      this.restoreSessionManagerDisplayCwd();
-      await this.refreshRuntimeSessionBindings();
-    }
-    return result;
+    return this.withExclusiveRuntimeOperation(
+      "new_session",
+      async () => {
+        if (this.disposed) return { cancelled: true };
+        this.assertRuntimeIdle("new_session");
+        const parentSession = this.piSession.sessionFile;
+        const result = await this.runtime.newSession({ parentSession });
+        this.assertReplacementContinuationActive("new_session");
+        if (!result.cancelled) {
+          this.restoreSessionManagerDisplayCwd();
+          await this.refreshRuntimeSessionBindings();
+          this.assertReplacementContinuationActive("new_session");
+        }
+        return result;
+      },
+      { allowDisposed: true },
+    );
   }
 
   async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
-    if (this.disposed) {
-      return { cancelled: true };
-    }
-
-    const result = await this.runtime.switchSession(
-      sessionPath,
-      this.sessionCwdExistsOverride ? { cwdOverride: this.sessionCwdExistsOverride } : undefined,
+    return this.withExclusiveRuntimeOperation(
+      "switch_session",
+      async () => {
+        if (this.disposed) return { cancelled: true };
+        this.assertRuntimeIdle("switch_session");
+        const result = await this.runtime.switchSession(
+          sessionPath,
+          this.sessionCwdExistsOverride
+            ? { cwdOverride: this.sessionCwdExistsOverride }
+            : undefined,
+        );
+        this.assertReplacementContinuationActive("switch_session");
+        if (!result.cancelled) {
+          this.restoreSessionManagerDisplayCwd();
+          await this.refreshRuntimeSessionBindings();
+          this.assertReplacementContinuationActive("switch_session");
+        }
+        return result;
+      },
+      { allowDisposed: true },
     );
-    if (!result.cancelled) {
-      this.restoreSessionManagerDisplayCwd();
-      await this.refreshRuntimeSessionBindings();
-    }
-    return result;
   }
 
   async fork(entryId: string): Promise<{ cancelled: boolean; selectedText?: string }> {
-    if (this.disposed) {
-      return { cancelled: true };
-    }
+    return this.withExclusiveRuntimeOperation(
+      "fork",
+      async () => {
+        if (this.disposed) return { cancelled: true };
+        this.assertRuntimeIdle("fork");
+        const result = await this.runtime.fork(entryId);
+        this.assertReplacementContinuationActive("fork");
+        if (!result.cancelled) {
+          this.restoreSessionManagerDisplayCwd();
+          await this.refreshRuntimeSessionBindings();
+          this.assertReplacementContinuationActive("fork");
+        }
+        return result;
+      },
+      { allowDisposed: true },
+    );
+  }
 
-    const result = await this.runtime.fork(entryId);
-    if (!result.cancelled) {
-      this.restoreSessionManagerDisplayCwd();
-      await this.refreshRuntimeSessionBindings();
+  // ─── Runtime transaction ───
+
+  async withModelTurnAdmission<T>(
+    commandType: string,
+    operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
+  ): Promise<T> {
+    if (this.isQueueReconciliationRequired) {
+      throw new Error(QUEUE_RECONCILIATION_REQUIRED_ERROR);
     }
-    return result;
+    const blocker = (this.requestedExclusiveOperations ?? [])[0]?.name;
+    const unavailableMessage =
+      blocker === "reload"
+        ? `${commandType} cannot start while reload is rebuilding the session`
+        : `${commandType} cannot start while the session runtime lifecycle is changing`;
+    return this.getRuntimeTransaction().tryWithShared(unavailableMessage, async (permit) => {
+      this.assertNotDisposed();
+      if (this.isQueueReconciliationRequired) {
+        throw new Error(QUEUE_RECONCILIATION_REQUIRED_ERROR);
+      }
+      return operation(permit);
+    });
+  }
+
+  async withRuntimeLifecycleTransaction<T>(
+    operationName: string,
+    operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
+    options: { allowDisposed?: boolean } = {},
+  ): Promise<T> {
+    return this.withExclusiveRuntimeOperation(operationName, operation, options);
+  }
+
+  get isRuntimeLifecycleTransactionExclusive(): boolean {
+    return this.getRuntimeTransaction().isExclusiveActive;
+  }
+
+  get isQueueReconciliationRequired(): boolean {
+    return this.queueReconciliationRequired === true;
+  }
+
+  private getRuntimeTransaction(): SessionRuntimeTransaction {
+    return (this.runtimeTransaction ??= new SessionRuntimeTransaction());
+  }
+
+  private async withExclusiveRuntimeOperation<T>(
+    name: string,
+    operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
+    options: { allowDisposed?: boolean } = {},
+  ): Promise<T> {
+    const request = { name };
+    (this.requestedExclusiveOperations ??= []).push(request);
+    try {
+      return await this.getRuntimeTransaction().withExclusive(async (permit) => {
+        if (!options.allowDisposed) this.assertNotDisposed();
+        return operation(permit);
+      });
+    } finally {
+      const index = this.requestedExclusiveOperations.indexOf(request);
+      if (index !== -1) this.requestedExclusiveOperations.splice(index, 1);
+    }
+  }
+
+  private assertNotDisposed(): void {
+    if (this.disposed) throw new Error("Session backend is disposed");
+  }
+
+  private assertRuntimeIdle(operation: string): void {
+    if (this.piSession.isStreaming || this.piSession.isCompacting) {
+      throw new Error(`${operation} requires an idle session`);
+    }
   }
 
   // ─── Commands ───
 
-  /** Send a prompt. Fire-and-forget — events come via subscribe. */
-  prompt(
+  /** Resolve after Pi accepts prompt preflight; model events continue through subscribe(). */
+  async prompt(
     message: string,
     opts?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       streamingBehavior?: "steer" | "followUp";
+      onPreflightAccepted?: () => void;
     },
-  ): void {
-    if (this.disposed) return;
+    permit?: SessionRuntimeTransactionPermit,
+  ): Promise<void> {
+    const commandType =
+      opts?.streamingBehavior === "steer"
+        ? "steer"
+        : opts?.streamingBehavior === "followUp"
+          ? "follow_up"
+          : "prompt";
+    if (permit) {
+      this.getRuntimeTransaction().assertPermit(permit, "shared");
+      this.assertNotDisposed();
+      await this.promptWithoutTransaction(message, opts);
+      return;
+    }
+    await this.withModelTurnAdmission(commandType, (admission) =>
+      this.prompt(message, opts, admission),
+    );
+  }
 
+  captureQueuedModelTurnsAuthority(
+    permit: SessionRuntimeTransactionPermit,
+  ): QueuedModelTurnsAuthority {
+    this.getRuntimeTransaction().assertPermit(permit, "exclusive");
+    this.assertNotDisposed();
+    return { generation: this.queueAuthorityGeneration ?? 0 };
+  }
+
+  assertQueuedModelTurnsAuthority(
+    authority: QueuedModelTurnsAuthority,
+    permit: SessionRuntimeTransactionPermit,
+    phase: QueuedModelTurnsAuthorityError["phase"] = "after_replay",
+  ): void {
+    this.getRuntimeTransaction().assertPermit(permit, "exclusive");
+    this.assertNotDisposed();
+    if ((this.queueAuthorityGeneration ?? 0) !== authority.generation) {
+      throw new QueuedModelTurnsAuthorityError(phase);
+    }
+  }
+
+  async replaceQueuedModelTurns(
+    batch: QueuedModelTurnBatch,
+    rollback?: QueuedModelTurnBatch,
+    permit?: SessionRuntimeTransactionPermit,
+    authority?: QueuedModelTurnsAuthority,
+  ): Promise<QueuedModelTurnsAuthority | undefined> {
+    if (!permit) {
+      return this.withExclusiveRuntimeOperation("queue replacement", (transaction) =>
+        this.replaceQueuedModelTurns(batch, rollback, transaction, authority),
+      );
+    }
+
+    this.getRuntimeTransaction().assertPermit(permit, "exclusive");
+    this.assertNotDisposed();
+    const previous = rollback ?? this.sdkQueueSnapshot();
+    try {
+      const replayAuthority = authority
+        ? await this.replayQueuedModelTurnsWithAuthority(batch, authority, permit)
+        : (await this.replayQueuedModelTurns(batch), undefined);
+      this.queueReconciliationRequired = false;
+      return replayAuthority;
+    } catch (error) {
+      if (error instanceof QueuedModelTurnsAuthorityError) {
+        if (error.phase !== "before_replay") this.queueReconciliationRequired = false;
+        throw error;
+      }
+      try {
+        await this.replayQueuedModelTurns(previous);
+      } catch (rollbackError) {
+        this.queueReconciliationRequired = true;
+        log.error("sdk.queue_rollback.failed", {
+          sessionId: this.oppiSessionId,
+          replacementError: safeErrorMessage(error),
+          rollbackError: safeErrorMessage(rollbackError),
+        });
+        throw new QueuedModelTurnsReconciliationError(error, rollbackError);
+      }
+      throw error;
+    }
+  }
+
+  clearQueuedModelTurns(permit: SessionRuntimeTransactionPermit): void {
+    this.getRuntimeTransaction().assertPermit(permit, "exclusive");
+    this.assertNotDisposed();
+    this.piSession.clearQueue();
+    this.queueReconciliationRequired = false;
+  }
+
+  private sdkQueueSnapshot(): QueuedModelTurnBatch {
+    return {
+      steering: this.piSession.getSteeringMessages().map((message) => ({ message })),
+      followUp: this.piSession.getFollowUpMessages().map((message) => ({ message })),
+    };
+  }
+
+  private async replayQueuedModelTurns(batch: QueuedModelTurnBatch): Promise<void> {
+    this.piSession.clearQueue();
+    // Queue the remainder before starting an idle deferred prompt. If prompt
+    // preflight rejects, rollback can still restore the complete prior intent.
+    for (const item of batch.steering) await this.piSession.steer(item.message, item.images);
+    for (const item of batch.followUp) await this.piSession.followUp(item.message, item.images);
+    if (batch.prompt) {
+      await this.promptWithoutTransaction(batch.prompt.message, { images: batch.prompt.images });
+    }
+  }
+
+  private async replayQueuedModelTurnsWithAuthority(
+    batch: QueuedModelTurnBatch,
+    authority: QueuedModelTurnsAuthority,
+    permit: SessionRuntimeTransactionPermit,
+  ): Promise<QueuedModelTurnsAuthority> {
+    if (batch.prompt) {
+      throw new Error("Authoritative queue replacement cannot start a prompt");
+    }
+    this.assertQueuedModelTurnsAuthority(authority, permit, "before_replay");
+
+    // Pi exposes no queue mutation barrier. Its queue methods mutate synchronously
+    // before their promises settle, so invoke the whole clear/replay batch in one
+    // JavaScript turn. Pi cannot consume between the final authority check and
+    // the clear, or between individual replays.
+    const replays: Promise<void>[] = [];
+    this.piSession.clearQueue();
+    for (const item of batch.steering) {
+      replays.push(this.piSession.steer(item.message, item.images));
+    }
+    for (const item of batch.followUp) {
+      replays.push(this.piSession.followUp(item.message, item.images));
+    }
+    const replayAuthority = this.captureQueuedModelTurnsAuthority(permit);
+
+    try {
+      await Promise.all(replays);
+    } catch (error) {
+      // An authoritative dequeue outranks a concurrent replay rejection. Do not
+      // roll stale pre-replay intent back over a message Pi already consumed.
+      this.assertQueuedModelTurnsAuthority(replayAuthority, permit, "during_replay");
+      throw error;
+    }
+    this.assertQueuedModelTurnsAuthority(replayAuthority, permit, "during_replay");
+    const steering = this.piSession.getSteeringMessages();
+    const followUp = this.piSession.getFollowUpMessages();
+    const queueMatches =
+      steering.length === batch.steering.length &&
+      steering.every((message, index) => message === batch.steering[index]?.message) &&
+      followUp.length === batch.followUp.length &&
+      followUp.every((message, index) => message === batch.followUp[index]?.message);
+    if (!queueMatches) throw new QueuedModelTurnsAuthorityError("during_replay");
+    return replayAuthority;
+  }
+
+  private async promptWithoutTransaction(
+    message: string,
+    opts?: {
+      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      streamingBehavior?: "steer" | "followUp";
+      onPreflightAccepted?: () => void;
+    },
+  ): Promise<void> {
     const images: ImageContent[] | undefined = opts?.images?.map((img) => ({
       type: "image" as const,
       data: img.data,
       mimeType: img.mimeType,
     }));
 
-    this.piSession
-      .prompt(message, {
+    let accepted = false;
+    let acceptanceNotified = false;
+    let preflightSettled = false;
+    let resolvePreflight!: () => void;
+    let rejectPreflight!: (error: unknown) => void;
+    const preflight = new Promise<void>((resolve, reject) => {
+      resolvePreflight = resolve;
+      rejectPreflight = reject;
+    });
+    const acceptPreflight = (): void => {
+      if (this.disposed) {
+        rejectPreflight(new Error("Session backend is disposed"));
+        return;
+      }
+      if (!acceptanceNotified) {
+        acceptanceNotified = true;
+        opts?.onPreflightAccepted?.();
+      }
+      resolvePreflight();
+    };
+    const completion = Promise.resolve(
+      this.piSession.prompt(message, {
         images,
         streamingBehavior: opts?.streamingBehavior,
-      })
-      .catch((err) => {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        log.error("sdk.prompt.failed", { error: safeErrorMessage(err) });
-        this.emitEvent({ type: "prompt_error", error: errorMessage });
-      });
+        preflightResult: (success) => {
+          preflightSettled = true;
+          accepted = success && !this.disposed;
+          if (success) acceptPreflight();
+        },
+      }),
+    );
+    completion.then(
+      () => {
+        if (!preflightSettled) acceptPreflight();
+        else if (!accepted) rejectPreflight(new Error("Pi prompt preflight rejected"));
+      },
+      (error: unknown) => {
+        if (!accepted) {
+          rejectPreflight(error);
+          return;
+        }
+        log.error("sdk.prompt.failed", { error: safeErrorMessage(error) });
+        this.emitEvent({
+          type: "prompt_error",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    );
+    await preflight;
   }
 
-  async abort(): Promise<void> {
-    if (this.disposed) return;
-    await this.piSession.abort();
+  get isReloading(): boolean {
+    return (this.requestedExclusiveOperations ?? []).some(
+      (operation) => operation.name === "reload",
+    );
+  }
+
+  async abort(permit?: SessionRuntimeTransactionPermit): Promise<void> {
+    if (permit) {
+      this.getRuntimeTransaction().assertPermit(permit, "exclusive");
+      if (!this.disposed) await this.piSession.abort();
+      return;
+    }
+    await this.withExclusiveRuntimeOperation("abort", (transaction) => this.abort(transaction), {
+      allowDisposed: true,
+    });
   }
 
   async setModel(modelId: string): Promise<{
@@ -1032,39 +1519,305 @@ export class SdkBackend {
     return this.piSession.isCompacting;
   }
 
-  private startShutdownCleanup(): Promise<void> {
+  private recordLocalCleanupFailure(message: string): void {
+    const failures = (this.localCleanupFailures ??= []);
+    if (!failures.includes(message)) failures.push(message);
+  }
+
+  private localCleanupDiagnostic(): string | undefined {
+    const failures = this.localCleanupFailures ?? [];
+    return failures.length > 0 ? failures.join("; ") : undefined;
+  }
+
+  private withLocalCleanupDiagnostic(result: SdkBackendDisposeResult): SdkBackendDisposeResult {
+    const diagnosticReason = this.localCleanupDiagnostic();
+    if (!diagnosticReason) return result;
+    if (result.disposal === "graceful") {
+      return {
+        disposal: "forced",
+        cause: "local_cleanup_error",
+        diagnosticReason,
+      };
+    }
+    if (result.diagnosticReason === diagnosticReason) return result;
+    return {
+      ...result,
+      diagnosticReason: [result.diagnosticReason, diagnosticReason].filter(Boolean).join("; "),
+    };
+  }
+
+  private markLocallyDisposed(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+
+    try {
+      const cleanup = this.uiBridge.dispose();
+      for (const failure of cleanup?.failures ?? []) {
+        this.recordLocalCleanupFailure(failure.message);
+      }
+    } catch (error: unknown) {
+      const errorMessage = safeErrorMessage(error);
+      this.recordLocalCleanupFailure(`Extension UI bridge cleanup failed: ${errorMessage}`);
+      log.error("sdk.local_cleanup.ui_bridge_failed", {
+        sessionId: this.oppiSessionId,
+        error: errorMessage,
+      });
+    }
+
+    try {
+      this.unsub?.();
+    } catch (error: unknown) {
+      const errorMessage = safeErrorMessage(error);
+      this.recordLocalCleanupFailure(`Session event unsubscribe failed: ${errorMessage}`);
+      log.error("sdk.local_cleanup.unsubscribe_failed", {
+        sessionId: this.oppiSessionId,
+        error: errorMessage,
+      });
+    } finally {
+      this.unsub = null;
+    }
+  }
+
+  private forceDisposeAfterLifecycleTimeout(
+    operation: "reload",
+    session: AgentSession,
+    timeoutMs: number,
+  ): SdkBackendDisposeResult {
+    const result: SdkBackendDisposeResult = {
+      disposal: "forced",
+      cause: "lifecycle_timeout",
+      operation,
+      timeoutMs,
+    };
+    this.markLocallyDisposed();
+    session.dispose();
+    const diagnosedResult = this.withLocalCleanupDiagnostic(result);
+    this.forcedDisposalResult = diagnosedResult;
+    this.shutdownCleanupPromise ??= Promise.resolve(diagnosedResult);
+    return diagnosedResult;
+  }
+
+  /** Capture the current Pi session before stop waits for the runtime permit. */
+  captureEmergencyDisposalForStop(): (timeoutMs: number) => SdkBackendDisposeResult {
+    const capturedSession = this.piSession;
+    return (timeoutMs) => this.emergencyDisposeAfterStopTimeout(capturedSession, timeoutMs);
+  }
+
+  private emergencyDisposeAfterStopTimeout(
+    capturedSession: AgentSession,
+    timeoutMs: number,
+  ): SdkBackendDisposeResult {
+    const existing = this.forcedDisposalResult;
+    this.markLocallyDisposed();
+    this.getRuntimeTransaction().poison(
+      new Error(`stop timed out after ${timeoutMs}ms; session backend is disposed`),
+    );
+
+    let cleanupFailed = false;
+    for (const session of new Set([capturedSession, this.piSession])) {
+      try {
+        session.dispose();
+      } catch (error: unknown) {
+        cleanupFailed = true;
+        log.error("sdk.runtime_lifecycle.force_cleanup_failed", {
+          sessionId: this.oppiSessionId,
+          operation: "stop",
+          error: safeErrorMessage(error),
+        });
+      }
+    }
+
+    const result = this.withLocalCleanupDiagnostic(
+      existing ??
+        (cleanupFailed
+          ? { disposal: "forced", cause: "runtime_dispose_error" }
+          : {
+              disposal: "forced",
+              cause: "lifecycle_timeout",
+              operation: "stop",
+              timeoutMs,
+            }),
+    );
+    this.forcedDisposalResult ??= result;
+    this.shutdownCleanupPromise ??= Promise.resolve(result);
+    return result;
+  }
+
+  private assertReplacementContinuationActive(operation: SdkRuntimeLifecycleOperation): void {
+    if (!this.disposed) return;
+    this.disposeLateLifecycleContinuation(operation, this.piSession);
+    throw new Error("Session backend is disposed");
+  }
+
+  private disposeLateLifecycleContinuation(
+    operation: SdkRuntimeLifecycleOperation,
+    session: AgentSession,
+  ): void {
+    try {
+      // Pi's reload mutates its AgentSession after session_shutdown settles.
+      // Re-dispose the detached session after any abandoned continuation so a
+      // rebuilt extension runner cannot revive resources on the poisoned backend.
+      session.dispose();
+    } catch (error: unknown) {
+      log.error("sdk.runtime_lifecycle.late_cleanup_failed", {
+        sessionId: this.oppiSessionId,
+        operation,
+        error: safeErrorMessage(error),
+      });
+    }
+  }
+
+  private reloadCurrentSessionWithinLifecycleBound(): Promise<void> {
+    const operation = "reload" as const;
+    const session = this.piSession;
+    const timeoutMs = SdkBackend.RUNTIME_LIFECYCLE_TIMEOUT_MS;
+
+    return new Promise<void>((resolve, reject) => {
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        log.warn("sdk.runtime_lifecycle.timeout_force_cleanup", {
+          sessionId: this.oppiSessionId,
+          operation,
+          timeoutMs,
+        });
+        try {
+          this.forceDisposeAfterLifecycleTimeout(operation, session, timeoutMs);
+          reject(
+            new Error(`${operation} timed out after ${timeoutMs}ms; session backend was disposed`),
+          );
+        } catch (error: unknown) {
+          log.error("sdk.runtime_lifecycle.force_cleanup_failed", {
+            sessionId: this.oppiSessionId,
+            operation,
+            error: safeErrorMessage(error),
+          });
+          reject(error);
+        }
+      }, timeoutMs);
+
+      let reload: Promise<void>;
+      try {
+        reload = Promise.resolve(session.reload());
+      } catch (error: unknown) {
+        clearTimeout(timeout);
+        reject(error);
+        return;
+      }
+
+      void reload.then(
+        () => {
+          if (timedOut) {
+            this.disposeLateLifecycleContinuation(operation, session);
+            return;
+          }
+          clearTimeout(timeout);
+          resolve();
+        },
+        (error: unknown) => {
+          if (timedOut) {
+            this.disposeLateLifecycleContinuation(operation, session);
+            return;
+          }
+          clearTimeout(timeout);
+          reject(error);
+        },
+      );
+    });
+  }
+
+  private startShutdownCleanup(): Promise<SdkBackendDisposeResult> {
     if (this.shutdownCleanupPromise) {
       return this.shutdownCleanupPromise;
     }
 
-    this.shutdownCleanupPromise = (async () => {
-      try {
-        // Runtime dispose emits session_shutdown and tears down the current
-        // session lifecycle (extensions + event subscriptions).
-        await this.runtime.dispose();
-      } catch (err: unknown) {
-        log.error("sdk.runtime_dispose.failed", {
-          sessionId: this.piSession.sessionId,
-          error: safeErrorMessage(err),
+    const session = this.piSession;
+    const timeoutMs = SdkBackend.RUNTIME_LIFECYCLE_TIMEOUT_MS;
+    this.shutdownCleanupPromise = new Promise<SdkBackendDisposeResult>((resolve, reject) => {
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        log.warn("sdk.runtime_dispose.timeout_force_cleanup", {
+          sessionId: this.oppiSessionId,
+          timeoutMs,
         });
-      }
-    })();
+        try {
+          // Pi waits for every extension's session_shutdown handler before it
+          // invalidates the session. A broken handler must not retain Oppi's
+          // lifecycle transaction and workspace locks forever.
+          session.dispose();
+          const result = this.withLocalCleanupDiagnostic({
+            disposal: "forced",
+            cause: "extension_shutdown_timeout",
+            timeoutMs,
+          });
+          this.forcedDisposalResult = result;
+          resolve(result);
+        } catch (error: unknown) {
+          log.error("sdk.runtime_dispose.force_cleanup_failed", {
+            sessionId: this.oppiSessionId,
+            error: safeErrorMessage(error),
+          });
+          reject(error);
+        }
+      }, timeoutMs);
+
+      void Promise.resolve()
+        .then(() => this.runtime.dispose())
+        .then(
+          () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            resolve(this.withLocalCleanupDiagnostic({ disposal: "graceful" }));
+          },
+          (error: unknown) => {
+            // A timed-out runtime can settle after forced local cleanup. Its
+            // result no longer owns disposal and must not emit a second failure.
+            if (settled) return;
+            settled = true;
+            log.error("sdk.runtime_dispose.failed", {
+              sessionId: this.oppiSessionId,
+              error: safeErrorMessage(error),
+            });
+            clearTimeout(timeout);
+            try {
+              session.dispose();
+              const result = this.withLocalCleanupDiagnostic({
+                disposal: "forced",
+                cause: "runtime_dispose_error",
+              });
+              this.forcedDisposalResult = result;
+              resolve(result);
+            } catch (forceError: unknown) {
+              log.error("sdk.runtime_dispose.force_cleanup_failed", {
+                sessionId: this.oppiSessionId,
+                error: safeErrorMessage(forceError),
+              });
+              reject(forceError);
+            }
+          },
+        );
+    });
 
     return this.shutdownCleanupPromise;
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) {
-      await this.startShutdownCleanup();
-      return;
+  async dispose(permit?: SessionRuntimeTransactionPermit): Promise<SdkBackendDisposeResult> {
+    if (!permit) {
+      return this.withExclusiveRuntimeOperation(
+        "dispose",
+        (transaction) => this.dispose(transaction),
+        { allowDisposed: true },
+      );
     }
-    this.disposed = true;
 
-    this.uiBridge.dispose();
-
-    this.unsub?.();
-    this.unsub = null;
-
-    await this.startShutdownCleanup();
+    this.getRuntimeTransaction().assertPermit(permit, "exclusive");
+    if (this.disposed) {
+      return this.startShutdownCleanup();
+    }
+    this.markLocallyDisposed();
+    return this.startShutdownCleanup();
   }
 }

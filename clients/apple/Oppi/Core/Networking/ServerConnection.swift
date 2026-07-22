@@ -138,6 +138,7 @@ final class ServerConnection {
     let sessionStore = SessionStore()
     let askRequestStore = AskRequestStore()
     let workspaceStore = WorkspaceStore()
+    let serverResourceStore = ServerResourceStore()
     let gitStatusStore = GitStatusStore(environment: .app)
     let fileIndexStore = FileIndexStore(environment: .app)
     let messageQueueStore = MessageQueueStore(telemetry: .appMetrics)
@@ -643,6 +644,9 @@ final class ServerConnection {
 
         self.credentials = credentials
         self.currentServerId = credentials.normalizedServerFingerprint
+        if let serverId = credentials.normalizedServerFingerprint {
+            self.serverResourceStore.switchServer(to: serverId)
+        }
         self.endpointSelection = endpointSelection
         self.dictationStreamAvailable = false
         self.appEventStreamAvailable = false

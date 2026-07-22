@@ -17,16 +17,25 @@ export type TerminalListItem = {
   details?: unknown[];
 };
 
-type CliOutputCapture = { chunks: string[] };
+type CliOutputCapture = { chunks: string[]; exitCode: number };
 
 const cliOutputCapture = new AsyncLocalStorage<CliOutputCapture>();
 
 export async function captureCliOutput<T>(
   fn: () => Promise<T>,
-): Promise<{ stdout: string; result: T }> {
-  const capture: CliOutputCapture = { chunks: [] };
+): Promise<{ stdout: string; result: T; exitCode: number }> {
+  const capture: CliOutputCapture = { chunks: [], exitCode: 0 };
   const result = await cliOutputCapture.run(capture, fn);
-  return { stdout: capture.chunks.join(""), result };
+  return { stdout: capture.chunks.join(""), result, exitCode: capture.exitCode };
+}
+
+export function setCapturedCliExitCode(exitCode: number): void {
+  const capture = cliOutputCapture.getStore();
+  if (capture) {
+    capture.exitCode = exitCode;
+    return;
+  }
+  process.exitCode = exitCode;
 }
 
 export function writeJsonEnvelope(envelope: CliJsonEnvelope): void {

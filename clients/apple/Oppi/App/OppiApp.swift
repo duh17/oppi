@@ -778,6 +778,8 @@ struct OppiApp: App {
         switch target {
         case .schedules: "schedules"
         case .agents: "agents"
+        case .skills: "skills"
+        case .extensions: "extensions"
         case .manageServers: "manage_servers"
         case .appSettings: "app_settings"
         }

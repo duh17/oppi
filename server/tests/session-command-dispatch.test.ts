@@ -73,11 +73,12 @@ describe("session command dispatch and output boundaries", () => {
   it("maps malformed API failures to a stable nonzero JSON envelope", async () => {
     request.mockRejectedValue(Object.assign(new Error("bad response"), { status: 502 }));
 
-    const { stdout } = await captureCliOutput(() =>
+    const { stdout, exitCode } = await captureCliOutput(() =>
       cmdSession(storage, "get", ["s"], { json: "true" }),
     );
 
-    expect(process.exitCode).toBe(1);
+    expect(exitCode).toBe(1);
+    expect(process.exitCode).toBeUndefined();
     expect(JSON.parse(stdout)).toEqual({
       ok: false,
       error: { message: "bad response", status: 502 },
@@ -112,11 +113,12 @@ describe("session command dispatch and output boundaries", () => {
   ])(
     "rejects conflicting command input: $action",
     async ({ action, positional, flags, message }) => {
-      const { stdout } = await captureCliOutput(() =>
+      const { stdout, exitCode } = await captureCliOutput(() =>
         cmdSession(storage, action, positional, flags),
       );
 
-      expect(process.exitCode).toBe(1);
+      expect(exitCode).toBe(1);
+      expect(process.exitCode).toBeUndefined();
       const envelope = JSON.parse(stdout) as { ok: boolean; error: { message: string } };
       expect(envelope.ok).toBe(false);
       expect(envelope.error.message).toContain(message);

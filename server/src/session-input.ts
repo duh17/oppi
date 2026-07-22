@@ -7,12 +7,18 @@ import {
   resolveUploadStoreConfig,
   type UploadStoreConfigResolved,
 } from "./uploads/local-upload-store.js";
+import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 
 export interface SessionInputSessionState extends TurnSessionState {
   session: Session;
   sdkBackend?: {
     isStreaming?: boolean;
     isCompacting?: boolean;
+    isDisposed?: boolean;
+    withModelTurnAdmission?<T>(
+      commandType: string,
+      operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
+    ): Promise<T>;
   };
 }
 
@@ -39,6 +45,14 @@ type EnqueueQueuedMessage = (
   sdkImages?: SdkImageInput[],
 ) => void;
 
+function requireAcceptedTurn(turn: { clientTurnId?: string; duplicate: boolean } | undefined): {
+  clientTurnId?: string;
+  duplicate: boolean;
+} {
+  if (!turn) throw new Error("Runtime command completed without accepting prompt preflight");
+  return turn;
+}
+
 function isPromiseLike(value: void | Promise<unknown>): value is Promise<unknown> {
   return Boolean(
     value && typeof value === "object" && typeof (value as { then?: unknown }).then === "function",
@@ -52,7 +66,12 @@ export interface SessionInputCoordinatorDeps {
     SessionTurnCoordinator,
     "beginTurnIntent" | "isDuplicateTurnIntent" | "markTurnDispatched"
   >;
-  sendCommand: (key: string, command: Record<string, unknown>) => void | Promise<unknown>;
+  sendCommand: (
+    key: string,
+    command: Record<string, unknown>,
+    permit?: SessionRuntimeTransactionPermit,
+    onPreflightAccepted?: () => void,
+  ) => void | Promise<unknown>;
   uploadStoreConfig?: UploadStoreConfigResolved;
   onCommandResult?: (
     key: string,
@@ -66,10 +85,12 @@ export interface SessionInputCoordinatorDeps {
   promptBusyErrorMessage?: string;
   streamingInputBusyErrorMessage?: (kind: StreamingInputKind) => string;
   attachmentWorkspaceErrorMessage?: string;
+  assertModelTurnAdmissionAllowed?: (key: string) => void;
 }
 
 export class SessionInputCoordinator {
   private readonly uploadStoreConfig: UploadStoreConfigResolved;
+  private readonly inputAdmissionTails = new WeakMap<SessionInputSessionState, Promise<void>>();
 
   constructor(private readonly deps: SessionInputCoordinatorDeps) {
     this.uploadStoreConfig = deps.uploadStoreConfig ?? resolveUploadStoreConfig(deps.config);
@@ -135,7 +156,28 @@ export class SessionInputCoordinator {
     },
   ): Promise<SessionInputDispatchResult> {
     const active = this.deps.getActiveSession(key);
-    if (!active) {
+    if (!active) throw new Error(`Session not active: ${key}`);
+    return this.withSerializedModelTurnAdmission(key, active, "prompt", (permit) =>
+      this.sendPromptAdmitted(key, active, message, opts, permit),
+    );
+  }
+
+  private async sendPromptAdmitted(
+    key: string,
+    active: SessionInputSessionState,
+    message: string,
+    opts:
+      | {
+          attachments?: ChatAttachmentRef[];
+          streamingBehavior?: "steer" | "followUp";
+          clientTurnId?: string;
+          requestId?: string;
+          timestamp?: number;
+        }
+      | undefined,
+    permit: SessionRuntimeTransactionPermit | undefined,
+  ): Promise<SessionInputDispatchResult> {
+    if (this.deps.getActiveSession(key) !== active) {
       throw new Error(`Session not active: ${key}`);
     }
 
@@ -163,16 +205,22 @@ export class SessionInputCoordinator {
       );
     }
 
-    const turn = this.deps.turnCoordinator.beginTurnIntent(
-      key,
-      active,
-      "prompt",
-      turnPayload,
-      opts?.clientTurnId,
-      opts?.requestId,
-    );
-
-    if (turn.duplicate) {
+    if (
+      this.deps.turnCoordinator.isDuplicateTurnIntent(
+        active,
+        "prompt",
+        opts?.clientTurnId,
+        turnPayload,
+      )
+    ) {
+      this.deps.turnCoordinator.beginTurnIntent(
+        key,
+        active,
+        "prompt",
+        turnPayload,
+        opts?.clientTurnId,
+        opts?.requestId,
+      );
       return { duplicate: true };
     }
 
@@ -183,24 +231,49 @@ export class SessionInputCoordinator {
     });
     const dispatchImages = prepared.images;
     const dispatchMessage = prepared.message;
-
-    if (this.deps.recordPromptLocally !== false) {
-      const capturedFirst = appendSessionMessage(active.session, {
-        role: "user",
-        content: dispatchMessage,
-        timestamp: opts?.timestamp ?? Date.now(),
-      });
-
-      if (capturedFirst) {
-        this.deps.onFirstMessage?.(active.session);
+    let acceptedTurn: { clientTurnId?: string; duplicate: boolean } | undefined;
+    let turnDispatched = false;
+    const acceptPreflight = (): void => {
+      if (acceptedTurn) return;
+      this.assertPreflightOwnerActive(key, active);
+      acceptedTurn = this.deps.turnCoordinator.beginTurnIntent(
+        key,
+        active,
+        "prompt",
+        turnPayload,
+        opts?.clientTurnId,
+        opts?.requestId,
+      );
+      if (acceptedTurn.duplicate) {
+        throw new Error("Prompt turn became duplicate during serialized preflight admission");
       }
-    }
+
+      if (this.deps.recordPromptLocally !== false) {
+        const capturedFirst = appendSessionMessage(active.session, {
+          role: "user",
+          content: dispatchMessage,
+          timestamp: opts?.timestamp ?? Date.now(),
+        });
+
+        if (capturedFirst) {
+          this.deps.onFirstMessage?.(active.session);
+        }
+      }
+    };
+    const dispatchAcceptedTurn = (): { clientTurnId?: string; duplicate: boolean } => {
+      const turn = requireAcceptedTurn(acceptedTurn);
+      if (!turnDispatched) {
+        turnDispatched = true;
+        this.deps.turnCoordinator.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);
+      }
+      return turn;
+    };
 
     const cmd: Record<string, unknown> = {
       type: "prompt",
       message: dispatchMessage,
       ...(opts?.requestId ? { requestId: opts.requestId } : {}),
-      ...(turn.clientTurnId ? { clientTurnId: turn.clientTurnId } : {}),
+      ...(opts?.clientTurnId ? { clientTurnId: opts.clientTurnId } : {}),
     };
 
     // SDK image format: {type:"image", data:"base64...", mimeType:"image/png"}
@@ -218,7 +291,7 @@ export class SessionInputCoordinator {
       runtime: runtimeLogTag(active.session),
       status: active.session.status,
       requestId: opts?.requestId,
-      clientTurnId: turn.clientTurnId,
+      clientTurnId: opts?.clientTurnId,
       chars: dispatchMessage.length,
       imageCount: dispatchImages.length,
       attachmentCount: opts?.attachments?.length ?? 0,
@@ -226,14 +299,23 @@ export class SessionInputCoordinator {
       recordPromptLocally: this.deps.recordPromptLocally !== false,
     });
 
-    const commandResult = this.deps.sendCommand(key, cmd);
+    const commandResult = this.deps.sendCommand(key, cmd, permit, () => {
+      acceptPreflight();
+      // Pi can synchronously emit agent_start immediately after preflight.
+      dispatchAcceptedTurn();
+    });
     if (isPromiseLike(commandResult)) {
       const data = await commandResult;
+      // Promise-returning runtimes resolve only after authoritative preflight acceptance.
+      acceptPreflight();
       await this.deps.onCommandResult?.(key, cmd, data);
-    } else if (this.deps.onCommandResult) {
-      await this.deps.onCommandResult(key, cmd, commandResult);
+    } else {
+      acceptPreflight();
+      if (this.deps.onCommandResult) {
+        await this.deps.onCommandResult(key, cmd, commandResult);
+      }
     }
-    this.deps.turnCoordinator.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);
+    const dispatchedTurn = dispatchAcceptedTurn();
 
     if (runtimeBusy && opts?.streamingBehavior) {
       const kind = opts.streamingBehavior === "steer" ? "steer" : "follow_up";
@@ -242,7 +324,7 @@ export class SessionInputCoordinator {
         kind,
         message,
         opts.attachments,
-        turn.clientTurnId,
+        dispatchedTurn.clientTurnId,
         dispatchMessage,
         dispatchImages,
       );
@@ -286,7 +368,27 @@ export class SessionInputCoordinator {
     },
   ): Promise<SessionInputDispatchResult> {
     const active = this.deps.getActiveSession(key);
-    if (!active) {
+    if (!active) throw new Error(`Session not active: ${key}`);
+    return this.withSerializedModelTurnAdmission(key, active, kind, (permit) =>
+      this.sendStreamingInputAdmitted(key, active, kind, message, opts, permit),
+    );
+  }
+
+  private async sendStreamingInputAdmitted(
+    key: string,
+    active: SessionInputSessionState,
+    kind: StreamingInputKind,
+    message: string,
+    opts:
+      | {
+          attachments?: ChatAttachmentRef[];
+          clientTurnId?: string;
+          requestId?: string;
+        }
+      | undefined,
+    permit: SessionRuntimeTransactionPermit | undefined,
+  ): Promise<SessionInputDispatchResult> {
+    if (this.deps.getActiveSession(key) !== active) {
       throw new Error(`Session not active: ${key}`);
     }
 
@@ -298,19 +400,21 @@ export class SessionInputCoordinator {
       );
     }
 
-    const turn = this.deps.turnCoordinator.beginTurnIntent(
-      key,
-      active,
-      kind,
-      {
-        message,
-        attachments: opts?.attachments ?? [],
-      },
-      opts?.clientTurnId,
-      opts?.requestId,
-    );
-
-    if (turn.duplicate) {
+    const turnPayload = {
+      message,
+      attachments: opts?.attachments ?? [],
+    };
+    if (
+      this.deps.turnCoordinator.isDuplicateTurnIntent(active, kind, opts?.clientTurnId, turnPayload)
+    ) {
+      this.deps.turnCoordinator.beginTurnIntent(
+        key,
+        active,
+        kind,
+        turnPayload,
+        opts?.clientTurnId,
+        opts?.requestId,
+      );
       return { duplicate: true };
     }
 
@@ -321,12 +425,37 @@ export class SessionInputCoordinator {
     });
     const dispatchImages = prepared.images;
     const dispatchMessage = prepared.message;
+    let acceptedTurn: { clientTurnId?: string; duplicate: boolean } | undefined;
+    let turnDispatched = false;
+    const acceptPreflight = (): void => {
+      if (acceptedTurn) return;
+      this.assertPreflightOwnerActive(key, active);
+      acceptedTurn = this.deps.turnCoordinator.beginTurnIntent(
+        key,
+        active,
+        kind,
+        turnPayload,
+        opts?.clientTurnId,
+        opts?.requestId,
+      );
+      if (acceptedTurn.duplicate) {
+        throw new Error("Streaming turn became duplicate during serialized preflight admission");
+      }
+    };
+    const dispatchAcceptedTurn = (): { clientTurnId?: string; duplicate: boolean } => {
+      const turn = requireAcceptedTurn(acceptedTurn);
+      if (!turnDispatched) {
+        turnDispatched = true;
+        this.deps.turnCoordinator.markTurnDispatched(key, active, kind, turn, opts?.requestId);
+      }
+      return turn;
+    };
 
     const cmd: Record<string, unknown> = {
       type: kind,
       message: dispatchMessage,
       ...(opts?.requestId ? { requestId: opts.requestId } : {}),
-      ...(turn.clientTurnId ? { clientTurnId: turn.clientTurnId } : {}),
+      ...(opts?.clientTurnId ? { clientTurnId: opts.clientTurnId } : {}),
     };
     if (dispatchImages.length) {
       cmd.images = dispatchImages;
@@ -338,30 +467,74 @@ export class SessionInputCoordinator {
       status: active.session.status,
       command: kind,
       requestId: opts?.requestId,
-      clientTurnId: turn.clientTurnId,
+      clientTurnId: opts?.clientTurnId,
       chars: dispatchMessage.length,
       imageCount: dispatchImages.length,
       attachmentCount: opts?.attachments?.length ?? 0,
     });
 
-    const commandResult = this.deps.sendCommand(key, cmd);
+    const commandResult = this.deps.sendCommand(key, cmd, permit, () => {
+      acceptPreflight();
+      dispatchAcceptedTurn();
+    });
     if (isPromiseLike(commandResult)) {
       const data = await commandResult;
+      acceptPreflight();
       await this.deps.onCommandResult?.(key, cmd, data);
-    } else if (this.deps.onCommandResult) {
-      await this.deps.onCommandResult(key, cmd, commandResult);
+    } else {
+      acceptPreflight();
+      if (this.deps.onCommandResult) {
+        await this.deps.onCommandResult(key, cmd, commandResult);
+      }
     }
-    this.deps.turnCoordinator.markTurnDispatched(key, active, kind, turn, opts?.requestId);
+    const dispatchedTurn = dispatchAcceptedTurn();
     this.deps.enqueueQueuedMessage?.(
       key,
       kind,
       message,
       opts?.attachments,
-      turn.clientTurnId,
+      dispatchedTurn.clientTurnId,
       dispatchMessage,
       dispatchImages,
     );
 
     return { duplicate: false };
+  }
+
+  private assertPreflightOwnerActive(key: string, active: SessionInputSessionState): void {
+    if (active.sdkBackend?.isDisposed) throw new Error("Session backend is disposed");
+    if (this.deps.getActiveSession(key) !== active) throw new Error(`Session not active: ${key}`);
+  }
+
+  private async withSerializedModelTurnAdmission<T>(
+    key: string,
+    active: SessionInputSessionState,
+    commandType: string,
+    operation: (permit: SessionRuntimeTransactionPermit | undefined) => Promise<T>,
+  ): Promise<T> {
+    const previous = this.inputAdmissionTails.get(active) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => current);
+    this.inputAdmissionTails.set(active, tail);
+
+    await previous;
+    try {
+      this.deps.assertModelTurnAdmissionAllowed?.(key);
+      if (active.sdkBackend?.withModelTurnAdmission) {
+        return await active.sdkBackend.withModelTurnAdmission(commandType, (permit) => {
+          this.deps.assertModelTurnAdmissionAllowed?.(key);
+          return operation(permit);
+        });
+      }
+      return await operation(undefined);
+    } finally {
+      release();
+      if (this.inputAdmissionTails.get(active) === tail) {
+        this.inputAdmissionTails.delete(active);
+      }
+    }
   }
 }

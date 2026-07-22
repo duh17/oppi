@@ -14,8 +14,16 @@ import { basename, dirname, join, resolve } from "node:path";
 import { hostname } from "node:os";
 
 import {
+  assertOppiMirrorQueueVersion,
   isOppiMirrorBridgeCommand,
+  isOppiMirrorQueueVersion,
+  nextOppiMirrorQueueVersion,
+  OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION,
   OPPI_MIRROR_CAPABILITIES,
+  OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY,
+  OPPI_MIRROR_QUEUE_VERSION_EXHAUSTED_CODE,
+  OPPI_MIRROR_QUEUE_VERSION_EXHAUSTED_ERROR,
+  OPPI_MIRROR_QUEUE_VERSION_MISMATCH_CODE,
   type OppiMirrorBridgeCommand,
 } from "./oppi-mirror-contract.ts";
 
@@ -86,6 +94,16 @@ interface EditableAgentSession {
   _emitQueueUpdate?: () => void;
   getSteeringMessages?: () => readonly string[];
   getFollowUpMessages?: () => readonly string[];
+  prompt?: (
+    text: string,
+    options?: {
+      expandPromptTemplates?: boolean;
+      images?: Array<QueueImageContent & { type: "image" }>;
+      streamingBehavior?: "steer" | "followUp";
+      source?: "extension";
+      preflightResult?: (success: boolean) => void;
+    },
+  ) => Promise<void>;
   agent?: {
     clearAllQueues?: () => void;
     clearSteeringQueue?: () => void;
@@ -1211,6 +1229,36 @@ type ProjectionStartedItem = {
   queue: MessageQueueState;
 };
 
+class MirrorQueueVersionMismatchError extends Error {
+  readonly data: { code: string; queue: MessageQueueState };
+
+  constructor(
+    expectedVersion: number,
+    baseVersion: number,
+    queue: MessageQueueState,
+  ) {
+    super(
+      `Queue version mismatch: expected ${expectedVersion}, got ${baseVersion}`,
+    );
+    this.data = {
+      code: OPPI_MIRROR_QUEUE_VERSION_MISMATCH_CODE,
+      queue: cloneQueueState(queue),
+    };
+  }
+}
+
+class MirrorQueueVersionExhaustedError extends Error {
+  readonly data: { code: string; queue: MessageQueueState };
+
+  constructor(queue: MessageQueueState) {
+    super(OPPI_MIRROR_QUEUE_VERSION_EXHAUSTED_ERROR);
+    this.data = {
+      code: OPPI_MIRROR_QUEUE_VERSION_EXHAUSTED_CODE,
+      queue: cloneQueueState(queue),
+    };
+  }
+}
+
 export class MirrorQueueProjection {
   private queue: MessageQueueState;
 
@@ -1221,7 +1269,22 @@ export class MirrorQueueProjection {
       followUp: [],
     },
   ) {
+    assertOppiMirrorQueueVersion(initialQueue.version);
     this.queue = cloneQueueState(initialQueue);
+  }
+
+  private nextVersion(): number {
+    try {
+      return nextOppiMirrorQueueVersion(this.queue.version);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === OPPI_MIRROR_QUEUE_VERSION_EXHAUSTED_ERROR
+      ) {
+        throw new MirrorQueueVersionExhaustedError(this.queue);
+      }
+      throw error;
+    }
   }
 
   snapshot(): MessageQueueState {
@@ -1237,8 +1300,9 @@ export class MirrorQueueProjection {
       return { changed: false, queue: this.snapshot() };
     }
 
+    const version = this.nextVersion();
     this.queue = {
-      version: this.queue.version + 1,
+      version,
       steering: itemsFromTexts(snapshot.steering, this.queue.steering),
       followUp: itemsFromTexts(snapshot.followUp, this.queue.followUp),
     };
@@ -1246,6 +1310,7 @@ export class MirrorQueueProjection {
   }
 
   replace(nextQueue: MessageQueueState): ProjectionChange {
+    assertOppiMirrorQueueVersion(nextQueue.version);
     const changed = JSON.stringify(this.queue) !== JSON.stringify(nextQueue);
     this.queue = cloneQueueState(nextQueue);
     return { changed, queue: this.snapshot() };
@@ -1257,7 +1322,7 @@ export class MirrorQueueProjection {
     }
 
     this.queue = {
-      version: this.queue.version + 1,
+      version: this.nextVersion(),
       steering: [],
       followUp: [],
     };
@@ -1269,12 +1334,20 @@ export class MirrorQueueProjection {
     steering: MessageQueueDraftItem[],
     followUp: MessageQueueDraftItem[],
   ): MessageQueueState {
+    if (!isOppiMirrorQueueVersion(baseVersion)) {
+      throw new Error(
+        "Invalid set_queue payload: expected a nonnegative safe integer baseVersion",
+      );
+    }
+    if (baseVersion !== this.queue.version) {
+      throw new MirrorQueueVersionMismatchError(
+        this.queue.version,
+        baseVersion,
+        this.queue,
+      );
+    }
     return {
-      version:
-        Math.max(
-          this.queue.version,
-          Number.isFinite(baseVersion) ? baseVersion : 0,
-        ) + 1,
+      version: this.nextVersion(),
       steering: steering.map(draftToItem),
       followUp: followUp.map(draftToItem),
     };
@@ -1305,15 +1378,17 @@ export class MirrorQueueProjection {
     if (runtimeUpdateAlreadyAddedItem) {
       const existing = matchingItems.at(-1);
       if (existing && images?.length && !existing.images?.length) {
+        const version = this.nextVersion();
         existing.images = images.map((image) => ({ ...image }));
-        this.queue.version += 1;
+        this.queue.version = version;
         return { changed: true, queue: this.snapshot() };
       }
       return { changed: false, queue: this.snapshot() };
     }
 
+    const version = this.nextVersion();
     list.push(item);
-    this.queue.version += 1;
+    this.queue.version = version;
     return { changed: true, queue: this.snapshot() };
   }
 
@@ -1329,9 +1404,10 @@ export class MirrorQueueProjection {
         (item) => item.message.trim() === normalized,
       );
       if (index === -1) return null;
+      const version = this.nextVersion();
       const [item] = list.splice(index, 1);
       if (!item) return null;
-      this.queue.version += 1;
+      this.queue.version = version;
       return {
         kind,
         item: cloneQueueItem(item),
@@ -1602,6 +1678,10 @@ function commandError(message: string, id: string, error: unknown) {
     id,
     success: false,
     error: error instanceof Error ? error.message : String(error),
+    ...(error instanceof MirrorQueueVersionMismatchError ||
+    error instanceof MirrorQueueVersionExhaustedError
+      ? { data: error.data }
+      : {}),
   };
 }
 
@@ -1641,21 +1721,6 @@ function imagesFromCommand(value: unknown): QueueImageContent[] {
         ]
       : [];
   });
-}
-
-function contentForMessage(message: string, images: QueueImageContent[]) {
-  if (!images.length) return message;
-  return [
-    {
-      type: "text" as const,
-      text: message || "(see attached image)",
-    },
-    ...images.map((image) => ({
-      type: "image" as const,
-      data: image.data,
-      mimeType: image.mimeType,
-    })),
-  ];
 }
 
 type MirrorIndicatorMode =
@@ -2358,6 +2423,12 @@ interface TuiMirrorRuntime {
   startSession(ctx: ExtensionContext): void;
 }
 
+interface MirrorInputPreflightRecord {
+  fingerprint: string;
+  promise: Promise<unknown>;
+  accepted: boolean;
+}
+
 async function createTuiMirrorRuntime(
   pi: ExtensionAPI,
 ): Promise<TuiMirrorRuntime> {
@@ -2374,6 +2445,10 @@ async function createTuiMirrorRuntime(
   let connectedSessionId: string | null = null;
   let connectedWorkspaceId: string | null = null;
   const queueProjection = new MirrorQueueProjection();
+  const inputPreflightsByClientTurnId = new Map<
+    string,
+    MirrorInputPreflightRecord
+  >();
   const pendingUIResponses = new Map<
     string,
     PendingMirrorUIResponse<unknown>
@@ -2400,12 +2475,14 @@ async function createTuiMirrorRuntime(
   let lastOppiRuntimeConflictNotifiedAt = 0;
 
   let settings = loadSettings();
+  let serverSupportsAuthoritativeInputAcceptance = false;
+  let queueReplacementInProgress = false;
 
   const queueUpdateBridge = await (async () => {
     try {
       const { AgentSession } = await import("@earendil-works/pi-coding-agent");
       return installQueueUpdateBridge(
-        AgentSession.prototype as AgentSessionPrototype,
+        AgentSession.prototype as unknown as AgentSessionPrototype,
       );
     } catch (error) {
       writeMirrorLog("error", "queue_update_bridge_install_failed", { error });
@@ -2413,6 +2490,7 @@ async function createTuiMirrorRuntime(
     }
   })();
   const queueUpdateListener: QueueUpdateListener = ({ steering, followUp }) => {
+    if (queueReplacementInProgress) return;
     publishQueueIfChanged(steering, followUp);
   };
   const internalAgentEventListener: InternalAgentSessionEventListener = (
@@ -3256,6 +3334,12 @@ async function createTuiMirrorRuntime(
   ) {
     const session = requireEditableAgentSession(ctx);
     const previous = queueProjection.snapshot();
+    queueReplacementInProgress = true;
+    try {
+      replaceAgentSessionQueue(session, nextQueue);
+    } finally {
+      queueReplacementInProgress = false;
+    }
     const result = queueProjection.replace(nextQueue);
     if (result.changed) {
       writeMirrorLog("info", "queue_projection_replaced", {
@@ -3272,12 +3356,24 @@ async function createTuiMirrorRuntime(
         followUpCount: result.queue.followUp.length,
       });
     }
-    replaceAgentSessionQueue(session, nextQueue);
   }
 
   function clearQueueForShutdown(ctx: ExtensionContext) {
     const previous = queueProjection.snapshot();
-    const result = queueProjection.clear();
+    let result: ProjectionChange;
+    try {
+      result = queueProjection.clear();
+    } catch (error) {
+      if (!(error instanceof MirrorQueueVersionExhaustedError)) throw error;
+      result = { changed: false, queue: queueProjection.snapshot() };
+      writeMirrorLog("warn", "queue_projection_exhausted_during_shutdown", {
+        runtime: "pi-tui",
+        bridgeId,
+        sessionId: connectedSessionId,
+        workspaceId: connectedWorkspaceId,
+        version: previous.version,
+      });
+    }
     const session = findEditableAgentSession(ctx);
     if (session) {
       try {
@@ -3333,6 +3429,182 @@ async function createTuiMirrorRuntime(
     if (!result.changed) return;
     sendQueueState();
     renderIndicator();
+  }
+
+  function mirrorInputFingerprint(
+    type: "prompt" | "steer" | "follow_up",
+    command: Record<string, unknown>,
+  ): string {
+    return JSON.stringify({
+      type,
+      message: command.message,
+      images: command.images,
+      streamingBehavior: command.streamingBehavior,
+    });
+  }
+
+  function pruneAcceptedInputPreflights(): void {
+    const maxAcceptedEntries = 256;
+    let acceptedCount = 0;
+    for (const record of inputPreflightsByClientTurnId.values()) {
+      if (record.accepted) acceptedCount += 1;
+    }
+    if (acceptedCount <= maxAcceptedEntries) return;
+
+    for (const [clientTurnId, record] of inputPreflightsByClientTurnId) {
+      if (!record.accepted) continue;
+      inputPreflightsByClientTurnId.delete(clientTurnId);
+      acceptedCount -= 1;
+      if (acceptedCount <= maxAcceptedEntries) return;
+    }
+  }
+
+  function coalesceMirrorInputPreflight(
+    type: "prompt" | "steer" | "follow_up",
+    command: Record<string, unknown>,
+    dispatch: () => Promise<unknown>,
+  ): Promise<unknown> {
+    const clientTurnId =
+      typeof command.clientTurnId === "string" && command.clientTurnId.trim()
+        ? command.clientTurnId
+        : undefined;
+    if (!clientTurnId) return dispatch();
+
+    const fingerprint = mirrorInputFingerprint(type, command);
+    const existing = inputPreflightsByClientTurnId.get(clientTurnId);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        return Promise.reject(
+          new Error(`clientTurnId conflict: ${clientTurnId}`),
+        );
+      }
+      return existing.promise;
+    }
+
+    const record: MirrorInputPreflightRecord = {
+      fingerprint,
+      accepted: false,
+      promise: Promise.resolve(),
+    };
+    record.promise = dispatch();
+    inputPreflightsByClientTurnId.set(clientTurnId, record);
+    void record.promise.then(
+      () => {
+        if (inputPreflightsByClientTurnId.get(clientTurnId) !== record) return;
+        record.accepted = true;
+        pruneAcceptedInputPreflights();
+      },
+      () => {
+        if (inputPreflightsByClientTurnId.get(clientTurnId) === record) {
+          inputPreflightsByClientTurnId.delete(clientTurnId);
+        }
+      },
+    );
+    return record.promise;
+  }
+
+  function dispatchMirrorInputWithPreflight(
+    ctx: ExtensionContext,
+    type: "prompt" | "steer" | "follow_up",
+    command: Record<string, unknown>,
+    streamingBehavior?: "steer" | "followUp",
+  ): Promise<unknown> {
+    return coalesceMirrorInputPreflight(type, command, () => {
+      const session = requireEditableAgentSession(ctx);
+      // At exhaustion, Pi input could consume or enqueue intent without a new
+      // representable CAS version. Reject before invoking Pi preflight.
+      nextOppiMirrorQueueVersion(queueProjection.snapshot().version);
+      if (!session.prompt) {
+        return Promise.reject(
+          new Error("Terminal Pi runtime prompt preflight is not attached yet"),
+        );
+      }
+
+      const message = String(command.message ?? "");
+      const images = imagesFromCommand(command.images);
+      const queueKind = streamingBehavior;
+      const previousMatchingCount = queueKind
+        ? queueProjection
+            .snapshot()
+            [
+              queueKind === "steer" ? "steering" : "followUp"
+            ].filter((item) => item.message === message).length
+        : 0;
+
+      return new Promise<unknown>((resolve, reject) => {
+        let settled = false;
+        let preflightRejected = false;
+        const rejectOnce = (error: unknown): void => {
+          if (settled) return;
+          settled = true;
+          reject(error instanceof Error ? error : new Error(String(error)));
+        };
+        const acceptOnce = (): void => {
+          if (settled) return;
+          try {
+            syncQueueFromEditableSession(ctx);
+            if (queueKind) {
+              const queue = queueProjection.snapshot();
+              const matchingCount = queue[
+                queueKind === "steer" ? "steering" : "followUp"
+              ].filter((item) => item.message === message).length;
+              if (matchingCount > previousMatchingCount) {
+                enqueueShadow(queueKind, message, images, {
+                  previousMatchingCount,
+                });
+              }
+            }
+            const data = {
+              dispatched: true,
+              queue: queueProjection.snapshot(),
+            };
+            settled = true;
+            resolve(data);
+          } catch (error) {
+            rejectOnce(error);
+          }
+        };
+
+        let promptPromise: Promise<void>;
+        try {
+          promptPromise = session.prompt!(message, {
+            expandPromptTemplates: false,
+            ...(images.length
+              ? {
+                  images: images.map((image) => ({
+                    type: "image" as const,
+                    ...image,
+                  })),
+                }
+              : {}),
+            ...(streamingBehavior ? { streamingBehavior } : {}),
+            source: "extension",
+            preflightResult: (success) => {
+              if (success) acceptOnce();
+              else preflightRejected = true;
+            },
+          });
+        } catch (error) {
+          rejectOnce(error);
+          return;
+        }
+
+        void promptPromise.then(
+          () => {
+            if (!settled) {
+              rejectOnce(
+                new Error(
+                  preflightRejected
+                    ? "Terminal Pi rejected input preflight"
+                    : "Terminal Pi completed input without reporting preflight acceptance",
+                ),
+              );
+            }
+          },
+          (error: unknown) => rejectOnce(error),
+        );
+      });
+    });
   }
 
   function markQueueItemStarted(message: string | undefined) {
@@ -3595,6 +3867,9 @@ async function createTuiMirrorRuntime(
     }
 
     manualStop = false;
+    // A new bridge cannot inherit delayed-acceptance support from its prior server.
+    // Until this connection's hello_ack proves protocol 2+, model input stays closed.
+    serverSupportsAuthoritativeInputAcceptance = false;
     startIndicator(ctx, "connecting");
     let url: string;
     let socket: WebSocket;
@@ -3625,7 +3900,7 @@ async function createTuiMirrorRuntime(
           settings.workspaceCreation === "always";
         send({
           type: "hello",
-          protocolVersion: 1,
+          protocolVersion: OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION,
           bridgeId,
           pid: process.pid,
           hostname: hostname(),
@@ -3759,7 +4034,26 @@ async function createTuiMirrorRuntime(
       command?: Record<string, unknown>;
     };
     switch (message.type) {
-      case "hello_ack":
+      case "hello_ack": {
+        const serverProtocolVersion = (message as { protocolVersion?: unknown })
+          .protocolVersion;
+        if (serverProtocolVersion !== OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION) {
+          manualStop = true;
+          setIndicatorMode("error");
+          writeMirrorLog("warn", "bridge_hello_ack_rejected", {
+            runtime: "pi-tui",
+            bridgeId,
+            serverProtocolVersion,
+            expectedProtocolVersion: OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION,
+          });
+          try {
+            ws?.close(1008, "Unsupported Oppi Mirror bridge protocol");
+          } catch (error) {
+            writeMirrorLog("warn", "bridge_hello_ack_close_failed", { error });
+          }
+          return;
+        }
+        serverSupportsAuthoritativeInputAcceptance = true;
         connectedSessionId =
           (message as { sessionId?: string }).sessionId ?? null;
         connectedWorkspaceId =
@@ -3776,11 +4070,14 @@ async function createTuiMirrorRuntime(
           bridgeId,
           sessionId: connectedSessionId,
           workspaceId: connectedWorkspaceId,
+          serverProtocolVersion,
+          serverSupportsAuthoritativeInputAcceptance,
         });
         setIndicatorMode("live");
         replayPersistentExtensionUIRequests();
         replayPendingExtensionUIRequests();
         return;
+      }
 
       case "command":
         if (message.id && message.command) {
@@ -3963,6 +4260,15 @@ async function createTuiMirrorRuntime(
     type: OppiMirrorBridgeCommand,
     command: Record<string, unknown>,
   ): Promise<unknown> {
+    if (
+      (type === "prompt" || type === "steer" || type === "follow_up") &&
+      !serverSupportsAuthoritativeInputAcceptance
+    ) {
+      throw new Error(
+        `Oppi Mirror requires server bridge protocol ${OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION} for authoritative model input acceptance`,
+      );
+    }
+
     switch (type) {
       case "prompt": {
         const message =
@@ -3971,52 +4277,34 @@ async function createTuiMirrorRuntime(
           scheduleRuntimeReload(ctx);
           return { reloading: true };
         }
-        const images = imagesFromCommand(command.images);
-        const content = contentForMessage(message, images);
-        const streamingBehavior = command.streamingBehavior;
-        if (streamingBehavior === "steer") {
-          const previousMatchingCount = queueProjection
-            .snapshot()
-            .steering.filter((item) => item.message === message).length;
-          pi.sendUserMessage(content, { deliverAs: "steer" });
-          enqueueShadow("steer", message, images, { previousMatchingCount });
-        } else if (streamingBehavior === "followUp") {
-          const previousMatchingCount = queueProjection
-            .snapshot()
-            .followUp.filter((item) => item.message === message).length;
-          pi.sendUserMessage(content, { deliverAs: "followUp" });
-          enqueueShadow("followUp", message, images, { previousMatchingCount });
-        } else {
-          pi.sendUserMessage(content);
-        }
-        return { dispatched: true, queue: queueProjection.snapshot() };
+        const streamingBehavior =
+          command.streamingBehavior === "steer" ||
+          command.streamingBehavior === "followUp"
+            ? command.streamingBehavior
+            : undefined;
+        return await dispatchMirrorInputWithPreflight(
+          ctx,
+          "prompt",
+          command,
+          streamingBehavior,
+        );
       }
 
-      case "steer": {
-        const message = String(command.message ?? "");
-        const images = imagesFromCommand(command.images);
-        const previousMatchingCount = queueProjection
-          .snapshot()
-          .steering.filter((item) => item.message === message).length;
-        pi.sendUserMessage(contentForMessage(message, images), {
-          deliverAs: "steer",
-        });
-        enqueueShadow("steer", message, images, { previousMatchingCount });
-        return { dispatched: true, queue: queueProjection.snapshot() };
-      }
+      case "steer":
+        return await dispatchMirrorInputWithPreflight(
+          ctx,
+          "steer",
+          command,
+          "steer",
+        );
 
-      case "follow_up": {
-        const message = String(command.message ?? "");
-        const images = imagesFromCommand(command.images);
-        const previousMatchingCount = queueProjection
-          .snapshot()
-          .followUp.filter((item) => item.message === message).length;
-        pi.sendUserMessage(contentForMessage(message, images), {
-          deliverAs: "followUp",
-        });
-        enqueueShadow("followUp", message, images, { previousMatchingCount });
-        return { dispatched: true, queue: queueProjection.snapshot() };
-      }
+      case "follow_up":
+        return await dispatchMirrorInputWithPreflight(
+          ctx,
+          "follow_up",
+          command,
+          "followUp",
+        );
 
       case "abort":
         findEditableAgentSession(ctx)?.abortCompaction?.();
@@ -4056,7 +4344,12 @@ async function createTuiMirrorRuntime(
       }
 
       case "set_queue": {
-        const baseVersion = Number(command.baseVersion);
+        const baseVersion = command.baseVersion;
+        if (!isOppiMirrorQueueVersion(baseVersion)) {
+          throw new Error(
+            "Invalid set_queue payload: expected a nonnegative safe integer baseVersion",
+          );
+        }
         const steering = Array.isArray(command.steering)
           ? (command.steering as MessageQueueDraftItem[])
           : [];

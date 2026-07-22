@@ -74,6 +74,12 @@ private struct WorkspaceSplitRootView: View {
                     .navigationDestination(for: WorkspaceLinkedFileNavTarget.self) { target in
                         WorkspaceLinkedFileDestinationView(target: target)
                     }
+                    .navigationDestination(for: ServerResourceDetailNavTarget.self) { target in
+                        ServerResourceDetailDestinationView(target: target)
+                    }
+                    .navigationDestination(for: ServerSkillFileNavTarget.self) { target in
+                        ServerSkillFileScopedDestinationView(target: target)
+                    }
             }
             .id(navigation.splitDetailTarget)
             .toolbar {
@@ -216,6 +222,10 @@ private struct WorkspaceUtilityDestinationView: View {
                 ScheduleManagementView()
             case .agents:
                 AgentManagementView()
+            case .skills:
+                ServerSkillsView()
+            case .extensions:
+                ServerExtensionsView()
             case .manageServers:
                 ServerView()
             case .appSettings:

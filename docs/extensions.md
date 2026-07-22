@@ -14,11 +14,35 @@ This is not a general Pi extension-authoring guide. For pi package layout, lifec
 
 ## Core rule
 
-Ordinary Oppi SDK sessions do not receive injected extension tools. Extension tools, including `ask`, load from Pi's own resource system for the session cwd, and there is no `workspace.extensions` allowlist in the current workspace model. The shipped Default Agent is the narrow exception: its isolated runtime always registers server-managed `oppi` and structured `ask` tools while disabling user/project extensions, skills, prompt templates, context files, and Pi's filesystem/shell built-ins.
+Pi owns ordinary skills and extensions. Normal Oppi-managed sessions resolve them for the session cwd through Pi's resource system; there is no `workspace.extensions` allowlist. Installing or running Oppi does not write `~/.pi/agent/settings.json`, run `pi install`, or enable anything in standalone Pi.
 
-Approval behavior is extension-owned. If a session needs approval before an action, use a Pi extension that handles `tool_call` or session events and asks through `ctx.ui`.
+Oppi has one explicit server-owned exception: the built-in **Oppi** extension. It is pathless, off by default, and is not a Pi package or a row in Pi's filesystem resource settings. When enabled, it adds only the allowlisted `oppi` tool to ordinary non-sandbox Oppi-managed sessions. Sandbox sessions never receive or reserve this built-in tool. It never adds structured `ask`.
 
-Installing or running Oppi server must not write to `~/.pi/agent/settings.json`, run `pi install`, or implicitly enable any extension in standalone pi. Standalone pi only loads what the user explicitly installs or loads with pi.
+The shipped Default Agent is separate. Its isolated control identity always has server-managed `oppi` and structured `ask`, with confirm-all approval, while disabling user/project extensions, skills, prompt templates, context files, and Pi's filesystem/shell built-ins.
+
+## Server Skills and Extensions
+
+Use the server's **Skills** and **Extensions** destinations to inspect and change the selected server's Pi user/global defaults. These catalog endpoints follow `pi config` semantics: Pi resolves user-scope candidates, including disabled entries, and toggles preserve Pi's ordered `+path`, `-path`, `!pattern`, and package-filter rules. Workspace Settings remain the authority for project overrides; a server default is not a claim about the effective state in every workspace.
+
+The catalog is intentionally global and has no `cwd` parameter. It lists Pi-native user candidates from `~/.pi/agent`, `~/.agents/skills`, configured user settings, and configured packages. It does not install packages while listing. Provenance and enabled state come from Pi. Normal resource IDs are opaque path-derived identifiers, so a moved resource can receive a new ID.
+
+Extensions list **Oppi** first. Its row has stable id `oppi`, built-in provenance, no filesystem `path`, and no removal action. It starts disabled. Its full server configuration contains enablement, approval policy, and a revision; updates use that revision to prevent stale client writes.
+
+### Oppi approval policies
+
+- **Confirm destructive only** (default): reads and allowlisted non-destructive changes run directly; delete, remove, and archive actions require approval.
+- **Confirm all changes**: reads run directly; every allowlisted mutation requires approval.
+- **Read only**: allowlisted reads run directly; mutations fail with a deterministic read-only error and never open an approval prompt.
+
+Unknown commands, unsupported subcommands, and file- or stdin-backed mutation bodies are denied. The approval boundary uses normalized immutable input, so the approved command is the command executed.
+
+### When a change takes effect
+
+New ordinary Oppi-managed sessions use the latest saved Oppi configuration. An active managed session keeps its existing extension runtime until `/reload` rebuilds it through Pi's full `AgentSession.reload()` lifecycle; reload applies the current enablement and policy before the next turn. A disabled configuration registers no `oppi` tool.
+
+The built-in setting does not modify standalone Pi or terminal-owned mirrored sessions. A stopped disconnected mirror session evaluates the current setting only if it is explicitly promoted to Oppi-managed ownership. The dedicated Oppi control identity remains separate and always uses confirm-all, regardless of this setting.
+
+For ordinary Pi extensions, disabled rows are still visible in the server catalog. Pi does not execute disabled extension factories merely to manufacture diagnostics or contributed capabilities, so disabled rows can honestly show discovery state without a speculative load error. Enabled extensions can report Pi loader diagnostics and contributed tools or commands when Pi provides them.
 
 ## Extension surfaces
 
@@ -26,7 +50,7 @@ Installing or running Oppi server must not write to `~/.pi/agent/settings.json`,
 | ----------------------- | ------------------------------------------------------------- | ---------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------- |
 | Host pi extensions      | User/project pi settings, `pi install`, or `.pi/extensions`   | User-owned pi config/package paths       | pi resource loader | Must work without Oppi server services                                                                        |
 | Ask extension example   | Pi package/settings install or auto-discovered extension path | `pi-extensions/ask`                      | pi resource loader | Portable Pi package: registers `ask`, uses native AskCard when available, then falls back to Pi UI APIs       |
-| Active goal extension   | User Pi resource settings or auto-discovered extension path   | Standalone `pi-goal` package             | pi resource loader | Canonical durable-goal implementation maintained in its own repository                                         |
+| Active goal extension   | User Pi resource settings or auto-discovered extension path   | Standalone `pi-goal` package             | pi resource loader | Canonical durable-goal implementation maintained in its own repository                                        |
 | Disabled goal prototype | Not enabled                                                   | `pi-extensions/goal`                     | not loaded         | Preserved while compaction recovery, task timing, and snapshot migration are audited in the pi-goal workspace |
 | Browser video example   | Pi package/settings install or auto-discovered extension path | `pi-extensions/browser-automation-video` | pi resource loader | Oppi-compatible Pi package: registers a public Pi tool and uses Oppi's attachment helper when available       |
 | Mobile UI compatibility | Native Oppi client + server bridge                            | Protocol and UI bridge code              | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md)    |
@@ -85,8 +109,9 @@ Oppi keeps Pi's extension system, then adds these rules:
 
 1. **Cwd-scoped Pi resource resolution** for host sessions. User settings, project settings, installed packages, and auto-discovered extension directories remain the source of truth.
 2. **Pi resource toggles** from the workspace editor. The editor writes Pi resource settings (`+` / `-` entries) for skills and extensions; it does not write a workspace-level extension allowlist.
-3. **Mobile UI compatibility** for most standard extension input, confirm, ask, and approval UI calls.
-4. **Stored attachment helpers** for tool-generated files through documented Oppi context helpers such as `ctx.attachments.addFile()`.
+3. **A server-scoped built-in Oppi extension**, configured separately from Pi resources and disabled until the server owner enables it.
+4. **Mobile UI compatibility** for most standard extension input, confirm, ask, and approval UI calls.
+5. **Stored attachment helpers** for tool-generated files through documented Oppi context helpers such as `ctx.attachments.addFile()`.
 
 Oppi does not replace Pi discovery. Extensions that ask for input or confirmation use the same mobile bridge as other Pi extension UI.
 
@@ -235,7 +260,9 @@ The behavior is the same shape for Oppi-owned sessions and mirrored terminal ses
 
 ## How extension loading works
 
-At session startup, Oppi begins with pi's normal extension sources for the session working directory:
+At session startup, Oppi begins with pi's normal extension sources for the session working directory. An enabled built-in Oppi extension is added separately only for ordinary Oppi-managed sessions; it is not a Pi resource source.
+
+Pi's normal sources are:
 
 - auto-discovered extension directories (`~/.pi/agent/extensions/`, `.pi/extensions/`)
 - settings-declared extension paths (`settings.json` `extensions` arrays)
@@ -253,7 +280,7 @@ Oppi loads Pi-resolved extensions without injecting an extra Ask tool into ordin
 
 ## Reload behavior
 
-`/reload` reloads host pi extensions, skills, prompts, and themes through pi's resource loader.
+`/reload` rebuilds an active Oppi-managed session through Pi's full `AgentSession.reload()` lifecycle. It reloads host Pi extensions, skills, prompts, and themes, and applies the current server-owned Oppi enablement and approval snapshot before the next turn. Terminal-owned mirrored sessions keep terminal ownership and are not changed by this server setting.
 
 ## Pi resource toggle behavior
 

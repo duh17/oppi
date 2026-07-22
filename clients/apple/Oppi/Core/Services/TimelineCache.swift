@@ -244,6 +244,20 @@ actor TimelineCache {
         save(skills, to: serverPath(serverId, "skills.json"))
     }
 
+    // MARK: - Server Resource Catalog
+
+    /// Loads independently trustworthy server-global Skills and Extensions cache halves.
+    func loadServerResourceCatalog(serverId: String) -> ServerResourceCatalogSnapshot? {
+        ensureServerDir(serverId)
+        return load(ServerResourceCatalogSnapshot.self, from: serverPath(serverId, "resource-catalog.json"))
+    }
+
+    /// Saves independently trustworthy server-global Skills and Extensions cache halves.
+    func saveServerResourceCatalog(_ snapshot: ServerResourceCatalogSnapshot, serverId: String) {
+        ensureServerDir(serverId)
+        save(snapshot, to: serverPath(serverId, "resource-catalog.json"))
+    }
+
     // MARK: - Skill Detail
 
     /// Legacy unscoped skill-detail cache.

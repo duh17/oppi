@@ -90,11 +90,14 @@ export class SessionTurnCoordinator {
   ): boolean {
     if (!clientTurnId) return false;
     const existing = active.turnCache.get(clientTurnId);
-    return Boolean(
-      existing &&
-      existing.command === command &&
-      existing.payloadHash === computeTurnPayloadHash(command, payload),
-    );
+    if (!existing) return false;
+    if (
+      existing.command !== command ||
+      existing.payloadHash !== computeTurnPayloadHash(command, payload)
+    ) {
+      throw new Error(`clientTurnId conflict: ${clientTurnId}`);
+    }
+    return true;
   }
 
   markTurnDispatched(

@@ -24,13 +24,14 @@ function makeCoordinator(
   options: {
     sdkBackend?: Partial<SdkBackend>;
     reloadRuntimeConfig?: () => void;
+    session?: Session;
   } = {},
 ): {
   coordinator: SessionCommandCoordinator;
   broadcast: ReturnType<typeof vi.fn>;
 } {
   const activeState: CommandSessionState = {
-    session: makeSession(),
+    session: options.session ?? makeSession(),
     sdkBackend: {
       session: agentSession,
       ...options.sdkBackend,
@@ -55,7 +56,8 @@ function makeCoordinator(
 describe("SessionCommandCoordinator", () => {
   it("allows reload and refreshes runtime config before SDK resources", async () => {
     const calls: string[] = [];
-    const reloadResources = vi.fn(async () => {
+    const reloadResources = vi.fn(async (reloadConfig?: () => void) => {
+      reloadConfig?.();
       calls.push("resources");
       return { success: true as const };
     });
@@ -73,6 +75,67 @@ describe("SessionCommandCoordinator", () => {
     expect(reloadRuntimeConfig).toHaveBeenCalledOnce();
     expect(reloadResources).toHaveBeenCalledOnce();
     expect(calls).toEqual(["config", "resources"]);
+  });
+
+  it("rejects reload before config or Pi shutdown while a model turn is active", async () => {
+    const reloadResources = vi.fn(async () => ({ success: true as const }));
+    const reloadRuntimeConfig = vi.fn();
+    const active = makeSession("busy-session");
+    active.status = "busy";
+    const busyCoordinator = makeCoordinator({} as AgentSession, {
+      session: active,
+      sdkBackend: { reloadResources },
+      reloadRuntimeConfig,
+    }).coordinator;
+
+    await expect(
+      busyCoordinator.sendCommandAsync("busy-session", { type: "reload" }),
+    ).rejects.toThrow("reload requires an idle session");
+    expect(reloadRuntimeConfig).not.toHaveBeenCalled();
+    expect(reloadResources).not.toHaveBeenCalled();
+    expect(busyCoordinator.isAllowedCommand("reload")).toBe(true);
+  });
+
+  it("does not admit a new model turn while reload is rebuilding", async () => {
+    let finishReload: (() => void) | undefined;
+    let isReloading = false;
+    const pendingReload = new Promise<void>((resolve) => {
+      finishReload = resolve;
+    });
+    const reloadResources = vi.fn(async () => {
+      isReloading = true;
+      await pendingReload;
+      isReloading = false;
+      return { success: true as const };
+    });
+    const piPrompt = vi.fn();
+    const prompt = vi.fn((...args: unknown[]) => {
+      if (isReloading) {
+        throw new Error("prompt cannot start while reload is rebuilding the session");
+      }
+      piPrompt(...args);
+    });
+    const { coordinator } = makeCoordinator({} as AgentSession, {
+      sdkBackend: {
+        reloadResources,
+        prompt,
+        get isReloading() {
+          return isReloading;
+        },
+      },
+    });
+
+    const reloadPromise = coordinator.sendCommandAsync("s1", { type: "reload" });
+    expect(reloadResources).toHaveBeenCalledOnce();
+    expect(() => coordinator.sendCommand("s1", { type: "prompt", message: "overlap" })).toThrow(
+      "prompt cannot start while reload is rebuilding the session",
+    );
+    expect(piPrompt).not.toHaveBeenCalled();
+
+    finishReload?.();
+    await expect(reloadPromise).resolves.toEqual({ success: true });
+    coordinator.sendCommand("s1", { type: "prompt", message: "after" });
+    expect(piPrompt).toHaveBeenCalledOnce();
   });
 
   it("supports get_commands passthrough", async () => {

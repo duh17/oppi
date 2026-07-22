@@ -1,3 +1,9 @@
+export const PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION = 2;
+export const PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS = [2] as const;
+export const PI_TUI_MIRROR_INPUT_PREFLIGHT_CAPABILITY = "input_preflight:v1";
+export const PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE = "queue_version_mismatch";
+export const PI_TUI_MIRROR_QUEUE_VERSION_EXHAUSTED_CODE = "queue_version_exhausted";
+
 export const PI_TUI_MIRROR_REMOTE_COMMANDS = [
   "get_state",
   "get_messages",

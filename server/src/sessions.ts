@@ -43,6 +43,9 @@ import {
 } from "./extension-ui-state.js";
 import type { SearchIndex } from "./search-index.js";
 import { updateSearchIndexForSessionEvent } from "./session-search-indexing.js";
+import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
+import { SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS } from "./sdk-backend.js";
+import type { SessionStopTimers } from "./session-stop.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -98,7 +101,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private readonly agentEventCoordinator: SessionCoordinatorBundle["agentEventCoordinator"];
   private readonly stopFlowCoordinator: SessionCoordinatorBundle["stopFlowCoordinator"];
 
-  constructor(storage: Storage, metrics?: ServerMetricCollector) {
+  constructor(storage: Storage, metrics?: ServerMetricCollector, stopTimers?: SessionStopTimers) {
     super();
     this.storage = storage;
     if (metrics) this.opsMetrics = metrics;
@@ -117,16 +120,20 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       stopAbortTimeoutMs: this.stopAbortTimeoutMs,
       stopAbortRetryTimeoutMs: this.stopAbortRetryTimeoutMs,
       stopSessionGraceMs: this.stopSessionGraceMs,
+      stopSessionBoundMs: this.stopSessionBoundMs,
+      stopTimers,
       getContextWindowResolver: () => this.contextWindowResolver,
       getSkillPathResolver: () => this.skillPathResolver,
       emitSessionEvent: (payload) => this.emit("session_event", payload),
       onPiEvent: (key, event) => this.handlePiEvent(key, event),
-      onSessionEnd: (key, reason) => this.handleSessionEnd(key, reason),
+      onSessionEnd: (key, reason, stopConfirmationReason) =>
+        this.handleSessionEnd(key, reason, stopConfirmationReason),
       persistSessionNow: (key, session) => this.persistSessionNow(key, session),
       markSessionDirty: (key) => this.markSessionDirty(key),
       resetIdleTimer: (key) => this.resetIdleTimer(key),
       bootstrapSessionState: (key) => this.bootstrapSessionState(key),
-      sendCommand: (key, command) => this.sendCommand(key, command),
+      sendCommand: (key, command, permit, onPreflightAccepted) =>
+        this.sendCommand(key, command, permit, onPreflightAccepted),
       sendCommandAsync: (key, command) => this.sendCommandAsync(key, command),
       broadcast: (key, message) => this.broadcast(key, message),
       stopSession: (sessionId) => this.stopSession(sessionId),
@@ -404,14 +411,26 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /** Grace period between abort and dispose in force-stop flow. */
   private readonly stopSessionGraceMs = 1_000;
 
+  /**
+   * Documented stop/stopAll bound from permit wait through forced disposal.
+   * Sessions stop in parallel, so the same bound applies to stopAll.
+   */
+  private readonly stopSessionBoundMs = this.stopSessionGraceMs + SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS;
+
   // ─── SDK Commands ───
 
   /**
    * Send a fire-and-forget command to the SDK backend.
    */
-  sendCommand(key: string, command: Record<string, unknown>): void {
-    this.commandCoordinator.sendCommand(key, command);
+  sendCommand(
+    key: string,
+    command: Record<string, unknown>,
+    permit?: SessionRuntimeTransactionPermit,
+    onPreflightAccepted?: () => void,
+  ): void | Promise<void> {
+    const result = this.commandCoordinator.sendCommand(key, command, permit, onPreflightAccepted);
     this.resetIdleTimer(key);
+    return result;
   }
 
   /**
@@ -434,8 +453,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   // ─── Session End ───
 
-  private handleSessionEnd(key: string, reason: string): void {
-    this.lifecycleCoordinator.handleSessionEnd(key, reason);
+  private handleSessionEnd(
+    key: string,
+    reason: string,
+    stopConfirmationReason?: string,
+  ): Promise<void> {
+    return this.lifecycleCoordinator.handleSessionEnd(key, reason, stopConfirmationReason);
   }
 
   // ─── Subscribe / Broadcast ───

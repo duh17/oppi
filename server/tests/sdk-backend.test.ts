@@ -28,6 +28,8 @@ import {
 } from "../src/session-caller-identity.js";
 import type { AgentDefinition } from "../src/agent-launch-service.js";
 import { DEFAULT_AGENT_DEFINITION, DEFAULT_AGENT_ID } from "../src/default-agent.js";
+import type { OppiExtensionSettingsSnapshot } from "../src/oppi-extension-settings.js";
+import { OPPI_EXTENSION_READ_ONLY_ERROR } from "../src/oppi-tool-extension.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
 
 afterEach(() => {
@@ -186,32 +188,48 @@ describe("SdkBackend control sessions", () => {
     const session = makeSession({
       workspaceId: undefined,
       control: { domain: "schedules", intent: "revise" },
-      launch: { status: "launching", requestedAt: 1, agentId: DEFAULT_AGENT_ID },
     });
     let first: SdkBackend | undefined;
     let reopened: SdkBackend | undefined;
+    const getOppiExtensionSettings = vi.fn(() => {
+      throw new Error("ordinary persisted settings must not be read by control sessions");
+    });
 
     try {
       first = await SdkBackend.create({
         session,
         dataDir,
         agentDefinition: DEFAULT_AGENT_DEFINITION,
+        getOppiExtensionSettings,
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
       expect(first.session.sessionManager.getCwd()).toBe("Oppi Control");
+      expect(first.session.getActiveToolNames()).toEqual(["oppi", "ask"]);
       expect(session.piSessionFile).toBeDefined();
+      const oppi = first.session.getToolDefinition("oppi");
+      await expect(
+        oppi!.execute(
+          "self-stop",
+          { args: ["session", "stop", session.id] },
+          undefined,
+          undefined,
+          { hasUI: true, ui: { confirm: vi.fn(async () => true) } } as never,
+        ),
+      ).rejects.toThrow(`Cannot target the calling Oppi session (${session.id})`);
 
       await first.dispose();
       reopened = await SdkBackend.create({
         session,
         dataDir,
         agentDefinition: DEFAULT_AGENT_DEFINITION,
+        getOppiExtensionSettings,
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
 
       expect(reopened.session.sessionManager.getCwd()).toBe("Oppi Control");
+      expect(getOppiExtensionSettings).not.toHaveBeenCalled();
     } finally {
       await reopened?.dispose();
       await first?.dispose();
@@ -276,6 +294,11 @@ describe("SdkBackend sandbox", () => {
         onEvent: vi.fn(),
         onEnd: vi.fn(),
         skillPaths: [skillDir],
+        getOppiExtensionSettings: vi.fn(() => ({
+          enabled: true,
+          approvalPolicy: "confirmDestructiveOnly",
+          revision: 7,
+        })),
       });
 
       expect(manager.ensureWorkspaceVm).toHaveBeenCalled();
@@ -308,6 +331,11 @@ describe("SdkBackend sandbox", () => {
       expect(runtime.session.sessionManager.getHeader()?.cwd).toBe(
         "/workspace/sandbox-secrets-test",
       );
+      const sandboxInlineOppi = backend.session.resourceLoader
+        .getExtensions()
+        .extensions.find((extension) => extension.path === "<inline:oppi>");
+      expect(sandboxInlineOppi).toBeUndefined();
+      expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
 
       const targetSession = PiSdk.SessionManager.create(
         "/workspace/sandbox-secrets-test",
@@ -333,6 +361,77 @@ describe("SdkBackend sandbox", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    { name: "default tools", tools: undefined },
+    { name: "explicit allowlist", tools: { allowed: ["read"] } },
+    { name: "noTools all", tools: { noTools: "all" as const } },
+    { name: "explicit Oppi exclusion", tools: { excluded: ["oppi", "bash"] } },
+  ])("never injects or reserves Oppi for sandbox $name", async ({ tools }) => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-oppi-eligibility-"));
+    const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+    const execResult = {
+      exitCode: 0,
+      stdout: "",
+      stdoutBuffer: Buffer.alloc(0),
+      ok: true,
+    };
+    const vm = {
+      fs: {
+        access: vi.fn(async () => undefined),
+        mkdir: vi.fn(async () => undefined),
+        readFile: vi.fn(async () => Buffer.alloc(0)),
+        writeFile: vi.fn(async () => undefined),
+      },
+      exec: vi.fn(() =>
+        Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
+      ),
+    };
+    const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+    const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+    const previousManager = sdkBackendType._gondolinManager;
+    sdkBackendType._gondolinManager = manager;
+    const getOppiExtensionSettings = vi.fn(
+      (): OppiExtensionSettingsSnapshot => ({
+        enabled: true,
+        approvalPolicy: "confirmDestructiveOnly",
+        revision: 9,
+      }),
+    );
+    let backend: SdkBackend | undefined;
+
+    try {
+      backend = await SdkBackend.create({
+        session: makeSession({
+          ephemeral: true,
+          ...(tools ? { launch: { status: "launching", requestedAt: 1, tools } } : {}),
+        }),
+        workspace: {
+          id: "w1",
+          name: "Sandbox Oppi eligibility",
+          runtime: "sandbox",
+          hostMount: cwd,
+          extensions: [],
+        } as Workspace,
+        getOppiExtensionSettings,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(getOppiExtensionSettings).not.toHaveBeenCalled();
+      expect(
+        backend.session.resourceLoader
+          .getExtensions()
+          .extensions.some((extension) => extension.path === "<inline:oppi>"),
+      ).toBe(false);
+      expect(backend.session.getActiveToolNames()).not.toContain("oppi");
+    } finally {
+      await backend?.dispose();
+      sdkBackendType._gondolinManager = previousManager;
+      qemuSpy.mockRestore();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("SdkBackend host extensions", () => {
@@ -345,6 +444,235 @@ describe("SdkBackend host extensions", () => {
 
     return resourceLoader.getExtensions().extensions.flatMap((ext) => [...ext.commands.keys()]);
   }
+
+  it("keeps the stable named Oppi factory honest while disabled", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-inline-disabled-"));
+    const getOppiExtensionSettings = vi.fn(
+      (): OppiExtensionSettingsSnapshot => ({
+        enabled: false,
+        approvalPolicy: "confirmDestructiveOnly",
+        revision: 0,
+      }),
+    );
+    const backend = await SdkBackend.create({
+      session: makeSession({ ephemeral: true }),
+      workspace: { id: "w1", name: "Disabled Oppi", runtime: "host", hostMount: cwd } as Workspace,
+      getOppiExtensionSettings,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
+      expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
+      expect(
+        backend.session.resourceLoader
+          .getExtensions()
+          .extensions.some((extension) => extension.path === "<inline:oppi>"),
+      ).toBe(false);
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("registers only Oppi from one named ordinary factory while enabled", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-inline-enabled-"));
+    const getOppiExtensionSettings = vi.fn(
+      (): OppiExtensionSettingsSnapshot => ({
+        enabled: true,
+        approvalPolicy: "confirmDestructiveOnly",
+        revision: 1,
+      }),
+    );
+    const backend = await SdkBackend.create({
+      session: makeSession({ ephemeral: true }),
+      workspace: { id: "w1", name: "Enabled Oppi", runtime: "host", hostMount: cwd } as Workspace,
+      getOppiExtensionSettings,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      const inlineOppi = backend.session.resourceLoader
+        .getExtensions()
+        .extensions.filter((extension) => extension.path === "<inline:oppi>");
+      expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
+      expect(inlineOppi).toHaveLength(1);
+      expect([...inlineOppi[0]!.tools.keys()]).toEqual(["oppi"]);
+      expect(backend.session.getToolDefinition("oppi")).toBeDefined();
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      name: "explicit allowlist",
+      tools: { allowed: ["read"] },
+      present: ["read", "oppi"],
+      absent: ["bash", "edit", "write"],
+    },
+    {
+      name: "noTools all",
+      tools: { noTools: "all" as const },
+      present: ["oppi"],
+      absent: ["read", "bash", "edit", "write"],
+    },
+    {
+      name: "explicit Oppi exclusion",
+      tools: { excluded: ["oppi", "bash"] },
+      present: ["read", "edit", "write", "oppi"],
+      absent: ["bash"],
+    },
+  ])("reserves only oppi across $name", async ({ tools, present, absent }) => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-tool-reservation-"));
+    const backend = await SdkBackend.create({
+      session: makeSession({
+        ephemeral: true,
+        launch: { status: "launching", requestedAt: 1, tools },
+      }),
+      workspace: {
+        id: "w1",
+        name: "Tool reservation",
+        runtime: "host",
+        hostMount: cwd,
+      } as Workspace,
+      getOppiExtensionSettings: () => ({
+        enabled: true,
+        approvalPolicy: "confirmDestructiveOnly",
+        revision: 2,
+      }),
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      const active = backend.session.getActiveToolNames();
+      for (const name of present) expect(active).toContain(name);
+      for (const name of absent) expect(active).not.toContain(name);
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("applies enablement and immutable policy snapshots across Pi reloads", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-settings-reload-"));
+    let snapshot: OppiExtensionSettingsSnapshot = {
+      enabled: false,
+      approvalPolicy: "confirmDestructiveOnly",
+      revision: 0,
+    };
+    const getOppiExtensionSettings = vi.fn(() => snapshot);
+    const backend = await SdkBackend.create({
+      session: makeSession({ ephemeral: true }),
+      workspace: {
+        id: "w1",
+        name: "Settings reload",
+        runtime: "host",
+        hostMount: cwd,
+      } as Workspace,
+      getOppiExtensionSettings,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
+
+      snapshot = { enabled: true, approvalPolicy: "confirmAllChanges", revision: 1 };
+      await backend.reloadResources();
+      const oldTool = backend.session.getToolDefinition("oppi");
+      expect(oldTool).toBeDefined();
+
+      snapshot = { enabled: true, approvalPolicy: "readOnly", revision: 2 };
+      await backend.reloadResources();
+      const newTool = backend.session.getToolDefinition("oppi");
+      expect(newTool).toBeDefined();
+
+      const oldConfirm = vi.fn(async () => false);
+      await expect(
+        oldTool!.execute(
+          "old-policy",
+          { args: ["workspace", "delete", "workspace-1"] },
+          undefined,
+          undefined,
+          { hasUI: true, ui: { confirm: oldConfirm }, cwd } as never,
+        ),
+      ).resolves.toMatchObject({ details: { cancelled: true, reason: "declined" } });
+      expect(oldConfirm).toHaveBeenCalledOnce();
+
+      const newConfirm = vi.fn(async () => false);
+      await expect(
+        newTool!.execute(
+          "new-policy",
+          { args: ["workspace", "delete", "workspace-1"] },
+          undefined,
+          undefined,
+          { hasUI: true, ui: { confirm: newConfirm }, cwd } as never,
+        ),
+      ).rejects.toThrow(OPPI_EXTENSION_READ_ONLY_ERROR);
+      expect(newConfirm).not.toHaveBeenCalled();
+
+      snapshot = { enabled: false, approvalPolicy: "readOnly", revision: 3 };
+      await backend.reloadResources();
+      expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
+      expect(
+        backend.session.resourceLoader
+          .getExtensions()
+          .extensions.some((extension) => extension.path === "<inline:oppi>"),
+      ).toBe(false);
+      expect(getOppiExtensionSettings).toHaveBeenCalledTimes(4);
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reads settings before Pi shutdown and restores the holder when reload fails", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-settings-reload-failure-"));
+    const initial: OppiExtensionSettingsSnapshot = {
+      enabled: true,
+      approvalPolicy: "confirmAllChanges",
+      revision: 1,
+    };
+    let snapshot = initial;
+    let readFailure: Error | undefined;
+    const getOppiExtensionSettings = vi.fn(() => {
+      if (readFailure) throw readFailure;
+      return snapshot;
+    });
+    const backend = await SdkBackend.create({
+      session: makeSession({ ephemeral: true }),
+      workspace: { id: "w1", name: "Reload failure", runtime: "host", hostMount: cwd } as Workspace,
+      getOppiExtensionSettings,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+    const reload = vi.spyOn(backend.session, "reload");
+
+    try {
+      readFailure = new Error("settings unavailable");
+      await expect(backend.reloadResources()).rejects.toThrow("settings unavailable");
+      expect(reload).not.toHaveBeenCalled();
+      expect(backend.session.getToolDefinition("oppi")).toBeDefined();
+
+      readFailure = undefined;
+      snapshot = { enabled: true, approvalPolicy: "readOnly", revision: 2 };
+      reload.mockRejectedValueOnce(new Error("Pi loader failed"));
+      await expect(backend.reloadResources()).rejects.toThrow("Pi loader failed");
+      expect(
+        (backend as unknown as { oppiSettingsHolder: { snapshot: OppiExtensionSettingsSnapshot } })
+          .oppiSettingsHolder.snapshot,
+      ).toEqual(initial);
+    } finally {
+      reload.mockRestore();
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 
   it("preserves caller identity, shell prefix, and custom shell path across reloads", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-caller-identity-"));
@@ -583,6 +911,11 @@ describe("SdkBackend saved Agent definitions", () => {
       `export default function(pi) { pi.registerTool({ name: "extra_tool", label: "Extra", description: "Should not load", parameters: { type: "object", properties: {}, additionalProperties: false }, async execute() { return { content: [{ type: "text", text: "extra" }], details: {} }; } }); }`,
     );
 
+    const getOppiExtensionSettings = vi.fn(() => ({
+      enabled: false,
+      approvalPolicy: "readOnly" as const,
+      revision: 99,
+    }));
     const backend = await SdkBackend.create({
       session: makeSession({
         launch: {
@@ -599,6 +932,7 @@ describe("SdkBackend saved Agent definitions", () => {
         hostMount: cwd,
       } as Workspace,
       agentDefinition: DEFAULT_AGENT_DEFINITION,
+      getOppiExtensionSettings,
       onEvent: vi.fn(),
       onEnd: vi.fn(),
     });
@@ -618,6 +952,20 @@ describe("SdkBackend saved Agent definitions", () => {
       ).toBe(true);
       expect(extensions.some((ext) => ext.tools.has("extra_tool"))).toBe(false);
       expect(backend.session.getActiveToolNames()).toEqual(["oppi", "ask"]);
+      expect(getOppiExtensionSettings).not.toHaveBeenCalled();
+
+      const confirm = vi.fn(async () => false);
+      const oppi = backend.session.getToolDefinition("oppi");
+      await expect(
+        oppi!.execute(
+          "control-policy",
+          { args: ["workspace", "create", "--name", "Needs confirmation"] },
+          undefined,
+          undefined,
+          { hasUI: true, ui: { confirm }, cwd } as never,
+        ),
+      ).resolves.toMatchObject({ details: { cancelled: true, reason: "declined" } });
+      expect(confirm).toHaveBeenCalledOnce();
     } finally {
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });
@@ -1696,18 +2044,26 @@ describe("SdkBackend extension UI bridge", () => {
 });
 
 describe("SdkBackend.dispose", () => {
+  async function flushDisposeMicrotasks(turns = 6): Promise<void> {
+    for (let turn = 0; turn < turns; turn += 1) await Promise.resolve();
+  }
+
   function makeDisposeHarness() {
     const backend = Object.create(SdkBackend.prototype) as SdkBackend;
 
-    let resolveRuntimeDispose: (() => void) | null = null;
-    const runtimeDisposePromise = new Promise<void>((resolve) => {
+    let resolveRuntimeDispose!: () => void;
+    let rejectRuntimeDispose!: (error: unknown) => void;
+    const runtimeDisposePromise = new Promise<void>((resolve, reject) => {
       resolveRuntimeDispose = resolve;
+      rejectRuntimeDispose = reject;
     });
 
+    const forceDispose = vi.fn();
     const runtime = {
       dispose: vi.fn(() => runtimeDisposePromise),
       session: {
         sessionId: "pi-session-1",
+        dispose: forceDispose,
       },
     };
 
@@ -1716,45 +2072,180 @@ describe("SdkBackend.dispose", () => {
       uiBridge: { dispose: () => void };
       unsub: (() => void) | null;
       runtime: typeof runtime;
-      shutdownCleanupPromise: Promise<void> | null;
-      shutdownCleanupCompleted: boolean;
-      shutdownCleanupListeners: Set<() => void>;
+      oppiSessionId: string;
+      shutdownCleanupPromise: Promise<unknown> | null;
     };
 
     const pendingCancel = vi.fn();
+    const unsubscribe = vi.fn();
 
     mutableBackend.disposed = false;
     mutableBackend.uiBridge = { dispose: pendingCancel };
-    mutableBackend.unsub = vi.fn();
+    mutableBackend.unsub = unsubscribe;
     mutableBackend.runtime = runtime;
+    mutableBackend.oppiSessionId = "sess-test";
     mutableBackend.shutdownCleanupPromise = null;
-    mutableBackend.shutdownCleanupCompleted = false;
-    mutableBackend.shutdownCleanupListeners = new Set();
 
     return {
       backend,
+      mutableBackend,
       runtime,
       pendingCancel,
-      resolveRuntimeDispose: () => resolveRuntimeDispose?.(),
+      unsubscribe,
+      forceDispose,
+      resolveRuntimeDispose,
+      rejectRuntimeDispose,
     };
   }
 
-  it("waits for runtime teardown before resolving dispose", async () => {
-    const { backend, runtime, pendingCancel, resolveRuntimeDispose } = makeDisposeHarness();
+  it("coalesces repeated disposal and clears the graceful teardown timer", async () => {
+    vi.useFakeTimers();
+    const { backend, runtime, pendingCancel, unsubscribe, forceDispose, resolveRuntimeDispose } =
+      makeDisposeHarness();
 
-    let resolved = false;
-    const disposePromise = backend.dispose().then(() => {
-      resolved = true;
-    });
+    const first = backend.dispose();
+    const repeated = backend.dispose();
+    await flushDisposeMicrotasks();
 
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(runtime.dispose).toHaveBeenCalledTimes(1);
-    expect(pendingCancel).toHaveBeenCalledTimes(1);
-    expect(resolved).toBe(false);
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(pendingCancel).toHaveBeenCalledOnce();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(1);
 
     resolveRuntimeDispose();
+    await expect(Promise.all([first, repeated])).resolves.toEqual([
+      { disposal: "graceful" },
+      { disposal: "graceful" },
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(forceDispose).not.toHaveBeenCalled();
+  });
+
+  it("continues normal disposal when one extension widget disposer throws", async () => {
+    vi.useFakeTimers();
+    const { backend, mutableBackend, runtime, unsubscribe, forceDispose, resolveRuntimeDispose } =
+      makeDisposeHarness();
+    const widgetDisposals: string[] = [];
+    const bridge = new SdkUiBridge(vi.fn(), () => backend.isDisposed);
+    const ui = bridge.createContext();
+    ui.setWidget("throwing-widget", () => ({
+      render: () => ["throwing"],
+      dispose: () => {
+        widgetDisposals.push("throwing-widget");
+        throw new Error("widget dispose failed");
+      },
+    }));
+    ui.setWidget("remaining-widget", () => ({
+      render: () => ["remaining"],
+      dispose: () => {
+        widgetDisposals.push("remaining-widget");
+      },
+    }));
+    const pendingInput = ui.input("Pending", "cancel during disposal");
+    mutableBackend.uiBridge = bridge;
+
+    const disposePromise = backend.dispose();
+    await flushDisposeMicrotasks();
+
+    await expect(pendingInput).resolves.toBeUndefined();
+    expect(widgetDisposals).toEqual(["throwing-widget", "remaining-widget"]);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+
+    resolveRuntimeDispose();
+    await expect(disposePromise).resolves.toMatchObject({
+      disposal: "forced",
+      cause: "local_cleanup_error",
+      diagnosticReason: expect.stringContaining("widget dispose failed"),
+    });
+    expect(forceDispose).not.toHaveBeenCalled();
+  });
+
+  it("continues normal disposal when the UI bridge unexpectedly throws", async () => {
+    vi.useFakeTimers();
+    const { backend, runtime, pendingCancel, unsubscribe, resolveRuntimeDispose } =
+      makeDisposeHarness();
+    pendingCancel.mockImplementation(() => {
+      throw new Error("UI bridge dispose failed");
+    });
+
+    const disposePromise = backend.dispose();
+    await flushDisposeMicrotasks();
+
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    resolveRuntimeDispose();
+    await expect(disposePromise).resolves.toMatchObject({
+      disposal: "forced",
+      cause: "local_cleanup_error",
+      diagnosticReason: expect.stringContaining("UI bridge dispose failed"),
+    });
+  });
+
+  it("forces local disposal and reports a never-resolving extension shutdown timeout", async () => {
+    vi.useFakeTimers();
+    const { backend, runtime, forceDispose, resolveRuntimeDispose } = makeDisposeHarness();
+
+    const disposePromise = backend.dispose();
+    await flushDisposeMicrotasks();
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    await expect(disposePromise).resolves.toEqual({
+      disposal: "forced",
+      cause: "extension_shutdown_timeout",
+      timeoutMs: 5_000,
+    });
+    expect(forceDispose).toHaveBeenCalledOnce();
+    expect(backend.isDisposed).toBe(true);
+
+    resolveRuntimeDispose();
+    await flushDisposeMicrotasks();
+    await expect(backend.dispose()).resolves.toEqual({
+      disposal: "forced",
+      cause: "extension_shutdown_timeout",
+      timeoutMs: 5_000,
+    });
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(forceDispose).toHaveBeenCalledOnce();
+  });
+
+  it("forces local disposal on runtime rejection and cancels the timeout", async () => {
+    vi.useFakeTimers();
+    const { backend, runtime, forceDispose, rejectRuntimeDispose } = makeDisposeHarness();
+
+    const disposePromise = backend.dispose();
+    await flushDisposeMicrotasks();
+    rejectRuntimeDispose(new Error("runtime teardown failed"));
+
+    await expect(disposePromise).resolves.toEqual({
+      disposal: "forced",
+      cause: "runtime_dispose_error",
+    });
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(forceDispose).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("ignores a late runtime rejection after timeout cleanup wins", async () => {
+    vi.useFakeTimers();
+    const { backend, runtime, forceDispose, rejectRuntimeDispose } = makeDisposeHarness();
+
+    const disposePromise = backend.dispose();
+    await flushDisposeMicrotasks();
+    await vi.advanceTimersByTimeAsync(5_000);
     await disposePromise;
-    expect(resolved).toBe(true);
+
+    rejectRuntimeDispose(new Error("late runtime teardown failure"));
+    await flushDisposeMicrotasks();
+
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(forceDispose).toHaveBeenCalledOnce();
+    await expect(backend.dispose()).resolves.toEqual({
+      disposal: "forced",
+      cause: "extension_shutdown_timeout",
+      timeoutMs: 5_000,
+    });
   });
 });

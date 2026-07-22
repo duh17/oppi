@@ -3,12 +3,19 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION,
+  PI_TUI_MIRROR_INPUT_PREFLIGHT_CAPABILITY,
+  PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE,
   PI_TUI_MIRROR_REMOTE_COMMANDS,
+  PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS,
   PI_TUI_MIRROR_UNSUPPORTED_REMOTE_COMMAND_REASONS,
 } from "../src/pi-tui-mirror-contract.js";
 import {
   OPPI_MIRROR_BRIDGE_COMMANDS,
+  OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION,
   OPPI_MIRROR_CAPABILITIES,
+  OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY,
+  OPPI_MIRROR_QUEUE_VERSION_MISMATCH_CODE,
   OPPI_MIRROR_SERVER_REMOTE_COMMANDS,
   OPPI_MIRROR_TERMINAL_CONTROL_COMMANDS,
 } from "../../pi-extensions/oppi-mirror/extensions/oppi-mirror-contract.ts";
@@ -72,7 +79,17 @@ describe("pi-tui mirror contract", () => {
     }
   });
 
-  it("keeps advertised capabilities deduplicated", () => {
+  it("keeps advertised capabilities deduplicated and versions input preflight", () => {
     expectNoDuplicates("extension capabilities", OPPI_MIRROR_CAPABILITIES);
+    expect(OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION).toBe(2);
+    expect(OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION).toBe(PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION);
+    expect(PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS).toEqual([2]);
+    expect(PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS).toContain(
+      PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION,
+    );
+    expect(OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY).toBe("input_preflight:v1");
+    expect(OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY).toBe(PI_TUI_MIRROR_INPUT_PREFLIGHT_CAPABILITY);
+    expect(OPPI_MIRROR_QUEUE_VERSION_MISMATCH_CODE).toBe(PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE);
+    expect(OPPI_MIRROR_CAPABILITIES).toContain(OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY);
   });
 });

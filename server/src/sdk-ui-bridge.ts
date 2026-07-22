@@ -7,6 +7,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { safeErrorMessage } from "./log-utils.js";
+import { createLogger } from "./logger.js";
 import type {
   ExtensionAudioStreamEvent,
   ExtensionUIRequestEvent,
@@ -48,6 +49,16 @@ interface ActiveWidgetComponent extends ExtensionUISourceScope {
   placement?: ExtensionUIWidgetPlacement;
 }
 
+export interface SdkUiBridgeCleanupFailure {
+  target: "response" | "widget";
+  id: string;
+  message: string;
+}
+
+export interface SdkUiBridgeDisposeResult {
+  failures: SdkUiBridgeCleanupFailure[];
+}
+
 // Snapshot callbacks are not attached to a real terminal, but Pi extension authors
 // commonly read this public TUI subset while producing render output.
 interface CustomUISnapshotTui {
@@ -71,6 +82,7 @@ const EXTENSION_AUDIO_MIME_TYPES = new Set<ExtensionAudioStreamEvent["mimeType"]
 const CUSTOM_UI_SNAPSHOT_WIDTH = 88;
 const CUSTOM_UI_SNAPSHOT_ROWS = 40;
 const CUSTOM_UI_SNAPSHOT_WIDGET_MAX_LINES = 8;
+const log = createLogger({ base: { component: "sdk_ui_bridge" } });
 
 function titleCaseIdentifier(value: string): string {
   return value
@@ -525,23 +537,59 @@ export class SdkUiBridge {
     return true;
   }
 
-  dispose(): void {
-    for (const pending of this.pendingResponses.values()) {
-      pending.cancel();
+  dispose(): SdkUiBridgeDisposeResult {
+    const failures: SdkUiBridgeCleanupFailure[] = [];
+
+    for (const [id, pending] of [...this.pendingResponses]) {
+      try {
+        pending.cancel();
+      } catch (error: unknown) {
+        const errorMessage = safeErrorMessage(error);
+        log.error("sdk_ui_bridge.response_cleanup.failed", {
+          requestId: id,
+          error: errorMessage,
+        });
+        failures.push({
+          target: "response",
+          id,
+          message: `Extension UI response cleanup failed: ${errorMessage}`,
+        });
+      }
     }
     this.pendingResponses.clear();
-    for (const key of this.activeWidgets.keys()) {
-      this.disposeWidget(key);
+
+    for (const key of [...this.activeWidgets.keys()]) {
+      const failure = this.disposeWidget(key);
+      if (failure) failures.push(failure);
     }
     this.clearPendingWidgetSnapshots();
+
+    return { failures };
   }
 
-  private disposeWidget(key: string): void {
+  private disposeWidget(key: string): SdkUiBridgeCleanupFailure | undefined {
     this.clearPendingWidgetSnapshot(key);
     this.widgetSnapshotEmittedAt.delete(key);
     const active = this.activeWidgets.get(key);
     this.activeWidgets.delete(key);
-    active?.component.dispose?.();
+
+    try {
+      active?.component.dispose?.();
+      return undefined;
+    } catch (error: unknown) {
+      const errorMessage = safeErrorMessage(error);
+      log.error("sdk_ui_bridge.widget_cleanup.failed", {
+        widgetKey: key,
+        extensionScopeId: active?.extensionScopeId,
+        extensionDisplayName: active?.extensionDisplayName,
+        error: errorMessage,
+      });
+      return {
+        target: "widget",
+        id: key,
+        message: `Extension widget "${key}" cleanup failed: ${errorMessage}`,
+      };
+    }
   }
 
   private scheduleWidgetSnapshot(key: string): void {
@@ -652,8 +700,11 @@ export class SdkUiBridge {
       };
 
       const cancel = (): void => {
-        cleanup();
-        resolve(defaultValue);
+        try {
+          cleanup();
+        } finally {
+          resolve(defaultValue);
+        }
       };
 
       const onAbort = (): void => {

@@ -60,6 +60,7 @@ export class SessionStartCoordinator {
           onEvent: (event) => this.deps.onPiEvent(key, event),
           onEnd: (reason) => this.deps.onSessionEnd(key, reason),
           dataDir: this.deps.storage.getDataDir(),
+          getOppiExtensionSettings: () => this.deps.storage.getOppiExtensionSettings(),
           metrics: this.deps.metrics,
           serverConfig: this.deps.config,
         });

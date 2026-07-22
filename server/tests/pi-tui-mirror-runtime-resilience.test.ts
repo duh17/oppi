@@ -221,10 +221,11 @@ function connectBridge(
   runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
   ws.receive({
     type: "hello",
-    protocolVersion: 1,
+    protocolVersion: 2,
     bridgeId: options.bridgeId,
     ...(options.workspaceId === null ? {} : { workspaceId: options.workspaceId ?? "w1" }),
     cwd: options.cwd,
+    capabilities: ["input_preflight:v1"],
     state: {
       piSessionId: options.piSessionId,
       sessionFile: options.sessionFile,

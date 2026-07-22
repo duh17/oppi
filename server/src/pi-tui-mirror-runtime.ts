@@ -37,6 +37,11 @@ import type { SessionBackendEvent } from "./pi-events.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import {
   isPiTuiMirrorRemoteCommand,
+  PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION,
+  PI_TUI_MIRROR_INPUT_PREFLIGHT_CAPABILITY,
+  PI_TUI_MIRROR_QUEUE_VERSION_EXHAUSTED_CODE,
+  PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE,
+  PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS,
   piTuiMirrorUnsupportedRemoteCommandReason,
 } from "./pi-tui-mirror-contract.js";
 import { SessionAgentEventCoordinator } from "./session-agent-events.js";
@@ -55,7 +60,6 @@ import {
   parseQueueState,
   queueItemStartedMessage,
   queueStateMessage,
-  removeQueueItemStartedByRuntime,
   requireQueueState,
 } from "./session-queue-utils.js";
 import { SessionTurnCoordinator } from "./session-turns.js";
@@ -82,7 +86,6 @@ import type {
 
 const log = createLogger({ base: { component: "pi_tui_mirror_runtime" } });
 
-const BRIDGE_PROTOCOL_VERSION = 1;
 const EVENT_RING_CAPACITY = 500;
 const OPPI_RUNTIME_CONFLICT_RETRY_MS = 10_000;
 const OPPI_RUNTIME_TAKEOVER_STOP_TIMEOUT_MS = 15_000;
@@ -117,7 +120,7 @@ export interface PiBridgeStateSnapshot {
 
 interface PiBridgeHelloMessage {
   type: "hello";
-  protocolVersion?: number;
+  protocolVersion: number;
   bridgeId?: string;
   pid?: number;
   hostname?: string;
@@ -125,7 +128,7 @@ interface PiBridgeHelloMessage {
   workspaceId?: string;
   createWorkspace?: boolean;
   takeoverConfirmation?: { sessionId?: string };
-  capabilities?: string[];
+  capabilities: string[];
   state?: PiBridgeStateSnapshot;
 }
 
@@ -165,7 +168,7 @@ interface PiBridgeQueueItemStartedMessage {
   kind: MessageQueueKind;
   item: MessageQueueItem;
   queueVersion: number;
-  queue?: MessageQueueState;
+  queue: MessageQueueState;
 }
 
 interface PiBridgeGoodbyeMessage {
@@ -287,7 +290,43 @@ function parseBridgeMessage(data: RawData): PiBridgeInboundMessage {
   if (!record || typeof record.type !== "string") {
     throw new Error("Bridge message must be an object with a string type");
   }
-  return record as unknown as PiBridgeInboundMessage;
+  if (record.type !== "hello") {
+    return record as unknown as PiBridgeInboundMessage;
+  }
+
+  const protocolVersion = record.protocolVersion;
+  if (protocolVersion !== PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION) {
+    throw new BridgeRegistrationError(
+      `Bridge hello protocolVersion must be an explicit supported safe integer (${PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS.join(", ")})`,
+      "invalid_bridge_hello",
+    );
+  }
+
+  const capabilities = record.capabilities;
+  if (
+    !Array.isArray(capabilities) ||
+    capabilities.some(
+      (capability) =>
+        typeof capability !== "string" ||
+        capability.length === 0 ||
+        capability.trim() !== capability,
+    ) ||
+    new Set(capabilities).size !== capabilities.length
+  ) {
+    throw new BridgeRegistrationError(
+      "Bridge hello capabilities must be a unique array of non-empty strings",
+      "invalid_bridge_hello",
+    );
+  }
+
+  if (!capabilities.includes(PI_TUI_MIRROR_INPUT_PREFLIGHT_CAPABILITY)) {
+    throw new BridgeRegistrationError(
+      `Bridge hello capabilities must include ${PI_TUI_MIRROR_INPUT_PREFLIGHT_CAPABILITY}`,
+      "invalid_bridge_hello",
+    );
+  }
+
+  return record as unknown as PiBridgeHelloMessage;
 }
 
 function expandHomePath(path: string): string {
@@ -1064,7 +1103,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     hello: PiBridgeHelloMessage,
   ): BridgeConnection | Promise<BridgeConnection> {
     const now = Date.now();
-    const protocolVersion = hello.protocolVersion ?? BRIDGE_PROTOCOL_VERSION;
+    const protocolVersion = hello.protocolVersion;
     const bridgeId = hello.bridgeId?.trim() || `pi-tui-${process.pid}-${now}`;
     const state = { ...hello.state, cwd: hello.state?.cwd ?? hello.cwd };
     if (isPiTuiTaskRecordBridgeState(state)) {
@@ -1124,7 +1163,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       sessionId: session.id,
       ws,
       cwd: hello.cwd,
-      capabilities: [...(hello.capabilities ?? [])],
+      capabilities: [...hello.capabilities],
       protocolVersion,
       connectedAt: now,
       lastSeenAt: now,
@@ -1139,7 +1178,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     ws.send(
       JSON.stringify({
         type: "hello_ack",
-        protocolVersion: BRIDGE_PROTOCOL_VERSION,
+        protocolVersion: PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION,
         bridgeId,
         sessionId: session.id,
         workspaceId: workspace.id,
@@ -1297,18 +1336,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     message: PiBridgeQueueItemStartedMessage,
   ): void {
     const previousQueue = active.messageQueue;
-    if (message.queue) {
-      active.messageQueue = cloneQueueState(
-        requireQueueState(message.queue, "pi-tui sent invalid started-item queue state"),
-      );
-    } else {
-      removeQueueItemStartedByRuntime(
-        active.messageQueue,
-        message.kind,
-        message.item,
-        message.queueVersion,
-      );
-    }
+    active.messageQueue = cloneQueueState(
+      requireQueueState(message.queue, "pi-tui sent invalid started-item queue state"),
+    );
     const next = queueCounts(active.messageQueue);
     log.info("mirror_bridge.queue_item_started", {
       runtime: MIRROR_RUNTIME_LOG_TAG,
@@ -1336,7 +1366,27 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     connection: BridgeConnection,
     message: PiBridgeCommandResultMessage,
   ): void {
+    const pendingCommandType = connection.pendingCommands.get(message.id)?.commandType;
     const matched = this.bridgeCommandDriver.resolveResult(connection, message, () => {
+      const resultData = asRecord(message.data);
+      const queueErrorCode = resultData?.code;
+      if (
+        !message.success &&
+        pendingCommandType === "set_queue" &&
+        (queueErrorCode === PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE ||
+          queueErrorCode === PI_TUI_MIRROR_QUEUE_VERSION_EXHAUSTED_CODE)
+      ) {
+        this.applyBridgeQueueState(
+          this.requireActive(connection.sessionId),
+          requireQueueState(
+            resultData?.queue,
+            queueErrorCode === PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE
+              ? "pi-tui queue version mismatch did not return current queue state"
+              : "pi-tui queue version exhaustion did not return current queue state",
+          ),
+          `command_result:set_queue_version_${queueErrorCode === PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE ? "mismatch" : "exhausted"}`,
+        );
+      }
       if (message.state) {
         const active = this.requireActive(connection.sessionId);
         const stateChanged = this.applyBridgeState(active, message.state, connection);
@@ -1901,6 +1951,18 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         ),
       );
     }
+
+    const commandType = typeof command.type === "string" ? command.type : "unknown";
+    if (
+      connection &&
+      (commandType === "prompt" || commandType === "steer" || commandType === "follow_up") &&
+      !connection.capabilities.includes(PI_TUI_MIRROR_INPUT_PREFLIGHT_CAPABILITY)
+    ) {
+      return Promise.reject(
+        new Error(`pi-tui input requires capability ${PI_TUI_MIRROR_INPUT_PREFLIGHT_CAPABILITY}`),
+      );
+    }
+
     return this.bridgeCommandDriver.dispatch(connection, command);
   }
 

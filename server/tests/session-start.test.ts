@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_AGENT_ID } from "../src/default-agent.js";
+import type { OppiExtensionSettingsSnapshot } from "../src/oppi-extension-settings.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionStartCoordinator, type SessionStartCoordinatorDeps } from "../src/session-start.js";
 import type { Storage } from "../src/storage.js";
@@ -52,6 +53,13 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     getSession: vi.fn(() => session),
     listSessions: vi.fn(() => [session]),
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
+    getOppiExtensionSettings: vi.fn(
+      (): OppiExtensionSettingsSnapshot => ({
+        enabled: false,
+        approvalPolicy: "confirmDestructiveOnly",
+        revision: 0,
+      }),
+    ),
   } as unknown as Storage;
 
   const runtimeManager = {
@@ -105,6 +113,26 @@ describe("SessionStartCoordinator status persistence", () => {
       workspaceId: workspace.id,
       sessionId: session.id,
     });
+  });
+
+  it("passes one atomic current-settings reader to managed backend construction", async () => {
+    const session = makeSession({ status: "ready" });
+    const deps = makeDeps(session);
+    const latest: OppiExtensionSettingsSnapshot = {
+      enabled: true,
+      approvalPolicy: "readOnly",
+      revision: 8,
+    };
+    const getOppiExtensionSettings = vi.fn(() => latest);
+    Object.assign(deps.storage, { getOppiExtensionSettings });
+    const createSpy = vi.spyOn(SdkBackend, "create").mockResolvedValue({} as SdkBackend);
+
+    await new SessionStartCoordinator(deps).startSessionInner("key", session.id, makeWorkspace());
+
+    const config = createSpy.mock.calls.at(-1)?.[0];
+    expect(config?.getOppiExtensionSettings).toBeTypeOf("function");
+    expect(config?.getOppiExtensionSettings?.()).toBe(latest);
+    expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
   });
 
   it("uses the saved Agent definition version recorded on the session", async () => {

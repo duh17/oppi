@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
 import { PiTuiMirrorRuntime } from "../src/pi-tui-mirror-runtime.js";
@@ -155,6 +155,8 @@ function connectBridge(
     piSessionId?: string;
     sessionFile?: string | null;
     sessionName?: string;
+    protocolVersion?: number;
+    capabilities?: string[];
   } = {},
 ): {
   ws: FakeBridgeWebSocket;
@@ -164,7 +166,7 @@ function connectBridge(
   runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
   ws.receive({
     type: "hello",
-    protocolVersion: 1,
+    protocolVersion: options.protocolVersion ?? 2,
     bridgeId: options.bridgeId ?? "bridge-1",
     ...(options.workspaceId === null ? {} : { workspaceId: options.workspaceId ?? "w1" }),
     ...(options.createWorkspace ? { createWorkspace: true } : {}),
@@ -172,6 +174,7 @@ function connectBridge(
       ? { takeoverConfirmation: { sessionId: options.takeoverConfirmationSessionId } }
       : {}),
     cwd: options.cwd ?? "/tmp/oppi-mirror-test",
+    capabilities: options.capabilities ?? ["input_preflight:v1"],
     state: {
       piSessionId: options.piSessionId ?? "pi-1",
       ...(options.sessionFile === null
@@ -200,6 +203,18 @@ async function waitForLatestCommand(ws: FakeBridgeWebSocket): Promise<Record<str
   return latestCommand(ws);
 }
 
+async function waitForNextCommand(
+  ws: FakeBridgeWebSocket,
+  previousCommandId: unknown,
+): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const command = ws.sent.findLast((message) => message.type === "command");
+    if (command && command.id !== previousCommandId) return command;
+    await ws.waitForSend();
+  }
+  throw new Error("Timed out waiting for next bridge command");
+}
+
 describe("PiTuiMirrorRuntime queue bridge", () => {
   it("matches home-relative workspace mounts against terminal cwd", () => {
     const cwd = `${homedir()}/workspace/oppi/server`;
@@ -214,6 +229,62 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(runtime.getActiveSession(sessionId)?.workspaceId).toBe("w1");
   });
 
+  it.each([
+    ["missing protocolVersion", false, undefined, true, []],
+    ["null protocolVersion", true, null, true, []],
+    ["NaN protocolVersion", true, Number.NaN, true, []],
+    ["coercive protocolVersion", true, "2", true, []],
+    ["fractional protocolVersion", true, 2.5, true, []],
+    ["unsupported old protocolVersion", true, 1, true, ["input_preflight:v1"]],
+    ["unsupported future protocolVersion", true, 3, true, []],
+    ["missing capabilities", true, 2, false, undefined],
+    ["missing required input preflight capability", true, 2, true, []],
+    ["non-array capabilities", true, 2, true, "input_preflight:v1"],
+    ["non-string capability", true, 2, true, ["input_preflight:v1", 2]],
+    ["empty capability", true, 2, true, [""]],
+    ["duplicate capabilities", true, 2, true, ["state", "state"]],
+  ] as const)(
+    "rejects %s before resolving or promoting a mirror session",
+    (_name, includeProtocol, protocolVersion, includeCapabilities, capabilities) => {
+      const stopOppiSession = vi.fn(async () => {});
+      const { runtime, sessions } = makeRuntime({ stopOppiSession });
+      sessions.set("oppi-1", {
+        id: "oppi-1",
+        workspaceId: "w1",
+        workspaceName: "Workspace",
+        runtime: "oppi",
+        status: "busy",
+        createdAt: 1,
+        lastActivity: 1,
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        piSessionId: "pi-malformed",
+      });
+      const ws = new FakeBridgeWebSocket();
+      runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
+      const hello: Record<string, unknown> = {
+        type: "hello",
+        bridgeId: "bridge-malformed",
+        workspaceId: "w1",
+        takeoverConfirmation: { sessionId: "oppi-1" },
+        cwd: "/tmp/oppi-mirror-test",
+        state: { piSessionId: "pi-malformed" },
+      };
+      if (includeProtocol) hello.protocolVersion = protocolVersion;
+      if (includeCapabilities) hello.capabilities = capabilities;
+
+      ws.receive(hello);
+
+      expect(ws.sent.at(-1)).toMatchObject({ type: "error" });
+      expect(ws.closeCode).toBe(1008);
+      expect(ws.sent.some((message) => message.type === "hello_ack")).toBe(false);
+      expect(stopOppiSession).not.toHaveBeenCalled();
+      expect(sessions.get("oppi-1")).toMatchObject({ runtime: "oppi", status: "busy" });
+      expect(sessions.size).toBe(1);
+    },
+  );
+
   it("reports a missing workspace with the suggested git-root workspace", async () => {
     const root = await mkdtemp(join(tmpdir(), "oppi-mirror-missing-workspace-"));
     const cwd = join(root, "packages", "app");
@@ -225,9 +296,10 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
     ws.receive({
       type: "hello",
-      protocolVersion: 1,
+      protocolVersion: 2,
       bridgeId: "bridge-1",
       cwd,
+      capabilities: ["input_preflight:v1"],
       state: { piSessionId: "pi-1", sessionFile: join(cwd, "session.jsonl") },
     });
 
@@ -293,10 +365,11 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
     ws.receive({
       type: "hello",
-      protocolVersion: 1,
+      protocolVersion: 2,
       bridgeId: "bridge-1",
       workspaceId: "w1",
       cwd: "/tmp/not-in-a-workspace",
+      capabilities: ["input_preflight:v1"],
       state: { piSessionId: "pi-1" },
     });
 
@@ -317,9 +390,10 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
     ws.receive({
       type: "hello",
-      protocolVersion: 1,
+      protocolVersion: 2,
       bridgeId: "bridge-1",
       cwd: missingCwd,
+      capabilities: ["input_preflight:v1"],
       state: { piSessionId: "pi-1" },
     });
 
@@ -338,9 +412,10 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
     ws.receive({
       type: "hello",
-      protocolVersion: 1,
+      protocolVersion: 2,
       bridgeId: "bridge-task",
       cwd: "/tmp/oppi-mirror-test",
+      capabilities: ["input_preflight:v1"],
       state: {
         piSessionId: "pi-task",
         sessionName: "general-purpose#738f21e6",
@@ -379,10 +454,11 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
     ws.receive({
       type: "hello",
-      protocolVersion: 1,
+      protocolVersion: 2,
       bridgeId: "bridge-1",
       workspaceId: "w1",
       cwd: "/tmp/oppi-mirror-test",
+      capabilities: ["input_preflight:v1"],
       state: {
         piSessionId: "pi-1",
         sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
@@ -486,10 +562,11 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
     ws.receive({
       type: "hello",
-      protocolVersion: 1,
+      protocolVersion: 2,
       bridgeId: "bridge-1",
       workspaceId: "w1",
       cwd: "/tmp/oppi-mirror-test",
+      capabilities: ["input_preflight:v1"],
       state: {
         piSessionId: "pi-1",
         sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
@@ -546,11 +623,12 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
     ws.receive({
       type: "hello",
-      protocolVersion: 1,
+      protocolVersion: 2,
       bridgeId: "bridge-1",
       workspaceId: "w1",
       takeoverConfirmation: { sessionId: "oppi-1" },
       cwd: "/tmp/oppi-mirror-test",
+      capabilities: ["input_preflight:v1"],
       state: {
         piSessionId: "pi-1",
         sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
@@ -865,6 +943,260 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     await expect(queuePromise).rejects.toThrow("pi-tui did not return queue state");
   });
 
+  it("projects the terminal current queue when authoritative set_queue CAS rejects", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "queue_state",
+      queue: {
+        version: 1,
+        steering: [{ id: "a", message: "A", createdAt: 1 }],
+        followUp: [],
+      },
+    });
+    const setPromise = runtime.setMessageQueue(sessionId, {
+      baseVersion: 1,
+      steering: [{ id: "stale", message: "stale replacement" }],
+      followUp: [],
+    });
+    const rejection = expect(setPromise).rejects.toThrow(
+      "Queue version mismatch: expected 2, got 1",
+    );
+    const command = latestCommand(ws);
+
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: false,
+      error: "Queue version mismatch: expected 2, got 1",
+      data: {
+        code: "queue_version_mismatch",
+        queue: {
+          version: 2,
+          steering: [{ id: "b", message: "B", createdAt: 2 }],
+          followUp: [],
+        },
+      },
+    });
+
+    await rejection;
+    expect(received.at(-1)).toEqual({
+      type: "queue_state",
+      queue: {
+        version: 2,
+        steering: [{ id: "b", message: "B", createdAt: 2 }],
+        followUp: [],
+      },
+    });
+  });
+
+  it.each([
+    ["fractional", 1.5],
+    ["negative", -1],
+    ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+    ["NaN serialized as null", Number.NaN],
+    ["positive infinity serialized as null", Number.POSITIVE_INFINITY],
+    ["string", "2"],
+    ["missing", undefined],
+  ] as const)(
+    "rejects a %s authoritative mismatch queue version without poisoning projection or broadcast",
+    async (_name, version) => {
+      const { runtime } = makeRuntime();
+      const { ws, sessionId } = connectBridge(runtime);
+      ws.receive({
+        type: "queue_state",
+        queue: {
+          version: 1,
+          steering: [{ id: "trusted", message: "trusted intent", createdAt: 1 }],
+          followUp: [],
+        },
+      });
+      const received: ServerMessage[] = [];
+      runtime.subscribe(sessionId, (message) => received.push(message));
+
+      const rejected = runtime.setMessageQueue(sessionId, {
+        baseVersion: 1,
+        steering: [{ id: "stale", message: "stale replacement" }],
+        followUp: [],
+      });
+      const rejectedCommand = latestCommand(ws);
+      const rejection = expect(rejected).rejects.toThrow(
+        "pi-tui queue version mismatch did not return current queue state",
+      );
+      ws.receive({
+        type: "command_result",
+        id: rejectedCommand.id,
+        success: false,
+        error: "Queue version mismatch: invalid terminal queue",
+        data: {
+          code: "queue_version_mismatch",
+          queue: { version, steering: [], followUp: [] },
+        },
+      });
+
+      await rejection;
+      expect(received).toEqual([]);
+
+      // The malformed mismatch is not authoritative: retry from the last trusted state.
+      const retry = runtime.setMessageQueue(sessionId, {
+        baseVersion: 1,
+        steering: [{ id: "recovered", message: "recovered intent" }],
+        followUp: [],
+      });
+      const retryCommand = await waitForNextCommand(ws, rejectedCommand.id);
+      ws.receive({
+        type: "command_result",
+        id: retryCommand.id,
+        success: true,
+        data: {
+          queue: {
+            version: 2,
+            steering: [{ id: "recovered", message: "recovered intent", createdAt: 2 }],
+            followUp: [],
+          },
+        },
+      });
+
+      await expect(retry).resolves.toEqual({
+        version: 2,
+        steering: [{ id: "recovered", message: "recovered intent", createdAt: 2 }],
+        followUp: [],
+      });
+      expect(received).toEqual([
+        {
+          type: "queue_state",
+          queue: {
+            version: 2,
+            steering: [{ id: "recovered", message: "recovered intent", createdAt: 2 }],
+            followUp: [],
+          },
+        },
+      ]);
+    },
+  );
+
+  it.each([0, 2, Number.MAX_SAFE_INTEGER])(
+    "projects a valid nonnegative safe integer authoritative mismatch queue version (%d)",
+    async (version) => {
+      const { runtime } = makeRuntime();
+      const { ws, sessionId } = connectBridge(runtime);
+      const received: ServerMessage[] = [];
+      runtime.subscribe(sessionId, (message) => received.push(message));
+
+      const rejected = runtime.setMessageQueue(sessionId, {
+        baseVersion: 0,
+        steering: [{ id: "stale", message: "stale replacement" }],
+        followUp: [],
+      });
+      const command = latestCommand(ws);
+      const rejection = expect(rejected).rejects.toThrow(
+        `Queue version mismatch: expected ${version}, got 0`,
+      );
+      ws.receive({
+        type: "command_result",
+        id: command.id,
+        success: false,
+        error: `Queue version mismatch: expected ${version}, got 0`,
+        data: {
+          code: "queue_version_mismatch",
+          queue: {
+            version,
+            steering: [{ id: "terminal", message: "terminal intent", createdAt: 1 }],
+            followUp: [],
+          },
+        },
+      });
+
+      await rejection;
+      expect(received).toEqual([
+        {
+          type: "queue_state",
+          queue: {
+            version,
+            steering: [{ id: "terminal", message: "terminal intent", createdAt: 1 }],
+            followUp: [],
+          },
+        },
+      ]);
+    },
+  );
+
+  it("keeps terminal exhaustion authoritative and rejects stale and current retries safely", async () => {
+    const maxVersion = Number.MAX_SAFE_INTEGER;
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    ws.receive({
+      type: "queue_state",
+      queue: {
+        version: maxVersion,
+        steering: [{ id: "at-max", message: "at max", createdAt: 1 }],
+        followUp: [],
+      },
+    });
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    const rejectExhausted = async (id: string): Promise<void> => {
+      const pending = runtime.setMessageQueue(sessionId, {
+        baseVersion: maxVersion,
+        steering: [{ id, message: id }],
+        followUp: [],
+      });
+      const command = await waitForLatestCommand(ws);
+      ws.receive({
+        type: "command_result",
+        id: command.id,
+        success: false,
+        error: `Queue version exhausted at ${maxVersion}; start a new session to reset the queue counter`,
+        data: {
+          code: "queue_version_exhausted",
+          queue: {
+            version: maxVersion,
+            steering: [{ id: "at-max", message: "at max", createdAt: 1 }],
+            followUp: [],
+          },
+        },
+      });
+      await expect(pending).rejects.toThrow(
+        `Queue version exhausted at ${maxVersion}; start a new session to reset the queue counter`,
+      );
+    };
+
+    await rejectExhausted("exhausted");
+    const commandCount = ws.sent.filter((message) => message.type === "command").length;
+    await expect(
+      runtime.setMessageQueue(sessionId, {
+        baseVersion: maxVersion - 1,
+        steering: [{ id: "stale", message: "stale" }],
+        followUp: [],
+      }),
+    ).rejects.toThrow(`Queue version mismatch: expected ${maxVersion}, got ${maxVersion - 1}`);
+    expect(ws.sent.filter((message) => message.type === "command")).toHaveLength(commandCount);
+
+    await rejectExhausted("exhausted-retry");
+    expect(received).toEqual([
+      {
+        type: "queue_state",
+        queue: {
+          version: maxVersion,
+          steering: [{ id: "at-max", message: "at max", createdAt: 1 }],
+          followUp: [],
+        },
+      },
+      {
+        type: "queue_state",
+        queue: {
+          version: maxVersion,
+          steering: [{ id: "at-max", message: "at max", createdAt: 1 }],
+          followUp: [],
+        },
+      },
+    ]);
+  });
+
   it("forwards set_queue and broadcasts the returned queue state", async () => {
     const { runtime } = makeRuntime();
     const { ws, sessionId } = connectBridge(runtime);
@@ -931,6 +1263,175 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
     await expect(reloadPromise).resolves.toBeUndefined();
     expect(received.some((message) => message.type === "turn_ack")).toBe(false);
+  });
+
+  it.each([
+    ["prompt", "ready"],
+    ["steer", "busy"],
+    ["follow_up", "busy"],
+  ] as const)(
+    "does not acknowledge rejected mirrored %s input and allows the same clientTurnId retry",
+    async (kind, status) => {
+      const { runtime } = makeRuntime();
+      const { ws, sessionId } = connectBridge(runtime);
+      const session = runtime.getActiveSession(sessionId);
+      if (!session) throw new Error("expected active mirror session");
+      session.status = status;
+      const received: ServerMessage[] = [];
+      runtime.subscribe(sessionId, (message) => received.push(message));
+
+      const opts = {
+        clientTurnId: `turn-${kind}`,
+        requestId: `req-${kind}-rejected`,
+      };
+      const rejected =
+        kind === "prompt"
+          ? runtime.sendPrompt(sessionId, `${kind} message`, { ...opts, timestamp: Date.now() })
+          : kind === "steer"
+            ? runtime.sendSteer(sessionId, `${kind} message`, opts)
+            : runtime.sendFollowUp(sessionId, `${kind} message`, opts);
+      const rejectedCommand = await waitForLatestCommand(ws);
+      ws.receive({
+        type: "command_result",
+        id: rejectedCommand.id,
+        success: false,
+        error: `${kind} preflight rejected`,
+      });
+
+      await expect(rejected).rejects.toThrow(`${kind} preflight rejected`);
+      expect(received.filter((message) => message.type === "turn_ack")).toHaveLength(0);
+      expect(received.filter((message) => message.type === "queue_state")).toHaveLength(0);
+
+      const retryOpts = {
+        clientTurnId: `turn-${kind}`,
+        requestId: `req-${kind}-retry`,
+      };
+      const retry =
+        kind === "prompt"
+          ? runtime.sendPrompt(sessionId, `${kind} message`, {
+              ...retryOpts,
+              timestamp: Date.now(),
+            })
+          : kind === "steer"
+            ? runtime.sendSteer(sessionId, `${kind} message`, retryOpts)
+            : runtime.sendFollowUp(sessionId, `${kind} message`, retryOpts);
+      const retryCommand = await waitForNextCommand(ws, rejectedCommand.id);
+      const queue =
+        kind === "steer"
+          ? {
+              version: 1,
+              steering: [{ id: "s-retry", message: `${kind} message`, createdAt: 1 }],
+              followUp: [],
+            }
+          : kind === "follow_up"
+            ? {
+                version: 1,
+                steering: [],
+                followUp: [{ id: "f-retry", message: `${kind} message`, createdAt: 1 }],
+              }
+            : { version: 0, steering: [], followUp: [] };
+      ws.receive({
+        type: "command_result",
+        id: retryCommand.id,
+        success: true,
+        data: { dispatched: true, queue },
+      });
+
+      await expect(retry).resolves.toBeUndefined();
+      expect(received.filter((message) => message.type === "turn_ack")).toEqual([
+        expect.objectContaining({
+          requestId: `req-${kind}-retry`,
+          clientTurnId: `turn-${kind}`,
+          stage: "accepted",
+        }),
+        expect.objectContaining({
+          requestId: `req-${kind}-retry`,
+          clientTurnId: `turn-${kind}`,
+          stage: "dispatched",
+        }),
+      ]);
+    },
+  );
+
+  it("treats mirror command timeout as unknown and permits retrying the same ID", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime } = makeRuntime();
+      const { ws, sessionId } = connectBridge(runtime);
+      const received: ServerMessage[] = [];
+      runtime.subscribe(sessionId, (message) => received.push(message));
+
+      const first = runtime.sendPrompt(sessionId, "timeout retry", {
+        clientTurnId: "turn-timeout",
+        requestId: "req-timeout",
+        timestamp: Date.now(),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      const firstCommand = latestCommand(ws);
+      expect(firstCommand.command).toMatchObject({ type: "prompt" });
+
+      const firstRejection = expect(first).rejects.toThrow("pi-tui command timed out: prompt");
+      await vi.advanceTimersByTimeAsync(30_000);
+      await firstRejection;
+      expect(received.filter((message) => message.type === "turn_ack")).toHaveLength(0);
+
+      const retry = runtime.sendPrompt(sessionId, "timeout retry", {
+        clientTurnId: "turn-timeout",
+        requestId: "req-timeout-retry",
+        timestamp: Date.now(),
+      });
+      const retryCommand = await waitForNextCommand(ws, firstCommand.id);
+      ws.receive({
+        type: "command_result",
+        id: retryCommand.id,
+        success: true,
+        data: { dispatched: true, queue: { version: 0, steering: [], followUp: [] } },
+      });
+      await expect(retry).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("treats disconnect as unknown and permits retrying the same ID after reconnect", async () => {
+    const { runtime } = makeRuntime();
+    const first = connectBridge(runtime, { bridgeId: "bridge-disconnect-retry" });
+    const received: ServerMessage[] = [];
+    runtime.subscribe(first.sessionId, (message) => received.push(message));
+
+    const pending = runtime.sendPrompt(first.sessionId, "disconnect retry", {
+      clientTurnId: "turn-disconnect",
+      requestId: "req-disconnect",
+      timestamp: Date.now(),
+    });
+    await waitForLatestCommand(first.ws);
+    first.ws.readyState = WebSocket.CLOSED;
+    first.ws.emit("close", 1006, Buffer.from("network lost"));
+
+    await expect(pending).rejects.toThrow("pi-tui disconnected");
+    expect(received.filter((message) => message.type === "turn_ack")).toHaveLength(0);
+
+    const second = connectBridge(runtime, {
+      bridgeId: "bridge-disconnect-retry",
+      piSessionId: "pi-1",
+      sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
+    });
+    expect(second.sessionId).toBe(first.sessionId);
+
+    const retry = runtime.sendPrompt(second.sessionId, "disconnect retry", {
+      clientTurnId: "turn-disconnect",
+      requestId: "req-disconnect-retry",
+      timestamp: Date.now(),
+    });
+    const retryCommand = await waitForLatestCommand(second.ws);
+    second.ws.receive({
+      type: "command_result",
+      id: retryCommand.id,
+      success: true,
+      data: { dispatched: true, queue: { version: 0, steering: [], followUp: [] } },
+    });
+    await expect(retry).resolves.toBeUndefined();
   });
 
   it("waits for the terminal user event before recording a mirrored prompt", async () => {
