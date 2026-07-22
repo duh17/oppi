@@ -1,6 +1,6 @@
 {
   "name": "oppi-mirror",
-  "version": "0.44.0",
+  "version": "0.45.0",
   "description": "Pi extension for mirroring live terminal sessions into Oppi.",
   "type": "module",
   "license": "MIT",
@@ -21,9 +21,14 @@
   "homepage": "https://github.com/duh17/oppi/tree/main/pi-extensions/oppi-mirror#readme",
   "files": [
     "extensions/",
+    "scripts/",
     "README.md",
     "LICENSE"
   ],
+  "scripts": {
+    "check:release": "node scripts/check-release.mjs",
+    "prepack": "npm run check:release"
+  },
   "dependencies": {
     "ws": "8.21.0"
   },

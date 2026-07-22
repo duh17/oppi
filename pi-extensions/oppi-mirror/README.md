@@ -8,6 +8,12 @@
 pi install npm:oppi-mirror
 ```
 
+Update an existing install before starting a matching Oppi server release:
+
+```bash
+pi update --extension npm:oppi-mirror
+```
+
 If Pi is already running, reload extensions:
 
 ```text
@@ -71,7 +77,7 @@ Session replacement stays terminal-owned. Use terminal Pi for `/new`, `/fork`, a
 
 ## Requirements
 
-- Oppi server `0.41.0` or newer
+- Oppi server `0.45.0` or newer
 - Interactive terminal `pi`; print, JSON, RPC, and server-owned SDK sessions are not mirror sessions
 
 See the full mirror contract and compatibility matrix in the Oppi repo: https://github.com/duh17/oppi/blob/main/docs/oppi-mirror.md

@@ -8,7 +8,7 @@ Do not use mirror mode for server-owned SDK sessions, `pi -p`, JSON mode, RPC mo
 
 ## Prerequisites
 
-- Oppi server `0.41.0` or newer is running.
+- Oppi server `0.45.0` or newer is running.
 - The server has a valid token in `~/.config/oppi/config.json`.
 - You are starting Pi in interactive terminal mode.
 
@@ -26,6 +26,12 @@ For a one-off run without editing settings, use:
 
 ```bash
 pi -e npm:oppi-mirror
+```
+
+Before upgrading the Oppi server, update an existing Mirror install:
+
+```bash
+pi update --extension npm:oppi-mirror
 ```
 
 If Pi is already running, reload extensions:
