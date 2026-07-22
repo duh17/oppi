@@ -1,6 +1,9 @@
 import Foundation
+import ImageIO
+import SwiftUI
 import Testing
 import UIKit
+import UniformTypeIdentifiers
 @testable import Oppi
 
 @Suite("AssistantAvatar", .serialized)
@@ -24,23 +27,64 @@ struct AssistantAvatarTests {
         #expect(AssistantAvatar.emoji("🧠").displayName == "🧠")
     }
 
-    @Test("invalid persisted value falls back to grid")
-    func invalidPersistedValueFallsBackToGrid() {
-        UserDefaults.standard.set("totally-unknown", forKey: "assistantAvatarType")
-        #expect(AssistantAvatar.current == .golGrid)
-        UserDefaults.standard.removeObject(forKey: "assistantAvatarType")
+    @Test("malformed persisted emoji and unknown types normalize to classic pi")
+    func malformedPersistedValuesNormalizeToPiText() throws {
+        let cases: [(type: String, emoji: String?)] = [
+            ("emoji", ""),
+            ("emoji", "plain text"),
+            ("emoji", "🤖🦊"),
+            ("emoji", "🤖-"),
+            ("totally-unknown", "🤖"),
+        ]
+
+        for fixture in cases {
+            let suiteName = "AssistantAvatarTests.\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suiteName))
+            defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+            defaults.set(fixture.type, forKey: "assistantAvatarType")
+            if let emoji = fixture.emoji {
+                defaults.set(emoji, forKey: "assistantAvatarEmoji")
+            }
+
+            let persistence = AssistantAvatarPersistence(defaults: defaults)
+            #expect(persistence.current == .piText)
+            #expect(defaults.string(forKey: "assistantAvatarType") == "piText")
+        }
+    }
+
+    @Test("valid persisted builtins and a single emoji are preserved")
+    func validPersistedValuesArePreserved() throws {
+        let cases: [(type: String, emoji: String?, expected: AssistantAvatar)] = [
+            ("officialPi", nil, .officialPi),
+            ("piText", nil, .piText),
+            ("golGrid", nil, .golGrid),
+            ("emoji", "🦊", .emoji("🦊")),
+        ]
+
+        for fixture in cases {
+            let suiteName = "AssistantAvatarTests.\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suiteName))
+            defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+            defaults.set(fixture.type, forKey: "assistantAvatarType")
+            if let emoji = fixture.emoji {
+                defaults.set(emoji, forKey: "assistantAvatarEmoji")
+            }
+
+            #expect(AssistantAvatarPersistence(defaults: defaults).current == fixture.expected)
+        }
     }
 
     @Test("default is piText")
     func defaultAvatar() {
         // Clear any stored preference
         UserDefaults.standard.removeObject(forKey: "assistantAvatarType")
+        AssistantAvatar.reloadAfterExternalChange()
         let avatar = AssistantAvatar.current
         #expect(avatar == .piText)
     }
 
     @Test("persistence round-trip for officialPi announces the change")
-    func persistOfficialPi() async {
+    func persistOfficialPi() async throws {
         await confirmation("avatar change notification") { confirm in
             let observer = NotificationCenter.default.addObserver(
                 forName: .assistantAvatarDidChange,
@@ -51,10 +95,15 @@ struct AssistantAvatarTests {
             }
             defer {
                 NotificationCenter.default.removeObserver(observer)
-                AssistantAvatar.setCurrent(.piText)
+                try? AssistantAvatar.setCurrent(.piText)
             }
 
-            AssistantAvatar.setCurrent(.officialPi)
+            do {
+                try AssistantAvatar.setCurrent(.officialPi)
+            } catch {
+                Issue.record("Unexpected persistence rejection: \(error)")
+                return
+            }
             #expect(AssistantAvatar.current == .officialPi)
         }
     }
@@ -89,26 +138,228 @@ struct AssistantAvatarTests {
     }
 
     @Test("persistence round-trip for piText")
-    func persistPiText() {
-        AssistantAvatar.setCurrent(.piText)
+    func persistPiText() throws {
+        try AssistantAvatar.setCurrent(.piText)
         #expect(AssistantAvatar.current == .piText)
     }
 
     @Test("persistence round-trip for golGrid")
-    func persistGolGrid() {
-        AssistantAvatar.setCurrent(.golGrid)
+    func persistGolGrid() throws {
+        try AssistantAvatar.setCurrent(.golGrid)
         #expect(AssistantAvatar.current == .golGrid)
         // Restore default
-        AssistantAvatar.setCurrent(.piText)
+        try AssistantAvatar.setCurrent(.piText)
     }
 
     @Test("persistence round-trip for emoji")
-    func persistEmoji() {
-        AssistantAvatar.setCurrent(.emoji("🦊"))
+    func persistEmoji() throws {
+        try AssistantAvatar.setCurrent(.emoji("🦊"))
         let restored = AssistantAvatar.current
         #expect(restored == .emoji("🦊"))
         // Restore default
-        AssistantAvatar.setCurrent(.piText)
+        try AssistantAvatar.setCurrent(.piText)
+    }
+
+    @Test("persisted Genmoji decodes once and shares its cached image")
+    func persistedGenmojiDecodesOnceAndSharesCachedImage() throws {
+        let suiteName = "AssistantAvatarTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        defaults.set("genmoji", forKey: "assistantAvatarType")
+        defaults.set(try genericHEICFixture(), forKey: "assistantAvatarGenmoji")
+        defaults.set("Pink square", forKey: "assistantAvatarGenmojiDescription")
+
+        let decodedImage = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { _ in }
+        var decodeCount = 0
+        let persistence = AssistantAvatarPersistence(defaults: defaults) { _ in
+            decodeCount += 1
+            return decodedImage
+        }
+
+        let first = persistence.current
+        let second = persistence.current
+        #expect(first == second)
+        #expect(decodeCount == 1)
+        #expect(persistence.image(for: first) === decodedImage)
+        #expect(persistence.image(for: second) === decodedImage)
+
+        try persistence.setCurrent(.piText)
+        #expect(persistence.current == .piText)
+        #expect(decodeCount == 1)
+        #expect(persistence.image(for: .piText) == nil)
+    }
+
+    @Test("cached persisted snapshot keeps ordinary row updates off persistence")
+    func cachedSnapshotAvoidsPersistenceWorkForOrdinaryRows() throws {
+        let decodedImage = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { _ in }
+        let source = AssistantAvatarPersistence.Source(
+            type: "genmoji",
+            emoji: nil,
+            genmojiData: try genericHEICFixture(),
+            genmojiDescription: "Pink square"
+        )
+        var readCount = 0
+        var fingerprintCount = 0
+        var decodeCount = 0
+        let persistence = AssistantAvatarPersistence(
+            read: {
+                readCount += 1
+                return source
+            },
+            fingerprint: { _ in
+                fingerprintCount += 1
+                return "persisted-pink-square"
+            },
+            decode: { _ in
+                decodeCount += 1
+                return decodedImage
+            }
+        )
+        let badge = SessionGridBadgeView()
+        badge.assistantAvatarProvider = { persistence.snapshot }
+
+        badge.configure(sessionId: "ordinary-row", agentId: nil, agentIcon: nil, iconAssetCache: nil)
+        #expect((readCount, fingerprintCount, decodeCount) == (1, 1, 1))
+
+        for _ in 0..<5 {
+            badge.configure(sessionId: "ordinary-row", agentId: nil, agentIcon: nil, iconAssetCache: nil)
+        }
+
+        #expect((readCount, fingerprintCount, decodeCount) == (1, 1, 1))
+    }
+
+    @Test("prepared Genmoji persists without a second decode")
+    func preparedGenmojiPersistsWithoutSecondDecode() throws {
+        let suiteName = "AssistantAvatarTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+
+        let decodedImage = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { _ in }
+        var decodeCount = 0
+        let persistence = AssistantAvatarPersistence(defaults: defaults) { _ in
+            decodeCount += 1
+            return decodedImage
+        }
+        let draft = AssistantAvatar.genmoji(
+            data: try genericHEICFixture(),
+            contentDescription: "Pink square"
+        )
+
+        let prepared = try persistence.prepare(draft)
+        #expect(decodeCount == 1)
+        try persistence.setCurrent(prepared)
+        #expect(persistence.current == prepared)
+        #expect(decodeCount == 1)
+        #expect(persistence.image(for: prepared) === decodedImage)
+    }
+
+    @Test("corrupt persisted Genmoji falls back to visible pi text")
+    func corruptPersistedGenmojiFallsBackToPiText() {
+        let defaults = UserDefaults.standard
+        defaults.set("genmoji", forKey: "assistantAvatarType")
+        defaults.set(Data([0x00, 0x01, 0x02]), forKey: "assistantAvatarGenmoji")
+        defaults.set("Corrupt glyph", forKey: "assistantAvatarGenmojiDescription")
+        defer { clearPersistedAvatar() }
+        AssistantAvatar.reloadAfterExternalChange()
+
+        #expect(AssistantAvatar.current == .piText)
+    }
+
+    @Test("historical local image record without a description falls back conservatively")
+    func historicalLocalImageWithoutDescriptionFallsBackToPiText() throws {
+        let defaults = UserDefaults.standard
+        defaults.set("genmoji", forKey: "assistantAvatarType")
+        defaults.set(try genericHEICFixture(), forKey: "assistantAvatarGenmoji")
+        defaults.removeObject(forKey: "assistantAvatarGenmojiDescription")
+        defer { clearPersistedAvatar() }
+        AssistantAvatar.reloadAfterExternalChange()
+
+        #expect(AssistantAvatar.current == .piText)
+    }
+
+    @Test("historical local image record preserves its persisted content description")
+    func historicalLocalImagePreservesContentDescription() throws {
+        // Generic HEIC intentionally exercises safe raster fallback only.
+        let defaults = UserDefaults.standard
+        defaults.set("genmoji", forKey: "assistantAvatarType")
+        defaults.set(try genericHEICFixture(), forKey: "assistantAvatarGenmoji")
+        defaults.set("Pink square", forKey: "assistantAvatarGenmojiDescription")
+        defer { clearPersistedAvatar() }
+        AssistantAvatar.reloadAfterExternalChange()
+
+        #expect(
+            AssistantAvatar.current.accessibilityDescription == "Pink square",
+            "Persisted content description must survive relaunch"
+        )
+    }
+
+    @Test("persisted local image bytes relaunch and render through the safe ImageIO fallback")
+    func persistedLocalImageRelaunchesAndRendersSafely() throws {
+        // Generic HEIC intentionally exercises safe raster fallback only.
+        let defaults = UserDefaults.standard
+        defaults.set("genmoji", forKey: "assistantAvatarType")
+        defaults.set(try genericHEICFixture(), forKey: "assistantAvatarGenmoji")
+        defaults.set("Pink square", forKey: "assistantAvatarGenmojiDescription")
+        defer { clearPersistedAvatar() }
+        AssistantAvatar.reloadAfterExternalChange()
+
+        let rendered = AssistantAvatarRenderer.render(
+            avatar: AssistantAvatar.current,
+            sessionId: "relaunch-safe-render",
+            size: 64
+        )
+
+        #expect(rendered.cgImage != nil)
+        #expect(rendered.size.width > 0)
+        #expect(rendered.size.height > 0)
+    }
+
+    @Test("invalid Genmoji persistence is rejected without replacing the saved avatar")
+    func invalidGenmojiPersistenceIsRejected() throws {
+        defer { clearPersistedAvatar() }
+        try AssistantAvatar.setCurrent(.emoji("🦊"))
+
+        #expect(throws: Error.self) {
+            try AssistantAvatar.setCurrent(
+                .genmoji(data: Data([0xFF]), contentDescription: "Bad data")
+            )
+        }
+
+        #expect(AssistantAvatar.current == .emoji("🦊"))
+    }
+
+    @Test("persistence rejection leaves the mounted binding consistent")
+    func rejectedPersistenceDoesNotMutateBinding() throws {
+        defer { clearPersistedAvatar() }
+        try AssistantAvatar.setCurrent(.piText)
+        var mountedAvatar = AssistantAvatar.piText
+        let binding = Binding(
+            get: { mountedAvatar },
+            set: { mountedAvatar = $0 }
+        )
+
+        #expect(throws: Error.self) {
+            try AvatarPickerView.persist(
+                .genmoji(data: Data([0xFF]), contentDescription: "Bad data"),
+                to: binding
+            )
+        }
+
+        #expect(mountedAvatar == .piText)
+        #expect(AssistantAvatar.current == .piText)
+    }
+
+    @Test("mounted session identity label refreshes after assistant avatar notification")
+    func mountedSessionIdentityLabelRefreshes() throws {
+        defer { clearPersistedAvatar() }
+        try AssistantAvatar.setCurrent(.piText)
+        let view = SessionGridBadgeView()
+        view.sessionId = "mounted-row"
+        #expect(view.accessibilityLabel == "Classic π")
+
+        try AssistantAvatar.setCurrent(.emoji("🦊"))
+
+        #expect(view.accessibilityLabel == "Emoji 🦊")
     }
 
     @Test("emoji equality")
@@ -124,6 +375,41 @@ struct AssistantAvatarTests {
         #expect(AssistantAvatar.piText.cacheIdentifier == "piText")
         #expect(AssistantAvatar.golGrid.cacheIdentifier == "golGrid")
         #expect(AssistantAvatar.emoji("🤖").cacheIdentifier != AssistantAvatar.emoji("🧠").cacheIdentifier)
+    }
+
+    private func clearPersistedAvatar() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "assistantAvatarType")
+        defaults.removeObject(forKey: "assistantAvatarEmoji")
+        defaults.removeObject(forKey: "assistantAvatarGenmoji")
+        defaults.removeObject(forKey: "assistantAvatarGenmojiDescription")
+        AssistantAvatar.reloadAfterExternalChange()
+    }
+
+    private func genericHEICFixture() throws -> Data {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2))
+        let image = renderer.image { context in
+            UIColor.systemPink.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        }
+        guard let cgImage = image.cgImage else {
+            throw FixtureError.image
+        }
+
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            UTType.heic.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw FixtureError.destination
+        }
+        CGImageDestinationAddImage(destination, cgImage, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw FixtureError.finalize
+        }
+        return output as Data
     }
 
     private func pixel(in image: UIImage, normalizedX: CGFloat, normalizedY: CGFloat) -> Pixel? {
@@ -151,6 +437,12 @@ struct AssistantAvatarTests {
             alpha: CGFloat(bytes[3]) / 255
         )
     }
+}
+
+private enum FixtureError: Error {
+    case image
+    case destination
+    case finalize
 }
 
 private struct Pixel {

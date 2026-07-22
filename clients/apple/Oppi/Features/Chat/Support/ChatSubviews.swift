@@ -3,13 +3,20 @@ import SwiftUI
 // MARK: - Empty State
 
 struct ChatEmptyState: View {
-    var sessionId: String = ""
+    var sessionId: String
     var agentId: String?
     var agentIcon: IconChoice?
     @State private var visible = false
-    @State private var avatar = AssistantAvatar.current
+    @State private var avatar: AssistantAvatar
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.themeID) private var themeID
+
+    init(sessionId: String = "", agentId: String? = nil, agentIcon: IconChoice? = nil) {
+        self.sessionId = sessionId
+        self.agentId = agentId
+        self.agentIcon = agentIcon
+        let presentation = AssistantIdentityPresentation.resolve(agentId: agentId, agentIcon: agentIcon)
+        _avatar = State(initialValue: presentation == .globalAvatar ? AssistantAvatar.current : .piText)
+    }
 
     var body: some View {
         Group {
@@ -20,38 +27,21 @@ struct ChatEmptyState: View {
             case .agent:
                 AgentIconView(value: agentIcon, size: 64, frameSize: 112, isDecorative: false)
             case .globalAvatar:
-                switch avatar {
-                case .officialPi:
-                    Image(
-                        uiImage: AssistantAvatarRenderer.render(
-                            avatar: avatar,
-                            sessionId: sessionId,
-                            size: 112,
-                            themeID: themeID
-                        )
-                    )
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                        .frame(width: 112, height: 112)
-                case .golGrid:
-                    SessionGridView(sessionId: sessionId)
-                case .piText:
-                    Text("π")
-                        .font(.appHeroMono)
-                        .foregroundStyle(.themePurple.opacity(0.5))
-                case .emoji(let char):
-                    Text(char)
-                        .font(.system(size: 48))
-                case .genmoji:
-                    // Genmoji in empty state — fall back to grid
-                    SessionGridView(sessionId: sessionId)
-                }
+                AssistantAvatarPreview(
+                    avatar: avatar,
+                    sessionId: sessionId,
+                    size: 112
+                )
+                .accessibilityHidden(false)
+                .accessibilityLabel(avatar.accessibilityDescription)
             }
         }
         .opacity(visible ? 1 : 0)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onReceive(NotificationCenter.default.publisher(for: .assistantAvatarDidChange)) { _ in
+            guard AssistantIdentityPresentation.resolve(agentId: agentId, agentIcon: agentIcon) == .globalAvatar else {
+                return
+            }
             avatar = AssistantAvatar.current
         }
         .task {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum WorkspaceCreatePresentation: Equatable, Sendable {
     case standard
@@ -54,7 +55,8 @@ struct WorkspaceCreateView: View {
     @State private var hostMount = ""
     @State private var isHostMountFromProjectPicker = false
     @State private var description = ""
-    @State private var icon = ""
+    @State private var icon: IconChoice = .defaultValue
+    @State private var isShowingIconPicker = false
     @State private var gitStatusEnabled = true
     @State private var hostMountStatus: HostPathStatus?
     @State private var hostMountValidationMessage: String?
@@ -174,6 +176,12 @@ struct WorkspaceCreateView: View {
             .task(id: hostMountLookupKey) {
                 await validateAndCompleteHostMount()
             }
+        }
+        .sheet(isPresented: $isShowingIconPicker) {
+            WorkspaceIconPickerView(
+                icon: $icon,
+                uploadOperation: uploadWorkspaceGenmoji
+            )
         }
     }
 
@@ -415,6 +423,30 @@ struct WorkspaceCreateView: View {
                 }
             }
 
+            Section("Appearance") {
+                Button {
+                    isShowingIconPicker = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Text("Icon")
+                            .foregroundStyle(.themeFg)
+                        Spacer(minLength: 12)
+                        WorkspaceIcon(icon: icon, size: 22)
+                            .frame(width: 32, height: 32)
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.themeComment)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Workspace icon")
+                .accessibilityValue(WorkspaceIconPickerView.description(icon))
+                .accessibilityHint("Opens the icon picker")
+                .accessibilityIdentifier("workspace.create.icon")
+            }
+
             Section {
                 if skills.isEmpty {
                     Text("No Pi skills discovered for this folder yet.")
@@ -443,9 +475,6 @@ struct WorkspaceCreateView: View {
             if showAdvanced {
                 Section("Optional") {
                     TextField("Description", text: $description)
-                    TextField("Icon (SF Symbol or emoji)", text: $icon)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
                 }
             } else {
                 Section {
@@ -749,6 +778,24 @@ struct WorkspaceCreateView: View {
 
     // MARK: - Create
 
+    @MainActor
+    private func uploadWorkspaceGenmoji(
+        data: Data,
+        contentDescription: String
+    ) async throws -> IconChoice {
+        guard let api = await preparedAPIClient() else {
+            throw APIError.server(status: 503, message: "Server is offline")
+        }
+        let asset = try await api.uploadIconAsset(
+            data: data,
+            contentType: NSAdaptiveImageGlyph.contentType.preferredMIMEType ?? "image/heic"
+        )
+        return .genmoji(
+            assetId: asset.assetId,
+            contentDescription: contentDescription
+        )
+    }
+
     private func create() async {
         guard await coordinator.switchToServerReady(server),
               let api = coordinator.apiClient(for: server.id) else {
@@ -771,7 +818,7 @@ struct WorkspaceCreateView: View {
         let request = CreateWorkspaceRequest(
             name: name,
             description: description.isEmpty ? nil : description,
-            icon: draftIconChoice(icon),
+            icon: icon,
             hostMount: trimmedHostMount.isEmpty ? nil : trimmedHostMount,
             gitStatusEnabled: gitStatusEnabled,
             runtime: sandboxMode ? .sandbox : nil,

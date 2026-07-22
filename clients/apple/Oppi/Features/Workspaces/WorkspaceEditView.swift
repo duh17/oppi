@@ -53,7 +53,7 @@ struct WorkspaceEditView: View {
 
     @State private var name: String = ""
     @State private var description: String = ""
-    @State private var icon = WorkspaceIconPickerSelection(value: .defaultValue)
+    @State private var icon: IconChoice = .defaultValue
     @State private var hostMount: String = ""
     @State private var systemPrompt: String = ""
     @State private var gitStatusEnabled: Bool = true
@@ -75,7 +75,6 @@ struct WorkspaceEditView: View {
     @State private var availableModels: [ModelInfo] = []
     @State private var selectedSkillDetail: SkillDetailDestination?
     @State private var isShowingIconPicker = false
-    @State private var iconPickerDetent: PresentationDetent = .large
     @State private var isShowingSystemPromptEditor = false
     @State private var runtime: WorkspaceRuntime?
     @State private var allowedHostsText: String = ""
@@ -134,12 +133,7 @@ struct WorkspaceEditView: View {
     }
 
     private var iconDisplayName: String {
-        switch icon.value {
-        case .defaultValue: return "Default"
-        case .emoji(let value): return value
-        case .symbol(let name): return WorkspaceIconCatalog.label(for: name) ?? name
-        case .genmoji(_, let contentDescription): return contentDescription
-        }
+        WorkspaceIconPickerView.description(icon)
     }
 
     private var canSave: Bool {
@@ -201,7 +195,7 @@ struct WorkspaceEditView: View {
 
                         Spacer(minLength: 12)
 
-                        WorkspaceIcon(icon: icon.value, size: 22)
+                        WorkspaceIcon(icon: icon, size: 22)
                             .frame(width: 32, height: 32)
 
                         Image(systemName: "chevron.right")
@@ -370,11 +364,7 @@ struct WorkspaceEditView: View {
             SkillDetailView(skillName: dest.skillName, cwd: dest.cwd)
         }
         .sheet(isPresented: $isShowingIconPicker) {
-            NavigationStack {
-                WorkspaceIconPicker(selection: $icon)
-            }
-            .presentationDetents([.medium, .large], selection: $iconPickerDetent)
-            .presentationDragIndicator(.visible)
+            WorkspaceIconPickerView(icon: $icon)
         }
         .navigationDestination(isPresented: $isShowingSystemPromptEditor) {
             WorkspaceSystemPromptEditorView(systemPrompt: $systemPrompt)
@@ -612,7 +602,7 @@ struct WorkspaceEditView: View {
 
         name = source.name
         description = source.description ?? ""
-        icon = WorkspaceIconPickerSelection(value: source.icon)
+        icon = source.icon
         hostMount = source.hostMount ?? ""
         hostMountStatus = nil
         hostMountValidationMessage = nil
@@ -806,7 +796,7 @@ struct WorkspaceEditView: View {
         let request = UpdateWorkspaceRequest(
             name: name,
             description: nullableJSONString(description),
-            icon: icon.value.jsonValue,
+            icon: icon.jsonValue,
             systemPrompt: nullableJSONString(systemPrompt),
             systemPromptMode: .append,
             hostMount: nullableJSONString(trimmedHostMount),

@@ -1048,11 +1048,17 @@ struct ChatView: View {
     private var sessionTitleLabel: some View {
         VStack(spacing: 1) {
             HStack(spacing: 6) {
-                if case .agent = assistantIdentityPresentation {
+                switch assistantIdentityPresentation {
+                case .agent:
                     AgentIconView(
                         value: session?.launch?.agentIcon,
                         size: 18,
                         frameSize: 20
+                    )
+                case .globalAvatar:
+                    CurrentAssistantAvatarPreview(
+                        sessionId: sessionId,
+                        size: 20
                     )
                 }
 

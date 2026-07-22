@@ -749,21 +749,6 @@ struct IconAssetCacheTests {
 
 @Suite("Agent icon presentation")
 struct AgentIconPresentationTests {
-    private func storedAgent(icon: IconChoice = .defaultValue, version: Int = 2) -> StoredAgentDefinition {
-        StoredAgentDefinition(
-            id: "agent-1",
-            name: "Reviewer",
-            icon: icon,
-            description: nil,
-            status: .active,
-            version: version,
-            definition: AgentDefinition(name: "Reviewer", icon: icon),
-            createdAt: Date(timeIntervalSince1970: 1),
-            updatedAt: Date(timeIntervalSince1970: 2),
-            archivedAt: nil
-        )
-    }
-
     @Test func classifiesTrimmedEmojiAndSymbolCandidatesDeterministically() {
         #expect(AgentIconValue.classify("  🧘  ") == .emoji("🧘"))
         #expect(AgentIconValue.classify(" checkmark.shield\n") == .symbolCandidate("checkmark.shield"))
@@ -771,115 +756,6 @@ struct AgentIconPresentationTests {
         #expect(AgentIconValue.classify(String(repeating: "a", count: 129)) == .invalid(.tooLong))
         #expect(AgentIconValue.classify("😀" + String(repeating: "‍😀", count: 64)) == .invalid(.tooLong))
         #expect(AgentIconValue.classify("not/a/symbol") == .invalid(.malformed))
-    }
-
-    @MainActor
-    @Test func pickerPreviewsDraftAndSavesSuccessfulSelection() async {
-        let model = AgentIconPickerModel(savedValue: .emoji("🧘"))
-        model.selectSuggestion("checkmark.shield")
-
-        #expect(model.previewValue == .symbol("checkmark.shield"))
-        #expect(model.previewContent == .symbol("checkmark.shield"))
-
-        let result = await model.saveCurrent { icon in
-            #expect(icon == .symbol("checkmark.shield"))
-            return storedAgent(icon: icon, version: 3)
-        }
-
-        #expect(result?.version == 3)
-        #expect(model.savedValue == .symbol("checkmark.shield"))
-        #expect(model.draft == "checkmark.shield")
-        #expect(model.errorPresentation == nil)
-    }
-
-    @MainActor
-    @Test func pickerClearUsesDefaultAndResetsPreview() async {
-        let model = AgentIconPickerModel(savedValue: .symbol("checkmark.shield"))
-
-        let result = await model.useDefault { icon in
-            #expect(icon == .defaultValue)
-            return storedAgent(icon: .defaultValue, version: 3)
-        }
-
-        #expect(result?.definition.icon == .defaultValue)
-        #expect(model.savedValue == .defaultValue)
-        #expect(model.previewValue == nil)
-        #expect(model.previewContent == .fallback)
-        #expect(!model.canUseDefault)
-    }
-
-    @MainActor
-    @Test func pickerShowsLiveValidationWithoutRequestingAccessibilityFocusDuringDraftEdits() {
-        let model = AgentIconPickerModel(savedValue: .emoji("🧘"))
-        model.draft = "not-a-real-symbol"
-
-        #expect(model.previewValue == .symbol("not-a-real-symbol"))
-        #expect(model.previewContent == .fallback)
-        guard case .validation(let message) = model.errorPresentation else {
-            Issue.record("Expected a validation error presentation")
-            return
-        }
-        #expect(message.contains("isn’t available"))
-        #expect(!model.canSave)
-        #expect(model.accessibilityFocusRequest == nil)
-
-        model.draft = "still-not-a-real-symbol"
-        #expect(model.errorPresentation != nil)
-        #expect(model.accessibilityFocusRequest == nil)
-    }
-
-    @MainActor
-    @Test func pickerRequestsValidationFocusOnlyAfterExplicitSaveAttempt() async {
-        let model = AgentIconPickerModel(savedValue: .emoji("🧘"))
-        model.draft = "not-a-real-symbol"
-
-        let result = await model.saveCurrent { _ in
-            Issue.record("Invalid drafts must not reach the save operation")
-            return storedAgent()
-        }
-
-        #expect(result == nil)
-        #expect(model.accessibilityFocusRequest?.target == .validation)
-        #expect(model.accessibilityFocusRequest?.sequence == 1)
-
-        model.draft = "still-not-a-real-symbol"
-        #expect(model.accessibilityFocusRequest?.sequence == 1)
-    }
-
-    @MainActor
-    @Test func pickerPreservesDraftAndExposesRetryAfterSaveFailure() async {
-        struct SaveFailure: LocalizedError {
-            var errorDescription: String? { "network unavailable" }
-        }
-
-        let model = AgentIconPickerModel(savedValue: .emoji("🧘"))
-        model.selectSuggestion("checkmark.shield")
-
-        let failed = await model.saveCurrent { _ in
-            throw SaveFailure()
-        }
-
-        #expect(failed == nil)
-        #expect(model.draft == "checkmark.shield")
-        #expect(model.errorMessage?.contains("network unavailable") == true)
-        guard case .save(let message) = model.errorPresentation else {
-            Issue.record("Expected a save error presentation")
-            return
-        }
-        #expect(message.contains("network unavailable"))
-        #expect(!model.isSaving)
-        #expect(model.canSave)
-        #expect(model.accessibilityFocusRequest?.target == .save)
-        #expect(model.accessibilityFocusRequest?.sequence == 1)
-
-        model.draft = "checkmark.shield "
-        #expect(model.accessibilityFocusRequest?.sequence == 1)
-
-        let retried = await model.saveCurrent { icon in
-            storedAgent(icon: icon, version: 3)
-        }
-        #expect(retried?.version == 3)
-        #expect(model.errorPresentation == nil)
     }
 
     @Test func scaledIconContentNeverExceedsItsLayoutBox() {

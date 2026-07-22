@@ -36,6 +36,18 @@ private actor IconAssetFetchGateForTimeline {
     }
 }
 
+private actor IconAssetFetchCounterForTimeline {
+    private var ids: [String] = []
+
+    func record(_ id: String) {
+        ids.append(id)
+    }
+
+    func recordedIDs() -> [String] {
+        ids
+    }
+}
+
 @Suite("AssistantTimelineRowContentView")
 struct AssistantTimelineRowContentViewTests {
     @MainActor
@@ -52,6 +64,89 @@ struct AssistantTimelineRowContentViewTests {
         badge.agentIcon = .symbol("not/a/symbol")
         #expect(imageView.image != nil)
         #expect(badge.intrinsicContentSize == CGSize(width: 18, height: 18))
+    }
+
+    @MainActor
+    @Test func savedAgentBadgeNeverLoadsTheGlobalAssistantAvatar() {
+        let badge = SessionGridBadgeView()
+        var readCount = 0
+        var fingerprintCount = 0
+        var decodeCount = 0
+        let persistence = AssistantAvatarPersistence(
+            read: {
+                readCount += 1
+                return .init(type: "piText", emoji: nil, genmojiData: nil, genmojiDescription: nil)
+            },
+            fingerprint: { _ in
+                fingerprintCount += 1
+                return "unused"
+            },
+            decode: { _ in
+                decodeCount += 1
+                return nil
+            }
+        )
+        badge.assistantAvatarProvider = { persistence.snapshot }
+
+        badge.configure(
+            sessionId: "agent-session",
+            agentId: "agent-1",
+            agentIcon: .symbol("checkmark.shield"),
+            iconAssetCache: nil
+        )
+        badge.configure(
+            sessionId: "agent-session",
+            agentId: "agent-1",
+            agentIcon: .emoji("🧘"),
+            iconAssetCache: nil
+        )
+
+        #expect((readCount, fingerprintCount, decodeCount) == (0, 0, 0))
+        #expect(badge.accessibilityLabel == "Saved Agent, Emoji 🧘")
+    }
+
+    @MainActor
+    @Test func savedAgentBadgeIgnoresAssistantAvatarChanges() async throws {
+        let assetId = "ia_" + UUID().uuidString.replacingOccurrences(of: "-", with: "") + String(repeating: "A", count: 11)
+        let fetchCounter = IconAssetFetchCounterForTimeline()
+        let expectedImage = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
+            UIColor.systemPink.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        }
+        let cache = IconAssetCache(
+            fetch: { requestedAssetId in
+                await fetchCounter.record(requestedAssetId)
+                return Data([1])
+            },
+            decode: { _, _ in (expectedImage, NSObject()) }
+        )
+        let badge = SessionGridBadgeView()
+        var globalAvatarProviderCount = 0
+        badge.assistantAvatarProvider = {
+            globalAvatarProviderCount += 1
+            return AssistantAvatarSnapshot(avatar: .piText)
+        }
+        badge.configure(
+            sessionId: "saved-agent-avatar-notification",
+            agentId: "agent-1",
+            agentIcon: .genmoji(assetId: assetId, contentDescription: "Agent glyph"),
+            iconAssetCache: cache
+        )
+
+        let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
+        for _ in 0..<50 {
+            if imageView.image === expectedImage { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(imageView.image === expectedImage)
+        #expect(await fetchCounter.recordedIDs() == [assetId])
+
+        NotificationCenter.default.post(name: .assistantAvatarDidChange, object: nil)
+
+        #expect(imageView.image === expectedImage, "Assistant-avatar notifications must not rerender saved-Agent badges")
+        for _ in 0..<20 { await Task.yield() }
+        #expect(globalAvatarProviderCount == 0)
+        #expect(await fetchCounter.recordedIDs() == [assetId])
     }
 
     @MainActor

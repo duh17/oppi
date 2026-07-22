@@ -13,10 +13,17 @@ struct AgentIconProofPreview: View {
         case agentChat
     }
 
+    let failsFirstSave: Bool
+
     @State private var agent = Self.makeAgent(icon: .defaultValue, version: 1)
     @State private var isShowingPicker = false
+    @State private var saveAttemptCount = 0
     @State private var themeStore = ThemeStore()
     @Environment(\.colorScheme) private var colorScheme
+
+    init(failsFirstSave: Bool = false) {
+        self.failsFirstSave = failsFirstSave
+    }
 
     var body: some View {
         NavigationStack {
@@ -144,7 +151,11 @@ struct AgentIconProofPreview: View {
             AgentIconPickerView(
                 agent: agent,
                 saveOperation: { icon in
-                    Self.makeAgent(icon: icon, version: agent.version + 1)
+                    saveAttemptCount += 1
+                    if failsFirstSave && saveAttemptCount == 1 {
+                        throw AgentIconProofSaveError.unavailable
+                    }
+                    return Self.makeAgent(icon: icon, version: agent.version + 1)
                 },
                 onSaved: { updated in
                     agent = updated
@@ -226,16 +237,7 @@ struct AgentIconProofPreview: View {
     }
 
     private var iconSummary: String {
-        switch AgentIconContent.resolve(agent.definition.icon) {
-        case .text(let emoji):
-            return "Emoji \(emoji)"
-        case .symbol(let name):
-            return "SF Symbol \(name)"
-        case .genmoji(_, let contentDescription):
-            return contentDescription
-        case .fallback:
-            return "Default"
-        }
+        AgentIconPickerView.description(agent.definition.icon)
     }
 
     private var agentSession: Session {
@@ -305,6 +307,38 @@ struct AgentIconProofPreview: View {
             thinkingLevel: nil,
             launch: launch
         )
+    }
+}
+
+private enum AgentIconProofSaveError: LocalizedError {
+    case unavailable
+
+    var errorDescription: String? { "Preview server is unavailable" }
+}
+
+/// Isolated assistant-avatar sheet proof. It keeps persistence outside the
+/// fixture so Cancel can prove that an invalid draft never changes the avatar.
+struct AssistantAvatarPickerProofPreview: View {
+    @State private var avatar: AssistantAvatar = .piText
+    @State private var isShowingPicker = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Button("Change Assistant Avatar") {
+                    isShowingPicker = true
+                }
+                .accessibilityIdentifier("assistant.avatarProof.open")
+
+                LabeledContent("Saved Avatar", value: avatar.accessibilityDescription)
+                    .accessibilityIdentifier("assistant.avatarProof.saved")
+            }
+            .navigationTitle("Assistant Avatar Proof")
+            .sheet(isPresented: $isShowingPicker) {
+                AvatarPickerView(avatar: $avatar)
+            }
+        }
+        .accessibilityIdentifier("screenshot.ready")
     }
 }
 #endif

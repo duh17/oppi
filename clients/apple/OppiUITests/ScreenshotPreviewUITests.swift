@@ -55,14 +55,14 @@ final class ScreenshotPreviewUITests: XCTestCase {
         detailIcon.tap()
 
         let pickerList = app.collectionViews["agent.iconPicker.list"]
-        let suggestion = app.buttons["agent.iconPicker.suggestion.sparkles"]
+        let suggestion = app.buttons["agent.iconPicker.symbol.sparkles"]
         for _ in 0..<3 where !suggestion.exists {
             pickerList.swipeUp()
         }
         XCTAssertTrue(suggestion.waitForExistence(timeout: 5), "Sparkles suggestion not visible")
         suggestion.tap()
 
-        let preview = app.descendants(matching: .any)["agent.iconPicker.preview"]
+        let preview = app.descendants(matching: .any)["agent.iconPicker.draft"]
         for _ in 0..<3 where !preview.exists {
             pickerList.swipeDown()
         }
@@ -75,31 +75,29 @@ final class ScreenshotPreviewUITests: XCTestCase {
         app.buttons["agent.iconPicker.save"].tap()
 
         XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail did not return after saving")
-        XCTAssertEqual(detailIcon.value as? String, "SF Symbol sparkles")
+        XCTAssertEqual(detailIcon.value as? String, "Sparkles")
 
         let backToAgents = app.navigationBars.buttons["Agents"]
         XCTAssertTrue(backToAgents.waitForExistence(timeout: 3), "Agents back button not visible")
         backToAgents.tap()
         XCTAssertTrue(agentRow.waitForExistence(timeout: 3), "Agent list did not return")
-        XCTAssertEqual(agentRow.value as? String, "SF Symbol sparkles")
+        XCTAssertEqual(agentRow.value as? String, "Sparkles")
         saveScreenshot(name: "agent-icons-sf-symbol-agent-list")
 
         agentRow.tap()
         XCTAssertTrue(detailIcon.waitForExistence(timeout: 3), "Agent detail did not reopen")
         detailIcon.tap()
 
-        let useDefault = app.buttons["agent.iconPicker.default"]
-        for _ in 0..<3 where !useDefault.isHittable {
-            app.swipeUp()
-        }
-        XCTAssertTrue(useDefault.waitForExistence(timeout: 3), "Use Default Icon action not visible")
+        let useDefault = app.descendants(matching: .any)["agent.iconPicker.option.default"]
+        XCTAssertTrue(useDefault.waitForExistence(timeout: 5), "Use Default Icon action not visible")
         useDefault.tap()
+        app.buttons["agent.iconPicker.save"].tap()
 
         XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail did not return after clearing")
         XCTAssertEqual(detailIcon.value as? String, "Default")
 
         detailIcon.tap()
-        let customIcon = app.textFields["agent.iconPicker.custom"]
+        let customIcon = app.textViews["agent.iconPicker.emojiInput"]
         XCTAssertTrue(customIcon.waitForExistence(timeout: 5), "Custom icon field not visible")
         customIcon.tap()
         customIcon.typeText("🧘")
@@ -136,8 +134,8 @@ final class ScreenshotPreviewUITests: XCTestCase {
             "Agent session row did not expose its saved-Agent identity"
         )
         XCTAssertTrue(
-            ordinarySession.label.contains("Pi"),
-            "Ordinary session row must expose the selected Pi avatar identity"
+            ordinarySession.label.contains("Classic π"),
+            "Ordinary session row must expose the selected assistant avatar identity"
         )
         saveScreenshot(name: "agent-icons-emoji-session-identities")
 
@@ -154,28 +152,177 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "agent-icons-emoji-chat-identities")
     }
 
-    func testAgentDetailAccessibilityPreview() throws {
+    func testAssistantAvatarCancelAndInvalidEmojiKeepSavedAvatar() throws {
+        launchPreview(screen: "assistant-avatar-picker")
+
+        let savedAvatar = app.descendants(matching: .any)["assistant.avatarProof.saved"]
+        XCTAssertTrue(savedAvatar.waitForExistence(timeout: 5), "Saved assistant avatar proof was not visible")
+        XCTAssertTrue(savedAvatar.label.contains("Classic π"))
+
+        app.buttons["assistant.avatarProof.open"].tap()
+        let pickerList = app.collectionViews["assistant.avatarPicker.list"]
+        XCTAssertTrue(pickerList.waitForExistence(timeout: 5), "Assistant picker list did not appear")
+        pickerList.swipeUp()
+        pickerList.swipeUp()
+        let customInput = app.textViews["assistant.avatarPicker.emojiInput"]
+        XCTAssertTrue(customInput.waitForExistence(timeout: 5), "Assistant custom input did not appear")
+        customInput.tap()
+        customInput.typeText("not an emoji")
+
+        let validation = app.staticTexts["assistant.avatarPicker.validationError"]
+        XCTAssertTrue(validation.waitForExistence(timeout: 3), "Invalid emoji must show input validation")
+        let save = app.buttons["assistant.avatarPicker.save"]
+        XCTAssertFalse(save.isEnabled, "Save must stay disabled for invalid custom emoji")
+        let cancel = app.buttons["assistant.avatarPicker.cancel"]
+        XCTAssertTrue(cancel.isHittable, "Assistant picker Cancel must remain reachable")
+        cancel.tap()
+        XCTAssertTrue(savedAvatar.waitForExistence(timeout: 3), "Cancel did not dismiss assistant picker")
+        XCTAssertTrue(savedAvatar.label.contains("Classic π"), "Cancel must preserve the saved assistant avatar")
+        saveScreenshot(name: "assistant-avatar-invalid-cancel")
+    }
+
+    func testAgentIconSaveFailureShowsRetryAndPreservesDraft() throws {
+        launchPreview(screen: "agent-icons-save-failure")
+
+        let agentRow = app.descendants(matching: .any)["agent.proof.agentRow"]
+        XCTAssertTrue(agentRow.waitForExistence(timeout: 5))
+        agentRow.tap()
+        let detailIcon = app.buttons["agent.proof.detail.icon"]
+        XCTAssertTrue(detailIcon.waitForExistence(timeout: 5))
+        detailIcon.tap()
+
+        let pickerList = app.collectionViews["agent.iconPicker.list"]
+        let sparkle = app.buttons["agent.iconPicker.symbol.sparkles"]
+        for _ in 0..<4 where !sparkle.isHittable {
+            pickerList.swipeUp()
+        }
+        XCTAssertTrue(sparkle.isHittable, "Agent symbol choice was not reachable")
+        sparkle.tap()
+        app.buttons["agent.iconPicker.save"].tap()
+
+        let saveError = app.descendants(matching: .any)["agent.iconPicker.saveError"].firstMatch
+        XCTAssertTrue(saveError.waitForExistence(timeout: 5), "Agent save failure did not render immediately")
+        XCTAssertTrue(saveError.isHittable, "Save failure must remain visible without scrolling")
+        XCTAssertTrue(saveError.label.contains("Preview server is unavailable"))
+        XCTAssertTrue(app.buttons["agent.iconPicker.retry"].isHittable, "Retry action must remain visible without scrolling")
+        app.buttons["agent.iconPicker.retry"].tap()
+
+        XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Retry did not return to agent detail")
+        XCTAssertEqual(detailIcon.value as? String, "Sparkles", "Retry lost the selected Agent icon")
+        saveScreenshot(name: "agent-icon-save-failure-retry")
+    }
+
+    func testIconPickerStandardSelectionAffordances() throws {
         XCUIDevice.shared.orientation = .portrait
-        launchPreview(
-            screen: "agent-icons",
-            contentSizeCategory: "UICTContentSizeCategoryAccessibilityXXXL"
+        launchPreview(screen: "agent-icons")
+
+        let agentRow = app.descendants(matching: .any)["agent.proof.agentRow"]
+        XCTAssertTrue(agentRow.waitForExistence(timeout: 5))
+        agentRow.tap()
+        let detailIcon = app.buttons["agent.proof.detail.icon"]
+        XCTAssertTrue(detailIcon.waitForExistence(timeout: 5))
+        detailIcon.tap()
+
+        let pickerList = app.collectionViews["agent.iconPicker.list"]
+        let current = app.descendants(matching: .any)["agent.iconPicker.current"]
+        let draft = app.descendants(matching: .any)["agent.iconPicker.draft"]
+        let defaultChoice = app.buttons["agent.iconPicker.option.default"]
+        XCTAssertTrue(current.waitForExistence(timeout: 5))
+        XCTAssertTrue(draft.waitForExistence(timeout: 5))
+        XCTAssertTrue(defaultChoice.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(defaultChoice.frame.height, 44)
+
+        let customInput = app.textViews["agent.iconPicker.emojiInput"]
+        for _ in 0..<3 where !customInput.isHittable {
+            pickerList.swipeUp()
+        }
+        XCTAssertTrue(customInput.isHittable, "Custom input was not reachable at standard size")
+        XCTAssertGreaterThanOrEqual(customInput.frame.height, 44)
+        customInput.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "Custom input did not open the software keyboard")
+        customInput.typeText("🧘")
+
+        let customSelection = app.descendants(matching: .any)["agent.iconPicker.customSelection"]
+        XCTAssertTrue(customSelection.waitForExistence(timeout: 3), "Custom emoji did not become an explicit selected choice")
+        XCTAssertTrue(customSelection.isSelected, "Custom choice must expose the selected trait")
+        XCTAssertEqual(customSelection.value as? String, "Selected")
+        XCTAssertTrue((customInput.value as? String)?.contains("Selected") == true)
+
+        let dismissKeyboard = app.buttons["iconPicker.dismissKeyboard"]
+        XCTAssertTrue(dismissKeyboard.waitForExistence(timeout: 3), "Custom input needs a keyboard dismissal action")
+        dismissKeyboard.tap()
+
+        let search = app.textFields["Search SF Symbols"]
+        for _ in 0..<3 where !search.isHittable {
+            pickerList.swipeDown()
+        }
+        XCTAssertTrue(search.isHittable, "Symbol search was not reachable")
+        XCTAssertGreaterThanOrEqual(search.frame.height, 44)
+        search.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "Symbol search did not open the software keyboard")
+        search.typeText("cart")
+        XCTAssertEqual(search.value as? String, "cart", "Symbol search must retain typed text before filtering")
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "Search must keep the software keyboard active while typing")
+        let keyboardReturn = app.keyboards.buttons["Return"]
+        XCTAssertTrue(keyboardReturn.waitForExistence(timeout: 3))
+        keyboardReturn.tap()
+        let cart = app.buttons["agent.iconPicker.symbol.cart"]
+        for _ in 0..<3 where !cart.exists || !cart.isHittable {
+            pickerList.swipeUp()
+        }
+        XCTAssertTrue(cart.waitForExistence(timeout: 3), "Search did not expose bottom catalog content")
+        XCTAssertTrue(cart.isHittable, "Filtered bottom content was not reachable after keyboard dismissal")
+        XCTAssertGreaterThanOrEqual(cart.frame.height, 44)
+        XCTAssertTrue(app.buttons["agent.iconPicker.cancel"].isHittable)
+        XCTAssertTrue(app.buttons["agent.iconPicker.save"].isHittable)
+        saveScreenshot(name: "agent-icon-picker-standard-selection")
+    }
+
+    func testIconPickerInitialStateUsesLargePresentationInCompactHeight() throws {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        launchPreview(screen: "agent-icons")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let landscape = XCTNSPredicateExpectation(
+            predicate: NSPredicate { object, _ in
+                guard let application = object as? XCUIApplication else { return false }
+                return application.frame.width > application.frame.height
+            },
+            object: app
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [landscape], timeout: 5),
+            .completed,
+            "Simulator did not settle into normalized landscape orientation"
         )
 
         let agentRow = app.descendants(matching: .any)["agent.proof.agentRow"]
-        XCTAssertTrue(agentRow.waitForExistence(timeout: 5), "Seeded Agent row not visible")
+        XCTAssertTrue(agentRow.waitForExistence(timeout: 5))
         agentRow.tap()
-
         let detailIcon = app.buttons["agent.proof.detail.icon"]
-        XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail icon control not visible")
-        XCTAssertTrue(app.staticTexts["Description"].exists)
-        saveScreenshot(name: "agent-detail-accessibility-description")
+        XCTAssertTrue(detailIcon.waitForExistence(timeout: 5))
+        detailIcon.tap()
 
-        let systemPrompt = app.staticTexts["Append System Prompt"]
-        for _ in 0..<4 where !systemPrompt.exists {
-            app.swipeUp()
-        }
-        XCTAssertTrue(systemPrompt.exists)
-        saveScreenshot(name: "agent-detail-accessibility-system-prompt")
+        let pickerList = app.collectionViews["agent.iconPicker.list"]
+        XCTAssertTrue(pickerList.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(
+            pickerList.frame.height,
+            app.frame.height * 0.65,
+            "Compact-height picker must use the large presentation"
+        )
+
+        let current = app.descendants(matching: .any)["agent.iconPicker.current"]
+        let draft = app.descendants(matching: .any)["agent.iconPicker.draft"]
+        let defaultChoice = app.buttons["agent.iconPicker.option.default"]
+        XCTAssertTrue(current.waitForExistence(timeout: 3), "Current preview must be exposed initially in compact height")
+        XCTAssertTrue(draft.waitForExistence(timeout: 3), "Draft preview must be exposed initially in compact height")
+        XCTAssertTrue(defaultChoice.waitForExistence(timeout: 3), "Default must be exposed initially before the catalog")
+        XCTAssertTrue(current.isHittable)
+        XCTAssertTrue(draft.isHittable)
+        XCTAssertTrue(defaultChoice.isHittable)
+        XCTAssertEqual(current.frame.midY, draft.frame.midY, accuracy: 2)
+        XCTAssertLessThan(draft.frame.minY, defaultChoice.frame.minY)
+        saveScreenshot(name: "agent-icon-picker-compact-height-initial")
     }
 
     func testWorkspaceSidebarGitStatusPreview() throws {

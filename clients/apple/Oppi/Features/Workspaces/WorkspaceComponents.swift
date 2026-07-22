@@ -1,73 +1,17 @@
 import SwiftUI
 import UIKit
 
-struct WorkspaceIconOption: Identifiable, Equatable {
-    let symbolName: String
-    let label: String
-
-    var id: String { symbolName }
-}
+typealias WorkspaceIconOption = IconSymbolOption
 
 enum WorkspaceIconCatalog {
-    static let options: [WorkspaceIconOption] = [
-        .init(symbolName: "folder", label: "Folder"),
-        .init(symbolName: "folder.fill", label: "Folder Filled"),
-        .init(symbolName: "square.grid.2x2", label: "Workspace"),
-        .init(symbolName: "rectangle.3.group", label: "Project"),
-        .init(symbolName: "terminal", label: "Terminal"),
-        .init(symbolName: "chevron.left.forwardslash.chevron.right", label: "Code"),
-        .init(symbolName: "curlybraces", label: "Braces"),
-        .init(symbolName: "command", label: "Command"),
-        .init(symbolName: "hammer", label: "Build"),
-        .init(symbolName: "wrench.and.screwdriver", label: "Tools"),
-        .init(symbolName: "ant", label: "Debug"),
-        .init(symbolName: "shippingbox", label: "Package"),
-        .init(symbolName: "cube", label: "Module"),
-        .init(symbolName: "server.rack", label: "Server"),
-        .init(symbolName: "externaldrive", label: "Storage"),
-        .init(symbolName: "cloud", label: "Cloud"),
-        .init(symbolName: "network", label: "Network"),
-        .init(symbolName: "globe", label: "Web"),
-        .init(symbolName: "arrow.triangle.branch", label: "Branch"),
-        .init(symbolName: "point.3.connected.trianglepath.dotted", label: "Graph"),
-        .init(symbolName: "doc.text", label: "Docs"),
-        .init(symbolName: "book.closed", label: "Book"),
-        .init(symbolName: "text.page", label: "Text"),
-        .init(symbolName: "checklist", label: "Checklist"),
-        .init(symbolName: "tray.full", label: "Archive"),
-        .init(symbolName: "brain", label: "AI"),
-        .init(symbolName: "sparkles", label: "Sparkles"),
-        .init(symbolName: "lightbulb", label: "Idea"),
-        .init(symbolName: "bolt", label: "Fast"),
-        .init(symbolName: "flame", label: "Hot"),
-        .init(symbolName: "star", label: "Favorite"),
-        .init(symbolName: "heart", label: "Heart"),
-        .init(symbolName: "flag", label: "Flag"),
-        .init(symbolName: "tag", label: "Tag"),
-        .init(symbolName: "lock", label: "Secure"),
-        .init(symbolName: "shield", label: "Shield"),
-        .init(symbolName: "person.2", label: "Team"),
-        .init(symbolName: "paintbrush", label: "Design"),
-        .init(symbolName: "photo", label: "Media"),
-        .init(symbolName: "music.note", label: "Audio"),
-        .init(symbolName: "gamecontroller", label: "Game"),
-        .init(symbolName: "graduationcap", label: "Learning"),
-        .init(symbolName: "leaf", label: "Nature"),
-        .init(symbolName: "cart", label: "Shop"),
-    ]
+    static let options = IconSymbolCatalog.options
 
     static func filtered(by query: String) -> [WorkspaceIconOption] {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedQuery.isEmpty else { return options }
-
-        return options.filter {
-            $0.label.localizedCaseInsensitiveContains(trimmedQuery)
-                || $0.symbolName.localizedCaseInsensitiveContains(trimmedQuery)
-        }
+        IconSymbolCatalog.availableOptions(matching: query)
     }
 
     static func label(for symbolName: String) -> String? {
-        options.first { $0.symbolName == symbolName }?.label
+        IconSymbolCatalog.label(for: symbolName)
     }
 }
 
@@ -77,218 +21,92 @@ struct WorkspaceIcon: View {
     let icon: IconChoice?
     let size: CGFloat
     var assetCache: IconAssetCache? = nil
-    @Environment(\.iconAssetCache) private var environmentAssetCache
-    @State private var loadedGenmoji: UIImage?
-    @State private var activeLoadIdentity: IconAssetViewLoadIdentity?
 
     var body: some View {
-        Group {
-            switch icon ?? .defaultValue {
-            case .emoji(let value):
-                Text(value)
-            case .symbol(let name) where UIImage(systemName: name) != nil:
-                Image(systemName: name)
-                    .foregroundStyle(.themeBlue)
-            case .genmoji:
-                if let loadedGenmoji {
-                    Image(uiImage: loadedGenmoji)
-                        .resizable()
-                        .scaledToFit()
-                } else {
-                    defaultIcon
+        IconChoiceView(
+            value: icon,
+            purpose: .workspace,
+            size: size,
+            frameSize: size,
+            assetCache: assetCache
+        )
+    }
+}
+
+private enum WorkspaceIconPickerError: LocalizedError {
+    case serverOffline
+
+    var errorDescription: String? { "Server is offline" }
+}
+
+/// Workspace adapter for the shared icon/avatar picker interaction.
+struct WorkspaceIconPickerView: View {
+    @Binding var icon: IconChoice
+    @Environment(\.apiClient) private var apiClient
+
+    var uploadOperation: ((Data, String) async throws -> IconChoice)?
+
+    var body: some View {
+        UnifiedIconPickerView(
+            purpose: .workspace,
+            savedValue: icon,
+            defaultValue: .defaultValue,
+            valueDescription: Self.description,
+            makeEmoji: IconChoice.emoji,
+            makeSymbol: IconChoice.symbol,
+            symbolName: Self.symbolName,
+            customChoice: Self.customChoice,
+            preview: { value, size in
+                AnyView(WorkspaceIcon(icon: value, size: size))
+            },
+            genmojiPreview: { data, contentDescription, size in
+                AnyView(AssistantAvatarPreview(
+                    avatar: .genmoji(data: data, contentDescription: contentDescription),
+                    sessionId: "workspace-icon-picker-genmoji",
+                    size: size
+                ))
+            },
+            prepareGenmoji: { data, contentDescription in
+                if let uploadOperation {
+                    return try await uploadOperation(data, contentDescription)
                 }
-            case .defaultValue, .symbol:
-                defaultIcon
-            }
-        }
-        .font(.system(size: size))
-        .task(id: IconAssetLoadKey(
-            assetId: icon?.assetId,
-            cache: assetCache ?? environmentAssetCache
-        )) {
-            let cache = assetCache ?? environmentAssetCache
-            let identity = IconAssetViewLoadIdentity(
-                key: IconAssetLoadKey(assetId: icon?.assetId, cache: cache),
-                requestID: UUID()
-            )
-            activeLoadIdentity = identity
-            guard case .genmoji(let assetId, _) = icon,
-                  let cache else {
-                loadedGenmoji = nil
-                return
-            }
-            await loadIconAssetForView(
-                assetId: assetId,
-                size: size * 2,
-                cache: cache,
-                identity: identity,
-                currentIdentity: { activeLoadIdentity },
-                assign: { loadedGenmoji = $0 }
-            )
-        }
+                guard let apiClient else { throw WorkspaceIconPickerError.serverOffline }
+                let asset = try await apiClient.uploadIconAsset(
+                    data: data,
+                    contentType: NSAdaptiveImageGlyph.contentType.preferredMIMEType ?? "image/heic"
+                )
+                return .genmoji(
+                    assetId: asset.assetId,
+                    contentDescription: contentDescription
+                )
+            },
+            commit: { selected in
+                icon = selected
+            },
+            accessibilityPrefix: "workspace.iconPicker"
+        )
     }
 
-    private var defaultIcon: some View {
-        Image(systemName: "square.grid.2x2")
-            .foregroundStyle(.themeBlue)
-    }
-}
-
-func draftIconChoice(_ value: String) -> IconChoice {
-    switch AgentIconValue.classify(value) {
-    case .emoji(let emoji): return .emoji(emoji)
-    case .symbolCandidate(let name): return .symbol(name)
-    case .invalid: return .defaultValue
-    }
-}
-
-extension IconChoice {
-    var draftText: String {
-        switch self {
-        case .emoji(let value): return value
-        case .symbol(let name): return name
-        case .defaultValue, .genmoji: return ""
-        }
-    }
-}
-
-struct WorkspaceIconPickerSelection: Equatable, Sendable {
-    var value: IconChoice
-
-    var draftText: String {
-        get { value.draftText }
-        set { value = draftIconChoice(newValue) }
+    private static func symbolName(_ value: IconChoice) -> String? {
+        guard case .symbol(let name) = value else { return nil }
+        return name
     }
 
-    var currentIconName: String {
+    private static func customChoice(_ value: IconChoice) -> IconPickerCustomChoice? {
         switch value {
-        case .defaultValue:
-            return "Default workspace icon"
-        case .emoji(let emoji):
-            return emoji
-        case .symbol(let name):
-            return WorkspaceIconCatalog.label(for: name) ?? name
-        case .genmoji(_, let contentDescription):
-            return contentDescription
+        case .emoji(let emoji): return .emoji(emoji)
+        case .genmoji(_, let contentDescription): return .genmoji(contentDescription)
+        case .defaultValue, .symbol: return nil
         }
     }
 
-    mutating func selectSymbol(_ symbolName: String) {
-        value = .symbol(symbolName)
-    }
-
-    mutating func useDefault() {
-        value = .defaultValue
-    }
-}
-
-struct WorkspaceIconPicker: View {
-    @Binding var selection: WorkspaceIconPickerSelection
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var searchText = ""
-
-    private var filteredOptions: [WorkspaceIconOption] {
-        WorkspaceIconCatalog.filtered(by: searchText)
-    }
-
-    var body: some View {
-        List {
-            Section("Current Icon") {
-                HStack(spacing: 12) {
-                    WorkspaceIcon(icon: selection.value, size: 28)
-                        .frame(width: 44, height: 44)
-
-                    Text(selection.currentIconName)
-                        .font(currentIconNameUsesMonospacedFont ? .body.monospaced() : .body)
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(2)
-                }
-                .accessibilityElement(children: .combine)
-
-                Button {
-                    selection.useDefault()
-                } label: {
-                    Label("Use Default Icon", systemImage: "arrow.counterclockwise")
-                }
-                .disabled(selection.value == .defaultValue)
-                .accessibilityIdentifier("workspace.iconPicker.default")
-            }
-
-            Section {
-                TextField("Emoji or SF Symbol name", text: $selection.draftText)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .accessibilityIdentifier("workspace.iconPicker.custom")
-            } footer: {
-                Text("Choose a symbol below, enter an emoji, or paste an SF Symbol name.")
-            }
-
-            Section("SF Symbols") {
-                if filteredOptions.isEmpty {
-                    ContentUnavailableView.search(text: searchText)
-                        .frame(maxWidth: .infinity)
-                        .listRowBackground(Color.clear)
-                } else {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 72), spacing: 8)],
-                        spacing: 8
-                    ) {
-                        ForEach(filteredOptions) { option in
-                            symbolButton(option)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
+    static func description(_ value: IconChoice) -> String {
+        switch AgentIconContent.resolve(value) {
+        case .text(let emoji): return "Emoji \(emoji)"
+        case .symbol(let name): return IconSymbolCatalog.label(for: name) ?? "SF Symbol"
+        case .genmoji(_, let contentDescription): return contentDescription
+        case .fallback: return "Default workspace icon"
         }
-        .listStyle(.insetGrouped)
-        .themedListSurface()
-        .navigationTitle("Choose Icon")
-        .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, prompt: "Search symbols")
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { dismiss() }
-            }
-        }
-    }
-
-    private var currentIconNameUsesMonospacedFont: Bool {
-        guard case .symbol(let name) = selection.value else { return false }
-        return WorkspaceIconCatalog.label(for: name) == nil
-    }
-
-    private func symbolButton(_ option: WorkspaceIconOption) -> some View {
-        let isSelected = selection.value == .symbol(option.symbolName)
-
-        return Button {
-            selection.selectSymbol(option.symbolName)
-        } label: {
-            VStack(spacing: 6) {
-                Image(systemName: option.symbolName)
-                    .font(.title3)
-                    .frame(width: 32, height: 28)
-
-                Text(option.label)
-                    .font(.caption2)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-            }
-            .foregroundStyle(isSelected ? .themeBlue : .themeFg)
-            .frame(maxWidth: .infinity, minHeight: 60)
-            .padding(.horizontal, 4)
-            .background(.themeBlue.opacity(isSelected ? 0.14 : 0), in: RoundedRectangle(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(.themeBlue.opacity(isSelected ? 0.7 : 0), lineWidth: 1)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(option.label)
-        .accessibilityValue(isSelected ? "Selected" : "Not selected")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

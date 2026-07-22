@@ -551,13 +551,16 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             "Assistant avatar picker did not open"
         )
 
-        let officialPi = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Official Pi")
-        ).firstMatch
+        let officialPi = app.buttons["assistant.avatarPicker.option.officialPi"]
         XCTAssertTrue(officialPi.waitForExistence(timeout: 5), "Official Pi avatar option did not appear")
         try saveLabScreenshot(name: "iphone-official-pi-avatar-picker-e2e")
 
         tap(officialPi, named: "official Pi avatar", timeout: 5)
+        XCTAssertTrue(
+            app.navigationBars["Assistant Avatar"].exists,
+            "Choosing an assistant avatar must remain a draft until Save"
+        )
+        tap(app.buttons["assistant.avatarPicker.save"], named: "assistant avatar Save", timeout: 5)
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5), "Avatar picker did not dismiss")
         XCTAssertTrue(
             app.staticTexts["Official Pi"].waitForExistence(timeout: 5),
@@ -565,10 +568,9 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
 
         tap(avatarSetting, named: "assistant avatar setting", timeout: 5)
-        let classicPi = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Classic π")
-        ).firstMatch
-        tap(classicPi, named: "classic Pi avatar", timeout: 5)
+        let defaultAvatar = app.buttons["assistant.avatarPicker.option.default"]
+        tap(defaultAvatar, named: "default assistant avatar", timeout: 5)
+        tap(app.buttons["assistant.avatarPicker.save"], named: "assistant avatar Save", timeout: 5)
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5), "Avatar picker did not dismiss")
     }
 
@@ -585,6 +587,20 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertTrue(pathField.waitForExistence(timeout: 5), "Workspace deep link path field did not appear")
         XCTAssertEqual(nameField.value as? String, "Deep Link Workspace")
         XCTAssertEqual(pathField.value as? String, "/tmp")
+
+        let iconButton = app.buttons["workspace.create.icon"]
+        for _ in 0..<5 where !iconButton.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(iconButton.waitForExistence(timeout: 5), "Workspace create icon control did not appear")
+        tap(iconButton, named: "workspace create icon", timeout: 5)
+        XCTAssertTrue(
+            app.collectionViews["workspace.iconPicker.list"].waitForExistence(timeout: 5),
+            "Workspace create did not use the shared icon picker"
+        )
+        try saveLabScreenshot(name: "iphone-workspace-create-icon-picker-e2e")
+        tap(app.buttons["workspace.iconPicker.cancel"], named: "workspace icon picker Cancel", timeout: 5)
+        XCTAssertEqual(iconButton.value as? String, "Default workspace icon")
     }
 
     func testIPhoneWorkspaceSidebarScrolls() throws {

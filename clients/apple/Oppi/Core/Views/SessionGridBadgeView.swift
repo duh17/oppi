@@ -7,7 +7,8 @@ enum AssistantAvatarRenderer {
         avatar: AssistantAvatar,
         sessionId: String,
         size: CGFloat,
-        themeID: ThemeID? = nil
+        themeID: ThemeID? = nil,
+        cachedImage: UIImage? = nil
     ) -> UIImage {
         switch avatar {
         case .officialPi:
@@ -18,10 +19,15 @@ enum AssistantAvatarRenderer {
             return renderText("π", size: size)
         case .emoji(let char):
             return renderEmoji(char, size: size)
-        case .genmoji(let data):
-            if #available(iOS 18.0, *),
-               let genmojiImage = renderLocalAssistantGenmoji(data: data, size: size) {
-                return genmojiImage
+        case .genmoji(let data, _):
+            // Mounted rows receive the persisted snapshot's validated raster.
+            // Draft renderers omit it and keep their bytes on this failable boundary.
+            if let cachedImage {
+                return cachedImage
+            }
+            let decodeSize = min(512, max(1, size))
+            if let decoded = try? IconAssetCache.decodeRemoteHEIF(data: data, size: decodeSize) {
+                return decoded.image
             }
             return renderText("π", size: size)
         }
@@ -127,47 +133,6 @@ enum AssistantAvatarRenderer {
         }
     }
 
-    @available(iOS 18.0, *)
-    private static func renderLocalAssistantGenmoji(data: Data, size: CGFloat) -> UIImage? {
-        // These bytes originate from the local official emoji keyboard picker,
-        // which supplied NSAdaptiveImageGlyph.imageContent. Remote Agent and
-        // workspace assets use IconAssetCache's failable ImageIO path instead.
-        let glyph = NSAdaptiveImageGlyph(imageContent: data)
-
-        // Render via UITextView which has native Genmoji support
-        let textView = UITextView()
-        textView.backgroundColor = .clear
-        textView.isEditable = false
-        textView.textContainerInset = .zero
-        textView.textContainer.lineFragmentPadding = 0
-
-        let attrStr = NSMutableAttributedString(string: "\u{FFFC}")
-        attrStr.addAttribute(
-            .adaptiveImageGlyph,
-            value: glyph,
-            range: NSRange(location: 0, length: 1)
-        )
-        attrStr.addAttribute(
-            .font,
-            value: UIFont.systemFont(ofSize: size * 0.8),
-            range: NSRange(location: 0, length: 1)
-        )
-        textView.attributedText = attrStr
-        textView.sizeToFit()
-
-        let renderSize = CGSize(width: size, height: size)
-        let renderer = UIGraphicsImageRenderer(size: renderSize)
-        return renderer.image { ctx in
-            let viewSize = textView.bounds.size
-            guard viewSize.width > 0, viewSize.height > 0 else { return }
-            let scale = min(size / viewSize.width, size / viewSize.height)
-            let scaledW = viewSize.width * scale
-            let scaledH = viewSize.height * scale
-            ctx.cgContext.translateBy(x: (size - scaledW) / 2, y: (size - scaledH) / 2)
-            ctx.cgContext.scaleBy(x: scale, y: scale)
-            textView.layer.render(in: ctx.cgContext)
-        }
-    }
 }
 
 /// Renders the assistant avatar as a cached `UIImage` in a `UIImageView`.
@@ -177,7 +142,7 @@ enum AssistantAvatarRenderer {
 /// - `.piText` → rendered π character
 /// - `.golGrid` → Game of Life grid, unique per session
 /// - `.emoji` → rendered emoji character
-/// - `.genmoji` → NSAdaptiveImageGlyph image
+/// - `.genmoji` → bounded ImageIO/CGImage raster fallback
 ///
 /// One render per (sessionId, avatar, theme) combo, then pure UIImageView.
 final class SessionGridBadgeView: UIView {
@@ -197,6 +162,10 @@ final class SessionGridBadgeView: UIView {
         didSet { updateIfNeeded() }
     }
 
+    /// Injectable only at this rendering boundary so focused tests can prove
+    /// Agent rows never consult the device-local assistant avatar.
+    var assistantAvatarProvider: @MainActor () -> AssistantAvatarSnapshot = { AssistantAvatar.currentSnapshot }
+
     var iconAssetCache: IconAssetCache? {
         didSet {
             guard iconAssetCache !== oldValue else { return }
@@ -209,6 +178,7 @@ final class SessionGridBadgeView: UIView {
     private var lastCacheKey: String?
     private var loadTask: Task<Void, Never>?
     private var currentGenmojiAssetID: String?
+    private var isConfiguring = false
 
     #if DEBUG
         var currentGenmojiAssetIDForTesting: String? { currentGenmojiAssetID }
@@ -217,6 +187,8 @@ final class SessionGridBadgeView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isOpaque = false
+        isAccessibilityElement = true
+        accessibilityTraits = .image
         backgroundColor = .clear
         imageView.contentMode = .scaleAspectFit
         imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -229,13 +201,13 @@ final class SessionGridBadgeView: UIView {
         ])
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(avatarOrThemeDidChange(_:)),
+            selector: #selector(assistantAvatarDidChange(_:)),
             name: .assistantAvatarDidChange,
             object: nil
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(avatarOrThemeDidChange(_:)),
+            selector: #selector(themeDidChange(_:)),
             name: .oppiThemeDidChange,
             object: nil
         )
@@ -257,28 +229,72 @@ final class SessionGridBadgeView: UIView {
         imageView.image = nil
     }
 
+    /// Applies one session identity atomically. SwiftUI and collection rows use
+    /// this instead of transiently configuring a saved-Agent row as global.
+    func configure(
+        sessionId: String,
+        agentId: String?,
+        agentIcon: IconChoice?,
+        iconAssetCache: IconAssetCache?
+    ) {
+        isConfiguring = true
+        self.sessionId = sessionId
+        self.agentId = agentId
+        self.agentIcon = agentIcon
+        self.iconAssetCache = iconAssetCache
+        isConfiguring = false
+        updateIfNeeded()
+    }
+
     override var intrinsicContentSize: CGSize {
         CGSize(width: 18, height: 18)
     }
 
-    @objc private func avatarOrThemeDidChange(_ notification: Notification) {
+    @objc private func assistantAvatarDidChange(_ notification: Notification) {
+        // A saved-Agent row is entirely defined by its launch snapshot. Do not
+        // invalidate its Agent image, start another asset fetch, or consult the
+        // device-local assistant avatar when that preference changes.
+        guard agentId?.isEmpty != false else { return }
+
+        // Global rows refresh through their lightweight persisted snapshot
+        // identity. Keep Agent entries in the shared cache intact.
+        lastCacheKey = nil
+        updateIfNeeded()
+    }
+
+    @objc private func themeDidChange(_ notification: Notification) {
+        // Rendered assistant and Agent icons can use theme colors, so a theme
+        // switch must invalidate all cached rasters before redrawing.
         Self.imageCache.removeAllObjects()
         lastCacheKey = nil
         updateIfNeeded()
     }
 
     private func updateIfNeeded() {
-        let avatar = AssistantAvatar.current
+        guard !isConfiguring else { return }
         let themeId = ThemeRuntimeState.currentThemeID()
         let presentation = AssistantIdentityPresentation.resolve(
             agentId: agentId,
             agentIcon: agentIcon
         )
-        let identity = switch presentation {
-        case .agent(let content):
-            "agent:\(content)"
+        let avatar: AssistantAvatar?
+        let cachedAvatarImage: UIImage?
+        let identity: String
+        switch presentation {
         case .globalAvatar:
-            "assistant:\(avatar.cacheIdentifier)"
+            let snapshot = assistantAvatarProvider()
+            let globalAvatar = snapshot.avatar
+            avatar = globalAvatar
+            cachedAvatarImage = snapshot.image
+            accessibilityLabel = globalAvatar.accessibilityDescription
+            identity = "assistant:\(snapshot.cacheIdentifier)"
+        case .agent(let content):
+            // Saved-Agent rows are entirely determined by their launch snapshot.
+            // Do not load or decode the global device-local assistant avatar.
+            avatar = nil
+            cachedAvatarImage = nil
+            accessibilityLabel = "Saved Agent, \(content.accessibilityDescription)"
+            identity = "agent:\(content)"
         }
         let cacheKey = "\(sessionId):\(themeId):\(identity)"
         guard cacheKey != lastCacheKey else { return }
@@ -316,10 +332,12 @@ final class SessionGridBadgeView: UIView {
             imageView.image = image
 
         case .globalAvatar:
+            guard let avatar else { return }
             let image = AssistantAvatarRenderer.render(
                 avatar: avatar,
                 sessionId: sessionId,
-                size: 36
+                size: 36,
+                cachedImage: cachedAvatarImage
             )
             Self.imageCache.setObject(image, forKey: cacheKey as NSString)
             imageView.image = image

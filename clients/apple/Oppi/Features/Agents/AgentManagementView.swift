@@ -362,12 +362,7 @@ private struct AgentDetailView: View {
     }
 
     private func iconSummary(_ value: IconChoice) -> String {
-        switch AgentIconContent.resolve(value) {
-        case .text(let emoji): return "Emoji \(emoji)"
-        case .symbol(let name): return "SF Symbol \(name)"
-        case .genmoji(_, let contentDescription): return contentDescription
-        case .fallback: return "Default"
-        }
+        AgentIconPickerView.description(value)
     }
 
     private func detailRow(_ title: String, _ value: String) -> some View {

@@ -75,6 +75,17 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         replaceText(in: hostField, with: hostPath)
         dismissKeyboardIfNeeded()
 
+        let iconButton = app.buttons["workspace.create.icon"]
+        for _ in 0..<4 where !iconButton.isHittable {
+            app.swipeUp()
+        }
+        tap(iconButton, named: "workspace create icon button")
+        let folder = app.buttons["workspace.iconPicker.symbol.folder"]
+        XCTAssertTrue(folder.waitForExistence(timeout: 5), "Workspace icon picker did not expose Folder")
+        tap(folder, named: "workspace Folder icon")
+        tap(app.buttons["workspace.iconPicker.save"], named: "workspace icon picker Save")
+        XCTAssertEqual(iconButton.value as? String, "Folder", "Create form did not retain the selected icon")
+
         let pathExists = app.staticTexts["Path exists"]
         let submit = app.buttons["workspace.create.submit"]
         let folderExists = app.staticTexts["Folder exists"]
@@ -108,6 +119,11 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
 
         let nameField = app.textFields["workspace.edit.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "Workspace edit name field not shown")
+        XCTAssertEqual(
+            app.buttons["workspace.edit.icon"].value as? String,
+            "Folder",
+            "Created workspace icon did not persist after reopening the editor"
+        )
         replaceText(in: nameField, with: updatedName)
 
         let saveButton = app.buttons["workspace.edit.save"]

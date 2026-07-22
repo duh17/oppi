@@ -118,25 +118,42 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
 
         openWorkspaceEditForm()
         let iconButton = app.buttons["workspace.edit.icon"]
+        let iconBeforeCancel = iconButton.value as? String
         tap(iconButton, named: "workspace icon picker")
 
         XCTAssertTrue(
-            app.navigationBars["Choose Icon"].waitForExistence(timeout: 10),
+            app.navigationBars["Workspace Icon"].waitForExistence(timeout: 10),
             "Workspace icon picker did not open"
         )
         XCTAssertTrue(
-            app.textFields["workspace.iconPicker.custom"].waitForExistence(timeout: 5),
-            "Workspace icon picker did not retain custom emoji or symbol entry"
+            app.textViews["workspace.iconPicker.emojiInput"].waitForExistence(timeout: 5),
+            "Workspace icon picker did not expose shared emoji and Genmoji input"
         )
 
-        let codeSymbol = app.buttons["Code"]
+        let folderSymbol = app.buttons["workspace.iconPicker.symbol.folder"]
+        XCTAssertTrue(folderSymbol.waitForExistence(timeout: 5), "Folder symbol was not available")
+        tap(folderSymbol, named: "workspace Folder symbol")
+        tap(app.buttons["workspace.iconPicker.cancel"], named: "workspace icon picker Cancel")
+        XCTAssertEqual(
+            iconButton.value as? String,
+            iconBeforeCancel,
+            "Cancel must preserve the workspace edit icon"
+        )
+
+        tap(iconButton, named: "workspace icon picker after Cancel")
+        let codeSymbol = app.buttons["workspace.iconPicker.symbol.chevron.left.forwardslash.chevron.right"]
         XCTAssertTrue(codeSymbol.waitForExistence(timeout: 5), "Code symbol was not available")
         for _ in 0..<3 where !codeSymbol.isHittable {
             app.swipeUp()
         }
         XCTAssertTrue(codeSymbol.isHittable, "Code symbol was not reachable in the picker")
         codeSymbol.tap()
-        tap(app.navigationBars["Choose Icon"].buttons["Done"], named: "icon picker Done button")
+        XCTAssertTrue(
+            app.navigationBars["Workspace Icon"].exists,
+            "Choosing a workspace icon must remain a draft until Save"
+        )
+        try saveLabScreenshot(name: "ipad-workspace-edit-icon-picker-e2e")
+        tap(app.buttons["workspace.iconPicker.save"], named: "icon picker Save button")
 
         XCTAssertEqual(iconButton.value as? String, "Code")
         tap(app.buttons["workspace.edit.save"], named: "workspace save button")

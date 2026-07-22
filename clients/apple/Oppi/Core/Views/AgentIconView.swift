@@ -23,7 +23,7 @@ enum AgentIconContent: Equatable {
     var accessibilityDescription: String {
         switch self {
         case .symbol(let name):
-            return "SF Symbol \(name.replacingOccurrences(of: ".", with: " "))"
+            return IconSymbolCatalog.label(for: name) ?? "Symbol icon"
         case .text(let emoji):
             return "Emoji \(emoji)"
         case .genmoji(_, let contentDescription):
@@ -86,12 +86,35 @@ enum AgentIconSizingPolicy {
     }
 }
 
-struct AgentIconView: View {
+enum IconChoiceRenderPurpose {
+    case agent
+    case workspace
+
+    var defaultSymbolName: String {
+        switch self {
+        case .agent: return "person.crop.circle"
+        case .workspace: return "square.grid.2x2"
+        }
+    }
+
+    var defaultAccessibilityDescription: String {
+        switch self {
+        case .agent: return "Default Agent icon"
+        case .workspace: return "Default workspace icon"
+        }
+    }
+}
+
+/// Shared committed-value renderer for saved Agent and workspace icons.
+/// Purpose supplies only the visible Default; media rendering stays generic.
+struct IconChoiceView: View {
     let value: IconChoice?
+    let purpose: IconChoiceRenderPurpose
     let size: CGFloat
     let frameSize: CGFloat?
     let isDecorative: Bool
     let assetCache: IconAssetCache?
+
     @Environment(\.iconAssetCache) private var environmentAssetCache
     @State private var loadedGenmoji: UIImage?
     @State private var activeLoadIdentity: IconAssetViewLoadIdentity?
@@ -99,12 +122,14 @@ struct AgentIconView: View {
 
     init(
         value: IconChoice?,
+        purpose: IconChoiceRenderPurpose,
         size: CGFloat,
         frameSize: CGFloat? = nil,
         isDecorative: Bool = true,
         assetCache: IconAssetCache? = nil
     ) {
         self.value = value
+        self.purpose = purpose
         self.size = size
         self.frameSize = frameSize
         self.isDecorative = isDecorative
@@ -118,6 +143,19 @@ struct AgentIconView: View {
             scaledSize: scaledSize,
             frameSize: frameSize
         )
+    }
+
+    private var accessibilityDescription: String {
+        switch AgentIconContent.resolve(value) {
+        case .symbol(let name):
+            return IconSymbolCatalog.label(for: name) ?? "Symbol icon"
+        case .text(let emoji):
+            return "Emoji \(emoji)"
+        case .genmoji(_, let contentDescription):
+            return contentDescription
+        case .fallback:
+            return purpose.defaultAccessibilityDescription
+        }
     }
 
     var body: some View {
@@ -134,18 +172,16 @@ struct AgentIconView: View {
                         .resizable()
                         .scaledToFit()
                 } else {
-                    Image(systemName: "person.crop.circle")
-                        .foregroundStyle(.themeBlue)
+                    defaultIcon
                 }
             case .fallback:
-                Image(systemName: "person.crop.circle")
-                    .foregroundStyle(.themeBlue)
+                defaultIcon
             }
         }
         .font(.system(size: displaySize))
         .frame(width: frameSize ?? size, height: frameSize ?? size)
         .accessibilityHidden(isDecorative)
-        .accessibilityLabel(isDecorative ? "" : AgentIconContent.resolve(value).accessibilityDescription)
+        .accessibilityLabel(isDecorative ? "" : accessibilityDescription)
         .task(id: IconAssetLoadKey(
             assetId: value?.assetId,
             cache: assetCache ?? environmentAssetCache
@@ -170,6 +206,44 @@ struct AgentIconView: View {
                 assign: { loadedGenmoji = $0 }
             )
         }
+    }
+
+    private var defaultIcon: some View {
+        Image(systemName: purpose.defaultSymbolName)
+            .foregroundStyle(.themeBlue)
+    }
+}
+
+struct AgentIconView: View {
+    let value: IconChoice?
+    let size: CGFloat
+    let frameSize: CGFloat?
+    let isDecorative: Bool
+    let assetCache: IconAssetCache?
+
+    init(
+        value: IconChoice?,
+        size: CGFloat,
+        frameSize: CGFloat? = nil,
+        isDecorative: Bool = true,
+        assetCache: IconAssetCache? = nil
+    ) {
+        self.value = value
+        self.size = size
+        self.frameSize = frameSize
+        self.isDecorative = isDecorative
+        self.assetCache = assetCache
+    }
+
+    var body: some View {
+        IconChoiceView(
+            value: value,
+            purpose: .agent,
+            size: size,
+            frameSize: frameSize,
+            isDecorative: isDecorative,
+            assetCache: assetCache
+        )
     }
 }
 

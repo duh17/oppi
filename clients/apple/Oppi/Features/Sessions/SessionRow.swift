@@ -444,17 +444,12 @@ struct SessionIdentityIconView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: SessionGridBadgeView, context: Context) {
-        view.iconAssetCache = iconAssetCache
-        view.sessionId = sessionId
-        view.agentId = agentId
-        view.agentIcon = agentIcon
-
-        switch AssistantIdentityPresentation.resolve(agentId: agentId, agentIcon: agentIcon) {
-        case .globalAvatar:
-            view.accessibilityLabel = "Pi"
-        case .agent(let content):
-            view.accessibilityLabel = "Saved Agent, \(content.accessibilityDescription)"
-        }
+        view.configure(
+            sessionId: sessionId,
+            agentId: agentId,
+            agentIcon: agentIcon,
+            iconAssetCache: iconAssetCache
+        )
     }
 
     static func dismantleUIView(_ view: SessionGridBadgeView, coordinator: Void) {

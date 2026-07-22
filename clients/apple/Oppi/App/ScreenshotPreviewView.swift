@@ -25,6 +25,10 @@ struct ScreenshotPreviewView: View {
             WorkspaceEditPreview()
         case "agent-icons":
             AgentIconProofPreview()
+        case "agent-icons-save-failure":
+            AgentIconProofPreview(failsFirstSave: true)
+        case "assistant-avatar-picker":
+            AssistantAvatarPickerProofPreview()
         case "workspace-sidebar-git-status":
             WorkspaceSidebarGitStatusPreview()
         case "session-timeline":

@@ -234,10 +234,12 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         accessibilityIdentifier = configuration.itemID.map { "chat.timeline.assistant.\($0)" }
 
         let palette = ThemeRuntimeState.currentPalette()
-        iconBadge.iconAssetCache = configuration.iconAssetCache
-        iconBadge.sessionId = configuration.sessionId
-        iconBadge.agentId = configuration.agentId
-        iconBadge.agentIcon = configuration.agentIcon
+        iconBadge.configure(
+            sessionId: configuration.sessionId,
+            agentId: configuration.agentId,
+            agentIcon: configuration.agentIcon,
+            iconAssetCache: configuration.iconAssetCache
+        )
         bubbleContainer.backgroundColor = UIColor(palette.purple).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
 
         let trimmedText = configuration.text.trimmingCharacters(in: .whitespacesAndNewlines)

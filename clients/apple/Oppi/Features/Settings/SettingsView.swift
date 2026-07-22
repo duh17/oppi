@@ -87,7 +87,6 @@ struct SettingsView: View {
                 }
                 .sheet(isPresented: $showAvatarPicker) {
                     AvatarPickerView(avatar: $assistantAvatar)
-                        .presentationDetents([.medium])
                 }
 
                 Picker("Spinner Style", selection: $spinnerStyle) {
