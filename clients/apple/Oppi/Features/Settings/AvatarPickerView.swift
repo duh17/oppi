@@ -24,7 +24,6 @@ struct AvatarPickerView: View {
                 ),
             ],
             symbols: [],
-            valueDescription: \.accessibilityDescription,
             makeEmoji: AssistantAvatar.emoji,
             makeSymbol: nil,
             customChoice: Self.customChoice,

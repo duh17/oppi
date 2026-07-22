@@ -30,7 +30,6 @@ struct AgentIconPickerView: View {
             purpose: .agent,
             savedValue: agent.definition.icon,
             defaultValue: .defaultValue,
-            valueDescription: Self.description,
             makeEmoji: IconChoice.emoji,
             makeSymbol: IconChoice.symbol,
             symbolName: Self.symbolName,

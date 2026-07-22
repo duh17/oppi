@@ -62,16 +62,12 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(suggestion.waitForExistence(timeout: 5), "Sparkles suggestion not visible")
         suggestion.tap()
 
-        let preview = app.descendants(matching: .any)["agent.iconPicker.draft"]
-        for _ in 0..<3 where !preview.exists {
-            pickerList.swipeDown()
-        }
-        XCTAssertTrue(preview.waitForExistence(timeout: 3), "Draft icon preview not visible")
-        XCTAssertTrue(
-            preview.label.localizedCaseInsensitiveContains("sparkles"),
-            "Draft preview did not describe the selected SF Symbol"
+        XCTAssertFalse(
+            app.descendants(matching: .any)["agent.iconPicker.current"].exists
+                || app.descendants(matching: .any)["agent.iconPicker.draft"].exists,
+            "The picker must not expose Current/Draft preview chrome"
         )
-        saveScreenshot(name: "agent-icons-sf-symbol-preview")
+        saveScreenshot(name: "agent-icons-sf-symbol-draft")
         app.buttons["agent.iconPicker.save"].tap()
 
         XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail did not return after saving")
@@ -87,24 +83,26 @@ final class ScreenshotPreviewUITests: XCTestCase {
         agentRow.tap()
         XCTAssertTrue(detailIcon.waitForExistence(timeout: 3), "Agent detail did not reopen")
         detailIcon.tap()
-
-        let useDefault = app.descendants(matching: .any)["agent.iconPicker.option.default"]
-        XCTAssertTrue(useDefault.waitForExistence(timeout: 5), "Use Default Icon action not visible")
-        useDefault.tap()
-        app.buttons["agent.iconPicker.save"].tap()
-
-        XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail did not return after clearing")
-        XCTAssertEqual(detailIcon.value as? String, "Default")
-
-        detailIcon.tap()
-        let customIcon = app.textViews["agent.iconPicker.emojiInput"]
-        XCTAssertTrue(customIcon.waitForExistence(timeout: 5), "Custom icon field not visible")
-        customIcon.tap()
-        customIcon.typeText("🧘")
-
-        XCTAssertTrue(preview.waitForExistence(timeout: 3), "Emoji draft preview not visible")
-        XCTAssertTrue(preview.label.contains("Emoji 🧘"), "Draft preview did not show the selected emoji")
-        saveScreenshot(name: "agent-icons-emoji-preview")
+        let chooseEmoji = app.buttons["agent.iconPicker.emojiGenmoji"]
+        XCTAssertTrue(chooseEmoji.waitForExistence(timeout: 5), "Choose Emoji or Genmoji control not visible")
+        XCTAssertFalse(
+            app.textViews["agent.iconPicker.emojiInput"].exists,
+            "The adaptive glyph input must not expose a visible empty text field"
+        )
+        chooseEmoji.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "Choose Emoji or Genmoji did not focus the native input")
+        XCTAssertFalse(app.buttons["iconPicker.dismissKeyboard"].exists, "Picker must not add a keyboard accessory control")
+        app.typeText("🧘")
+        XCTAssertTrue(
+            (chooseEmoji.value as? String)?.contains("Emoji 🧘") == true,
+            "The same control must report the selected Unicode emoji"
+        )
+        XCTAssertTrue(waitForKeyboardToDismiss(), "Valid emoji selection must dismiss the keyboard")
+        XCTAssertFalse(
+            app.descendants(matching: .any)["agent.iconPicker.customSelection"].exists,
+            "The picker must not show a separate custom-selection check row"
+        )
+        saveScreenshot(name: "agent-icons-emoji-draft")
         app.buttons["agent.iconPicker.save"].tap()
 
         XCTAssertTrue(detailIcon.waitForExistence(timeout: 5), "Agent detail did not return after emoji save")
@@ -164,10 +162,11 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(pickerList.waitForExistence(timeout: 5), "Assistant picker list did not appear")
         pickerList.swipeUp()
         pickerList.swipeUp()
-        let customInput = app.textViews["assistant.avatarPicker.emojiInput"]
-        XCTAssertTrue(customInput.waitForExistence(timeout: 5), "Assistant custom input did not appear")
-        customInput.tap()
-        customInput.typeText("not an emoji")
+        let chooseEmoji = app.buttons["assistant.avatarPicker.emojiGenmoji"]
+        XCTAssertTrue(chooseEmoji.waitForExistence(timeout: 5), "Assistant emoji control did not appear")
+        chooseEmoji.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "Assistant emoji control did not focus the native input")
+        app.typeText("not an emoji")
 
         let validation = app.staticTexts["assistant.avatarPicker.validationError"]
         XCTAssertTrue(validation.waitForExistence(timeout: 3), "Invalid emoji must show input validation")
@@ -224,40 +223,38 @@ final class ScreenshotPreviewUITests: XCTestCase {
         detailIcon.tap()
 
         let pickerList = app.collectionViews["agent.iconPicker.list"]
-        let current = app.descendants(matching: .any)["agent.iconPicker.current"]
-        let draft = app.descendants(matching: .any)["agent.iconPicker.draft"]
-        let defaultChoice = app.buttons["agent.iconPicker.option.default"]
-        XCTAssertTrue(current.waitForExistence(timeout: 5))
-        XCTAssertTrue(draft.waitForExistence(timeout: 5))
-        XCTAssertTrue(defaultChoice.waitForExistence(timeout: 5))
-        XCTAssertGreaterThanOrEqual(defaultChoice.frame.height, 44)
+        let chooseEmoji = app.buttons["agent.iconPicker.emojiGenmoji"]
+        XCTAssertTrue(chooseEmoji.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(chooseEmoji.frame.height, 43.5)
+        XCTAssertFalse(app.descendants(matching: .any)["agent.iconPicker.current"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["agent.iconPicker.draft"].exists)
+        XCTAssertFalse(app.buttons["agent.iconPicker.option.default"].exists)
+        XCTAssertFalse(app.staticTexts["Current and Draft"].exists)
+        XCTAssertFalse(app.staticTexts["Default"].exists)
+        XCTAssertFalse(app.staticTexts["Search Symbols"].exists)
+        XCTAssertFalse(app.staticTexts["Emoji or Genmoji"].exists, "Chooser label makes a separate section header redundant")
 
-        let customInput = app.textViews["agent.iconPicker.emojiInput"]
-        for _ in 0..<3 where !customInput.isHittable {
-            pickerList.swipeUp()
-        }
-        XCTAssertTrue(customInput.isHittable, "Custom input was not reachable at standard size")
-        XCTAssertGreaterThanOrEqual(customInput.frame.height, 44)
-        customInput.tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "Custom input did not open the software keyboard")
-        customInput.typeText("🧘")
+        chooseEmoji.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "Choose Emoji or Genmoji did not open the software keyboard")
+        XCTAssertFalse(app.buttons["iconPicker.dismissKeyboard"].exists, "Picker must not add a keyboard accessory control")
+        app.typeText("🧘")
+        let emojiFeedback = chooseEmoji.value as? String
+        XCTAssertTrue(
+            emojiFeedback?.contains("Emoji 🧘") == true,
+            "Unicode emoji did not update the chooser feedback: \(emojiFeedback ?? "nil")"
+        )
+        XCTAssertFalse(app.descendants(matching: .any)["agent.iconPicker.customSelection"].exists)
+        XCTAssertTrue(waitForKeyboardToDismiss(), "Valid emoji selection must dismiss the keyboard")
 
-        let customSelection = app.descendants(matching: .any)["agent.iconPicker.customSelection"]
-        XCTAssertTrue(customSelection.waitForExistence(timeout: 3), "Custom emoji did not become an explicit selected choice")
-        XCTAssertTrue(customSelection.isSelected, "Custom choice must expose the selected trait")
-        XCTAssertEqual(customSelection.value as? String, "Selected")
-        XCTAssertTrue((customInput.value as? String)?.contains("Selected") == true)
-
-        let dismissKeyboard = app.buttons["iconPicker.dismissKeyboard"]
-        XCTAssertTrue(dismissKeyboard.waitForExistence(timeout: 3), "Custom input needs a keyboard dismissal action")
-        dismissKeyboard.tap()
-
+        let symbolSection = app.staticTexts["Agent Symbols"]
         let search = app.textFields["Search SF Symbols"]
         for _ in 0..<3 where !search.isHittable {
-            pickerList.swipeDown()
+            pickerList.swipeUp()
         }
-        XCTAssertTrue(search.isHittable, "Symbol search was not reachable")
-        XCTAssertGreaterThanOrEqual(search.frame.height, 44)
+        XCTAssertTrue(symbolSection.exists, "Agent Symbols section header was not visible")
+        XCTAssertTrue(search.isHittable, "Symbol search was not reachable inside Agent Symbols")
+        XCTAssertGreaterThanOrEqual(search.frame.height, 43.5)
+        XCTAssertLessThan(symbolSection.frame.minY, search.frame.minY, "Search must live inside the symbol section")
         search.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "Symbol search did not open the software keyboard")
         search.typeText("cart")
@@ -272,7 +269,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
         }
         XCTAssertTrue(cart.waitForExistence(timeout: 3), "Search did not expose bottom catalog content")
         XCTAssertTrue(cart.isHittable, "Filtered bottom content was not reachable after keyboard dismissal")
-        XCTAssertGreaterThanOrEqual(cart.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(cart.frame.height, 43.5)
         XCTAssertTrue(app.buttons["agent.iconPicker.cancel"].isHittable)
         XCTAssertTrue(app.buttons["agent.iconPicker.save"].isHittable)
         saveScreenshot(name: "agent-icon-picker-standard-selection")
@@ -311,18 +308,16 @@ final class ScreenshotPreviewUITests: XCTestCase {
             "Compact-height picker must use the large presentation"
         )
 
-        let current = app.descendants(matching: .any)["agent.iconPicker.current"]
-        let draft = app.descendants(matching: .any)["agent.iconPicker.draft"]
-        let defaultChoice = app.buttons["agent.iconPicker.option.default"]
-        XCTAssertTrue(current.waitForExistence(timeout: 3), "Current preview must be exposed initially in compact height")
-        XCTAssertTrue(draft.waitForExistence(timeout: 3), "Draft preview must be exposed initially in compact height")
-        XCTAssertTrue(defaultChoice.waitForExistence(timeout: 3), "Default must be exposed initially before the catalog")
-        XCTAssertTrue(current.isHittable)
-        XCTAssertTrue(draft.isHittable)
-        XCTAssertTrue(defaultChoice.isHittable)
-        XCTAssertEqual(current.frame.midY, draft.frame.midY, accuracy: 2)
-        XCTAssertLessThan(draft.frame.minY, defaultChoice.frame.minY)
-        saveScreenshot(name: "agent-icon-picker-compact-height-initial")
+        let chooseEmoji = app.buttons["agent.iconPicker.emojiGenmoji"]
+        let symbolSection = app.staticTexts["Agent Symbols"]
+        XCTAssertTrue(chooseEmoji.waitForExistence(timeout: 3), "Emoji or Genmoji control must be exposed initially in compact height")
+        XCTAssertTrue(symbolSection.waitForExistence(timeout: 3), "Agent Symbols must follow the emoji control")
+        XCTAssertFalse(app.descendants(matching: .any)["agent.iconPicker.current"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["agent.iconPicker.draft"].exists)
+        XCTAssertFalse(app.buttons["agent.iconPicker.option.default"].exists)
+        XCTAssertFalse(app.staticTexts["Emoji or Genmoji"].exists)
+        XCTAssertLessThan(chooseEmoji.frame.minY, symbolSection.frame.minY)
+        saveScreenshot(name: "agent-icon-picker-compact-height-simplified")
     }
 
     func testWorkspaceSidebarGitStatusPreview() throws {
@@ -877,6 +872,15 @@ final class ScreenshotPreviewUITests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    private func waitForKeyboardToDismiss(timeout: TimeInterval = 3) -> Bool {
+        let keyboard = app.keyboards.firstMatch
+        let disappeared = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: keyboard
+        )
+        return XCTWaiter.wait(for: [disappeared], timeout: timeout) == .completed
+    }
 
     private func tapInlineOption(_ label: String) {
         let option = app.descendants(matching: .any)

@@ -568,9 +568,15 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
 
         tap(avatarSetting, named: "assistant avatar setting", timeout: 5)
-        let defaultAvatar = app.buttons["assistant.avatarPicker.option.default"]
-        tap(defaultAvatar, named: "default assistant avatar", timeout: 5)
-        tap(app.buttons["assistant.avatarPicker.save"], named: "assistant avatar Save", timeout: 5)
+        XCTAssertTrue(
+            app.buttons["assistant.avatarPicker.emojiGenmoji"].waitForExistence(timeout: 5),
+            "Assistant picker did not expose Choose Emoji or Genmoji"
+        )
+        XCTAssertFalse(
+            app.buttons["assistant.avatarPicker.option.default"].exists,
+            "Assistant picker must not offer a standalone Default reset"
+        )
+        tap(app.buttons["assistant.avatarPicker.cancel"], named: "assistant avatar Cancel", timeout: 5)
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5), "Avatar picker did not dismiss")
     }
 

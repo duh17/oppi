@@ -51,7 +51,6 @@ struct WorkspaceIconPickerView: View {
             purpose: .workspace,
             savedValue: icon,
             defaultValue: .defaultValue,
-            valueDescription: Self.description,
             makeEmoji: IconChoice.emoji,
             makeSymbol: IconChoice.symbol,
             symbolName: Self.symbolName,

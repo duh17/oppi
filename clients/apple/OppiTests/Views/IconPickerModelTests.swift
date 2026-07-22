@@ -106,7 +106,7 @@ struct IconPickerModelTests {
         #expect(model.customInputText.isEmpty)
     }
 
-    @Test("Genmoji remains an explicit selected custom choice without raw text")
+    @Test("a Genmoji input callback updates the draft without raw text")
     func genmojiSelectionHasDescriptionButNoRawText() {
         let model = IconPickerModel(
             purpose: .agent,
@@ -115,8 +115,10 @@ struct IconPickerModelTests {
             customChoice: Self.customChoice
         )
 
-        model.selectGenmoji(data: Data([1, 2, 3]), contentDescription: "A smiling fox")
+        let accepted = model.selectGenmoji(data: Data([1, 2, 3]), contentDescription: "A smiling fox")
 
+        #expect(accepted)
+        #expect(model.draft == .genmoji(data: Data([1, 2, 3]), contentDescription: "A smiling fox"))
         #expect(model.selectedCustomChoice == .genmoji("A smiling fox"))
         #expect(model.customInputText.isEmpty)
     }

@@ -32,14 +32,6 @@ enum IconPickerPurpose: Sendable {
         }
     }
 
-    var defaultLabel: String {
-        switch self {
-        case .assistant: return "Default"
-        case .agent: return "Default Agent icon"
-        case .workspace: return "Default workspace icon"
-        }
-    }
-
     var symbolSectionTitle: String {
         switch self {
         case .assistant: return ""
@@ -60,7 +52,7 @@ enum IconPickerCustomChoice: Equatable, Sendable {
 
     var accessibilityDescription: String {
         switch self {
-        case .emoji(let value): return "Custom emoji \(value)"
+        case .emoji(let value): return "Emoji \(value)"
         case .genmoji(let contentDescription): return "Genmoji \(contentDescription)"
         }
     }
@@ -379,7 +371,6 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
     let purpose: IconPickerPurpose
     let builtinOptions: [IconPickerOption<Value>]
     let symbols: [IconSymbolOption]
-    let valueDescription: (Value) -> String
     let makeEmoji: (String) -> Value
     let makeSymbol: ((String) -> Value)?
     let symbolName: ((Value) -> String?)?
@@ -395,6 +386,7 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
     @State private var symbolSearch = ""
     @State private var submittedSymbolSearch = ""
     @State private var symbolResultGeneration = 0
+    @State private var glyphInputFocusRequest = 0
     @State private var draftGenmojiImage: UIImage?
     @AccessibilityFocusState private var errorFocused: Bool
 
@@ -404,7 +396,6 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
         defaultValue: Value,
         builtinOptions: [IconPickerOption<Value>] = [],
         symbols: [IconSymbolOption] = IconSymbolCatalog.options,
-        valueDescription: @escaping (Value) -> String,
         makeEmoji: @escaping (String) -> Value,
         makeSymbol: ((String) -> Value)?,
         symbolName: ((Value) -> String?)? = nil,
@@ -419,7 +410,6 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
         self.purpose = purpose
         self.builtinOptions = builtinOptions
         self.symbols = symbols
-        self.valueDescription = valueDescription
         self.makeEmoji = makeEmoji
         self.makeSymbol = makeSymbol
         self.symbolName = symbolName
@@ -468,12 +458,9 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
         NavigationStack {
             List {
                 // List order is also the baseline VoiceOver focus order.
-                previewSection
-                defaultSection
                 builtinSection
-                symbolSearchSection
                 customSection
-                symbolResultsSection
+                symbolSection
                 operationSection
             }
             // Return advances this identity after UIKit has the final query,
@@ -527,79 +514,6 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
         verticalSizeClass == .compact
     }
 
-    private var previewSection: some View {
-        Section("Current and Draft") {
-            if verticalSizeClass == .compact {
-                HStack(spacing: 8) {
-                    compactPreviewCard(title: "Current", draft: .value(model.savedValue))
-                    compactPreviewCard(title: "Draft", draft: model.draft)
-                }
-            } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) {
-                        previewCard(title: "Current", draft: .value(model.savedValue))
-                        previewCard(title: "Draft", draft: model.draft)
-                    }
-                    VStack(spacing: 4) {
-                        previewCard(title: "Current", draft: .value(model.savedValue))
-                        previewCard(title: "Draft", draft: model.draft)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-        }
-    }
-
-    private func previewCard(title: String, draft: IconPickerDraft<Value>) -> some View {
-        HStack(spacing: 10) {
-            draftPreview(draft, size: 34)
-                .frame(width: 44, height: 44)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeComment)
-                Text(description(for: draft))
-                    .font(.body)
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 4)
-        }
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title): \(description(for: draft))")
-        .accessibilityIdentifier("\(accessibilityPrefix).\(title.lowercased())")
-    }
-
-    private func compactPreviewCard(title: String, draft: IconPickerDraft<Value>) -> some View {
-        HStack(spacing: 10) {
-            draftPreview(draft, size: 28)
-                .frame(width: 44, height: 44)
-            Text("\(title): \(description(for: draft))")
-                .font(.caption)
-                .lineLimit(1)
-                .foregroundStyle(.themeFg)
-            Spacer(minLength: 0)
-        }
-        .frame(minHeight: 44)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title): \(description(for: draft))")
-        .accessibilityIdentifier("\(accessibilityPrefix).\(title.lowercased())")
-    }
-
-    private var defaultSection: some View {
-        Section("Default") {
-            optionButton(
-                id: "default",
-                label: purpose.defaultLabel,
-                detail: defaultDetail,
-                value: model.defaultValue
-            )
-        }
-    }
-
     @ViewBuilder
     private var builtinSection: some View {
         if !builtinOptions.isEmpty {
@@ -618,77 +532,77 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
 
     private var customSection: some View {
         Section {
-            if let selectedCustomChoice = model.selectedCustomChoice {
-                customChoiceRow(selectedCustomChoice)
-            }
-
-            AdaptiveGlyphInput(
-                text: customInputBinding,
-                selectedChoice: model.selectedCustomChoice,
-                validationMessage: model.validationMessage,
-                onTextChanged: { text in
-                    draftGenmojiImage = nil
-                    _ = model.selectEmoji(text, transform: makeEmoji)
-                },
-                onGenmoji: { data, contentDescription, previewImage in
-                    if model.selectGenmoji(data: data, contentDescription: contentDescription) {
-                        draftGenmojiImage = previewImage
-                    }
-                }
-            )
-            .frame(minHeight: 44)
-            .disabled(model.isSaving)
-            .accessibilityIdentifier("\(accessibilityPrefix).emojiInput")
+            emojiGenmojiControl
 
             if let validationMessage = model.validationMessage {
                 errorLabel(validationMessage, prefix: "Input error")
                     .accessibilityIdentifier("\(accessibilityPrefix).validationError")
             }
-        } header: {
-            Text("Emoji or Genmoji")
         } footer: {
-            Text("Enter exactly one emoji, or switch to Apple’s emoji keyboard to choose Genmoji.")
+            Text("Use the Globe key to switch to the Emoji keyboard if needed.")
         }
     }
 
-    private var customInputBinding: Binding<String> {
-        Binding(
-            get: { model.customInputText },
-            set: {
-                draftGenmojiImage = nil
-                _ = model.selectEmoji($0, transform: makeEmoji)
-            }
-        )
-    }
-
-
-    private func customChoiceRow(_ choice: IconPickerCustomChoice) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.themeBlue)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(choice.accessibilityDescription)
-                    .foregroundStyle(.themeFg)
-                Text("Selected custom choice")
-                    .font(.caption)
+    private var emojiGenmojiControl: some View {
+        Button {
+            glyphInputFocusRequest &+= 1
+        } label: {
+            HStack(spacing: 12) {
+                if let choice = model.selectedCustomChoice {
+                    draftPreview(model.draft, size: 28)
+                        .frame(width: 36, height: 36)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Choose Emoji or Genmoji")
+                            .font(.body.weight(.medium))
+                        Text(choice.accessibilityDescription)
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Label("Choose Emoji or Genmoji", systemImage: "face.smiling")
+                        .font(.body.weight(.medium))
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeComment)
+                    .accessibilityHidden(true)
             }
-            Spacer(minLength: 8)
+            .foregroundStyle(.themeFg)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(choice.accessibilityDescription)
-        .accessibilityValue("Selected")
-        .accessibilityAddTraits(.isSelected)
-        .accessibilityIdentifier("\(accessibilityPrefix).customSelection")
+        .buttonStyle(.plain)
+        .disabled(model.isSaving)
+        .accessibilityLabel("Choose Emoji or Genmoji")
+        .accessibilityValue(model.selectedCustomChoice?.accessibilityDescription ?? "No custom choice selected")
+        .accessibilityHint("Opens the current keyboard")
+        .accessibilityIdentifier("\(accessibilityPrefix).emojiGenmoji")
+        .background {
+            AdaptiveGlyphInput(
+                focusRequest: glyphInputFocusRequest,
+                onTextChanged: { text in
+                    draftGenmojiImage = nil
+                    return model.selectEmoji(text, transform: makeEmoji)
+                },
+                onGenmoji: { data, contentDescription, previewImage in
+                    guard model.selectGenmoji(data: data, contentDescription: contentDescription) else {
+                        return false
+                    }
+                    draftGenmojiImage = previewImage
+                    return true
+                }
+            )
+            .frame(width: 1, height: 1)
+            .accessibilityHidden(true)
+        }
     }
 
     @ViewBuilder
-    private var symbolSearchSection: some View {
-        if purpose.allowedMedia.contains(.symbol) {
-            Section("Search Symbols") {
+    private var symbolSection: some View {
+        if purpose.allowedMedia.contains(.symbol), let makeSymbol {
+            Section(purpose.symbolSectionTitle) {
                 SymbolSearchField(
                     text: $symbolSearch,
                     onTextChanged: { submittedSymbolSearch = $0 },
@@ -699,14 +613,7 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
                 )
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("\(accessibilityPrefix).symbolSearch")
-            }
-        }
-    }
 
-    @ViewBuilder
-    private var symbolResultsSection: some View {
-        if purpose.allowedMedia.contains(.symbol), let makeSymbol {
-            Section(purpose.symbolSectionTitle) {
                 if filteredSymbols.isEmpty {
                     ContentUnavailableView.search(text: submittedSymbolSearch)
                         .frame(maxWidth: .infinity)
@@ -764,10 +671,6 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
         .padding(.vertical, 8)
         .background(.themeRed.opacity(0.12))
         .accessibilityElement(children: .contain)
-    }
-
-    private var defaultDetail: String? {
-        purpose == .assistant ? "Classic π" : "Uses Oppi’s standard visible icon"
     }
 
     private func optionButton(id: String, label: String, detail: String?, value: Value) -> some View {
@@ -868,15 +771,6 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
         }
     }
 
-    private func description(for draft: IconPickerDraft<Value>) -> String {
-        switch draft {
-        case .value(let value):
-            return valueDescription(value)
-        case .genmoji(_, let contentDescription):
-            return contentDescription
-        }
-    }
-
     private func selectValue(_ value: Value) {
         draftGenmojiImage = nil
         model.selectValue(value)
@@ -908,90 +802,60 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
 // MARK: - Emoji and Genmoji input
 
 private struct AdaptiveGlyphInput: UIViewRepresentable {
-    @Binding var text: String
-    let selectedChoice: IconPickerCustomChoice?
-    let validationMessage: String?
-    let onTextChanged: (String) -> Void
-    let onGenmoji: (Data, String, UIImage?) -> Void
+    let focusRequest: Int
+    let onTextChanged: (String) -> Bool
+    let onGenmoji: (Data, String, UIImage?) -> Bool
 
     func makeUIView(context: Context) -> UITextView {
         let view = AdaptiveGlyphTextView()
         view.delegate = context.coordinator
         view.isEditable = true
         view.isSelectable = true
-        view.isUserInteractionEnabled = true
         view.supportsAdaptiveImageGlyph = true
-        view.font = .preferredFont(forTextStyle: .body)
-        view.adjustsFontForContentSizeCategory = true
         view.backgroundColor = .clear
+        view.textColor = .clear
+        view.tintColor = .clear
         view.isScrollEnabled = false
         view.textContainer.maximumNumberOfLines = 1
-        view.textContainer.lineBreakMode = .byTruncatingTail
-        view.textContainerInset = UIEdgeInsets(top: 10, left: 8, bottom: 10, right: 8)
-        view.layer.cornerRadius = 10
-        view.layer.borderWidth = 1
-        view.layer.borderColor = UIColor.separator.cgColor
-        let toolbar = UIToolbar()
-        toolbar.sizeToFit()
-        let dismissKeyboard = UIBarButtonItem(
-            barButtonSystemItem: .done,
-            target: context.coordinator,
-            action: #selector(Coordinator.dismissKeyboard)
-        )
-        dismissKeyboard.accessibilityIdentifier = "iconPicker.dismissKeyboard"
-        toolbar.items = [UIBarButtonItem.flexibleSpace(), dismissKeyboard]
-        view.inputAccessoryView = toolbar
-        view.accessibilityLabel = "Emoji or Genmoji"
-        view.accessibilityHint = "Enter one emoji or use Apple’s emoji keyboard to choose Genmoji"
+        view.textContainer.lineBreakMode = .byClipping
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        // This responder is intentionally tiny and non-accessible: the visible
+        // chooser owns the label and feedback, while UIKit owns glyph input.
+        view.isAccessibilityElement = false
+        view.accessibilityElementsHidden = true
         return view
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
         context.coordinator.parent = self
-        uiView.accessibilityValue = accessibilityValue
-        uiView.accessibilityHint = accessibilityHint
-        guard uiView.markedTextRange == nil, uiView.text != text else { return }
-        uiView.text = text
-    }
-
-    private var accessibilityValue: String {
-        if let selectedChoice {
-            return "Selected, \(selectedChoice.accessibilityDescription)"
-        }
-        if let validationMessage {
-            return "Invalid: \(validationMessage)"
-        }
-        return text.isEmpty ? "No custom choice selected" : text
-    }
-
-    private var accessibilityHint: String {
-        if let validationMessage {
-            return "\(validationMessage) Save is disabled until this is fixed."
-        }
-        return "Enter one emoji or use Apple’s emoji keyboard to choose Genmoji"
+        context.coordinator.focusIfRequested(focusRequest, textView: uiView)
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
+        Coordinator(parent: self, handledFocusRequest: focusRequest)
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: AdaptiveGlyphInput
+        private var handledFocusRequest: Int
 
-        init(parent: AdaptiveGlyphInput) {
+        init(parent: AdaptiveGlyphInput, handledFocusRequest: Int) {
             self.parent = parent
+            self.handledFocusRequest = handledFocusRequest
         }
 
-        func textViewDidBeginEditing(_ textView: UITextView) {
-            activeTextView = textView
+        func focusIfRequested(_ request: Int, textView: UITextView) {
+            guard request != handledFocusRequest else { return }
+            handledFocusRequest = request
+            textView.delegate = nil
+            textView.attributedText = NSAttributedString()
+            textView.delegate = self
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView, textView.window != nil else { return }
+                textView.becomeFirstResponder()
+            }
         }
-
-        @objc func dismissKeyboard() {
-            activeTextView?.resignFirstResponder()
-        }
-
-        private weak var activeTextView: UITextView?
-
         func textViewDidChange(_ textView: UITextView) {
             let attributedText = textView.attributedText ?? NSAttributedString()
             let range = NSRange(location: 0, length: attributedText.length)
@@ -1004,20 +868,22 @@ private struct AdaptiveGlyphInput: UIViewRepresentable {
 
             if let adaptiveGlyph {
                 let previewImage = PickerAdaptiveGlyphRenderer.render(adaptiveGlyph, size: 128)
-                parent.onGenmoji(
+                if parent.onGenmoji(
                     adaptiveGlyph.imageContent,
                     adaptiveGlyph.contentDescription,
                     previewImage
-                )
+                ) {
+                    textView.resignFirstResponder()
+                }
                 textView.delegate = nil
                 textView.attributedText = NSAttributedString()
                 textView.delegate = self
                 return
             }
 
-            let value = textView.text ?? ""
-            parent.text = value
-            parent.onTextChanged(value)
+            if parent.onTextChanged(textView.text ?? "") {
+                textView.resignFirstResponder()
+            }
         }
     }
 }

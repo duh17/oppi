@@ -126,8 +126,8 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
             "Workspace icon picker did not open"
         )
         XCTAssertTrue(
-            app.textViews["workspace.iconPicker.emojiInput"].waitForExistence(timeout: 5),
-            "Workspace icon picker did not expose shared emoji and Genmoji input"
+            app.buttons["workspace.iconPicker.emojiGenmoji"].waitForExistence(timeout: 5),
+            "Workspace icon picker did not expose the shared Choose Emoji or Genmoji control"
         )
 
         let folderSymbol = app.buttons["workspace.iconPicker.symbol.folder"]
