@@ -27,7 +27,7 @@ struct OppiShortcutsProvider: AppShortcutsProvider {
                 "Send to \(.applicationName)",
                 "Tell \(.applicationName)",
             ],
-            shortTitle: "Ask Oppi",
+            shortTitle: "Ask Pi",
             systemImageName: "paperplane"
         )
     }
