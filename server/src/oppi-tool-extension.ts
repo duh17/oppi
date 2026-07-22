@@ -1200,12 +1200,54 @@ export function formatOppiToolExpandedText(
     "## Command",
     markdownInlineCode(command.displayCommand),
   ];
+  const descriptor = DESCRIPTORS_BY_KEY.get(descriptorKey(command.command, command.action));
+  if (descriptor) {
+    const request = buildOppiToolApprovalDetails(command.parsed, descriptor);
+    const requestRows: string[] = [];
+    if (request.target) {
+      requestRows.push(
+        `- **${escapeMarkdownInline(request.target.label)}:** ${markdownRequestValue(request.target.value)}`,
+      );
+    }
+    if (request.context) {
+      requestRows.push(
+        `- **${escapeMarkdownInline(request.context.label)}:** ${markdownRequestValue(request.context.value)}`,
+      );
+    }
+    if (request.arguments.length > 0) {
+      requestRows.push(`- **Arguments:** ${markdownRequestValue(request.arguments.join(" "))}`);
+    }
+    if (requestRows.length > 0) sections.push("## Request", requestRows.join("\n"));
+    for (const body of request.bodies) {
+      sections.push(`## ${escapeMarkdownInline(body.label)}`, formatOppiToolBody(body));
+    }
+  }
   if (command.command === "session" && command.action === "search") {
     sections.push(formatSessionSearchResult(data));
   } else {
     sections.push("## Result", formatHumanValue(data));
   }
   return sections.join("\n\n");
+}
+
+function formatOppiToolBody(body: Readonly<{ label: string; value: string }>): string {
+  const value = sanitizeDisplayText(body.value);
+  if (body.label !== "Definition") {
+    return value
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+  }
+  try {
+    return `\`\`\`json\n${JSON.stringify(JSON.parse(value) as unknown, null, 2)}\n\`\`\``;
+  } catch {
+    return fencedText(value);
+  }
+}
+
+function markdownRequestValue(value: string): string {
+  const oneLine = singleLineDisplayString(value);
+  return oneLine.includes("`") ? escapeMarkdownInline(oneLine) : markdownInlineCode(oneLine);
 }
 
 function commandSummary(descriptor: CommandDescriptor): string {
@@ -1221,7 +1263,11 @@ function commandSummary(descriptor: CommandDescriptor): string {
 }
 
 function buildOppiToolApprovalDetails(
-  parsed: ParsedCliArgs,
+  parsed: Readonly<{
+    command: string;
+    positional: readonly string[];
+    flags: Readonly<Record<string, string>>;
+  }>,
   descriptor: CommandDescriptor,
 ): OppiToolApprovalDetails {
   const action = normalizedDescriptorAction(descriptor);
@@ -1278,7 +1324,11 @@ function buildOppiToolApprovalDetails(
 }
 
 function resolveTargetValue(
-  parsed: ParsedCliArgs,
+  parsed: Readonly<{
+    command: string;
+    positional: readonly string[];
+    flags: Readonly<Record<string, string>>;
+  }>,
   target: ApprovalTargetDescriptor | undefined,
 ): string | undefined {
   if (!target) return undefined;
@@ -1289,7 +1339,10 @@ function resolveTargetValue(
   return target.fallbackFlag ? parsed.flags[target.fallbackFlag] : undefined;
 }
 
-function targetLabelForValue(target: ApprovalTargetDescriptor, parsed: ParsedCliArgs): string {
+function targetLabelForValue(
+  target: ApprovalTargetDescriptor,
+  parsed: Readonly<{ flags: Readonly<Record<string, string>> }>,
+): string {
   return target.fallbackFlag && parsed.flags[target.flag ?? ""] === undefined
     ? target.fallbackFlag === "session"
       ? "Session"

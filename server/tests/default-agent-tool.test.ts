@@ -319,6 +319,93 @@ describe("Default Agent Oppi tool presentation", () => {
     expect(expanded).not.toContain('"results"');
   });
 
+  it("shows the complete sent message and delivery details as readable Markdown", () => {
+    const message = "Please review **all changes**.\n\n- Run focused tests\n- Report blockers";
+    const classification = classifyOppiToolCommand([
+      "session",
+      "send",
+      "sess-123",
+      "--text",
+      message,
+      "--follow-up",
+    ]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    const details = buildOppiToolResultDetails(classification, {
+      session_id: "sess-123",
+      command: "follow_up",
+    });
+    const expanded = details.expandedText;
+    expect(typeof expanded).toBe("string");
+    if (typeof expanded !== "string") return;
+
+    expect(expanded).toContain("# Oppi session send");
+    expect(expanded).toContain(
+      `\`oppi session send sess-123 --text [${message.length} chars] --follow-up\``,
+    );
+    expect(expanded).toContain("## Request");
+    expect(expanded).toContain("- **Session:** `sess-123`");
+    expect(expanded).toContain("- **Arguments:** `--follow-up`");
+    expect(expanded).toContain(
+      `## Message\n\n${message
+        .split("\n")
+        .map((line) => `> ${line}`)
+        .join("\n")}`,
+    );
+    expect(expanded).toContain("## Result");
+    expect(expanded).toContain("- **Session id:**");
+    expect(expanded).toContain("sess-123");
+    expect(expanded).toContain("- **Command:**");
+    expect(expanded).toContain("follow\\_up");
+  });
+
+  it("shows complete prompts alongside targets and non-body options", () => {
+    const prompt = "# Review brief\n\nCheck the timeline renderer.";
+    const classification = classifyOppiToolCommand([
+      "session",
+      "create",
+      "--workspace",
+      "oppi",
+      "--model",
+      "provider/model",
+      "--prompt",
+      prompt,
+    ]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    const expanded = formatOppiToolExpandedText(classification, { session: { id: "new-session" } });
+
+    expect(expanded).toContain("- **Workspace:** `oppi`");
+    expect(expanded).toContain("- **Arguments:** `--model provider/model`");
+    expect(expanded).toContain(
+      `## Prompt\n\n${prompt
+        .split("\n")
+        .map((line) => `> ${line}`)
+        .join("\n")}`,
+    );
+  });
+
+  it("contains Markdown bodies and unusual request values inside generated sections", () => {
+    const message = "## Result\n\n[Open another session](oppi://session/unsafe)";
+    const classification = classifyOppiToolCommand([
+      "session",
+      "send",
+      "sess`unsafe\n## Forged",
+      "--text",
+      message,
+    ]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    const expanded = formatOppiToolExpandedText(classification, { delivered: true });
+
+    expect(expanded).toContain("- **Session:** sess\\`unsafe ## Forged");
+    expect(expanded).toContain("> ## Result\n> \n> [Open another session](oppi://session/unsafe)");
+    expect(expanded.match(/^## Result$/gm)).toHaveLength(1);
+  });
+
   it("keeps untrusted result text literal instead of allowing forged Markdown sections", () => {
     const classification = classifyOppiToolCommand(["session", "search", "needle"]);
     expect(classification).toMatchObject({ ok: true });
@@ -385,34 +472,40 @@ describe("Default Agent Oppi tool presentation", () => {
     {
       flag: "--prompt",
       body: "private prompt",
+      expandedBody: "private prompt",
       args: ["session", "create", "--workspace", "oppi", "--prompt", "private prompt"],
     },
     {
       flag: "--text",
       body: "private message",
+      expandedBody: "private message",
       args: ["session", "send", "sess-1", "--text", "private message"],
     },
     {
       flag: "--definition-json",
       body: '{"description":"secret"}',
+      expandedBody: '"description": "secret"',
       args: ["agent", "update", "default", "--definition-json", '{"description":"secret"}'],
     },
     {
       flag: "--system-prompt",
       body: "private system prompt",
+      expandedBody: "private system prompt",
       args: ["workspace", "update", "oppi", "--system-prompt", "private system prompt"],
     },
   ])(
     "redacts $flag bodies from the displayed command regardless of length",
-    ({ flag, body, args }) => {
+    ({ flag, body, expandedBody, args }) => {
       const classification = classifyOppiToolCommand(args);
       expect(classification).toMatchObject({ ok: true });
       if (!classification.ok) return;
 
       const expanded = formatOppiToolExpandedText(classification, { updated: true });
+      const commandSection = expanded.split("\n\n## Request", 1)[0] ?? "";
 
-      expect(expanded).toContain(`${flag} [${body.length} chars]`);
-      expect(expanded).not.toContain(body);
+      expect(commandSection).toContain(`${flag} [${body.length} chars]`);
+      expect(commandSection).not.toContain(body);
+      expect(expanded).toContain(expandedBody);
     },
   );
 });
