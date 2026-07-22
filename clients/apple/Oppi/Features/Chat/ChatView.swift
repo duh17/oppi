@@ -1499,6 +1499,18 @@ struct ChatView: View {
         )
     }
 
+    @MainActor
+    private func dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle() {
+        guard composerDraftController.mode == .message,
+              composerDraftController.text.isEmpty,
+              composerDraftController.repoPointers.isEmpty,
+              pendingAttachments.isEmpty,
+              composerTextBeforeRecording == nil else {
+            return
+        }
+        dismissKeyboard()
+    }
+
     private func uploadPendingLocalAttachments(
         _ sourceAttachments: [PendingAttachment]
     ) async throws -> [ChatAttachmentRef] {
@@ -1716,6 +1728,7 @@ struct ChatView: View {
                     onSendSucceeded: {
                         composerDraftController.completeSubmission(submission)
                         clearSentReviewComments(ids: stagedReviewCommentIds)
+                        dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                     },
                     onAsyncFailure: { _, _ in
                         composerDraftController.failSubmission(submission)
@@ -1804,6 +1817,7 @@ struct ChatView: View {
             onSendSucceeded: {
                 if let submission {
                     composerDraftController.completeSubmission(submission)
+                    dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                 }
             },
             onAsyncFailure: {

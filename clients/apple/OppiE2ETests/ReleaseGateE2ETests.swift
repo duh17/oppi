@@ -127,12 +127,20 @@ final class ReleaseGateE2ETests: E2ETestCase {
             "Expanded composer did not preserve inline text. Last value: \(expandedValue)"
         )
         tap(app.buttons["expanded.composer.cancel"], named: "expanded composer done button", timeout: 5)
-        XCTAssertTrue(waitForElementToExist(app.textViews["chat.input"], timeout: 10), "Inline composer did not return")
+        let inlineComposer = app.textViews["chat.input"]
+        XCTAssertTrue(waitForElementToExist(inlineComposer, timeout: 10), "Inline composer did not return")
+        dismissKeyboardLearningOverlayIfNeeded()
+        tap(inlineComposer, named: "inline composer before attachment send", timeout: 1)
+        waitForKeyboardFocus(inlineComposer, name: "inline composer before attachment send")
 
         tap(app.buttons["chat.send"], named: "attachment prompt send button", timeout: 5)
         XCTAssertTrue(
             waitForTimelineTextContaining(marker, timeout: 20),
             "Sent attachment prompt did not appear in the timeline"
+        )
+        XCTAssertTrue(
+            waitForKeyboardToDismiss(timeout: 5),
+            "Keyboard stayed visible after the attachment prompt was acknowledged"
         )
         XCTAssertTrue(
             waitForElementToExist(app.descendants(matching: .any)["chat.user.thumbnail.0"], timeout: 20),
@@ -210,6 +218,17 @@ final class ReleaseGateE2ETests: E2ETestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         XCTAssertTrue(focusPredicate.evaluate(with: element), "\(name) did not gain keyboard focus")
+    }
+
+    @MainActor
+    private func waitForKeyboardToDismiss(timeout: TimeInterval) -> Bool {
+        let keyboard = app.keyboards.firstMatch
+        guard keyboard.exists else { return true }
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: keyboard
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
     @MainActor
