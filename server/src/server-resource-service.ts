@@ -600,7 +600,12 @@ function skillFileLocation(
   resourcePath: string,
   skill: Skill | undefined,
 ): { baseDir: string; markdownFileName: string } {
-  if (skill) return { baseDir: skill.baseDir, markdownFileName: basename(skill.filePath) };
+  if (skill) {
+    return {
+      baseDir: canonicalPath(skill.baseDir),
+      markdownFileName: basename(skill.filePath),
+    };
+  }
   if (basename(resourcePath) === "SKILL.md" || resourcePath.endsWith(".md")) {
     return { baseDir: dirname(resourcePath), markdownFileName: basename(resourcePath) };
   }

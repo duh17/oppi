@@ -77,6 +77,9 @@ private struct WorkspaceSplitRootView: View {
                     .navigationDestination(for: ServerResourceDetailNavTarget.self) { target in
                         ServerResourceDetailDestinationView(target: target)
                     }
+                    .navigationDestination(for: ServerSkillBrowserNavTarget.self) { target in
+                        ServerSkillBrowserScopedDestinationView(target: target)
+                    }
                     .navigationDestination(for: ServerSkillFileNavTarget.self) { target in
                         ServerSkillFileScopedDestinationView(target: target)
                     }

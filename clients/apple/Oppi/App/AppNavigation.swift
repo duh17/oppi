@@ -29,6 +29,11 @@ struct ServerResourceDetailNavTarget: Hashable, Sendable {
     let resourceId: String
 }
 
+struct ServerSkillBrowserNavTarget: Hashable, Sendable {
+    let serverId: String
+    let resourceId: String
+}
+
 struct ServerSkillFileNavTarget: Hashable, Sendable {
     let serverId: String
     let resourceId: String
@@ -53,6 +58,7 @@ enum WorkspaceSplitDetailPathElement: Hashable {
     case fileBrowser(FileBrowserNavTarget)
     case linkedFile(WorkspaceLinkedFileNavTarget)
     case serverResourceDetail(ServerResourceDetailNavTarget)
+    case serverSkillBrowser(ServerSkillBrowserNavTarget)
     case serverSkillFile(ServerSkillFileNavTarget)
 }
 
@@ -68,6 +74,7 @@ private enum WorkspaceStackRouteElement: Hashable {
     case workspaceConfiguration(WorkspaceNavTarget)
     case utility(WorkspaceUtilityNavTarget)
     case serverResourceDetail(ServerResourceDetailNavTarget)
+    case serverSkillBrowser(ServerSkillBrowserNavTarget)
     case serverSkillFile(ServerSkillFileNavTarget)
     case unknown
 }
@@ -375,6 +382,22 @@ final class AppNavigation {
         }
     }
 
+    func openServerSkillBrowser(_ target: ServerSkillBrowserNavTarget) {
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.serverSkillBrowserDiagnosticContext,
+                routeElement: .serverSkillBrowser(target)
+            )
+        case .split:
+            splitDetailPath.append(target)
+            splitDetailPathElements.append(.serverSkillBrowser(target))
+            splitColumnVisibility = .all
+        }
+    }
+
     func openServerSkillFile(_ target: ServerSkillFileNavTarget) {
         selectedTab = .workspaces
         switch workspaceNavigationPresentation {
@@ -595,6 +618,8 @@ final class AppNavigation {
                 path.append(target)
             case .serverResourceDetail(let target):
                 path.append(target)
+            case .serverSkillBrowser(let target):
+                path.append(target)
             case .serverSkillFile(let target):
                 path.append(target)
             }
@@ -732,6 +757,12 @@ final class AppNavigation {
         )
     }
 
+    private static let serverSkillBrowserDiagnosticContext = WorkspaceStackDiagnosticContext(
+        screen: "server_skill_browser",
+        sessionId: nil,
+        workspaceId: nil
+    )
+
     private static let serverSkillFileDiagnosticContext = WorkspaceStackDiagnosticContext(
         screen: "server_skill_file",
         sessionId: nil,
@@ -804,6 +835,10 @@ final class AppNavigation {
                 path.append(target)
                 contexts.append(Self.serverResourceDetailDiagnosticContext(target))
                 routeElements.append(.serverResourceDetail(target))
+            case .serverSkillBrowser(let target):
+                path.append(target)
+                contexts.append(Self.serverSkillBrowserDiagnosticContext)
+                routeElements.append(.serverSkillBrowser(target))
             case .serverSkillFile(let target):
                 path.append(target)
                 contexts.append(Self.serverSkillFileDiagnosticContext)
@@ -855,6 +890,8 @@ final class AppNavigation {
                 detailPathElements = []
             case .serverResourceDetail(let target):
                 detailPathElements.append(.serverResourceDetail(target))
+            case .serverSkillBrowser(let target):
+                detailPathElements.append(.serverSkillBrowser(target))
             case .serverSkillFile(let target):
                 detailPathElements.append(.serverSkillFile(target))
             case .unknown:

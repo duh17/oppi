@@ -178,7 +178,7 @@ struct ServerSkillDetailView: View {
                     Section {
                         HStack {
                             Spacer()
-                            ProgressView("Loading SKILL.md…")
+                            ProgressView("Loading skill contents…")
                             Spacer()
                         }
                         .frame(minHeight: 72)
@@ -186,35 +186,33 @@ struct ServerSkillDetailView: View {
                     }
                 }
 
-                if let detail, !detail.skillMarkdown.isEmpty {
-                    Section("SKILL.md") {
-                        MarkdownContentViewWrapper(content: detail.skillMarkdown)
-                            .allowsFullScreenExpansion(false)
-                            .listRowBackground(theme.bg.primary)
-                    }
-                }
-
-                if let detail, !detail.files.isEmpty {
-                    Section("Files") {
-                        ForEach(detail.files, id: \.self) { path in
-                            Button {
-                                navigation.openServerSkillFile(ServerSkillFileNavTarget(
-                                    serverId: target.serverId,
-                                    resourceId: target.resourceId,
-                                    path: path
-                                ))
-                            } label: {
-                                Label(path, systemImage: fileIcon(for: path))
-                                    .font(.body)
+                if let detail {
+                    Section("Contents") {
+                        Button {
+                            navigation.openServerSkillBrowser(ServerSkillBrowserNavTarget(
+                                serverId: target.serverId,
+                                resourceId: target.resourceId
+                            ))
+                        } label: {
+                            HStack(spacing: 12) {
+                                Label("Browse Files", systemImage: "folder")
                                     .foregroundStyle(.themeFg)
-                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    .contentShape(Rectangle())
+                                Spacer(minLength: 8)
+                                Text("\(detail.files.count)")
+                                    .font(.subheadline.monospacedDigit())
+                                    .foregroundStyle(.themeComment)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.themeComment)
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Open \(path)")
-                            .accessibilityIdentifier("skills.file.\(path)")
-                            .listRowBackground(theme.bg.primary)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Browse \(summary.name) files")
+                        .accessibilityValue(fileCountLabel(detail.files.count))
+                        .accessibilityIdentifier("skills.files.open")
+                        .listRowBackground(theme.bg.primary)
                     }
                 }
 
@@ -373,14 +371,8 @@ struct ServerSkillDetailView: View {
         }
     }
 
-    private func fileIcon(for path: String) -> String {
-        if path.hasSuffix(".md") { return "doc.text" }
-        if path.hasSuffix(".json") || path.hasSuffix(".yml") || path.hasSuffix(".yaml") { return "curlybraces" }
-        if path.hasSuffix(".sh") { return "terminal" }
-        if path.hasSuffix(".swift") || path.hasSuffix(".ts") || path.hasSuffix(".js") || path.hasSuffix(".py") {
-            return "chevron.left.forwardslash.chevron.right"
-        }
-        return "doc"
+    private func fileCountLabel(_ count: Int) -> String {
+        count == 1 ? "1 file" : "\(count) files"
     }
 }
 

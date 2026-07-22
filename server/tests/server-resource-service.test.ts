@@ -304,6 +304,27 @@ describe("ServerResourceService mutations and skill details", () => {
     expect(settings.packages[0]?.skills).toEqual([]);
   });
 
+  it("reads skill detail through a symlinked user skill directory", async () => {
+    const fixture = makeFixture();
+    const externalSkills = join(fixture.root, "external-skills");
+    const skillDir = writeSkill(externalSkills, "linked-skill");
+    writeFileSync(join(skillDir, "reference.md"), "# Reference");
+    const agentSkills = join(fixture.agentDir, "skills");
+    mkdirSync(agentSkills, { recursive: true });
+    symlinkSync(skillDir, join(agentSkills, "linked-skill"));
+
+    const service = makeService(fixture);
+    const summary = (await service.listSkills()).skills.find(
+      (skill) => skill.name === "linked-skill",
+    );
+    expect(summary).toBeDefined();
+
+    const detail = await service.getSkillDetail(summary!.id);
+    expect(detail.skillMarkdown).toContain("# linked-skill");
+    expect(detail.files).toEqual(["reference.md", "SKILL.md"]);
+    expect(await service.readSkillFile(summary!.id, "reference.md")).toBe("# Reference");
+  });
+
   it("provides bounded symlink-safe skill detail and file reads", async () => {
     const fixture = makeFixture();
     const skillDir = writeSkill(join(fixture.agentDir, "skills"), "detail-skill");

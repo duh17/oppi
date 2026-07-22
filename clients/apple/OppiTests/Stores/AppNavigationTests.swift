@@ -862,6 +862,10 @@ struct AppNavigationShellRoutingTests {
             kind: .skill,
             resourceId: "skill_opaque"
         )
+        let browser = ServerSkillBrowserNavTarget(
+            serverId: "server-a",
+            resourceId: "skill_opaque"
+        )
         let file = ServerSkillFileNavTarget(
             serverId: "server-a",
             resourceId: "skill_opaque",
@@ -870,10 +874,22 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceUtility(.skills)
         navigation.openServerResourceDetail(detail)
+        navigation.openServerSkillBrowser(browser)
         navigation.openServerSkillFile(file)
 
-        #expect(navigation.workspacePath.count == 3)
+        #expect(navigation.workspacePath.count == 4)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_file")
+
+        navigation.setWorkspaceNavigationPresentation(.split)
+        #expect(navigation.splitDetailTarget == .utility(.skills))
+        #expect(navigation.splitDetailPath.count == 3)
+
+        navigation.setWorkspaceNavigationPresentation(.stack)
+        #expect(navigation.workspacePath.count == 4)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_file")
+
+        navigation.workspacePath.removeLast()
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_browser")
 
         navigation.setWorkspaceNavigationPresentation(.split)
         #expect(navigation.splitDetailTarget == .utility(.skills))
@@ -881,8 +897,8 @@ struct AppNavigationShellRoutingTests {
 
         navigation.setWorkspaceNavigationPresentation(.stack)
         #expect(navigation.workspacePath.count == 3)
-        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_file")
-        #expect(file.serverId == detail.serverId)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_browser")
+        #expect(browser.serverId == detail.serverId)
         #expect(file.resourceId == detail.resourceId)
     }
 
