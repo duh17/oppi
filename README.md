@@ -160,6 +160,7 @@ The app does not bundle a second server runtime. `oppi init`, local status and p
 
 ## Docs
 
+- [Contributing](CONTRIBUTING.md) - open an issue before proposing code changes
 - [Changelog](CHANGELOG.md) - release history and versioning policy
 - [Server README](server/README.md) - server setup, Docker, development
 - [Onboarding and pairing](docs/onboarding.md) - intended first-run user flow
