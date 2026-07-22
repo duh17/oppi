@@ -25,6 +25,10 @@ final class AppEventStreamCoordinator {
         return !consumptionTask.isCancelled
     }
 
+    func isCurrentClient(_ candidate: AppEventStreamClient) -> Bool {
+        client === candidate
+    }
+
     func start(
         connection: ServerConnection,
         client nextClient: AppEventStreamClient,

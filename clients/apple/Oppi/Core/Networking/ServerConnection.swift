@@ -33,6 +33,7 @@ final class ServerConnection {
     private var configuredLANReachabilityProbe: @MainActor (EndpointSelection, ServerCredentials) async -> Bool = { selection, credentials in
         await LANEndpointSelection.isReachable(selection, credentials: credentials)
     }
+    private var persistentHealthRecoveryInFlight = false
     private var lanCandidateGeneration: UInt64 = 0
     private var transportConfigurationGeneration: UInt64 = 0
     private var activeTransportConfigurationGenerations: Set<UInt64> = []
@@ -614,7 +615,7 @@ final class ServerConnection {
             )
         )
         installAPIClient(apiClient)
-        self.wsClient = WebSocketClient(
+        let wsClient = WebSocketClient(
             credentials: credentials,
             preferredEndpoint: selection,
             diagnosticRole: "focused_session",
@@ -622,8 +623,15 @@ final class ServerConnection {
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: selection.tlsServerName
         )
-        self.wsClient?.setStreamURL(nil)
-        sender.wsClient = self.wsClient
+        wsClient.onTransportHealthFailure = { @MainActor [weak self, weak wsClient] failure in
+            guard let self,
+                  let wsClient,
+                  self.wsClient === wsClient else { return }
+            await self.handlePersistentStreamHealthFailure(failure)
+        }
+        self.wsClient = wsClient
+        wsClient.setStreamURL(nil)
+        sender.wsClient = wsClient
         sender.focusedSessionProvider = { [weak self] in
             self?.focusedSessionStore.focused
         }
@@ -1401,6 +1409,56 @@ final class ServerConnection {
                 await self.recoverAfterEstablishedIrohStreamFailure(manager: manager)
             }
         )
+    }
+
+    func handlePersistentStreamHealthFailure(
+        _ failure: PersistentStreamHealthFailure
+    ) async {
+        guard !persistentHealthRecoveryInFlight,
+              !irohTerminalFailureActive,
+              let credentials,
+              credentials.transports.preference == .irohPreferred else { return }
+
+        // Focused and app-event streams share one selected transport. Their
+        // watchdogs can fail together, but the first recovery rebuilds both.
+        persistentHealthRecoveryInFlight = true
+        defer { persistentHealthRecoveryInFlight = false }
+
+        ClientLog.warning("Network", "Persistent stream reported unhealthy transport", metadata: [
+            "transport": transportPath.rawValue,
+            "reason": persistentStreamHealthReason(failure),
+        ])
+
+        switch transportPath {
+        case .iroh:
+            guard let irohManager else {
+                await reevaluateIrohPreferredTransportAtBoundary(forceHTTPFallback: true)
+                return
+            }
+            await recoverAfterEstablishedIrohStreamFailure(manager: irohManager)
+
+        case .lan:
+            discoveredLANEndpoint = nil
+            lanCandidateGeneration &+= 1
+            await reevaluateIrohPreferredTransportAtBoundary(forceIrohRetry: true)
+
+        case .paired:
+            guard irohFallbackActive else { return }
+            await reevaluateIrohPreferredTransportAtBoundary()
+        }
+    }
+
+    private func persistentStreamHealthReason(
+        _ failure: PersistentStreamHealthFailure
+    ) -> String {
+        switch failure {
+        case .pingTimeout:
+            "ping_timeout"
+        case .pingFailures:
+            "ping_failure"
+        case .reconnectThreshold:
+            "reconnect_threshold"
+        }
     }
 
     private func recoverAfterEstablishedIrohStreamFailure(
@@ -2255,6 +2313,12 @@ final class ServerConnection {
             tlsServerName: selection.tlsServerName,
             diagnosticRemoteIdentity: transportPath == .iroh ? "iroh" : nil
         )
+        client.onTransportHealthFailure = { @MainActor [weak self, weak client] failure in
+            guard let self,
+                  let client,
+                  self.appEventStreamCoordinator.isCurrentClient(client) else { return }
+            await self.handlePersistentStreamHealthFailure(failure)
+        }
         appEventStreamCoordinator.start(
             connection: self,
             client: client,

@@ -234,6 +234,36 @@ struct PathChangeReconnectDelaySanityTests {
 
 // MARK: - ConnectionCoordinator Path Change Integration Tests
 
+@Suite("Network Path Recovery Boundaries")
+struct NetworkPathRecoveryBoundaryTests {
+    @Test func satisfiedAfterUnsatisfiedIsBoundaryWhenInterfaceSignatureIsUnchanged() {
+        #expect(NetworkPathRecoveryDecision.isRecoveryBoundary(
+            previousSignature: "wifi:en0",
+            previousWasSatisfied: false,
+            nextSignature: "wifi:en0",
+            nextIsSatisfied: true
+        ))
+    }
+
+    @Test func repeatedSatisfiedPathWithUnchangedSignatureIsNotBoundary() {
+        #expect(!NetworkPathRecoveryDecision.isRecoveryBoundary(
+            previousSignature: "wifi:en0",
+            previousWasSatisfied: true,
+            nextSignature: "wifi:en0",
+            nextIsSatisfied: true
+        ))
+    }
+
+    @Test func changedSatisfiedInterfaceIsBoundary() {
+        #expect(NetworkPathRecoveryDecision.isRecoveryBoundary(
+            previousSignature: "wifi:en0",
+            previousWasSatisfied: true,
+            nextSignature: "cell:pdp_ip0",
+            nextIsSatisfied: true
+        ))
+    }
+}
+
 @Suite("ConnectionCoordinator Network Path Change", .serialized)
 @MainActor
 struct ConnectionCoordinatorPathChangeTests {
@@ -320,6 +350,36 @@ struct ConnectionCoordinatorPathChangeTests {
         // Stop twice — should not crash
         coordinator.stopNetworkPathMonitor()
         coordinator.stopNetworkPathMonitor()
+    }
+
+    @Test func unsatisfiedPathCancelsPendingSatisfiedRecovery() async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(
+            id: "sha256:SERVERFINGERPRINTABCDEF",
+            name: "Studio",
+            host: "my-server.tail00000.ts.net",
+            scheme: .https,
+            tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
+        )
+        coordinator.serverStore.addOrUpdate(server)
+        let connection = coordinator.ensureConnection(for: server)
+        coordinator._applyLANDiscoveryForTesting([
+            LANDiscoveredEndpoint(
+                host: "192.168.1.42",
+                port: 7749,
+                serverFingerprintPrefix: "SERVERFINGERPRINT",
+                tlsCertFingerprintPrefix: "TLSFINGERPRINT"
+            ),
+        ])
+        #expect(connection.transportPath == .lan)
+
+        coordinator._handleNetworkPathStateForTesting(signature: "wifi:en0", isSatisfied: true)
+        coordinator._handleNetworkPathStateForTesting(signature: "wifi:en0", isSatisfied: false)
+        coordinator._handleNetworkPathStateForTesting(signature: "wifi:en0", isSatisfied: true)
+        coordinator._handleNetworkPathStateForTesting(signature: "wifi:en0", isSatisfied: false)
+        try? await Task.sleep(for: .milliseconds(300))
+
+        #expect(connection.transportPath == .lan)
     }
 
     // MARK: - Full LAN→Tailscale Transition Simulation

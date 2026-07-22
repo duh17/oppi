@@ -5,9 +5,29 @@ import Foundation
 /// The focused session stream and global app-event stream have different payload
 /// semantics, but should answer transport recovery questions the same way: when
 /// to retry, how long to wait, and which handshake failures are terminal.
+enum PersistentStreamHealthFailure: Equatable, Sendable {
+    case pingTimeout
+    case pingFailures(count: Int)
+    case reconnectThreshold(attempt: Int)
+}
+
+enum WebSocketPingResult: Equatable, Sendable {
+    case succeeded
+    case failed
+    case timedOut
+}
+
 enum WebSocketRecoveryPolicy {
     static let pingInterval: Duration = .seconds(30)
+    static let pingTimeout: Duration = .seconds(8)
     static let maxConsecutivePingFailures = 2
+
+    /// Escalate repeated socket retries into transport selection without probing
+    /// on every transient reconnect. Attempts 4 and 6 provide early bounded
+    /// recovery, then the existing 15-second reconnect cap governs later probes.
+    nonisolated static func shouldReportUnhealthyReconnect(attempt: Int) -> Bool {
+        attempt == 4 || attempt >= 6
+    }
 
     /// Persistent stream subscriptions retry until their owner disconnects them.
     /// Saturating arithmetic avoids a theoretical overflow after years of outage.
@@ -90,25 +110,64 @@ enum WebSocketRecoveryPolicy {
     }
 }
 
-/// Thread-safe one-shot resolver for callback APIs that may race timeout/cancel paths.
-///
-/// SAFETY (`@unchecked Sendable`):
-/// - `continuation` is protected by `lock` and consumed exactly once.
-/// - Resume is always executed after lock release.
-/// - Double-resume is prevented by nil-ing `continuation` under lock.
-final class OneShotBoolContinuation: @unchecked Sendable {
-    private var continuation: UnsafeContinuation<Bool, Never>?
-    private let lock = NSLock()
+/// Adds a deadline to URLSession's callback-based WebSocket ping API. A zombie
+/// socket can otherwise withhold the callback forever and wedge its watchdog.
+enum WebSocketPingDeadline {
+    @MainActor
+    static func wait(
+        timeout: Duration,
+        sendPing: (@escaping @Sendable (Error?) -> Void) -> Void
+    ) async -> WebSocketPingResult {
+        await withCheckedContinuation { continuation in
+            let resolver = WebSocketPingResolver(continuation)
+            let timeoutTask = Task {
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    return
+                }
+                resolver.resolve(.timedOut)
+            }
+            resolver.setTimeoutTask(timeoutTask)
+            sendPing { error in
+                resolver.resolve(error == nil ? .succeeded : .failed)
+            }
+        }
+    }
+}
 
-    init(_ continuation: UnsafeContinuation<Bool, Never>) {
+private final class WebSocketPingResolver: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<WebSocketPingResult, Never>?
+    private var timeoutTask: Task<Void, Never>?
+
+    init(_ continuation: CheckedContinuation<WebSocketPingResult, Never>) {
         self.continuation = continuation
     }
 
-    func resume(returning value: Bool) {
+    func setTimeoutTask(_ task: Task<Void, Never>) {
         lock.lock()
-        let cont = continuation
-        continuation = nil
+        if continuation == nil {
+            lock.unlock()
+            task.cancel()
+            return
+        }
+        timeoutTask = task
         lock.unlock()
-        cont?.resume(returning: value)
+    }
+
+    func resolve(_ result: WebSocketPingResult) {
+        lock.lock()
+        guard let continuation else {
+            lock.unlock()
+            return
+        }
+        self.continuation = nil
+        let timeoutTask = self.timeoutTask
+        self.timeoutTask = nil
+        lock.unlock()
+
+        timeoutTask?.cancel()
+        continuation.resume(returning: result)
     }
 }

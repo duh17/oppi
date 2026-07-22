@@ -4,6 +4,20 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Coordinator")
 
+enum NetworkPathRecoveryDecision {
+    static func isRecoveryBoundary(
+        previousSignature: String?,
+        previousWasSatisfied: Bool?,
+        nextSignature: String,
+        nextIsSatisfied: Bool
+    ) -> Bool {
+        guard nextIsSatisfied,
+              let previousSignature,
+              let previousWasSatisfied else { return false }
+        return !previousWasSatisfied || previousSignature != nextSignature
+    }
+}
+
 /// Orchestrates concurrent multi-server connections.
 ///
 /// Each paired server gets its own `ServerConnection` with a persistent
@@ -61,6 +75,7 @@ final class ConnectionCoordinator {
     /// burning reconnect attempts against an unreachable LAN IP.
     private var pathMonitor: NWPathMonitor?
     private var lastPathInterfaceSignature: String?
+    private var lastPathWasSatisfied: Bool?
     private var pathChangeDebounceTask: Task<Void, Never>?
 
     private static let pathMonitorQueueLabel = "oppi.path-monitor"
@@ -269,29 +284,49 @@ final class ConnectionCoordinator {
         pathChangeDebounceTask?.cancel()
         pathChangeDebounceTask = nil
         lastPathInterfaceSignature = nil
+        lastPathWasSatisfied = nil
     }
 
     private func handleNetworkPathUpdate(_ path: NWPath) {
-        let signature = Self.interfaceSignature(path)
+        handleNetworkPathState(
+            signature: Self.interfaceSignature(path),
+            isSatisfied: path.status == .satisfied
+        )
+    }
 
-        // Skip the initial callback (just record baseline)
-        guard let previous = lastPathInterfaceSignature else {
+    private func handleNetworkPathState(signature: String, isSatisfied: Bool) {
+        // Skip the initial callback, but retain satisfaction independently of
+        // interface identity. A transient unsatisfied path can recover with the
+        // exact same interfaces and still requires a transport boundary.
+        guard let previous = lastPathInterfaceSignature,
+              let previousWasSatisfied = lastPathWasSatisfied else {
             lastPathInterfaceSignature = signature
+            lastPathWasSatisfied = isSatisfied
             return
         }
 
-        guard signature != previous else { return }
+        let isRecoveryBoundary = NetworkPathRecoveryDecision.isRecoveryBoundary(
+            previousSignature: previous,
+            previousWasSatisfied: previousWasSatisfied,
+            nextSignature: signature,
+            nextIsSatisfied: isSatisfied
+        )
         lastPathInterfaceSignature = signature
+        lastPathWasSatisfied = isSatisfied
 
-        // Can't reconnect without a network
-        guard path.status == .satisfied else {
-            logger.warning("Network path unsatisfied (\(previous, privacy: .public) -> \(signature, privacy: .public))")
-            ClientLog.info("Network", "Path unsatisfied", metadata: [
-                "from": previous,
-                "to": signature,
-            ])
+        guard isSatisfied else {
+            pathChangeDebounceTask?.cancel()
+            pathChangeDebounceTask = nil
+            if previousWasSatisfied || signature != previous {
+                logger.warning("Network path unsatisfied (\(previous, privacy: .public) -> \(signature, privacy: .public))")
+                ClientLog.info("Network", "Path unsatisfied", metadata: [
+                    "from": previous,
+                    "to": signature,
+                ])
+            }
             return
         }
+        guard isRecoveryBoundary else { return }
 
         logger.warning("Network path changed: \(previous, privacy: .public) -> \(signature, privacy: .public)")
         ClientLog.info("Network", "Path changed", metadata: [
@@ -475,6 +510,13 @@ final class ConnectionCoordinator {
         }
         return trimmed
     }
+
+    #if DEBUG
+    // periphery:ignore - deterministic NWPath state seam for recovery tests
+    func _handleNetworkPathStateForTesting(signature: String, isSatisfied: Bool) {
+        handleNetworkPathState(signature: signature, isSatisfied: isSatisfied)
+    }
+    #endif
 
     // MARK: - Server Switching
 

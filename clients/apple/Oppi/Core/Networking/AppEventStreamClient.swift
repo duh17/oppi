@@ -73,11 +73,15 @@ final class AppEventStreamClient {
     private let reconnectDelay: @Sendable (Int) -> TimeInterval
     private let webSocketFactory: (URLRequest) -> AppEventWebSocketTransport
     private let diagnosticRemoteIdentity: String?
+    private let pingInterval: Duration
+    private let pingTimeout: Duration
+    var onTransportHealthFailure: (@MainActor @Sendable (PersistentStreamHealthFailure) async -> Void)?
 
     private var webSocket: AppEventWebSocketTransport?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var healthReportTask: Task<Void, Never>?
     private var continuation: AsyncStream<AppEventMessage>.Continuation?
     private var openStartedNs: UInt64?
     private var reconnectAttempt = 0
@@ -92,13 +96,19 @@ final class AppEventStreamClient {
         tlsCertFingerprint: String? = nil,
         tlsServerName: String? = nil,
         diagnosticRemoteIdentity: String? = nil,
+        pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval,
+        pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
         reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = WebSocketRecoveryPolicy.reconnectDelay,
+        onTransportHealthFailure: (@MainActor @Sendable (PersistentStreamHealthFailure) async -> Void)? = nil,
         webSocketFactory: ((URLRequest) -> AppEventWebSocketTransport)? = nil
     ) {
         self.url = url
         self.token = token
         self.reconnectDelay = reconnectDelay
         self.diagnosticRemoteIdentity = diagnosticRemoteIdentity
+        self.pingInterval = pingInterval
+        self.pingTimeout = pingTimeout
+        self.onTransportHealthFailure = onTransportHealthFailure
         self.trustDelegate = PinnedServerTrustDelegate(
             pinnedLeafFingerprint: tlsCertFingerprint,
             expectedServerName: tlsServerName
@@ -140,6 +150,8 @@ final class AppEventStreamClient {
     func disconnect() {
         reconnectTask?.cancel()
         reconnectTask = nil
+        healthReportTask?.cancel()
+        healthReportTask = nil
         receiveTask?.cancel()
         receiveTask = nil
         pingTask?.cancel()
@@ -268,38 +280,48 @@ final class AppEventStreamClient {
         pingTask = Task { [weak self] in
             var consecutiveFailures = 0
             while !Task.isCancelled {
-                try? await Task.sleep(for: WebSocketRecoveryPolicy.pingInterval)
-                guard !Task.isCancelled else { break }
-                guard ws.state() == .running else { break }
+                try? await Task.sleep(for: self?.pingInterval ?? WebSocketRecoveryPolicy.pingInterval)
+                guard !Task.isCancelled,
+                      let self,
+                      self.webSocket?.identity == ws.identity,
+                      ws.state() == .running else { break }
 
-                let failed = await withUnsafeContinuation { (cont: UnsafeContinuation<Bool, Never>) in
-                    let oneShot = OneShotBoolContinuation(cont)
-                    ws.sendPing { error in
-                        oneShot.resume(returning: error != nil)
-                    }
+                let result = await WebSocketPingDeadline.wait(timeout: self.pingTimeout) { callback in
+                    ws.sendPing(callback)
                 }
+                guard !Task.isCancelled, self.webSocket?.identity == ws.identity else { break }
 
-                if failed {
-                    consecutiveFailures += 1
-                    if consecutiveFailures >= WebSocketRecoveryPolicy.maxConsecutivePingFailures {
-                        appEventClientLogger.warning("App event ping watchdog reconnect after \(consecutiveFailures) failures")
-                        await MainActor.run { [weak self] in
-                            guard let self, self.webSocket?.identity == ws.identity else { return }
-                            self.receiveTask?.cancel()
-                            self.receiveTask = nil
-                            ws.cancel(.goingAway, nil)
-                            self.webSocket = nil
-                            self.logStreamWarning(
-                                "Ping watchdog reconnect",
-                                extra: ["consecutiveFailures": String(consecutiveFailures)]
-                            )
-                            self.attemptReconnect(reason: "ping_watchdog")
-                        }
-                        break
-                    }
-                } else {
+                switch result {
+                case .succeeded:
                     consecutiveFailures = 0
+                    continue
+
+                case .failed:
+                    consecutiveFailures += 1
+                    guard consecutiveFailures >= WebSocketRecoveryPolicy.maxConsecutivePingFailures else {
+                        continue
+                    }
+                    await self.onTransportHealthFailure?(.pingFailures(count: consecutiveFailures))
+
+                case .timedOut:
+                    await self.onTransportHealthFailure?(.pingTimeout)
                 }
+
+                guard !Task.isCancelled, self.webSocket?.identity == ws.identity else { break }
+                appEventClientLogger.warning("App event ping watchdog detected an unhealthy socket")
+                self.receiveTask?.cancel()
+                self.receiveTask = nil
+                ws.cancel(.goingAway, nil)
+                self.webSocket = nil
+                self.logStreamWarning(
+                    "Ping watchdog reconnect",
+                    extra: [
+                        "consecutiveFailures": String(consecutiveFailures),
+                        "result": result == .timedOut ? "timeout" : "callback_error",
+                    ]
+                )
+                self.attemptReconnect(reason: "ping_watchdog")
+                break
             }
         }
     }
@@ -409,6 +431,18 @@ final class AppEventStreamClient {
         recordReconnectMetric(status: "scheduled", reason: reason, attempt: nextAttempt, closeCode: closeCode)
         status = .reconnecting(attempt: nextAttempt)
         let delay = reconnectDelay(nextAttempt)
+        if WebSocketRecoveryPolicy.shouldReportUnhealthyReconnect(attempt: nextAttempt),
+           let onTransportHealthFailure {
+            let reportingConnectionID = connectionID
+            healthReportTask?.cancel()
+            healthReportTask = Task { [weak self] in
+                guard let self,
+                      !Task.isCancelled,
+                      self.connectionID == reportingConnectionID,
+                      self.status != .disconnected else { return }
+                await onTransportHealthFailure(.reconnectThreshold(attempt: nextAttempt))
+            }
+        }
 
         receiveTask?.cancel()
         receiveTask = nil

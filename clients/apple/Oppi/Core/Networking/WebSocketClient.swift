@@ -32,6 +32,7 @@ final class WebSocketClient {
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var healthReportTask: Task<Void, Never>?
     private var continuation: AsyncStream<StreamFrameEvent>.Continuation?
     private var lastReceiveErrorFingerprint: String?
     private var lastReceiveErrorLogNs: UInt64 = 0
@@ -53,9 +54,12 @@ final class WebSocketClient {
     private let urlSession: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
 
-    private let pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval
+    private let pingInterval: Duration
+    private let pingTimeout: Duration
     private let waitForConnectionTimeout: Duration
     private let sendTimeout: Duration
+
+    var onTransportHealthFailure: (@MainActor @Sendable (PersistentStreamHealthFailure) async -> Void)?
 
     /// Continuations waiting for `.connected` status. Resolved on status
     /// transition to `.connected` or `.disconnected`.
@@ -69,6 +73,8 @@ final class WebSocketClient {
         diagnosticRemoteIdentity: String? = nil,
         tlsCertFingerprint: String? = nil,
         tlsServerName: String? = nil,
+        pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval,
+        pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
         waitForConnectionTimeout: Duration = .seconds(3),
         sendTimeout: Duration = .seconds(5)
     ) {
@@ -76,6 +82,8 @@ final class WebSocketClient {
         self.preferredEndpoint = preferredEndpoint
         self.diagnosticRole = diagnosticRole
         self.diagnosticRemoteIdentity = diagnosticRemoteIdentity
+        self.pingInterval = pingInterval
+        self.pingTimeout = pingTimeout
         self.waitForConnectionTimeout = waitForConnectionTimeout
         self.sendTimeout = sendTimeout
         let pinnedFingerprint = tlsCertFingerprint ?? credentials.normalizedTLSCertFingerprint
@@ -323,6 +331,8 @@ final class WebSocketClient {
         wsLogInfo("Cancelling reconnect backoff (was attempt \(attempt))")
         reconnectTask?.cancel()
         reconnectTask = nil
+        healthReportTask?.cancel()
+        healthReportTask = nil
         receiveTask?.cancel()
         receiveTask = nil
         pingTask?.cancel()
@@ -342,6 +352,8 @@ final class WebSocketClient {
     func prepareForBackground() {
         guard let ws = webSocket, status == .connected else { return }
         wsLogInfo("Preparing for background — sending goingAway close")
+        healthReportTask?.cancel()
+        healthReportTask = nil
         pingTask?.cancel()
         pingTask = nil
         ws.cancel(with: .goingAway, reason: nil)
@@ -361,6 +373,8 @@ final class WebSocketClient {
 
         reconnectTask?.cancel()
         reconnectTask = nil
+        healthReportTask?.cancel()
+        healthReportTask = nil
         receiveTask?.cancel()
         receiveTask = nil
         pingTask?.cancel()
@@ -629,40 +643,48 @@ final class WebSocketClient {
         pingTask = Task { [weak self] in
             var consecutiveFailures = 0
             while !Task.isCancelled {
-                try? await Task.sleep(for: self?.pingInterval ?? .seconds(30))
+                try? await Task.sleep(for: self?.pingInterval ?? WebSocketRecoveryPolicy.pingInterval)
                 guard !Task.isCancelled else { break }
+                guard ws.state == .running,
+                      let self,
+                      self.webSocket === ws else { break }
 
-                guard ws.state == .running else { break }
-
-                let failed = await withUnsafeContinuation { (cont: UnsafeContinuation<Bool, Never>) in
-                    let oneShot = OneShotBoolContinuation(cont)
-                    ws.sendPing { error in
-                        oneShot.resume(returning: error != nil)
-                    }
+                let result = await WebSocketPingDeadline.wait(timeout: self.pingTimeout) { callback in
+                    ws.sendPing(pongReceiveHandler: callback)
                 }
-                guard !Task.isCancelled, let self, self.webSocket === ws else { break }
+                guard !Task.isCancelled, self.webSocket === ws else { break }
 
-                if failed {
-                    consecutiveFailures += 1
-                    if consecutiveFailures >= 2 {
-                        logger.error("Ping watchdog: \(consecutiveFailures) consecutive failures — triggering reconnect")
-                        self.wsLogError(
-                            "Ping watchdog reconnect",
-                            metadata: ["failures": String(consecutiveFailures)]
-                        )
-                        await MainActor.run { [weak self] in
-                            guard let self, self.webSocket === ws else { return }
-                            self.receiveTask?.cancel()
-                            self.receiveTask = nil
-                            ws.cancel(with: .goingAway, reason: nil)
-                            self.webSocket = nil
-                            self.attemptReconnect()
-                        }
-                        break
-                    }
-                } else {
+                switch result {
+                case .succeeded:
                     consecutiveFailures = 0
+                    continue
+
+                case .failed:
+                    consecutiveFailures += 1
+                    guard consecutiveFailures >= WebSocketRecoveryPolicy.maxConsecutivePingFailures else {
+                        continue
+                    }
+                    await self.onTransportHealthFailure?(.pingFailures(count: consecutiveFailures))
+
+                case .timedOut:
+                    await self.onTransportHealthFailure?(.pingTimeout)
                 }
+
+                guard !Task.isCancelled, self.webSocket === ws else { break }
+                logger.error("Ping watchdog detected an unhealthy socket — triggering reconnect")
+                self.wsLogError(
+                    "Ping watchdog reconnect",
+                    metadata: [
+                        "failures": String(consecutiveFailures),
+                        "result": result == .timedOut ? "timeout" : "callback_error",
+                    ]
+                )
+                self.receiveTask?.cancel()
+                self.receiveTask = nil
+                ws.cancel(with: .goingAway, reason: nil)
+                self.webSocket = nil
+                self.attemptReconnect()
+                break
             }
         }
     }
@@ -679,6 +701,18 @@ final class WebSocketClient {
         let nextAttempt = WebSocketRecoveryPolicy.nextReconnectAttempt(after: attempt)
         status = .reconnecting(attempt: nextAttempt)
         let delay = Self.reconnectDelay(attempt: nextAttempt)
+        if WebSocketRecoveryPolicy.shouldReportUnhealthyReconnect(attempt: nextAttempt),
+           let onTransportHealthFailure {
+            let reportingConnectionID = connectionID
+            healthReportTask?.cancel()
+            healthReportTask = Task { [weak self] in
+                guard let self,
+                      !Task.isCancelled,
+                      self.connectionID == reportingConnectionID,
+                      self.status != .disconnected else { return }
+                await onTransportHealthFailure(.reconnectThreshold(attempt: nextAttempt))
+            }
+        }
 
         // Cancel old tasks
         receiveTask?.cancel()

@@ -49,4 +49,32 @@ struct WebSocketClientReconnectBackoffTests {
 
         #expect(client.status == .connected)
     }
+
+    @Test func pingDeadlineReturnsTimeoutWhenCallbackNeverArrives() async {
+        let result = await WebSocketPingDeadline.wait(timeout: .milliseconds(20)) { _ in }
+        #expect(result == .timedOut)
+    }
+
+    @Test func pingDeadlineReturnsCallbackFailureBeforeTimeout() async {
+        let result = await WebSocketPingDeadline.wait(timeout: .seconds(1)) { callback in
+            callback(URLError(.networkConnectionLost))
+        }
+        #expect(result == .failed)
+    }
+
+    @Test func pingDeadlineReturnsSuccessBeforeTimeout() async {
+        let result = await WebSocketPingDeadline.wait(timeout: .seconds(1)) { callback in
+            callback(nil)
+        }
+        #expect(result == .succeeded)
+    }
+
+    @Test func reconnectThresholdReportsPersistentTransportHealthAtBoundedAttempts() {
+        #expect(!WebSocketRecoveryPolicy.shouldReportUnhealthyReconnect(attempt: 3))
+        #expect(WebSocketRecoveryPolicy.shouldReportUnhealthyReconnect(attempt: 4))
+        #expect(!WebSocketRecoveryPolicy.shouldReportUnhealthyReconnect(attempt: 5))
+        #expect(WebSocketRecoveryPolicy.shouldReportUnhealthyReconnect(attempt: 6))
+        #expect(WebSocketRecoveryPolicy.shouldReportUnhealthyReconnect(attempt: 7))
+        #expect(WebSocketRecoveryPolicy.shouldReportUnhealthyReconnect(attempt: 100))
+    }
 }

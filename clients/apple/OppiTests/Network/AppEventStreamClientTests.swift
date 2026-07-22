@@ -66,6 +66,63 @@ struct AppEventStreamClientTests {
         await consumer.value
     }
 
+    @Test func withheldPingCallbackTimesOutReportsHealthAndReconnects() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        factory.pingBehavior = .withhold
+        var healthFailures: [PersistentStreamHealthFailure] = []
+        let client = try makeClient(
+            factory: factory,
+            pingInterval: .milliseconds(1),
+            pingTimeout: .milliseconds(20),
+            onTransportHealthFailure: { healthFailures.append($0) }
+        )
+        let stream = client.connect()
+        let consumer = Task {
+            for await _ in stream {}
+        }
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            healthFailures == [.pingTimeout]
+        })
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            if case .reconnecting(attempt: 1) = client.status { return true }
+            return false
+        })
+        #expect(factory.sockets.first?.isCanceling == true)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func repeatedRecoverableFailuresReportUnhealthyTransportAtBoundedThreshold() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        var healthFailures: [PersistentStreamHealthFailure] = []
+        let client = try makeClient(
+            factory: factory,
+            reconnectDelay: { _ in 0 },
+            onTransportHealthFailure: { healthFailures.append($0) }
+        )
+        let stream = client.connect()
+        let consumer = Task {
+            for await _ in stream {}
+        }
+
+        for expectedSocketCount in 2...5 {
+            let socket = try #require(factory.sockets.last)
+            socket.fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
+            #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+                factory.sockets.count == expectedSocketCount
+            })
+        }
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            healthFailures == [.reconnectThreshold(attempt: 4)]
+        })
+
+        client.disconnect()
+        await consumer.value
+    }
+
     @Test func recoverableFailuresContinuePastFormerRetryCeiling() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let client = try makeClient(factory: factory, reconnectDelay: { _ in 0 })
@@ -195,13 +252,19 @@ struct AppEventStreamClientTests {
 
     private func makeClient(
         factory: ScriptedAppEventSocketFactory,
-        reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = { _ in 60 }
+        pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval,
+        pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
+        reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = { _ in 60 },
+        onTransportHealthFailure: (@MainActor @Sendable (PersistentStreamHealthFailure) async -> Void)? = nil
     ) throws -> AppEventStreamClient {
         let url = try #require(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
         return AppEventStreamClient(
             url: url,
             token: "test-token",
+            pingInterval: pingInterval,
+            pingTimeout: pingTimeout,
             reconnectDelay: reconnectDelay,
+            onTransportHealthFailure: onTransportHealthFailure,
             webSocketFactory: { request in factory.makeTransport(for: request) }
         )
     }
@@ -318,13 +381,20 @@ private final class AppEventSnapshotGate {
     }
 }
 
+private enum ScriptedPingBehavior {
+    case succeed
+    case fail
+    case withhold
+}
+
 @MainActor
 private final class ScriptedAppEventSocketFactory {
     private(set) var requests: [URLRequest] = []
     private(set) var sockets: [ScriptedAppEventSocket] = []
+    var pingBehavior: ScriptedPingBehavior = .succeed
 
     func makeTransport(for request: URLRequest) -> AppEventWebSocketTransport {
-        let socket = ScriptedAppEventSocket()
+        let socket = ScriptedAppEventSocket(pingBehavior: pingBehavior)
         requests.append(request)
         sockets.append(socket)
         return socket.transport
@@ -340,6 +410,15 @@ private final class ScriptedAppEventSocket {
     private var taskState: URLSessionTask.State = .suspended
     private var taskResponse: URLResponse?
     private var taskCloseCode: URLSessionWebSocketTask.CloseCode = .invalid
+    private let pingBehavior: ScriptedPingBehavior
+
+    init(pingBehavior: ScriptedPingBehavior = .succeed) {
+        self.pingBehavior = pingBehavior
+    }
+
+    var isCanceling: Bool {
+        taskState == .canceling
+    }
 
     lazy var transport = AppEventWebSocketTransport(
         identity: self,
@@ -348,7 +427,16 @@ private final class ScriptedAppEventSocket {
             guard let self else { throw CancellationError() }
             return try await self.receive()
         },
-        sendPing: { handler in handler(nil) },
+        sendPing: { [weak self] handler in
+            switch self?.pingBehavior {
+            case .succeed:
+                handler(nil)
+            case .fail:
+                handler(URLError(.networkConnectionLost))
+            case .withhold, nil:
+                break
+            }
+        },
         cancel: { [weak self] code, _ in self?.cancel(code: code) },
         state: { [weak self] in self?.taskState ?? .completed },
         response: { [weak self] in self?.taskResponse },

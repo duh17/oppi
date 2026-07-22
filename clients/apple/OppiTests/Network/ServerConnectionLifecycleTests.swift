@@ -294,6 +294,89 @@ struct ServerConnectionLifecycleTests {
         #expect(await conn.apiClient?.environment.pinnedCertificateFingerprint == nil)
     }
 
+    @Test func unhealthyStickyFallbackRetriesIrohWithoutWaitingForForegroundBoundary() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:42019"))
+        var attempts = 0
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                attempts += 1
+                if attempts == 1 {
+                    throw IrohTransportError.unavailable("initial outage")
+                }
+                return (nil, localURL)
+            }
+        ))
+        #expect(conn.transportPath == .paired)
+        #expect(conn.irohFallbackActive)
+
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+
+        #expect(attempts == 2)
+        #expect(conn.transportPath == .iroh)
+        #expect(!conn.irohFallbackActive)
+        #expect(await conn.apiClient?.baseURL == localURL)
+    }
+
+    @Test func IrohPingTimeoutRecyclesEstablishedEndpointBeforeFallback() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let provider = EstablishedStreamFailureRecoveryProvider()
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let localURL = try #require(URL(string: "http://127.0.0.1:42020"))
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        ))
+
+        await conn.handlePersistentStreamHealthFailure(.pingTimeout)
+
+        #expect(await provider.endpointRecycleCount == 1)
+        #expect(conn.transportPath == .iroh)
+        #expect(!conn.irohFallbackActive)
+    }
+
+    @Test func concurrentPersistentStreamFailuresCoalesceIntoOneIrohRecovery() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let provider = GatedPersistentHealthRecoveryProvider()
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let localURL = try #require(URL(string: "http://127.0.0.1:42021"))
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        ))
+
+        let firstRecovery = Task { @MainActor in
+            await conn.handlePersistentStreamHealthFailure(.pingTimeout)
+        }
+        await provider.waitForRecycle()
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        await provider.releaseRecycle()
+        await firstRecovery.value
+
+        #expect(await provider.endpointRecycleCount == 1)
+        #expect(conn.transportPath == .iroh)
+    }
+
+    @Test func persistentHealthFailureDoesNotChangeHTTPOnlyConnection() async {
+        let conn = ServerConnection()
+        #expect(await conn.configureForUse(credentials: makeHTTPOnlyCredentials()))
+        let originalAPIClient = conn.apiClient
+
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 7))
+
+        #expect(conn.transportPath == .paired)
+        #expect(conn.apiClient === originalAPIClient)
+    }
+
     @Test func LANDiscoveredDuringInitialIrohProbeWinsBeforeAdoption() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
@@ -1664,6 +1747,43 @@ private actor EstablishedStreamFailureRecoveryProvider: IrohConnectionProviding 
 
     func recycleEndpoint() async throws {
         endpointRecycleCount += 1
+    }
+
+    func shutdown() async {}
+}
+
+private actor GatedPersistentHealthRecoveryProvider: IrohConnectionProviding {
+    private var recycleContinuation: CheckedContinuation<Void, Never>?
+    private(set) var recycleIsWaiting = false
+    private(set) var endpointRecycleCount = 0
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+    }
+
+    func suspendConnections() async {}
+
+    func recycleEndpoint() async throws {
+        endpointRecycleCount += 1
+        recycleIsWaiting = true
+        await withCheckedContinuation { continuation in
+            recycleContinuation = continuation
+        }
+    }
+
+    func waitForRecycle() async {
+        while !recycleIsWaiting {
+            await Task.yield()
+        }
+    }
+
+    func releaseRecycle() {
+        recycleContinuation?.resume()
+        recycleContinuation = nil
     }
 
     func shutdown() async {}
