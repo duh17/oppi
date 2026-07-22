@@ -152,6 +152,55 @@ describe("ModelCatalog", () => {
       expect(catalog.getUpdatedAt()).toBeGreaterThan(0);
     });
 
+    it("does not wait for a stalled registry refresh", async () => {
+      const registry = makeRegistry([SONNET]);
+      (registry.refresh as ReturnType<typeof vi.fn>).mockReturnValue(new Promise<void>(() => {}));
+      const catalog = new ModelCatalog(registry, makeStorage());
+      let completed = false;
+
+      void catalog.refresh().then(() => {
+        completed = true;
+      });
+      await Promise.resolve();
+
+      expect(completed).toBe(true);
+      expect(catalog.getAll()).toEqual([
+        expect.objectContaining({ id: "anthropic/claude-sonnet-4-20250514" }),
+      ]);
+    });
+
+    it("updates the cached catalog after a background refresh completes", async () => {
+      let finishRefresh: (() => void) | undefined;
+      const reload = new Promise<void>((resolve) => {
+        finishRefresh = resolve;
+      });
+      const registry = makeRegistry([SONNET]);
+      (registry.refresh as ReturnType<typeof vi.fn>).mockReturnValue(reload);
+      const catalog = new ModelCatalog(registry, makeStorage());
+
+      await catalog.refresh();
+      expect(catalog.getAll().map((model) => model.id)).toEqual([
+        "anthropic/claude-sonnet-4-20250514",
+      ]);
+
+      (registry.getAvailable as ReturnType<typeof vi.fn>).mockReturnValue([GPT]);
+      finishRefresh?.();
+      await reload;
+
+      expect(catalog.getAll().map((model) => model.id)).toEqual(["openai/gpt-5.3-codex"]);
+    });
+
+    it("coalesces calls while a background refresh is in flight", async () => {
+      const registry = makeRegistry([SONNET]);
+      (registry.refresh as ReturnType<typeof vi.fn>).mockReturnValue(new Promise<void>(() => {}));
+      const catalog = new ModelCatalog(registry, makeStorage());
+
+      await catalog.refresh();
+      await catalog.refresh();
+
+      expect(registry.refresh).toHaveBeenCalledTimes(1);
+    });
+
     it("survives registry throwing", () => {
       const registry = makeRegistry();
       (registry.refresh as ReturnType<typeof vi.fn>).mockImplementation(() => {

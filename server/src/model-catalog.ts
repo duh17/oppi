@@ -53,6 +53,7 @@ function candidateToModelInfo(candidate: ModelResolutionCandidate): ModelInfo {
 export class ModelCatalog {
   private catalog: ModelInfo[] = [];
   private updatedAt = 0;
+  private refreshInFlight?: Promise<void>;
   constructor(
     private registry: ModelRegistry,
     private storage: Storage,
@@ -63,20 +64,32 @@ export class ModelCatalog {
     return typeof this.allowlist === "function" ? this.allowlist() : this.allowlist;
   }
 
-  /** Refresh the model catalog from the SDK registry. */
+  /** Start an SDK refresh without blocking callers, serving the current registry snapshot meanwhile. */
   refresh(): Promise<void> {
+    if (this.refreshInFlight) {
+      this.populateFromRegistry();
+      return Promise.resolve();
+    }
+
     try {
       // Keep the existing snapshot available synchronously while Pi reloads its
       // asynchronous model runtime. The second population captures refreshed
       // configured and dynamic provider catalogs.
       const reload = this.registry.refresh();
       this.populateFromRegistry();
-      return reload
+      const tracked = reload
         .then(() => this.populateFromRegistry())
         .catch((err: unknown) => {
           const message = err instanceof Error ? err.message : String(err);
           log.warn("models.refresh.failed", { error: message });
+        })
+        .finally(() => {
+          if (this.refreshInFlight === tracked) {
+            this.refreshInFlight = undefined;
+          }
         });
+      this.refreshInFlight = tracked;
+      return Promise.resolve();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       log.warn("models.refresh.failed", { error: message });
