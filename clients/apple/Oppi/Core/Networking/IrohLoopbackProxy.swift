@@ -7,6 +7,16 @@ private let irohProxyLogger = Logger(
     category: "IrohLoopbackProxy"
 )
 
+struct IrohTunnelPumpFailure: Error, @unchecked Sendable {
+    enum Endpoint: Sendable {
+        case localPeer
+        case iroh
+    }
+
+    let endpoint: Endpoint
+    let underlyingError: Error
+}
+
 /// App-local TCP bridge. URLSession and URLSessionWebSocketTask keep their
 /// existing HTTP semantics while each accepted TCP connection is carried by
 /// one authenticated Iroh bidirectional stream.
@@ -233,12 +243,22 @@ final class IrohLoopbackProxy: @unchecked Sendable {
             status = "cancelled"
             await stream.reset(errorCode: 2)
         } catch {
-            status = "failed"
-            irohProxyLogger.debug("Iroh proxy connection ended: \(error.localizedDescription, privacy: .public)")
-            IrohTransportTelemetry.recordTunnelError(
-                phase: "pump",
-                errorKind: IrohTransportTelemetry.errorKind(error)
-            )
+            let failure = error as? IrohTunnelPumpFailure
+            let underlyingError = failure?.underlyingError ?? error
+            let responseBytes = byteCounter.snapshot().responseBytes
+            if !Self.shouldRecordTunnelPumpError(error, responseBytes: responseBytes) {
+                status = "peer_closed"
+                irohProxyLogger.debug("Iroh proxy local peer closed after receiving a response")
+            } else {
+                status = "failed"
+                irohProxyLogger.debug(
+                    "Iroh proxy connection ended: \(underlyingError.localizedDescription, privacy: .public)"
+                )
+                IrohTransportTelemetry.recordTunnelError(
+                    phase: "pump",
+                    errorKind: IrohTransportTelemetry.errorKind(underlyingError)
+                )
+            }
             await stream.reset(errorCode: 2)
         }
         let byteSnapshot = byteCounter.snapshot()
@@ -296,19 +316,59 @@ final class IrohLoopbackProxy: @unchecked Sendable {
         case irohToLocal
     }
 
+    static func shouldRecordTunnelPumpError(_ error: Error, responseBytes: Int) -> Bool {
+        guard let failure = error as? IrohTunnelPumpFailure,
+              failure.endpoint == .localPeer,
+              responseBytes > 0 else {
+            return true
+        }
+        let error = failure.underlyingError
+        if error is CancellationError { return false }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return false }
+
+        let code: POSIXErrorCode?
+        if case .posix(let posixCode) = error as? NWError {
+            code = posixCode
+        } else {
+            let nsError = error as NSError
+            code = nsError.domain == NSPOSIXErrorDomain
+                ? POSIXErrorCode(rawValue: Int32(nsError.code))
+                : nil
+        }
+        guard let code else { return true }
+        return code != .ECANCELED
+            && code != .ECONNRESET
+            && code != .EPIPE
+            && code != .ENOTCONN
+    }
+
     private static func pumpLocalToIroh(
         connection: NWConnection,
         stream: any IrohByteStream,
         counter: IrohTunnelByteCounter
     ) async throws {
         while !Task.isCancelled {
-            let (data, complete) = try await receive(from: connection)
+            let data: Data
+            let complete: Bool
+            do {
+                (data, complete) = try await receive(from: connection)
+            } catch {
+                throw IrohTunnelPumpFailure(endpoint: .localPeer, underlyingError: error)
+            }
             if !data.isEmpty {
-                try await stream.write(data)
+                do {
+                    try await stream.write(data)
+                } catch {
+                    throw IrohTunnelPumpFailure(endpoint: .iroh, underlyingError: error)
+                }
                 counter.addRequestBytes(data.count)
             }
             if complete {
-                try await stream.finishWriting()
+                do {
+                    try await stream.finishWriting()
+                } catch {
+                    throw IrohTunnelPumpFailure(endpoint: .iroh, underlyingError: error)
+                }
                 return
             }
         }
@@ -322,9 +382,19 @@ final class IrohLoopbackProxy: @unchecked Sendable {
     ) async throws {
         try await pumpIrohToLocal(
             counter: counter,
-            read: { try await stream.read(maxBytes: chunkBytes) },
+            read: {
+                do {
+                    return try await stream.read(maxBytes: chunkBytes)
+                } catch {
+                    throw IrohTunnelPumpFailure(endpoint: .iroh, underlyingError: error)
+                }
+            },
             send: { data, isComplete in
-                try await send(data, isComplete: isComplete, over: connection)
+                do {
+                    try await send(data, isComplete: isComplete, over: connection)
+                } catch {
+                    throw IrohTunnelPumpFailure(endpoint: .localPeer, underlyingError: error)
+                }
             }
         )
     }

@@ -10,6 +10,7 @@ For implementation details, read the split pages:
 
 - [Server architecture](architecture-server.md) — HTTP routes, stream muxes, runtime ownership, session coordinators, storage, mirror bridge, and server boundary rules.
 - [Client architecture](architecture-client.md) — Apple stores, transport coordinators, workspace navigation, chat timeline pipeline, extension UI rendering, and client boundary rules.
+- [Networking and connection routing](networking.md) — LAN, paired HTTPS, Iroh, transport selection, fallback, recovery, and diagnostics.
 
 This page does not document every source file or operational runbook.
 

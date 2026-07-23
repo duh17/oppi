@@ -41,13 +41,20 @@ Notes:
 - The guided create flow lets you pick a project, enter a path manually, or start with a blank workspace.
 - Manual connection keeps **Connect** disabled until host and token are filled. If the port is invalid, Oppi uses `7749`.
 
-For host-free pairing and app traffic, start the server in Iroh-only mode:
+For Iroh with verified HTTPS fallback, enable the transport durably and restart the server:
 
 ```bash
-OPPI_IROH_TRANSPORT=1 OPPI_IROH_INVITE_MODE=irohOnly oppi serve
+oppi config set iroh.enabled true
+oppi serve
 ```
 
-The signed invite identifies the Iroh endpoint instead of an Oppi host and port. The app uses the same REST, file, media, focused-session, app-event, and dictation behavior through the Iroh tunnel. Iroh-only pairing and connection failures do not fall back to HTTP.
+For host-free Iroh-only pairing, keep `iroh.enabled` on and select Iroh-only invite mode when starting the server:
+
+```bash
+OPPI_IROH_INVITE_MODE=irohOnly oppi serve
+```
+
+The signed invite identifies the Iroh endpoint instead of an Oppi host and port. The app uses the same REST, file, media, focused-session, app-event, and dictation behavior through the Iroh tunnel. Iroh-only pairing and connection failures do not fall back to HTTP. See [Networking and connection routing](networking.md) for route priority, fallback, recovery, and diagrams.
 
 For remote HTTP/TLS pairing (for example Tailscale or a VPS), generate an invite with an explicit host:
 

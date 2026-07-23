@@ -48,6 +48,422 @@ struct ConnectionCoordinatorTests {
         #expect(connection.transportPath == .paired)
     }
 
+    @Test func pairedShellPublishesIrohServerBeforeTransportPreparation() throws {
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeIrohPreferredCredentials(token: "dt_staged_launch")
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+
+        let connection = coordinator.activatePairedServerShell(server)
+
+        #expect(coordinator.activeServerId == server.id)
+        #expect(coordinator.connection(for: server.id) === connection)
+        #expect(coordinator.activeConnection === connection)
+        #expect(connection.sessionStore.activeServerId == server.id)
+        #expect(connection.workspaceStore.activeServerId == server.id)
+        #expect(connection.serverResourceStore.activeServerId == server.id)
+        #expect(connection.credentials == nil)
+        #expect(connection.apiClient == nil)
+    }
+
+    @Test func pairedShellSurvivesAvailabilityFailureAndRetriesAtPathBoundary() async throws {
+        defer { TestURLProtocol.handler = nil }
+        TestURLProtocol.handler = { request in
+            let body = switch request.url?.path {
+            case "/workspaces": #"{"serverNow":1700000000000,"workspaces":[],"summaries":[]}"#
+            case "/skills": #"{"skills":[]}"#
+            case "/sessions/recent": #"{"sessions":[]}"#
+            default: #"{}"#
+            }
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "http://recovered.test")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (Data(body.utf8), response)
+        }
+
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeTestIrohOnlyCredentials()
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        let shellConnection = coordinator.activatePairedServerShell(server)
+        var attempts = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            attempts += 1
+            if attempts == 1 {
+                throw IrohTransportError.unavailable("path unavailable")
+            }
+            return (nil, try #require(URL(string: "http://127.0.0.1:41997")))
+        }
+        coordinator._onConnectionPreparedForTesting = { _, connection in
+            guard connection.credentials != nil else { return }
+            connection.setAPIClientForTesting(makeTestAPIClient(host: "recovered.test"))
+            connection.setSplitStreamCapabilitiesForTesting()
+        }
+
+        _ = await coordinator.ensureConnectionReady(for: server)
+
+        #expect(coordinator.activeConnection === shellConnection)
+        #expect(coordinator.serverStore.server(for: server.id) != nil)
+        #expect(shellConnection.credentials == nil)
+
+        coordinator._applyNetworkPathChangeForTesting()
+        for _ in 0..<100 where shellConnection.credentials == nil {
+            await Task.yield()
+        }
+
+        #expect(attempts == 2)
+        #expect(coordinator.activeConnection === shellConnection)
+        #expect(shellConnection.credentials == credentials)
+        #expect(shellConnection.apiClient != nil)
+    }
+
+    @Test func terminalInitialFailureDoesNotAutomaticallyRetryAtPathBoundary() async throws {
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeIrohPreferredCredentials(token: "dt_terminal_staged_launch")
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        let shellConnection = coordinator.activatePairedServerShell(server)
+        var attempts = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            attempts += 1
+            throw IrohTransportError.authentication("peer rejected")
+        }
+
+        _ = await coordinator.ensureConnectionReady(for: server)
+        coordinator._applyNetworkPathChangeForTesting()
+        for _ in 0..<10 { await Task.yield() }
+
+        #expect(attempts == 1)
+        #expect(shellConnection.credentials == nil)
+        #expect(!shellConnection.canAutomaticallyRetryInitialTransport)
+    }
+
+    @Test func explicitRetryRebuildsConfiguredTerminalTransport() async throws {
+        defer { TestURLProtocol.handler = nil }
+        installEmptyCatalogHandler()
+
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeIrohPreferredCredentials(token: "dt_explicit_terminal_retry")
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        var attempts = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            attempts += 1
+            return (nil, try #require(URL(string: "http://127.0.0.1:41999")))
+        }
+        coordinator._onConnectionPreparedForTesting = { _, connection in
+            guard connection.credentials != nil else { return }
+            connection.setAPIClientForTesting(makeTestAPIClient(host: "retry.test"))
+            connection.setSplitStreamCapabilitiesForTesting()
+        }
+
+        let connection = await coordinator.ensureConnectionReady(for: server)
+        coordinator.activatePairedServerShell(server)
+        connection.failTransportTerminallyForTesting()
+        #expect(connection.apiClient == nil)
+
+        await coordinator.retryServerConnection(server.id)
+
+        #expect(attempts == 2)
+        #expect(connection.credentials == credentials)
+        #expect(connection.apiClient != nil)
+        #expect(!connection.workspaceStore.lastSyncFailed)
+        #expect(!connection.sessionStore.lastSyncFailed)
+    }
+
+    @Test func explicitRetryFullyRebuildsConfiguredFallbackWhenForegroundRecoveryIsBusy() async throws {
+        defer { TestURLProtocol.handler = nil }
+        installEmptyCatalogHandler()
+
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeIrohPreferredCredentials(token: "dt_busy_explicit_retry")
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        var attempts = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            attempts += 1
+            if attempts == 1 {
+                throw IrohTransportError.unavailable("server listener was disabled")
+            }
+            return (nil, try #require(URL(string: "http://127.0.0.1:42022")))
+        }
+        coordinator._onConnectionPreparedForTesting = { _, connection in
+            guard connection.credentials != nil else { return }
+            connection.setAPIClientForTesting(makeTestAPIClient(host: "retry.test"))
+            connection.setSplitStreamCapabilitiesForTesting()
+        }
+
+        let connection = await coordinator.ensureConnectionReady(for: server)
+        #expect(connection.transportPath == .paired)
+        connection.foregroundRecoveryInFlight = true
+
+        await coordinator.retryServerConnection(server.id)
+        connection.foregroundRecoveryInFlight = false
+
+        #expect(attempts == 2)
+        #expect(connection.transportPath == .iroh)
+        #expect(connection.apiClient != nil)
+    }
+
+    @Test func explicitRetryQueuesForcedRebuildBehindNonForcedPreparation() async throws {
+        defer { TestURLProtocol.handler = nil }
+        installEmptyCatalogHandler()
+
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeIrohPreferredCredentials(token: "dt_forced_join_retry")
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        var attempts = 0
+        let gate = CoordinatorIrohSetupGate()
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            attempts += 1
+            if attempts == 1 {
+                await gate.waitUntilReleased()
+                throw IrohTransportError.unavailable("ordinary setup unavailable")
+            }
+            return (nil, try #require(URL(string: "http://127.0.0.1:42023")))
+        }
+        coordinator._onConnectionPreparedForTesting = { _, connection in
+            guard connection.credentials != nil else { return }
+            connection.setAPIClientForTesting(makeTestAPIClient(host: "retry.test"))
+            connection.setSplitStreamCapabilitiesForTesting()
+        }
+
+        let connection = coordinator.activatePairedServerShell(server)
+        let ordinaryPreparation = Task { @MainActor in
+            await coordinator.ensureConnectionReady(for: server)
+        }
+        while !gate.isWaiting { await Task.yield() }
+        let retry = Task { @MainActor in
+            await coordinator.retryServerConnection(server.id)
+        }
+        await Task.yield()
+        gate.release()
+        _ = await ordinaryPreparation.value
+        await retry.value
+
+        #expect(attempts == 2)
+        #expect(connection.transportPath == .iroh)
+        #expect(connection.apiClient != nil)
+    }
+
+    @Test func ordinaryPreparationAwaitsInFlightForcedRetry() async throws {
+        defer { TestURLProtocol.handler = nil }
+        installEmptyCatalogHandler()
+
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeIrohPreferredCredentials(token: "dt_wait_for_forced_retry")
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        let gate = CoordinatorIrohSetupGate()
+        var attempts = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            attempts += 1
+            if attempts == 2 {
+                await gate.waitUntilReleased()
+            }
+            let port = attempts == 1 ? 42031 : 42032
+            return (nil, try #require(URL(string: "http://127.0.0.1:\(port)")))
+        }
+        coordinator._onConnectionPreparedForTesting = { _, connection in
+            guard connection.credentials != nil else { return }
+            connection.setAPIClientForTesting(makeTestAPIClient(host: "retry.test"))
+            connection.setSplitStreamCapabilitiesForTesting()
+        }
+
+        let connection = await coordinator.ensureConnectionReady(for: server)
+        let originalAPIClient = connection.apiClient
+        let retry = Task { @MainActor in
+            await coordinator.retryServerConnection(server.id)
+        }
+        while !gate.isWaiting { await Task.yield() }
+        var ordinaryCompleted = false
+        let ordinary = Task { @MainActor in
+            let prepared = await coordinator.ensureConnectionReady(for: server)
+            ordinaryCompleted = true
+            return prepared
+        }
+        await Task.yield()
+
+        #expect(!ordinaryCompleted)
+        gate.release()
+        await retry.value
+        let prepared = await ordinary.value
+
+        #expect(attempts == 2)
+        #expect(prepared === connection)
+        #expect(connection.apiClient !== originalAPIClient)
+    }
+
+    @Test func failedExplicitRetryMarksSelectedServerStores() async throws {
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeTestIrohOnlyCredentials()
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        let connection = coordinator.activatePairedServerShell(server)
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            throw IrohTransportError.authentication("peer rejected retry")
+        }
+
+        await coordinator.retryServerConnection(server.id)
+
+        #expect(connection.workspaceStore.lastSyncFailed)
+        #expect(connection.sessionStore.lastSyncFailed)
+    }
+
+    @Test func explicitRetryRebuildsOnlySelectedServer() async throws {
+        defer { TestURLProtocol.handler = nil }
+        installEmptyCatalogHandler()
+
+        let (coordinator, _) = makeCoordinator()
+        let firstCredentials = makeIrohPreferredCredentials(
+            token: "dt_retry_first",
+            serverFingerprint: "sha256:RETRYFIRST"
+        )
+        let secondCredentials = makeIrohPreferredCredentials(
+            token: "dt_retry_second",
+            serverFingerprint: "sha256:RETRYSECOND"
+        )
+        let first = try #require(PairedServer(from: firstCredentials, sortOrder: 0))
+        let second = try #require(PairedServer(from: secondCredentials, sortOrder: 1))
+        coordinator.serverStore.addOrUpdate(first)
+        coordinator.serverStore.addOrUpdate(second)
+        var attemptsByToken: [String: Int] = [:]
+        coordinator._irohProxyFactoryForTesting = { _, token in
+            attemptsByToken[token, default: 0] += 1
+            let port = token == firstCredentials.token ? 42024 : 42025
+            return (nil, try #require(URL(string: "http://127.0.0.1:\(port)")))
+        }
+        coordinator._onConnectionPreparedForTesting = { _, connection in
+            guard connection.credentials != nil else { return }
+            connection.setAPIClientForTesting(makeTestAPIClient(host: "retry.test"))
+            connection.setSplitStreamCapabilitiesForTesting()
+        }
+
+        let firstConnection = await coordinator.ensureConnectionReady(for: first)
+        let secondConnection = await coordinator.ensureConnectionReady(for: second)
+        let untouchedSecondAPI = secondConnection.apiClient
+
+        await coordinator.retryServerConnection(first.id)
+
+        #expect(attemptsByToken[firstCredentials.token] == 2)
+        #expect(attemptsByToken[secondCredentials.token] == 1)
+        #expect(firstConnection.apiClient != nil)
+        #expect(secondConnection.apiClient === untouchedSecondAPI)
+    }
+
+    @Test func failedInactivePreparationRemainsEligibleForBoundaryRecovery() async throws {
+        defer { TestURLProtocol.handler = nil }
+        installEmptyCatalogHandler()
+
+        let (coordinator, _) = makeCoordinator()
+        let selected = makeServer(id: "sha256:selected-http", name: "Selected")
+        let inactiveCredentials = makeTestIrohOnlyCredentials()
+        let inactive = try #require(PairedServer(from: inactiveCredentials, sortOrder: 1))
+        coordinator.serverStore.addOrUpdate(selected)
+        coordinator.serverStore.addOrUpdate(inactive)
+        #expect(coordinator.switchToServer(selected))
+        var attempts = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            attempts += 1
+            if attempts == 1 {
+                throw IrohTransportError.unavailable("inactive path unavailable")
+            }
+            return (nil, try #require(URL(string: "http://127.0.0.1:42000")))
+        }
+        coordinator._onConnectionPreparedForTesting = { serverId, connection in
+            guard serverId == inactive.id, connection.credentials != nil else { return }
+            connection.setAPIClientForTesting(makeTestAPIClient(host: "inactive.test"))
+            connection.setSplitStreamCapabilitiesForTesting()
+        }
+
+        await coordinator.prepareInactiveConnectionsReady(excluding: selected.id)
+        let inactiveConnection = try #require(coordinator.connection(for: inactive.id))
+        #expect(inactiveConnection.credentials == nil)
+
+        await coordinator.recoverUnconfiguredServerAfterBoundary(inactive.id)
+
+        #expect(attempts == 2)
+        #expect(inactiveConnection.credentials == inactiveCredentials)
+        #expect(inactiveConnection.apiClient != nil)
+    }
+
+    @Test func pathBoundaryDuringInitialFailureSchedulesFreshAttempt() async throws {
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeTestIrohOnlyCredentials()
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        let shellConnection = coordinator.activatePairedServerShell(server)
+        let gate = CoordinatorIrohSetupGate()
+        var attempts = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            attempts += 1
+            if attempts == 1 {
+                await gate.waitUntilReleased()
+                throw IrohTransportError.unavailable("old path unavailable")
+            }
+            return (nil, try #require(URL(string: "http://127.0.0.1:41998")))
+        }
+
+        let preparation = Task { @MainActor in
+            await coordinator.ensureConnectionReady(for: server)
+        }
+        while !gate.isWaiting { await Task.yield() }
+        await coordinator.recoverUnconfiguredServerAfterBoundary(server.id)
+        gate.release()
+        _ = await preparation.value
+
+        #expect(attempts == 2)
+        #expect(shellConnection.credentials == credentials)
+        #expect(shellConnection.apiClient != nil)
+    }
+
+    @Test func explicitRetryDuringPreparationRefreshesAfterFreshAttempt() async throws {
+        defer { TestURLProtocol.handler = nil }
+        installEmptyCatalogHandler()
+
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeTestIrohOnlyCredentials()
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        coordinator.serverStore.addOrUpdate(server)
+        let shellConnection = coordinator.activatePairedServerShell(server)
+        let gate = CoordinatorIrohSetupGate()
+        var attempts = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            attempts += 1
+            if attempts == 1 {
+                await gate.waitUntilReleased()
+                throw IrohTransportError.unavailable("first path unavailable")
+            }
+            return (nil, try #require(URL(string: "http://127.0.0.1:42001")))
+        }
+        coordinator._onConnectionPreparedForTesting = { _, connection in
+            guard connection.credentials != nil else { return }
+            connection.setAPIClientForTesting(makeTestAPIClient(host: "explicit.test"))
+            connection.setSplitStreamCapabilitiesForTesting()
+        }
+
+        let preparation = Task { @MainActor in
+            await coordinator.ensureConnectionReady(for: server)
+        }
+        while !gate.isWaiting { await Task.yield() }
+        let retry = Task { @MainActor in
+            await coordinator.retryServerConnection(server.id)
+        }
+        await Task.yield()
+        gate.release()
+        _ = await preparation.value
+        await retry.value
+
+        #expect(attempts == 2)
+        #expect(shellConnection.credentials == credentials)
+        #expect(!shellConnection.workspaceStore.lastSyncFailed)
+        #expect(!shellConnection.sessionStore.lastSyncFailed)
+    }
+
     // MARK: - Per-Server Connection Isolation
 
     @Test func eachServerGetsOwnConnection() {
@@ -796,14 +1212,17 @@ struct ConnectionCoordinatorTests {
 
     // MARK: - Helpers
 
-    private func makeIrohPreferredCredentials(token: String) -> ServerCredentials {
+    private func makeIrohPreferredCredentials(
+        token: String,
+        serverFingerprint: String = "sha256:SERVERFINGERPRINTABCDEF"
+    ) -> ServerCredentials {
         ServerCredentials(
             host: "studio.tailnet.ts.net",
             port: 7749,
             token: token,
             name: "Studio",
             scheme: .https,
-            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
+            serverFingerprint: serverFingerprint,
             tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF",
             transports: ServerTransports(
                 preference: .irohPreferred,
@@ -837,6 +1256,24 @@ struct ConnectionCoordinatorTests {
         }
         coordinator._initialLANEndpointForTesting = { _ in nil }
         return (coordinator, store)
+    }
+
+    private func installEmptyCatalogHandler() {
+        TestURLProtocol.handler = { request in
+            let body = switch request.url?.path {
+            case "/workspaces": #"{"serverNow":1700000000000,"workspaces":[],"summaries":[]}"#
+            case "/skills": #"{"skills":[]}"#
+            case "/sessions/recent": #"{"sessions":[]}"#
+            default: #"{}"#
+            }
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "http://test.local")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (Data(body.utf8), response)
+        }
     }
 
     private func makeTestAPIClient(host: String) -> APIClient {
@@ -873,6 +1310,26 @@ struct ConnectionCoordinatorTests {
         return server
     }
 
+}
+
+@MainActor
+private final class CoordinatorIrohSetupGate {
+    private(set) var isWaiting = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func waitUntilReleased() async {
+        isWaiting = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func release() {
+        isWaiting = false
+        let continuation = continuation
+        self.continuation = nil
+        continuation?.resume()
+    }
 }
 
 private final class CoordinatorRequestLog: @unchecked Sendable {

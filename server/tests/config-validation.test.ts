@@ -27,6 +27,7 @@ describe("Storage config validation", () => {
     expect(result.config?.runtimePathEntries?.length).toBeGreaterThan(0);
     expect(result.config?.oppiDocsPrompt?.enabled).toBe(true);
     expect(result.config?.oppiCliPrompt?.enabled).toBe(true);
+    expect(result.config?.iroh?.enabled).toBe(false);
     expect(result.config?.tls?.mode).toBe("self-signed");
     expect(result.config?.images?.autoResize).toBe(false);
   });
@@ -233,6 +234,28 @@ describe("Storage config validation", () => {
     expect(invalid.valid).toBe(false);
     expect(invalid.errors).toContain("config.oppiCliPrompt.enabled: expected boolean");
     expect(invalid.errors).toContain("config.oppiCliPrompt.unknownField: unknown key");
+  });
+
+  it("preserves and validates durable Iroh transport config", () => {
+    const enabled = Storage.validateConfig(
+      { ...Storage.getDefaultConfig(dir), iroh: { enabled: true } },
+      dir,
+      true,
+    );
+    expect(enabled.valid).toBe(true);
+    expect(enabled.config?.iroh?.enabled).toBe(true);
+
+    const invalid = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        iroh: { enabled: "yes", unknownField: true },
+      },
+      dir,
+      true,
+    );
+    expect(invalid.valid).toBe(false);
+    expect(invalid.errors).toContain("config.iroh.enabled: expected boolean");
+    expect(invalid.errors).toContain("config.iroh.unknownField: unknown key");
   });
 
   it("preserves image auto-resize config", () => {

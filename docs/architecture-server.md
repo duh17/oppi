@@ -6,7 +6,7 @@ The Oppi server is the authority for sessions, workspace access, runtime configu
 
 Read this page when changing server routes, WebSocket transports, session lifecycle code, runtime ownership, the Pi SDK adapter, terminal mirror behavior, storage projections, or protocol contracts.
 
-This page covers production server structure. It does not cover Apple UI composition; see [Client architecture](architecture-client.md).
+This page covers production server structure. It does not cover Apple UI composition; see [Client architecture](architecture-client.md). For route selection, Iroh fallback, and connection recovery across both sides, see [Networking and connection routing](networking.md).
 
 ## Server responsibilities
 

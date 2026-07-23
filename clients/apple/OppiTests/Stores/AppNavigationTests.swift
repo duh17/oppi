@@ -66,6 +66,41 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspacePath.count == 0)
     }
 
+    @Test func pairedLaunchRevealNeverShowsOnboarding() {
+        let navigation = AppNavigation()
+        navigation.showOnboarding = true
+
+        navigation.revealPairedServerShell()
+
+        #expect(navigation.launchPhase == .ready)
+        #expect(!navigation.showOnboarding)
+    }
+
+    @Test func pairedLaunchRevealsLocalStateBeforeTransportPreparation() async {
+        var events: [String] = []
+
+        let result = await PairedLaunchSequence.revealThenPrepare(
+            loadLocalState: { events.append("cache") },
+            reveal: { events.append("reveal") },
+            prepare: {
+                events.append("transport")
+                return "ready"
+            }
+        )
+
+        #expect(events == ["cache", "reveal", "transport"])
+        #expect(result == "ready")
+    }
+
+    @Test func failedInviteCannotShowOnboardingWhenAnyPairingExists() {
+        #expect(!AppLaunchPairingPolicy.shouldShowOnboardingAfterInviteFailure(
+            pairedServerCount: 1
+        ))
+        #expect(AppLaunchPairingPolicy.shouldShowOnboardingAfterInviteFailure(
+            pairedServerCount: 0
+        ))
+    }
+
     @Test func workspaceSessionPathBuilderCreatesSingleDestination() {
         let path = AppNavigation.workspaceSessionPath(serverId: "server-1", sessionId: "session-1")
 

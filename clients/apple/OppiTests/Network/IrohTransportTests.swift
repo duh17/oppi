@@ -1,5 +1,6 @@
 import Foundation
 import IrohLib
+import Network
 import Testing
 @testable import Oppi
 
@@ -334,6 +335,41 @@ struct IrohTransportTests {
 
         #expect(counter.snapshot().responseBytes == 4_096)
         #expect(await sink.byteCount() == 4_096)
+    }
+
+    @Test func localPeerCancellationAfterResponseDoesNotEmitTunnelError() {
+        for error in [
+            NWError.posix(.ECANCELED),
+            NWError.posix(.ECONNRESET),
+            NWError.posix(.EPIPE),
+            NWError.posix(.ENOTCONN),
+        ] {
+            let failure = IrohTunnelPumpFailure(endpoint: .localPeer, underlyingError: error)
+            #expect(!IrohLoopbackProxy.shouldRecordTunnelPumpError(failure, responseBytes: 1))
+        }
+        for error in [CancellationError(), URLError(.cancelled)] as [Error] {
+            let failure = IrohTunnelPumpFailure(endpoint: .localPeer, underlyingError: error)
+            #expect(!IrohLoopbackProxy.shouldRecordTunnelPumpError(failure, responseBytes: 1))
+        }
+    }
+
+    @Test func preResponseLocalAndAllIrohFailuresRemainReportable() {
+        let localReset = IrohTunnelPumpFailure(
+            endpoint: .localPeer,
+            underlyingError: NWError.posix(.ECONNRESET)
+        )
+        let localTimeout = IrohTunnelPumpFailure(
+            endpoint: .localPeer,
+            underlyingError: NWError.posix(.ETIMEDOUT)
+        )
+        let irohReset = IrohTunnelPumpFailure(
+            endpoint: .iroh,
+            underlyingError: NWError.posix(.ECONNRESET)
+        )
+
+        #expect(IrohLoopbackProxy.shouldRecordTunnelPumpError(localReset, responseBytes: 0))
+        #expect(IrohLoopbackProxy.shouldRecordTunnelPumpError(localTimeout, responseBytes: 1))
+        #expect(IrohLoopbackProxy.shouldRecordTunnelPumpError(irohReset, responseBytes: 1))
     }
 
     @Test func failedIrohPumpCancelsLocalPeerBeforeWaitingForBlockedUpload() async {

@@ -17,8 +17,8 @@ struct ContentView: View {
         Group {
             switch navigation.launchPhase {
             case .resolving:
-                // Blank canvas while credential check + cache load runs.
-                // Prevents flash of onboarding or empty workspace list.
+                // Brief local-only gate while pairing identity and cache load.
+                // Network transport preparation begins after the paired shell appears.
                 Color.themeBg
                     .ignoresSafeArea()
 

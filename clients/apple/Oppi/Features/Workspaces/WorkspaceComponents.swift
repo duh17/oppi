@@ -208,6 +208,7 @@ struct RuntimeBadge: View {
 enum ServerBadgeConnectionState: Sendable, Equatable {
     case connected
     case connecting
+    case recovering
     case disconnected
     case syncFailed
 
@@ -222,7 +223,15 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
         }
     }
 
-    init(_ presentation: WorkspaceServerStatusPresentation, hasSyncFailure: Bool = false) {
+    init(
+        _ presentation: WorkspaceServerStatusPresentation,
+        hasSyncFailure: Bool = false,
+        isPreparing: Bool = false
+    ) {
+        if isPreparing {
+            self = hasSyncFailure ? .recovering : .connecting
+            return
+        }
         if hasSyncFailure {
             self = .syncFailed
             return
@@ -242,8 +251,19 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
         switch self {
         case .connected: return "Connected"
         case .connecting: return "Connecting"
-        case .disconnected: return "Disconnected"
+        case .recovering: return "Recovering"
+        case .disconnected: return "Offline"
         case .syncFailed: return "Update Failed"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .connected: return "checkmark.circle.fill"
+        case .connecting: return "ellipsis.circle.fill"
+        case .recovering: return "arrow.triangle.2.circlepath.circle.fill"
+        case .disconnected: return "wifi.slash"
+        case .syncFailed: return "exclamationmark.triangle.fill"
         }
     }
 
@@ -251,7 +271,47 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
         switch self {
         case .connected: return .themeGreen
         case .connecting: return .themeBlue
+        case .recovering: return .themeOrange
         case .disconnected, .syncFailed: return .themeRed
+        }
+    }
+}
+
+@MainActor
+enum ServerConnectionLanePresentation {
+    static func title(
+        server: PairedServer,
+        connection: ServerConnection?,
+        state: ServerBadgeConnectionState,
+        isPreparing: Bool
+    ) -> String {
+        if isPreparing {
+            return switch server.credentials.transports.preference {
+            case .irohOnly: "Trying Iroh"
+            case .irohPreferred: "Connecting"
+            case .httpOnly: "Connecting to paired server"
+            }
+        }
+
+        guard let connection, let credentials = connection.credentials else {
+            return switch server.credentials.transports.preference {
+            case .irohOnly: "Iroh unavailable"
+            case .irohPreferred: "Connection unavailable"
+            case .httpOnly: "Paired server unavailable"
+            }
+        }
+
+        let lane = switch connection.transportPath {
+        case .iroh: "Iroh"
+        case .lan: "local network"
+        case .paired: credentials.resolvedScheme == .http ? "paired HTTP" : "paired HTTPS"
+        }
+        return switch state {
+        case .connected: "Connected via \(lane)"
+        case .connecting: "Connecting via \(lane)"
+        case .recovering: "Recovering via \(lane)"
+        case .disconnected: "\(lane) unavailable"
+        case .syncFailed: "Update failed via \(lane)"
         }
     }
 }

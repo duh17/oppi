@@ -4,6 +4,25 @@ import SwiftUI
 ///
 /// Prevents the flash of wrong content on cold launch (onboarding screen
 /// briefly visible for paired users, empty workspace list before cache loads).
+@MainActor
+enum PairedLaunchSequence {
+    static func revealThenPrepare<Prepared>(
+        loadLocalState: () async -> Void,
+        reveal: () -> Void,
+        prepare: () async -> Prepared
+    ) async -> Prepared {
+        await loadLocalState()
+        reveal()
+        return await prepare()
+    }
+}
+
+enum AppLaunchPairingPolicy {
+    static func shouldShowOnboardingAfterInviteFailure(pairedServerCount: Int) -> Bool {
+        pairedServerCount == 0
+    }
+}
+
 enum AppLaunchPhase: Sendable, Equatable {
     /// Credential check + cache load in progress. UI shows blank canvas.
     case resolving
@@ -148,8 +167,16 @@ final class AppNavigation {
     var splitColumnVisibility: NavigationSplitViewVisibility = .automatic
 
     /// Launch phase gate. While `.resolving`, ContentView shows a blank
-    /// canvas instead of onboarding or the workspace list.
+    /// canvas until local pairing and cache state are known.
     var launchPhase: AppLaunchPhase = .resolving
+
+    /// Reveal the normal app shell for an existing pairing before transport
+    /// preparation finishes. Connectivity failures must never masquerade as
+    /// missing credentials and route a paired user back through onboarding.
+    func revealPairedServerShell() {
+        showOnboarding = false
+        launchPhase = .ready
+    }
 
     /// Set after a fresh pairing when the server had no workspaces.
     /// The workspace navigation shell consumes this to present guided creation.

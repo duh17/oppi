@@ -1245,6 +1245,18 @@ struct ServerSwitcherPill: View {
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
 
+            if connectionState != .connected {
+                if connectionState == .connecting || connectionState == .recovering {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(connectionState.tintColor)
+                }
+                Text(connectionState.title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(connectionState.tintColor)
+                    .lineLimit(1)
+            }
+
             Image(systemName: "chevron.down")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.themeComment)

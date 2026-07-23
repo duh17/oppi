@@ -498,6 +498,27 @@ struct SessionInboxView: View {
                 .accessibilityValue(serverBadgeConnectionState(for: server).title)
             }
 
+            Section("Connection") {
+                let state = serverBadgeConnectionState(for: current)
+                Label(
+                    ServerConnectionLanePresentation.title(
+                        server: current,
+                        connection: coordinator.connection(for: current.id),
+                        state: state,
+                        isPreparing: coordinator.preparingServerIds.contains(current.id)
+                    ),
+                    systemImage: state.systemImage
+                )
+
+                if state != .connected {
+                    Button {
+                        Task { await coordinator.retryServerConnection(current.id) }
+                    } label: {
+                        Label("Retry Connection", systemImage: "arrow.clockwise")
+                    }
+                }
+            }
+
             Divider()
 
             Button {
@@ -538,12 +559,16 @@ struct SessionInboxView: View {
 
     private func serverBadgeConnectionState(for server: PairedServer) -> ServerBadgeConnectionState {
         guard let connection = coordinator.connection(for: server.id) else {
-            return ServerBadgeConnectionState(serverStatusPresentation(for: server))
+            return ServerBadgeConnectionState(
+                serverStatusPresentation(for: server),
+                isPreparing: coordinator.preparingServerIds.contains(server.id)
+            )
         }
         return ServerBadgeConnectionState(
             serverStatusPresentation(for: server),
             hasSyncFailure: connection.workspaceStore.lastSyncFailed
-                || connection.sessionStore.lastSyncFailed
+                || connection.sessionStore.lastSyncFailed,
+            isPreparing: coordinator.preparingServerIds.contains(server.id)
         )
     }
 

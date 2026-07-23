@@ -60,6 +60,11 @@ export interface ServerConfig {
     enabled: boolean;
   };
 
+  /** Host-free Iroh transport activation. */
+  iroh?: {
+    enabled: boolean;
+  };
+
   /** Transport security (HTTPS/WSS). */
   tls?: TlsConfig;
 

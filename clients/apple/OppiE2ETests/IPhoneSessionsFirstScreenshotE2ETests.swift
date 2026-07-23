@@ -176,6 +176,32 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         try saveLabScreenshot(name: "iphone-all-active-sessions-inbox-e2e")
     }
 
+    func testServerMenuShowsOneConsolidatedConnectionStatus() throws {
+        XCUIDevice.shared.orientation = .portrait
+
+        let sessionList = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
+        let serverSwitcher = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Current server:")
+        ).firstMatch
+        tap(serverSwitcher, named: "server switcher", timeout: 10)
+
+        let consolidatedStatus = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Connected via paired HTTP")
+        )
+        XCTAssertTrue(
+            consolidatedStatus.firstMatch.waitForExistence(timeout: 5),
+            "Server menu did not show the connected state and active route in one row"
+        )
+        XCTAssertEqual(consolidatedStatus.count, 1, "Server menu duplicated the consolidated status row")
+        XCTAssertFalse(
+            app.descendants(matching: .any)["Connected"].exists,
+            "Server menu retained the redundant generic Connected row"
+        )
+
+        try saveLabScreenshot(name: "iphone-server-menu-consolidated-connection-e2e")
+    }
+
     func testThemeSwitchRefreshesMountedInboxAndSidebar() throws {
         XCUIDevice.shared.orientation = .portrait
 

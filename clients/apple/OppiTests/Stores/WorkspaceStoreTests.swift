@@ -280,6 +280,39 @@ struct ServerBadgeConnectionStateTests {
         #expect(ServerBadgeConnectionState(presentation) == .connecting)
     }
 
+    @Test func activeTransportPreparationMapsToRecoveringBadge() {
+        let presentation = WorkspaceServerStatusPresentation.derive(
+            freshnessState: .offline,
+            freshnessLabel: "Updated never",
+            isTransportConnected: false,
+            hasCachedCatalog: true
+        )
+
+        let state = ServerBadgeConnectionState(
+            presentation,
+            hasSyncFailure: true,
+            isPreparing: true
+        )
+
+        #expect(state == .recovering)
+        #expect(state.title == "Recovering")
+    }
+
+    @Test func firstTransportPreparationMapsToConnectingBadge() {
+        let presentation = WorkspaceServerStatusPresentation.derive(
+            freshnessState: .offline,
+            freshnessLabel: "Updated never",
+            isTransportConnected: false,
+            hasCachedCatalog: false
+        )
+
+        #expect(ServerBadgeConnectionState(
+            presentation,
+            hasSyncFailure: false,
+            isPreparing: true
+        ) == .connecting)
+    }
+
     @Test func offlinePresentationMapsToDisconnectedBadge() {
         let presentation = WorkspaceServerStatusPresentation.derive(
             freshnessState: .offline,
@@ -301,6 +334,131 @@ struct ServerBadgeConnectionStateTests {
 
         #expect(ServerBadgeConnectionState(presentation, hasSyncFailure: true) == .syncFailed)
         #expect(ServerBadgeConnectionState(presentation, hasSyncFailure: false) == .connected)
+    }
+
+    @Test func connectedIrohStatusConsolidatesHealthAndLane() async throws {
+        let (server, connection) = try await makeIrohBadgeFixture()
+
+        #expect(ServerConnectionLanePresentation.title(
+            server: server,
+            connection: connection,
+            state: .connected,
+            isPreparing: false
+        ) == "Connected via Iroh")
+    }
+
+    @Test func updateFailurePreservesFailureAndActiveLane() async throws {
+        let (server, connection) = try await makeIrohBadgeFixture()
+
+        #expect(ServerConnectionLanePresentation.title(
+            server: server,
+            connection: connection,
+            state: .syncFailed,
+            isPreparing: false
+        ) == "Update failed via Iroh")
+    }
+
+    @Test func pairedHTTPStatusUsesAuthoritativeTransportScheme() throws {
+        let credentials = ServerCredentials(
+            host: "paired.test",
+            port: 7749,
+            token: "dt_paired_http_badge",
+            name: "Paired HTTP",
+            scheme: nil,
+            serverFingerprint: "sha256:PAIREDHTTPBADGE",
+            transports: ServerTransports(
+                preference: .httpOnly,
+                iroh: nil,
+                http: HTTPServerTransport(
+                    host: "paired.test",
+                    port: 7749,
+                    scheme: .http,
+                    tlsCertFingerprint: nil
+                )
+            )
+        )
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        let connection = ServerConnection()
+        #expect(connection.configure(credentials: credentials))
+
+        #expect(ServerConnectionLanePresentation.title(
+            server: server,
+            connection: connection,
+            state: .connected,
+            isPreparing: false
+        ) == "Connected via paired HTTP")
+    }
+
+    @Test func preparingIrohPreferredServerStaysRouteNeutral() throws {
+        let credentials = ServerCredentials(
+            host: "studio.tailnet.ts.net",
+            port: 7749,
+            token: "dt_badge_lane",
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: "sha256:BADGELANESERVER",
+            transports: ServerTransports(
+                preference: .irohPreferred,
+                iroh: IrohServerTransport(
+                    version: 2,
+                    nodeId: "iroh-node",
+                    alpns: [IrohTunnelProtocol.alpn],
+                    addressMode: .nodeId,
+                    ticket: nil
+                ),
+                http: HTTPServerTransport(
+                    host: "studio.tailnet.ts.net",
+                    port: 7749,
+                    scheme: .https,
+                    tlsCertFingerprint: nil
+                )
+            )
+        )
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+
+        #expect(ServerConnectionLanePresentation.title(
+            server: server,
+            connection: nil,
+            state: .connecting,
+            isPreparing: true
+        ) == "Connecting")
+    }
+
+    private func makeIrohBadgeFixture() async throws -> (PairedServer, ServerConnection) {
+        let credentials = ServerCredentials(
+            host: "studio.tailnet.ts.net",
+            port: 7749,
+            token: "dt_badge_fixture",
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: "sha256:BADGEFIXTURESERVER",
+            transports: ServerTransports(
+                preference: .irohPreferred,
+                iroh: IrohServerTransport(
+                    version: 2,
+                    nodeId: "iroh-node",
+                    alpns: [IrohTunnelProtocol.alpn],
+                    addressMode: .nodeId,
+                    ticket: nil
+                ),
+                http: HTTPServerTransport(
+                    host: "studio.tailnet.ts.net",
+                    port: 7749,
+                    scheme: .https,
+                    tlsCertFingerprint: nil
+                )
+            )
+        )
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        let connection = ServerConnection()
+        let configured = await connection.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                (nil, try #require(URL(string: "http://127.0.0.1:41995")))
+            }
+        )
+        #expect(configured)
+        return (server, connection)
     }
 }
 

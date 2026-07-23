@@ -22,6 +22,18 @@ Settings are listed in the order they appear in the config file. Auth state is d
 | `host`          | string | `"0.0.0.0"`        | Remote bind address. Use `"127.0.0.1"` to restrict network clients to localhost.                                |
 | `dataDir`       | string | `"~/.config/oppi"` | Root state directory. Contains sessions, workspaces, config, TLS material, and the local CLI runtime directory. |
 
+### Iroh transport
+
+| Setting        | Type    | Default | Description                                                                                                       |
+| -------------- | ------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `iroh.enabled` | boolean | `false` | Starts the host-free Iroh HTTP/WebSocket tunnel and includes Iroh in new pairing invites when readiness succeeds. |
+
+```bash
+oppi config set iroh.enabled true
+```
+
+The setting is durable across CLI, Mac app, launchd, crash, and machine restarts. A server restart is required after changing it. `OPPI_IROH_TRANSPORT=1` and `OPPI_IROH_PAIRING=1` remain temporary compatibility overrides for development and isolated deployments. See [Networking and connection routing](../../docs/networking.md) for route selection and fallback behavior.
+
 ### Model
 
 Oppi does not define a top-level server default chat model. New chat sessions use the shared model-selection behavior documented in [`model-selection.md`](./model-selection.md): explicit model, inherited/source model, workspace `defaultModel`, then Pi settings.
@@ -192,6 +204,7 @@ Approval behavior is extension-owned. If a session needs approval before an acti
   "runtimePathEntries": ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"],
   "runtimeEnv": {},
   "oppiDocsPrompt": { "enabled": true },
+  "iroh": { "enabled": true },
   "tls": { "mode": "tailscale" },
   "autoTitle": { "enabled": true, "model": "omlx/Qwen3.5-122B-A10B-4bit" },
   "images": { "autoResize": false }
@@ -208,6 +221,7 @@ Examples:
 oppi config get asr.sttEndpoint
 oppi config set asr.sttEndpoint http://127.0.0.1:7936
 oppi config set images.autoResize false
+oppi config set iroh.enabled true
 oppi config set oppiDocsPrompt.enabled false
 oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
 oppi config set extensions.voice.defaultVoiceId warm-technical-teammate

@@ -294,10 +294,18 @@ function configuredInviteMode(
 ): "irohOnly" | "irohPreferred" | "httpOnly" {
   const envMode = process.env.OPPI_IROH_INVITE_MODE;
   if (envMode === "irohOnly" || envMode === "irohPreferred") return envMode;
-  if (process.env.OPPI_IROH_PAIRING === "1" || process.env.OPPI_IROH_TRANSPORT === "1") {
+  const config = storage.getConfig();
+  if (config.irohInviteMode === "irohOnly" || config.irohInviteMode === "irohPreferred") {
+    return config.irohInviteMode;
+  }
+  if (
+    config.iroh?.enabled === true ||
+    process.env.OPPI_IROH_PAIRING === "1" ||
+    process.env.OPPI_IROH_TRANSPORT === "1"
+  ) {
     return "irohPreferred";
   }
-  return storage.getConfig().irohInviteMode ?? "httpOnly";
+  return "httpOnly";
 }
 
 function buildPairInviteOptions(
@@ -906,6 +914,8 @@ const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
     type: "boolean",
     desc: "Append a concise Oppi CLI management hint to Oppi sessions",
   },
+  iroh: { type: "json", desc: "Iroh transport config JSON object" },
+  "iroh.enabled": { type: "boolean", desc: "Enable host-free Iroh transport" },
   tls: { type: "json", desc: "TLS config JSON object" },
   "tls.mode": { type: "string", desc: "TLS mode" },
   "tls.certPath": { type: "string", desc: "Manual TLS certificate path" },

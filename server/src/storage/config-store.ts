@@ -68,6 +68,9 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     oppiCliPrompt: {
       enabled: true,
     },
+    iroh: {
+      enabled: false,
+    },
     tls: { mode: "self-signed" },
     images: {
       autoResize: false,
@@ -116,6 +119,7 @@ function normalizeConfig(
     "runtimeEnv",
     "oppiDocsPrompt",
     "oppiCliPrompt",
+    "iroh",
     "tls",
     "irohInviteMode",
     "irohInviteReadinessId",
@@ -323,6 +327,35 @@ function normalizeConfig(
     }
   } else {
     errors.push("config.oppiCliPrompt: expected object");
+    changed = true;
+  }
+
+  if (!("iroh" in obj)) {
+    changed = true;
+  } else if (isRecord(obj.iroh)) {
+    const iroh = obj.iroh;
+    const allowedIrohKeys = new Set(["enabled"]);
+
+    if (strictUnknown) {
+      for (const key of Object.keys(iroh)) {
+        if (!allowedIrohKeys.has(key)) {
+          errors.push(`config.iroh.${key}: unknown key`);
+        }
+      }
+    }
+
+    if ("enabled" in iroh) {
+      if (typeof iroh.enabled === "boolean") {
+        config.iroh = { enabled: iroh.enabled };
+      } else {
+        errors.push("config.iroh.enabled: expected boolean");
+        changed = true;
+      }
+    } else {
+      changed = true;
+    }
+  } else {
+    errors.push("config.iroh: expected object");
     changed = true;
   }
 

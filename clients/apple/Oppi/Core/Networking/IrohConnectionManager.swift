@@ -539,8 +539,12 @@ actor IrohConnectionManager {
     private var proxyToken: String?
     private var availabilityFailureHandler: (@MainActor @Sendable () async -> Void)?
     private var establishedStreamFailureHandler: (@MainActor @Sendable () async -> Void)?
-    private var availabilityFailureReportingSuspended = false
+    private var availabilityFailureReportingSuspensionDepth = 0
     private var establishedStreamFailureReportInFlight = false
+
+    private var availabilityFailureReportingSuspended: Bool {
+        availabilityFailureReportingSuspensionDepth > 0
+    }
     private var observedSharedRecycleGeneration: UInt64 = 0
 
     init(
@@ -692,11 +696,23 @@ actor IrohConnectionManager {
         await provider.suspendConnections()
     }
 
+    /// Drop only this server's cached QUIC connection and prove a fresh dial
+    /// before escalating to the process-wide endpoint shared by other servers.
+    func resetConnectionsAndProbe(
+        timeout: Duration = IrohConnectionManager.connectivityTimeoutDefault
+    ) async throws -> IrohSelectedPathEvidence? {
+        availabilityFailureReportingSuspensionDepth += 1
+        defer { availabilityFailureReportingSuspensionDepth -= 1 }
+
+        await provider.suspendConnections()
+        return try await selectedPathEvidence(timeout: timeout)
+    }
+
     func recycleEndpointAfterSuspension(
         timeout: Duration = IrohConnectionManager.connectivityTimeoutDefault
     ) async throws {
-        availabilityFailureReportingSuspended = true
-        defer { availabilityFailureReportingSuspended = false }
+        availabilityFailureReportingSuspensionDepth += 1
+        defer { availabilityFailureReportingSuspensionDepth -= 1 }
 
         await provider.suspendConnections()
         let recycling = Task { [provider] in

@@ -718,6 +718,11 @@ describe("oppi config", () => {
     expect(stdout.trim()).toBe("http://127.0.0.1:7936");
   });
 
+  it("config set/get supports durable Iroh enablement", () => {
+    run(["config", "set", "iroh.enabled", "true"]);
+    expect(run(["config", "get", "iroh.enabled"]).stdout.trim()).toBe("true");
+  });
+
   it("config set/get supports Oppi prompt toggles", () => {
     run(["config", "set", "oppiDocsPrompt.enabled", "false"]);
     expect(run(["config", "get", "oppiDocsPrompt.enabled"]).stdout.trim()).toBe("false");
@@ -2303,9 +2308,10 @@ describe("oppi pair persisted Iroh policy", () => {
     OPPI_IROH_INVITE_MODE: "",
   });
 
-  it("keeps plain pair Iroh-only after server startup persisted the mode", () => {
+  it("keeps plain pair Iroh-only when durable Iroh activation is also enabled", () => {
     const dir = preparePersistedPolicy("irohOnly", "ready");
     try {
+      new Storage(dir).updateConfig({ iroh: { enabled: true } });
       const { stdout, exitCode } = run(["pair", "--json"], plainPairEnv(dir));
       expect(exitCode).toBe(0);
       const invite = JSON.parse(stdout) as Record<string, unknown>;

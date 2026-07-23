@@ -927,7 +927,11 @@ export class Server {
   }
 
   private shouldStartIrohPairingServer(): boolean {
-    return process.env.OPPI_IROH_PAIRING === "1" || process.env.OPPI_IROH_TRANSPORT === "1";
+    return (
+      this.storage.getConfig().iroh?.enabled === true ||
+      process.env.OPPI_IROH_PAIRING === "1" ||
+      process.env.OPPI_IROH_TRANSPORT === "1"
+    );
   }
 
   private requiresIrohReadiness(): boolean {
@@ -938,7 +942,7 @@ export class Server {
     if (this.irohPairingServer) return;
     if (!this.shouldStartIrohPairingServer()) {
       if (this.requiresIrohReadiness()) {
-        throw new Error("Iroh-only mode requires OPPI_IROH_TRANSPORT=1");
+        throw new Error("Iroh-only mode requires iroh.enabled=true or OPPI_IROH_TRANSPORT=1");
       }
       return;
     }

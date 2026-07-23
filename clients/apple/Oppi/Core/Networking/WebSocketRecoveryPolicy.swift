@@ -6,6 +6,8 @@ import Foundation
 /// semantics, but should answer transport recovery questions the same way: when
 /// to retry, how long to wait, and which handshake failures are terminal.
 enum PersistentStreamHealthFailure: Equatable, Sendable {
+    case tunnelOpenFailure
+    case establishedStreamFailure
     case pingTimeout
     case pingFailures(count: Int)
     case reconnectThreshold(attempt: Int)

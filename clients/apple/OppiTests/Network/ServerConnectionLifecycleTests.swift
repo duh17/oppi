@@ -192,74 +192,260 @@ struct ServerConnectionLifecycleTests {
         await provider.releaseEvidence()
     }
 
-    @Test func activeIrohTunnelFailureEscalatesToPreferredHTTPFallback() async throws {
+    @Test func establishedIrohFailureImmediatelyPerformsFullRebuildAndRefresh() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
-        let provider = ReachableThenUnavailableOpenProvider()
-        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
-        let localURL = try #require(URL(string: "http://127.0.0.1:42011"))
+        let firstProvider = EstablishedStreamFailureRecoveryProvider()
+        let replacementProvider = TrackingReachableIrohProvider()
+        let firstManager = IrohConnectionManager(iroh: metadata, provider: firstProvider)
+        let replacementManager = IrohConnectionManager(iroh: metadata, provider: replacementProvider)
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42037"))
+        let replacementURL = try #require(URL(string: "http://127.0.0.1:42038"))
+        var factoryCalls = 0
+        var refreshCalls = 0
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {
+            refreshCalls += 1
+        }
 
-        let configured = await conn.configureForUse(
+        #expect(await conn.configureForUse(
             credentials: credentials,
-            irohReachabilityTimeout: .milliseconds(20),
-            irohProxyFactory: { _, _ in (manager, localURL) }
-        )
-        #expect(configured)
-        #expect(conn.transportPath == .iroh)
+            irohProxyFactory: { _, _ in
+                factoryCalls += 1
+                return factoryCalls == 1
+                    ? (firstManager, firstURL)
+                    : (replacementManager, replacementURL)
+            }
+        ))
+        let originalAPIClient = conn.apiClient
 
-        await #expect(throws: IrohTransportError.unavailable("active tunnel unavailable")) {
-            _ = try await manager.openTunnelStream(timeout: .milliseconds(20))
-        }
-        for _ in 0..<100 where conn.transportPath == .iroh {
-            await Task.yield()
-        }
+        await firstProvider.failEstablishedStream()
 
-        #expect(conn.transportPath == .paired)
-        #expect(conn.irohFallbackActive)
-        #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
+        #expect(factoryCalls == 2)
+        #expect(await firstProvider.shutdownCount == 1)
+        #expect(await firstProvider.suspendCount == 0)
+        #expect(conn.apiClient !== originalAPIClient)
+        #expect(await conn.apiClient?.baseURL == replacementURL)
+        #expect(refreshCalls == 1)
     }
 
-    @Test func establishedIrohStreamFailureRecyclesEndpointBeforeHTTPFallback() async throws {
+    @Test func repeatedAutomaticIrohRebuildsUseBackoffUntilAStreamReconnects() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let managers = [
+            IrohConnectionManager(iroh: metadata, provider: TrackingReachableIrohProvider()),
+            IrohConnectionManager(iroh: metadata, provider: TrackingReachableIrohProvider()),
+            IrohConnectionManager(iroh: metadata, provider: TrackingReachableIrohProvider()),
+            IrohConnectionManager(iroh: metadata, provider: TrackingReachableIrohProvider()),
+        ]
+        let urls = try [42039, 42040, 42041, 42042].map { port in
+            try #require(URL(string: "http://127.0.0.1:\(port)"))
+        }
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        var factoryCalls = 0
+        conn._automaticIrohRecoveryNowForTesting = { now }
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                defer { factoryCalls += 1 }
+                return (managers[factoryCalls], urls[factoryCalls])
+            }
+        ))
+
+        await conn.handlePersistentStreamHealthFailure(.establishedStreamFailure)
+        #expect(factoryCalls == 2)
+
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 6))
+        #expect(factoryCalls == 2, "A repeated failure inside the first cooldown must not rebuild again")
+
+        now = now.addingTimeInterval(1)
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 7))
+        #expect(factoryCalls == 3)
+
+        conn.setAppEventStreamTransportState(.connected)
+        await conn.handlePersistentStreamHealthFailure(.establishedStreamFailure)
+        #expect(factoryCalls == 4, "A proven stream reconnect resets automatic recovery backoff")
+    }
+
+    @Test func automaticIrohRecoveryUsesFiveAttemptExponentialBudget() {
+        #expect(ServerConnection.automaticIrohRecoveryMaximumAttempts == 5)
+        #expect(ServerConnection.automaticIrohRecoveryBackoff(attempt: 1) == 1)
+        #expect(ServerConnection.automaticIrohRecoveryBackoff(attempt: 2) == 2)
+        #expect(ServerConnection.automaticIrohRecoveryBackoff(attempt: 3) == 4)
+        #expect(ServerConnection.automaticIrohRecoveryBackoff(attempt: 4) == 8)
+        #expect(ServerConnection.automaticIrohRecoveryBackoff(attempt: 5) == 16)
+    }
+
+    @Test func automaticIrohRecoveryStopsAfterFiveAttemptsUntilAStreamReconnects() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let managers = (0..<7).map { _ in
+            IrohConnectionManager(iroh: metadata, provider: TrackingReachableIrohProvider())
+        }
+        let urls = try (42060..<42067).map { port in
+            try #require(URL(string: "http://127.0.0.1:\(port)"))
+        }
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        var factoryCalls = 0
+        conn._automaticIrohRecoveryNowForTesting = { now }
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                defer { factoryCalls += 1 }
+                return (managers[factoryCalls], urls[factoryCalls])
+            }
+        ))
+
+        for delay in [0.0, 1.0, 2.0, 4.0, 8.0] {
+            now = now.addingTimeInterval(delay)
+            await conn.handlePersistentStreamHealthFailure(.establishedStreamFailure)
+        }
+        #expect(factoryCalls == 6, "The initial setup plus five automatic rebuilds should run")
+
+        now = now.addingTimeInterval(16)
+        await conn.handlePersistentStreamHealthFailure(.establishedStreamFailure)
+        #expect(factoryCalls == 6, "The sixth automatic rebuild must remain blocked")
+
+        conn.setAppEventStreamTransportState(.connected)
+        await conn.handlePersistentStreamHealthFailure(.establishedStreamFailure)
+        #expect(factoryCalls == 7, "A proven stream reconnect restores the automatic retry budget")
+    }
+
+    @Test func terminalFailureDuringAutomaticFullRebuildRemainsFailClosed() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
         let provider = EstablishedStreamFailureRecoveryProvider()
         let manager = IrohConnectionManager(iroh: metadata, provider: provider)
-        let localURL = try #require(URL(string: "http://127.0.0.1:42013"))
+        let localURL = try #require(URL(string: "http://127.0.0.1:42048"))
+        var factoryCalls = 0
 
         #expect(await conn.configureForUse(
             credentials: credentials,
-            irohProxyFactory: { _, _ in (manager, localURL) }
+            irohProxyFactory: { _, _ in
+                factoryCalls += 1
+                if factoryCalls == 1 { return (manager, localURL) }
+                throw IrohTransportError.authentication("peer rejected replacement")
+            }
+        ))
+
+        await provider.failEstablishedStream()
+        #expect(factoryCalls == 2)
+        #expect(conn.apiClient == nil)
+        #expect(conn.wsClient == nil)
+        #expect(!conn.irohFallbackActive)
+
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 7))
+        #expect(factoryCalls == 2, "Terminal integrity failures must not enter automatic retry")
+    }
+
+    @Test func IrohOnlyEstablishedStreamFailureFullRebuildsWithoutHTTPFallback() async throws {
+        let conn = ServerConnection()
+        let credentials = makeTestIrohOnlyCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let firstProvider = EstablishedStreamFailureRecoveryProvider()
+        let replacementProvider = TrackingReachableIrohProvider()
+        let firstManager = IrohConnectionManager(iroh: metadata, provider: firstProvider)
+        let replacementManager = IrohConnectionManager(iroh: metadata, provider: replacementProvider)
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42030"))
+        let replacementURL = try #require(URL(string: "http://127.0.0.1:42043"))
+        var factoryCalls = 0
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                factoryCalls += 1
+                return factoryCalls == 1
+                    ? (firstManager, firstURL)
+                    : (replacementManager, replacementURL)
+            }
         ))
         let originalAPIClient = conn.apiClient
 
-        await provider.failEstablishedStream()
+        await firstProvider.failEstablishedStream()
 
-        #expect(await provider.endpointRecycleCount == 1)
-        #expect(await provider.suspendCount == 1)
+        #expect(factoryCalls == 2)
+        #expect(await firstProvider.shutdownCount == 1)
         #expect(conn.transportPath == .iroh)
         #expect(!conn.irohFallbackActive)
         #expect(conn.apiClient !== originalAPIClient)
-        #expect(await conn.apiClient?.baseURL == localURL)
+        #expect(await conn.apiClient?.baseURL == replacementURL)
     }
 
-    @Test func establishedIrohRecoveryProbeFallsBackWhenPeerRemainsUnavailable() async throws {
+    @Test func serverScopedFullRebuildLeavesOtherIrohManagerUntouched() async throws {
+        let firstConnection = ServerConnection()
+        let secondConnection = ServerConnection()
+        let firstCredentials = makeIrohPreferredCredentials()
+        let secondCredentials = makeIrohPreferredCredentials()
+        let firstMetadata = try #require(firstCredentials.transports.iroh)
+        let secondMetadata = try #require(secondCredentials.transports.iroh)
+        let firstProvider = EstablishedStreamFailureRecoveryProvider()
+        let replacementProvider = TrackingReachableIrohProvider()
+        let secondProvider = EstablishedStreamFailureRecoveryProvider()
+        let firstManager = IrohConnectionManager(iroh: firstMetadata, provider: firstProvider)
+        let replacementManager = IrohConnectionManager(iroh: firstMetadata, provider: replacementProvider)
+        let secondManager = IrohConnectionManager(iroh: secondMetadata, provider: secondProvider)
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42035"))
+        let replacementURL = try #require(URL(string: "http://127.0.0.1:42044"))
+        let secondURL = try #require(URL(string: "http://127.0.0.1:42036"))
+        var firstFactoryCalls = 0
+        firstConnection._refreshAfterAutomaticIrohRecoveryForTesting = {}
+
+        #expect(await firstConnection.configureForUse(
+            credentials: firstCredentials,
+            irohProxyFactory: { _, _ in
+                firstFactoryCalls += 1
+                return firstFactoryCalls == 1
+                    ? (firstManager, firstURL)
+                    : (replacementManager, replacementURL)
+            }
+        ))
+        #expect(await secondConnection.configureForUse(
+            credentials: secondCredentials,
+            irohProxyFactory: { _, _ in (secondManager, secondURL) }
+        ))
+        let secondAPIClient = secondConnection.apiClient
+
+        await firstProvider.failEstablishedStream()
+
+        #expect(firstFactoryCalls == 2)
+        #expect(await firstProvider.shutdownCount == 1)
+        #expect(await secondProvider.suspendCount == 0)
+        #expect(await secondProvider.shutdownCount == 0)
+        #expect(secondConnection.apiClient === secondAPIClient)
+        #expect(secondConnection.transportPath == .iroh)
+    }
+
+    @Test func automaticFullRebuildFallsBackWhenFreshIrohSetupIsUnavailable() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
-        let provider = EstablishedStreamFailureRecoveryProvider(failRecoveryProbe: true)
+        let provider = EstablishedStreamFailureRecoveryProvider()
         let manager = IrohConnectionManager(iroh: metadata, provider: provider)
         let localURL = try #require(URL(string: "http://127.0.0.1:42014"))
+        var factoryCalls = 0
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
 
         #expect(await conn.configureForUse(
             credentials: credentials,
-            irohProxyFactory: { _, _ in (manager, localURL) }
+            irohProxyFactory: { _, _ in
+                factoryCalls += 1
+                if factoryCalls == 1 { return (manager, localURL) }
+                throw IrohTransportError.unavailable("fresh Iroh setup unavailable")
+            }
         ))
 
         await provider.failEstablishedStream()
 
-        #expect(await provider.endpointRecycleCount == 1)
+        #expect(factoryCalls == 2)
+        #expect(await provider.shutdownCount == 1)
         #expect(conn.transportPath == .paired)
         #expect(conn.irohFallbackActive)
         #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
@@ -321,49 +507,240 @@ struct ServerConnectionLifecycleTests {
         #expect(await conn.apiClient?.baseURL == localURL)
     }
 
-    @Test func IrohPingTimeoutRecyclesEstablishedEndpointBeforeFallback() async throws {
+    @Test func IrohPingTimeoutPerformsFullRebuild() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
-        let provider = EstablishedStreamFailureRecoveryProvider()
-        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
-        let localURL = try #require(URL(string: "http://127.0.0.1:42020"))
+        let firstProvider = TrackingReachableIrohProvider()
+        let replacementProvider = TrackingReachableIrohProvider()
+        let firstManager = IrohConnectionManager(iroh: metadata, provider: firstProvider)
+        let replacementManager = IrohConnectionManager(iroh: metadata, provider: replacementProvider)
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42020"))
+        let replacementURL = try #require(URL(string: "http://127.0.0.1:42045"))
+        var factoryCalls = 0
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
 
         #expect(await conn.configureForUse(
             credentials: credentials,
-            irohProxyFactory: { _, _ in (manager, localURL) }
+            irohProxyFactory: { _, _ in
+                factoryCalls += 1
+                return factoryCalls == 1
+                    ? (firstManager, firstURL)
+                    : (replacementManager, replacementURL)
+            }
         ))
 
         await conn.handlePersistentStreamHealthFailure(.pingTimeout)
 
-        #expect(await provider.endpointRecycleCount == 1)
+        #expect(factoryCalls == 2)
+        #expect(await firstProvider.shutdownCount == 1)
         #expect(conn.transportPath == .iroh)
-        #expect(!conn.irohFallbackActive)
+        #expect(await conn.apiClient?.baseURL == replacementURL)
     }
 
-    @Test func concurrentPersistentStreamFailuresCoalesceIntoOneIrohRecovery() async throws {
+    @Test func unhealthyLANPersistentStreamRetriesIroh() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:42026"))
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            lanReachabilityProbe: { _, _ in true },
+            irohProxyFactory: { _, _ in (nil, localURL) }
+        ))
+        #expect(conn.transportPath == .lan)
+
+        await conn.handlePersistentStreamHealthFailure(.pingTimeout)
+
+        #expect(conn.transportPath == .iroh)
+        #expect(await conn.apiClient?.baseURL == localURL)
+    }
+
+    @Test func explicitRetryRebuildRestoresFocusedAndAppEventIntent() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42033"))
+        let secondURL = try #require(URL(string: "http://127.0.0.1:42034"))
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (nil, firstURL) }
+        ))
+        conn.setSplitStreamCapabilitiesForTesting(appEventStream: true)
+        conn.prepareFocusedSessionStreamEndpointForTesting(
+            sessionId: "session-retry",
+            workspaceId: "workspace-retry"
+        )
+        let originalFocusedURL = conn.focusedSessionStreamURLForTesting
+        let originalGeneration = conn.persistentStreamGenerationForTesting
+
+        #expect(await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (nil, secondURL) }
+        ))
+
+        #expect(conn.persistentStreamGenerationForTesting > originalGeneration)
+        #expect(conn.focusedSessionStreamEndpointKind == "split_session")
+        #expect(conn.focusedSessionStreamURLForTesting != originalFocusedURL)
+        #expect(conn.focusedSessionStreamURLForTesting?.port == 42034)
+        #expect(conn.appEventStreamTransportState == .connecting)
+        conn.disconnectAppEventStream()
+        conn.disconnectStream()
+    }
+
+    @Test func focusedWebSocketHealthCallbackPerformsFullIrohRebuild() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
-        let provider = GatedPersistentHealthRecoveryProvider()
-        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
-        let localURL = try #require(URL(string: "http://127.0.0.1:42021"))
+        let firstProvider = TrackingReachableIrohProvider()
+        let replacementProvider = TrackingReachableIrohProvider()
+        let firstManager = IrohConnectionManager(iroh: metadata, provider: firstProvider)
+        let replacementManager = IrohConnectionManager(iroh: metadata, provider: replacementProvider)
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42029"))
+        let replacementURL = try #require(URL(string: "http://127.0.0.1:42046"))
+        var factoryCalls = 0
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                factoryCalls += 1
+                return factoryCalls == 1
+                    ? (firstManager, firstURL)
+                    : (replacementManager, replacementURL)
+            }
+        ))
+
+        await conn.reportFocusedStreamHealthFailureForTesting(.pingTimeout)
+
+        #expect(factoryCalls == 2)
+        #expect(await firstProvider.shutdownCount == 1)
+        #expect(conn.transportPath == .iroh)
+        #expect(await conn.apiClient?.baseURL == replacementURL)
+    }
+
+    @Test func stalePersistentHealthReportCannotRecoverReplacementTransport() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let firstProvider = EstablishedStreamFailureRecoveryProvider()
+        let secondProvider = EstablishedStreamFailureRecoveryProvider()
+        let metadata = try #require(credentials.transports.iroh)
+        let firstManager = IrohConnectionManager(iroh: metadata, provider: firstProvider)
+        let secondManager = IrohConnectionManager(iroh: metadata, provider: secondProvider)
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42027"))
+        let secondURL = try #require(URL(string: "http://127.0.0.1:42028"))
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (firstManager, firstURL) }
+        ))
+        let staleGeneration = conn.persistentStreamGenerationForTesting
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in (secondManager, secondURL) }
+        ))
+        let replacementAPI = conn.apiClient
+
+        await conn.handlePersistentStreamHealthFailure(
+            .reconnectThreshold(attempt: 4),
+            expectedGeneration: staleGeneration
+        )
+
+        #expect(await firstProvider.shutdownCount == 1, "Superseded manager shuts down during replacement")
+        #expect(await firstProvider.suspendCount == 0)
+        #expect(await secondProvider.suspendCount == 0)
+        #expect(conn.apiClient === replacementAPI)
+        #expect(await conn.apiClient?.baseURL == secondURL)
+    }
+
+    @Test func concurrentPersistentStreamFailuresCoalesceIntoOneFullRebuild() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let firstProvider = EstablishedStreamFailureRecoveryProvider()
+        let replacementProvider = TrackingReachableIrohProvider()
+        let firstManager = IrohConnectionManager(iroh: metadata, provider: firstProvider)
+        let replacementManager = IrohConnectionManager(iroh: metadata, provider: replacementProvider)
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42021"))
+        let replacementURL = try #require(URL(string: "http://127.0.0.1:42047"))
+        let gate = SupersededSetupGate()
+        var factoryCalls = 0
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
 
         #expect(await conn.configureForUse(
             credentials: credentials,
-            irohProxyFactory: { _, _ in (manager, localURL) }
+            irohProxyFactory: { _, _ in
+                factoryCalls += 1
+                if factoryCalls == 2 {
+                    await gate.waitUntilReleased()
+                }
+                return factoryCalls == 1
+                    ? (firstManager, firstURL)
+                    : (replacementManager, replacementURL)
+            }
         ))
 
         let firstRecovery = Task { @MainActor in
-            await conn.handlePersistentStreamHealthFailure(.pingTimeout)
+            await firstProvider.failEstablishedStream()
         }
-        await provider.waitForRecycle()
-        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
-        await provider.releaseRecycle()
+        while !gate.isWaiting { await Task.yield() }
+        let secondRecovery = Task { @MainActor in
+            await conn.handlePersistentStreamHealthFailure(
+                .reconnectThreshold(attempt: 4)
+            )
+        }
+        while !conn.persistentHealthRecoveryPendingForTesting { await Task.yield() }
+        gate.release()
         await firstRecovery.value
+        await secondRecovery.value
 
-        #expect(await provider.endpointRecycleCount == 1)
+        #expect(factoryCalls == 2)
+        #expect(await firstProvider.shutdownCount == 1)
         #expect(conn.transportPath == .iroh)
+        #expect(await conn.apiClient?.baseURL == replacementURL)
+    }
+
+    @Test func concurrentFailureRetainsFollowUpWhenRecoveryDoesNotReplaceStreams() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let gate = SupersededSetupGate()
+        var attempts = 0
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            irohProxyFactory: { _, _ in
+                attempts += 1
+                if attempts == 2 {
+                    await gate.waitUntilReleased()
+                }
+                throw IrohTransportError.unavailable("relay remains unavailable")
+            }
+        ))
+        #expect(conn.transportPath == .paired)
+
+        let streamGeneration = conn.persistentStreamGenerationForTesting
+        let firstRecovery = Task { @MainActor in
+            await conn.handlePersistentStreamHealthFailure(
+                .pingTimeout,
+                expectedGeneration: streamGeneration
+            )
+        }
+        while !gate.isWaiting { await Task.yield() }
+        let secondRecovery = Task { @MainActor in
+            await conn.handlePersistentStreamHealthFailure(
+                .reconnectThreshold(attempt: 4),
+                expectedGeneration: streamGeneration
+            )
+        }
+        while !conn.persistentHealthRecoveryPendingForTesting { await Task.yield() }
+        gate.release()
+        await firstRecovery.value
+        await secondRecovery.value
+
+        #expect(attempts == 3)
+        #expect(conn.transportPath == .paired)
     }
 
     @Test func persistentHealthFailureDoesNotChangeHTTPOnlyConnection() async {
@@ -1694,41 +2071,17 @@ private actor GatedUnavailableShutdownIrohProvider: IrohConnectionProviding {
     }
 }
 
-private actor ReachableThenUnavailableOpenProvider: IrohConnectionProviding {
-    func openStream(alpn: String) async throws -> any IrohByteStream {
-        throw IrohTransportError.unavailable("active tunnel unavailable")
-    }
-
-    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
-        // A dial/path probe can look healthy while opening a real stream fails.
-        IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
-    }
-
-    func suspendConnections() async {}
-    func shutdown() async {}
-}
-
 private actor EstablishedStreamFailureRecoveryProvider: IrohConnectionProviding {
-    private let failRecoveryProbe: Bool
     private var failureHandler: (@Sendable () async -> Void)?
-    private var evidenceCount = 0
-    private(set) var endpointRecycleCount = 0
     private(set) var suspendCount = 0
-
-    init(failRecoveryProbe: Bool = false) {
-        self.failRecoveryProbe = failRecoveryProbe
-    }
+    private(set) var shutdownCount = 0
 
     func openStream(alpn: String) async throws -> any IrohByteStream {
         throw IrohTransportError.unavailable("unused")
     }
 
     func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
-        evidenceCount += 1
-        if failRecoveryProbe, evidenceCount > 1 {
-            throw IrohTransportError.unavailable("peer remains unavailable")
-        }
-        return IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+        IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
     }
 
     func setEstablishedStreamFailureHandler(
@@ -1745,48 +2098,9 @@ private actor EstablishedStreamFailureRecoveryProvider: IrohConnectionProviding 
         suspendCount += 1
     }
 
-    func recycleEndpoint() async throws {
-        endpointRecycleCount += 1
+    func shutdown() async {
+        shutdownCount += 1
     }
-
-    func shutdown() async {}
-}
-
-private actor GatedPersistentHealthRecoveryProvider: IrohConnectionProviding {
-    private var recycleContinuation: CheckedContinuation<Void, Never>?
-    private(set) var recycleIsWaiting = false
-    private(set) var endpointRecycleCount = 0
-
-    func openStream(alpn: String) async throws -> any IrohByteStream {
-        throw IrohTransportError.unavailable("unused")
-    }
-
-    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
-        IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
-    }
-
-    func suspendConnections() async {}
-
-    func recycleEndpoint() async throws {
-        endpointRecycleCount += 1
-        recycleIsWaiting = true
-        await withCheckedContinuation { continuation in
-            recycleContinuation = continuation
-        }
-    }
-
-    func waitForRecycle() async {
-        while !recycleIsWaiting {
-            await Task.yield()
-        }
-    }
-
-    func releaseRecycle() {
-        recycleContinuation?.resume()
-        recycleContinuation = nil
-    }
-
-    func shutdown() async {}
 }
 
 private actor TrackingReachableIrohProvider: IrohConnectionProviding {

@@ -94,6 +94,24 @@ describe("server Iroh pairing startup", () => {
     }
   });
 
+  it("starts Iroh when durable config enables the transport", async () => {
+    storage.updateConfig({ iroh: { enabled: true } });
+    mockStartIrohPairingServer.mockResolvedValueOnce({
+      nodeId: "iroh-node",
+      ticket: "endpoint-ticket",
+      alpns: ["oppi/pair/1", "oppi/http/1"],
+      close: vi.fn(async () => {}),
+    });
+    const server = new Server(storage);
+    try {
+      await server.start();
+      expect(mockStartIrohPairingServer).toHaveBeenCalledOnce();
+      expect(storage.getConfig().irohInviteMode).toBe("irohPreferred");
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("logs Iroh startup failure while preserving the HTTP fallback", async () => {
     process.env.OPPI_IROH_PAIRING = "1";
     const staleInvitePath = join(dataDir, "iroh", "invite.json");
@@ -138,7 +156,9 @@ describe("server Iroh pairing startup", () => {
   it("rejects irohOnly configuration when the transport is disabled", async () => {
     process.env.OPPI_IROH_INVITE_MODE = "irohOnly";
     const server = new Server(storage);
-    await expect(server.start()).rejects.toThrow("Iroh-only mode requires OPPI_IROH_TRANSPORT=1");
+    await expect(server.start()).rejects.toThrow(
+      "Iroh-only mode requires iroh.enabled=true or OPPI_IROH_TRANSPORT=1",
+    );
     expect(mockStartIrohPairingServer).not.toHaveBeenCalled();
   });
 

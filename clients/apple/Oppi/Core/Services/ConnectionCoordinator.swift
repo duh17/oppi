@@ -96,7 +96,11 @@ final class ConnectionCoordinator {
     /// Server IDs whose transport is being prepared. Views keep showing their
     /// current connection until the requested server's API surface is ready.
     private(set) var preparingServerIds: Set<String> = []
-    private var connectionPreparationTasks: [String: Task<ServerConnection?, Never>] = [:]
+    private var connectionPreparationTasks: [
+        String: (id: UUID, task: Task<ServerConnection?, Never>)
+    ] = [:]
+    private var forcedConnectionPreparationServerIds: Set<String> = []
+    private var retryPreparationAfterBoundaryServerIds: Set<String> = []
 
     #if DEBUG
     /// Synchronous HTTP-only seam retained for tests that exercise LAN endpoint
@@ -129,40 +133,111 @@ final class ConnectionCoordinator {
     }
     #endif
 
+    /// Publish the paired server's stores and make them active before its
+    /// network transport is ready. Cold launch can render cached content from
+    /// this connection while `ensureConnectionReady` performs bounded Iroh/LAN/
+    /// HTTP selection in the background.
+    @discardableResult
+    func activatePairedServerShell(_ server: PairedServer) -> ServerConnection {
+        let connection = stagePairedServerConnection(server)
+        activeServerId = server.id
+        return connection
+    }
+
+    private func stagePairedServerConnection(_ server: PairedServer) -> ServerConnection {
+        if let existing = connections[server.id] {
+            return existing
+        }
+        let staged = ServerConnection()
+        initializeStores(for: staged, serverId: server.id)
+        connections[server.id] = staged
+        return staged
+    }
+
     /// Await transport setup for HTTP or Iroh. Iroh needs this asynchronous path
     /// because its app-local listener must reach `.ready` before clients receive
     /// the ephemeral URL.
     @discardableResult
-    func ensureConnectionReady(for server: PairedServer) async -> ServerConnection {
+    func ensureConnectionReady(
+        for server: PairedServer,
+        forceReconfigure: Bool = false
+    ) async -> ServerConnection {
         let serverId = server.id
-        if let task = connectionPreparationTasks[serverId] {
-            return await task.value ?? disconnectedSentinel
+        if let preparation = connectionPreparationTasks[serverId] {
+            let activePreparationIsForced = forcedConnectionPreparationServerIds.contains(serverId)
+            let prepared = await preparation.task.value ?? disconnectedSentinel
+            if forceReconfigure, !activePreparationIsForced {
+                finishConnectionPreparation(serverId: serverId, id: preparation.id)
+                return await ensureConnectionReady(for: server, forceReconfigure: true)
+            }
+            return prepared
+        }
+        if !forceReconfigure,
+           let existing = connections[serverId],
+           existing.credentials == server.credentials,
+           existing.apiClient != nil {
+            return existing
         }
 
         preparingServerIds.insert(serverId)
-        let task = Task { @MainActor [weak self] in
-            await self?.prepareConnection(for: server)
+        if forceReconfigure {
+            forcedConnectionPreparationServerIds.insert(serverId)
         }
-        connectionPreparationTasks[serverId] = task
+        let task = Task { @MainActor [weak self] in
+            await self?.prepareConnection(for: server, forceReconfigure: forceReconfigure)
+        }
+        let preparationID = UUID()
+        connectionPreparationTasks[serverId] = (preparationID, task)
         let prepared = await task.value
-        connectionPreparationTasks.removeValue(forKey: serverId)
-        preparingServerIds.remove(serverId)
+        finishConnectionPreparation(serverId: serverId, id: preparationID)
+
+        let retryAfterBoundary = retryPreparationAfterBoundaryServerIds.remove(serverId) != nil
+        if prepared?.credentials == nil,
+           retryAfterBoundary,
+           connections[serverId]?.canAutomaticallyRetryInitialTransport == true {
+            return await ensureConnectionReady(for: server)
+        }
         return prepared ?? disconnectedSentinel
     }
 
-    private func prepareConnection(for server: PairedServer) async -> ServerConnection? {
+    private func finishConnectionPreparation(serverId: String, id: UUID) {
+        guard connectionPreparationTasks[serverId]?.id == id else { return }
+        connectionPreparationTasks.removeValue(forKey: serverId)
+        forcedConnectionPreparationServerIds.remove(serverId)
+        preparingServerIds.remove(serverId)
+    }
+
+    private func prepareConnection(
+        for server: PairedServer,
+        forceReconfigure: Bool = false
+    ) async -> ServerConnection? {
         let serverId = server.id
         let initialLANEndpoint = await initialLANEndpoint(for: server)
         if let existing = connections[serverId] {
-            if existing.credentials != server.credentials {
-                logger.warning("Reconfiguring connection for re-paired server \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
-                existing.disconnectStream()
-                existing.disconnectAppEventStream()
+            if forceReconfigure || existing.credentials != server.credentials {
+                if existing.credentials == nil {
+                    logger.info("Preparing transport for paired server")
+                } else {
+                    logger.warning("Reconfiguring paired server transport")
+                }
+                if !forceReconfigure {
+                    existing.disconnectStream()
+                    existing.disconnectAppEventStream()
+                }
                 existing.setDiscoveredLANEndpoint(initialLANEndpoint)
-                guard await configureConnection(existing, credentials: server.credentials) else {
-                    logger.error("Failed to reconfigure connection for \(server.name, privacy: .public)")
+                guard await configureConnection(
+                    existing,
+                    credentials: server.credentials,
+                    preservingPersistentStreams: forceReconfigure
+                ) else {
+                    logger.error("Failed to prepare paired server transport")
                     return nil
                 }
+                await reconcileLANDiscoveredDuringTransportSetup(
+                    connection: existing,
+                    server: server,
+                    initialEndpoint: initialLANEndpoint
+                )
             }
             #if DEBUG
             _onConnectionPreparedForTesting?(serverId, existing)
@@ -214,9 +289,8 @@ final class ConnectionCoordinator {
             let latestEndpoint = await initialLANEndpoint(for: server)
             guard latestEndpoint != reconciledEndpoint else { return }
 
-            // This connection is not published yet, so Bonjour updates during
-            // transport setup cannot reach it through the normal callback.
-            // Repeat after each transition to close that asynchronous window.
+            // Bonjour can change again while an asynchronous transport setup
+            // is in flight. Repeat after each transition to close that window.
             let transition = connection.setDiscoveredLANEndpoint(latestEndpoint)
             await transition?.value
             reconciledEndpoint = latestEndpoint
@@ -225,10 +299,18 @@ final class ConnectionCoordinator {
 
     private func configureConnection(
         _ connection: ServerConnection,
-        credentials: ServerCredentials
+        credentials: ServerCredentials,
+        preservingPersistentStreams: Bool = false
     ) async -> Bool {
         #if DEBUG
         if let factory = _irohProxyFactoryForTesting {
+            if preservingPersistentStreams {
+                return await connection.reconfigureForExplicitRetry(
+                    credentials: credentials,
+                    lanReachabilityProbe: { _, _ in true },
+                    irohProxyFactory: factory
+                )
+            }
             return await connection.configureForUse(
                 credentials: credentials,
                 lanReachabilityProbe: { _, _ in true },
@@ -236,6 +318,9 @@ final class ConnectionCoordinator {
             )
         }
         #endif
+        if preservingPersistentStreams {
+            return await connection.reconfigureForExplicitRetry(credentials: credentials)
+        }
         return await connection.configureForUse(credentials: credentials)
     }
 
@@ -243,10 +328,12 @@ final class ConnectionCoordinator {
         connection.sessionStore.switchServer(to: serverId)
         connection.askRequestStore.switchServer(to: serverId)
         connection.workspaceStore.switchServer(to: serverId)
+        connection.serverResourceStore.switchServer(to: serverId)
     }
 
-    func prepareAllConnectionsReady() async {
-        for server in serverStore.servers {
+    func prepareInactiveConnectionsReady(excluding selectedServerId: String) async {
+        for server in serverStore.servers where server.id != selectedServerId {
+            _ = stagePairedServerConnection(server)
             _ = await ensureConnectionReady(for: server)
         }
     }
@@ -348,8 +435,16 @@ final class ConnectionCoordinator {
         //    handleNetworkPathChange captures `wasOnLAN` before clearing the
         //    endpoint, so order matters — call it before lanDiscovery.stop()
         //    which also clears endpoints via the onUpdate callback.
-        for conn in connections.values {
-            conn.handleNetworkPathChange()
+        for (serverId, connection) in connections {
+            if connection.credentials == nil {
+                // A paired shell can exist before its first transport succeeds.
+                // A new interface/VPN is a recovery boundary for that setup too.
+                Task { @MainActor [weak self] in
+                    await self?.recoverUnconfiguredServerAfterBoundary(serverId)
+                }
+            } else {
+                connection.handleNetworkPathChange()
+            }
         }
 
         // 2. Restart LAN discovery on the new network interface.
@@ -647,6 +742,39 @@ final class ConnectionCoordinator {
 
     // MARK: - Multi-Server Refresh
 
+    /// Retry setup for a shell that has never established a usable transport.
+    /// Boundaries coalesce with an in-flight attempt and request one fresh pass
+    /// afterward, while terminal integrity/auth failures remain user-controlled.
+    func recoverUnconfiguredServerAfterBoundary(_ serverId: String) async {
+        guard let connection = connections[serverId], connection.credentials == nil else {
+            return
+        }
+        guard connection.canAutomaticallyRetryInitialTransport else { return }
+        if connectionPreparationTasks[serverId] != nil {
+            retryPreparationAfterBoundaryServerIds.insert(serverId)
+            return
+        }
+        await refreshServer(serverId, force: true)
+    }
+
+    /// User-requested retry may re-attempt a terminal setup failure. Configured
+    /// connections first run their normal transport-boundary recovery, then
+    /// refresh cached projections against the selected lane.
+    func retryServerConnection(_ serverId: String) async {
+        guard let server = serverStore.server(for: serverId) else { return }
+        let connection = await ensureConnectionReady(
+            for: server,
+            forceReconfigure: true
+        )
+        guard connection.credentials != nil, connection.apiClient != nil else {
+            let failedConnection = connections[serverId] ?? connection
+            failedConnection.workspaceStore.markSyncFailed()
+            failedConnection.sessionStore.markSyncFailed()
+            return
+        }
+        await refreshServer(serverId, force: true)
+    }
+
     /// Refresh workspace + session data for one paired server.
     ///
     /// Server-scoped surfaces use this instead of waiting on every paired host.
@@ -659,13 +787,16 @@ final class ConnectionCoordinator {
 
         let connection = await ensureConnectionReady(for: server)
         guard connection !== disconnectedSentinel, connection.apiClient != nil else {
-            logger.error("Cannot refresh server without a configured API client: \(serverId.prefix(16), privacy: .public)")
+            logger.error("Cannot refresh server without a configured API client")
             let failedConnection = connections[serverId] ?? connection
             failedConnection.workspaceStore.markSyncFailed()
             failedConnection.sessionStore.markSyncFailed()
             return
         }
 
+        if serverId == activeServerId {
+            MetricKitService.shared.setUploadClient(connection.apiClient)
+        }
         await connection.refreshWorkspaceAndSessionLists(force: force)
     }
 

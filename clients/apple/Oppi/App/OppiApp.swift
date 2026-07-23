@@ -583,8 +583,9 @@ struct OppiApp: App {
         }
         inviteBootstrapInFlight = true
         defer { inviteBootstrapInFlight = false }
-        let existingCredentials = connection.credentials
-        let hadExistingCredentials = existingCredentials != nil
+        let existingCredentials = credentials.normalizedServerFingerprint
+            .flatMap { serverStore.server(for: $0)?.credentials }
+            ?? serverStore.server(forHost: credentials.host, port: credentials.port)?.credentials
         do {
 #if DEBUG
             let bootstrap: InviteBootstrapResult
@@ -672,7 +673,11 @@ struct OppiApp: App {
                 return
             }
 #endif
-            if !hadExistingCredentials { navigation.showOnboarding = true }
+            if AppLaunchPairingPolicy.shouldShowOnboardingAfterInviteFailure(
+                pairedServerCount: serverStore.servers.count
+            ) {
+                navigation.showOnboarding = true
+            }
             connection.extensionToast = "Invite link failed: \(error.localizedDescription)"
         }
     }
@@ -864,8 +869,20 @@ struct OppiApp: App {
                     defer {
                         lifecycleSignposter.endInterval("foreground.reconnect", reconnectInterval)
                     }
-                    // Active server: full reconnect (WS, session metadata, lists)
-                    await connection.reconnectIfNeeded()
+                    // A paired shell may still be waiting for its first usable
+                    // transport. Foreground is an explicit recovery boundary for
+                    // setup as well as for established streams.
+                    if let activeServerId = coordinator.activeServerId,
+                       let activeConnection = coordinator.connection(for: activeServerId),
+                       activeConnection.credentials == nil {
+                        await coordinator.recoverUnconfiguredServerAfterBoundary(activeServerId)
+                        if activeConnection.credentials != nil,
+                           ReleaseFeatures.remotePushNotificationsEnabled {
+                            await coordinator.registerPushWithAllServers()
+                        }
+                    } else {
+                        await connection.reconnectIfNeeded()
+                    }
                     // All other servers: reconnect + refresh
                     await coordinator.refreshInactiveServers()
                 }
@@ -1113,44 +1130,20 @@ struct OppiApp: App {
             return
         }
 
-        // Prepare the target transport before switching. Iroh startup awaits its
-        // ephemeral loopback listener and never persists that local URL.
-        let preparedConnection = await coordinator.ensureConnectionReady(for: server)
-        guard preparedConnection.credentials != nil,
-              await coordinator.switchToServerReady(server) else {
-            launchOutcome = "invalid_credentials"
-            navigation.showOnboarding = true
-            navigation.launchPhase = .ready
-            return
-        }
-
-        // Prepare paired server connections. Live sockets open from workspace/chat screens.
-        await coordinator.prepareAllConnectionsReady()
-
-        guard connection.apiClient != nil else {
-            launchOutcome = "no_api_client"
-            navigation.showOnboarding = true
-            navigation.launchPhase = .ready
-            return
-        }
-
-        MetricKitService.shared.setUploadClient(connection.apiClient)
-
-        // Never show onboarding when we have valid credentials.
-        // Even if security profile check fails (server offline), show cached workspace.
-        navigation.showOnboarding = false
+        // A persisted PairedServer is authoritative for launch presentation.
+        // Publish its stores immediately so transport availability can never
+        // send an already-paired user back through onboarding.
+        let launchConnection = coordinator.activatePairedServerShell(server)
 
         // Show What's New once per marketing version after onboarding.
         if WhatsNewManager.shouldShow {
             navigation.showWhatsNew = true
         }
 
-        // Security profile is server-config managed and no longer required for launch.
-
         // 2. Restore UI state (tab, active session, draft)
         if let restored {
             navigation.selectedTab = AppTab(rawString: restored.selectedTab)
-            connection.sessionStore.activeSessionId = restored.activeSessionId
+            launchConnection.sessionStore.activeSessionId = restored.activeSessionId
             composerDraftStore.stageLegacyDraft(
                 text: restored.composerDraft,
                 serverID: restored.activeServerId,
@@ -1158,37 +1151,63 @@ struct OppiApp: App {
             )
         }
 
-        // 3. Show cached data immediately (before any network calls)
+        // 3. Load local state before any network wait. The normal paired shell
+        // renders cached content—or its ordinary empty/offline state—while the
+        // connection badge reports transport preparation and recovery.
         let cache = TimelineCache.shared
-        if let cachedSessions = await loadLaunchSessionCache(
-            cache: cache,
-            serverId: server.id
-        ) {
-            usedCachedSessions = true
-            connection.sessionStore.applyServerSnapshot(cachedSessions)
-            connection.syncAllWorkspaceSummariesFromLocalState()
-            connection.syncLiveActivityState()
+        let preparedConnection = await PairedLaunchSequence.revealThenPrepare(
+            loadLocalState: {
+                if let cachedSessions = await loadLaunchSessionCache(
+                    cache: cache,
+                    serverId: server.id
+                ) {
+                    usedCachedSessions = true
+                    launchConnection.sessionStore.applyServerSnapshot(cachedSessions)
+                    launchConnection.syncAllWorkspaceSummariesFromLocalState()
+                    launchConnection.syncLiveActivityState()
+                }
+                await launchConnection.workspaceStore.loadCachedCatalog(serverId: server.id)
+            },
+            reveal: {
+                navigation.revealPairedServerShell()
+            },
+            // 4. Prepare transport after revealing the paired shell. Iroh may use
+            // its full bounded reachability deadline without holding the first frame.
+            prepare: {
+                await coordinator.ensureConnectionReady(for: server)
+            }
+        )
+        var selectedServerReady = false
+        if preparedConnection.credentials != nil,
+           preparedConnection.apiClient != nil {
+            selectedServerReady = await coordinator.switchToServerReady(server)
+        }
+        if selectedServerReady {
+            MetricKitService.shared.setUploadClient(preparedConnection.apiClient)
+        } else {
+            launchConnection.workspaceStore.markSyncFailed()
+            launchConnection.sessionStore.markSyncFailed()
         }
 
-        // Cached workspace catalog — load before revealing UI so the
-        // workspace list is populated on the first visible frame.
-        // Cache-only: no network fetch, so this returns fast.
-        await connection.workspaceStore.loadCachedCatalog(serverId: server.id)
+        // Prepare other paired servers even when the selected server is offline.
+        // One unavailable host must not suppress their refresh, push, or metrics setup.
+        await coordinator.prepareInactiveConnectionsReady(excluding: server.id)
 
-        // Launch resolved: credentials valid, cached data applied.
-        // Reveal the UI before the network refresh so the user sees
-        // cached content immediately instead of a blank screen.
-        navigation.launchPhase = .ready
-
-        // 4. Refresh workspaces + recent workspace-scoped sessions from server.
+        // 5. Refresh workspaces + recent workspace-scoped sessions from server.
         // Avoid the legacy global `/sessions` endpoint on launch; it returns every
         // stopped session and can be multi-megabyte on long-lived installs.
-        await coordinator.refreshAllServers()
-        launchOutcome = connection.workspaceStore.lastSyncFailed && connection.sessionStore.lastSyncFailed
-            ? "offline_cache_only"
-            : "online_refresh_ok"
+        if selectedServerReady {
+            await coordinator.refreshAllServers()
+            launchOutcome = preparedConnection.workspaceStore.lastSyncFailed
+                && preparedConnection.sessionStore.lastSyncFailed
+                ? "offline_cache_only"
+                : "online_refresh_ok"
+        } else {
+            await coordinator.refreshInactiveServers()
+            launchOutcome = "offline_cache_only"
+        }
 
-        // 5. Register for remote push notifications with all paired servers.
+        // 6. Register for remote push notifications with all paired servers.
         if ReleaseFeatures.remotePushNotificationsEnabled {
             await PushRegistration.shared.requestAndRegister()
             await coordinator.registerPushWithAllServers()
