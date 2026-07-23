@@ -86,10 +86,10 @@ const TEST_CONTROL_SESSION: Session = {
   workspaceName: undefined,
   name: "Oppi Control",
   control: {
-    domain: "agents",
+    domain: "skills",
     intent: "revise",
-    targetId: "agent-reviewer",
-    targetName: "Reviewer",
+    targetId: "skill-reviewer",
+    targetName: "Reviewer Skill",
   },
 };
 

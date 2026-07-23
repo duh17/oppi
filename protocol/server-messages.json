@@ -208,10 +208,10 @@
         ],
         "piSessionId": "uuid-abc-123",
         "control": {
-          "domain": "agents",
+          "domain": "skills",
           "intent": "revise",
-          "targetId": "agent-reviewer",
-          "targetName": "Reviewer"
+          "targetId": "skill-reviewer",
+          "targetName": "Reviewer Skill"
         }
       }
     },
@@ -253,10 +253,10 @@
           "name": "checkmark.shield"
         },
         "control": {
-          "domain": "agents",
+          "domain": "skills",
           "intent": "revise",
-          "targetId": "agent-reviewer",
-          "targetName": "Reviewer"
+          "targetId": "skill-reviewer",
+          "targetName": "Reviewer Skill"
         }
       }
     },

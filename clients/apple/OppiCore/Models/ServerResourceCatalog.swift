@@ -57,6 +57,8 @@ struct ServerSkillSummary: Codable, Sendable, Equatable, Identifiable {
     let state: ServerSkillState
     let loadError: String?
     let warnings: [String]
+    /// Server-authoritative capability; never infer editability from a path.
+    let editable: Bool
 
     init(
         id: String,
@@ -67,7 +69,8 @@ struct ServerSkillSummary: Codable, Sendable, Equatable, Identifiable {
         packageName: String? = nil,
         state: ServerSkillState,
         loadError: String?,
-        warnings: [String]
+        warnings: [String],
+        editable: Bool
     ) {
         self.id = id
         self.name = name
@@ -78,6 +81,7 @@ struct ServerSkillSummary: Codable, Sendable, Equatable, Identifiable {
         self.state = state
         self.loadError = loadError
         self.warnings = warnings
+        self.editable = editable
     }
 }
 

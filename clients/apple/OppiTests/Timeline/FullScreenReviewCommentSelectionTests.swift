@@ -1031,6 +1031,62 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
+    @Test func fullScreenViewerInstallsResourceActionsBeforeReaderActions() throws {
+        let controller = FullScreenCodeViewController(
+            content: .markdown(content: "# Prompt", filePath: "Schedule.md"),
+            navigationActions: [
+                FullScreenViewerNavigationAction(
+                    id: "edit",
+                    title: "Edit",
+                    accessibilityLabel: "Edit in Oppi Session",
+                    handler: {}
+                ),
+            ]
+        )
+        controller.loadViewIfNeeded()
+
+        let navigationController = try #require(controller.children.first as? UINavigationController)
+        let contentController = try #require(navigationController.topViewController)
+        let actions = try #require(contentController.navigationItem.rightBarButtonItems)
+
+        #expect(actions.first?.title == "Edit")
+        #expect(actions.first?.accessibilityLabel == "Edit in Oppi Session")
+        #expect(actions.dropFirst().contains { $0.image == UIImage(systemName: "doc.on.doc") })
+    }
+
+    @Test func fullScreenViewerUpdatesResourceActionState() throws {
+        let controller = FullScreenCodeViewController(
+            content: .markdown(content: "# Prompt", filePath: "Schedule.md"),
+            navigationActions: [
+                FullScreenViewerNavigationAction(
+                    id: "edit",
+                    title: "Edit",
+                    accessibilityLabel: "Edit in Oppi Session",
+                    handler: {}
+                ),
+            ]
+        )
+        controller.loadViewIfNeeded()
+        let navigationController = try #require(controller.children.first as? UINavigationController)
+        let contentController = try #require(navigationController.topViewController)
+
+        controller.setNavigationActions([
+            FullScreenViewerNavigationAction(
+                id: "edit",
+                title: "Starting…",
+                accessibilityLabel: "Edit in Oppi Session",
+                accessibilityValue: "Starting",
+                isEnabled: false,
+                handler: {}
+            ),
+        ])
+
+        let edit = try #require(contentController.navigationItem.rightBarButtonItems?.first)
+        #expect(edit.title == "Starting…")
+        #expect(edit.accessibilityValue == "Starting")
+        #expect(!edit.isEnabled)
+    }
+
     @Test func liveSourceChunkUpdateKeepsNavigationChromeWhenMetadataIsUnchanged() throws {
         let stream = SourceTraceStream(
             text: "streaming source",

@@ -16,7 +16,7 @@ import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
 import { isDeclaredControlSession } from "../control-session.js";
 
-const CONTROL_SESSION_DOMAINS = new Set(["agents", "schedules", "workspaces"] as const);
+const CONTROL_SESSION_DOMAINS = new Set(["agents", "schedules", "skills", "workspaces"] as const);
 const CONTROL_SESSION_INTENTS = new Set(["create", "revise"] as const);
 
 const CREATE_SESSION_THINKING_LEVELS = new Set([
@@ -269,7 +269,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }>(req);
     if (
       typeof body.domain !== "string" ||
-      !CONTROL_SESSION_DOMAINS.has(body.domain as "agents" | "schedules" | "workspaces") ||
+      !CONTROL_SESSION_DOMAINS.has(
+        body.domain as "agents" | "schedules" | "skills" | "workspaces",
+      ) ||
       typeof body.intent !== "string" ||
       !CONTROL_SESSION_INTENTS.has(body.intent as "create" | "revise") ||
       (body.targetId !== undefined &&
@@ -292,7 +294,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     try {
       const result = await lifecycle.createControlSession({
         control: {
-          domain: body.domain as "agents" | "schedules" | "workspaces",
+          domain: body.domain as "agents" | "schedules" | "skills" | "workspaces",
           intent: body.intent as "create" | "revise",
           ...(targetId ? { targetId } : {}),
           ...(targetName ? { targetName } : {}),

@@ -10,7 +10,7 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
   name: DEFAULT_AGENT_DEFAULT_NAME,
   icon: DEFAULT_ICON_CHOICE,
   description:
-    "Manage Oppi workspaces, Agents, schedules, and sessions with explicit approval before changes.",
+    "Manage Oppi workspaces, Agents, Skills, schedules, and sessions with explicit approval before changes.",
   resources: {
     noContextFiles: true,
   },

@@ -33,6 +33,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     var reviewCommentSourceLabel: String?
     var showsNavigationChrome = true
     var backSwipeAction: (@MainActor @Sendable () -> Void)?
+    var navigationActions: [FullScreenViewerNavigationAction] = []
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
@@ -60,7 +61,8 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
         return FullScreenCodeViewController(
             content: content,
             presentationMode: presentationMode,
-            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext
+            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
+            navigationActions: navigationActions
         )
     }
 
@@ -68,6 +70,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
         _ uiViewController: FullScreenCodeViewController,
         context: Context
     ) {
+        uiViewController.setNavigationActions(navigationActions)
         uiViewController.applyThemeIfNeeded(themeID)
     }
 }

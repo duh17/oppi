@@ -187,6 +187,7 @@ private struct AgentDetailView: View {
     @State private var isLoading = false
     @State private var error: String?
     @State private var isShowingRevision = false
+    @State private var isShowingDefinitionReview = false
     @State private var isShowingIconPicker = false
     @State private var isShowingLaunch = false
     @State private var isShowingSchedule = false
@@ -231,10 +232,24 @@ private struct AgentDetailView: View {
 
                 if let instructions = agent.definition.instructions {
                     Section(systemPromptTitle(instructions.mode)) {
-                        Text(instructions.text)
-                            .foregroundStyle(.themeFg)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
+                        Button {
+                            isShowingDefinitionReview = true
+                        } label: {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(instructions.text)
+                                    .foregroundStyle(.themeFg)
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                Label("Read and comment", systemImage: "arrow.up.left.and.arrow.down.right")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.themeBlue)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Read and comment on Agent definition")
+                        .accessibilityIdentifier("agents.detail.definition")
                     }
                 }
 
@@ -294,11 +309,17 @@ private struct AgentDetailView: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if agent != nil {
                     Button("Edit") {
-                        isShowingRevision = true
+                        isShowingDefinitionReview = true
                     }
                     .accessibilityIdentifier("agents.detail.edit")
 
                     Menu {
+                        Button {
+                            isShowingRevision = true
+                        } label: {
+                            Label("Describe Changes in Session", systemImage: "text.bubble")
+                        }
+
                         Button("Archive Agent", role: .destructive) {
                             Task { await archiveAgent() }
                         }
@@ -328,6 +349,18 @@ private struct AgentDetailView: View {
                     targetId: agent.id,
                     targetName: agent.name,
                     placeholder: "Describe how this Agent should change…"
+                )
+            }
+        }
+        .sheet(isPresented: $isShowingDefinitionReview) {
+            if let agent {
+                ReviewableControlMarkdownView(
+                    content: definitionMarkdown(agent),
+                    domain: .agents,
+                    targetId: agent.id,
+                    targetName: agent.name,
+                    sourceLabel: "\(agent.name) definition",
+                    sourcePath: "Agents/\(agent.id)/Definition.md"
                 )
             }
         }
@@ -394,6 +427,59 @@ private struct AgentDetailView: View {
         case .append: return "Append System Prompt"
         case .replace: return "Replace System Prompt"
         }
+    }
+
+    private func definitionMarkdown(_ agent: StoredAgentDefinition) -> String {
+        let definition = agent.definition
+        let defaults = definition.sessionDefaults
+        let resources = definition.resources
+        let instructions: [String]
+        if let instruction = definition.instructions {
+            instructions = [
+                "## \(systemPromptTitle(instruction.mode))",
+                "",
+                instruction.text,
+            ]
+        } else {
+            instructions = ["## System Prompt", "", "_Uses the server default._"]
+        }
+
+        var lines = ["# \(definition.name)", ""]
+        if let description = definition.description?.nilIfBlank {
+            lines.append(description)
+            lines.append("")
+        }
+        lines += instructions
+        lines += [
+            "",
+            "## Pi Session Defaults",
+            "",
+            "- **Model:** \(defaults?.model?.nilIfBlank ?? "Server default")",
+            "- **Thinking level:** \(defaults?.thinkingLevel?.rawValue ?? "Default")",
+            "- **Tools:** \(agentToolSummary(defaults))",
+            "",
+            "## Resources",
+            "",
+            "- **Skill paths:** \(resourceSummary(resources?.skillPaths))",
+            "- **Prompt templates:** \(resourceSummary(resources?.promptTemplateIds))",
+            "- **Extensions:** \(resourceSummary(resources?.extensionIds))",
+            "- **Context files:** \(resources?.noContextFiles == true ? "Disabled" : "Default discovery")",
+        ]
+        return lines.joined(separator: "\n")
+    }
+
+    private func agentToolSummary(_ defaults: AgentSessionDefaults?) -> String {
+        if let noTools = defaults?.noTools { return noTools.displayName }
+        let allowed = defaults?.tools ?? []
+        let excluded = defaults?.excludeTools ?? []
+        if !allowed.isEmpty { return "Allowed: \(allowed.joined(separator: ", "))" }
+        if !excluded.isEmpty { return "Excluded: \(excluded.joined(separator: ", "))" }
+        return "Default"
+    }
+
+    private func resourceSummary(_ values: [String]?) -> String {
+        guard let values, !values.isEmpty else { return "Default discovery" }
+        return values.joined(separator: ", ")
     }
 
     @ViewBuilder

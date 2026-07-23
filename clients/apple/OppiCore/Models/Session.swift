@@ -43,6 +43,7 @@ struct PiTuiMirrorSessionMetadata: Codable, Sendable, Equatable {
 enum ControlSessionDomain: String, Codable, Sendable {
     case agents
     case schedules
+    case skills
     case workspaces
 }
 
@@ -96,6 +97,7 @@ enum ControlSessionStarterPrompt {
         let subject = switch domain {
         case .agents: "saved Agent"
         case .schedules: "Schedule"
+        case .skills: "Skill"
         case .workspaces: "Workspace"
         }
         let target = intent == .revise
@@ -109,6 +111,8 @@ enum ControlSessionStarterPrompt {
             "Use the `oppi agent` command family to list and inspect existing definitions, then create or update the approved definition. If Agent behavior is ambiguous, ask focused questions about responsibilities, boundaries, resources, defaults, and success criteria."
         case .schedules:
             "Use the `oppi schedule` command family to list and inspect existing schedules, then create or update the approved schedule. If schedule behavior or timing is ambiguous, ask focused questions about the task, target workspace or session, cadence, time zone, safety constraints, and expected output."
+        case .skills:
+            "Use the restricted `oppi skill` command family to inspect the canonical Skill and read each current file revision. Update only approved, existing editable files with `oppi skill update-file --base-revision <revision> --content-json <json-string>`; package Skills are read-only. If a revision conflicts, re-read the file and reconcile instead of overwriting it."
         case .workspaces:
             "Use the `oppi workspace` command family to inspect existing workspaces, then create or update the approved workspace. Ask focused questions about paths, runtime, and access when they are ambiguous."
         }

@@ -23,6 +23,7 @@ vi.mock("../src/cli/local-api-client.js", async (importOriginal) => {
 
 const request = vi.mocked(localApiRequest);
 const originalCallerSessionId = process.env[OPPI_CALLER_SESSION_ID_ENV];
+const SKILL_FILE_REVISION = "a".repeat(64);
 
 afterEach(() => {
   request.mockReset();
@@ -62,6 +63,13 @@ const MATRIX_CASES: MatrixCase[] = [
   },
   { category: "read", command: "agent list", args: ["agent", "list"] },
   { category: "read", command: "agent get", args: ["agent", "get", "agent-1"] },
+  { category: "read", command: "skill list", args: ["skill", "list"] },
+  { category: "read", command: "skill get", args: ["skill", "get", "skill-1"] },
+  {
+    category: "read",
+    command: "skill file",
+    args: ["skill", "file", "skill-1", "--path", "SKILL.md"],
+  },
   { category: "read", command: "session list", args: ["session", "list"] },
   { category: "read", command: "session get", args: ["session", "get", "sess-1"] },
   { category: "read", command: "session read", args: ["session", "read", "sess-1"] },
@@ -131,6 +139,21 @@ const MATRIX_CASES: MatrixCase[] = [
     category: "nonDestructiveWrite",
     command: "agent create",
     args: ["agent", "create", "--definition-json", '{"name":"Reviewer"}'],
+  },
+  {
+    category: "nonDestructiveWrite",
+    command: "skill update-file",
+    args: [
+      "skill",
+      "update-file",
+      "skill-1",
+      "--path",
+      "SKILL.md",
+      "--base-revision",
+      SKILL_FILE_REVISION,
+      "--content-json",
+      JSON.stringify("# Updated\n"),
+    ],
   },
   {
     category: "nonDestructiveWrite",
@@ -315,6 +338,7 @@ describe("Oppi prepared command boundary", () => {
       ["agent", "create", "--definition", "agent.json"],
       ["agent", "update", "agent-1", "--definition", "agent.json"],
       ["schedule", "update", "sch-1", "--definition", "schedule.json"],
+      ["skill", "update-file", "skill-1", "--path", "SKILL.md", "--content-json", "@-"],
       ["session", "create", "--workspace", "ws-1", "--prompt", "@-"],
       ["session", "send", "sess-1", "--text", "@-"],
       ["schedule", "create", "--workspace", "ws-1", "--prompt", "@-", "--every", "1d"],
@@ -326,6 +350,22 @@ describe("Oppi prepared command boundary", () => {
     });
   });
 
+  it("rejects a malformed Skill base revision", () => {
+    expect(
+      prepareOppiCommand([
+        "skill",
+        "update-file",
+        "skill-1",
+        "--path",
+        "SKILL.md",
+        "--base-revision",
+        "stale",
+        "--content-json",
+        JSON.stringify("# Updated\n"),
+      ]),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("base-revision") });
+  });
+
   it.each(["not json", "[]", "{}", JSON.stringify({ description: "x".repeat(65_536) })])(
     "rejects invalid, empty-update, or oversized inline JSON",
     (definition) => {
@@ -334,6 +374,31 @@ describe("Oppi prepared command boundary", () => {
       ).toMatchObject({ ok: false });
     },
   );
+
+  it("presents the complete Skill replacement body for approval", () => {
+    const body = "---\nname: review\ndescription: Review changes\n---\n# Review\n";
+    const command = prepared([
+      "skill",
+      "update-file",
+      "skill_abc",
+      "--path",
+      "SKILL.md",
+      "--base-revision",
+      SKILL_FILE_REVISION,
+      "--content-json",
+      JSON.stringify(body),
+    ]);
+
+    expect(command.approvalDetails).toMatchObject({
+      action: "oppi skill update-file",
+      category: "nonDestructiveWrite",
+      target: { label: "Skill", value: "skill_abc" },
+      context: { label: "Path", value: "SKILL.md" },
+      bodies: [{ label: "File content", value: body }],
+    });
+    expect(command.approvalMessage).toContain("name: review");
+    expect(command.displayCommand).not.toContain(body);
+  });
 
   it("preserves complete body whitespace and recursively freezes approved data", () => {
     const body = "  first line\n```\n~~~\nlast line  \n";
@@ -357,6 +422,31 @@ describe("Oppi prepared command boundary", () => {
     expect(Object.isFrozen(command.approvalDetails)).toBe(true);
     expect(Object.isFrozen(command.approvalDetails?.bodies)).toBe(true);
     expect(Object.isFrozen(command.approvalDetails?.bodies[0])).toBe(true);
+  });
+
+  it("executes Skill replacement with the decoded approved body", async () => {
+    const body = "---\nname: review\ndescription: Review changes\n---\n# Review\n";
+    request.mockResolvedValueOnce({ content: body, revision: "b".repeat(64) });
+    const command = prepared([
+      "skill",
+      "update-file",
+      "skill_abc",
+      "--path",
+      "SKILL.md",
+      "--base-revision",
+      SKILL_FILE_REVISION,
+      "--content-json",
+      JSON.stringify(body),
+    ]);
+
+    const result = await executePreparedOppiCommand({ prepared: command });
+
+    expect(result.ok).toBe(true);
+    expect(request).toHaveBeenCalledWith(
+      expect.anything(),
+      "/server/resources/skills/skill_abc/file?path=SKILL.md",
+      { method: "PUT", body: { content: body, baseRevision: SKILL_FILE_REVISION } },
+    );
   });
 
   it("executes the prepared parse without rereading or reclassifying mutable input", async () => {

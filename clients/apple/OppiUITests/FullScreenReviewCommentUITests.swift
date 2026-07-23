@@ -19,6 +19,16 @@ final class FullScreenReviewCommentUITests: XCTestCase {
 
     func testFullScreenCodeSelectionShowsNativeActionBar() throws {
         launchReviewCommentHarness()
+
+        XCTAssertTrue(
+            app.buttons["Edit in Oppi Session"].waitForExistence(timeout: 5),
+            "The full-screen reader did not expose its session edit action"
+        )
+        XCTAssertTrue(
+            app.buttons["Staged Comments"].waitForExistence(timeout: 2),
+            "The full-screen reader did not expose the staged comment stash"
+        )
+
         selectHarnessCodeRange()
 
         XCTAssertFalse(
@@ -44,6 +54,21 @@ final class FullScreenReviewCommentUITests: XCTestCase {
             "Native Comment action did not open the inline comment composer"
         )
         saveScreenshot(name: "fullscreen-review-comment-inline-composer")
+    }
+
+    func testEmbeddedReviewReaderExposesBackAndSessionActions() throws {
+        launchReviewCommentHarness(embedded: true)
+
+        XCTAssertTrue(app.buttons["fullscreen-code.back"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Edit in Oppi Session"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["Staged Comments"].waitForExistence(timeout: 2))
+
+        app.buttons["fullscreen-code.back"].tap()
+        XCTAssertEqual(
+            waitForDiagnostic("diag.embedded.backCount", timeout: 2, matching: { $0 == 1 }),
+            1,
+            "Embedded reader back chrome did not call the NavigationStack dismissal action"
+        )
     }
 
     func testFullScreenCodeSelectionPaintsVisibleHighlight() throws {
@@ -84,7 +109,10 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         XCTAssertLessThanOrEqual(abs(secondX - expectedX), 100)
     }
 
-    private func launchReviewCommentHarness(diffWrapping: Bool = false) {
+    private func launchReviewCommentHarness(
+        diffWrapping: Bool = false,
+        embedded: Bool = false
+    ) {
         app = XCUIApplication()
         app.launchArguments.append(contentsOf: [
             "--fullscreen-review-comment-harness",
@@ -95,6 +123,10 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         if diffWrapping {
             app.launchArguments.append("--fullscreen-diff-wrapping-harness")
             app.launchEnvironment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS_DIFF_WRAPPING"] = "1"
+        }
+        if embedded {
+            app.launchArguments.append("--fullscreen-embedded-review-harness")
+            app.launchEnvironment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS_EMBEDDED"] = "1"
         }
         app.launch()
 

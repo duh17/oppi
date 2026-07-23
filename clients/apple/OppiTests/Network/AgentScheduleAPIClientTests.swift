@@ -859,6 +859,23 @@ struct ControlSessionStarterPromptTests {
         #expect(prompt.contains("User request:\nCreate a careful release reviewer."))
     }
 
+    @Test func SkillRevisionStarterPromptUsesOnlyRestrictedInlineSkillCommands() {
+        let prompt = ControlSessionStarterPrompt.make(
+            domain: .skills,
+            intent: .revise,
+            targetId: "skill_abc",
+            targetName: "review",
+            userRequest: "Apply my staged comments."
+        )
+
+        #expect(prompt.contains("Canonical target ID: skill_abc"))
+        #expect(prompt.contains("`oppi skill`"))
+        #expect(prompt.contains("`oppi skill update-file --base-revision <revision> --content-json <json-string>`"))
+        #expect(prompt.contains("If a revision conflicts, re-read the file"))
+        #expect(prompt.contains("package Skills are read-only"))
+        #expect(prompt.contains("Do not use filesystem tools or temporary files"))
+    }
+
     @Test func revisionPromptIsDeterministicAndUsesCanonicalDefinitionInput() {
         let first = ControlSessionStarterPrompt.make(
             domain: .schedules,

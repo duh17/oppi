@@ -286,6 +286,7 @@ private struct ScheduleDetailView: View {
     @State private var isMutating = false
     @State private var error: String?
     @State private var showRevision = false
+    @State private var showPromptReader = false
 
     var body: some View {
         List {
@@ -390,6 +391,18 @@ private struct ScheduleDetailView: View {
                 )
             }
         }
+        .sheet(isPresented: $showPromptReader) {
+            if let schedule {
+                ReviewableControlMarkdownView(
+                    content: prompt(in: schedule.action),
+                    domain: .schedules,
+                    targetId: schedule.id,
+                    targetName: schedule.name,
+                    sourceLabel: "\(schedule.name) prompt",
+                    sourcePath: "Schedules/\(schedule.id)/Prompt.md"
+                )
+            }
+        }
         .alert("Schedule", isPresented: Binding(
             get: { error != nil },
             set: { if !$0 { error = nil } }
@@ -440,14 +453,38 @@ private struct ScheduleDetailView: View {
     }
 
     private func promptPreview(_ prompt: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Prompt")
-                .font(.subheadline.weight(.medium))
-            Text(prompt)
-                .font(.caption.monospaced())
-                .foregroundStyle(.themeFg)
-                .lineLimit(8)
-                .textSelection(.enabled)
+        Button {
+            showPromptReader = true
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Prompt")
+                        .font(.subheadline.weight(.medium))
+                    Spacer(minLength: 8)
+                    Label("Read", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.themeBlue)
+                }
+                Text(prompt)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.themeFg)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Read full schedule prompt")
+        .accessibilityHint("Opens the prompt as full-screen Markdown")
+        .accessibilityIdentifier("schedule.detail.prompt")
+    }
+
+    private func prompt(in action: AgentScheduleAction) -> String {
+        switch action {
+        case .newSession(_, let prompt, _, _, _, _),
+             .existingSession(_, _, let prompt, _):
+            return prompt
         }
     }
 

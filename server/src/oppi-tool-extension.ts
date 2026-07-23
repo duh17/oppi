@@ -5,6 +5,7 @@ import { isHelpFlag, parseCliArgs, type ParsedCliArgs } from "./cli/args.js";
 import { cmdAgent } from "./cli/commands/agent.js";
 import { cmdSchedule } from "./cli/commands/schedule.js";
 import { cmdSession } from "./cli/commands/session.js";
+import { cmdSkill } from "./cli/commands/skill.js";
 import { cmdWorkspace } from "./cli/commands/workspace.js";
 import { cmdWorktree } from "./cli/commands/worktree.js";
 import { createCliConnectionConfig } from "./cli/connection-config.js";
@@ -13,6 +14,7 @@ import { helpTopicToJson, resolveHelpTopic } from "./cli/help.js";
 import type { LocalApiConnection } from "./cli/local-api-client.js";
 import { captureCliOutput, type CliJsonEnvelope } from "./cli/output.js";
 import { createLogger } from "./logger.js";
+import { MAX_SKILL_FILE_BYTES } from "./skill-files.js";
 import type { OppiApprovalPolicy } from "./oppi-extension-settings.js";
 import { assertNotSelfTargetingSession } from "./session-caller-identity.js";
 import { tlsSchemeForConfig } from "./tls.js";
@@ -30,6 +32,7 @@ type AllowedOppiToolCommandCategory = Exclude<OppiToolCommandCategory, "denied">
 type FlagDescriptor = Readonly<{
   kind: "boolean" | "value";
   bodyLabel?: string;
+  bodyEncoding?: "jsonString";
   indirectBody?: boolean;
 }>;
 
@@ -125,6 +128,11 @@ const DEFINITION_JSON_FLAG: FlagDescriptor = Object.freeze({
 const DEFINITION_FILE_FLAG: FlagDescriptor = Object.freeze({
   kind: "value",
   indirectBody: true,
+});
+const FILE_CONTENT_JSON_FLAG: FlagDescriptor = Object.freeze({
+  kind: "value",
+  bodyLabel: "File content",
+  bodyEncoding: "jsonString",
 });
 
 function commandFlags(
@@ -344,6 +352,49 @@ const COMMAND_DESCRIPTORS: readonly CommandDescriptor[] = Object.freeze([
     maxPositionals: 1,
     flags: commandFlags(),
     target: { label: "Agent", positionalIndex: 0 },
+  },
+  {
+    command: "skill",
+    action: "list",
+    category: "read",
+    minPositionals: 0,
+    maxPositionals: 0,
+    flags: commandFlags(),
+  },
+  {
+    command: "skill",
+    action: "get",
+    category: "read",
+    minPositionals: 1,
+    maxPositionals: 1,
+    flags: commandFlags(),
+    target: { label: "Skill", positionalIndex: 0 },
+  },
+  {
+    command: "skill",
+    action: "file",
+    category: "read",
+    minPositionals: 1,
+    maxPositionals: 1,
+    flags: commandFlags({ path: VALUE_FLAG }),
+    requiredFlags: ["path"],
+    target: { label: "Skill", positionalIndex: 0 },
+    contextFlag: { flag: "path", label: "Path" },
+  },
+  {
+    command: "skill",
+    action: "update-file",
+    category: "nonDestructiveWrite",
+    minPositionals: 1,
+    maxPositionals: 1,
+    flags: commandFlags({
+      path: VALUE_FLAG,
+      "base-revision": VALUE_FLAG,
+      "content-json": FILE_CONTENT_JSON_FLAG,
+    }),
+    requiredFlags: ["path", "base-revision", "content-json"],
+    target: { label: "Skill", positionalIndex: 0 },
+    contextFlag: { flag: "path", label: "Path" },
   },
   {
     command: "session",
@@ -779,6 +830,22 @@ function validateParsedCommand(
     }
   }
 
+  const fileContentJson = parsed.flags["content-json"];
+  if (descriptor.command === "skill" && descriptor.action === "update-file") {
+    if (!/^[a-f0-9]{64}$/.test(parsed.flags["base-revision"] ?? "")) {
+      return "--base-revision must be a 64-character lowercase SHA-256 revision";
+    }
+    try {
+      const fileContent = JSON.parse(fileContentJson ?? "") as unknown;
+      if (typeof fileContent !== "string") return "--content-json must be a JSON string";
+      if (Buffer.byteLength(fileContent, "utf8") > MAX_SKILL_FILE_BYTES) {
+        return `--content-json exceeds the ${MAX_SKILL_FILE_BYTES}-byte Skill file limit`;
+      }
+    } catch {
+      return "--content-json must be a valid JSON string";
+    }
+  }
+
   const inlineDefinition = parsed.flags["definition-json"];
   if (inlineDefinition !== undefined) {
     try {
@@ -936,6 +1003,9 @@ async function dispatchJsonCliCommand(
     case "session":
       await cmdSession(storage, action, positional, flags, cwd, { callerSessionId });
       return;
+    case "skill":
+      await cmdSkill(storage, action, positional, flags);
+      return;
     case "schedule":
       await cmdSchedule(storage, action, positional, flags);
       return;
@@ -1073,10 +1143,10 @@ export function createOppiToolExtensionFactory(options: {
       description:
         "Run an allowlisted Oppi CLI command as JSON under the configured server approval policy.",
       promptSnippet:
-        "Run allowlisted Oppi CLI commands as JSON for workspaces, worktrees, Agents, sessions, schedules, and status.",
+        "Run allowlisted Oppi CLI commands as JSON for workspaces, worktrees, Agents, Skills, sessions, schedules, and status.",
       promptGuidelines: [
         "Use oppi for Oppi app state instead of shell or filesystem tools.",
-        "Use oppi read commands before asking the user about discoverable workspace, Agent, session, schedule, or worktree state.",
+        "Use oppi read commands before asking the user about discoverable workspace, Agent, Skill, session, schedule, or worktree state.",
         "Use oppi session search and oppi session inspect for past Oppi session history instead of local JSONL-reading tools.",
         "Inspect session history progressively: start with session inspect <id> --view summary, then use --view outline; stop there when previews answer the question, otherwise request messages or tools for the smallest relevant turn set.",
         "Use session trace-outline only when exact entry ids are needed, followed by trace-page --around-entry or tool-output for bounded detail.",
@@ -1287,11 +1357,13 @@ function buildOppiToolApprovalDetails(
     descriptor.contextFlag && contextValue !== undefined
       ? { label: descriptor.contextFlag.label, value: contextValue }
       : undefined;
-  const bodies = Object.entries(descriptor.flags).flatMap(([flag, flagDescriptor]) =>
-    flagDescriptor.bodyLabel && Object.hasOwn(parsed.flags, flag)
-      ? [{ label: flagDescriptor.bodyLabel, value: parsed.flags[flag] ?? "" }]
-      : [],
-  );
+  const bodies = Object.entries(descriptor.flags).flatMap(([flag, flagDescriptor]) => {
+    if (!flagDescriptor.bodyLabel || !Object.hasOwn(parsed.flags, flag)) return [];
+    const rawValue = parsed.flags[flag] ?? "";
+    const value =
+      flagDescriptor.bodyEncoding === "jsonString" ? (JSON.parse(rawValue) as string) : rawValue;
+    return [{ label: flagDescriptor.bodyLabel, value }];
+  });
 
   const consumedPositional = new Set<number>();
   if (descriptor.target?.positionalIndex !== undefined) {

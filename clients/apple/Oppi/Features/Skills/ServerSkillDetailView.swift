@@ -314,6 +314,8 @@ struct ServerSkillDetailView: View {
                 .listRowBackground(theme.bg.primary)
             LabeledContent("Scope", value: "Server default")
                 .listRowBackground(theme.bg.primary)
+            LabeledContent("Files", value: summary.editable ? "Editable in session" : "Read-only")
+                .listRowBackground(theme.bg.primary)
         }
     }
 

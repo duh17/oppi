@@ -19,7 +19,16 @@ import {
   type OppiExtensionSettingsReader,
   type OppiExtensionSettingsSnapshot,
 } from "./oppi-extension-settings.js";
-import { listSkillFiles, readSkillFile as readContainedSkillFile } from "./skill-files.js";
+import {
+  listSkillFiles,
+  readSkillFile as readContainedSkillFile,
+  readSkillFileSnapshot as readContainedSkillFileSnapshot,
+  SkillFileConflictError,
+  SkillFileInvalidTextError,
+  SkillFileNotFoundError,
+  SkillFileTooLargeError,
+  writeSkillFile as writeContainedSkillFile,
+} from "./skill-files.js";
 
 const MAX_MESSAGE_LENGTH = 2048;
 const MAX_WARNINGS = 8;
@@ -47,6 +56,8 @@ export interface ServerSkillSummary {
   state: "enabled" | "disabled" | "error";
   loadError?: string;
   warnings: string[];
+  /** Server-authoritative capability; clients must not infer this from paths. */
+  editable: boolean;
 }
 
 export interface ServerSkillDetail {
@@ -89,6 +100,7 @@ interface ResolutionContext {
   settingsManager: SettingsManager;
   skills: ResolvedResource[];
   extensions: ResolvedResource[];
+  configuredPackages: Array<{ source: string; canonicalRoot: string }>;
 }
 
 interface SkillCatalogEntry {
@@ -117,6 +129,27 @@ export class ServerResourceNotFoundError extends ServerResourceServiceError {
   constructor(resource: "skill" | "extension" | "skill file") {
     super(`${resource[0]?.toUpperCase()}${resource.slice(1)} not found`);
     this.name = "ServerResourceNotFoundError";
+  }
+}
+
+export class ServerResourceReadOnlyError extends ServerResourceServiceError {
+  constructor() {
+    super("Skill is read-only");
+    this.name = "ServerResourceReadOnlyError";
+  }
+}
+
+export class ServerResourceValidationError extends ServerResourceServiceError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ServerResourceValidationError";
+  }
+}
+
+export class ServerResourceConflictError extends ServerResourceServiceError {
+  constructor(options?: ErrorOptions) {
+    super("Skill file changed since it was read", options);
+    this.name = "ServerResourceConflictError";
   }
 }
 
@@ -171,15 +204,55 @@ export class ServerResourceService {
   }
 
   async readSkillFile(id: string, path: string): Promise<string> {
+    return (await this.readSkillFileSnapshot(id, path)).content;
+  }
+
+  async readSkillFileSnapshot(
+    id: string,
+    path: string,
+  ): Promise<{ content: string; revision: string }> {
     const entry = (await this.buildSkillCatalog(await this.resolveContext())).find(
       (candidate) => candidate.summary.id === id,
     );
     if (!entry) throw new ServerResourceNotFoundError("skill");
     try {
-      return readContainedSkillFile(entry.baseDir, path);
+      return readContainedSkillFileSnapshot(entry.baseDir, path);
     } catch {
       throw new ServerResourceNotFoundError("skill file");
     }
+  }
+
+  async updateSkillFile(
+    id: string,
+    path: string,
+    content: string,
+    baseRevision: string,
+  ): Promise<{ content: string; revision: string }> {
+    return this.withMutationLock(async () => {
+      const entry = (await this.buildSkillCatalog(await this.resolveContext())).find(
+        (candidate) => candidate.summary.id === id,
+      );
+      if (!entry) throw new ServerResourceNotFoundError("skill");
+      if (!entry.summary.editable || entry.resource.metadata.origin !== "top-level") {
+        throw new ServerResourceReadOnlyError();
+      }
+      try {
+        return writeContainedSkillFile(entry.baseDir, path, content, baseRevision);
+      } catch (error: unknown) {
+        if (error instanceof SkillFileNotFoundError) {
+          throw new ServerResourceNotFoundError("skill file");
+        }
+        if (error instanceof SkillFileConflictError) {
+          throw new ServerResourceConflictError({ cause: error });
+        }
+        if (error instanceof SkillFileTooLargeError || error instanceof SkillFileInvalidTextError) {
+          throw new ServerResourceValidationError(error.message, { cause: error });
+        }
+        throw new ServerResourceServiceError(`Skill file write failed: ${messageFrom(error)}`, {
+          cause: error,
+        });
+      }
+    });
   }
 
   async getExtensionDetail(id: string): Promise<ServerExtensionDetail> {
@@ -260,14 +333,37 @@ export class ServerResourceService {
       settingsManager,
       skills: resolvedPaths.skills.filter((resource) => resource.metadata.scope === "user"),
       extensions: resolvedPaths.extensions.filter((resource) => resource.metadata.scope === "user"),
+      configuredPackages: packageManager.listConfiguredPackages().flatMap((configured) =>
+        configured.scope === "user" && configured.installedPath
+          ? [
+              {
+                source: configured.source,
+                canonicalRoot: canonicalPath(configured.installedPath),
+              },
+            ]
+          : [],
+      ),
     };
   }
 
   private async buildSkillCatalog(context: ResolutionContext): Promise<SkillCatalogEntry[]> {
-    const resources = context.skills.map((resource) => ({
-      resource,
-      canonicalPath: canonicalPath(resource.path),
-    }));
+    const resourcesByCanonicalPath = new Map<
+      string,
+      { resource: ResolvedResource; canonicalPath: string }
+    >();
+    for (const resource of context.skills) {
+      const path = canonicalPath(resource.path);
+      const current = resourcesByCanonicalPath.get(path);
+      // A package-backed candidate is authoritative for duplicate aliases so a
+      // symlink added under a top-level Skill directory cannot grant writes.
+      if (
+        !current ||
+        (current.resource.metadata.origin !== "package" && resource.metadata.origin === "package")
+      ) {
+        resourcesByCanonicalPath.set(path, { resource, canonicalPath: path });
+      }
+    }
+    const resources = [...resourcesByCanonicalPath.values()];
     const loaded = loadSkills({
       cwd: context.cwd,
       agentDir: context.agentDir,
@@ -290,8 +386,17 @@ export class ServerResourceService {
       const loadError = missingSkillError ? boundMessage(missingSkillError) : undefined;
       const fallbackName = skillNameFromPath(resource.path);
       const { baseDir, markdownFileName } = skillFileLocation(resource.path, skill);
-      const provenance = resourceProvenance(resource, context.agentDir);
-      const packageName = configuredPackageName(resource.metadata.source);
+      const configuredPackage = context.configuredPackages.find((candidate) =>
+        pathContains(candidate.canonicalRoot, path),
+      );
+      const isPackageBacked =
+        resource.metadata.origin === "package" || configuredPackage !== undefined;
+      const provenance = configuredPackage
+        ? { kind: "package" as const, label: boundMessage(configuredPackage.source) }
+        : resourceProvenance(resource, context.agentDir);
+      const packageName = configuredPackageName(
+        configuredPackage?.source ?? resource.metadata.source,
+      );
       const summary: ServerSkillSummary = {
         id: resourceId("skill", path),
         name: boundMessage(skill?.name ?? fallbackName),
@@ -302,6 +407,7 @@ export class ServerResourceService {
         state: loadError ? "error" : resource.enabled ? "enabled" : "disabled",
         ...(loadError ? { loadError } : {}),
         warnings,
+        editable: resource.metadata.origin === "top-level" && !isPackageBacked,
       };
       return { resource, canonicalPath: path, summary, skill, baseDir, markdownFileName };
     });
@@ -403,9 +509,11 @@ export class ServerResourceService {
     resources: ResolvedResource[],
     id: string,
   ): ResolvedResource {
-    const resource = resources.find(
+    const matches = resources.filter(
       (candidate) => resourceId(kind, canonicalPath(candidate.path)) === id,
     );
+    const resource =
+      matches.find((candidate) => candidate.metadata.origin === "package") ?? matches[0];
     if (!resource || resource.metadata.scope !== "user") {
       throw new ServerResourceNotFoundError(kind);
     }

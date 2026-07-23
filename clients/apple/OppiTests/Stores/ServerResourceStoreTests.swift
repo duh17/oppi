@@ -1421,7 +1421,8 @@ struct ServerResourceStoreTests {
             packageName: packageName,
             state: state,
             loadError: nil,
-            warnings: []
+            warnings: [],
+            editable: true
         )
     }
 

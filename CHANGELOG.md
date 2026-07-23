@@ -41,7 +41,9 @@ Example:
 ### Added
 
 - **Client:** Added saved Agents and schedules to the iPhone drawer and iPad sidebar, made Workspaces collapsible, and moved App Settings into the sidebar while preserving the existing New Workspace action.
-- **Client/Server:** Added server-scoped Oppi Control sessions for creating and revising Agents, schedules, and workspaces from their existing edit sheets. Control sessions reuse the normal timeline, composer, tools, and approval UI.
+- **Client:** Added full-screen Markdown reading for schedule prompts and saved Agent definitions. Selected-text comments can be staged before editing, then moved into an Oppi Control session for one combined revision request.
+- **Client/Server:** Added comment-driven session editing for server-authorized local Skill files. Package Skills remain read-only, while editable Skill files reuse the full-screen reader and comment stash with a restricted, approval-gated `oppi skill` command boundary.
+- **Client/Server:** Added server-scoped Oppi Control sessions for creating and revising Agents, schedules, Skills, and workspaces from their existing management surfaces. Control sessions reuse the normal timeline, composer, tools, and approval UI.
 - **Server:** Added memory-only `--definition-json` input for Agent create/update and schedule update commands, with strict validation and bounded approval display.
 - **Protocol:** Added explicit control-session domain, intent, and target metadata plus a versioned control-session capability and authenticated control route family.
 - **Client:** WIP: reworking the Mac app into an interactive Oppi client for browsing workspaces, running sessions, and reviewing changes. It is not ready for general use yet.

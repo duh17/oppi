@@ -58,6 +58,7 @@ import { isHelpFlag, parseCliArgs } from "./cli/args.js";
 import { cmdAgent } from "./cli/commands/agent.js";
 import { cmdSchedule } from "./cli/commands/schedule.js";
 import { cmdSession } from "./cli/commands/session.js";
+import { cmdSkill } from "./cli/commands/skill.js";
 import { cmdWait } from "./cli/commands/wait.js";
 import { cmdWorkspace } from "./cli/commands/workspace.js";
 import { cmdWorktree } from "./cli/commands/worktree.js";
@@ -1491,6 +1492,10 @@ async function main(): Promise<void> {
 
     case "schedule":
       await cmdSchedule(connection, positional[0], positional.slice(1), flags);
+      break;
+
+    case "skill":
+      await cmdSkill(connection, positional[0], positional.slice(1), flags);
       break;
 
     case "wait":

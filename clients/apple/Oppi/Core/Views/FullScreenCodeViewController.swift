@@ -75,6 +75,8 @@ final class FullScreenCodeViewController: UIViewController {
     private let content: FullScreenCodeContent
     private let presentationMode: PresentationMode
     private let reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    private var navigationActions: [FullScreenViewerNavigationAction]
+    private var navigationActionPresentation: [FullScreenViewerNavigationAction.Presentation]
     private var showSource = false
     private var copyButton: UIBarButtonItem?
     private var floatingViewingOptionsButton: UIButton?
@@ -96,7 +98,8 @@ final class FullScreenCodeViewController: UIViewController {
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         reviewCommentSessionId: String? = nil,
-        reviewCommentSourceLabel: String? = nil
+        reviewCommentSourceLabel: String? = nil,
+        navigationActions: [FullScreenViewerNavigationAction] = []
     ) {
         self.content = content
         self.presentationMode = presentationMode
@@ -106,6 +109,8 @@ final class FullScreenCodeViewController: UIViewController {
                 sessionId: reviewCommentSessionId,
                 sourceLabel: reviewCommentSourceLabel
             )
+        self.navigationActions = navigationActions
+        self.navigationActionPresentation = navigationActions.map(\.presentation)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -201,6 +206,16 @@ final class FullScreenCodeViewController: UIViewController {
     /// changes. Full-screen bodies capture a palette at construction time, so
     /// merely invalidating the representable leaves code, markdown, diff,
     /// terminal, and rendered-document viewers in the previous appearance.
+    func setNavigationActions(_ actions: [FullScreenViewerNavigationAction]) {
+        let presentation = actions.map(\.presentation)
+        guard presentation != navigationActionPresentation else { return }
+        navigationActions = actions
+        navigationActionPresentation = presentation
+        lastNavigationPresentation = nil
+        guard isViewLoaded, let viewController = contentHostController else { return }
+        configureNavigation(on: viewController, palette: ThemeRuntimeState.currentThemeID().palette)
+    }
+
     func applyThemeIfNeeded(_ themeID: ThemeID) {
         guard isViewLoaded, appliedThemeID != themeID,
               let viewController = contentHostController else { return }
@@ -405,7 +420,7 @@ final class FullScreenCodeViewController: UIViewController {
         // No titleView — immersive mode shows only floating glass pills.
         // See FullScreenViewerChrome.
 
-        var rightItems: [UIBarButtonItem] = []
+        var rightItems = navigationActions.map(makeNavigationActionButton)
 
         let copy = UIBarButtonItem(
             image: UIImage(systemName: "doc.on.doc"),
@@ -440,6 +455,21 @@ final class FullScreenCodeViewController: UIViewController {
             presentation: presentation,
             palette: palette
         )
+    }
+
+    private func makeNavigationActionButton(_ action: FullScreenViewerNavigationAction) -> UIBarButtonItem {
+        let primaryAction = UIAction(
+            title: action.title ?? "",
+            image: action.systemImage.flatMap(UIImage.init(systemName:))
+        ) { _ in
+            Task { @MainActor in action.handler() }
+        }
+        let item = UIBarButtonItem(primaryAction: primaryAction)
+        item.accessibilityIdentifier = "fullscreen-code.action.\(action.id)"
+        item.accessibilityLabel = action.accessibilityLabel
+        item.accessibilityValue = action.accessibilityValue
+        item.isEnabled = action.isEnabled
+        return item
     }
 
     private func configureFloatingViewingOptionsButton(
@@ -1420,11 +1450,15 @@ private enum FullScreenViewingOptionsSymbols {
 extension FullScreenCodeViewController {
     static func makeHarnessController(
         content: FullScreenCodeContent,
-        reviewCommentSelectionContext: ReviewCommentSelectionContext?
+        presentationMode: PresentationMode = .sheet,
+        reviewCommentSelectionContext: ReviewCommentSelectionContext?,
+        navigationActions: [FullScreenViewerNavigationAction] = []
     ) -> FullScreenCodeViewController {
         FullScreenCodeViewController(
             content: content,
-            reviewCommentSelectionContext: reviewCommentSelectionContext
+            presentationMode: presentationMode,
+            reviewCommentSelectionContext: reviewCommentSelectionContext,
+            navigationActions: navigationActions
         )
     }
 

@@ -34,7 +34,7 @@ struct ServerSkillListPresentationTests {
 
     @Test func packageNameIsSearchableAndAppearsBeforeProvenanceInAccessibility() throws {
         let skill = try JSONDecoder().decode(ServerSkillSummary.self, from: Data("""
-        {"id":"review-tools","name":"Review tools","description":"Package skill.","provenance":{"kind":"package","label":"Configured package source"},"path":"/private/var/folders/package/SKILL.md","packageName":"@scope/review-tools","state":"enabled","warnings":[]}
+        {"id":"review-tools","name":"Review tools","description":"Package skill.","provenance":{"kind":"package","label":"Configured package source"},"path":"/private/var/folders/package/SKILL.md","packageName":"@scope/review-tools","state":"enabled","warnings":[],"editable":false}
         """.utf8))
 
         #expect(ServerSkillListPresentation(skills: [skill], query: "@scope/review-tools").visibleSkills.map(\.id) == ["review-tools"])
@@ -153,7 +153,8 @@ struct ServerSkillListPresentationTests {
             path: nil,
             state: state,
             loadError: loadError,
-            warnings: []
+            warnings: [],
+            editable: true
         )
     }
 }

@@ -4,6 +4,7 @@ import Observation
 enum ReviewCommentStoreError: LocalizedError, Equatable {
     case emptyBody
     case commentNotFound
+    case invalidStoredComments
 
     var errorDescription: String? {
         switch self {
@@ -11,8 +12,21 @@ enum ReviewCommentStoreError: LocalizedError, Equatable {
             return "Review comment body is required."
         case .commentNotFound:
             return "Review comment was not found."
+        case .invalidStoredComments:
+            return "Stored review comments could not be moved."
         }
     }
+}
+
+enum ReviewCommentLocalScope {
+    static let controlDraft = "__oppi_control_draft__"
+}
+
+struct ReviewCommentMoveJournal: Codable, Equatable {
+    let sourceKey: String
+    let destinationKey: String
+    let sourceData: Data
+    let destinationData: Data
 }
 
 @MainActor @Observable
@@ -46,7 +60,13 @@ final class ReviewCommentStore {
     func load(workspaceId: String, sessionId: String) {
         let key = Self.makeStorageKey(prefix: keyPrefix, workspaceId: workspaceId, sessionId: sessionId)
         storageKey = key
-        loadComments(forKey: key)
+        do {
+            try recoverPendingMove()
+            loadComments(forKey: key)
+        } catch {
+            comments = []
+            lastError = "Failed to recover local review comments: \(error.localizedDescription)"
+        }
     }
 
     @discardableResult
@@ -126,6 +146,78 @@ final class ReviewCommentStore {
         }
     }
 
+    /// Moves staged comments from a resource draft into the session that will
+    /// apply them. A write-ahead journal finishes an interrupted two-key move
+    /// the next time either scope loads; encoding failures leave the source intact.
+    @discardableResult
+    func moveStagedComments(
+        fromWorkspaceId: String,
+        fromSessionId: String,
+        toWorkspaceId: String,
+        toSessionId: String
+    ) throws -> Int {
+        try recoverPendingMove()
+        let sourceKey = Self.makeStorageKey(
+            prefix: keyPrefix,
+            workspaceId: fromWorkspaceId,
+            sessionId: fromSessionId
+        )
+        let destinationKey = Self.makeStorageKey(
+            prefix: keyPrefix,
+            workspaceId: toWorkspaceId,
+            sessionId: toSessionId
+        )
+        guard sourceKey != destinationKey else { return 0 }
+
+        let sourceComments = try storedComments(forKey: sourceKey)
+        let staged = sourceComments.filter { $0.status == .staged }
+        guard !staged.isEmpty else { return 0 }
+
+        var destinationComments = try storedComments(forKey: destinationKey)
+        var destinationIds = Set(destinationComments.map(\.id))
+        for comment in staged where destinationIds.insert(comment.id).inserted {
+            destinationComments.append(comment.retargeted(
+                workspaceId: toWorkspaceId,
+                sessionId: toSessionId
+            ))
+        }
+        let remainingSourceComments = sourceComments.filter { $0.status != .staged }
+
+        let destinationData: Data
+        let sourceData: Data
+        do {
+            destinationData = try JSONEncoder().encode(destinationComments)
+            sourceData = try JSONEncoder().encode(remainingSourceComments)
+        } catch {
+            throw ReviewCommentStoreError.invalidStoredComments
+        }
+
+        let journal = ReviewCommentMoveJournal(
+            sourceKey: sourceKey,
+            destinationKey: destinationKey,
+            sourceData: sourceData,
+            destinationData: destinationData
+        )
+        let journalData: Data
+        do {
+            journalData = try JSONEncoder().encode(journal)
+        } catch {
+            throw ReviewCommentStoreError.invalidStoredComments
+        }
+
+        defaults.set(journalData, forKey: Self.moveJournalKey(prefix: keyPrefix))
+        defaults.set(destinationData, forKey: destinationKey)
+        defaults.set(sourceData, forKey: sourceKey)
+        defaults.removeObject(forKey: Self.moveJournalKey(prefix: keyPrefix))
+        if storageKey == sourceKey {
+            comments = remainingSourceComments
+        } else if storageKey == destinationKey {
+            comments = destinationComments
+        }
+        lastError = nil
+        return staged.count
+    }
+
     func appendReviewBlock(to text: String) -> String {
         let block = Self.reviewBlock(for: stagedComments)
         guard !block.isEmpty else { return text }
@@ -145,19 +237,36 @@ final class ReviewCommentStore {
     }
 
     private func loadComments(forKey key: String) {
-        guard let data = defaults.data(forKey: key) else {
-            comments = []
-            lastError = nil
-            return
-        }
-
         do {
-            comments = try JSONDecoder().decode([ReviewComment].self, from: data)
+            comments = try storedComments(forKey: key)
             lastError = nil
         } catch {
             comments = []
             lastError = "Failed to load local review comments: \(error.localizedDescription)"
         }
+    }
+
+    private func storedComments(forKey key: String) throws -> [ReviewComment] {
+        guard let data = defaults.data(forKey: key) else { return [] }
+        do {
+            return try JSONDecoder().decode([ReviewComment].self, from: data)
+        } catch {
+            throw ReviewCommentStoreError.invalidStoredComments
+        }
+    }
+
+    private func recoverPendingMove() throws {
+        let key = Self.moveJournalKey(prefix: keyPrefix)
+        guard let data = defaults.data(forKey: key) else { return }
+        let journal: ReviewCommentMoveJournal
+        do {
+            journal = try JSONDecoder().decode(ReviewCommentMoveJournal.self, from: data)
+        } catch {
+            throw ReviewCommentStoreError.invalidStoredComments
+        }
+        defaults.set(journal.destinationData, forKey: journal.destinationKey)
+        defaults.set(journal.sourceData, forKey: journal.sourceKey)
+        defaults.removeObject(forKey: key)
     }
 
     private func upsert(_ comment: ReviewComment) {
@@ -184,8 +293,12 @@ final class ReviewCommentStore {
         }
     }
 
-    private static func makeStorageKey(prefix: String, workspaceId: String, sessionId: String) -> String {
+    static func makeStorageKey(prefix: String, workspaceId: String, sessionId: String) -> String {
         "\(prefix).\(workspaceId).\(sessionId)"
+    }
+
+    static func moveJournalKey(prefix: String) -> String {
+        "\(prefix).moveJournal.v1"
     }
 
     static func reviewBlock(for comments: [ReviewComment]) -> String {
@@ -339,5 +452,25 @@ final class ReviewCommentStore {
         case .unknown:
             return "unknown source"
         }
+    }
+}
+
+private extension ReviewComment {
+    func retargeted(workspaceId: String, sessionId: String) -> ReviewComment {
+        ReviewComment(
+            id: id,
+            workspaceId: workspaceId,
+            sessionId: sessionId,
+            turnId: turnId,
+            author: author,
+            status: status,
+            severity: severity,
+            body: body,
+            attachments: attachments,
+            reference: reference,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            sentAt: sentAt
+        )
     }
 }

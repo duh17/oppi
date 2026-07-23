@@ -27,6 +27,7 @@ struct ServerSkillFileView: View {
     let target: ServerSkillFileNavTarget
 
     @State private var content: String?
+    @State private var summary: ServerSkillSummary?
     @State private var isLoading = true
     @State private var error: String?
 
@@ -36,9 +37,20 @@ struct ServerSkillFileView: View {
 
     var body: some View {
         Group {
-            if let content {
-                EmbeddedFileViewerView(content: .fromText(content, filePath: target.path))
-                    .ignoresSafeArea(edges: .top)
+            if let content, let summary {
+                if summary.editable {
+                    ReviewableControlMarkdownView(
+                        fileContent: content,
+                        domain: .skills,
+                        targetId: target.resourceId,
+                        targetName: summary.name,
+                        sourceLabel: "\(summary.name) / \(target.path)",
+                        sourcePath: target.path
+                    )
+                } else {
+                    EmbeddedFileViewerView(content: .fromText(content, filePath: target.path))
+                        .ignoresSafeArea(edges: .top)
+                }
             } else if isLoading {
                 ProgressView("Loading file…")
             } else {
@@ -60,20 +72,28 @@ struct ServerSkillFileView: View {
     }
 
     private func load() async {
+        content = nil
+        summary = nil
+        isLoading = true
+        error = nil
+
         guard let apiClient else {
             error = "Not connected"
             isLoading = false
             return
         }
-
-        if content == nil { isLoading = true }
-        error = nil
         do {
-            content = try await apiClient.getServerSkillFile(
+            async let fetchedContent = apiClient.getServerSkillFile(
                 id: target.resourceId,
                 path: target.path
             )
+            async let fetchedDetail = apiClient.getServerSkill(id: target.resourceId)
+            let (resolvedContent, resolvedDetail) = try await (fetchedContent, fetchedDetail)
+            guard !Task.isCancelled else { return }
+            content = resolvedContent
+            summary = resolvedDetail.summary
         } catch {
+            guard !Task.isCancelled else { return }
             self.error = error.localizedDescription
         }
         isLoading = false

@@ -40,6 +40,12 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
 
     private static let diffWrappingLongLine = "it(\"flags concrete key branches inside the server architecture boundary when extensions install UI proxies through runtime hooks\")"
 
+    private static var embeddedModeEnabled: Bool {
+        let processInfo = ProcessInfo.processInfo
+        return processInfo.arguments.contains("--fullscreen-embedded-review-harness")
+            || processInfo.environment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS_EMBEDDED"] == "1"
+    }
+
     private static var diffWrappingModeEnabled: Bool {
         let processInfo = ProcessInfo.processInfo
         return processInfo.arguments.contains("--fullscreen-diff-wrapping-harness")
@@ -75,7 +81,9 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
     private let diffWrapHeadIndentLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.headIndentHundredths")
     private let diffWrapSecondXLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.secondXHundredths")
     private let diffWrapExpectedXLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.expectedXHundredths")
+    private let embeddedBackLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.embedded.backCount")
     private let selectButton = UIButton(type: .system)
+    private var embeddedBackCount = 0
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -94,6 +102,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
     func updateDiagnostics() {
         setDiagnostic(readyLabel, value: 1)
         setDiagnostic(inlineComposerLabel, value: hasVisibleView(identifier: "review-comment.inline-composer") ? 1 : 0)
+        setDiagnostic(embeddedBackLabel, value: embeddedBackCount)
         updateDiffWrappingDiagnostics()
     }
 
@@ -145,9 +154,32 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
                 languageHint: "bash"
             )
         }
+        let presentationMode: FullScreenCodeViewController.PresentationMode = Self.embeddedModeEnabled
+            ? .embedded(onDismiss: { [weak self] in
+                guard let self else { return }
+                self.embeddedBackCount += 1
+                self.updateDiagnostics()
+            })
+            : .sheet
         let controller = FullScreenCodeViewController.makeHarnessController(
             content: content,
-            reviewCommentSelectionContext: context
+            presentationMode: presentationMode,
+            reviewCommentSelectionContext: context,
+            navigationActions: Self.diffWrappingModeEnabled ? [] : [
+                FullScreenViewerNavigationAction(
+                    id: "edit-in-session",
+                    title: "Edit",
+                    accessibilityLabel: "Edit in Oppi Session",
+                    handler: {}
+                ),
+                FullScreenViewerNavigationAction(
+                    id: "staged-comments",
+                    systemImage: "text.bubble",
+                    accessibilityLabel: "Staged Comments",
+                    accessibilityValue: "0 staged comments",
+                    handler: {}
+                ),
+            ]
         )
         addChild(controller)
         controller.view.translatesAutoresizingMaskIntoConstraints = false
@@ -192,6 +224,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             diffWrapHeadIndentLabel,
             diffWrapSecondXLabel,
             diffWrapExpectedXLabel,
+            embeddedBackLabel,
         ].forEach(diagnosticsStack.addArrangedSubview)
         view.addSubview(diagnosticsStack)
 

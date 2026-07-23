@@ -15,7 +15,8 @@ struct ServerResourceModelTests {
             "path": "/Users/test/.pi/agent/skills/release/SKILL.md",
             "state": "error",
             "loadError": "description is required",
-            "warnings": ["Uses deprecated metadata"]
+            "warnings": ["Uses deprecated metadata"],
+            "editable": true
           },
           "skillMarkdown": "# Release checklist",
           "files": ["SKILL.md", "references/checklist.md"]
@@ -27,6 +28,7 @@ struct ServerResourceModelTests {
         #expect(detail.summary.state == .error)
         #expect(detail.summary.packageName == nil)
         #expect(detail.summary.loadError == "description is required")
+        #expect(detail.summary.editable)
         #expect(detail.skillMarkdown == "# Release checklist")
         #expect(detail.files == ["SKILL.md", "references/checklist.md"])
     }
@@ -81,7 +83,8 @@ struct ServerResourceModelTests {
               "description": "A future Pi source.",
               "provenance": { "kind": "futureSource", "label": "Future source" },
               "state": "disabled",
-              "warnings": []
+              "warnings": [],
+              "editable": false
             },
             {
               "id": "skill_known",
@@ -89,7 +92,8 @@ struct ServerResourceModelTests {
               "description": "A Pi agent skill.",
               "provenance": { "kind": "piAgent", "label": "~/.pi/agent/skills" },
               "state": "enabled",
-              "warnings": []
+              "warnings": [],
+              "editable": true
             }
           ]
         }
@@ -97,12 +101,14 @@ struct ServerResourceModelTests {
 
         #expect(catalog.skills.count == 2)
         #expect(catalog.skills[0].provenance.kind == .unknown)
+        #expect(catalog.skills[0].editable == false)
         #expect(catalog.skills[1].provenance.kind == .piAgent)
+        #expect(catalog.skills[1].editable)
     }
 
     @Test func preservesServerProvidedPackageNamesWhenDecodingAndEncodingCatalogEntries() throws {
         let skills = try JSONDecoder().decode(ServerSkillsCatalog.self, from: Data("""
-        {"skills":[{"id":"skill_package","name":"Review tools","description":"Package skill.","provenance":{"kind":"package","label":"npm:@scope/review-tools@1.2.3"},"packageName":"@scope/review-tools","state":"enabled","warnings":[]}]}
+        {"skills":[{"id":"skill_package","name":"Review tools","description":"Package skill.","provenance":{"kind":"package","label":"npm:@scope/review-tools@1.2.3"},"packageName":"@scope/review-tools","state":"enabled","warnings":[],"editable":false}]}
         """.utf8))
         let extensions = try JSONDecoder().decode(ServerExtensionCatalog.self, from: Data("""
         {"extensions":[{"id":"extension_package","name":"Review extension","kind":"package","provenance":{"kind":"package","label":"npm:@scope/review-tools@1.2.3"},"packageName":"@scope/review-tools","state":"on","warnings":[],"isRemovable":false}],"oppiConfiguration":{"enabled":false,"approvalPolicy":"confirmDestructiveOnly","revision":0}}

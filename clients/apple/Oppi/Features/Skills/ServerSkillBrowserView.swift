@@ -129,7 +129,11 @@ struct ServerSkillBrowserView: View {
                                 fileTreeRow(node)
                             }
                         } footer: {
-                            Text("Files are read-only and come from \(detail.summary.provenance.label).")
+                            if detail.summary.editable {
+                                Text("Open a file to select text, stage comments, and revise it in an Oppi session.")
+                            } else {
+                                Text("Files are read-only and come from \(detail.summary.provenance.label).")
+                            }
                         }
                     }
                     .listStyle(.insetGrouped)

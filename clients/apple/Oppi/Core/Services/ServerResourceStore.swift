@@ -1044,7 +1044,8 @@ final class ServerResourceStore {
             packageName: skill.packageName,
             state: state,
             loadError: skill.loadError,
-            warnings: skill.warnings
+            warnings: skill.warnings,
+            editable: skill.editable
         )
     }
 

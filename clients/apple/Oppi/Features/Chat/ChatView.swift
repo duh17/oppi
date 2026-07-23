@@ -227,6 +227,21 @@ struct ChatView: View {
         return routeScope
     }
 
+    private var reviewCommentLocalScopeId: String? {
+        Self.reviewCommentLocalScopeId(routeScope: focusedRouteScope)
+    }
+
+    static func reviewCommentLocalScopeId(routeScope: SessionRouteScope?) -> String? {
+        switch routeScope {
+        case .control:
+            return SessionRouteScope.control.composerDraftScopeID
+        case .workspace(let workspaceId):
+            return workspaceId
+        case nil:
+            return nil
+        }
+    }
+
     private var composerDraftKey: ComposerDraftKey? {
         guard let serverID = connection.currentServerId ?? sessionStore.activeServerId,
               let workspaceID = focusedRouteScope?.composerDraftScopeID else {
@@ -521,7 +536,7 @@ struct ChatView: View {
                     await voiceInputManager.prewarm(source: "chat_view_task")
                 }
             }
-            .task(id: ReviewCommentLoadKey(workspaceId: session?.workspaceId, sessionId: sessionId)) {
+            .task(id: ReviewCommentLoadKey(localScopeId: reviewCommentLocalScopeId, sessionId: sessionId)) {
                 loadReviewCommentsIfPossible()
             }
             .onChange(of: session?.displayTitle) { _, _ in
@@ -1234,7 +1249,7 @@ struct ChatView: View {
     }
 
     private func loadReviewCommentsIfPossible() {
-        reviewComments.load(workspaceId: session?.workspaceId, sessionId: sessionId)
+        reviewComments.load(localScopeId: reviewCommentLocalScopeId, sessionId: sessionId)
     }
 
     @discardableResult
@@ -1242,7 +1257,7 @@ struct ChatView: View {
         if let error = reviewComments.save(
             body: body,
             request: request,
-            workspaceId: session?.workspaceId,
+            localScopeId: reviewCommentLocalScopeId,
             sessionId: sessionId
         ) {
             connection.extensionToast = error

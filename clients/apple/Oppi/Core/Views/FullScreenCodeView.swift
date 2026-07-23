@@ -1,6 +1,54 @@
 import SwiftUI
 import UIKit
 
+struct FullScreenViewerNavigationAction {
+    let id: String
+    let title: String?
+    let systemImage: String?
+    let accessibilityLabel: String
+    let accessibilityValue: String?
+    let isEnabled: Bool
+    let handler: @MainActor @Sendable () -> Void
+
+    init(
+        id: String,
+        title: String? = nil,
+        systemImage: String? = nil,
+        accessibilityLabel: String,
+        accessibilityValue: String? = nil,
+        isEnabled: Bool = true,
+        handler: @escaping @MainActor @Sendable () -> Void
+    ) {
+        self.id = id
+        self.title = title
+        self.systemImage = systemImage
+        self.accessibilityLabel = accessibilityLabel
+        self.accessibilityValue = accessibilityValue
+        self.isEnabled = isEnabled
+        self.handler = handler
+    }
+
+    var presentation: Presentation {
+        Presentation(
+            id: id,
+            title: title,
+            systemImage: systemImage,
+            accessibilityLabel: accessibilityLabel,
+            accessibilityValue: accessibilityValue,
+            isEnabled: isEnabled
+        )
+    }
+
+    struct Presentation: Equatable {
+        let id: String
+        let title: String?
+        let systemImage: String?
+        let accessibilityLabel: String
+        let accessibilityValue: String?
+        let isEnabled: Bool
+    }
+}
+
 @MainActor
 final class ThinkingTraceStream {
     struct Snapshot: Equatable {
@@ -396,6 +444,7 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     let reviewCommentSessionId: String?
     let reviewCommentSourceLabel: String?
+    var navigationActions: [FullScreenViewerNavigationAction]
 
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @Environment(\.themeID) private var themeID
@@ -415,25 +464,29 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         reviewCommentSessionId: String? = nil,
-        reviewCommentSourceLabel: String? = nil
+        reviewCommentSourceLabel: String? = nil,
+        navigationActions: [FullScreenViewerNavigationAction] = []
     ) {
         self.content = content
         self.reviewCommentSelectionContext = reviewCommentSelectionContext
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSessionId = reviewCommentSessionId
         self.reviewCommentSourceLabel = reviewCommentSourceLabel
+        self.navigationActions = navigationActions
     }
 
     func makeUIViewController(context: Context) -> FullScreenCodeViewController {
         FullScreenCodeViewController(
             content: content,
-            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext
+            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
+            navigationActions: navigationActions
         )
     }
 
     func updateUIViewController(_ uiViewController: FullScreenCodeViewController, context: Context) {
         // Content is immutable, but the UIKit body and chrome persist across
-        // SwiftUI updates and must explicitly follow a live theme change.
+        // SwiftUI updates and must explicitly follow live environment changes.
+        uiViewController.setNavigationActions(navigationActions)
         uiViewController.applyThemeIfNeeded(themeID)
     }
 }

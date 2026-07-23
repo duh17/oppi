@@ -373,6 +373,33 @@ describe("POST /control-sessions", () => {
     }
   });
 
+  it("accepts Skill revision control sessions", async () => {
+    const mock = createMockContext();
+
+    await dispatchCreate(mock, {
+      domain: "skills",
+      intent: "revise",
+      targetId: "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      targetName: "review",
+      prompt: "Inspect the selected skill file and wait for review comments.",
+    });
+
+    expect(mock.errors).toEqual([]);
+    expect(mock.responses[0]).toMatchObject({
+      status: 201,
+      data: {
+        session: {
+          workspaceId: undefined,
+          control: {
+            domain: "skills",
+            intent: "revise",
+            targetId: "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+        },
+      },
+    });
+  });
+
   it("rejects unknown control domains and intents", async () => {
     const mock = createMockContext();
 
@@ -450,33 +477,36 @@ describe("control session route scope", () => {
   it.each([
     ["POST", "/sessions/control-1/command", { type: "reload" }],
     ["POST", "/sessions/control-1/stop", {}],
-  ])("rejects generic mutation route %s %s for declared control sessions", async (method, path, body) => {
-    const mock = createMockContext();
-    mock.storage.getSession.mockReturnValue(
-      makeSession({
-        id: "control-1",
-        workspaceId: undefined,
-        control: { domain: "agents", intent: "create" },
-      }),
-    );
-    const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+  ])(
+    "rejects generic mutation route %s %s for declared control sessions",
+    async (method, path, body) => {
+      const mock = createMockContext();
+      mock.storage.getSession.mockReturnValue(
+        makeSession({
+          id: "control-1",
+          workspaceId: undefined,
+          control: { domain: "agents", intent: "create" },
+        }),
+      );
+      const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
 
-    expect(
-      await dispatcher({
-        method,
-        path,
-        url: new URL(`https://localhost${path}`),
-        req: makeRequestBody(body),
-        res: {} as ServerResponse,
-      }),
-    ).toBe(true);
+      expect(
+        await dispatcher({
+          method,
+          path,
+          url: new URL(`https://localhost${path}`),
+          req: makeRequestBody(body),
+          res: {} as ServerResponse,
+        }),
+      ).toBe(true);
 
-    expect(mock.responses).toEqual([]);
-    expect(mock.errors).toEqual([
-      { status: 400, message: "Use the control-session route for control-session mutations" },
-    ]);
-    expect(mock.sessions.stopSession).not.toHaveBeenCalled();
-  });
+      expect(mock.responses).toEqual([]);
+      expect(mock.errors).toEqual([
+        { status: 400, message: "Use the control-session route for control-session mutations" },
+      ]);
+      expect(mock.sessions.stopSession).not.toHaveBeenCalled();
+    },
+  );
 
   it("resumes a declared stopped control session without resolving a workspace", async () => {
     const mock = createMockContext();

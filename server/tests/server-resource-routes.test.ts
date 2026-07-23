@@ -2,10 +2,18 @@ import type { IncomingMessage } from "node:http";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ServerResourceNotFoundError } from "../src/server-resource-service.js";
+import {
+  ServerResourceConflictError,
+  ServerResourceNotFoundError,
+  ServerResourceReadOnlyError,
+  ServerResourceValidationError,
+} from "../src/server-resource-service.js";
 import { RouteHandler } from "../src/routes/index.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+
+const FILE_REVISION = "a".repeat(64);
+const UPDATED_FILE_REVISION = "b".repeat(64);
 
 const skill = {
   id: "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -15,6 +23,7 @@ const skill = {
   path: "/agent/skills/review/SKILL.md",
   state: "enabled" as const,
   warnings: [],
+  editable: true,
 };
 
 const extension = {
@@ -43,6 +52,13 @@ function makeRoutes() {
       files: ["SKILL.md", "notes.md"],
     })),
     readSkillFile: vi.fn(async () => "notes"),
+    readSkillFileSnapshot: vi.fn(async () => ({ content: "notes", revision: FILE_REVISION })),
+    updateSkillFile: vi.fn(
+      async (_id: string, _path: string, content: string, _baseRevision: string) => ({
+        content,
+        revision: UPDATED_FILE_REVISION,
+      }),
+    ),
     setSkillEnabled: vi.fn(async () => ({ ...skill, state: "disabled" as const })),
     listExtensions: vi.fn(async () => ({
       extensions: [
@@ -113,7 +129,7 @@ describe("server resource routes", () => {
     serverResources.getSkillDetail.mockRejectedValueOnce(
       new Error(`Pi settings load failed: malformed JSON at ${sensitiveContext}`),
     );
-    serverResources.readSkillFile.mockRejectedValueOnce(
+    serverResources.readSkillFileSnapshot.mockRejectedValueOnce(
       new Error(`Failed to load enabled Pi extensions from ${sensitiveContext}`),
     );
     serverResources.setExtensionEnabled.mockRejectedValueOnce(
@@ -317,7 +333,25 @@ describe("server resource routes", () => {
       `/server/resources/skills/${skill.id}/file?path=notes.md`,
     );
     expect(file.statusCode).toBe(200);
-    expect(JSON.parse(file.body)).toEqual({ content: "notes" });
+    expect(JSON.parse(file.body)).toEqual({ content: "notes", revision: FILE_REVISION });
+
+    const updatedFile = await dispatch(
+      routes,
+      "PUT",
+      `/server/resources/skills/${skill.id}/file?path=notes.md`,
+      jsonRequest({ content: "updated notes\n", baseRevision: FILE_REVISION }),
+    );
+    expect(updatedFile.statusCode).toBe(200);
+    expect(JSON.parse(updatedFile.body)).toEqual({
+      content: "updated notes\n",
+      revision: UPDATED_FILE_REVISION,
+    });
+    expect(serverResources.updateSkillFile).toHaveBeenCalledWith(
+      skill.id,
+      "notes.md",
+      "updated notes\n",
+      FILE_REVISION,
+    );
 
     const enabled = await dispatch(
       routes,
@@ -328,6 +362,57 @@ describe("server resource routes", () => {
     expect(enabled.statusCode).toBe(200);
     expect(JSON.parse(enabled.body)).toEqual({ ...skill, state: "disabled" });
     expect(serverResources.setSkillEnabled).toHaveBeenCalledWith(skill.id, false);
+  });
+
+  it("returns a stable forbidden response when the server marks a Skill read-only", async () => {
+    const { routes, serverResources } = makeRoutes();
+    serverResources.updateSkillFile.mockRejectedValueOnce(new ServerResourceReadOnlyError());
+
+    const response = await dispatch(
+      routes,
+      "PUT",
+      `/server/resources/skills/${skill.id}/file?path=SKILL.md`,
+      jsonRequest({ content: "# Changed\n", baseRevision: FILE_REVISION }),
+    );
+
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(response.body)).toEqual({ error: "Skill is read-only" });
+  });
+
+  it("returns stable validation responses for invalid Skill replacement text", async () => {
+    const { routes, serverResources } = makeRoutes();
+    serverResources.updateSkillFile.mockRejectedValueOnce(
+      new ServerResourceValidationError("Skill file content must be valid Unicode text"),
+    );
+
+    const response = await dispatch(
+      routes,
+      "PUT",
+      `/server/resources/skills/${skill.id}/file?path=SKILL.md`,
+      jsonRequest({ content: "\ud800", baseRevision: FILE_REVISION }),
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({
+      error: "Skill file content must be valid Unicode text",
+    });
+  });
+
+  it("returns a conflict instead of overwriting a stale Skill file", async () => {
+    const { routes, serverResources } = makeRoutes();
+    serverResources.updateSkillFile.mockRejectedValueOnce(new ServerResourceConflictError());
+
+    const response = await dispatch(
+      routes,
+      "PUT",
+      `/server/resources/skills/${skill.id}/file?path=SKILL.md`,
+      jsonRequest({ content: "# Changed\n", baseRevision: FILE_REVISION }),
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toEqual({
+      error: "Skill file changed since it was read",
+    });
   });
 
   it("serves Oppi first, only mutates normal extensions, and uses direct details", async () => {
@@ -420,6 +505,25 @@ describe("server resource routes", () => {
       { method: "GET", path: "/server/resources/skills/%E0%A4%A" },
       { method: "GET", path: `/server/resources/skills/${skill.id}/file` },
       { method: "GET", path: `/server/resources/skills/${skill.id}/file?path=one&path=two` },
+      {
+        method: "PUT",
+        path: `/server/resources/skills/${skill.id}/file?path=notes.md`,
+        request: jsonRequest({
+          content: "updated",
+          baseRevision: FILE_REVISION,
+          extra: true,
+        }),
+      },
+      {
+        method: "PUT",
+        path: `/server/resources/skills/${skill.id}/file?path=notes.md`,
+        request: jsonRequest({ content: "updated", baseRevision: "stale" }),
+      },
+      {
+        method: "PUT",
+        path: `/server/resources/skills/${skill.id}/file?path=notes.md`,
+        request: jsonRequest({ content: "updated", baseRevision: FILE_REVISION }, "text/plain"),
+      },
       {
         method: "PUT",
         path: `/server/resources/skills/${skill.id}/enabled`,

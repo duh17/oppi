@@ -13,7 +13,7 @@ struct ServerResourceAPIClientTests {
             #expect(request.url?.path == "/server/resources/skills")
             #expect(request.url?.query == nil)
             return mockResponse(json: """
-            {"skills":[{"id":"skill_abc","name":"Release","description":"Review releases.","provenance":{"kind":"package","label":"Configured package source"},"packageName":"@scope/review-tools","state":"enabled","warnings":[]}]}
+            {"skills":[{"id":"skill_abc","name":"Release","description":"Review releases.","provenance":{"kind":"package","label":"Configured package source"},"packageName":"@scope/review-tools","state":"enabled","warnings":[],"editable":false}]}
             """)
         }
 
@@ -38,7 +38,7 @@ struct ServerResourceAPIClientTests {
             if requestCount == 1 {
                 #expect(components?.percentEncodedPath == "/server/resources/skills/skill%20a%2Fb%3Fc")
                 return mockResponse(json: """
-                {"summary":{"id":"skill a/b?c","name":"Release","description":"Review releases.","provenance":{"kind":"piAgent","label":"~/.pi/agent/skills"},"state":"enabled","warnings":[]},"skillMarkdown":"# Release","files":[]}
+                {"summary":{"id":"skill a/b?c","name":"Release","description":"Review releases.","provenance":{"kind":"piAgent","label":"~/.pi/agent/skills"},"state":"enabled","warnings":[],"editable":true},"skillMarkdown":"# Release","files":[]}
                 """)
             }
 
@@ -69,7 +69,7 @@ struct ServerResourceAPIClientTests {
             if requestCount == 1 {
                 #expect(request.url?.path == "/server/resources/skills/skill_abc/enabled")
                 return mockResponse(json: """
-                {"id":"skill_abc","name":"Release","description":"Review releases.","provenance":{"kind":"piAgent","label":"~/.pi/agent/skills"},"state":"enabled","warnings":[]}
+                {"id":"skill_abc","name":"Release","description":"Review releases.","provenance":{"kind":"piAgent","label":"~/.pi/agent/skills"},"state":"enabled","warnings":[],"editable":true}
                 """)
             }
 

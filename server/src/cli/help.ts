@@ -75,6 +75,7 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       { name: "schedule", summary: "create and run scheduled agent work" },
       { name: "agent", summary: "create, inspect, update, archive, and launch saved Agents" },
+      { name: "skill", summary: "inspect and update editable server Skill files" },
       { name: "wait", summary: "poll session state until a condition is true" },
       { name: "token", summary: "rotate the owner bearer token" },
       { name: "update", summary: "check or update the npm-installed server and CLI" },
@@ -1439,6 +1440,99 @@ const HELP_TOPICS: HelpTopic[] = [
     arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     examples: [{ command: "oppi agent archive Reviewer --json" }],
+  },
+  {
+    path: ["skill"],
+    title: "Server Skills",
+    summary: "Inspect server Skills and replace files for server-authorized editable Skills.",
+    usage: "oppi skill <subcommand> [flags]",
+    subcommands: [
+      { name: "list", summary: "list server Skills and editing capability" },
+      { name: "get <skill-id>", summary: "inspect one Skill definition and file list" },
+      { name: "file <skill-id>", summary: "read one contained Skill file" },
+      { name: "update-file <skill-id>", summary: "replace one existing editable Skill file" },
+    ],
+    notes: [
+      "Skill ids and editability are server-authored; package Skills are read-only.",
+      "File paths must be contained relative paths from the Skill catalog.",
+    ],
+    examples: [
+      { command: "oppi skill list --json" },
+      { command: "oppi skill get skill_abc --json" },
+    ],
+  },
+  {
+    path: ["skill", "list"],
+    title: "List server Skills",
+    summary: "List server Skills with canonical ids and editing capability.",
+    usage: "oppi skill list [--json]",
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi skill list --json" }],
+  },
+  {
+    path: ["skill", "get"],
+    title: "Get server Skill",
+    summary: "Read one Skill definition and its contained file list.",
+    usage: "oppi skill get <skill-id> [--json]",
+    arguments: [{ name: "<skill-id>", summary: "canonical server Skill id" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    examples: [{ command: "oppi skill get skill_abc --json" }],
+  },
+  {
+    path: ["skill", "file"],
+    title: "Read server Skill file",
+    summary: "Read one existing text file contained by a server Skill.",
+    usage: "oppi skill file <skill-id> --path <relative-path> [--json]",
+    arguments: [{ name: "<skill-id>", summary: "canonical server Skill id" }],
+    flags: [
+      {
+        name: "--path",
+        value: "<relative-path>",
+        summary: "contained Skill file path",
+        required: true,
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    examples: [{ command: "oppi skill file skill_abc --path SKILL.md --json" }],
+  },
+  {
+    path: ["skill", "update-file"],
+    title: "Update server Skill file",
+    summary: "Atomically replace one existing file for a server-authorized editable Skill.",
+    usage:
+      "oppi skill update-file <skill-id> --path <relative-path> --base-revision <sha256> --content-json <json-string> [--json]",
+    arguments: [{ name: "<skill-id>", summary: "canonical server Skill id" }],
+    flags: [
+      {
+        name: "--path",
+        value: "<relative-path>",
+        summary: "contained existing Skill file path",
+        required: true,
+      },
+      {
+        name: "--base-revision",
+        value: "<sha256>",
+        summary: "revision returned by the latest 'oppi skill file' read",
+        required: true,
+      },
+      {
+        name: "--content-json",
+        value: "<json-string>",
+        summary: "complete replacement body as a JSON string (maximum 1 MiB decoded)",
+        required: true,
+      },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "Package Skills and other server-authorized read-only Skills cannot be changed.",
+      "A stale base revision returns a conflict instead of overwriting intervening edits.",
+      "The Oppi session tool requires the complete body inline for approval and rejects @-.",
+    ],
+    examples: [
+      {
+        command: `oppi skill update-file skill_abc --path SKILL.md --base-revision <sha256> --content-json '"# Updated\\n"' --json`,
+      },
+    ],
   },
   {
     path: ["session", "create"],

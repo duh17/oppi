@@ -46,7 +46,7 @@ export interface PiTuiMirrorSessionMetadata {
   protocolVersion?: number;
 }
 
-export type ControlSessionDomain = "agents" | "schedules" | "workspaces";
+export type ControlSessionDomain = "agents" | "schedules" | "skills" | "workspaces";
 export type ControlSessionIntent = "create" | "revise";
 
 export interface ControlSessionMetadata {

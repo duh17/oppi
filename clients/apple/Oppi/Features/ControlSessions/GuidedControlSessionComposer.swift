@@ -172,6 +172,7 @@ struct GuidedControlSessionComposer: View {
         switch domain {
         case .agents: "Agent"
         case .schedules: "Schedule"
+        case .skills: "Skill"
         case .workspaces: "Workspace"
         }
     }
@@ -309,7 +310,7 @@ struct GuidedControlSessionSheet: View {
         NavigationStack {
             ContentUnavailableView(
                 title,
-                systemImage: domain == .agents ? "person.crop.circle.badge.questionmark" : "calendar.badge.clock",
+                systemImage: domainSystemImage,
                 description: Text("Describe the outcome you want. Default Agent will inspect the current definition and clarify anything ambiguous before changing it.")
             )
             .navigationTitle(title)
@@ -335,8 +336,23 @@ struct GuidedControlSessionSheet: View {
         }
     }
 
+    private var domainSystemImage: String {
+        switch domain {
+        case .agents: "person.crop.circle.badge.questionmark"
+        case .schedules: "calendar.badge.clock"
+        case .skills: "hammer"
+        case .workspaces: "folder.badge.gearshape"
+        }
+    }
+
     private var title: String {
-        let subject = targetName ?? (domain == .agents ? "Agent" : "Schedule")
+        let fallbackSubject = switch domain {
+        case .agents: "Agent"
+        case .schedules: "Schedule"
+        case .skills: "Skill"
+        case .workspaces: "Workspace"
+        }
+        let subject = targetName ?? fallbackSubject
         return intent == .create ? "Create \(subject)" : "Revise \(subject)"
     }
 }

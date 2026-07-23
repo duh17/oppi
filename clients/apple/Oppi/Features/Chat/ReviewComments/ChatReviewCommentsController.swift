@@ -13,12 +13,12 @@ final class ChatReviewCommentsController {
     var stagedCount: Int { store.stagedCount }
     var stagedCommentIds: [String] { store.stagedComments.map(\.id) }
 
-    func load(workspaceId: String?, sessionId: String) {
-        guard let workspaceId else {
+    func load(localScopeId: String?, sessionId: String) {
+        guard let localScopeId else {
             store.clearLoadedScope()
             return
         }
-        store.load(workspaceId: workspaceId, sessionId: sessionId)
+        store.load(workspaceId: localScopeId, sessionId: sessionId)
     }
 
     func appendReviewBlock(to text: String) -> String {
@@ -26,14 +26,14 @@ final class ChatReviewCommentsController {
     }
 
     @discardableResult
-    func save(body: String, request: ReviewCommentSelectionRequest, workspaceId: String?, sessionId: String) -> String? {
-        guard let workspaceId else {
-            return "Review comments are only available in workspace sessions."
+    func save(body: String, request: ReviewCommentSelectionRequest, localScopeId: String?, sessionId: String) -> String? {
+        guard let localScopeId else {
+            return "Review comments are unavailable for this session."
         }
 
         do {
             _ = try store.create(
-                workspaceId: workspaceId,
+                workspaceId: localScopeId,
                 sessionId: sessionId,
                 body: body,
                 reference: Self.reviewReference(for: request)
@@ -59,6 +59,21 @@ final class ChatReviewCommentsController {
 
     func clearSent(ids: [String]) {
         store.clearSent(ids: ids)
+    }
+
+    @discardableResult
+    func moveStagedComments(
+        fromLocalScopeId: String,
+        fromSessionId: String,
+        toLocalScopeId: String,
+        toSessionId: String
+    ) throws -> Int {
+        try store.moveStagedComments(
+            fromWorkspaceId: fromLocalScopeId,
+            fromSessionId: fromSessionId,
+            toWorkspaceId: toLocalScopeId,
+            toSessionId: toSessionId
+        )
     }
 
     private static func reviewReference(for request: ReviewCommentSelectionRequest) -> ReviewCommentReference {

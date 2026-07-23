@@ -114,6 +114,7 @@ const settingsOperationIds = [
   "listServerSkills",
   "getServerSkill",
   "getServerSkillFile",
+  "updateServerSkillFile",
   "setServerSkillEnabled",
   "listServerExtensions",
   "getServerExtension",

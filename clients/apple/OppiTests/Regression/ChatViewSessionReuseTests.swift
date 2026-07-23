@@ -120,7 +120,7 @@ struct ChatViewSessionReuseTests {
 
     // MARK: - Review comment load key
 
-    /// Local review comments are scoped by both workspaceId and sessionId.
+    /// Local review comments are scoped by both local scope and session ID.
     /// If ChatView is reused for another session in the same workspace,
     /// the load task must restart; otherwise staged comments from session A
     /// can remain visible in session B.
@@ -136,6 +136,18 @@ struct ChatViewSessionReuseTests {
         let key2 = ReviewCommentLoadKey(workspaceId: "workspace-1", sessionId: "session-A")
         #expect(key1 == key2,
                 "Same workspace + session should not reload review comments unnecessarily")
+    }
+
+    @Test func controlRouteResolvesCommentScopeBeforeSessionMetadataLoads() {
+        #expect(
+            ChatView.reviewCommentLocalScopeId(routeScope: .control)
+                == SessionRouteScope.control.composerDraftScopeID
+        )
+        #expect(
+            ChatView.reviewCommentLocalScopeId(routeScope: .workspace("workspace-1"))
+                == "workspace-1"
+        )
+        #expect(ChatView.reviewCommentLocalScopeId(routeScope: nil) == nil)
     }
 
     // MARK: - Shared state isolation
