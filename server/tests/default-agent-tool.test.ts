@@ -353,11 +353,58 @@ describe("Default Agent Oppi tool presentation", () => {
         .map((line) => `> ${line}`)
         .join("\n")}`,
     );
+    expect(expanded).toContain("## Delivery");
+    expect(expanded).toContain("- **Status:** Queued");
+    expect(expanded).toContain("- **Handling:** After the current turn");
+    expect(expanded).toContain("- **Session:** [Open `sess-123`](oppi://session/sess-123)");
+    expect(expanded).not.toContain("- **Command:**");
+    expect(expanded).not.toContain("follow\\_up");
+  });
+
+  it.each([
+    {
+      args: ["session", "send", "sess-now", "--text", "Continue"],
+      data: { session_id: "sess-now", command: "prompt" },
+      status: "Sent",
+      handling: "Starts an idle session or redirects the active turn",
+    },
+    {
+      args: ["session", "send", "sess-steer", "--text", "Change course", "--steer"],
+      data: { session_id: "sess-steer", command: "steer" },
+      status: "Sent",
+      handling: "Redirects the active turn",
+    },
+  ])("explains $data.command delivery behavior", ({ args, data, status, handling }) => {
+    const classification = classifyOppiToolCommand(args);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    const expanded = formatOppiToolExpandedText(classification, data);
+
+    expect(expanded).toContain("## Delivery");
+    expect(expanded).toContain(`- **Status:** ${status}`);
+    expect(expanded).toContain(`- **Handling:** ${handling}`);
+    expect(expanded).toContain(
+      `- **Session:** [Open \`${data.session_id}\`](oppi://session/${data.session_id})`,
+    );
+  });
+
+  it("falls back to readable result data when session delivery fields are missing", () => {
+    const classification = classifyOppiToolCommand([
+      "session",
+      "send",
+      "sess-unknown",
+      "--text",
+      "Continue",
+    ]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    const expanded = formatOppiToolExpandedText(classification, { accepted: true });
+
     expect(expanded).toContain("## Result");
-    expect(expanded).toContain("- **Session id:**");
-    expect(expanded).toContain("sess-123");
-    expect(expanded).toContain("- **Command:**");
-    expect(expanded).toContain("follow\\_up");
+    expect(expanded).toContain("- **Accepted:** true");
+    expect(expanded).not.toContain("## Delivery");
   });
 
   it("shows complete prompts alongside targets and non-body options", () => {

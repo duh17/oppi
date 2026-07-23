@@ -81,15 +81,16 @@ describe("MobileRendererRegistry", () => {
 describe("oppi renderer", () => {
   const reg = new MobileRendererRegistry();
 
-  it("renders the resource, action, and safe search terms instead of an opaque args count", () => {
+  it("renders only the resource then action; parameters stay in the expanded view", () => {
     const segs = reg.renderCall("oppi", {
       args: ["session", "search", "workspace", "search", "--workspace", "oppi"],
     });
 
-    expect(textOf(segs)).toBe("oppi session search · workspace search");
+    expect(textOf(segs)).toBe("oppi session search");
     expect(styleOf(segs, 0)).toBe("bold");
     expect(styleOf(segs, 1)).toBe("accent");
     expect(styleOf(segs, 2)).toBe("muted");
+    expect(textOf(segs)).not.toContain("workspace search");
   });
 
   it("normalizes the optional leading oppi accepted by the command classifier", () => {
@@ -97,7 +98,80 @@ describe("oppi renderer", () => {
       args: ["oppi", "session", "search", "workspace"],
     });
 
-    expect(textOf(segs)).toBe("oppi session search · workspace");
+    expect(textOf(segs)).toBe("oppi session search");
+  });
+
+  it.each([
+    { args: ["status"], title: "oppi status" },
+    { args: ["workspace", "list"], title: "oppi workspace list" },
+    { args: ["workspace", "get", "ws-1"], title: "oppi workspace get" },
+    { args: ["workspace", "create", "--name", "Scratch"], title: "oppi workspace create" },
+    { args: ["workspace", "update", "ws-1", "--name", "Renamed"], title: "oppi workspace update" },
+    { args: ["workspace", "delete", "ws-1"], title: "oppi workspace delete" },
+    { args: ["workspace", "remove", "ws-1"], title: "oppi workspace remove" },
+    { args: ["worktree", "list", "--workspace", "ws-1"], title: "oppi worktree list" },
+    { args: ["worktree", "get", "main", "--workspace", "ws-1"], title: "oppi worktree get" },
+    { args: ["worktree", "status", "main", "--workspace", "ws-1"], title: "oppi worktree status" },
+    {
+      args: ["worktree", "preview", "main", "--workspace", "ws-1", "--into", "base"],
+      title: "oppi worktree preview",
+    },
+    {
+      args: ["worktree", "create", "--workspace", "ws-1", "--branch", "feature/x"],
+      title: "oppi worktree create",
+    },
+    {
+      args: ["worktree", "open", "--workspace", "ws-1", "--branch", "feature/x"],
+      title: "oppi worktree open",
+    },
+    { args: ["worktree", "remove", "wt-1", "--workspace", "ws-1"], title: "oppi worktree remove" },
+    { args: ["agent", "list"], title: "oppi agent list" },
+    { args: ["agent", "get", "agent-1"], title: "oppi agent get" },
+    { args: ["agent", "create", "--name", "Reviewer"], title: "oppi agent create" },
+    { args: ["agent", "update", "agent-1", "--definition-json", "{}"], title: "oppi agent update" },
+    { args: ["agent", "archive", "agent-1"], title: "oppi agent archive" },
+    { args: ["session", "list", "--workspace", "ws-1"], title: "oppi session list" },
+    { args: ["session", "get", "sess-1"], title: "oppi session get" },
+    { args: ["session", "changes", "sess-1"], title: "oppi session changes" },
+    { args: ["session", "trace-outline", "sess-1"], title: "oppi session trace-outline" },
+    { args: ["session", "read", "sess-1", "--tail", "10"], title: "oppi session read" },
+    { args: ["session", "events", "sess-1", "--since", "10"], title: "oppi session events" },
+    { args: ["session", "trace", "sess-1", "--include", "tools"], title: "oppi session trace" },
+    { args: ["session", "search", "needle", "--all"], title: "oppi session search" },
+    { args: ["session", "inspect", "sess-1", "--view", "summary"], title: "oppi session inspect" },
+    { args: ["session", "diff", "sess-1", "--path", "README.md"], title: "oppi session diff" },
+    { args: ["session", "tool-output", "sess-1", "call-1"], title: "oppi session tool-output" },
+    {
+      args: ["session", "trace-page", "sess-1", "--target-events", "20"],
+      title: "oppi session trace-page",
+    },
+    { args: ["session", "wait", "sess-1", "--for", "idle"], title: "oppi session wait" },
+    {
+      args: ["session", "create", "--workspace", "ws-1", "--prompt", "Review"],
+      title: "oppi session create",
+    },
+    { args: ["session", "send", "sess-1", "--text", "Continue"], title: "oppi session send" },
+    { args: ["session", "stop", "sess-1"], title: "oppi session stop" },
+    { args: ["session", "resume", "sess-1"], title: "oppi session resume" },
+    { args: ["session", "fork", "sess-1", "--entry", "entry-1"], title: "oppi session fork" },
+    { args: ["session", "delete", "sess-1"], title: "oppi session delete" },
+    { args: ["schedule", "list", "--workspace", "ws-1"], title: "oppi schedule list" },
+    { args: ["schedule", "get", "sch-1"], title: "oppi schedule get" },
+    { args: ["schedule", "runs", "sch-1", "--limit", "10"], title: "oppi schedule runs" },
+    {
+      args: ["schedule", "create", "--workspace", "ws-1", "--prompt", "Review", "--every", "1d"],
+      title: "oppi schedule create",
+    },
+    {
+      args: ["schedule", "update", "sch-1", "--definition-json", "{}"],
+      title: "oppi schedule update",
+    },
+    { args: ["schedule", "run", "sch-1", "--request-id", "req-1"], title: "oppi schedule run" },
+    { args: ["schedule", "pause", "sch-1"], title: "oppi schedule pause" },
+    { args: ["schedule", "resume", "sch-1"], title: "oppi schedule resume" },
+    { args: ["schedule", "archive", "sch-1"], title: "oppi schedule archive" },
+  ])("keeps $title collapsed consistently", ({ args, title }) => {
+    expect(textOf(reg.renderCall("oppi", { args }))).toBe(title);
   });
 
   it("does not expose malformed flag-first arguments before classification rejects them", () => {

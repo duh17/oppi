@@ -399,22 +399,11 @@ const oppi: MobileToolRenderer = {
     const resource = commandArgs[0]?.startsWith("--") ? "command" : commandArgs[0] || "command";
     const action =
       resource === "command" || commandArgs[1]?.startsWith("--") ? "" : commandArgs[1] || "";
-    const segments: StyledSegment[] = [
+    return [
       { text: "oppi ", style: "bold" },
-      { text: [resource, action].filter(Boolean).join(" "), style: "accent" },
+      { text: resource, style: "accent" },
+      ...(action ? [{ text: ` ${action}`, style: "muted" as const }] : []),
     ];
-
-    if (resource === "session" && action === "search") {
-      const remaining = commandArgs.slice(2);
-      const firstFlagIndex = remaining.findIndex((part) => part.startsWith("--"));
-      const query = remaining
-        .slice(0, firstFlagIndex < 0 ? remaining.length : firstFlagIndex)
-        .join(" ")
-        .trim();
-      if (query) segments.push({ text: ` · ${firstLine(query, 72)}`, style: "muted" });
-    }
-
-    return segments;
   },
   renderResult(details, isError) {
     if (isError) return [];

@@ -1224,6 +1224,10 @@ export function formatOppiToolExpandedText(
   }
   if (command.command === "session" && command.action === "search") {
     sections.push(formatSessionSearchResult(data));
+  } else if (command.command === "session" && command.action === "send") {
+    const delivery = formatSessionSendResult(data);
+    if (delivery) sections.push(delivery);
+    else sections.push("## Result", formatHumanValue(data));
   } else {
     sections.push("## Result", formatHumanValue(data));
   }
@@ -1494,6 +1498,30 @@ function formatCommandForDisplay(
     index += 1;
   }
   return `oppi ${displayed.join(" ")}`;
+}
+
+function formatSessionSendResult(data: unknown): string | undefined {
+  const payload = asDisplayRecord(data);
+  const sessionId = displayString(payload?.session_id);
+  const command = displayString(payload?.command);
+  if (!/^[A-Za-z0-9_-]+$/.test(sessionId) || !["prompt", "steer", "follow_up"].includes(command)) {
+    return undefined;
+  }
+
+  const status = command === "follow_up" ? "Queued" : "Sent";
+  const handling =
+    command === "follow_up"
+      ? "After the current turn"
+      : command === "steer"
+        ? "Redirects the active turn"
+        : "Starts an idle session or redirects the active turn";
+  const sessionLink = `oppi://session/${encodeURIComponent(sessionId)}`;
+  return [
+    "## Delivery",
+    `- **Status:** ${status}`,
+    `- **Handling:** ${handling}`,
+    `- **Session:** [Open ${markdownInlineCode(sessionId)}](${sessionLink})`,
+  ].join("\n");
 }
 
 function formatSessionSearchResult(data: unknown): string {
