@@ -23,6 +23,7 @@ import {
   scanDirectories,
 } from "../host.js";
 import { listConfiguredHostExtensionResources } from "../extension-loader.js";
+import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const MAX_SKILL_FILE_BYTES = 1024 * 1024;
@@ -38,6 +39,16 @@ interface SkillRouteInfo {
 
 type PiResourceType = "skills" | "extensions";
 type PiResourceScope = "user" | "project";
+
+class WorkspaceResourceScopeError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "WorkspaceResourceScopeError";
+  }
+}
 
 function resolveResourceCwd(cwd: string | undefined): string {
   const raw = cwd?.trim();
@@ -522,13 +533,48 @@ async function setPiResourceEnabled(options: {
 }
 
 export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
-  async function handleListSkills(url: URL, res: ServerResponse): Promise<void> {
-    const cwd = url.searchParams.get("cwd") ?? undefined;
-    if (cwd) {
-      helpers.json(res, { skills: await listConfiguredHostSkills(cwd) });
-      return;
+  function resolveScopedResourceCwd(options: { workspaceId?: string; cwd?: string }): {
+    cwd?: string;
+    workspaceScoped: boolean;
+  } {
+    if (options.workspaceId === undefined) {
+      return { cwd: options.cwd, workspaceScoped: false };
     }
-    helpers.json(res, { skills: ctx.skillRegistry.list() });
+
+    const workspaceId = options.workspaceId.trim();
+    if (!workspaceId) {
+      throw new WorkspaceResourceScopeError("workspaceId must not be empty", 400);
+    }
+
+    const workspace = ctx.storage.getWorkspace(workspaceId);
+    if (!workspace) {
+      throw new WorkspaceResourceScopeError("Workspace not found", 404);
+    }
+
+    return {
+      cwd: resolveSdkSessionCwd(workspace, undefined, { dataDir: ctx.storage.getDataDir() }),
+      workspaceScoped: true,
+    };
+  }
+
+  async function handleListSkills(url: URL, res: ServerResponse): Promise<void> {
+    try {
+      const { cwd } = resolveScopedResourceCwd({
+        workspaceId: url.searchParams.get("workspaceId") ?? undefined,
+        cwd: url.searchParams.get("cwd") ?? undefined,
+      });
+      if (cwd) {
+        helpers.json(res, { skills: await listConfiguredHostSkills(cwd) });
+        return;
+      }
+      helpers.json(res, { skills: ctx.skillRegistry.list() });
+    } catch (err: unknown) {
+      if (err instanceof WorkspaceResourceScopeError) {
+        helpers.error(res, err.status, err.message);
+        return;
+      }
+      throw err;
+    }
   }
 
   function handleRescanSkills(res: ServerResponse): void {
@@ -537,22 +583,33 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
   }
 
   async function handleListExtensions(url: URL, res: ServerResponse): Promise<void> {
-    const cwd = url.searchParams.get("cwd") ?? undefined;
-    const piExtensions = (
-      await listConfiguredHostExtensionResources({ cwd, agentDir: getAgentDir() })
-    ).map((ext) => ({
-      ...ext,
-      enabled: ext.enabled ?? true,
-      source: "pi" as const,
-    }));
-    const byName = new Map<string, (typeof piExtensions)[number]>();
-    for (const ext of piExtensions) {
-      if (!byName.has(ext.name)) {
-        byName.set(ext.name, ext);
+    try {
+      const { cwd } = resolveScopedResourceCwd({
+        workspaceId: url.searchParams.get("workspaceId") ?? undefined,
+        cwd: url.searchParams.get("cwd") ?? undefined,
+      });
+      const piExtensions = (
+        await listConfiguredHostExtensionResources({ cwd, agentDir: getAgentDir() })
+      ).map((ext) => ({
+        ...ext,
+        enabled: ext.enabled ?? true,
+        source: "pi" as const,
+      }));
+      const byName = new Map<string, (typeof piExtensions)[number]>();
+      for (const ext of piExtensions) {
+        if (!byName.has(ext.name)) {
+          byName.set(ext.name, ext);
+        }
       }
-    }
 
-    helpers.json(res, { extensions: Array.from(byName.values()) });
+      helpers.json(res, { extensions: Array.from(byName.values()) });
+    } catch (err: unknown) {
+      if (err instanceof WorkspaceResourceScopeError) {
+        helpers.error(res, err.status, err.message);
+        return;
+      }
+      throw err;
+    }
   }
 
   async function handleGetSkillDetail(name: string, url: URL, res: ServerResponse): Promise<void> {
@@ -640,6 +697,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     res: ServerResponse,
   ): Promise<void> {
     const body = await helpers.parseBody<{
+      workspaceId?: unknown;
       cwd?: unknown;
       type?: unknown;
       path?: unknown;
@@ -660,17 +718,29 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       return;
     }
 
+    if (body.workspaceId !== undefined && typeof body.workspaceId !== "string") {
+      helpers.error(res, 400, "workspaceId must be a string");
+      return;
+    }
+
     try {
-      const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
+      const scope = resolveScopedResourceCwd({
+        workspaceId: typeof body.workspaceId === "string" ? body.workspaceId : undefined,
+        cwd: typeof body.cwd === "string" ? body.cwd : undefined,
+      });
       await setPiResourceEnabled({
-        cwd: resolveResourceCwd(cwd),
+        cwd: resolveResourceCwd(scope.cwd),
         type,
         path: body.path,
         enabled: body.enabled,
-        preferProjectScope: cwd?.trim().length ? true : false,
+        preferProjectScope: scope.workspaceScoped || Boolean(scope.cwd?.trim().length),
       });
       helpers.json(res, { ok: true });
     } catch (err: unknown) {
+      if (err instanceof WorkspaceResourceScopeError) {
+        helpers.error(res, err.status, err.message);
+        return;
+      }
       const message = err instanceof Error ? err.message : "Failed to update Pi resource settings";
       helpers.error(res, message.includes("not found") ? 404 : 400, message);
     }

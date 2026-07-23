@@ -167,6 +167,53 @@ struct WorkspaceEditSaveCompletionTests {
     }
 }
 
+@Suite("Workspace Pi Resource Scope")
+struct WorkspacePiResourceScopePolicyTests {
+    @Test func mountlessSandboxUsesWorkspaceIdentity() {
+        let scope = WorkspacePiResourceScopePolicy.resolve(
+            runtime: .sandbox,
+            persistedHostMount: nil,
+            draftHostMount: "",
+            workspaceId: "sandbox-workspace"
+        )
+
+        #expect(scope == WorkspacePiResourceScope(workspaceId: "sandbox-workspace", cwd: nil))
+    }
+
+    @Test func unchangedHostWorkspaceUsesWorkspaceIdentity() {
+        let scope = WorkspacePiResourceScopePolicy.resolve(
+            runtime: .host,
+            persistedHostMount: " ~/workspace/project ",
+            draftHostMount: "~/workspace/project",
+            workspaceId: "host-workspace"
+        )
+
+        #expect(scope == WorkspacePiResourceScope(workspaceId: "host-workspace", cwd: nil))
+    }
+
+    @Test func clearedHostFolderFallsBackToWorkspaceIdentity() {
+        let scope = WorkspacePiResourceScopePolicy.resolve(
+            runtime: .host,
+            persistedHostMount: "~/workspace/old",
+            draftHostMount: "  ",
+            workspaceId: "host-workspace"
+        )
+
+        #expect(scope == WorkspacePiResourceScope(workspaceId: "host-workspace", cwd: nil))
+    }
+
+    @Test func draftHostFolderUsesExplicitProjectCwd() {
+        let scope = WorkspacePiResourceScopePolicy.resolve(
+            runtime: .host,
+            persistedHostMount: "~/workspace/old",
+            draftHostMount: " ~/workspace/new ",
+            workspaceId: "host-workspace"
+        )
+
+        #expect(scope == WorkspacePiResourceScope(workspaceId: nil, cwd: "~/workspace/new"))
+    }
+}
+
 @Suite("Workspace icon picker catalog")
 struct WorkspaceIconPickerCatalogTests {
     @Test func emptySearchReturnsEveryCuratedSymbol() {

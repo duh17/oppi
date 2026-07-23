@@ -527,6 +527,97 @@ describe("skills module", () => {
     }
   });
 
+  it("uses workspace scope when toggling and reloading mountless sandbox skills", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-resource-route-sandbox-scope-"));
+    const cwd = join(root, "sandbox", "sandbox-workspace");
+    const agentDir = join(root, "agent");
+    const skillDir = join(agentDir, "skills", "sandbox-route-skill");
+    mkdirSync(skillDir, { recursive: true });
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: sandbox-route-skill",
+        "description: Global skill toggled for one sandbox workspace.",
+        "---",
+        "Use this sandbox-route skill.",
+      ].join("\n"),
+    );
+
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousHome = process.env.HOME;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.HOME = root;
+
+    try {
+      const workspace = {
+        id: "sandbox-workspace-id",
+        name: "Sandbox Workspace",
+        runtime: "sandbox" as const,
+        icon: { kind: "symbol" as const, name: "lock" },
+        systemPromptMode: "append" as const,
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const dispatch = createSkillRoutes(
+        {
+          skillRegistry: { list: vi.fn(() => []) },
+          storage: {
+            getWorkspace: vi.fn(() => workspace),
+            getDataDir: vi.fn(() => root),
+          },
+        } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+
+      const toggleRes = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: "/pi/resources/enabled",
+        url: new URL("http://localhost/pi/resources/enabled"),
+        req: makeRequest({
+          workspaceId: workspace.id,
+          type: "skills",
+          path: skillDir,
+          enabled: false,
+        }) as never,
+        res: toggleRes as never,
+      });
+      expect(toggleRes.statusCode).toBe(200);
+      expect(existsSync(join(agentDir, "settings.json"))).toBe(false);
+      expect(existsSync(join(cwd, ".pi", "settings.json"))).toBe(true);
+
+      const listRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/skills",
+        url: new URL(`http://localhost/skills?workspaceId=${workspace.id}`),
+        req: {} as never,
+        res: listRes as never,
+      });
+      expect(listRes.statusCode).toBe(200);
+      const body = JSON.parse(listRes.body) as {
+        skills: Array<{ name: string; enabled: boolean }>;
+      };
+      expect(body.skills.find((skill) => skill.name === "sandbox-route-skill")?.enabled).toBe(
+        false,
+      );
+    } finally {
+      if (previousAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      }
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not list or read cwd-local skill files through symlinks", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-skill-route-symlink-"));
     const skillDir = join(cwd, ".pi", "skills", "safe-route-skill");

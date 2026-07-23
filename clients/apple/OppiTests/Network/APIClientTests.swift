@@ -777,6 +777,44 @@ struct APIClientTests {
         #expect(skills[0].name == "fetch")
     }
 
+    @Test func listSkillsForWorkspaceAddsWorkspaceScope() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            let workspaceId = components?.queryItems?.first(where: { $0.name == "workspaceId" })?.value
+            #expect(workspaceId == "sandbox-workspace")
+            #expect(components?.queryItems?.contains(where: { $0.name == "cwd" }) == false)
+            return self.mockResponse(json: """
+            {"skills":[]}
+            """)
+        }
+
+        let skills = try await client.listSkills(workspaceId: "sandbox-workspace")
+        #expect(skills.isEmpty)
+    }
+
+    @Test func setPiResourceEnabledUsesWorkspaceScope() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            let body = self.requestBodyData(request)
+            let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+            #expect(json?["workspaceId"] as? String == "sandbox-workspace")
+            #expect(json?["cwd"] == nil)
+            return self.mockResponse(json: "{\"ok\":true}")
+        }
+
+        try await client.setPiResourceEnabled(
+            type: "skills",
+            path: "/path/to/skill",
+            workspaceId: "sandbox-workspace",
+            enabled: false
+        )
+    }
+
     @Test func rescanSkills() async throws {
         let client = makeClient()
         defer { cleanup() }

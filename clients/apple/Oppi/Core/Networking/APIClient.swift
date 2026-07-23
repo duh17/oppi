@@ -801,9 +801,11 @@ actor APIClient: ClientLogUploading {
     // MARK: - Skills
 
     /// List available skills from Pi resource discovery.
-    func listSkills(cwd: String? = nil) async throws -> [SkillInfo] {
+    func listSkills(cwd: String? = nil, workspaceId: String? = nil) async throws -> [SkillInfo] {
         var queryItems: [URLQueryItem] = []
-        if let cwd, !cwd.isEmpty {
+        if let workspaceId, !workspaceId.isEmpty {
+            queryItems.append(URLQueryItem(name: "workspaceId", value: workspaceId))
+        } else if let cwd, !cwd.isEmpty {
             queryItems.append(URLQueryItem(name: "cwd", value: cwd))
         }
         let data = try await get(
@@ -822,17 +824,30 @@ actor APIClient: ClientLogUploading {
     }
 
     /// Enable or disable a Pi resource by writing Pi user/project settings for the cwd.
-    func setPiResourceEnabled(type: String, path: String, cwd: String? = nil, enabled: Bool) async throws {
+    func setPiResourceEnabled(
+        type: String,
+        path: String,
+        cwd: String? = nil,
+        workspaceId: String? = nil,
+        enabled: Bool
+    ) async throws {
         struct Body: Encodable {
             let type: String
             let path: String
             let cwd: String?
+            let workspaceId: String?
             let enabled: Bool
         }
 
         _ = try await post(
             "/pi/resources/enabled",
-            body: Body(type: type, path: path, cwd: cwd, enabled: enabled)
+            body: Body(
+                type: type,
+                path: path,
+                cwd: workspaceId == nil ? cwd : nil,
+                workspaceId: workspaceId,
+                enabled: enabled
+            )
         )
     }
 
@@ -840,11 +855,17 @@ actor APIClient: ClientLogUploading {
     ///
     /// The server resolves extensions using pi's resource resolver, including
     /// auto-discovered dirs, settings paths, and installed package extensions.
-    func listExtensions(cwd: String? = nil) async throws -> [ExtensionInfo] {
+    func listExtensions(cwd: String? = nil, workspaceId: String? = nil) async throws -> [ExtensionInfo] {
         var path = "/extensions"
-        if let cwd, !cwd.isEmpty {
+        var queryItems: [URLQueryItem] = []
+        if let workspaceId, !workspaceId.isEmpty {
+            queryItems.append(URLQueryItem(name: "workspaceId", value: workspaceId))
+        } else if let cwd, !cwd.isEmpty {
+            queryItems.append(URLQueryItem(name: "cwd", value: cwd))
+        }
+        if !queryItems.isEmpty {
             var components = URLComponents()
-            components.queryItems = [URLQueryItem(name: "cwd", value: cwd)]
+            components.queryItems = queryItems
             if let query = components.percentEncodedQuery {
                 path += "?\(query)"
             }

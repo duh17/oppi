@@ -25,6 +25,28 @@ enum WorkspaceEditSaveCompletionPolicy {
     }
 }
 
+struct WorkspacePiResourceScope: Equatable {
+    let workspaceId: String?
+    let cwd: String?
+}
+
+enum WorkspacePiResourceScopePolicy {
+    static func resolve(
+        runtime: WorkspaceRuntime?,
+        persistedHostMount: String?,
+        draftHostMount: String,
+        workspaceId: String
+    ) -> WorkspacePiResourceScope {
+        let persisted = persistedHostMount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let draft = draftHostMount.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if runtime == .sandbox || draft == persisted || draft.isEmpty {
+            return WorkspacePiResourceScope(workspaceId: workspaceId, cwd: nil)
+        }
+        return WorkspacePiResourceScope(workspaceId: nil, cwd: draft.isEmpty ? nil : draft)
+    }
+}
+
 /// Edit an existing workspace's configuration.
 struct WorkspaceEditView: View {
     let workspace: Workspace
@@ -131,6 +153,22 @@ struct WorkspaceEditView: View {
     private var trimmedHostMount: String {
         hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// Use the persisted workspace identity whenever the form still describes
+    /// that workspace's runtime scope. This matters for sandbox workspaces with
+    /// no host mount: their Pi project settings live in a server-resolved backing
+    /// directory, not in the server-global user settings.
+    private var piResourceScope: WorkspacePiResourceScope {
+        WorkspacePiResourceScopePolicy.resolve(
+            runtime: workspaceForEditing.runtime,
+            persistedHostMount: workspaceForEditing.hostMount,
+            draftHostMount: trimmedHostMount,
+            workspaceId: workspace.id
+        )
+    }
+
+    private var piResourceWorkspaceId: String? { piResourceScope.workspaceId }
+    private var piResourceCwd: String? { piResourceScope.cwd }
 
     private var iconDisplayName: String {
         WorkspaceIconPickerView.description(icon)
@@ -541,7 +579,8 @@ struct WorkspaceEditView: View {
     private func schedulePiResourceLoad() {
         piResourceLoadGeneration += 1
         let generation = piResourceLoadGeneration
-        let cwd = trimmedHostMount
+        let cwd = piResourceCwd
+        let workspaceId = piResourceWorkspaceId
         isLoadingSkills = true
         isLoadingExtensions = true
         skillsError = nil
@@ -550,8 +589,8 @@ struct WorkspaceEditView: View {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard isCurrentPiResourceLoad(generation) else { return }
-            await loadSkills(cwd: cwd, generation: generation)
-            await loadExtensions(cwd: cwd, generation: generation)
+            await loadSkills(cwd: cwd, workspaceId: workspaceId, generation: generation)
+            await loadExtensions(cwd: cwd, workspaceId: workspaceId, generation: generation)
         }
     }
 
@@ -574,8 +613,13 @@ struct WorkspaceEditView: View {
             }
 
             do {
-                let cwd = trimmedHostMount.isEmpty ? nil : trimmedHostMount
-                try await api.setPiResourceEnabled(type: type, path: path, cwd: cwd, enabled: enabled)
+                try await api.setPiResourceEnabled(
+                    type: type,
+                    path: path,
+                    cwd: piResourceCwd,
+                    workspaceId: piResourceWorkspaceId,
+                    enabled: enabled
+                )
                 if type == "skills" {
                     await loadSkills()
                 } else {
@@ -708,7 +752,11 @@ struct WorkspaceEditView: View {
     }
 
     @MainActor
-    private func loadSkills(cwd explicitCwd: String? = nil, generation: Int? = nil) async {
+    private func loadSkills(
+        cwd explicitCwd: String? = nil,
+        workspaceId explicitWorkspaceId: String? = nil,
+        generation: Int? = nil
+    ) async {
         guard isCurrentPiResourceLoad(generation) else { return }
         guard let api = apiClient else {
             if isCurrentPiResourceLoad(generation) {
@@ -726,8 +774,10 @@ struct WorkspaceEditView: View {
         }
 
         do {
-            let cwd = explicitCwd ?? hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
-            let loaded = try await api.listSkills(cwd: cwd.isEmpty ? nil : cwd)
+            let loaded = try await api.listSkills(
+                cwd: explicitCwd ?? piResourceCwd,
+                workspaceId: explicitWorkspaceId ?? piResourceWorkspaceId
+            )
             guard isCurrentPiResourceLoad(generation) else { return }
             availableSkills = loaded
         } catch {
@@ -738,7 +788,11 @@ struct WorkspaceEditView: View {
     }
 
     @MainActor
-    private func loadExtensions(cwd explicitCwd: String? = nil, generation: Int? = nil) async {
+    private func loadExtensions(
+        cwd explicitCwd: String? = nil,
+        workspaceId explicitWorkspaceId: String? = nil,
+        generation: Int? = nil
+    ) async {
         guard isCurrentPiResourceLoad(generation) else { return }
         guard let api = apiClient else {
             if isCurrentPiResourceLoad(generation) {
@@ -759,8 +813,10 @@ struct WorkspaceEditView: View {
         }
 
         do {
-            let cwd = explicitCwd ?? hostMount.trimmingCharacters(in: .whitespacesAndNewlines)
-            let loaded = try await api.listExtensions(cwd: cwd.isEmpty ? nil : cwd)
+            let loaded = try await api.listExtensions(
+                cwd: explicitCwd ?? piResourceCwd,
+                workspaceId: explicitWorkspaceId ?? piResourceWorkspaceId
+            )
             guard isCurrentPiResourceLoad(generation) else { return }
             availableExtensions = loaded
         } catch {
