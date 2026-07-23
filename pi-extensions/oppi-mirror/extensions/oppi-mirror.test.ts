@@ -425,6 +425,45 @@ describe("oppi mirror input preflight", () => {
     });
   });
 
+  it("does not reconnect after the server permanently rejects bridge hello", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.useFakeTimers();
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      const terminalNotify = ctx.ui.notify;
+      await startSession(pi, ctx);
+
+      await pi.commands.get("oppi-mirror")?.handler("start", ctx);
+      const socket = wsMock.instances.at(-1);
+      if (!socket) throw new Error("Expected mirror websocket");
+      socket.open();
+      socket.receive(
+        JSON.stringify({
+          type: "error",
+          code: "invalid_bridge_hello",
+          error:
+            "Bridge hello protocolVersion must be an explicit supported safe integer; received <missing>; supported: 2",
+          receivedProtocolVersion: "<missing>",
+          receivedProtocolVersionType: "missing",
+          supportedProtocolVersions: [2],
+        }),
+      );
+      await Promise.resolve();
+      socket.close();
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(wsMock.instances).toHaveLength(1);
+      expect(terminalNotify).toHaveBeenCalledWith(
+        expect.stringContaining("bridge protocol"),
+        "warning",
+      );
+    });
+  });
+
   it("correlates rejection and retry for prompt, steer, and follow-up", async () => {
     await withInteractiveTerminal(async () => {
       vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");

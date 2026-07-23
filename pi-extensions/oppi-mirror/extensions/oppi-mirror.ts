@@ -4101,8 +4101,38 @@ async function createTuiMirrorRuntime(
           cwd?: string;
           suggestedHostMount?: string;
           suggestedName?: string;
+          receivedProtocolVersion?: unknown;
+          receivedProtocolVersionType?: string;
+          supportedProtocolVersions?: unknown;
         };
         const errorText = err.error ?? "unknown";
+        if (err.code === "invalid_bridge_hello") {
+          manualStop = true;
+          nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
+          setIndicatorMode("error");
+          writeMirrorLog("warn", "bridge_hello_rejected", {
+            runtime: "pi-tui",
+            bridgeId,
+            code: err.code,
+            error: errorText,
+            receivedProtocolVersion: err.receivedProtocolVersion,
+            receivedProtocolVersionType: err.receivedProtocolVersionType,
+            supportedProtocolVersions: err.supportedProtocolVersions,
+          });
+          notify(
+            ctx,
+            "Oppi Mirror bridge protocol was rejected. Reload or update the extension before starting it again.",
+            "warning",
+          );
+          try {
+            ws?.close(1008, "Oppi Mirror bridge protocol rejected");
+          } catch (error) {
+            writeMirrorLog("warn", "bridge_hello_rejected_close_failed", {
+              error,
+            });
+          }
+          return;
+        }
         if (err.code === "workspace_missing") {
           await handleWorkspaceMissingError(ctx, err);
           return;

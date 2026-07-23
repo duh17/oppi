@@ -285,6 +285,32 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     },
   );
 
+  it("reports the received shape when protocolVersion is missing", () => {
+    const { runtime } = makeRuntime();
+    const ws = new FakeBridgeWebSocket();
+    runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
+
+    ws.receive({
+      type: "hello",
+      bridgeId: "bridge-missing-version",
+      workspaceId: "w1",
+      cwd: "/tmp/oppi-mirror-test",
+      capabilities: ["input_preflight:v1"],
+      state: { piSessionId: "pi-missing-version" },
+    });
+
+    expect(ws.sent.at(-1)).toEqual({
+      type: "error",
+      code: "invalid_bridge_hello",
+      error:
+        "Bridge hello protocolVersion must be an explicit supported safe integer; received <missing>; supported: 2",
+      receivedProtocolVersion: "<missing>",
+      receivedProtocolVersionType: "missing",
+      supportedProtocolVersions: [2],
+    });
+    expect(ws.closeCode).toBe(1008);
+  });
+
   it("reports a missing workspace with the suggested git-root workspace", async () => {
     const root = await mkdtemp(join(tmpdir(), "oppi-mirror-missing-workspace-"));
     const cwd = join(root, "packages", "app");

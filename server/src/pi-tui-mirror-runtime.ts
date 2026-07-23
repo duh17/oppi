@@ -284,6 +284,49 @@ function firstUserMessageFromSessionFile(path: string | undefined): string | und
   return undefined;
 }
 
+function bridgeProtocolVersionDiagnostic(value: unknown): {
+  receivedProtocolVersion: string | number | boolean | null;
+  receivedProtocolVersionType: string;
+  display: string;
+} {
+  if (value === undefined) {
+    return {
+      receivedProtocolVersion: "<missing>",
+      receivedProtocolVersionType: "missing",
+      display: "<missing>",
+    };
+  }
+  if (value === null) {
+    return {
+      receivedProtocolVersion: null,
+      receivedProtocolVersionType: "null",
+      display: "null",
+    };
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return {
+      receivedProtocolVersion: value,
+      receivedProtocolVersionType: typeof value,
+      display: String(value),
+    };
+  }
+  if (typeof value === "string") {
+    const receivedProtocolVersion = value.slice(0, 128);
+    return {
+      receivedProtocolVersion,
+      receivedProtocolVersionType: "string",
+      display: JSON.stringify(receivedProtocolVersion),
+    };
+  }
+
+  const receivedProtocolVersion = Array.isArray(value) ? "<array>" : "<object>";
+  return {
+    receivedProtocolVersion,
+    receivedProtocolVersionType: Array.isArray(value) ? "array" : typeof value,
+    display: receivedProtocolVersion,
+  };
+}
+
 function parseBridgeMessage(data: RawData): PiBridgeInboundMessage {
   const parsed = JSON.parse(rawDataToText(data)) as unknown;
   const record = asRecord(parsed);
@@ -296,9 +339,15 @@ function parseBridgeMessage(data: RawData): PiBridgeInboundMessage {
 
   const protocolVersion = record.protocolVersion;
   if (protocolVersion !== PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION) {
+    const diagnostic = bridgeProtocolVersionDiagnostic(protocolVersion);
     throw new BridgeRegistrationError(
-      `Bridge hello protocolVersion must be an explicit supported safe integer (${PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS.join(", ")})`,
+      `Bridge hello protocolVersion must be an explicit supported safe integer; received ${diagnostic.display}; supported: ${PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS.join(", ")}`,
       "invalid_bridge_hello",
+      {
+        receivedProtocolVersion: diagnostic.receivedProtocolVersion,
+        receivedProtocolVersionType: diagnostic.receivedProtocolVersionType,
+        supportedProtocolVersions: [...PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS],
+      },
     );
   }
 
