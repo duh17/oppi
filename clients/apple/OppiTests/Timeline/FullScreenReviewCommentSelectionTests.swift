@@ -431,6 +431,88 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
+    @Test func markdownBodyUsesItsProvidedOLEDPaletteWhenRuntimeThemeIsStale() throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+        ThemeRuntimeState.setThemeID(.light)
+
+        let body = NativeFullScreenMarkdownBody(
+            content: "# OLED heading\n\nBody",
+            stream: nil,
+            themeID: .oled,
+            palette: ThemeID.oled.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let host = attachToHost(body)
+        _ = host
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let headingTextView = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("OLED heading")
+        })
+        let headingRange = (timelineRenderedText(of: headingTextView) as NSString).range(of: "OLED heading")
+        let headingColor = try #require(
+            headingTextView.attributedText?.attribute(.foregroundColor, at: headingRange.location, effectiveRange: nil) as? UIColor
+        )
+
+        #expect(headingColor == UIColor(ThemeID.oled.palette.mdHeading))
+    }
+
+    @Test func fullScreenMarkdownUsesOwnerThemeWhenRuntimeThemeIsStale() throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+        ThemeRuntimeState.setThemeID(.light)
+
+        let controller = FullScreenCodeViewController(
+            content: .markdown(content: "# OLED heading\n\nBody", filePath: "Notes.md")
+        )
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        controller.applyThemeIfNeeded(.oled)
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+
+        let markdownBody = try #require(timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: controller.view))
+        markdownBody.debugLayoutVisibleMarkdownCellsForTesting()
+        let headingTextView = try #require(timelineAllTextViews(in: markdownBody).first {
+            timelineRenderedText(of: $0).contains("OLED heading")
+        })
+        let headingRange = (timelineRenderedText(of: headingTextView) as NSString).range(of: "OLED heading")
+        let headingColor = try #require(
+            headingTextView.attributedText?.attribute(.foregroundColor, at: headingRange.location, effectiveRange: nil) as? UIColor
+        )
+
+        #expect(headingColor == UIColor(ThemeID.oled.palette.mdHeading))
+    }
+
+    @Test func fullScreenMarkdownRetainsOwnerThemeAppliedBeforeViewLoad() throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+        ThemeRuntimeState.setThemeID(.light)
+
+        let controller = FullScreenCodeViewController(
+            content: .markdown(content: "# OLED heading\n\nBody", filePath: "Notes.md")
+        )
+        controller.applyThemeIfNeeded(.oled)
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+
+        let markdownBody = try #require(timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: controller.view))
+        markdownBody.debugLayoutVisibleMarkdownCellsForTesting()
+        let headingTextView = try #require(timelineAllTextViews(in: markdownBody).first {
+            timelineRenderedText(of: $0).contains("OLED heading")
+        })
+        let headingRange = (timelineRenderedText(of: headingTextView) as NSString).range(of: "OLED heading")
+        let headingColor = try #require(
+            headingTextView.attributedText?.attribute(.foregroundColor, at: headingRange.location, effectiveRange: nil) as? UIColor
+        )
+
+        #expect(headingColor == UIColor(ThemeID.oled.palette.mdHeading))
+    }
+
     @Test func markdownBodyKeepsAdjacentHeadingAndParagraphInSingleSelectionSurface() throws {
         let body = NativeFullScreenMarkdownBody(
             content: "# Selection heading\n\nParagraph text continues here.",

@@ -739,6 +739,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 content: text,
                 stream: nil,
                 isStreaming: isStreaming,
+                themeID: themeID,
                 palette: themeID.palette,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 reviewCommentSourceContext: reviewCommentSourceContext,

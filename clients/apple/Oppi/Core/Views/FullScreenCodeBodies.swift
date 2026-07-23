@@ -1487,6 +1487,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private let collectionView: UICollectionView
     private let segmentSource = AssistantMarkdownSegmentSource()
     private let stream: ThinkingTraceStream?
+    private let themeID: ThemeID
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
     private var textSelectionEnabled: Bool
@@ -1529,6 +1530,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         content: String,
         stream: ThinkingTraceStream?,
         isStreaming: Bool = false,
+        themeID: ThemeID? = nil,
         palette: ThemePalette,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
@@ -1545,6 +1547,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
     ) {
         self.stream = stream
+        self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
         self.perfSurface = perfSurface
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
@@ -1741,7 +1744,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         let config = AssistantMarkdownContentView.Configuration.make(
             content: snapshot.text,
             isStreaming: !snapshot.isDone,
-            themeID: ThemeRuntimeState.currentThemeID(),
+            themeID: themeID,
             textSelectionEnabled: textSelectionEnabled,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
@@ -1798,7 +1801,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         config: AssistantMarkdownContentView.Configuration,
         cycleStart: UInt64
     ) {
-        installDeferredRenderPlaceholder(palette: ThemeRuntimeState.currentPalette())
+        installDeferredRenderPlaceholder(palette: themeID.palette)
         renderedSegments = []
         renderedSegmentLineRanges = []
         collectionView.reloadData()
@@ -2187,15 +2190,18 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
 
     private let scrollView = UIScrollView()
     private let readerPreferences: FullScreenReaderPreferences
+    private let themeID: ThemeID
 
     init(
         content: DocumentContent,
+        themeID: ThemeID? = nil,
         palette: ThemePalette,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.renderedDocument.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?
     ) {
         self.readerPreferences = readerPreferences
+        self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
         super.init(frame: .zero)
         backgroundColor = UIColor(palette.bgDark)
 
@@ -2264,7 +2270,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         let config = RenderConfiguration(
             fontSize: 20 * readerPreferences.textScale,
             maxWidth: 800,
-            theme: ThemeRuntimeState.currentRenderTheme(),
+            theme: themeID.palette.renderTheme,
             displayMode: .document
         )
         let multiLayout = DocumentRenderPipeline.layoutLatexExpressions(text: text, config: config)
@@ -2294,7 +2300,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         mdView.apply(configuration: .make(
             content: markdownText,
             isStreaming: false,
-            themeID: ThemeRuntimeState.currentThemeID(),
+            themeID: themeID,
             textSelectionEnabled: true,
             readerPreferences: readerPreferences
         ))
@@ -2307,7 +2313,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         let config = RenderConfiguration(
             fontSize: fontSize,
             maxWidth: 800,
-            theme: ThemeRuntimeState.currentRenderTheme(),
+            theme: themeID.palette.renderTheme,
             displayMode: .document
         )
         let layout = DocumentRenderPipeline.layoutGraphical(

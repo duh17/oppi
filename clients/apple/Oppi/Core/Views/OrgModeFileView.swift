@@ -19,12 +19,14 @@ struct OrgModeFileView: View {
             fullScreenContent: .orgMode(content: content, filePath: filePath),
             renderedViewFactory: { [content, presentation] in
                 let markdownContent = DocumentRenderPipeline.orgToMarkdown(content)
+                let themeID = ThemeRuntimeState.currentThemeID()
 
                 if presentation == .document {
                     return NativeFullScreenMarkdownBody(
                         content: markdownContent,
                         stream: nil,
-                        palette: ThemeRuntimeState.currentThemeID().palette,
+                        themeID: themeID,
+                        palette: themeID.palette,
                         reviewCommentSelectionRouter: nil,
                         reviewCommentSourceContext: nil
                     )
@@ -35,7 +37,7 @@ struct OrgModeFileView: View {
                 view.apply(configuration: .make(
                     content: markdownContent,
                     isStreaming: false,
-                    themeID: ThemeRuntimeState.currentThemeID(),
+                    themeID: themeID,
                     textSelectionEnabled: true,
                 ))
                 return view

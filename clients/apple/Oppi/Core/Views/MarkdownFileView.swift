@@ -73,11 +73,13 @@ struct MarkdownFileView: View {
             ),
             reviewCommentSelectionContext: reviewContext,
             renderedViewFactory: { [content, filePath, workspaceID, serverBaseURL, fetchWorkspaceFile, presentation, reviewContext, reviewSourceContext] in
+                let themeID = ThemeRuntimeState.currentThemeID()
                 if presentation == .document {
                     return NativeFullScreenMarkdownBody(
                         content: content,
                         stream: nil,
-                        palette: ThemeRuntimeState.currentThemeID().palette,
+                        themeID: themeID,
+                        palette: themeID.palette,
                         reviewCommentSelectionRouter: reviewContext?.dispatcher,
                         reviewCommentSourceContext: reviewSourceContext,
                         workspaceID: workspaceID,
@@ -93,7 +95,7 @@ struct MarkdownFileView: View {
                 view.apply(configuration: .make(
                     content: content,
                     isStreaming: false,
-                    themeID: ThemeRuntimeState.currentThemeID(),
+                    themeID: themeID,
                     textSelectionEnabled: true,
                     reviewCommentSelectionRouter: reviewContext?.dispatcher,
                     reviewCommentSourceContext: reviewSourceContext,

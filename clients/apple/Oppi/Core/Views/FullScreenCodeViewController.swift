@@ -92,6 +92,10 @@ final class FullScreenCodeViewController: UIViewController {
     private var lastNavigationPresentation: NavigationPresentation?
     private var appliedThemeID: ThemeID?
 
+    private var bodyThemeID: ThemeID {
+        appliedThemeID ?? ThemeRuntimeState.currentThemeID()
+    }
+
     init(
         content: FullScreenCodeContent,
         presentationMode: PresentationMode = .sheet,
@@ -172,7 +176,7 @@ final class FullScreenCodeViewController: UIViewController {
             object: nil
         )
 
-        let themeID = ThemeRuntimeState.currentThemeID()
+        let themeID = appliedThemeID ?? ThemeRuntimeState.currentThemeID()
         appliedThemeID = themeID
         let palette = themeID.palette
         view.backgroundColor = UIColor(palette.bgDark)
@@ -213,12 +217,15 @@ final class FullScreenCodeViewController: UIViewController {
         navigationActionPresentation = presentation
         lastNavigationPresentation = nil
         guard isViewLoaded, let viewController = contentHostController else { return }
-        configureNavigation(on: viewController, palette: ThemeRuntimeState.currentThemeID().palette)
+        configureNavigation(on: viewController, palette: bodyThemeID.palette)
     }
 
     func applyThemeIfNeeded(_ themeID: ThemeID) {
-        guard isViewLoaded, appliedThemeID != themeID,
-              let viewController = contentHostController else { return }
+        guard isViewLoaded, let viewController = contentHostController else {
+            appliedThemeID = themeID
+            return
+        }
+        guard appliedThemeID != themeID else { return }
 
         appliedThemeID = themeID
         let palette = themeID.palette
@@ -229,7 +236,7 @@ final class FullScreenCodeViewController: UIViewController {
         let interactionState = installedBodyView.map(captureInteractionState)
         clearLiveSourceBodyReferences()
         let presentation = makePresentation()
-        let themedBody = makeBodyView(for: presentation.bodyContent, palette: palette)
+        let themedBody = makeBodyView(for: presentation.bodyContent, themeID: themeID)
         installBodyView(themedBody, on: viewController)
         if let interactionState {
             restoreInteractionState(interactionState, in: themedBody, host: viewController.view)
@@ -325,7 +332,7 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private func makeContentController() -> UIViewController {
-        let palette = ThemeRuntimeState.currentThemeID().palette
+        let palette = bodyThemeID.palette
         let vc = UIViewController()
         vc.view.backgroundColor = UIColor(palette.bgDark)
 
@@ -357,21 +364,21 @@ final class FullScreenCodeViewController: UIViewController {
         // No custom UINavigationBarAppearance — iOS 26 Liquid Glass renders
         // bar items as floating glass pills. See FullScreenViewerChrome.
 
-        installInitialBody(on: vc, palette: palette)
+        installInitialBody(on: vc)
         configureNavigation(on: vc, palette: palette)
 
         return vc
     }
 
-    private func installInitialBody(on viewController: UIViewController, palette: ThemePalette) {
+    private func installInitialBody(on viewController: UIViewController) {
         switch content {
         case .liveSource(let snapshot, let stream):
             liveSourceCurrentSnapshot = snapshot
             if snapshot.isDone {
                 let presentation = makePresentation()
-                installBodyView(makeBodyView(for: presentation.bodyContent, palette: palette), on: viewController)
+                installBodyView(makeBodyView(for: presentation.bodyContent, themeID: bodyThemeID), on: viewController)
             } else {
-                installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, palette: palette)
+                installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, themeID: bodyThemeID)
             }
             let observerID = stream.addObserver(deliverImmediately: false) { [weak self] snapshot in
                 self?.handleLiveSourceUpdate(snapshot)
@@ -382,7 +389,7 @@ final class FullScreenCodeViewController: UIViewController {
 
         default:
             let presentation = makePresentation()
-            installBodyView(makeBodyView(for: presentation.bodyContent, palette: palette), on: viewController)
+            installBodyView(makeBodyView(for: presentation.bodyContent, themeID: bodyThemeID), on: viewController)
         }
     }
 
@@ -563,7 +570,8 @@ final class FullScreenCodeViewController: UIViewController {
 
     // MARK: - Body
 
-    private func makeBodyView(for content: FullScreenCodeContent, palette: ThemePalette) -> UIView {
+    private func makeBodyView(for content: FullScreenCodeContent, themeID: ThemeID) -> UIView {
+        let palette = themeID.palette
         switch content {
         case .code(let text, let language, let filePath, let startLine):
             return NativeFullScreenCodeBody(
@@ -609,6 +617,7 @@ final class FullScreenCodeViewController: UIViewController {
             let body = NativeFullScreenMarkdownBody(
                 content: text,
                 stream: nil,
+                themeID: themeID,
                 palette: palette,
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
@@ -639,6 +648,7 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenMarkdownBody(
                 content: text,
                 stream: stream,
+                themeID: themeID,
                 palette: palette,
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
@@ -662,12 +672,13 @@ final class FullScreenCodeViewController: UIViewController {
                 )
             )
         case .liveSource(let snapshot, _):
-            return makeBodyView(for: bodyContent(for: snapshot), palette: palette)
+            return makeBodyView(for: bodyContent(for: snapshot), themeID: themeID)
 
         // Document renderers — use rendered views with source toggle
         case .latex(let text, let filePath):
             return NativeFullScreenRenderedDocumentBody(
                 content: .latex(text),
+                themeID: themeID,
                 palette: palette,
                 readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
@@ -680,6 +691,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .orgMode(let text, let filePath):
             return NativeFullScreenRenderedDocumentBody(
                 content: .orgMode(text),
+                themeID: themeID,
                 palette: palette,
                 readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
@@ -692,6 +704,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .mermaid(let text, let filePath):
             return NativeFullScreenRenderedDocumentBody(
                 content: .mermaid(text),
+                themeID: themeID,
                 palette: palette,
                 readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
@@ -742,12 +755,14 @@ final class FullScreenCodeViewController: UIViewController {
         filePath: String?,
         workspaceContext: FullScreenCodeContent.WorkspaceContext?,
         isStreaming: Bool,
-        palette: ThemePalette
+        themeID: ThemeID
     ) -> NativeFullScreenMarkdownBody {
-        NativeFullScreenMarkdownBody(
+        let palette = themeID.palette
+        return NativeFullScreenMarkdownBody(
             content: text,
             stream: nil,
             isStreaming: isStreaming,
+            themeID: themeID,
             palette: palette,
             reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
             reviewCommentSourceContext: makeSourceContext(
@@ -768,8 +783,9 @@ final class FullScreenCodeViewController: UIViewController {
     private func makeLiveSourceHTMLBody(
         text: String,
         filePath: String?,
-        palette: ThemePalette
+        themeID: ThemeID
     ) -> HTMLRenderView {
+        let palette = themeID.palette
         let view = HTMLRenderView(
             htmlString: text,
             reviewCommentRouter: reviewCommentSelectionContext?.dispatcher,
@@ -789,8 +805,9 @@ final class FullScreenCodeViewController: UIViewController {
     private func installOrUpdateLiveSourceStreamingBody(
         snapshot: SourceTraceStream.Snapshot,
         on viewController: UIViewController,
-        palette: ThemePalette
+        themeID: ThemeID
     ) {
+        let palette = themeID.palette
         switch bodyContent(for: snapshot) {
         case .markdown(let text, let filePath, let workspaceContext):
             liveSourceBodyView = nil
@@ -803,7 +820,7 @@ final class FullScreenCodeViewController: UIViewController {
                     filePath: filePath,
                     workspaceContext: workspaceContext,
                     isStreaming: true,
-                    palette: palette
+                    themeID: themeID
                 )
                 liveSourceMarkdownBodyView = body
                 installBodyView(body, on: viewController)
@@ -815,7 +832,7 @@ final class FullScreenCodeViewController: UIViewController {
             if let body = liveSourceHTMLBodyView, installedBodyView === body {
                 body.load(text)
             } else {
-                let body = makeLiveSourceHTMLBody(text: text, filePath: filePath, palette: palette)
+                let body = makeLiveSourceHTMLBody(text: text, filePath: filePath, themeID: themeID)
                 liveSourceHTMLBodyView = body
                 installBodyView(body, on: viewController)
             }
@@ -835,13 +852,14 @@ final class FullScreenCodeViewController: UIViewController {
         liveSourceCurrentSnapshot = snapshot
         guard let viewController = contentHostController else { return }
 
-        let palette = ThemeRuntimeState.currentThemeID().palette
+        let themeID = bodyThemeID
+        let palette = themeID.palette
         if snapshot.isDone {
             clearLiveSourceBodyReferences()
             let presentation = makePresentation()
-            installBodyView(makeBodyView(for: presentation.bodyContent, palette: palette), on: viewController)
+            installBodyView(makeBodyView(for: presentation.bodyContent, themeID: themeID), on: viewController)
         } else {
-            installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, palette: palette)
+            installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, themeID: themeID)
         }
 
         configureNavigation(on: viewController, palette: palette)
@@ -1103,13 +1121,11 @@ final class FullScreenCodeViewController: UIViewController {
         if let configurable = installedBodyView as? FullScreenReaderConfigurable {
             configurable.applyReaderPreferences(preferences)
         } else if let viewController = contentHostController {
-            let palette = ThemeRuntimeState.currentThemeID().palette
-            installBodyView(makeBodyView(for: bodyContent, palette: palette), on: viewController)
+            installBodyView(makeBodyView(for: bodyContent, themeID: bodyThemeID), on: viewController)
         }
 
         guard let viewController = contentHostController else { return }
-        let palette = ThemeRuntimeState.currentThemeID().palette
-        configureNavigation(on: viewController, palette: palette)
+        configureNavigation(on: viewController, palette: bodyThemeID.palette)
 
         let presentation = makePresentation()
         if let family = presentation.readerFamily,
@@ -1204,18 +1220,19 @@ final class FullScreenCodeViewController: UIViewController {
         }
 
         showSource.toggle()
-        let palette = ThemeRuntimeState.currentThemeID().palette
+        let themeID = bodyThemeID
+        let palette = themeID.palette
         if case .liveSource(let initialSnapshot, _) = content {
             let snapshot = liveSourceCurrentSnapshot ?? initialSnapshot
             if !snapshot.isDone {
-                installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, palette: palette)
+                installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, themeID: themeID)
                 configureNavigation(on: viewController, palette: palette)
                 return
             }
         }
 
         let presentation = makePresentation()
-        installBodyView(makeBodyView(for: presentation.bodyContent, palette: palette), on: viewController)
+        installBodyView(makeBodyView(for: presentation.bodyContent, themeID: themeID), on: viewController)
         configureNavigation(on: viewController, palette: palette)
     }
 }
