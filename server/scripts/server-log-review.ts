@@ -9,7 +9,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-const DAY_MS = 24 * 60 * 60 * 1_000;
+const HOUR_MS = 60 * 60 * 1_000;
+const DAY_MS = 24 * HOUR_MS;
 
 interface ServerLogRecord {
   ts?: string;
@@ -50,7 +51,11 @@ interface RecentProblem {
 
 export interface ServerLogReviewResult {
   days: number;
+  windowLabel: string;
+  requestedSinceMs: number;
   logPath: string;
+  logAvailable: boolean;
+  evidenceState: "available" | "unavailable" | "invalid" | "stale";
   lines: number;
   parsed: number;
   unparsed: number;
@@ -80,9 +85,12 @@ interface ParsedArgs {
   path?: string;
   dataDir?: string;
   days: number;
+  hours?: number;
+  since?: string;
   json: boolean;
   help: boolean;
   limit: number;
+  match?: string;
 }
 
 function inc(map: Record<string, number>, key: string, by = 1): void {
@@ -107,7 +115,13 @@ function truncate(value: string, max: number): string {
 function parseJsonLine(line: string): ServerLogRecord | null {
   try {
     const parsed = JSON.parse(line) as ServerLogRecord;
-    return parsed && typeof parsed === "object" ? parsed : null;
+    return parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      typeof parsed.ts === "string" &&
+      Number.isFinite(Date.parse(parsed.ts))
+      ? parsed
+      : null;
   } catch {
     return null;
   }
@@ -176,10 +190,25 @@ function addProblem(
 
 export function buildServerLogReview(options: {
   logPath: string;
-  days: number;
+  days?: number;
+  hours?: number;
+  sinceMs?: number;
   limit?: number;
+  match?: RegExp;
 }): ServerLogReviewResult {
-  const cutoffMs = Date.now() - options.days * DAY_MS;
+  const days = Math.max(0, options.days ?? 1);
+  const hours = options.hours == null ? undefined : Math.max(0, options.hours);
+  const explicitSinceMs =
+    typeof options.sinceMs === "number" && Number.isFinite(options.sinceMs)
+      ? Math.trunc(options.sinceMs)
+      : null;
+  const cutoffMs = explicitSinceMs ?? Date.now() - (hours != null ? hours * HOUR_MS : days * DAY_MS);
+  const windowLabel =
+    explicitSinceMs != null
+      ? `since ${formatTs(explicitSinceMs)}`
+      : hours != null
+        ? `${hours}h`
+        : `${days}d`;
   const levelCounts: Record<string, number> = {};
   const componentCounts: Record<string, number> = {};
   const eventCounts: Record<string, number> = {};
@@ -195,8 +224,12 @@ export function buildServerLogReview(options: {
 
   if (!existsSync(options.logPath)) {
     return {
-      days: options.days,
+      days: Math.max(0, (Date.now() - cutoffMs) / DAY_MS),
+      windowLabel,
+      requestedSinceMs: cutoffMs,
       logPath: options.logPath,
+      logAvailable: false,
+      evidenceState: "unavailable",
       lines,
       parsed,
       unparsed,
@@ -252,8 +285,13 @@ export function buildServerLogReview(options: {
   recent.sort((a, b) => b.ts - a.ts);
 
   return {
-    days: options.days,
+    days: Math.max(0, (Date.now() - cutoffMs) / DAY_MS),
+    windowLabel,
+    requestedSinceMs: cutoffMs,
     logPath: options.logPath,
+    logAvailable: true,
+    evidenceState:
+      lines === 0 ? "unavailable" : parsed === 0 ? "invalid" : inWindow === 0 ? "stale" : "available",
     lines,
     parsed,
     unparsed,
@@ -272,7 +310,11 @@ export function buildServerLogReview(options: {
         .slice(0, limit),
     ),
     problems: [...problems.values()]
-      .sort((a, b) => b.count - a.count || b.lastTs - a.lastTs)
+      .sort((a, b) => {
+        const aMatch = options.match?.test(`${a.component} ${a.event} ${a.message}`) ? 1 : 0;
+        const bMatch = options.match?.test(`${b.component} ${b.event} ${b.message}`) ? 1 : 0;
+        return bMatch - aMatch || b.count - a.count || b.lastTs - a.lastTs;
+      })
       .slice(0, limit)
       .map((problem) => ({
         key: problem.key,
@@ -292,10 +334,10 @@ export function buildServerLogReview(options: {
 }
 
 function printHuman(result: ServerLogReviewResult): void {
-  console.log(`Oppi Server Log Review (last ${result.days}d)`);
+  console.log(`Oppi Server Log Review (${result.windowLabel})`);
   console.log(`  log: ${result.logPath}`);
   console.log(
-    `  lines=${result.lines} parsed=${result.parsed} unparsed=${result.unparsed} in_window=${result.inWindow}`,
+    `  evidence=${result.evidenceState} lines=${result.lines} parsed=${result.parsed} unparsed=${result.unparsed} in_window=${result.inWindow}`,
   );
   console.log(`  window=${formatTs(result.firstTs)} -> ${formatTs(result.lastTs)}`);
   console.log();
@@ -343,6 +385,29 @@ function printHuman(result: ServerLogReviewResult): void {
   }
 }
 
+function requiredArg(argv: string[], index: number, flag: string): string {
+  const value = argv[index];
+  if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+  return value;
+}
+
+function patternArg(argv: string[], index: number, flag: string): string {
+  const value = argv[index];
+  if (value === undefined || value.length === 0 || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value; use ${flag}=<pattern> for patterns beginning with --`);
+  }
+  return value;
+}
+
+function positiveNumber(raw: string, flag: string): number {
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw)) {
+    throw new Error(`${flag} requires a positive number`);
+  }
+  const value = Number.parseFloat(raw);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`${flag} requires a positive number`);
+  return value;
+}
+
 function parseArgs(argv: string[]): ParsedArgs {
   const args: ParsedArgs = {
     days: 1,
@@ -353,18 +418,36 @@ function parseArgs(argv: string[]): ParsedArgs {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg.startsWith("--match=")) {
+      args.match = arg.slice("--match=".length);
+      if (!args.match) throw new Error("--match requires a value");
+      continue;
+    }
     switch (arg) {
       case "--path":
-        args.path = argv[++i];
+        args.path = requiredArg(argv, ++i, arg);
         break;
       case "--data-dir":
-        args.dataDir = argv[++i];
+        args.dataDir = requiredArg(argv, ++i, arg);
         break;
       case "--days":
-        args.days = Math.max(1, Number.parseInt(argv[++i] ?? "1", 10) || 1);
+        args.days = positiveNumber(requiredArg(argv, ++i, arg), arg);
+        args.hours = undefined;
+        args.since = undefined;
+        break;
+      case "--hours":
+        args.hours = positiveNumber(requiredArg(argv, ++i, arg), arg);
+        args.since = undefined;
+        break;
+      case "--since":
+        args.since = requiredArg(argv, ++i, arg);
+        args.hours = undefined;
         break;
       case "--limit":
-        args.limit = Math.max(1, Number.parseInt(argv[++i] ?? "20", 10) || 20);
+        args.limit = Math.ceil(positiveNumber(requiredArg(argv, ++i, arg), arg));
+        break;
+      case "--match":
+        args.match = patternArg(argv, ++i, arg);
         break;
       case "--json":
         args.json = true;
@@ -373,6 +456,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       case "-h":
         args.help = true;
         break;
+      default:
+        throw new Error(`Unknown argument: ${arg}`);
     }
   }
 
@@ -384,13 +469,18 @@ function printHelp(): void {
 
   bun server/scripts/server-log-review.ts
   bun server/scripts/server-log-review.ts --days 1 --limit 30
+  bun server/scripts/server-log-review.ts --hours 3 --limit 30
+  bun server/scripts/server-log-review.ts --since 2026-07-22T20:00:00Z --limit 30
   bun server/scripts/server-log-review.ts --path ~/.config/oppi/server.log --json
 
 Options:
   --path <path>       Server log path (default: <data-dir>/server.log)
   --data-dir <path>   Oppi data dir (default: ~/.config/oppi)
   --days <n>          Days to include by JSON ts field (default: 1)
+  --hours <n>         Hours to include; overrides --days
+  --since <timestamp> Exact ISO-8601 window start; overrides --days/--hours
   --limit <n>         Number of top/recent entries (default: 20)
+  --match <regex>     Prioritize matching problems before applying --limit
   --json              Machine-readable JSON
   --help              Show this help
 `);
@@ -407,7 +497,24 @@ function main(): void {
     args.dataDir ?? process.env.OPPI_DATA_DIR ?? join(homedir(), ".config", "oppi"),
   );
   const logPath = resolve(args.path ?? join(dataDir, "server.log"));
-  const result = buildServerLogReview({ logPath, days: args.days, limit: args.limit });
+  const sinceMs = args.since ? Date.parse(args.since) : undefined;
+  if (args.since && !Number.isFinite(sinceMs)) {
+    throw new Error(`Invalid --since timestamp: ${args.since}`);
+  }
+  let match: RegExp | undefined;
+  try {
+    match = args.match ? new RegExp(args.match, "i") : undefined;
+  } catch {
+    throw new Error(`Invalid --match regex: ${args.match}`);
+  }
+  const result = buildServerLogReview({
+    logPath,
+    days: args.days,
+    hours: args.hours,
+    sinceMs,
+    limit: args.limit,
+    match,
+  });
 
   if (args.json) {
     console.log(JSON.stringify(result, null, 2));

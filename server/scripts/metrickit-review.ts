@@ -10,7 +10,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const DAY_MS = 24 * 60 * 60 * 1_000;
+const HOUR_MS = 60 * 60 * 1_000;
+const DAY_MS = 24 * HOUR_MS;
 const METRICKIT_PREFIX = "metrickit-";
 const JSONL_SUFFIX = ".jsonl";
 
@@ -90,11 +91,18 @@ interface DiagnosticSummary {
 
 export interface MetricKitReviewResult {
   days: number;
+  windowLabel: string;
+  requestedSinceMs: number;
   telemetryDir: string;
+  telemetryAvailable: boolean;
+  evidenceState: "available" | "unavailable" | "invalid" | "stale";
   filesRead: number;
+  malformedRecords: number;
   records: number;
   payloads: number;
   diagnostics: number;
+  firstPayloadTs: number | null;
+  lastPayloadTs: number | null;
   countsByType: Record<string, number>;
   countsByBuild: Record<string, Record<string, number>>;
   recentDiagnostics: DiagnosticSummary[];
@@ -104,10 +112,13 @@ export interface MetricKitReviewResult {
 interface ParsedArgs {
   dataDir?: string;
   days: number;
+  hours?: number;
+  since?: string;
   json: boolean;
   help: boolean;
   limit: number;
   symbolicatePath?: string;
+  match?: string;
 }
 
 function telemetryDir(dataDir: string): string {
@@ -151,7 +162,9 @@ function listFiles(dir: string): string[] {
 function parseJsonLine(line: string): MetricKitRecord | null {
   try {
     const parsed = JSON.parse(line) as MetricKitRecord;
-    return parsed && typeof parsed === "object" ? parsed : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.payloads)
+      ? parsed
+      : null;
   } catch {
     return null;
   }
@@ -446,21 +459,37 @@ function diagnosticsFromPayload(
 
 export function buildMetricKitReview(options: {
   dataDir: string;
-  days: number;
+  days?: number;
+  hours?: number;
+  sinceMs?: number;
   limit?: number;
   symbolicatePath?: string;
+  match?: RegExp;
 }): MetricKitReviewResult {
   const dir = telemetryDir(options.dataDir);
   const symbolicationTarget = resolveSymbolicationTarget(options.symbolicatePath);
-  const cutoffMs = Date.now() - options.days * DAY_MS;
+  const days = Math.max(0, options.days ?? 7);
+  const hours = options.hours == null ? undefined : Math.max(0, options.hours);
+  const explicitSinceMs = safeNumber(options.sinceMs);
+  const cutoffMs = explicitSinceMs ?? Date.now() - (hours != null ? hours * HOUR_MS : days * DAY_MS);
+  const windowLabel =
+    explicitSinceMs != null
+      ? `since ${formatTs(explicitSinceMs)}`
+      : hours != null
+        ? `${hours}h`
+        : `${days}d`;
   const countsByType: Record<string, number> = {};
   const countsByBuild: Record<string, Record<string, number>> = {};
   const recentDiagnostics: DiagnosticSummary[] = [];
 
+  const telemetryAvailable = existsSync(dir);
   let filesRead = 0;
+  let malformedRecords = 0;
   let records = 0;
   let payloads = 0;
   let diagnostics = 0;
+  let firstPayloadTs: number | null = null;
+  let lastPayloadTs: number | null = null;
 
   for (const file of listFiles(dir)) {
     const text = readFileSync(join(dir, file), "utf8");
@@ -468,12 +497,17 @@ export function buildMetricKitReview(options: {
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       const record = parseJsonLine(line);
-      if (!record) continue;
+      if (!record) {
+        malformedRecords += 1;
+        continue;
+      }
       records += 1;
       for (const payload of record.payloads ?? []) {
         const ts = safeNumber(payload.windowEndMs) ?? safeNumber(record.generatedAt) ?? 0;
         if (ts < cutoffMs) continue;
         payloads += 1;
+        firstPayloadTs = firstPayloadTs == null ? ts : Math.min(firstPayloadTs, ts);
+        lastPayloadTs = lastPayloadTs == null ? ts : Math.max(lastPayloadTs, ts);
         const payloadDiagnostics = diagnosticsFromPayload(record, payload, symbolicationTarget);
         for (const diagnostic of payloadDiagnostics) {
           diagnostics += diagnostic.count;
@@ -486,15 +520,32 @@ export function buildMetricKitReview(options: {
   }
 
   const limit = Math.max(1, options.limit ?? 20);
-  recentDiagnostics.sort((a, b) => b.windowEndMs - a.windowEndMs);
+  recentDiagnostics.sort((a, b) => {
+    const aMatch = options.match?.test(JSON.stringify(a)) ? 1 : 0;
+    const bMatch = options.match?.test(JSON.stringify(b)) ? 1 : 0;
+    return bMatch - aMatch || b.windowEndMs - a.windowEndMs;
+  });
 
   return {
-    days: options.days,
+    days: Math.max(0, (Date.now() - cutoffMs) / DAY_MS),
+    windowLabel,
+    requestedSinceMs: cutoffMs,
     telemetryDir: dir,
+    telemetryAvailable,
+    evidenceState: !telemetryAvailable || filesRead === 0
+      ? "unavailable"
+      : records === 0
+        ? "invalid"
+        : payloads === 0
+          ? "stale"
+          : "available",
     filesRead,
+    malformedRecords,
     records,
     payloads,
     diagnostics,
+    firstPayloadTs,
+    lastPayloadTs,
     countsByType,
     countsByBuild,
     recentDiagnostics: recentDiagnostics.slice(0, limit),
@@ -521,11 +572,12 @@ function frameLabel(frame: StackFrame): string {
 }
 
 function printHuman(result: MetricKitReviewResult): void {
-  console.log(`Oppi MetricKit Review (last ${result.days}d)`);
+  console.log(`Oppi MetricKit Review (${result.windowLabel})`);
   console.log(`  telemetry: ${result.telemetryDir}`);
   console.log(
-    `  files=${result.filesRead} records=${result.records} payloads=${result.payloads} diagnostics=${result.diagnostics}`,
+    `  evidence=${result.evidenceState} files=${result.filesRead} malformed=${result.malformedRecords} records=${result.records} payloads=${result.payloads} diagnostics=${result.diagnostics}`,
   );
+  console.log(`  window=${formatTs(result.firstPayloadTs)} -> ${formatTs(result.lastPayloadTs)}`);
   if (result.symbolicationTarget) {
     const uuids =
       result.symbolicationTarget.uuids.length > 0
@@ -595,6 +647,29 @@ function printHuman(result: MetricKitReviewResult): void {
   }
 }
 
+function requiredArg(argv: string[], index: number, flag: string): string {
+  const value = argv[index];
+  if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+  return value;
+}
+
+function patternArg(argv: string[], index: number, flag: string): string {
+  const value = argv[index];
+  if (value === undefined || value.length === 0 || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value; use ${flag}=<pattern> for patterns beginning with --`);
+  }
+  return value;
+}
+
+function positiveNumber(raw: string, flag: string): number {
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw)) {
+    throw new Error(`${flag} requires a positive number`);
+  }
+  const value = Number.parseFloat(raw);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`${flag} requires a positive number`);
+  return value;
+}
+
 function parseArgs(argv: string[]): ParsedArgs {
   const args: ParsedArgs = {
     days: 7,
@@ -605,18 +680,36 @@ function parseArgs(argv: string[]): ParsedArgs {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg.startsWith("--match=")) {
+      args.match = arg.slice("--match=".length);
+      if (!args.match) throw new Error("--match requires a value");
+      continue;
+    }
     switch (arg) {
       case "--data-dir":
-        args.dataDir = argv[++i];
+        args.dataDir = requiredArg(argv, ++i, arg);
         break;
       case "--days":
-        args.days = Math.max(1, Number.parseInt(argv[++i] ?? "7", 10) || 7);
+        args.days = positiveNumber(requiredArg(argv, ++i, arg), arg);
+        args.hours = undefined;
+        args.since = undefined;
+        break;
+      case "--hours":
+        args.hours = positiveNumber(requiredArg(argv, ++i, arg), arg);
+        args.since = undefined;
+        break;
+      case "--since":
+        args.since = requiredArg(argv, ++i, arg);
+        args.hours = undefined;
         break;
       case "--limit":
-        args.limit = Math.max(1, Number.parseInt(argv[++i] ?? "20", 10) || 20);
+        args.limit = Math.ceil(positiveNumber(requiredArg(argv, ++i, arg), arg));
         break;
       case "--symbolicate":
-        args.symbolicatePath = argv[++i];
+        args.symbolicatePath = requiredArg(argv, ++i, arg);
+        break;
+      case "--match":
+        args.match = patternArg(argv, ++i, arg);
         break;
       case "--json":
         args.json = true;
@@ -625,6 +718,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       case "-h":
         args.help = true;
         break;
+      default:
+        throw new Error(`Unknown argument: ${arg}`);
     }
   }
 
@@ -636,13 +731,18 @@ function printHelp(): void {
 
   bun server/scripts/metrickit-review.ts
   bun server/scripts/metrickit-review.ts --days 14 --limit 50
+  bun server/scripts/metrickit-review.ts --hours 3 --limit 50
+  bun server/scripts/metrickit-review.ts --since 2026-07-22T20:00:00Z --limit 50
   bun server/scripts/metrickit-review.ts --symbolicate /path/to/Oppi.xcarchive
 
 Options:
   --data-dir <path>       Oppi data dir (default: ~/.config/oppi)
   --days <n>              Days of MetricKit payloads (default: 7)
+  --hours <n>             Hours of MetricKit payloads; overrides --days
+  --since <timestamp>     Exact ISO-8601 window start; overrides --days/--hours
   --limit <n>             Number of recent diagnostics (default: 20)
   --symbolicate <path>    Best-effort atos symbolication for app frames; accepts .xcarchive, .dSYM, .app, or binary paths
+  --match <regex>         Prioritize matching diagnostics before applying --limit
   --json                  Machine-readable JSON
   --help                  Show this help
 `);
@@ -658,11 +758,24 @@ function main(): void {
   const dataDir = resolve(
     args.dataDir ?? process.env.OPPI_DATA_DIR ?? join(homedir(), ".config", "oppi"),
   );
+  const sinceMs = args.since ? Date.parse(args.since) : undefined;
+  if (args.since && !Number.isFinite(sinceMs)) {
+    throw new Error(`Invalid --since timestamp: ${args.since}`);
+  }
+  let match: RegExp | undefined;
+  try {
+    match = args.match ? new RegExp(args.match, "i") : undefined;
+  } catch {
+    throw new Error(`Invalid --match regex: ${args.match}`);
+  }
   const result = buildMetricKitReview({
     dataDir,
     days: args.days,
+    hours: args.hours,
+    sinceMs,
     limit: args.limit,
     symbolicatePath: args.symbolicatePath,
+    match,
   });
 
   if (args.json) {

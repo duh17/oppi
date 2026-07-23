@@ -75,8 +75,13 @@ interface RecentEntry {
 export interface ClientLogReviewResult {
   days: number;
   windowLabel: string;
+  requestedSinceMs: number;
   telemetryDir: string;
+  telemetryAvailable: boolean;
+  evidenceState: "available" | "unavailable" | "invalid" | "stale";
   filesRead: number;
+  parsedRecords: number;
+  malformedRecords: number;
   uploads: number;
   entries: number;
   dropped: number;
@@ -105,10 +110,12 @@ interface ParsedArgs {
   dataDir?: string;
   days: number;
   hours?: number;
+  since?: string;
   json: boolean;
   help: boolean;
   limit: number;
   levels: Set<string> | null;
+  match?: string;
 }
 
 function normalizeLevel(level: unknown): string {
@@ -243,7 +250,9 @@ function listFiles(dir: string): string[] {
 function parseJsonLine(line: string): ClientLogRecord | null {
   try {
     const parsed = JSON.parse(line) as ClientLogRecord;
-    return parsed && typeof parsed === "object" ? parsed : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.entries)
+      ? parsed
+      : null;
   } catch {
     return null;
   }
@@ -253,23 +262,33 @@ export function buildClientLogReview(options: {
   dataDir: string;
   days?: number;
   hours?: number;
+  sinceMs?: number;
   limit?: number;
   levels?: Set<string> | null;
+  match?: RegExp;
 }): ClientLogReviewResult {
   const dir = telemetryDir(options.dataDir);
   const days = Math.max(0, options.days ?? 7);
   const hours = options.hours == null ? undefined : Math.max(0, options.hours);
+  const explicitSinceMs = safeNumber(options.sinceMs);
   const windowMs = hours != null ? hours * HOUR_MS : days * DAY_MS;
+  const cutoffMs = explicitSinceMs ?? Date.now() - windowMs;
   const windowLabel =
-    hours != null ? `${formatWindowValue(hours)}h` : `${formatWindowValue(days)}d`;
-  const cutoffMs = Date.now() - windowMs;
+    explicitSinceMs != null
+      ? `since ${formatTs(explicitSinceMs)}`
+      : hours != null
+        ? `${formatWindowValue(hours)}h`
+        : `${formatWindowValue(days)}d`;
   const levels = options.levels;
   const levelCounts: Record<string, number> = {};
   const categoryCounts: Record<string, number> = {};
   const issues = new Map<string, IssueSummary>();
   const recent: RecentEntry[] = [];
 
+  const telemetryAvailable = existsSync(dir);
   let filesRead = 0;
+  let parsedRecords = 0;
+  let malformedRecords = 0;
   let uploads = 0;
   let entries = 0;
   let dropped = 0;
@@ -282,7 +301,11 @@ export function buildClientLogReview(options: {
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       const record = parseJsonLine(line);
-      if (!record) continue;
+      if (!record) {
+        malformedRecords += 1;
+        continue;
+      }
+      parsedRecords += 1;
       const buildNumber = record.buildNumber ?? "unknown";
       const recordFallbackTs = safeNumber(record.generatedAt) ?? safeNumber(record.receivedAt) ?? 0;
       let recordInWindow = false;
@@ -328,10 +351,21 @@ export function buildClientLogReview(options: {
   const limit = Math.max(1, options.limit ?? 20);
 
   return {
-    days: windowMs / DAY_MS,
+    days: Math.max(0, (Date.now() - cutoffMs) / DAY_MS),
     windowLabel,
+    requestedSinceMs: cutoffMs,
     telemetryDir: dir,
+    telemetryAvailable,
+    evidenceState: !telemetryAvailable || filesRead === 0
+      ? "unavailable"
+      : parsedRecords === 0
+        ? "invalid"
+        : uploads === 0
+          ? "stale"
+          : "available",
     filesRead,
+    parsedRecords,
+    malformedRecords,
     uploads,
     entries,
     dropped,
@@ -340,7 +374,11 @@ export function buildClientLogReview(options: {
     levelCounts,
     categoryCounts: Object.fromEntries(Object.entries(categoryCounts).sort((a, b) => b[1] - a[1])),
     issues: [...issues.values()]
-      .sort((a, b) => b.count - a.count || b.lastTs - a.lastTs)
+      .sort((a, b) => {
+        const aMatch = options.match?.test(`${a.category} ${a.message} ${a.signature}`) ? 1 : 0;
+        const bMatch = options.match?.test(`${b.category} ${b.message} ${b.signature}`) ? 1 : 0;
+        return bMatch - aMatch || b.count - a.count || b.lastTs - a.lastTs;
+      })
       .slice(0, limit)
       .map((issue) => ({
         key: issue.key,
@@ -361,10 +399,10 @@ export function buildClientLogReview(options: {
 }
 
 function printHuman(result: ClientLogReviewResult): void {
-  console.log(`Oppi Client Log Review (last ${result.windowLabel})`);
+  console.log(`Oppi Client Log Review (${result.windowLabel})`);
   console.log(`  telemetry: ${result.telemetryDir}`);
   console.log(
-    `  files=${result.filesRead} uploads=${result.uploads} entries=${result.entries} dropped=${result.dropped}`,
+    `  evidence=${result.evidenceState} files=${result.filesRead} parsed=${result.parsedRecords} malformed=${result.malformedRecords} uploads=${result.uploads} entries=${result.entries} dropped=${result.dropped}`,
   );
   console.log(`  window=${formatTs(result.firstTs)} -> ${formatTs(result.lastTs)}`);
   console.log();
@@ -413,6 +451,29 @@ function printHuman(result: ClientLogReviewResult): void {
   }
 }
 
+function requiredArg(argv: string[], index: number, flag: string): string {
+  const value = argv[index];
+  if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+  return value;
+}
+
+function patternArg(argv: string[], index: number, flag: string): string {
+  const value = argv[index];
+  if (value === undefined || value.length === 0 || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value; use ${flag}=<pattern> for patterns beginning with --`);
+  }
+  return value;
+}
+
+function positiveNumber(raw: string, flag: string): number {
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw)) {
+    throw new Error(`${flag} requires a positive number`);
+  }
+  const value = Number.parseFloat(raw);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`${flag} requires a positive number`);
+  return value;
+}
+
 function parseArgs(argv: string[]): ParsedArgs {
   const args: ParsedArgs = {
     days: 7,
@@ -424,22 +485,36 @@ function parseArgs(argv: string[]): ParsedArgs {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg.startsWith("--match=")) {
+      args.match = arg.slice("--match=".length);
+      if (!args.match) throw new Error("--match requires a value");
+      continue;
+    }
     switch (arg) {
       case "--data-dir":
-        args.dataDir = argv[++i];
+        args.dataDir = requiredArg(argv, ++i, arg);
         break;
       case "--days":
-        args.days = Math.max(1, Number.parseFloat(argv[++i] ?? "7") || 7);
+        args.days = positiveNumber(requiredArg(argv, ++i, arg), arg);
         args.hours = undefined;
+        args.since = undefined;
         break;
       case "--hours":
-        args.hours = Math.max(0.1, Number.parseFloat(argv[++i] ?? "") || 0);
+        args.hours = positiveNumber(requiredArg(argv, ++i, arg), arg);
+        args.since = undefined;
+        break;
+      case "--since":
+        args.since = requiredArg(argv, ++i, arg);
+        args.hours = undefined;
         break;
       case "--limit":
-        args.limit = Math.max(1, Number.parseInt(argv[++i] ?? "20", 10) || 20);
+        args.limit = Math.ceil(positiveNumber(requiredArg(argv, ++i, arg), arg));
+        break;
+      case "--match":
+        args.match = patternArg(argv, ++i, arg);
         break;
       case "--level": {
-        const raw = argv[++i] ?? "";
+        const raw = requiredArg(argv, ++i, arg);
         args.levels = new Set(
           raw
             .split(",")
@@ -455,6 +530,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       case "-h":
         args.help = true;
         break;
+      default:
+        throw new Error(`Unknown argument: ${arg}`);
     }
   }
 
@@ -467,13 +544,16 @@ function printHelp(): void {
   bun server/scripts/client-log-review.ts
   bun server/scripts/client-log-review.ts --days 1 --limit 30
   bun server/scripts/client-log-review.ts --hours 3 --limit 30
+  bun server/scripts/client-log-review.ts --since 2026-07-22T20:00:00Z --limit 30
   bun server/scripts/client-log-review.ts --level warn,error --json
 
 Options:
   --data-dir <path>     Oppi data dir (default: ~/.config/oppi)
   --days <n>            Days of uploaded client logs (default: 7)
   --hours <n>           Hours of uploaded client logs; overrides --days
+  --since <timestamp>   Exact ISO-8601 window start; overrides --days/--hours
   --limit <n>           Number of top/recent entries (default: 20)
+  --match <regex>       Prioritize matching signatures before applying --limit
   --level <levels>      Comma-separated levels: debug,info,warn,error
   --json                Machine-readable JSON
   --help                Show this help
@@ -490,12 +570,24 @@ function main(): void {
   const dataDir = resolve(
     args.dataDir ?? process.env.OPPI_DATA_DIR ?? join(homedir(), ".config", "oppi"),
   );
+  const sinceMs = args.since ? Date.parse(args.since) : undefined;
+  if (args.since && !Number.isFinite(sinceMs)) {
+    throw new Error(`Invalid --since timestamp: ${args.since}`);
+  }
+  let match: RegExp | undefined;
+  try {
+    match = args.match ? new RegExp(args.match, "i") : undefined;
+  } catch {
+    throw new Error(`Invalid --match regex: ${args.match}`);
+  }
   const result = buildClientLogReview({
     dataDir,
     days: args.days,
     hours: args.hours,
+    sinceMs,
     limit: args.limit,
     levels: args.levels,
+    match,
   });
 
   if (args.json) {

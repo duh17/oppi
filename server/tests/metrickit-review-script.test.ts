@@ -106,6 +106,27 @@ describe("metrickit-review", () => {
     rmSync(binDir, { recursive: true, force: true });
   });
 
+  it("reports unavailable telemetry instead of a successful empty source", () => {
+    const review = buildMetricKitReview({ dataDir, hours: 1, limit: 10 });
+
+    expect(review.telemetryAvailable).toBe(false);
+    expect(review.evidenceState).toBe("unavailable");
+    expect(review.filesRead).toBe(0);
+    expect(review.payloads).toBe(0);
+  });
+
+  it("reports files containing only malformed records as invalid", () => {
+    const telemetryDir = join(dataDir, "diagnostics", "telemetry");
+    mkdirSync(telemetryDir, { recursive: true });
+    writeFileSync(join(telemetryDir, "metrickit-2026-06-19.jsonl"), "{}\n");
+
+    const review = buildMetricKitReview({ dataDir, hours: 1, limit: 10 });
+
+    expect(review.evidenceState).toBe("invalid");
+    expect(review.records).toBe(0);
+    expect(review.malformedRecords).toBe(1);
+  });
+
   it("resolves xcarchive dSYM paths and reports UUID mismatches", () => {
     writeMetricKitRecord(dataDir, MISMATCHED_UUID);
 
@@ -137,6 +158,22 @@ describe("metrickit-review", () => {
     expect(review.recentDiagnostics[0]?.appFrames[0]?.symbolicationTargetUUIDs).toEqual([
       MATCHING_UUID,
     ]);
+  });
+
+  it("uses an exact hour window for MetricKit payloads", () => {
+    writeMetricKitRecord(dataDir, MATCHING_UUID);
+
+    const review = buildMetricKitReview({
+      dataDir,
+      hours: 0.5,
+      limit: 10,
+    });
+
+    expect(review.windowLabel).toBe("0.5h");
+    expect(review.requestedSinceMs).toBe(Date.now() - 30 * 60 * 1_000);
+    expect(review.payloads).toBe(0);
+    expect(review.firstPayloadTs).toBeNull();
+    expect(review.lastPayloadTs).toBeNull();
   });
 
   it("symbolicates app frames when the dSYM UUID matches", () => {
