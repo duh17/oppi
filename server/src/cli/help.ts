@@ -821,9 +821,9 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["schedule", "update"],
     title: "Update schedule",
-    summary: "Patch a schedule from a JSON definition file or inline JSON object.",
+    summary: "Patch a schedule from a definition or a focused model update.",
     usage:
-      "oppi schedule update <id> (--definition <file> | --definition-json <json-object>) [--json]",
+      "oppi schedule update <id> (--definition <file> | --definition-json <json-object> | --model <model> | --clear-model) [--json]",
     arguments: [{ name: "<id>", summary: "schedule id" }],
     flags: [
       {
@@ -834,15 +834,24 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--definition-json",
         value: "<json-object>",
-        summary: "inline JSON object with schedule fields to patch; maximum 65536 bytes",
+        summary: "inline JSON Merge Patch object; maximum 65536 bytes",
+      },
+      { name: "--model", value: "<model>", summary: "update a new-session schedule model" },
+      {
+        name: "--clear-model",
+        summary: "remove the explicit new-session model so the Agent or workspace default applies",
       },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    notes: ["Choose exactly one of --definition or --definition-json."],
+    notes: [
+      "Choose one update input. Omitted fields are unchanged; in definition JSON, null clears optional action fields.",
+      "Action type changes require a complete action definition.",
+    ],
     examples: [
-      { command: "oppi schedule update sch_123 --definition ./schedule.json --json" },
+      { command: "oppi schedule update sch_123 --model ds4/deepseek-v4-flash --json" },
+      { command: "oppi schedule update sch_123 --clear-model --json" },
       {
-        command: `oppi schedule update sch_123 --definition-json '{"name":"Daily review"}' --json`,
+        command: `oppi schedule update sch_123 --definition-json '{"action":{"model":"ds4/deepseek-v4-flash"}}' --json`,
       },
     ],
   },

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AgentScheduleStore,
+  mergeScheduleActionPatch,
   type AgentScheduleAction,
   type CreateAgentScheduleRequest,
 } from "../src/agent-schedules.js";
@@ -530,6 +531,31 @@ describe("agent schedule durable core", () => {
       completedAt: 1_000,
     });
     expect(store.getRun(run.id)?.error).toMatch(/BigInt/);
+  });
+
+  it("merges action patches without requiring callers to repeat preserved fields", () => {
+    const current: AgentScheduleAction = {
+      type: "new_session",
+      workspaceId: "ws-1",
+      prompt: "Keep this long prompt",
+      agentId: "agent-1",
+      model: "openai-codex/gpt-5.5",
+      worktreeId: "main",
+    };
+
+    expect(mergeScheduleActionPatch(current, { model: "ds4/deepseek-v4-flash" })).toEqual({
+      ...current,
+      model: "ds4/deepseek-v4-flash",
+    });
+    expect(mergeScheduleActionPatch(current, { model: null, worktreeId: null })).toEqual({
+      type: "new_session",
+      workspaceId: "ws-1",
+      prompt: "Keep this long prompt",
+      agentId: "agent-1",
+    });
+    expect(() =>
+      mergeScheduleActionPatch(current, { type: "existing_session", model: "other" }),
+    ).toThrow();
   });
 
   it("reclaims running runs after their lease expires", () => {

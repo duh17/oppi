@@ -200,6 +200,16 @@ const MATRIX_CASES: MatrixCase[] = [
     command: "schedule update",
     args: ["schedule", "update", "sch-1", "--definition-json", '{"name":"Daily"}'],
   },
+  {
+    category: "nonDestructiveWrite",
+    command: "schedule update",
+    args: ["schedule", "update", "sch-1", "--model", "ds4/deepseek-v4-flash"],
+  },
+  {
+    category: "nonDestructiveWrite",
+    command: "schedule update",
+    args: ["schedule", "update", "sch-1", "--clear-model"],
+  },
   { category: "nonDestructiveWrite", command: "schedule run", args: ["schedule", "run", "sch-1"] },
   {
     category: "nonDestructiveWrite",

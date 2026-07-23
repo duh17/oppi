@@ -32,6 +32,18 @@ export type AgentScheduleAction =
       streamingBehavior?: "steer" | "followUp";
     };
 
+export type AgentScheduleActionPatch = {
+  type?: AgentScheduleAction["type"];
+  workspaceId?: string;
+  prompt?: string;
+  agentId?: string | null;
+  model?: string | null;
+  worktreeId?: string | null;
+  name?: string | null;
+  sessionId?: string;
+  streamingBehavior?: "steer" | "followUp" | null;
+};
+
 export interface AgentSchedule {
   id: string;
   name: string;
@@ -232,7 +244,7 @@ export class AgentScheduleStore {
       ...current,
       ...(updates.name !== undefined ? { name: validateName(updates.name) } : {}),
       ...(updates.trigger !== undefined ? { trigger: validateTrigger(updates.trigger) } : {}),
-      ...(updates.action !== undefined ? { action: validateAction(updates.action) } : {}),
+      ...(updates.action !== undefined ? { action: validateActionShape(updates.action) } : {}),
       updatedAt: now,
     };
     this.db
@@ -740,7 +752,7 @@ export function validateCreateAgentScheduleRequest(input: unknown): CreateAgentS
 
 export function validateAgentScheduleUpdate(
   input: unknown,
-): Partial<Pick<CreateAgentScheduleRequest, "name" | "trigger" | "action">> {
+): Partial<Omit<CreateAgentScheduleRequest, "action"> & { action: AgentScheduleActionPatch }> {
   if (!isRecord(input)) throw new Error("Schedule update must be an object");
   assertAllowedKeys(input, new Set(["name", "trigger", "action"]), "Schedule update");
   if (Object.keys(input).length === 0) {
@@ -749,8 +761,65 @@ export function validateAgentScheduleUpdate(
   return {
     ...(input.name !== undefined ? { name: validateName(input.name as string) } : {}),
     ...(input.trigger !== undefined ? { trigger: validateTriggerShape(input.trigger) } : {}),
-    ...(input.action !== undefined ? { action: validateActionShape(input.action) } : {}),
+    ...(input.action !== undefined ? { action: validateActionPatch(input.action) } : {}),
   };
+}
+
+export function mergeScheduleActionPatch(
+  current: AgentScheduleAction,
+  patch: AgentScheduleActionPatch,
+): AgentScheduleAction {
+  const changingType = patch.type !== undefined && patch.type !== current.type;
+  const merged: Record<string, unknown> = changingType ? { ...patch } : { ...current, ...patch };
+  for (const [key, value] of Object.entries(merged)) {
+    if (value === null) delete merged[key];
+  }
+  return validateActionShape(merged);
+}
+
+function validateActionPatch(input: unknown): AgentScheduleActionPatch {
+  if (!isRecord(input)) throw new Error("Schedule action must be an object");
+  assertAllowedKeys(
+    input,
+    new Set([
+      "type",
+      "workspaceId",
+      "prompt",
+      "agentId",
+      "model",
+      "worktreeId",
+      "name",
+      "sessionId",
+      "streamingBehavior",
+    ]),
+    "Schedule action",
+  );
+  if (
+    input.type !== undefined &&
+    input.type !== "new_session" &&
+    input.type !== "existing_session"
+  ) {
+    throw new Error("Schedule action type must be new_session or existing_session");
+  }
+  for (const key of ["workspaceId", "prompt", "sessionId"] as const) {
+    if (input[key] !== undefined && typeof input[key] !== "string") {
+      throw new Error(`Schedule action ${key} must be a string`);
+    }
+  }
+  for (const key of ["agentId", "model", "worktreeId", "name"] as const) {
+    if (input[key] !== undefined && input[key] !== null && typeof input[key] !== "string") {
+      throw new Error(`Schedule action ${key} must be a string or null`);
+    }
+  }
+  if (
+    input.streamingBehavior !== undefined &&
+    input.streamingBehavior !== null &&
+    input.streamingBehavior !== "steer" &&
+    input.streamingBehavior !== "followUp"
+  ) {
+    throw new Error("Schedule action streamingBehavior must be steer, followUp, or null");
+  }
+  return input as AgentScheduleActionPatch;
 }
 
 function validateTriggerShape(input: unknown): AgentScheduleTrigger {

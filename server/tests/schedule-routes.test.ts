@@ -224,6 +224,47 @@ describe("schedule routes", () => {
     });
   });
 
+  it("patches nested schedule actions without replacing preserved fields", async () => {
+    const schedule = store.createSchedule({
+      name: "Model update",
+      trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+      action: {
+        type: "new_session",
+        workspaceId: workspace.id,
+        agentId: "agent-1",
+        model: "openai-codex/gpt-5.5",
+        worktreeId: "main",
+        prompt: "Keep this long prompt",
+      },
+    });
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = `/schedules/${schedule.id}`;
+
+    await dispatch({
+      method: "PATCH",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({ action: { model: "ds4/deepseek-v4-flash" } }),
+      res: {} as ServerResponse,
+    });
+    await dispatch({
+      method: "PATCH",
+      path,
+      url: new URL(`https://localhost${path}`),
+      req: requestBody({ action: { model: null, worktreeId: null } }),
+      res: {} as ServerResponse,
+    });
+
+    expect(errors).toEqual([]);
+    expect(store.getSchedule(schedule.id)?.action).toEqual({
+      type: "new_session",
+      workspaceId: workspace.id,
+      agentId: "agent-1",
+      prompt: "Keep this long prompt",
+    });
+    expect(responses).toHaveLength(2);
+  });
+
   it("runs a saved-Agent schedule with the stored Agent definition", async () => {
     const schedule = store.createSchedule({
       name: "Reviewer check",

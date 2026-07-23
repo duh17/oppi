@@ -1675,6 +1675,14 @@ describe("oppi local API commands", () => {
           expected: ["PATCH /schedules/sch-1"],
         },
         {
+          args: ["schedule", "update", "sch-1", "--model", "gpt codex", "--json"],
+          expected: ["GET /models", "PATCH /schedules/sch-1"],
+        },
+        {
+          args: ["schedule", "update", "sch-1", "--clear-model", "--json"],
+          expected: ["PATCH /schedules/sch-1"],
+        },
+        {
           args: ["wait", "session", "sess-1", "--status", "stopped", "--json"],
           expected: ["GET /sessions/sess-1"],
         },
@@ -2033,6 +2041,23 @@ describe("oppi local API commands", () => {
             (request.body as { name?: string }).name === "Inline schedule",
         )?.body,
       ).toEqual({ name: "Inline schedule" });
+      expect(
+        requests.find(
+          (request) =>
+            request.method === "PATCH" &&
+            request.path === "/schedules/sch-1" &&
+            (request.body as { action?: { model?: string } }).action?.model ===
+              "openai/gpt-5.3-codex",
+        )?.body,
+      ).toEqual({ action: { model: "openai/gpt-5.3-codex" } });
+      expect(
+        requests.find(
+          (request) =>
+            request.method === "PATCH" &&
+            request.path === "/schedules/sch-1" &&
+            (request.body as { action?: { model?: null } }).action?.model === null,
+        )?.body,
+      ).toEqual({ action: { model: null } });
 
       for (const testCase of [
         {
@@ -2059,6 +2084,10 @@ describe("oppi local API commands", () => {
         {
           args: ["schedule", "update", "sch-1", "--definition-json", "{}", "--json"],
           message: "definition update must not be empty",
+        },
+        {
+          args: ["schedule", "update", "sch-1", "--model", "  ", "--json"],
+          message: "--model requires a non-empty value",
         },
         {
           args: [

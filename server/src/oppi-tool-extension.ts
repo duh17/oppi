@@ -635,8 +635,14 @@ const COMMAND_DESCRIPTORS: readonly CommandDescriptor[] = Object.freeze([
     flags: commandFlags({
       definition: DEFINITION_FILE_FLAG,
       "definition-json": DEFINITION_JSON_FLAG,
+      model: VALUE_FLAG,
+      "clear-model": BOOLEAN_FLAG,
     }),
-    exactlyOneFlags: [["definition", "definition-json"]],
+    atLeastOneFlags: [["definition", "definition-json", "model", "clear-model"]],
+    atMostOneFlags: [
+      ["definition", "definition-json"],
+      ["model", "clear-model"],
+    ],
     target: { label: "Schedule", positionalIndex: 0 },
   },
   {

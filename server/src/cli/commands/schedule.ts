@@ -187,7 +187,33 @@ export async function cmdSchedule(
     if (mode === "update") {
       const id = positional[0];
       if (!id) throw new Error("schedule id is required");
-      const definition = readDefinitionInput(flags, { required: true, update: true });
+      const hasDefinition =
+        flags.definition !== undefined || flags["definition-json"] !== undefined;
+      if (flags.model !== undefined && !flags.model.trim()) {
+        throw new Error("--model requires a non-empty value");
+      }
+      const hasModelUpdate = flags.model !== undefined || flags["clear-model"] === "true";
+      if (hasDefinition && hasModelUpdate) {
+        throw new Error("--model or --clear-model cannot be combined with a definition input");
+      }
+      if (!hasDefinition && !hasModelUpdate) {
+        throw new Error(
+          "one of --definition, --definition-json, --model, or --clear-model is required",
+        );
+      }
+      if (flags.model !== undefined && flags["clear-model"] === "true") {
+        throw new Error("--model and --clear-model cannot be combined");
+      }
+      const definition = hasDefinition
+        ? readDefinitionInput(flags, { required: true, update: true })
+        : {
+            action: {
+              model:
+                flags["clear-model"] === "true"
+                  ? null
+                  : await resolveModelFlagForCli(storage, flags.model),
+            },
+          };
       const result = await call<Record<string, unknown>>(`/schedules/${encodeURIComponent(id)}`, {
         method: "PATCH",
         body: definition,

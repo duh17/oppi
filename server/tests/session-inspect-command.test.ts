@@ -126,6 +126,22 @@ describe("session inspect command contract", () => {
     ]);
   });
 
+  it("uses the control-session outline route for workspace-less sessions", async () => {
+    const paths: string[] = [];
+    const result = await inspectSession("control/1", [], { view: "summary" }, (async <T>(
+      path: string,
+    ) => {
+      paths.push(path);
+      if (path === "/sessions/control%2F1") {
+        return { session: { id: "control/1", name: "Control" } } as T;
+      }
+      return { outline: { entries: [{ id: "u1", kind: "user", summary: "status" }] } } as T;
+    }) as ApiCall);
+
+    expect(paths).toEqual(["/sessions/control%2F1", "/control-sessions/control%2F1/trace-outline"]);
+    expect(result.summary).toMatchObject({ sessionId: "control/1", workspaceId: undefined });
+  });
+
   it("returns stable JSON shapes for summary and detailed views", async () => {
     const api = traceCall([]);
     const summary = await inspectSession("s", [], { view: "summary" }, async <T>(path: string) => {
@@ -168,12 +184,6 @@ describe("session inspect command contract", () => {
       flags: { view: "messages" },
       call: (async () => ({ session: {} })) as ApiCall,
       message: "trace array",
-    },
-    {
-      name: "missing workspace",
-      flags: { view: "outline" },
-      call: (async () => ({ session: { id: "s" } })) as ApiCall,
-      message: "Session has no workspaceId",
     },
     {
       name: "malformed outline",

@@ -2,6 +2,7 @@ import type { ServerResponse } from "node:http";
 
 import { createAgentScheduleDispatchHooks } from "../agent-schedule-dispatch.js";
 import {
+  mergeScheduleActionPatch,
   validateAgentScheduleUpdate,
   validateCreateAgentScheduleRequest,
 } from "../agent-schedules.js";
@@ -76,10 +77,21 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         const schedules = getSchedules();
         const schedule = resolveScheduleSummary(scheduleId, res);
         if (!schedule) return true;
+        const current = schedules.getSchedule(schedule.id);
+        if (!current) {
+          helpers.error(res, 404, "Schedule not found");
+          return true;
+        }
         const body = validateAgentScheduleUpdate(await helpers.parseBody<unknown>(req));
-        const normalizedBody: Partial<CreateAgentScheduleRequest> = {
+        const normalizedBody = {
           ...body,
-          ...(body.action ? { action: normalizeScheduleActionTarget(body.action) } : {}),
+          ...(body.action
+            ? {
+                action: normalizeScheduleActionTarget(
+                  mergeScheduleActionPatch(current.action, body.action),
+                ),
+              }
+            : {}),
         };
         const now = Date.now();
         const updated = schedules.updateSchedule(schedule.id, normalizedBody, now);

@@ -64,10 +64,10 @@ export async function inspectSession(
       `/sessions/${encodeURIComponent(id)}`,
     );
     const workspaceId = sessionResult.session?.workspaceId?.trim();
-    if (!workspaceId) throw new Error("Session has no workspaceId");
-    const outlineResult = await call<Record<string, unknown>>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/trace-outline`,
-    );
+    const outlinePath = workspaceId
+      ? `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/trace-outline`
+      : `/control-sessions/${encodeURIComponent(id)}/trace-outline`;
+    const outlineResult = await call<Record<string, unknown>>(outlinePath);
     return buildInspectResult(
       sessionResult.session,
       traceEventsFromOutline(parseTraceOutlineEntries(outlineResult)),
