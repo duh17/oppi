@@ -823,6 +823,32 @@ struct SchedulePresentationTests {
         #expect(interval.scheduleScreenCadence == "REPEATS")
         #expect(interval.scheduleScreenTiming(locale: Locale(identifier: "en_US")) == "Every 2h")
     }
+
+    @Test func detailTimingNeverSurfacesCronAndQualifiesForeignTimeZones() {
+        let losAngeles = TimeZone(identifier: "America/Los_Angeles")!
+        let tokyo = TimeZone(identifier: "Asia/Tokyo")!
+        let daily = AgentScheduleTrigger.cron(
+            expression: "0 7 * * *",
+            timeZone: "America/Los_Angeles"
+        )
+
+        let localSummary = daily.detailTimingSummary(
+            locale: Locale(identifier: "en_US"),
+            deviceTimeZone: losAngeles
+        )
+        #expect(localSummary.contains("Every day"))
+        #expect(localSummary.contains("7:00"))
+        #expect(!localSummary.lowercased().contains("cron"))
+        #expect(!localSummary.contains("0 7"))
+
+        let foreignSummary = daily.detailTimingSummary(
+            locale: Locale(identifier: "en_US"),
+            deviceTimeZone: tokyo
+        )
+        #expect(foreignSummary.contains("Every day"))
+        #expect(!foreignSummary.lowercased().contains("cron"))
+        #expect(foreignSummary != localSummary)
+    }
 }
 
 @Suite("Control session starter prompts")

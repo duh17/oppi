@@ -385,6 +385,34 @@ enum AgentScheduleTrigger: Sendable, Equatable {
         }
     }
 
+    /// Human timing for schedule detail. Never surfaces cron expressions.
+    /// Appends a friendly timezone label when the schedule TZ differs from the device.
+    func detailTimingSummary(
+        locale: Locale = .current,
+        deviceTimeZone: TimeZone = .current
+    ) -> String {
+        let timing = scheduleScreenTiming(locale: locale)
+        guard let scheduleTimeZone = TimeZone(identifier: timeZone) else { return timing }
+        if scheduleTimeZone.identifier == deviceTimeZone.identifier {
+            return timing
+        }
+        let zoneLabel = Self.friendlyTimeZoneLabel(scheduleTimeZone, locale: locale)
+        return zoneLabel.map { "\(timing) · \($0)" } ?? timing
+    }
+
+    private static func friendlyTimeZoneLabel(_ timeZone: TimeZone, locale: Locale) -> String? {
+        if let city = timeZone.localizedName(for: .generic, locale: locale), !city.isEmpty {
+            return city
+        }
+        let identifier = timeZone.identifier
+        if let city = identifier.split(separator: "/").last.map(String.init)?
+            .replacingOccurrences(of: "_", with: " "),
+           !city.isEmpty {
+            return city
+        }
+        return nil
+    }
+
     private static func normalizedCronFields(_ expression: String) -> [String] {
         let fields = expression.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         return fields.count == 6 ? Array(fields.dropFirst()) : fields

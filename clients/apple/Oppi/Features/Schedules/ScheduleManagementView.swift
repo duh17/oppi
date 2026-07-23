@@ -282,11 +282,13 @@ private struct ScheduleDetailView: View {
 
     @State private var schedule: AgentSchedule?
     @State private var runs: [AgentScheduleRunSummary] = []
+    @State private var agentNamesById: [String: String] = [:]
     @State private var isLoading = false
     @State private var isMutating = false
     @State private var error: String?
     @State private var showRevision = false
     @State private var showPromptReader = false
+    @State private var confirmArchive = false
 
     var body: some View {
         List {
@@ -295,18 +297,19 @@ private struct ScheduleDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .listRowBackground(Color.themeBg)
             } else if let schedule {
-                Section("Schedule") {
-                    detailRow("Name", schedule.name)
-                    detailRow("Status", schedule.status.rawValue.capitalized)
-                    detailRow("When", schedule.trigger.displaySummary)
-                    detailRow("Updated", schedule.updatedAt.relativeString())
+                Section {
+                    scheduleSummaryHeader(schedule)
                 }
 
-                Section("Action") {
-                    actionDetail(schedule.action)
+                Section("Instructions") {
+                    promptPreview(prompt(in: schedule.action))
                 }
 
-                Section("Controls") {
+                Section(runWithSectionTitle(schedule.action)) {
+                    runWithDetail(schedule.action)
+                }
+
+                Section {
                     Button {
                         Task { await runNow() }
                     } label: {
@@ -315,21 +318,7 @@ private struct ScheduleDetailView: View {
                     .disabled(isMutating || schedule.status == .archived)
                     .accessibilityIdentifier("schedule.detail.run")
 
-                    if schedule.status == .active {
-                        Button {
-                            Task { await mutate(.pause) }
-                        } label: {
-                            Label("Pause", systemImage: "pause.fill")
-                        }
-                        .disabled(isMutating)
-                    } else if schedule.status == .paused {
-                        Button {
-                            Task { await mutate(.resume) }
-                        } label: {
-                            Label("Resume", systemImage: "play.fill")
-                        }
-                        .disabled(isMutating)
-                    } else {
+                    if schedule.status == .archived {
                         Button {
                             Task { await mutate(.restore) }
                         } label: {
@@ -337,13 +326,25 @@ private struct ScheduleDetailView: View {
                         }
                         .disabled(isMutating)
                         .accessibilityIdentifier("schedule.detail.restore")
+                    } else {
+                        Toggle(isOn: enabledBinding(for: schedule)) {
+                            Text("Enabled")
+                        }
+                        .disabled(isMutating)
+                        .accessibilityIdentifier("schedule.detail.enabled")
                     }
 
+                    Button {
+                        showRevision = true
+                    } label: {
+                        Label("Edit with Oppi", systemImage: "bubble.left.and.bubble.right")
+                    }
+                    .disabled(isMutating)
+                    .accessibilityIdentifier("schedule.detail.edit")
+
                     if schedule.status != .archived {
-                        Button(role: .destructive) {
-                            Task { await mutate(.archive) }
-                        } label: {
-                            Label("Archive", systemImage: "archivebox")
+                        Button("Archive", role: .destructive) {
+                            confirmArchive = true
                         }
                         .disabled(isMutating)
                     }
@@ -369,15 +370,6 @@ private struct ScheduleDetailView: View {
         .navigationTitle(schedule?.name ?? "Schedule")
         .navigationBarTitleDisplayMode(.inline)
         .themedListSurface()
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                if schedule != nil {
-                    Button("Edit") { showRevision = true }
-                        .disabled(isMutating)
-                        .accessibilityIdentifier("schedule.detail.edit")
-                }
-            }
-        }
         .task(id: scheduleId) { await load() }
         .refreshable { await load() }
         .sheet(isPresented: $showRevision) {
@@ -403,6 +395,14 @@ private struct ScheduleDetailView: View {
                 )
             }
         }
+        .alert("Archive this schedule?", isPresented: $confirmArchive) {
+            Button("Archive", role: .destructive) {
+                Task { await mutate(.archive) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It stops running and moves to Archived. You can restore it later.")
+        }
         .alert("Schedule", isPresented: Binding(
             get: { error != nil },
             set: { if !$0 { error = nil } }
@@ -420,6 +420,48 @@ private struct ScheduleDetailView: View {
         case restore
     }
 
+    private func scheduleSummaryHeader(_ schedule: AgentSchedule) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(schedule.name)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+                    .textSelection(.enabled)
+                Spacer(minLength: 8)
+                if schedule.status != .active {
+                    StatusPill(
+                        text: schedule.status.rawValue.capitalized,
+                        tone: schedule.status == .paused ? .warning : .neutral,
+                        emphasis: .tinted,
+                        size: .mini
+                    )
+                }
+            }
+
+            Label(schedule.trigger.detailTimingSummary(), systemImage: "calendar")
+                .font(.subheadline)
+                .foregroundStyle(.themeComment)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(schedule.trigger.detailTimingSummary())
+                .accessibilityIdentifier("schedule.detail.when")
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func enabledBinding(for schedule: AgentSchedule) -> Binding<Bool> {
+        Binding(
+            get: { schedule.status == .active },
+            set: { isEnabled in
+                guard !isMutating else { return }
+                if isEnabled, schedule.status == .paused {
+                    Task { await mutate(.resume) }
+                } else if !isEnabled, schedule.status == .active {
+                    Task { await mutate(.pause) }
+                }
+            }
+        )
+    }
+
     private func detailRow(_ title: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title)
@@ -427,28 +469,49 @@ private struct ScheduleDetailView: View {
             Spacer(minLength: 12)
             Text(value)
                 .multilineTextAlignment(.trailing)
+                .foregroundStyle(.themeFg)
                 .textSelection(.enabled)
         }
         .font(.subheadline)
     }
 
-    @ViewBuilder
-    private func actionDetail(_ action: AgentScheduleAction) -> some View {
+    private func runWithSectionTitle(_ action: AgentScheduleAction) -> String {
         switch action {
-        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name):
-            detailRow("Type", "New session")
-            detailRow("Workspace", workspaceName(workspaceId))
-            if let agentId, !agentId.isEmpty { detailRow("Agent", agentId) }
-            if let worktreeId, !worktreeId.isEmpty { detailRow("Worktree", worktreeId) }
-            if let name, !name.isEmpty { detailRow("Session name", name) }
-            if let model, !model.isEmpty { detailRow("Model", model) }
-            promptPreview(prompt)
-        case .existingSession(let workspaceId, let sessionId, let prompt, let streamingBehavior):
-            detailRow("Type", "Existing session")
-            detailRow("Workspace", workspaceName(workspaceId))
-            detailRow("Session", sessionTitle(sessionId))
-            detailRow("Delivery", streamingBehavior?.displayName ?? "Auto")
-            promptPreview(prompt)
+        case .newSession:
+            return "Run with"
+        case .existingSession:
+            return "Target"
+        }
+    }
+
+    @ViewBuilder
+    private func runWithDetail(_ action: AgentScheduleAction) -> some View {
+        switch action {
+        case .newSession(let workspaceId, _, let agentId, let model, _, let name):
+            detailRow("Workspace", humanWorkspaceName(workspaceId))
+            if let agentLabel = humanAgentName(agentId) {
+                detailRow("Agent", agentLabel)
+            }
+            if let model, !model.isEmpty {
+                detailRow("Model", SessionFormatting.shortModelName(model) ?? model)
+            }
+            if let name, !name.isEmpty {
+                detailRow("Session title", name)
+            }
+            Text("Starts a new session each run")
+                .font(.caption)
+                .foregroundStyle(.themeComment)
+        case .existingSession(let workspaceId, let sessionId, _, let streamingBehavior):
+            detailRow("Workspace", humanWorkspaceName(workspaceId))
+            detailRow("Session", humanSessionTitle(sessionId))
+            detailRow(
+                "Delivery",
+                streamingBehavior.map { $0 == .steer ? "Steers the session" : "Sends as follow-up" }
+                    ?? "Auto"
+            )
+            Text("Sends into an existing session")
+                .font(.caption)
+                .foregroundStyle(.themeComment)
         }
     }
 
@@ -458,24 +521,26 @@ private struct ScheduleDetailView: View {
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Prompt")
+                    Text("What it does")
                         .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.themeFg)
                     Spacer(minLength: 8)
-                    Label("Read", systemImage: "arrow.up.left.and.arrow.down.right")
+                    Text("Show instructions")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.themeBlue)
                 }
                 Text(prompt)
-                    .font(.caption.monospaced())
+                    .font(.subheadline)
                     .foregroundStyle(.themeFg)
                     .multilineTextAlignment(.leading)
-                    .lineLimit(8)
+                    .lineLimit(5)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Read full schedule prompt")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("What it does. \(prompt). Show full schedule instructions")
         .accessibilityHint("Opens the prompt as full-screen Markdown")
         .accessibilityIdentifier("schedule.detail.prompt")
     }
@@ -501,8 +566,12 @@ private struct ScheduleDetailView: View {
         do {
             async let fetchedSchedule = apiClient.getAgentSchedule(scheduleId)
             async let fetchedRuns = apiClient.listAgentScheduleRuns(scheduleId: scheduleId, limit: 20)
+            async let fetchedAgents = apiClient.listAgents(includeArchived: true)
             schedule = try await fetchedSchedule
             runs = try await fetchedRuns
+            if let agents = try? await fetchedAgents {
+                agentNamesById = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0.name) })
+            }
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -570,12 +639,22 @@ private struct ScheduleDetailView: View {
         )
     }
 
-    private func workspaceName(_ workspaceId: String) -> String {
-        workspaceStore.workspaces.first(where: { $0.id == workspaceId })?.name ?? workspaceId
+    private func humanWorkspaceName(_ workspaceId: String) -> String {
+        workspaceStore.workspaces.first(where: { $0.id == workspaceId })?.name
+            ?? "Unknown workspace"
     }
 
-    private func sessionTitle(_ sessionId: String) -> String {
-        sessionStore.session(id: sessionId)?.displayTitle ?? sessionId
+    private func humanSessionTitle(_ sessionId: String) -> String {
+        sessionStore.session(id: sessionId)?.displayTitle ?? "Existing session"
+    }
+
+    /// Prefer a resolved agent name. Never surface opaque agent IDs in primary UI.
+    private func humanAgentName(_ agentId: String?) -> String? {
+        guard let agentId, !agentId.isEmpty else { return nil }
+        if let name = agentNamesById[agentId], !name.isEmpty {
+            return name
+        }
+        return "Saved agent"
     }
 }
 

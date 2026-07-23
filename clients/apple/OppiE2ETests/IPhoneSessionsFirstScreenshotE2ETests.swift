@@ -404,6 +404,21 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         }
 
         tap(app.buttons["schedules.row.\(activeId)"], named: "active schedule detail")
+        let whenLabel = app.staticTexts["schedule.detail.when"]
+        XCTAssertTrue(whenLabel.waitForExistence(timeout: 10), "Human when label missing on schedule detail")
+        let whenText = whenLabel.label.lowercased()
+        XCTAssertFalse(whenText.contains("cron"), "Detail still surfaces cron syntax: \(whenLabel.label)")
+        XCTAssertFalse(whenText.contains("* * *"), "Detail still surfaces cron fields: \(whenLabel.label)")
+        XCTAssertTrue(
+            app.switches["schedule.detail.enabled"].waitForExistence(timeout: 5),
+            "Enabled toggle missing on schedule detail"
+        )
+        XCTAssertTrue(
+            app.buttons["schedule.detail.edit"].waitForExistence(timeout: 5),
+            "Edit with Oppi missing on schedule detail"
+        )
+        try saveLabScreenshot(name: "iphone-schedule-detail-human-when-e2e")
+
         tap(app.buttons["schedule.detail.edit"], named: "guided schedule revision")
         XCTAssertTrue(app.navigationBars["Revise Daily telemetry review"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 10))
