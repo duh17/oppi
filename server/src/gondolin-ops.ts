@@ -96,6 +96,28 @@ export function toGuestPath(
 
 // ─── Bash ───
 
+const PI_SESSION_METADATA_ENV_KEYS = [
+  "PI_PROVIDER",
+  "PI_MODEL",
+  "PI_REASONING_LEVEL",
+  "PI_SESSION_ID",
+] as const;
+
+function selectPiSessionMetadataEnv(
+  env: NodeJS.ProcessEnv | undefined,
+): Record<string, string> | undefined {
+  const selected: Record<string, string> = {};
+
+  for (const key of PI_SESSION_METADATA_ENV_KEYS) {
+    const value = env?.[key];
+    if (value) {
+      selected[key] = value;
+    }
+  }
+
+  return Object.keys(selected).length > 0 ? selected : undefined;
+}
+
 export function createGondolinBashOps(
   vm: GondolinVm,
   localCwd: string,
@@ -113,11 +135,11 @@ export function createGondolinBashOps(
       },
     ) {
       const guestCwd = toGuestPath(localCwd, cwd, guestWorkspace);
-      // Pi's bash tool passes the host shell environment by default. Do not
-      // forward it into the VM: provider credentials and host identity must
-      // stay on the trusted host side. Workspace-level sandbox env is injected
-      // at VM creation time instead.
-      const env = undefined;
+      // Pi's bash tool passes the host shell environment by default. Forward
+      // only non-secret session metadata without host paths: provider
+      // credentials and host identity stay on the trusted host side.
+      // Workspace-level sandbox env is injected at VM creation time instead.
+      const env = selectPiSessionMetadataEnv(options.env);
       const shellPath = vm.shellPath || "/bin/bash";
 
       const proc = vm.exec([shellPath, "-lc", command], {

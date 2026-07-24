@@ -198,7 +198,7 @@ describe("createGondolinBashOps", () => {
     expect(result.exitCode).toBe(42);
   });
 
-  it("does not forward host environment variables", async () => {
+  it("forwards only allowlisted Pi session metadata", async () => {
     const calls: Array<{ args: string[] | string; options: Record<string, unknown> }> = [];
     const vm = createMockVm((args, options) => {
       calls.push({ args, options: options ?? {} });
@@ -208,7 +208,37 @@ describe("createGondolinBashOps", () => {
     const ops = createGondolinBashOps(vm, localCwd);
     await ops.exec("env", localCwd, {
       onData: () => {},
-      env: { FOO: "bar", BAZ: undefined } as unknown as NodeJS.ProcessEnv,
+      env: {
+        PI_PROVIDER: "anthropic",
+        PI_MODEL: "claude-sonnet-4-5",
+        PI_REASONING_LEVEL: "high",
+        PI_SESSION_ID: "session-123",
+        PI_SESSION_FILE: "/tmp/session.jsonl",
+        FOO: "bar",
+        ANTHROPIC_API_KEY: "secret",
+        EMPTY: "",
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(calls[0].options.env).toEqual({
+      PI_PROVIDER: "anthropic",
+      PI_MODEL: "claude-sonnet-4-5",
+      PI_REASONING_LEVEL: "high",
+      PI_SESSION_ID: "session-123",
+    });
+  });
+
+  it("does not forward host environment variables when no Pi metadata is present", async () => {
+    const calls: Array<{ args: string[] | string; options: Record<string, unknown> }> = [];
+    const vm = createMockVm((args, options) => {
+      calls.push({ args, options: options ?? {} });
+      return createMockProcess();
+    });
+
+    const ops = createGondolinBashOps(vm, localCwd);
+    await ops.exec("env", localCwd, {
+      onData: () => {},
+      env: { FOO: "bar", ANTHROPIC_API_KEY: "secret", BAZ: undefined } as NodeJS.ProcessEnv,
     });
 
     expect(calls[0].options.env).toBeUndefined();
