@@ -725,6 +725,15 @@ describe("SdkBackend host extensions", () => {
       const readCallerIdentity = async (backend: SdkBackend): Promise<string> => {
         const bash = backend.session.getToolDefinition("bash");
         if (!bash) throw new Error("Managed host bash tool was not registered");
+        // Pi 0.82+ injects PI_* session env from ExtensionContext.sessionManager.
+        const toolContext = {
+          sessionManager: {
+            getSessionId: () => backend.session.sessionManager.getSessionId(),
+            getSessionFile: () => backend.session.sessionManager.getSessionFile(),
+          },
+          model: backend.session.model,
+          thinkingLevel: backend.session.thinkingLevel,
+        } as never;
         const result = await bash.execute(
           "bash-call",
           {
@@ -732,7 +741,7 @@ describe("SdkBackend host extensions", () => {
           },
           new AbortController().signal,
           undefined,
-          {} as never,
+          toolContext,
         );
         return result.content
           .filter((part) => part.type === "text")
@@ -759,6 +768,68 @@ describe("SdkBackend host extensions", () => {
       await second?.dispose();
       if (originalCallerIdentity === undefined) delete process.env[OPPI_CALLER_SESSION_ID_ENV];
       else process.env[OPPI_CALLER_SESSION_ID_ENV] = originalCallerIdentity;
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("exposes current model and thinking level to bash shell-outs", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-bash-session-env-"));
+    const backend = await SdkBackend.create({
+      session: makeSession({
+        ephemeral: true,
+        model: "openai-codex/gpt-5.3-codex",
+        thinkingLevel: "high",
+      }),
+      workspace: {
+        id: "w1",
+        name: "Bash session env test",
+        runtime: "host",
+        hostMount: cwd,
+      } as Workspace,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      const bash = backend.session.getToolDefinition("bash");
+      if (!bash) throw new Error("Managed host bash tool was not registered");
+      const model = backend.session.model;
+      expect(model?.provider).toBeTruthy();
+      expect(model?.id).toBeTruthy();
+      expect(backend.session.thinkingLevel).toBe("high");
+
+      // Pi 0.82+ injects live session metadata before spawnHook so scripts and
+      // extension-driven shell tools can read the active model without scraping
+      // prompts. Values refresh on each bash call after model/thinking changes.
+      const toolContext = {
+        sessionManager: backend.session.sessionManager,
+        model,
+        thinkingLevel: backend.session.thinkingLevel,
+      } as never;
+      const result = await bash.execute(
+        "bash-session-env",
+        {
+          command:
+            'printf \'%s|%s|%s|%s\' "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL" "$PI_SESSION_ID"',
+        },
+        new AbortController().signal,
+        undefined,
+        toolContext,
+      );
+      const text = result.content
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("");
+      expect(text).toBe(
+        [
+          model?.provider,
+          model?.id,
+          "high",
+          backend.session.sessionManager.getSessionId(),
+        ].join("|"),
+      );
+    } finally {
+      await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });
     }
   });
@@ -1221,7 +1292,7 @@ describe("SdkBackend.setModel", () => {
     );
 
     const modelRuntime = {
-      reloadConfig: vi.fn(async () => {}),
+      refresh: vi.fn(async () => ({})),
       getAvailableSnapshot: vi.fn(() => models),
       getModels: vi.fn(() => models),
       isUsingOAuth: vi.fn((provider: string) => oauthProviders.has(provider)),
@@ -1299,9 +1370,9 @@ describe("SdkBackend.setModel", () => {
 
     await backend.setModel("omlx/gemma-4-31b-bf16");
 
-    expect(modelRuntime.reloadConfig).toHaveBeenCalledTimes(1);
+    expect(modelRuntime.refresh).toHaveBeenCalledTimes(1);
     expect(modelRuntime.getAvailableSnapshot).toHaveBeenCalled();
-    expect(modelRuntime.reloadConfig.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(modelRuntime.refresh.mock.invocationCallOrder[0]).toBeLessThan(
       modelRuntime.getAvailableSnapshot.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
   });

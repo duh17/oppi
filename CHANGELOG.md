@@ -38,6 +38,10 @@ Example:
 
 ## [Unreleased]
 
+### Changed
+
+- **Server:** Updated embedded Pi runtime packages to `@earendil-works/pi-coding-agent@0.82.0`, `@earendil-works/pi-ai@0.82.0`, and `@earendil-works/pi-tui@0.82.0`. Managed host bash shell-outs now receive live `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`, `PI_SESSION_ID`, and `PI_SESSION_FILE`, so scripts and extensions can read the active model/thinking without scraping prompts.
+
 ### Added
 
 - **Client:** Added saved Agents and schedules to the iPhone drawer and iPad sidebar, made Workspaces collapsible, and moved App Settings into the sidebar while preserving the existing New Workspace action.
