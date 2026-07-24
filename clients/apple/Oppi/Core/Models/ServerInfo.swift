@@ -79,38 +79,62 @@ struct ServerInfo: Codable, Sendable, Equatable {
     }
 }
 
-struct CodexUsageInfo: Codable, Sendable, Equatable {
+/// Aggregated consumer/provider quota windows from `GET /server/provider-quotas`.
+struct ProviderQuotasInfo: Codable, Sendable, Equatable {
+    let providers: [ProviderQuota]
+    let fetchedAt: Int
+
+    var presentableProviders: [ProviderQuota] {
+        providers.filter(\.shouldPresentSection)
+    }
+
+    func quota(forProviderId providerId: String) -> ProviderQuota? {
+        let needle = providerId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return providers.first {
+            $0.providerId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == needle
+        }
+    }
+
+    func providerBadges(for provider: String) -> [ProviderQuota.ProviderBadge] {
+        quota(forProviderId: provider)?.providerBadges ?? []
+    }
+}
+
+struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
+    var id: String { providerId }
+
     let providerId: String
+    let displayName: String
     let authenticated: Bool
     let planType: String?
-    let rateLimitReachedType: String?
-    let fiveHour: Window?
-    let weekly: Window?
+    let windows: [Window]
     let credits: Credits?
-    let additionalRateLimits: [AdditionalRateLimit]
+    let prepaidBalanceCents: Int?
     let fetchedAt: Int
     let error: String?
 
-    struct Window: Codable, Sendable, Equatable {
+    struct Window: Codable, Sendable, Equatable, Identifiable {
+        var id: String { key }
+
+        let key: String
+        let shortLabel: String
+        let title: String
         let usedPercent: Double
         let remainingPercent: Double
-        let limitWindowSeconds: Int
-        let resetAt: Int
+        let limitWindowSeconds: Int?
+        let resetAt: Int?
+        let includeWeekdayInReset: Bool
 
-        var resetDate: Date { Date(timeIntervalSince1970: TimeInterval(resetAt)) }
+        var resetDate: Date? {
+            guard let resetAt else { return nil }
+            return Date(timeIntervalSince1970: TimeInterval(resetAt))
+        }
     }
 
     struct Credits: Codable, Sendable, Equatable {
         let hasCredits: Bool
         let unlimited: Bool
         let balance: String?
-    }
-
-    struct AdditionalRateLimit: Codable, Sendable, Equatable {
-        let meteredFeature: String?
-        let limitName: String?
-        let fiveHour: Window?
-        let weekly: Window?
     }
 
     enum BadgeTone: Sendable, Equatable {
@@ -125,7 +149,7 @@ struct CodexUsageInfo: Codable, Sendable, Equatable {
     }
 
     var hasAnyUsageWindow: Bool {
-        fiveHour != nil || weekly != nil
+        !windows.isEmpty
     }
 
     var shouldPresentSection: Bool {
@@ -139,6 +163,7 @@ struct CodexUsageInfo: Codable, Sendable, Equatable {
         switch normalized.lowercased() {
         case "prolite": return "Pro Lite"
         case "free_workspace": return "Free Workspace"
+        case "supergrok": return "SuperGrok"
         default:
             return normalized
                 .split(separator: "_")
@@ -156,31 +181,14 @@ struct CodexUsageInfo: Codable, Sendable, Equatable {
         return .green
     }
 
-    func providerBadges(for provider: String) -> [ProviderBadge] {
-        guard provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "openai-codex",
-              authenticated
-        else {
-            return []
-        }
-
-        var badges: [ProviderBadge] = []
-        if let window = fiveHour {
-            badges.append(
-                ProviderBadge(
-                    label: "5h \(Int(window.remainingPercent.rounded()))%",
-                    tone: Self.badgeTone(for: window.remainingPercent)
-                )
+    var providerBadges: [ProviderBadge] {
+        guard authenticated else { return [] }
+        return windows.map { window in
+            ProviderBadge(
+                label: "\(window.shortLabel) \(Int(window.remainingPercent.rounded()))%",
+                tone: Self.badgeTone(for: window.remainingPercent)
             )
         }
-        if let window = weekly {
-            badges.append(
-                ProviderBadge(
-                    label: "7d \(Int(window.remainingPercent.rounded()))%",
-                    tone: Self.badgeTone(for: window.remainingPercent)
-                )
-            )
-        }
-        return badges
     }
 }
 

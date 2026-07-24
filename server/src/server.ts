@@ -88,7 +88,7 @@ import { DictationManager } from "./dictation-manager.js";
 import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-types.js";
 import { StreamingSttProvider } from "./stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
-import { fetchCodexUsageStatus } from "./codex-usage.js";
+import { fetchProviderQuotas } from "./provider-quota.js";
 import {
   garbageCollectUploadStore,
   resolveUploadStoreConfig,
@@ -756,7 +756,7 @@ export class Server {
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       refreshModelCatalog: () => this.models.refresh(),
       getModelCatalog: () => this.models.getAll(),
-      getCodexUsageStatus: () => fetchCodexUsageStatus({ modelRuntime: this.modelRuntime }),
+      getProviderQuotasStatus: () => fetchProviderQuotas({ modelRuntime: this.modelRuntime }),
       searchIndex: this.searchIndex ?? undefined,
       appEvents: this.appEventStreamMux,
       serverStartedAt: Date.now(),

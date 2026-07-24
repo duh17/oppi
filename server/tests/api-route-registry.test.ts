@@ -106,7 +106,7 @@ const sessionOperationIds = [
 ];
 
 const settingsOperationIds = [
-  "getCodexUsage",
+  "getProviderQuotas",
   "getServerStats",
   "getDailyServerStats",
   "getAutoTitleConfig",

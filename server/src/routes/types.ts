@@ -7,7 +7,7 @@ import type { Session, Workspace } from "../types.js";
 import type { ModelInfo } from "../model-catalog.js";
 import type { SearchIndex } from "../search-index.js";
 import type { ProviderAuthManager } from "../provider-auth/provider-auth-manager.js";
-import type { CodexUsageStatus } from "../codex-usage.js";
+import type { ProviderQuotasStatus } from "../provider-quota.js";
 import type { AppEventEmitter } from "../app-event-stream.js";
 import type { SessionRuntimes } from "../runtime-router.js";
 import type { ServerResourceService } from "../server-resource-service.js";
@@ -24,7 +24,7 @@ export interface RouteContext {
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
   refreshModelCatalog: () => Promise<void>;
   getModelCatalog: () => ModelInfo[];
-  getCodexUsageStatus?: () => Promise<CodexUsageStatus>;
+  getProviderQuotasStatus?: () => Promise<ProviderQuotasStatus>;
   searchIndex?: SearchIndex;
   appEvents?: AppEventEmitter;
   serverStartedAt: number;

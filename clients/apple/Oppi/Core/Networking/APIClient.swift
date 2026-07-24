@@ -188,10 +188,10 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(DailyDetail.self, from: data)
     }
 
-    /// Fetch normalized Codex subscription usage windows from the server.
-    func fetchCodexUsage() async throws -> CodexUsageInfo {
-        let data = try await get("/server/codex-usage")
-        return try JSONDecoder().decode(CodexUsageInfo.self, from: data)
+    /// Fetch normalized provider quota windows (Codex, xAI, …) from the server.
+    func fetchProviderQuotas() async throws -> ProviderQuotasInfo {
+        let data = try await get("/server/provider-quotas")
+        return try JSONDecoder().decode(ProviderQuotasInfo.self, from: data)
     }
 
     // MARK: - Sessions

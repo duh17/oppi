@@ -18,7 +18,7 @@ struct ServerDetailView: View {
     @State private var showRemoveConfirmation = false
 
     @State private var providerStatuses: [ProviderAuthProviderStatus] = []
-    @State private var codexUsage: CodexUsageInfo?
+    @State private var providerQuotas: ProviderQuotasInfo?
     @State private var isLoadingProviders = false
     @State private var providerError: String?
     @State private var providerActionInFlightId: String?
@@ -138,13 +138,15 @@ struct ServerDetailView: View {
                 }
             }
 
-            if let codexUsage, codexUsage.shouldPresentSection {
+            if let providerQuotas, !providerQuotas.presentableProviders.isEmpty {
                 Section {
-                    CodexUsageSection(usage: codexUsage)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                        .listRowBackground(Color.clear)
+                    ForEach(providerQuotas.presentableProviders) { quota in
+                        ProviderQuotaSection(quota: quota)
+                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                            .listRowBackground(Color.clear)
+                    }
                 } header: {
-                    Text("Codex Usage")
+                    Text("Provider Quotas")
                 }
             }
 
@@ -238,7 +240,7 @@ struct ServerDetailView: View {
     }
 
     private var badgePreviewConnectionState: ServerBadgeConnectionState {
-        if info != nil || !providerStatuses.isEmpty || codexUsage != nil {
+        if info != nil || !providerStatuses.isEmpty || providerQuotas != nil {
             return .connected
         }
         if isLoading || isLoadingProviders {
@@ -738,7 +740,7 @@ struct ServerDetailView: View {
         isLoadingProviders = true
         defer { isLoadingProviders = false }
 
-        async let usage = loadCodexUsage(api: client)
+        async let quotas = loadProviderQuotas(api: client)
 
         do {
             providerStatuses = try await client.listProviderAuthStatus()
@@ -748,12 +750,12 @@ struct ServerDetailView: View {
             providerError = "Failed to load provider status: \(error.localizedDescription)"
         }
 
-        codexUsage = await usage
+        providerQuotas = await quotas
     }
 
-    private func loadCodexUsage(api: APIClient) async -> CodexUsageInfo? {
+    private func loadProviderQuotas(api: APIClient) async -> ProviderQuotasInfo? {
         do {
-            return try await api.fetchCodexUsage()
+            return try await api.fetchProviderQuotas()
         } catch {
             return nil
         }
@@ -1034,20 +1036,20 @@ struct ServerDetailView: View {
     }
 }
 
-private struct CodexUsageSection: View {
-    let usage: CodexUsageInfo
+private struct ProviderQuotaSection: View {
+    let quota: ProviderQuota
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 8) {
-                ProviderIcon(provider: "openai-codex")
-                Text("Codex usage")
+                ProviderIcon(provider: quota.providerId)
+                Text(quota.displayName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.themeFg)
 
                 Spacer(minLength: 8)
 
-                if let plan = usage.planLabel {
+                if let plan = quota.planLabel {
                     Text(plan)
                         .font(.caption.bold())
                         .foregroundStyle(.themeBlue)
@@ -1057,15 +1059,11 @@ private struct CodexUsageSection: View {
                 }
             }
 
-            if let window = usage.fiveHour {
-                usageRow(title: "5h", window: window, includeWeekday: false)
+            ForEach(quota.windows) { window in
+                usageRow(window: window)
             }
 
-            if let window = usage.weekly {
-                usageRow(title: "7d", window: window, includeWeekday: true)
-            }
-
-            if let error = usage.error {
+            if let error = quota.error {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.themeComment)
@@ -1078,10 +1076,10 @@ private struct CodexUsageSection: View {
     }
 
     @ViewBuilder
-    private func usageRow(title: String, window: CodexUsageInfo.Window, includeWeekday: Bool) -> some View {
+    private func usageRow(window: ProviderQuota.Window) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(title)
+                Text(window.title)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.themeComment)
 
@@ -1108,14 +1106,16 @@ private struct CodexUsageSection: View {
             }
             .frame(height: 6)
 
-            Text(resetLabel(for: window.resetDate, includeWeekday: includeWeekday))
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.themeComment)
+            if let resetDate = window.resetDate {
+                Text(resetLabel(for: resetDate, window: window))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.themeComment)
+            }
         }
     }
 
     private func remainingColor(_ remainingPercent: Double) -> Color {
-        switch CodexUsageInfo.badgeTone(for: remainingPercent) {
+        switch ProviderQuota.badgeTone(for: remainingPercent) {
         case .green:
             return .themeGreen
         case .orange:
@@ -1125,10 +1125,19 @@ private struct CodexUsageSection: View {
         }
     }
 
-    private func resetLabel(for date: Date, includeWeekday: Bool) -> String {
-        if includeWeekday {
-            return "resets \(date.formatted(.dateTime.weekday(.abbreviated).hour().minute()))"
+    private func resetLabel(for date: Date, window: ProviderQuota.Window) -> String {
+        let secondsUntilReset = date.timeIntervalSinceNow
+        let formatted: String
+        if secondsUntilReset <= 36 * 60 * 60, !window.includeWeekdayInReset {
+            // Short windows (e.g. Codex 5h): time-of-day is enough.
+            formatted = date.formatted(.dateTime.hour().minute())
+        } else if secondsUntilReset <= 8 * 24 * 60 * 60 {
+            // Within about a week: weekday + time.
+            formatted = date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        } else {
+            // Farther out (monthly): calendar day + time.
+            formatted = date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
         }
-        return "resets \(date.formatted(.dateTime.hour().minute()))"
+        return "resets \(formatted)"
     }
 }

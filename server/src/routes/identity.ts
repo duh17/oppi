@@ -163,20 +163,12 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, { models: ctx.getModelCatalog() });
   }
 
-  async function handleGetCodexUsage(res: ServerResponse): Promise<void> {
-    const getter = ctx.getCodexUsageStatus;
+  async function handleGetProviderQuotas(res: ServerResponse): Promise<void> {
+    const getter = ctx.getProviderQuotasStatus;
     if (!getter) {
       helpers.json(res, {
-        providerId: "openai-codex",
-        authenticated: false,
-        planType: null,
-        rateLimitReachedType: null,
-        fiveHour: null,
-        weekly: null,
-        credits: null,
-        additionalRateLimits: [],
+        providers: [],
         fetchedAt: Date.now(),
-        error: "Codex usage is unavailable on this server runtime.",
       });
       return;
     }
@@ -261,8 +253,8 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       await handleGetServerInfo(res);
       return true;
     }
-    if (path === "/server/codex-usage" && method === "GET") {
-      await handleGetCodexUsage(res);
+    if (path === "/server/provider-quotas" && method === "GET") {
+      await handleGetProviderQuotas(res);
       return true;
     }
     // Match /server/stats/daily/YYYY-MM-DD (must come before /server/stats)

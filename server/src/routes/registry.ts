@@ -111,7 +111,7 @@ const sessionOperationIds = new Set<string>([
 ]);
 
 const settingsOperationIds = new Set<string>([
-  "getCodexUsage",
+  "getProviderQuotas",
   "getServerStats",
   "getDailyServerStats",
   "updateServerRuntime",
@@ -193,8 +193,8 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
-    path: "/server/codex-usage",
-    operationId: "getCodexUsage",
+    path: "/server/provider-quotas",
+    operationId: "getProviderQuotas",
     surface: "admin",
     auth: "owner",
   },

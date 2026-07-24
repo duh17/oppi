@@ -15,7 +15,7 @@ struct ModelPickerSheet: View {
 
     @State private var searchText = ""
     @State private var collapsedProviders: Set<String> = []
-    @State private var codexUsage: CodexUsageInfo?
+    @State private var providerQuotas: ProviderQuotasInfo?
     private var recentIds: [String] { AppPreferences.RecentModels.load() }
 
     private var models: [ModelInfo] { chatState.cachedModels }
@@ -102,7 +102,7 @@ struct ModelPickerSheet: View {
                 // Background refresh — UI already shows cached data
                 if let api = apiClient {
                     async let refresh: Void = chatState.refreshModelCache(api: api)
-                    async let usage: Void = loadCodexUsage(api: api)
+                    async let usage: Void = loadProviderQuotas(api: api)
                     _ = await (refresh, usage)
                 }
             }
@@ -193,6 +193,8 @@ struct ModelPickerSheet: View {
     ) -> some View {
         let isSearchActive = !searchText.isEmpty
         let name = providerDisplayName(provider)
+        let usageBadges = providerQuotaBadges(for: provider)
+        let quotaSummary = usageBadges.map(\.label).joined(separator: ", ")
 
         return Button {
             guard !isSearchActive && hasVisibleModels else { return }
@@ -206,7 +208,6 @@ struct ModelPickerSheet: View {
 
                 Spacer(minLength: 8)
 
-                let usageBadges = codexUsageBadges(for: provider)
                 if !usageBadges.isEmpty {
                     HStack(spacing: 4) {
                         ForEach(Array(usageBadges.indices), id: \.self) { index in
@@ -220,6 +221,7 @@ struct ModelPickerSheet: View {
                             )
                         }
                     }
+                    .accessibilityHidden(true)
                 }
 
                 if !isSearchActive {
@@ -239,27 +241,46 @@ struct ModelPickerSheet: View {
         .buttonStyle(.plain)
         .font(.caption.bold())
         .foregroundStyle(.themeFgDim)
-        .accessibilityLabel(
-            isSearchActive || !hasVisibleModels
-                ? name
-                : (isCollapsed ? "Expand \(name) models" : "Collapse \(name) models")
-        )
+        .accessibilityLabel(providerHeaderAccessibilityLabel(
+            name: name,
+            isSearchActive: isSearchActive,
+            hasVisibleModels: hasVisibleModels,
+            isCollapsed: isCollapsed,
+            quotaSummary: quotaSummary
+        ))
+    }
+
+    private func providerHeaderAccessibilityLabel(
+        name: String,
+        isSearchActive: Bool,
+        hasVisibleModels: Bool,
+        isCollapsed: Bool,
+        quotaSummary: String
+    ) -> String {
+        let base: String
+        if isSearchActive || !hasVisibleModels {
+            base = name
+        } else {
+            base = isCollapsed ? "Expand \(name) models" : "Collapse \(name) models"
+        }
+        guard !quotaSummary.isEmpty else { return base }
+        return "\(base), quota \(quotaSummary)"
     }
 
     @MainActor
-    private func loadCodexUsage(api: APIClient) async {
+    private func loadProviderQuotas(api: APIClient) async {
         do {
-            codexUsage = try await api.fetchCodexUsage()
+            providerQuotas = try await api.fetchProviderQuotas()
         } catch {
-            // Keep picker lightweight; missing usage data should not block model selection.
+            // Keep picker lightweight; missing quota data should not block model selection.
         }
     }
 
-    private func codexUsageBadges(for provider: String) -> [CodexUsageInfo.ProviderBadge] {
-        codexUsage?.providerBadges(for: provider) ?? []
+    private func providerQuotaBadges(for provider: String) -> [ProviderQuota.ProviderBadge] {
+        providerQuotas?.providerBadges(for: provider) ?? []
     }
 
-    private func tone(for tone: CodexUsageInfo.BadgeTone) -> StatusPillTone {
+    private func tone(for tone: ProviderQuota.BadgeTone) -> StatusPillTone {
         switch tone {
         case .green:
             return .success

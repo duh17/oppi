@@ -154,32 +154,64 @@ struct ServerInfoTests {
         ])
     }
 
-    @Test func codexUsageSectionPresentationRequiresAuthUsageOrError() {
-        #expect(makeCodexUsageInfo().shouldPresentSection == false)
-        #expect(makeCodexUsageInfo(authenticated: true).shouldPresentSection)
-        #expect(makeCodexUsageInfo(error: "network timeout").shouldPresentSection)
-        #expect(makeCodexUsageInfo(fiveHour: makeCodexWindow(remainingPercent: 75)).shouldPresentSection)
+    @Test func providerQuotaSectionPresentationRequiresAuthUsageOrError() {
+        #expect(makeProviderQuota().shouldPresentSection == false)
+        #expect(makeProviderQuota(authenticated: true).shouldPresentSection)
+        #expect(makeProviderQuota(error: "network timeout").shouldPresentSection)
+        #expect(makeProviderQuota(windows: [makeQuotaWindow(remainingPercent: 75)]).shouldPresentSection)
     }
 
-    @Test func codexProviderBadgesOnlyAppearForAuthenticatedCodexProvider() {
-        let usage = makeCodexUsageInfo(
-            authenticated: true,
-            fiveHour: makeCodexWindow(remainingPercent: 62),
-            weekly: makeCodexWindow(limitWindowSeconds: 7 * 24 * 60 * 60, remainingPercent: 18)
+    @Test func providerQuotaBadgesOnlyAppearForAuthenticatedMatchingProvider() {
+        let quotas = ProviderQuotasInfo(
+            providers: [
+                makeProviderQuota(
+                    providerId: "openai-codex",
+                    displayName: "Codex",
+                    authenticated: true,
+                    windows: [
+                        makeQuotaWindow(key: "five_hour", shortLabel: "5h", remainingPercent: 62),
+                        makeQuotaWindow(
+                            key: "weekly",
+                            shortLabel: "7d",
+                            limitWindowSeconds: 7 * 24 * 60 * 60,
+                            remainingPercent: 18,
+                            includeWeekdayInReset: true
+                        ),
+                    ]
+                ),
+                makeProviderQuota(
+                    providerId: "xai",
+                    displayName: "xAI",
+                    authenticated: true,
+                    windows: [
+                        makeQuotaWindow(
+                            key: "weekly",
+                            shortLabel: "7d",
+                            limitWindowSeconds: 7 * 24 * 60 * 60,
+                            remainingPercent: 76,
+                            includeWeekdayInReset: true
+                        ),
+                    ]
+                ),
+            ],
+            fetchedAt: 0
         )
 
-        #expect(usage.providerBadges(for: "anthropic").isEmpty)
-        #expect(makeCodexUsageInfo(authenticated: false).providerBadges(for: "openai-codex").isEmpty)
-        #expect(usage.providerBadges(for: "openai-codex") == [
+        #expect(quotas.providerBadges(for: "anthropic").isEmpty)
+        #expect(makeProviderQuota(authenticated: false).providerBadges.isEmpty)
+        #expect(quotas.providerBadges(for: "openai-codex") == [
             .init(label: "5h 62%", tone: .green),
             .init(label: "7d 18%", tone: .red),
         ])
+        #expect(quotas.providerBadges(for: "xai") == [
+            .init(label: "7d 76%", tone: .green),
+        ])
     }
 
-    @Test func codexBadgeToneThresholdsMatchUiColors() {
-        #expect(CodexUsageInfo.badgeTone(for: 80) == .green)
-        #expect(CodexUsageInfo.badgeTone(for: 50) == .orange)
-        #expect(CodexUsageInfo.badgeTone(for: 20) == .red)
+    @Test func providerQuotaBadgeToneThresholdsMatchUiColors() {
+        #expect(ProviderQuota.badgeTone(for: 80) == .green)
+        #expect(ProviderQuota.badgeTone(for: 50) == .orange)
+        #expect(ProviderQuota.badgeTone(for: 20) == .red)
     }
 
     private func makeServerInfo(uptime: Int = 0, os: String = "darwin", arch: String = "arm64") -> ServerInfo {
@@ -202,35 +234,43 @@ struct ServerInfoTests {
         )
     }
 
-    private func makeCodexUsageInfo(
+    private func makeProviderQuota(
+        providerId: String = "openai-codex",
+        displayName: String = "Codex",
         authenticated: Bool = false,
-        fiveHour: CodexUsageInfo.Window? = nil,
-        weekly: CodexUsageInfo.Window? = nil,
+        windows: [ProviderQuota.Window] = [],
         error: String? = nil
-    ) -> CodexUsageInfo {
-        CodexUsageInfo(
-            providerId: "openai-codex",
+    ) -> ProviderQuota {
+        ProviderQuota(
+            providerId: providerId,
+            displayName: displayName,
             authenticated: authenticated,
             planType: nil,
-            rateLimitReachedType: nil,
-            fiveHour: fiveHour,
-            weekly: weekly,
+            windows: windows,
             credits: nil,
-            additionalRateLimits: [],
+            prepaidBalanceCents: nil,
             fetchedAt: 0,
             error: error
         )
     }
 
-    private func makeCodexWindow(
-        limitWindowSeconds: Int = 5 * 60 * 60,
-        remainingPercent: Double
-    ) -> CodexUsageInfo.Window {
-        CodexUsageInfo.Window(
+    private func makeQuotaWindow(
+        key: String = "five_hour",
+        shortLabel: String = "5h",
+        title: String? = nil,
+        limitWindowSeconds: Int? = 5 * 60 * 60,
+        remainingPercent: Double,
+        includeWeekdayInReset: Bool = false
+    ) -> ProviderQuota.Window {
+        ProviderQuota.Window(
+            key: key,
+            shortLabel: shortLabel,
+            title: title ?? shortLabel,
             usedPercent: 100 - remainingPercent,
             remainingPercent: remainingPercent,
             limitWindowSeconds: limitWindowSeconds,
-            resetAt: 1_700_000_000
+            resetAt: 1_700_000_000,
+            includeWeekdayInReset: includeWeekdayInReset
         )
     }
 }
