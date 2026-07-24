@@ -678,8 +678,16 @@ const HELP_TOPICS: HelpTopic[] = [
     subcommands: [{ name: "session <id>", summary: "wait for a session status" }],
     flags: [
       { name: "--status", value: "<status>", summary: "target status; defaults to stopped" },
-      { name: "--timeout", value: "<duration>", summary: "maximum wait such as 30s, 5m, or 1h" },
-      { name: "--poll", value: "<duration>", summary: "poll interval; defaults to 1s" },
+      {
+        name: "--timeout",
+        value: "<duration>",
+        summary: "maximum wait such as 900, 30s, or 5m; bare numbers are seconds",
+      },
+      {
+        name: "--poll",
+        value: "<duration>",
+        summary: "poll interval such as 1 or 500ms; bare numbers are seconds (default 1s)",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     examples: [{ command: "oppi wait session sess_123 --status stopped --json" }],
@@ -692,8 +700,16 @@ const HELP_TOPICS: HelpTopic[] = [
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [
       { name: "--status", value: "<status>", summary: "target status; defaults to stopped" },
-      { name: "--timeout", value: "<duration>", summary: "maximum wait such as 30s, 5m, or 1h" },
-      { name: "--poll", value: "<duration>", summary: "poll interval; defaults to 1s" },
+      {
+        name: "--timeout",
+        value: "<duration>",
+        summary: "maximum wait such as 900, 30s, or 10m; bare numbers are seconds",
+      },
+      {
+        name: "--poll",
+        value: "<duration>",
+        summary: "poll interval such as 1 or 500ms; bare numbers are seconds (default 1s)",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     examples: [{ command: "oppi wait session sess_123 --status stopped --timeout 10m --json" }],
@@ -1078,7 +1094,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Watch sessions",
     summary: "Stream one compact line per state transition for one or more sessions.",
     usage:
-      "oppi session watch <id...> [--until idle|attention|any-change] [--all] [--interval <s>] [--timeout <s>] [--json]",
+      "oppi session watch <id...> [--until idle|attention|any-change] [--all] [--interval <duration>] [--timeout <duration>] [--json]",
     arguments: [{ name: "<id...>", summary: "one or more session ids" }],
     flags: [
       {
@@ -1087,8 +1103,16 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "exit on idle, attention, or any-change (default idle)",
       },
       { name: "--all", summary: "require every watched session to meet --until (default any)" },
-      { name: "--interval", value: "<s>", summary: "poll interval; defaults to 2s" },
-      { name: "--timeout", value: "<s>", summary: "max watch time; defaults to 30m" },
+      {
+        name: "--interval",
+        value: "<duration>",
+        summary: "poll interval such as 2 or 500ms; bare numbers are seconds (default 2s)",
+      },
+      {
+        name: "--timeout",
+        value: "<duration>",
+        summary: "max watch time such as 900, 30s, or 30m; bare numbers are seconds (default 30m)",
+      },
       { name: "--json", summary: "emit NDJSON transition/resolution events" },
     ],
     notes: [
@@ -1104,7 +1128,7 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["session", "wait"],
     title: "Wait for a session",
     summary: "Block until a session is idle or needs attention, then print the terminal state.",
-    usage: "oppi session wait <id> [--for idle|attention|either] [--timeout <s>] [--json]",
+    usage: "oppi session wait <id> [--for idle|attention|either] [--timeout <duration>] [--json]",
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [
       {
@@ -1112,8 +1136,16 @@ const HELP_TOPICS: HelpTopic[] = [
         value: "<condition>",
         summary: "idle, attention, or either (default either)",
       },
-      { name: "--timeout", value: "<s>", summary: "max wait; defaults to 10m" },
-      { name: "--poll", value: "<s>", summary: "poll interval; defaults to 1s" },
+      {
+        name: "--timeout",
+        value: "<duration>",
+        summary: "max wait such as 900, 30s, or 10m; bare numbers are seconds (default 10m)",
+      },
+      {
+        name: "--poll",
+        value: "<duration>",
+        summary: "poll interval such as 1 or 500ms; bare numbers are seconds (default 1s)",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: ["Use watch for multiple sessions or live state transitions."],

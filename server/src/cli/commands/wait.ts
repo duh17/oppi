@@ -79,7 +79,9 @@ export function parseDurationMs(value: string): number {
   const match = value.trim().match(/^(\d+)(ms|s|m|h|d)?$/);
   if (!match) throw new Error("Duration must look like 500ms, 15s, 5m, 1h, or 1d");
   const amountText = match[1];
-  const unit = match[2] ?? "ms";
+  // Bare numbers are seconds so --timeout 900 matches help (`<s>`) and supervisor scripts.
+  // Use an explicit ms/s/m/h/d suffix when another unit is intended.
+  const unit = match[2] ?? "s";
   const amount = Number.parseInt(amountText, 10);
   if (!Number.isSafeInteger(amount)) {
     throw new Error("Duration is too large");
