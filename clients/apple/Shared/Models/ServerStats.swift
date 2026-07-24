@@ -145,12 +145,47 @@ func computePromptCacheRate(cacheRead: Int, inputTokens: Int, cacheWrite: Int) -
     return Double(cacheRead) / Double(denominator)
 }
 
+/// Sum optional token counters. `nil` means "not applicable" and stays nil until a real value appears.
+func mergeOptionalTokenCounts(_ lhs: Int?, _ rhs: Int?) -> Int? {
+    switch (lhs, rhs) {
+    case (nil, nil):
+        return nil
+    case (let left?, nil):
+        return left
+    case (nil, let right?):
+        return right
+    case (let left?, let right?):
+        return left + right
+    }
+}
+
+/// Model-breakdown cache-write label.
+/// `nil` means the provider has no write counter (for example xAI Grok).
+func formatModelCacheWriteLabel(_ cacheWrite: Int?) -> String {
+    guard let cacheWrite else { return "W: —" }
+    return "W: \(formatModelTokenCount(cacheWrite))"
+}
+
+func formatModelTokenCount(_ value: Int) -> String {
+    if value >= 1_000_000_000 {
+        return String(format: "%.1fB", Double(value) / 1_000_000_000)
+    }
+    if value >= 1_000_000 {
+        return String(format: "%.1fM", Double(value) / 1_000_000)
+    }
+    if value >= 1_000 {
+        return String(format: "%.0fK", Double(value) / 1_000)
+    }
+    return "\(value)"
+}
+
 extension StatsModelBreakdown {
     /// Prompt-cache effectiveness on the input side.
     ///
     /// Uses cacheRead / (cacheRead + uncachedInput + cacheWrite).
     /// Output tokens are excluded; cache writes are included because they are
     /// paid prompt-side work and should count against effectiveness.
+    /// When cacheWrite is nil (provider has no write concept), it contributes 0.
     var promptCacheRate: Double? {
         computePromptCacheRate(
             cacheRead: cacheRead ?? 0,

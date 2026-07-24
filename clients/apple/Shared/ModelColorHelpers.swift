@@ -369,7 +369,8 @@ struct AggregatedStatsModel: Identifiable, Equatable {
     let tokens: Int
     let inputTokens: Int
     let cacheRead: Int
-    let cacheWrite: Int
+    /// nil when the provider has no cache-write counter (for example xAI Grok).
+    let cacheWrite: Int?
     var share: Double
 
     var id: String { aggregationKey }
@@ -384,11 +385,12 @@ struct AggregatedStatsModel: Identifiable, Equatable {
 
     /// Prompt-cache effectiveness: cacheRead / (cacheRead + uncachedInput + cacheWrite).
     /// Excludes output tokens, but counts cache writes against the total.
+    /// Unsupported write counters (nil) contribute 0 to the denominator.
     var cacheRate: Double? {
         computePromptCacheRate(
             cacheRead: cacheRead,
             inputTokens: inputTokens,
-            cacheWrite: cacheWrite
+            cacheWrite: cacheWrite ?? 0
         )
     }
 }
@@ -403,7 +405,7 @@ func aggregateStatsModels(
         let identity = modelDisplayIdentity(item.model)
         let key = identity.aggregationKey
         let cacheRead = item.cacheRead ?? 0
-        let cacheWrite = item.cacheWrite ?? 0
+        let cacheWrite = item.cacheWrite
         let inputTokens = item.inputTokens
 
         if let existing = byKey[key] {
@@ -418,7 +420,7 @@ func aggregateStatsModels(
                 tokens: existing.tokens + item.tokens,
                 inputTokens: existing.inputTokens + inputTokens,
                 cacheRead: existing.cacheRead + cacheRead,
-                cacheWrite: existing.cacheWrite + cacheWrite,
+                cacheWrite: mergeOptionalTokenCounts(existing.cacheWrite, cacheWrite),
                 share: existing.share + item.share
             )
         } else {

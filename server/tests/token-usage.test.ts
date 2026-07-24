@@ -172,7 +172,48 @@ describe("resolveCacheWriteForModelBreakdown", () => {
     expect(resolved.source).toBe("estimated");
   });
 
-  it("does not estimate cacheWrite for non-OpenAI providers", () => {
+  it("marks xAI Grok cacheWrite as unsupported (provider has no write counter)", () => {
+    const resolved = resolveCacheWriteForModelBreakdown("xai/grok-4.5", {
+      input: 2100,
+      output: 400,
+      cacheRead: 35000,
+      cacheWrite: 0,
+    });
+
+    expect(resolved).toEqual({
+      value: null,
+      source: "unsupported",
+      ruleId: "xai-grok-no-cache-write",
+    });
+  });
+
+  it("marks OpenRouter Grok cacheWrite as unsupported", () => {
+    const resolved = resolveCacheWriteForModelBreakdown("openrouter/x-ai/grok-4.5", {
+      input: 900,
+      output: 200,
+      cacheRead: 1400,
+      cacheWrite: 0,
+    });
+
+    expect(resolved).toEqual({
+      value: null,
+      source: "unsupported",
+      ruleId: "xai-grok-no-cache-write",
+    });
+  });
+
+  it("still uses a reported cacheWrite for Grok if one is present", () => {
+    const resolved = resolveCacheWriteForModelBreakdown("xai/grok-4.5", {
+      input: 100,
+      output: 50,
+      cacheRead: 500,
+      cacheWrite: 12,
+    });
+
+    expect(resolved).toEqual({ value: 12, source: "reported" });
+  });
+
+  it("does not estimate cacheWrite for Anthropic models that report writes", () => {
     const resolved = resolveCacheWriteForModelBreakdown("anthropic/claude-opus-4-6", {
       input: 1200,
       output: 300,

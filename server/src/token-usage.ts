@@ -18,8 +18,9 @@ export interface TokenCounts {
 }
 
 export interface CacheWriteResolution {
-  value: number;
-  source: "reported" | "estimated" | "none";
+  /** null means the provider has no cache-write concept/counter. */
+  value: number | null;
+  source: "reported" | "estimated" | "none" | "unsupported";
   ruleId?: string;
 }
 
@@ -28,6 +29,12 @@ interface CacheWriteInferenceRule {
   description: string;
   matches: (modelId: string) => boolean;
   estimate: (tokens: TokenCounts) => number;
+}
+
+interface CacheWriteUnsupportedRule {
+  id: string;
+  description: string;
+  matches: (modelId: string) => boolean;
 }
 
 const costModels = builtinModels();
@@ -75,6 +82,27 @@ const CACHE_WRITE_INFERENCE_RULES: CacheWriteInferenceRule[] = [
       return isOpenRouter && (lower.includes("kimi") || lower.includes("glm"));
     },
     estimate: estimateUncachedInputWhenCacheReadPresent,
+  },
+];
+
+// Providers that expose cache reads but have no cache-write counter or billing lane.
+// xAI docs: only cached_tokens is reported; pricing is input / cached / output only.
+// https://docs.x.ai/developers/advanced-api-usage/prompt-caching/usage-and-pricing
+const CACHE_WRITE_UNSUPPORTED_RULES: CacheWriteUnsupportedRule[] = [
+  {
+    id: "xai-grok-no-cache-write",
+    description:
+      "xAI Grok (direct and OpenRouter) reports cached_tokens only. There is no cache-write " +
+      "counter or write price — uncached prompt tokens are billed as normal input.",
+    matches: (modelId: string) => {
+      const lower = modelId.toLowerCase();
+      return (
+        lower.startsWith("xai/") ||
+        lower.includes("/xai/") ||
+        lower.includes("/x-ai/") ||
+        lower.includes("grok")
+      );
+    },
   },
 ];
 
@@ -260,6 +288,7 @@ function normalizeTokens(tokens: Partial<TokenCounts> | undefined): TokenCounts 
  * Resolve cache write for model-breakdown display.
  *
  * - Uses reported cacheWrite when present.
+ * - Returns source "unsupported" (value null) when the provider has no write counter.
  * - Otherwise applies a model-specific inference rule (if any).
  */
 export function resolveCacheWriteForModelBreakdown(
@@ -274,6 +303,12 @@ export function resolveCacheWriteForModelBreakdown(
 
   if (!modelId) {
     return { value: 0, source: "none" };
+  }
+
+  for (const rule of CACHE_WRITE_UNSUPPORTED_RULES) {
+    if (rule.matches(modelId)) {
+      return { value: null, source: "unsupported", ruleId: rule.id };
+    }
   }
 
   for (const rule of CACHE_WRITE_INFERENCE_RULES) {

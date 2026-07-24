@@ -214,25 +214,25 @@ struct ServerStatsTests {
     }
 
     @Test func decodesModelBreakdownWithNullCacheFields() throws {
-        // iOS marks cacheRead/cacheWrite optional; server sends them non-null.
-        // Verify the optional path works for robustness.
+        // cacheWrite null is intentional for providers without a write counter (xAI Grok).
         let json = """
         {
-          "model": "gpt-4o",
+          "model": "xai/grok-4.5",
           "sessions": 5,
           "cost": 1.20,
           "tokens": 50000,
           "inputTokens": 20000,
-          "cacheRead": null,
+          "cacheRead": 35200000,
           "cacheWrite": null,
           "share": 0.50
         }
         """
         let breakdown = try decode(json, as: StatsModelBreakdown.self)
 
-        #expect(breakdown.cacheRead == nil)
+        #expect(breakdown.cacheRead == 35200000)
         #expect(breakdown.cacheWrite == nil)
         #expect(breakdown.share == 0.50)
+        #expect(formatModelCacheWriteLabel(breakdown.cacheWrite) == "W: —")
     }
 
     @Test func decodesModelBreakdownWithMissingCacheFields() throws {
@@ -761,6 +761,68 @@ struct ServerStatsTests {
         )
 
         #expect(breakdown.promptCacheRate == nil)
+    }
+
+    @Test func promptCacheRateTreatsMissingCacheWriteAsZero() {
+        // xAI Grok has no write counter; null must not invent write tokens.
+        let breakdown = StatsModelBreakdown(
+            model: "xai/grok-4.5",
+            sessions: 1,
+            cost: 1,
+            tokens: 10_000,
+            inputTokens: 2_100,
+            cacheRead: 35_200_000,
+            cacheWrite: nil,
+            share: 1
+        )
+
+        let expected = 35_200_000.0 / (35_200_000.0 + 2_100.0)
+        #expect(abs((breakdown.promptCacheRate ?? 0) - expected) < 0.000_001)
+    }
+
+    @Test func formatModelCacheWriteLabelShowsEmDashWhenUnsupported() {
+        #expect(formatModelCacheWriteLabel(nil) == "W: —")
+        #expect(formatModelCacheWriteLabel(0) == "W: 0")
+        #expect(formatModelCacheWriteLabel(2_100) == "W: 2K")
+        #expect(formatModelCacheWriteLabel(35_200_000) == "W: 35.2M")
+    }
+
+    @Test func mergeOptionalTokenCountsPreservesUnsupportedNil() {
+        #expect(mergeOptionalTokenCounts(nil, nil) == nil)
+        #expect(mergeOptionalTokenCounts(nil, 12) == 12)
+        #expect(mergeOptionalTokenCounts(8, nil) == 8)
+        #expect(mergeOptionalTokenCounts(8, 12) == 20)
+    }
+
+    @Test func aggregateStatsModelsPreservesUnsupportedCacheWrite() {
+        let aggregated = aggregateStatsModels([
+            StatsModelBreakdown(
+                model: "xai/grok-4.5",
+                sessions: 2,
+                cost: 3,
+                tokens: 20_000,
+                inputTokens: 1_000,
+                cacheRead: 10_000,
+                cacheWrite: nil,
+                share: 0.3
+            ),
+            StatsModelBreakdown(
+                model: "xai/grok-4.5",
+                sessions: 1,
+                cost: 2,
+                tokens: 10_000,
+                inputTokens: 500,
+                cacheRead: 8_000,
+                cacheWrite: nil,
+                share: 0.2
+            ),
+        ])
+
+        #expect(aggregated.count == 1)
+        #expect(aggregated[0].cacheWrite == nil)
+        #expect(formatModelCacheWriteLabel(aggregated[0].cacheWrite) == "W: —")
+        #expect(aggregated[0].cacheRead == 18_000)
+        #expect(aggregated[0].inputTokens == 1_500)
     }
 
     // MARK: - ServerInfo Presentation Helpers

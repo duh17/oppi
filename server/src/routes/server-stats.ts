@@ -51,7 +51,8 @@ export interface StatsModelBreakdown {
   tokens: number;
   inputTokens: number;
   cacheRead: number;
-  cacheWrite: number;
+  /** null when the provider has no cache-write concept/counter (e.g. xAI Grok). */
+  cacheWrite: number | null;
   share: number; // 0–1 fraction of total cost
 }
 
@@ -257,6 +258,8 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
       inputTokens: number;
       cacheRead: number;
       cacheWrite: number;
+      /** false when every session resolved cacheWrite as unsupported. */
+      cacheWriteApplicable: boolean;
     }
   >();
 
@@ -300,7 +303,15 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
     // Model
     let m = modelMap.get(model);
     if (!m) {
-      m = { sessions: 0, cost: 0, tokens: 0, inputTokens: 0, cacheRead: 0, cacheWrite: 0 };
+      m = {
+        sessions: 0,
+        cost: 0,
+        tokens: 0,
+        inputTokens: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        cacheWriteApplicable: false,
+      };
       modelMap.set(model, m);
     }
     m.sessions++;
@@ -308,7 +319,11 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
     m.tokens += tokens;
     m.inputTokens += s.tokens?.input ?? 0;
     m.cacheRead += s.tokens?.cacheRead ?? 0;
-    m.cacheWrite += resolveCacheWriteForModelBreakdown(s.model, s.tokens).value;
+    const resolvedCacheWrite = resolveCacheWriteForModelBreakdown(s.model, s.tokens);
+    if (resolvedCacheWrite.source !== "unsupported" && resolvedCacheWrite.value !== null) {
+      m.cacheWriteApplicable = true;
+      m.cacheWrite += resolvedCacheWrite.value;
+    }
 
     // Workspace
     const wsId = s.workspaceId ?? "unknown";
@@ -347,7 +362,7 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
       tokens: m.tokens,
       inputTokens: m.inputTokens,
       cacheRead: m.cacheRead,
-      cacheWrite: m.cacheWrite,
+      cacheWrite: m.cacheWriteApplicable ? m.cacheWrite : null,
       share: totalCost > 0 ? round2(m.cost / totalCost) : 0,
     }));
 

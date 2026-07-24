@@ -157,7 +157,7 @@ struct ModelBreakdownSection: View {
                     .frame(width: 30, alignment: .trailing)
             }
 
-            if item.cacheRead > 0 || item.cacheWrite > 0 {
+            if item.cacheRead > 0 || (item.cacheWrite ?? 0) > 0 {
                 HStack(spacing: 8) {
                     Color.clear.frame(width: 18)
 
@@ -169,7 +169,7 @@ struct ModelBreakdownSection: View {
                     Text("R: \(item.cacheRead.formattedTokenCount())")
                         .foregroundStyle(.themeComment)
 
-                    Text("W: \(item.cacheWrite.formattedTokenCount())")
+                    Text(formatModelCacheWriteLabel(item.cacheWrite))
                         .foregroundStyle(.themeComment)
 
                     Spacer()

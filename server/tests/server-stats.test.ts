@@ -440,6 +440,78 @@ describe("aggregateStats", () => {
     });
   });
 
+  test("emits null cacheWrite for xAI Grok models when the provider has no write counter", () => {
+    const sessions = [
+      makeSession({
+        id: "s1",
+        createdAt: now - DAY_MS,
+        cost: 5,
+        model: "xai/grok-4.5",
+        tokens: { input: 2100, output: 400, cacheRead: 35200000, cacheWrite: 0 },
+      }),
+    ];
+
+    const result = aggregate({ sessions });
+    expect(result.modelBreakdown).toHaveLength(1);
+    expect(result.modelBreakdown[0]).toMatchObject({
+      model: "xai/grok-4.5",
+      inputTokens: 2100,
+      cacheRead: 35200000,
+      cacheWrite: null,
+      tokens: 35202500,
+    });
+  });
+
+  test("emits null cacheWrite for OpenRouter Grok models when the provider has no write counter", () => {
+    const sessions = [
+      makeSession({
+        id: "s1",
+        createdAt: now - DAY_MS,
+        cost: 1,
+        model: "openrouter/x-ai/grok-4.5",
+        tokens: { input: 900, output: 200, cacheRead: 1400000, cacheWrite: 0 },
+      }),
+    ];
+
+    const result = aggregate({ sessions });
+    expect(result.modelBreakdown).toHaveLength(1);
+    expect(result.modelBreakdown[0]).toMatchObject({
+      model: "openrouter/x-ai/grok-4.5",
+      inputTokens: 900,
+      cacheRead: 1400000,
+      cacheWrite: null,
+      tokens: 1401100,
+    });
+  });
+
+  test("keeps null cacheWrite when aggregating multiple Grok sessions", () => {
+    const sessions = [
+      makeSession({
+        id: "s1",
+        createdAt: now - DAY_MS,
+        cost: 3,
+        model: "xai/grok-4.5",
+        tokens: { input: 1000, output: 100, cacheRead: 10000, cacheWrite: 0 },
+      }),
+      makeSession({
+        id: "s2",
+        createdAt: now - DAY_MS,
+        cost: 2,
+        model: "xai/grok-4.5",
+        tokens: { input: 500, output: 50, cacheRead: 8000, cacheWrite: 0 },
+      }),
+    ];
+
+    const result = aggregate({ sessions });
+    expect(result.modelBreakdown).toHaveLength(1);
+    expect(result.modelBreakdown[0]).toMatchObject({
+      model: "xai/grok-4.5",
+      inputTokens: 1500,
+      cacheRead: 18000,
+      cacheWrite: null,
+    });
+  });
+
   test("keeps cache-rate inputs consistent when mixing reported and inferred cache writes", () => {
     const sessions = [
       makeSession({

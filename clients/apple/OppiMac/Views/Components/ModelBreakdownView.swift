@@ -101,7 +101,7 @@ struct ModelBreakdownView: View {
                     .frame(width: 26, alignment: .trailing)
             }
 
-            if item.cacheRead > 0 || item.cacheWrite > 0 {
+            if item.cacheRead > 0 || (item.cacheWrite ?? 0) > 0 {
                 HStack(spacing: 6) {
                     Color.clear.frame(width: 17)
 
@@ -113,7 +113,7 @@ struct ModelBreakdownView: View {
                     Text("R: \(formatTokens(item.cacheRead))")
                         .foregroundStyle(.secondary)
 
-                    Text("W: \(formatTokens(item.cacheWrite))")
+                    Text(formatModelCacheWriteLabel(item.cacheWrite))
                         .foregroundStyle(.secondary)
 
                     Spacer()
