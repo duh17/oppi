@@ -388,8 +388,20 @@ struct UIHangHarnessView: View {
                     text: """
                     # Visual markdown sample
 
+                    First line sits beside the avatar; later lines and blocks reclaim the full bubble width so tables can breathe.
+
                     - bullet one
-                    - bullet two
+                    - bullet two with enough text to wrap under the avatar column on phone widths
+
+                    | Feature | Detail |
+                    | --- | --- |
+                    | Hang layout | Avatar stays put; prose/tables use width under it |
+                    | Two-column fit | Wrap cell text instead of sideways scroll when possible |
+                    | Wide tables | Keep horizontal scroll once columns get too many |
+
+                    | Col A | Col B | Col C | Col D | Col E |
+                    | --- | --- | --- | --- | --- |
+                    | alpha-value-long | beta-value-long | gamma-value-long | delta-value-long | epsilon-value-long |
 
                     ```swift
                     print(\"markdown + syntax highlight parity\")

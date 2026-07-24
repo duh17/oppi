@@ -138,6 +138,16 @@ func timelineRenderedText(of view: UIView) -> String {
     return ""
 }
 
+/// Join visible text from a markdown table in either clip or wrap mode.
+@MainActor
+func timelineRenderedTableText(in tableView: NativeTableBlockView) -> String {
+    timelineAllTextViews(in: tableView)
+        .filter { !$0.isHidden }
+        .map { timelineRenderedText(of: $0) }
+        .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        .joined(separator: "\n")
+}
+
 @MainActor
 func timelineActionTitles(in menu: UIMenu) -> [String] {
     menu.children.compactMap { ($0 as? UIAction)?.title }

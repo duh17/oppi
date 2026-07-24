@@ -159,6 +159,29 @@ final class AssistantMarkdownContentView: UIView {
 
     private var currentConfig: Configuration?
 
+    /// Leading hang used by assistant timeline rows: first text lines clear the
+    /// avatar, then content uses the full markdown width under that column.
+    /// Zero means no hang (full-screen readers, exports, non-chat surfaces).
+    var leadingHangClearance: CGFloat = 0 {
+        didSet {
+            guard oldValue != leadingHangClearance else { return }
+            segmentApplier.applyLeadingHang(
+                clearance: leadingHangClearance,
+                height: leadingHangHeight
+            )
+        }
+    }
+
+    var leadingHangHeight: CGFloat = 0 {
+        didSet {
+            guard oldValue != leadingHangHeight else { return }
+            segmentApplier.applyLeadingHang(
+                clearance: leadingHangClearance,
+                height: leadingHangHeight
+            )
+        }
+    }
+
     /// Closure for fetching workspace files (for inline markdown images).
     /// Wraps `APIClient.fetchWorkspaceFile` at the injection site, keeping this
     /// view file decoupled from `APIClient` directly.
@@ -222,6 +245,10 @@ final class AssistantMarkdownContentView: UIView {
             segments: build.segments,
             config: config,
             sourceLineRanges: build.sourceLineRanges
+        )
+        segmentApplier.applyLeadingHang(
+            clearance: leadingHangClearance,
+            height: leadingHangHeight
         )
 
         stackView.invalidateIntrinsicContentSize()

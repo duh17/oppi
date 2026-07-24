@@ -211,6 +211,34 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         XCTAssertLessThanOrEqual(perfGuardrail - perfGuardrailBefore, 1)
     }
 
+    func testAssistantMarkdownTableHangLayoutScreenshot() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+
+        let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 1, timeout: 6)
+        XCTAssertGreaterThanOrEqual(visualTools, 1)
+
+        let timeline = app.collectionViews.firstMatch
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+
+        // Drive to the end of the visual fixture cluster.
+        for _ in 0..<12 {
+            timeline.swipeUp(velocity: .fast)
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        // Walk back above the tool rows into the visual markdown/table block.
+        for _ in 0..<8 {
+            timeline.swipeDown(velocity: .slow)
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+
+        let screenshot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = "assistant-markdown-table-hang-layout"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testVisualToolsetTapThroughRendersWithoutStalls() throws {
         launchHarness(noStream: true, includeVisualFixtures: true)
 

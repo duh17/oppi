@@ -601,6 +601,47 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func assistantMarkdownHangsUnderAvatarAndUsesTighterTrailingEdge() throws {
+        let text = """
+        First line beside the avatar should clear the badge.
+
+        Second paragraph and later blocks reclaim the avatar column so tables can use full bubble width.
+
+        | Feature | Detail |
+        | --- | --- |
+        | Layout | Hang under avatar |
+        | Tables | Wrap to fit two columns |
+        """
+        let view = AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: text))
+        view.bounds = CGRect(x: 0, y: 0, width: 370, height: 600)
+        _ = fittedTimelineSize(for: view, width: 370)
+        view.layoutIfNeeded()
+
+        let markdown = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: view))
+        let badge = try #require(timelineFirstView(ofType: SessionGridBadgeView.self, in: view))
+
+        #expect(abs(markdown.frame.minX - AssistantTimelineRowContentView.bubbleLeadingPadding) < 0.5)
+        #expect(
+            abs(view.bounds.width - markdown.frame.maxX - AssistantTimelineRowContentView.bubbleTrailingPadding) < 0.5
+        )
+        #expect(markdown.frame.minX < badge.frame.maxX)
+
+        // First prose text view should reserve the avatar column via exclusion path.
+        let proseViews = timelineAllTextViews(in: markdown).filter { textView in
+            // Table/code cells are nested deeper than the root markdown stack.
+            textView.superview is UIStackView
+                && !(textView.superview?.superview is NativeTableBlockView)
+                && !(textView.superview?.superview is NativeCodeBlockView)
+        }
+        let firstProse = try #require(proseViews.first)
+        #expect(!firstProse.textContainer.exclusionPaths.isEmpty)
+
+        let exclusion = try #require(firstProse.textContainer.exclusionPaths.first?.bounds)
+        #expect(exclusion.width >= AssistantTimelineRowContentView.avatarContentClearance - 0.5)
+        #expect(exclusion.height >= AssistantTimelineRowContentView.avatarSize - 0.5)
+    }
+
+    @MainActor
     @Test func rendersWikiLinksInsideTableCellsAsClickableWorkspaceNoteLinks() throws {
         let text = """
         | Title | Link |
@@ -616,7 +657,13 @@ struct AssistantTimelineRowContentViewTests {
         ))
         _ = fittedTimelineSize(for: view, width: 370)
         let tableView = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: view))
-        let textView = try #require(timelineAllTextViews(in: tableView).first)
+        let textView = try #require(
+            timelineAllTextViews(in: tableView).first { textView in
+                guard !textView.isHidden else { return false }
+                let rendered = textView.attributedText?.string ?? ""
+                return rendered.contains("session note")
+            }
+        )
 
         let rendered = textView.attributedText.string
         let labelRange = (rendered as NSString).range(of: "session note")
@@ -781,9 +828,10 @@ struct AssistantTimelineRowContentViewTests {
         container.layoutIfNeeded()
 
         let tableView = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: markdownView))
-        let tableTextView = try #require(timelineAllTextViews(in: tableView).first)
+        let tableTextViews = timelineAllTextViews(in: tableView).filter { !$0.isHidden }
+        let tableTextView = try #require(tableTextViews.first)
 
-        let initialText = timelineRenderedText(of: tableTextView)
+        let initialText = timelineRenderedTableText(in: tableView)
         #expect(initialText.contains("Selection menu"))
         #expect(initialText.contains("WKWebView support"))
 
@@ -802,13 +850,17 @@ struct AssistantTimelineRowContentViewTests {
         container.setNeedsLayout()
         container.layoutIfNeeded()
 
-        let finalText = timelineRenderedText(of: tableTextView)
+        let finalText = timelineRenderedTableText(in: tableView)
         #expect(finalText.contains("Selection menu"))
         #expect(finalText.contains("WKWebView support"))
-        #expect(
-            abs(tableTextView.contentOffset.y + tableTextView.adjustedContentInset.top) < 0.5,
-            "Table text view should stay pinned at top, got y=\(tableTextView.contentOffset.y)"
-        )
+        for textView in timelineAllTextViews(in: tableView).filter({ !$0.isHidden }) {
+            #expect(
+                abs(textView.contentOffset.y + textView.adjustedContentInset.top) < 0.5,
+                "Table text view should stay pinned at top, got y=\(textView.contentOffset.y)"
+            )
+        }
+        // Keep a named binding so the clip-mode path stays exercised too.
+        _ = tableTextView
     }
 
     @MainActor
@@ -844,8 +896,8 @@ struct AssistantTimelineRowContentViewTests {
         let tableAfterPhase2 = timelineFirstView(ofType: NativeTableBlockView.self, in: mdView)
         #expect(tableAfterPhase2 === tableAfterPhase1, "Table view should be updated in-place, not rebuilt")
 
-        let phase2TextView = try #require(tableAfterPhase2.flatMap { timelineAllTextViews(in: $0).first })
-        #expect(timelineRenderedText(of: phase2TextView).contains("alpha"))
+        let tableAfterPhase2View = try #require(tableAfterPhase2)
+        #expect(timelineRenderedTableText(in: tableAfterPhase2View).contains("alpha"))
 
         // Phase 3: second row arrives (partial).
         let phase3 = """
@@ -862,8 +914,8 @@ struct AssistantTimelineRowContentViewTests {
         let tableAfterPhase3 = timelineFirstView(ofType: NativeTableBlockView.self, in: mdView)
         #expect(tableAfterPhase3 === tableAfterPhase1, "Table view should still be the same instance")
 
-        let phase3TextView = try #require(tableAfterPhase3.flatMap { timelineAllTextViews(in: $0).first })
-        #expect(timelineRenderedText(of: phase3TextView).contains("beta"))
+        let tableAfterPhase3View = try #require(tableAfterPhase3)
+        #expect(timelineRenderedTableText(in: tableAfterPhase3View).contains("beta"))
     }
 
     @MainActor
@@ -910,8 +962,7 @@ struct AssistantTimelineRowContentViewTests {
         _ = fittedTimelineSize(for: mdView, width: 370)
 
         let tableAfterPhase1 = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: mdView))
-        let tableTextViewPhase1 = try #require(timelineAllTextViews(in: tableAfterPhase1).first)
-        #expect(timelineRenderedText(of: tableTextViewPhase1).contains("Selection menu"))
+        #expect(timelineRenderedTableText(in: tableAfterPhase1).contains("Selection menu"))
 
         let phase2 = """
         ## What we can extend
@@ -932,16 +983,14 @@ struct AssistantTimelineRowContentViewTests {
 
         let phase2Table = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: mdView))
         #expect(phase2Table === tableAfterPhase1)
-        let tableTextViewPhase2 = try #require(timelineAllTextViews(in: phase2Table).first)
-        #expect(timelineRenderedText(of: tableTextViewPhase2).contains("Selection menu"))
+        #expect(timelineRenderedTableText(in: phase2Table).contains("Selection menu"))
 
         let phase3 = phase2 + "\n        ```\n"
         mdView.apply(configuration: .make(content: phase3, isStreaming: false, themeID: ThemeRuntimeState.currentThemeID()))
         _ = fittedTimelineSize(for: mdView, width: 370)
 
         let phase3Table = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: mdView))
-        let tableTextViewPhase3 = try #require(timelineAllTextViews(in: phase3Table).first)
-        let rendered = timelineRenderedText(of: tableTextViewPhase3)
+        let rendered = timelineRenderedTableText(in: phase3Table)
 
         #expect(rendered.contains("Selection menu"))
         #expect(!rendered.contains("menu injectors"), "Mermaid edge labels should not leak into table rendering")

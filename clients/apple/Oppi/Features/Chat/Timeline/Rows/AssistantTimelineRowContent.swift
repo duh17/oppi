@@ -77,6 +77,21 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
     /// exceed 10k points on phone-width layouts.
     private static let maxValidHeight: CGFloat = 1_000_000
 
+    /// Bubble padding and avatar geometry for the hanging content layout.
+    /// Content uses the full bubble width; the avatar only reserves space on the
+    /// first text lines (via exclusion path), then later lines/blocks run under it.
+    static let bubbleLeadingPadding: CGFloat = 10
+    static let bubbleTrailingPadding: CGFloat = 6
+    static let bubbleVerticalPadding: CGFloat = 8
+    static let avatarSize: CGFloat = 18
+    static let avatarTopPadding: CGFloat = 10
+    static let avatarContentGap: CGFloat = 8
+    static var avatarContentClearance: CGFloat { avatarSize + avatarContentGap }
+    /// Exclusion height relative to markdown top so line 1 clears the badge.
+    static var avatarHangHeight: CGFloat {
+        max(avatarSize, (avatarTopPadding - bubbleVerticalPadding) + avatarSize + 2)
+    }
+
     private let bubbleContainer = UIView()
     private let iconBadge = SessionGridBadgeView()
     private let markdownView = AssistantMarkdownContentView()
@@ -216,17 +231,41 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             bubbleContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
             bubbleContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // Match user bubble insets: 10pt horizontal, 8pt vertical.
-            iconBadge.widthAnchor.constraint(equalToConstant: 18),
-            iconBadge.heightAnchor.constraint(equalToConstant: 18),
-            iconBadge.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 10),
-            iconBadge.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 10),
+            // Avatar stays top-leading. Markdown is full-bleed inside the bubble
+            // so multi-line prose, tables, and code reclaim the avatar column
+            // after the first line.
+            iconBadge.widthAnchor.constraint(equalToConstant: Self.avatarSize),
+            iconBadge.heightAnchor.constraint(equalToConstant: Self.avatarSize),
+            iconBadge.leadingAnchor.constraint(
+                equalTo: bubbleContainer.leadingAnchor,
+                constant: Self.bubbleLeadingPadding
+            ),
+            iconBadge.topAnchor.constraint(
+                equalTo: bubbleContainer.topAnchor,
+                constant: Self.avatarTopPadding
+            ),
 
-            markdownView.leadingAnchor.constraint(equalTo: iconBadge.trailingAnchor, constant: 8),
-            markdownView.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 8),
-            markdownView.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -10),
-            markdownView.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -8),
+            markdownView.leadingAnchor.constraint(
+                equalTo: bubbleContainer.leadingAnchor,
+                constant: Self.bubbleLeadingPadding
+            ),
+            markdownView.topAnchor.constraint(
+                equalTo: bubbleContainer.topAnchor,
+                constant: Self.bubbleVerticalPadding
+            ),
+            markdownView.trailingAnchor.constraint(
+                equalTo: bubbleContainer.trailingAnchor,
+                constant: -Self.bubbleTrailingPadding
+            ),
+            markdownView.bottomAnchor.constraint(
+                equalTo: bubbleContainer.bottomAnchor,
+                constant: -Self.bubbleVerticalPadding
+            ),
         ])
+
+        bubbleContainer.bringSubviewToFront(iconBadge)
+        markdownView.leadingHangClearance = Self.avatarContentClearance
+        markdownView.leadingHangHeight = Self.avatarHangHeight
     }
 
     private func apply(configuration: AssistantTimelineRowConfiguration) {

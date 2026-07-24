@@ -43,6 +43,17 @@ final class AssistantMarkdownSegmentApplier {
     /// Closure for fetching files from the active session working directory.
     var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
 
+    /// Avatar hang geometry from the assistant row. Applied after each rebuild
+    /// so the first text segment clears the badge and later content is full width.
+    private var leadingHangClearance: CGFloat = 0
+    private var leadingHangHeight: CGFloat = 0
+    /// Avoid reassigning exclusion paths on every streaming tick — that forces a
+    /// full TextKit relayout of the growing prose tail.
+    private weak var hungTextView: BaselineSafeTextView?
+    private var appliedHangClearance: CGFloat = -1
+    private var appliedHangHeight: CGFloat = -1
+    private var appliedHangUsesTopMargin = false
+
     init(stackView: UIStackView, textViewDelegate: any UITextViewDelegate) {
         self.stackView = stackView
         self.textViewDelegate = textViewDelegate
@@ -70,6 +81,90 @@ final class AssistantMarkdownSegmentApplier {
         mermaidViews.removeAll()
         latexViews.removeAll()
         renderedSegmentSignatures = []
+        stackView.isLayoutMarginsRelativeArrangement = false
+        stackView.layoutMargins = .zero
+        hungTextView = nil
+        appliedHangClearance = -1
+        appliedHangHeight = -1
+        appliedHangUsesTopMargin = false
+    }
+
+    /// Hang content under the assistant avatar.
+    ///
+    /// - First segment is prose: exclusion path reserves the badge column for
+    ///   the first line(s) only; later lines wrap under the avatar.
+    /// - First segment is a block (table/code/…): push the block below the
+    ///   badge with top layout margin so it can use full width without overlap.
+    ///
+    /// Idempotent when geometry and the hung text view are unchanged so streaming
+    /// ticks do not force a full TextKit relayout of the growing tail.
+    func applyLeadingHang(clearance: CGFloat, height: CGFloat) {
+        let nextClearance = max(0, clearance)
+        let nextHeight = max(0, height)
+        leadingHangClearance = nextClearance
+        leadingHangHeight = nextHeight
+
+        let firstText = textViews[0]
+        let wantsTopMargin = firstText == nil && !renderedSegmentSignatures.isEmpty && nextClearance > 0 && nextHeight > 0
+
+        if firstText === hungTextView,
+           appliedHangClearance == nextClearance,
+           appliedHangHeight == nextHeight,
+           appliedHangUsesTopMargin == wantsTopMargin {
+            return
+        }
+
+        if let previous = hungTextView, previous !== firstText {
+            previous.textContainer.exclusionPaths = []
+        }
+
+        guard nextClearance > 0, nextHeight > 0 else {
+            firstText?.textContainer.exclusionPaths = []
+            stackView.isLayoutMarginsRelativeArrangement = false
+            stackView.layoutMargins = .zero
+            hungTextView = nil
+            appliedHangClearance = 0
+            appliedHangHeight = 0
+            appliedHangUsesTopMargin = false
+            return
+        }
+
+        if let firstText {
+            stackView.isLayoutMarginsRelativeArrangement = false
+            stackView.layoutMargins = .zero
+            let exclusion = CGRect(
+                x: 0,
+                y: 0,
+                width: nextClearance,
+                height: nextHeight
+            )
+            firstText.textContainer.exclusionPaths = [UIBezierPath(rect: exclusion)]
+            firstText.invalidateIntrinsicContentSize()
+            firstText.setNeedsLayout()
+            hungTextView = firstText
+            appliedHangClearance = nextClearance
+            appliedHangHeight = nextHeight
+            appliedHangUsesTopMargin = false
+            return
+        }
+
+        // Non-text first segment: drop the block below the avatar band.
+        if wantsTopMargin {
+            stackView.isLayoutMarginsRelativeArrangement = true
+            stackView.layoutMargins = UIEdgeInsets(
+                top: nextHeight,
+                left: 0,
+                bottom: 0,
+                right: 0
+            )
+        } else {
+            stackView.isLayoutMarginsRelativeArrangement = false
+            stackView.layoutMargins = .zero
+        }
+        hungTextView = nil
+        appliedHangClearance = nextClearance
+        appliedHangHeight = nextHeight
+        appliedHangUsesTopMargin = wantsTopMargin
     }
 
     func apply(
