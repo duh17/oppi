@@ -75,9 +75,17 @@ enum NavigationSwipeGestureDirection: Equatable {
 /// thresholds. This avoids the earlier split where file preview swipes,
 /// full-screen viewers, and chat timeline each guessed independently and fought
 /// document scrolling.
+///
+/// Modal down-dismiss follows the same edge rule as system sheets: only claim
+/// the gesture when there is no more content to reveal by scrolling in that
+/// direction (at top / content does not overflow). Mid-document pans must stay
+/// with the scroll view.
 enum NavigationSwipeGesturePolicy {
     static let minimumDistance: CGFloat = 72
     static let dominanceRatio: CGFloat = 1.35
+    /// Allow sub-point layout noise and rubber-band settle before treating an
+    /// edge as left.
+    static let scrollEdgeTolerance: CGFloat = 1.0
 
     static func isSwipe(translation: CGSize, direction: NavigationSwipeGestureDirection) -> Bool {
         switch direction {
@@ -104,12 +112,154 @@ enum NavigationSwipeGesturePolicy {
             return velocity.y > abs(velocity.x) * dominanceRatio
         }
     }
+
+    /// Whether a navigation/dismiss swipe may claim the pan given current scroll
+    /// state. Disabled, hidden, and non-overflowing scroll views do not block.
+    ///
+    /// When `touchLocationInHost` is provided, only scroll views on the UIKit
+    /// hit-test ancestry under the finger participate. Touches that miss every
+    /// scroll view (chrome / empty chrome area) may claim immediately so an
+    /// unrelated off-screen scrolled cell cannot veto navigation for the whole
+    /// host.
+    static func canClaimSwipe(
+        direction: NavigationSwipeGestureDirection,
+        scrollViews: [UIScrollView],
+        touchLocationInHost: CGPoint? = nil,
+        hostView: UIView? = nil
+    ) -> Bool {
+        let scoped = scopedScrollViews(
+            scrollViews,
+            touchLocationInHost: touchLocationInHost,
+            hostView: hostView
+        )
+        // Touch missed every known scroll view (nav chrome, margins, empty areas).
+        if touchLocationInHost != nil, hostView != nil, scoped.isEmpty {
+            return true
+        }
+
+        let candidates = scoped.filter(isEligibleScrollView(_:))
+        guard !candidates.isEmpty else { return true }
+
+        switch direction {
+        case .down:
+            let vertical = candidates.filter(canScrollVertically(_:))
+            guard !vertical.isEmpty else { return true }
+            return vertical.allSatisfy(isAtTopScrollEdge(_:))
+        case .right:
+            let horizontal = candidates.filter(canScrollHorizontally(_:))
+            guard !horizontal.isEmpty else { return true }
+            return horizontal.allSatisfy(isAtLeadingScrollEdge(_:))
+        }
+    }
+
+    /// Scroll views that should arbitrate a swipe at `touchLocationInHost`.
+    ///
+    /// Prefer the live hit-test chain so clipped, covered, or non-interactive
+    /// descendants cannot veto a gesture the user is not actually touching.
+    /// Falls back to geometric containment only when the host cannot hit-test
+    /// (detached test hosts without a full responder tree).
+    static func scopedScrollViews(
+        _ scrollViews: [UIScrollView],
+        touchLocationInHost: CGPoint?,
+        hostView: UIView?
+    ) -> [UIScrollView] {
+        guard let touchLocationInHost, let hostView else { return scrollViews }
+
+        if let hitView = hostView.hitTest(touchLocationInHost, with: nil) {
+            let ancestry = scrollViewsOnAncestry(of: hitView)
+            let known = Set(scrollViews.map { ObjectIdentifier($0) })
+            let hitKnown = ancestry.filter { known.contains(ObjectIdentifier($0)) }
+            if !hitKnown.isEmpty {
+                return hitKnown
+            }
+            // Hit something outside every candidate scroll view (chrome).
+            return []
+        }
+
+        // Detached/test hosts: geometric containment is the best available signal.
+        return scrollViews.filter { scrollView in
+            scrollView.convert(scrollView.bounds, to: hostView).contains(touchLocationInHost)
+        }
+    }
+
+    static func scrollViewsOnAncestry(of view: UIView) -> [UIScrollView] {
+        var matches: [UIScrollView] = []
+        var current: UIView? = view
+        while let node = current {
+            if let scrollView = node as? UIScrollView {
+                matches.append(scrollView)
+            }
+            current = node.superview
+        }
+        return matches
+    }
+
+    static func descendantScrollViews(in root: UIView) -> [UIScrollView] {
+        var matches: [UIScrollView] = []
+        func walk(_ view: UIView) {
+            if let scrollView = view as? UIScrollView {
+                matches.append(scrollView)
+            }
+            for child in view.subviews {
+                walk(child)
+            }
+        }
+        walk(root)
+        return matches
+    }
+
+    static func isEligibleScrollView(_ scrollView: UIScrollView) -> Bool {
+        guard scrollView.isScrollEnabled
+            && scrollView.isUserInteractionEnabled
+            && !scrollView.isHidden
+            && scrollView.alpha > 0.01
+            && scrollView.bounds.width > 0
+            && scrollView.bounds.height > 0
+        else { return false }
+
+        // Ancestor visibility/interaction: a scrolled cell inside a hidden or
+        // non-interactive container must not veto a gesture the user cannot touch.
+        var ancestor: UIView? = scrollView.superview
+        while let view = ancestor {
+            if view.isHidden || view.alpha <= 0.01 || !view.isUserInteractionEnabled {
+                return false
+            }
+            ancestor = view.superview
+        }
+        return true
+    }
+
+    static func canScrollVertically(_ scrollView: UIScrollView) -> Bool {
+        let viewport = scrollView.bounds.height
+            - scrollView.adjustedContentInset.top
+            - scrollView.adjustedContentInset.bottom
+        return scrollView.contentSize.height > viewport + scrollEdgeTolerance
+    }
+
+    static func canScrollHorizontally(_ scrollView: UIScrollView) -> Bool {
+        let viewport = scrollView.bounds.width
+            - scrollView.adjustedContentInset.left
+            - scrollView.adjustedContentInset.right
+        return scrollView.contentSize.width > viewport + scrollEdgeTolerance
+    }
+
+    static func isAtTopScrollEdge(_ scrollView: UIScrollView) -> Bool {
+        scrollView.contentOffset.y <= -scrollView.adjustedContentInset.top + scrollEdgeTolerance
+    }
+
+    static func isAtLeadingScrollEdge(_ scrollView: UIScrollView) -> Bool {
+        scrollView.contentOffset.x <= -scrollView.adjustedContentInset.left + scrollEdgeTolerance
+    }
 }
 
 /// Shared policy for the app-wide horizontal back gesture.
 ///
 /// Left-to-right swipes mean leaving the current pushed surface. Modal viewers
 /// with down-chevron chrome must not install this horizontal recognizer.
+///
+/// Distance/velocity thresholds are shared with ``NavigationSwipeGesturePolicy``.
+/// Scroll-edge gating lives on the UIKit installer path; pure SwiftUI
+/// ``horizontalBackSwipeGesture`` hosts still only apply the translation gate.
 enum HorizontalBackSwipeGesturePolicy {
     static let minimumHorizontalDistance = NavigationSwipeGesturePolicy.minimumDistance
     static let horizontalDominanceRatio = NavigationSwipeGesturePolicy.dominanceRatio
@@ -194,12 +344,26 @@ final class HorizontalBackSwipeActionCoordinator {
     }
 }
 
+/// Pan recognizer that reports reset so navigation swipe hosts can drop stale
+/// touch-scope state even when UIKit fails the gesture without an action callback.
+private final class NavigationSwipePanGestureRecognizer: UIPanGestureRecognizer {
+    var onReset: (() -> Void)?
+
+    override func reset() {
+        super.reset()
+        onReset?()
+    }
+}
+
 @MainActor
 final class HorizontalBackSwipeGestureInstaller: NSObject, UIGestureRecognizerDelegate {
     private let onBack: @MainActor () -> Void
     private let direction: NavigationSwipeGestureDirection
     private let shouldReceiveTouch: (@MainActor (UITouch) -> Bool)?
     private weak var recognizer: UIPanGestureRecognizer?
+    /// Last accepted touch location in the host, used to scope scroll-edge checks
+    /// to the content under the finger rather than every descendant scroll view.
+    private var activeTouchLocationInHost: CGPoint?
 
     init(
         onBack: @escaping @MainActor () -> Void,
@@ -218,43 +382,134 @@ final class HorizontalBackSwipeGestureInstaller: NSObject, UIGestureRecognizerDe
             recognizer.view?.removeGestureRecognizer(recognizer)
         }
 
-        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        let recognizer = NavigationSwipePanGestureRecognizer(
+            target: self,
+            action: #selector(handlePan(_:))
+        )
+        // One-finger only so pinch zoom / multi-touch pans cannot also dismiss.
+        recognizer.maximumNumberOfTouches = 1
         recognizer.cancelsTouchesInView = false
         recognizer.delaysTouchesBegan = false
         recognizer.delaysTouchesEnded = false
         recognizer.delegate = self
+        // reset() is the reliable cleanup point: UIKit does not invoke the action
+        // selector on .failed, and sequences that never leave .possible still reset.
+        recognizer.onReset = { [weak self] in
+            self?.activeTouchLocationInHost = nil
+        }
         view.addGestureRecognizer(recognizer)
         self.recognizer = recognizer
     }
 
     @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
-        guard recognizer.state == .ended else { return }
-        let translation = recognizer.translation(in: recognizer.view)
+        switch recognizer.state {
+        case .ended:
+            let host = recognizer.view
+            let translation = recognizer.translation(in: host)
+            handleNavigationSwipeEnded(
+                translation: CGSize(width: translation.x, height: translation.y),
+                in: host,
+                touchLocationInHost: activeTouchLocationInHost
+            )
+            activeTouchLocationInHost = nil
+        case .cancelled, .failed:
+            activeTouchLocationInHost = nil
+        default:
+            break
+        }
+    }
+
+    /// Testable entry point for pan-ended dismiss/back handling.
+    func handleNavigationSwipeEnded(
+        translation: CGSize,
+        in hostView: UIView?,
+        touchLocationInHost: CGPoint? = nil
+    ) {
         guard NavigationSwipeGesturePolicy.isSwipe(
-            translation: CGSize(width: translation.x, height: translation.y),
+            translation: translation,
             direction: direction
         ) else { return }
+        // Re-check scroll edges on end so a pan that began at the edge but was
+        // absorbed as document scrolling cannot dismiss mid-content.
+        guard canClaimSwipe(in: hostView, touchLocationInHost: touchLocationInHost) else { return }
         onBack()
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
-        return NavigationSwipeGesturePolicy.shouldBegin(
+        let allowed = shouldBeginNavigationSwipe(
             velocity: pan.velocity(in: pan.view),
+            in: pan.view,
+            touchLocationInHost: activeTouchLocationInHost
+        )
+        // UIKit does not invoke the action selector on .failed, so clear here when
+        // we reject begin; otherwise the next gesture keeps a stale touch point.
+        if !allowed {
+            activeTouchLocationInHost = nil
+        }
+        return allowed
+    }
+
+    /// Testable entry point for should-begin policy (velocity + scroll edge).
+    func shouldBeginNavigationSwipe(
+        velocity: CGPoint,
+        in hostView: UIView?,
+        touchLocationInHost: CGPoint? = nil
+    ) -> Bool {
+        guard NavigationSwipeGesturePolicy.shouldBegin(
+            velocity: velocity,
             direction: direction
+        ) else { return false }
+        return canClaimSwipe(in: hostView, touchLocationInHost: touchLocationInHost)
+    }
+
+    private func canClaimSwipe(
+        in hostView: UIView?,
+        touchLocationInHost: CGPoint?
+    ) -> Bool {
+        guard let hostView else { return true }
+        return NavigationSwipeGesturePolicy.canClaimSwipe(
+            direction: direction,
+            scrollViews: NavigationSwipeGesturePolicy.descendantScrollViews(in: hostView),
+            touchLocationInHost: touchLocationInHost,
+            hostView: hostView
         )
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        shouldReceiveTouch?(touch) ?? true
+        guard shouldReceiveTouch?(touch) ?? true else { return false }
+        // While still Possible, redefine scope on touch-down. A prior pan can fail
+        // without invoking the action selector, so requiring `== nil` would leave a
+        // stale point. After began/changed, keep the original finger location.
+        if gestureRecognizer.state == .possible, let host = gestureRecognizer.view {
+            activeTouchLocationInHost = touch.location(in: host)
+        }
+        return true
     }
 
     func gestureRecognizer(
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        true
+        // Coexist only with a scroll view's own pan recognizer. Selection-handle
+        // pans, pinches, and other recognizers attached to UITextView/UIScrollView
+        // stay exclusive so dismiss cannot fire as a side effect.
+        if let scrollView = otherGestureRecognizer.view as? UIScrollView,
+           otherGestureRecognizer === scrollView.panGestureRecognizer {
+            return true
+        }
+        return false
     }
+
+    #if DEBUG
+    func setActiveTouchLocationForTesting(_ point: CGPoint?) {
+        activeTouchLocationInHost = point
+    }
+
+    func activeTouchLocationForTesting() -> CGPoint? {
+        activeTouchLocationInHost
+    }
+    #endif
 }
 
 @MainActor
