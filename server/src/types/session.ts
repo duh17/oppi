@@ -82,6 +82,8 @@ export interface SessionLaunchMetadata {
     displayCwd?: string;
   };
   model?: string;
+  /** Required launch models must resolve exactly enough to start; Pi fallback is forbidden. */
+  modelPolicy?: "required";
   thinkingLevel?: string;
   tools?: {
     allowed?: string[];

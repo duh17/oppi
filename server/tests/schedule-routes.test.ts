@@ -191,7 +191,10 @@ describe("schedule routes", () => {
     });
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.id).toBe(firstRun?.sessionId);
-    expect(sessions[0]?.launch?.idempotencyKey).toBe(`schedule:${schedule.id}:manual:button-1`);
+    expect(sessions[0]?.launch).toMatchObject({
+      idempotencyKey: `schedule:${schedule.id}:manual:button-1`,
+      modelPolicy: "required",
+    });
   });
 
   it("canonicalizes saved-Agent schedule targets by Agent name", async () => {
@@ -297,6 +300,7 @@ describe("schedule routes", () => {
         agentId: "agent-1",
         agentVersion: 3,
         agentIcon: { kind: "symbol", name: "checkmark.shield" },
+        modelPolicy: "required",
       },
     });
   });
@@ -504,11 +508,11 @@ describe("schedule routes", () => {
     });
 
     expect(responses).toEqual([]);
-    expect(errors).toEqual([{ status: 400, message: "prompt_not_sent" }]);
+    expect(errors).toEqual([{ status: 400, message: "transport down" }]);
     expect(store.listRunSummaries(schedule.id)).toEqual([
       expect.objectContaining({
         status: "failed",
-        error: "prompt_not_sent",
+        error: "transport down",
       }),
     ]);
   });

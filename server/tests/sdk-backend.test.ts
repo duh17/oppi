@@ -15,6 +15,7 @@ import * as PiSdk from "@earendil-works/pi-coding-agent";
 import { hostMountValidationError } from "../src/host.js";
 import * as GondolinManagerModule from "../src/gondolin-manager.js";
 import {
+  enforceLaunchModelPolicy,
   normalizeThinkingLevel,
   resolveSandboxGuestCwd,
   resolveSdkSessionCwd,
@@ -1043,6 +1044,57 @@ describe("SdkBackend session state seeding", () => {
     }
     expect(normalizeThinkingLevel(undefined)).toBeUndefined();
     expect(normalizeThinkingLevel("unsupported")).toBeUndefined();
+  });
+
+  it("refuses fallback when a schedule requires its pinned model", () => {
+    const session = makeSession({
+      model: "ds4/deepseek-v4-flash",
+      launch: {
+        source: "schedule",
+        model: "ds4/deepseek-v4-flash",
+        modelPolicy: "required",
+        status: "launching",
+        requestedAt: 1,
+      },
+    });
+
+    expect(() => enforceLaunchModelPolicy(session, undefined)).toThrow(
+      'Required model "ds4/deepseek-v4-flash" is not available; refusing model fallback',
+    );
+  });
+
+  it("rejects a fuzzy model match for a required schedule pin", () => {
+    const session = makeSession({
+      model: "ds4/deepseek-v4-flash",
+      launch: { modelPolicy: "required", status: "launching", requestedAt: 1 },
+    });
+
+    expect(() =>
+      enforceLaunchModelPolicy(session, {
+        provider: "ds4",
+        id: "deepseek-v4-flash-latest",
+      }),
+    ).toThrow('Required model "ds4/deepseek-v4-flash" is not available');
+  });
+
+  it("accepts only the exact required schedule model", () => {
+    const session = makeSession({
+      model: "ds4/deepseek-v4-flash",
+      launch: { modelPolicy: "required", status: "launching", requestedAt: 1 },
+    });
+
+    expect(() =>
+      enforceLaunchModelPolicy(session, {
+        provider: "ds4",
+        id: "deepseek-v4-flash",
+      }),
+    ).not.toThrow();
+  });
+
+  it("retains Pi fallback for launches without a required model", () => {
+    const session = makeSession({ model: "ds4/deepseek-v4-flash" });
+
+    expect(() => enforceLaunchModelPolicy(session, undefined)).not.toThrow();
   });
 });
 

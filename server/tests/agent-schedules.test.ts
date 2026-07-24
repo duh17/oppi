@@ -78,6 +78,19 @@ describe("agent schedule durable core", () => {
     ).toThrow("Schedule timeZone is invalid: Mars/Phobos");
   });
 
+  it("rejects blank explicit models instead of treating them as defaults", () => {
+    expect(() =>
+      createSchedule({
+        action: {
+          type: "new_session",
+          workspaceId: "ws-1",
+          prompt: "Run automatically",
+          model: "   ",
+        },
+      }),
+    ).toThrow("Schedule action model cannot be empty");
+  });
+
   it("rejects removed approval fields from new schedule definitions", () => {
     expect(() =>
       createSchedule({

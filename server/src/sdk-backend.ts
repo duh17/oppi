@@ -44,6 +44,7 @@ import {
   modelCandidatesFromRegistry,
   modelUnavailableMessage,
   resolveModelRequest,
+  stripModelThinkingLevel,
 } from "./model-resolution.js";
 import { createDefaultAgentExtensionFactory } from "./default-agent-tool.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
@@ -92,6 +93,19 @@ type ExtensionContextWithAttachments = ExtensionContext & {
     addFile(input: AttachmentAddFileInput): Record<string, unknown>;
   };
 };
+
+export function enforceLaunchModelPolicy(
+  session: Session,
+  resolvedModel: { provider: string; id: string } | undefined,
+): void {
+  if (session.launch?.modelPolicy !== "required" || !session.model) return;
+  const requested = stripModelThinkingLevel(session.model).model.trim();
+  const resolvedCanonical = resolvedModel
+    ? `${resolvedModel.provider}/${resolvedModel.id}`
+    : undefined;
+  if (resolvedModel && (requested === resolvedCanonical || requested === resolvedModel.id)) return;
+  throw new Error(`Required model "${session.model}" is not available; refusing model fallback`);
+}
 
 export function normalizeThinkingLevel(level: string | undefined): PiThinkingLevel | undefined {
   switch (level) {
@@ -632,10 +646,25 @@ export class SdkBackend {
         shouldSeedFromSessionState && session.model
           ? resolveRegistryModel(modelRegistry, session.model, settingsManager.getEnabledModels())
           : undefined;
-      if (shouldSeedFromSessionState && session.model && !model) {
-        log.warn("sdk.model_resolve_defaulted", {
-          model: session.model,
-        });
+      if (shouldSeedFromSessionState && session.model) {
+        if (session.launch?.modelPolicy === "required") {
+          try {
+            enforceLaunchModelPolicy(session, model);
+          } catch (error) {
+            log.error("sdk.model_resolve_required_failed", {
+              sessionId: session.id,
+              model: session.model,
+              launchSource: session.launch.source,
+              resolvedModel: model ? `${model.provider}/${model.id}` : undefined,
+            });
+            throw error;
+          }
+        }
+        if (!model) {
+          log.warn("sdk.model_resolve_defaulted", {
+            model: session.model,
+          });
+        }
       }
 
       // Resource loader: follow Pi's normal cwd/settings/package discovery.

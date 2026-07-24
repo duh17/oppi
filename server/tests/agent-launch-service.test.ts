@@ -755,6 +755,44 @@ describe("AgentLaunchService", () => {
     expect(sendPrompt).not.toHaveBeenCalled();
   });
 
+  it("does not recover a failed launch whose model was required", async () => {
+    const failed = makeSession({
+      id: "failed-required-model",
+      status: "error",
+      launch: {
+        idempotencyKey: "launch-required-model",
+        modelPolicy: "required",
+        status: "failed",
+        requestedAt: 1_000,
+        completedAt: 1_500,
+        promptDispatch: "not_sent",
+        promptError: 'Required model "ds4/deepseek-v4-flash" is not available',
+      },
+    });
+    const { service, claimSessionLaunchRecovery, startSession, sendPrompt } = makeService({
+      sessions: [failed],
+      nowMs: 2_000,
+    });
+
+    const result = await service.launch({
+      agent: { name: "test", sessionDefaults: { model: "ds4/deepseek-v4-flash" } },
+      target: { workspace: makeWorkspace() },
+      prompt: "must not retry automatically",
+      idempotencyKey: "launch-required-model",
+      leaseOwner: "worker-b",
+      modelPolicy: "required",
+    });
+
+    expect(result).toMatchObject({
+      kind: "existing",
+      session: { id: "failed-required-model", status: "error" },
+      promptDispatch: "not_sent",
+    });
+    expect(claimSessionLaunchRecovery).not.toHaveBeenCalled();
+    expect(startSession).not.toHaveBeenCalled();
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
+
   it("retries a failed launch whose prompt was not delivered", async () => {
     const failed = makeSession({
       id: "failed-1",

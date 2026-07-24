@@ -73,6 +73,7 @@ async function launchNewSession(
     idempotencyKey: input.run.idempotencyKey,
     leaseOwner,
     source: "schedule",
+    ...(scheduledAgent.agent.sessionDefaults?.model ? { modelPolicy: "required" as const } : {}),
     schedule: {
       scheduleId: input.schedule.id,
       runId: input.run.id,
@@ -84,7 +85,8 @@ async function launchNewSession(
     throw new Error("launch_in_progress");
   }
   if (input.action.prompt.trim().length > 0 && result.promptDispatch !== "delivered") {
-    throw new Error("prompt_not_sent");
+    deps.appEvents?.emitSessionCreated(result.session);
+    throw new Error(result.session.launch?.promptError ?? "prompt_not_sent");
   }
   deps.appEvents?.emitSessionCreated(result.createdSession);
   if (result.summarySession) deps.appEvents?.emitSessionSummary(result.summarySession);

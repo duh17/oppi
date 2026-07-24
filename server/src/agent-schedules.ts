@@ -729,9 +729,14 @@ function validateAction(action: AgentScheduleAction): AgentScheduleAction {
   if (!cleanAction.prompt.trim()) throw new Error("Schedule action prompt is required");
   if (cleanAction.type === "new_session") {
     const agentId = cleanAction.agentId?.trim();
+    const model = cleanAction.model?.trim();
+    if (cleanAction.model !== undefined && !model) {
+      throw new Error("Schedule action model cannot be empty");
+    }
     const next: AgentScheduleAction = { ...cleanAction, workspaceId };
     if (agentId) next.agentId = agentId;
     else delete next.agentId;
+    if (model) next.model = model;
     return next;
   }
   if (!cleanAction.sessionId.trim()) {

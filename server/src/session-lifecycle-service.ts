@@ -302,6 +302,7 @@ export class SessionLifecycleService {
       };
     }
 
+    this.requireLaunchRestartAllowed(params.session);
     if (this.deps.sessionRuntimes.isSessionLive(params.session.id)) {
       const active = this.deps.sessionRuntimes.getActiveSession(params.session.id);
       return {
@@ -356,6 +357,7 @@ export class SessionLifecycleService {
       };
     }
 
+    this.requireLaunchRestartAllowed(params.session);
     const hadActiveSession = this.deps.sessionRuntimes.isSessionLive(params.session.id);
     const started = await this.deps.sessions.startSession(params.session.id, params.workspace);
     return {
@@ -625,6 +627,14 @@ export class SessionLifecycleService {
 
   private hydratedSnapshot(session: Session): Session {
     return { ...this.deps.ensureSessionContextWindow(session) };
+  }
+
+  private requireLaunchRestartAllowed(session: Session): void {
+    if (session.launch?.status !== "failed" || session.launch.modelPolicy !== "required") return;
+    throw new SessionLifecycleError(
+      session.launch.promptError ?? "Required schedule model was unavailable at launch",
+      409,
+    );
   }
 
   private requireSessionWorktreeAvailable(session: Session, workspace?: Workspace): void {

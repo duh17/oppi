@@ -113,6 +113,49 @@ describe("agent schedule runner", () => {
     ]);
     expect(sessions[0]?.launch?.source).toBe("schedule");
     expect(sessions[0]?.launch?.schedule).toMatchObject({ scheduleId: schedule.id });
+    expect(sessions[0]?.launch?.modelPolicy).toBeUndefined();
+  });
+
+  it("marks explicitly modeled schedule launches as fail-closed", async () => {
+    const schedule = store.createSchedule(
+      {
+        name: "Pinned model check",
+        trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+        action: { ...action(), model: "ds4/deepseek-v4-flash" },
+      },
+      500,
+    );
+    startSession.mockImplementationOnce(async (sessionId: string) => {
+      const session = sessions.find((candidate) => candidate.id === sessionId);
+      expect(session?.launch?.modelPolicy).toBe("required");
+      throw new Error('Required model "ds4/deepseek-v4-flash" is not available');
+    });
+    const runner = new AgentScheduleRunner({
+      storage: storage(),
+      sessions: { startSession, sendPrompt },
+      ensureSessionContextWindow: (session) => session,
+      nowMs: () => 2_000,
+    });
+
+    await runner.runOnce();
+
+    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(store.listRunSummaries(schedule.id)).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        error: 'Required model "ds4/deepseek-v4-flash" is not available',
+      }),
+    ]);
+    expect(sessions[0]).toMatchObject({
+      status: "error",
+      model: "ds4/deepseek-v4-flash",
+      launch: {
+        modelPolicy: "required",
+        status: "failed",
+        promptDispatch: "not_sent",
+        promptError: 'Required model "ds4/deepseek-v4-flash" is not available',
+      },
+    });
   });
 
   it("does not let the automatic runner claim manual runs", async () => {

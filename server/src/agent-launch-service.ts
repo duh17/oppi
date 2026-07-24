@@ -47,6 +47,7 @@ export interface AgentLaunchRequest {
   leaseOwner?: string;
   source?: NonNullable<Session["launch"]>["source"];
   schedule?: NonNullable<Session["launch"]>["schedule"];
+  modelPolicy?: NonNullable<Session["launch"]>["modelPolicy"];
   sessionName?: string;
   ephemeral?: boolean;
 }
@@ -243,6 +244,7 @@ export class AgentLaunchService {
         runtime: request.target.workspace.runtime === "sandbox" ? "sandbox" : "host",
       },
       model: modelSelection.model,
+      modelPolicy: request.modelPolicy,
       thinkingLevel: defaults.thinkingLevel,
       tools: {
         ...(defaults.tools ? { allowed: defaults.tools } : {}),
@@ -325,6 +327,7 @@ export class AgentLaunchService {
   ): void {
     if (session.launch) {
       const { promptError: _previousPromptError, ...launch } = session.launch;
+      if (promptError && launch.modelPolicy === "required") session.status = "error";
       session.launch = {
         ...launch,
         status: promptDispatch === "delivered" || !promptError ? "accepted" : "failed",
@@ -370,6 +373,7 @@ export class AgentLaunchService {
     if (!launch) return false;
     if (launch.promptDispatch === "delivered") return false;
     if (!this.launchTargetMatchesRequest(existing, request)) return false;
+    if (launch.status === "failed" && launch.modelPolicy === "required") return false;
     if (launch.status === "failed") return true;
     if (launch.status !== "launching") return false;
     const lease = launch.lease;

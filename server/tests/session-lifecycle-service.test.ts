@@ -500,6 +500,30 @@ describe("SessionLifecycleService", () => {
       expect(startSession).not.toHaveBeenCalled();
     });
 
+    it("does not resume a failed required-model schedule session", async () => {
+      const session = makeSession({
+        runtime: "oppi",
+        status: "error",
+        launch: {
+          modelPolicy: "required",
+          status: "failed",
+          requestedAt: 1,
+          promptDispatch: "not_sent",
+          promptError: 'Required model "ds4/deepseek-v4-flash" is not available',
+        },
+      });
+      const { service, startSession } = makeService();
+
+      await expect(
+        service.resumeWorkspaceSession({ session, workspace: makeWorkspace() }),
+      ).rejects.toMatchObject({
+        name: "SessionLifecycleError",
+        statusCode: 409,
+        message: 'Required model "ds4/deepseek-v4-flash" is not available',
+      } satisfies Partial<SessionLifecycleError>);
+      expect(startSession).not.toHaveBeenCalled();
+    });
+
     it("returns already-live managed sessions without restarting", async () => {
       const session = makeSession({ runtime: "oppi", status: "ready" });
       const active = makeSession({ id: "sess-1", runtime: "oppi", status: "busy" });
@@ -600,6 +624,30 @@ describe("SessionLifecycleService", () => {
         name: "SessionLifecycleError",
         statusCode: 409,
         message: "Session worktree is no longer available",
+      } satisfies Partial<SessionLifecycleError>);
+      expect(startSession).not.toHaveBeenCalled();
+    });
+
+    it("does not open a failed required-model schedule session", async () => {
+      const session = makeSession({
+        runtime: "oppi",
+        status: "error",
+        launch: {
+          modelPolicy: "required",
+          status: "failed",
+          requestedAt: 1,
+          promptDispatch: "not_sent",
+          promptError: 'Required model "ds4/deepseek-v4-flash" is not available',
+        },
+      });
+      const { service, startSession } = makeService();
+
+      await expect(
+        service.openFocusedSession({ session, workspace: makeWorkspace() }),
+      ).rejects.toMatchObject({
+        name: "SessionLifecycleError",
+        statusCode: 409,
+        message: 'Required model "ds4/deepseek-v4-flash" is not available',
       } satisfies Partial<SessionLifecycleError>);
       expect(startSession).not.toHaveBeenCalled();
     });
