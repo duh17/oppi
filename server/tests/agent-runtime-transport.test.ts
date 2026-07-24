@@ -17,9 +17,12 @@ const COMMAND_METHODS = [
   "setMessageQueue",
   "sendAbort",
   "stopSession",
+  "isSessionConnected",
   "getActiveSession",
   "respondToUIRequest",
   "forwardClientCommand",
+  "getToolFullOutputPath",
+  "getEventRing",
 ] as const;
 
 const EVENT_METHODS = [

@@ -186,7 +186,6 @@ describe("sessions module", () => {
       },
       sessionRuntimes: {
         isSessionConnected: vi.fn(() => false),
-        isSessionLive: vi.fn(() => false),
         stopSession,
       },
       ensureSessionContextWindow: vi.fn((s: unknown) => s),
@@ -352,7 +351,6 @@ describe("sessions module", () => {
         sessions: { startSession },
         sessionRuntimes: {
           isSessionConnected: vi.fn(() => false),
-          isSessionLive: vi.fn(() => false),
         },
         ensureSessionContextWindow: vi.fn((value: Session) => value),
       } as unknown as RouteContext;
@@ -835,7 +833,6 @@ describe("sessions module", () => {
           catchUpComplete: true,
         })),
         isSessionConnected: vi.fn(() => true),
-        isSessionLive: vi.fn(() => true),
         stopSession: vi.fn(async () => undefined),
       },
       sessions: {

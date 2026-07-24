@@ -597,14 +597,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         this.applyQueueFromCommandData(sessionId, data, `command_result:${commandType}`);
       },
       resolveWorkspaceRoot: (session) => this.resolveWorkspaceRoot(session),
-      recordPromptLocally: false,
-      promptBusyErrorMessage:
-        "Prompt requires an idle terminal session; use steer or follow_up while a turn is streaming",
-      streamingInputBusyErrorMessage: (kind) => {
-        const label = kind === "steer" ? "Steer" : "Follow-up";
-        return `${label} requires an active streaming terminal turn`;
-      },
-      attachmentWorkspaceErrorMessage: "Attachments require a workspace-backed pi-tui session",
     });
 
     this.runtimeCommandCoordinator = new RuntimeCommandCoordinator({
@@ -760,7 +752,13 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   }
 
   getActiveSessionIds(): Set<string> {
-    return new Set(this.active.keys());
+    const ids = new Set<string>();
+    for (const sessionId of this.active.keys()) {
+      if (this.isSessionConnected(sessionId)) {
+        ids.add(sessionId);
+      }
+    }
+    return ids;
   }
 
   getActiveSession(sessionId: string): Session | undefined {
@@ -770,12 +768,13 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   getSessionTraceState(
     sessionId: string,
   ): { sessionFile?: string; sessionId?: string; leafId?: string } | null {
-    const active = this.ensureActiveFromStorage(sessionId);
-    if (!active) return null;
+    const active = this.active.get(sessionId);
+    const session = active?.session ?? this.storage.getSession(sessionId) ?? undefined;
+    if (!session || !this.isMirrorSession(session)) return null;
     return {
-      sessionFile: active.session.piSessionFile,
-      sessionId: active.session.piSessionId,
-      ...(active.leafId ? { leafId: active.leafId } : {}),
+      sessionFile: session.piSessionFile,
+      sessionId: session.piSessionId,
+      ...(active?.leafId ? { leafId: active.leafId } : {}),
     };
   }
 
@@ -837,7 +836,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
   subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void {
     this.ensureActiveFromStorage(sessionId);
-    return this.broadcaster.subscribe(sessionId, callback);
+    const unsubscribe = this.broadcaster.subscribe(sessionId, callback);
+    return () => {
+      unsubscribe();
+      this.releaseActiveSessionIfIdle(sessionId);
+    };
   }
 
   getCurrentSeq(sessionId: string): number {
@@ -849,7 +852,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   }
 
   getPendingUIRequestMessages(sessionId: string): ServerMessage[] {
-    return buildPendingExtensionUIRequestMessages(this.ensureActiveFromStorage(sessionId));
+    return buildPendingExtensionUIRequestMessages(this.active.get(sessionId));
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {
@@ -858,13 +861,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       return null;
     }
 
-    return (
-      this.ensureActiveFromStorage(sessionId)?.toolFullOutputPaths.get(normalizedToolCallId) ?? null
-    );
+    return this.active.get(sessionId)?.toolFullOutputPaths.get(normalizedToolCallId) ?? null;
   }
 
   getEventRing(sessionId: string): { length: number; capacity: number } | null {
-    const active = this.ensureActiveFromStorage(sessionId);
+    const active = this.active.get(sessionId);
     if (!active) return null;
     return { length: active.eventRing.length, capacity: active.eventRing.capacity };
   }
@@ -889,10 +890,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       timestamp: number;
     },
   ): Promise<void> {
-    const active = this.requireActive(sessionId);
     if (!this.connectedBridgeForSession(sessionId)) {
       throw new Error("pi-tui is not connected");
     }
+    const active = this.requireActive(sessionId);
     if (isMirrorReloadPrompt(message, opts)) {
       await this.dispatchBridgeCommand(sessionId, { type: "reload" });
       active.session.lastActivity = opts.timestamp;
@@ -938,6 +939,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   }
 
   async getMessageQueue(sessionId: string): Promise<MessageQueueState> {
+    if (!this.connectedBridgeForSession(sessionId)) {
+      throw new Error("pi-tui is not connected");
+    }
     return this.dispatchBridgeQueueCommand(sessionId, { type: "get_queue" });
   }
 
@@ -949,6 +953,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       followUp: MessageQueueDraftItem[];
     },
   ): Promise<MessageQueueState> {
+    if (!this.connectedBridgeForSession(sessionId)) {
+      throw new Error("pi-tui is not connected");
+    }
     const active = this.requireActive(sessionId);
     assertQueueBaseVersion(active.messageQueue, payload.baseVersion);
 
@@ -1092,7 +1099,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   }
 
   respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean {
-    const active = this.ensureActiveFromStorage(sessionId);
+    const active = this.active.get(sessionId);
     if (!active) return false;
 
     const connection = this.connectedBridgeForSession(sessionId);
@@ -1190,7 +1197,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     registration: { now: number; bridgeId: string; protocolVersion: number },
   ): BridgeConnection {
     const { now, bridgeId, protocolVersion } = registration;
-    const active = this.ensureActive(session);
 
     const existingSameBridge = this.bridges.get(bridgeId);
     if (existingSameBridge && existingSameBridge.sessionId !== session.id) {
@@ -1206,6 +1212,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       if (existing) this.detachBridge(existing, "replaced");
     }
     this.clearBridgeAliases(bridgeId, session.id, "replaced");
+
+    // Ensure after detach: replace can idle-evict the previous entry when no stream is attached.
+    const active = this.ensureActive(session);
 
     const connection: BridgeConnection = {
       bridgeId,
@@ -1531,7 +1540,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     this.bridgeCommandDriver.rejectPending(connection, new Error("pi-tui disconnected"));
     this.resolvePendingBridgeStops(connection, effectiveReason);
 
-    const active = this.active.get(connection.sessionId);
+    // Entry may already be idle-evicted while the socket was CLOSING; still persist disconnect.
+    const active =
+      this.active.get(connection.sessionId) ?? this.ensureActiveFromStorage(connection.sessionId);
     if (active) {
       this.teardownMirrorBridgeSession(active, {
         bridgeId: connection.bridgeId,
@@ -1539,6 +1550,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         reason: effectiveReason,
         lastSeenAt: connection.lastSeenAt,
       });
+      this.releaseActiveSessionIfIdle(connection.sessionId);
     }
 
     log.info("mirror_bridge.disconnected", {
@@ -1555,10 +1567,11 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       if (mappedBridgeId !== bridgeId || sessionId === keepSessionId) continue;
       this.bridgeBySession.delete(sessionId);
 
-      const active = this.active.get(sessionId);
+      const active = this.active.get(sessionId) ?? this.ensureActiveFromStorage(sessionId);
       if (!active) continue;
 
       this.teardownMirrorBridgeSession(active, { bridgeId, reason });
+      this.releaseActiveSessionIfIdle(sessionId);
     }
   }
 
@@ -1778,6 +1791,19 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     return this.ensureActive(session);
   }
 
+  /**
+   * Drop in-memory projection state when nothing needs it.
+   * Connected bridges always keep their entry. Disconnected entries stay only while
+   * stream subscribers still need catch-up / tool-output lookup.
+   */
+  private releaseActiveSessionIfIdle(sessionId: string): void {
+    const active = this.active.get(sessionId);
+    if (!active) return;
+    if (this.isSessionConnected(sessionId)) return;
+    if (active.subscribers.size > 0) return;
+    this.active.delete(sessionId);
+  }
+
   private ensureActive(session: Session): MirrorActiveSession {
     const existing = this.active.get(session.id);
     if (existing) {
@@ -1797,7 +1823,8 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   }
 
   private requireActive(sessionId: string): MirrorActiveSession {
-    const active = this.ensureActiveFromStorage(sessionId);
+    // Never hydrate here: write paths that fail while disconnected must not pin memory.
+    const active = this.active.get(sessionId);
     if (!active) {
       throw new Error(`pi-tui session not active: ${sessionId}`);
     }

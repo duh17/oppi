@@ -63,7 +63,6 @@ class FakeWebSocket extends EventEmitter {
 
 type RuntimeOverride = {
   isSessionConnected?: (id: string) => boolean;
-  isSessionLive?: (id: string) => boolean;
   getSessionSnapshot?: (id: string) => Session | undefined;
   getActiveSession?: (id: string) => Session | undefined;
   getCurrentSeq?: (id: string) => number;
@@ -101,8 +100,6 @@ function createMockContext(sessions: Session[]): {
       if (session?.runtime === "pi-tui") return false;
       return ctx.sessions.getActiveSession(id) !== undefined;
     },
-    isSessionLive: (id: string) =>
-      runtimeOverride(id).isSessionLive?.(id) ?? sessionRuntimes.isSessionConnected(id),
     getSessionSnapshot: (id: string) => {
       const override = runtimeOverride(id);
       return (

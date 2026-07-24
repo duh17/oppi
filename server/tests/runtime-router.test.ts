@@ -52,6 +52,7 @@ function makeRouter(
   const managed = {
     ...managedCommands,
     isActive: vi.fn(() => session.runtime !== "pi-tui" && session.status !== "stopped"),
+    isSessionConnected: vi.fn((sessionId: string) => sessionId === "managed-1"),
     getActiveSessionIds: vi.fn(() => new Set(["managed-1"])),
     getActiveSession: vi.fn((sessionId: string) =>
       sessionId === "managed-1" ? makeSession({ id: "managed-1" }) : undefined,
@@ -68,9 +69,10 @@ function makeRouter(
       return session;
     }),
   };
+  const mirrorConnected = options.mirrorConnected ?? session.mirror?.status === "connected";
   const mirror = {
     ...makeCommands(),
-    getActiveSessionIds: vi.fn(() => new Set(["sess-1"])),
+    getActiveSessionIds: vi.fn(() => (mirrorConnected ? new Set(["sess-1"]) : new Set<string>())),
     getActiveSession: vi.fn(() => session),
     getCurrentSeq: vi.fn(() => 22),
     getCatchUp: vi.fn(() => ({
@@ -88,9 +90,7 @@ function makeRouter(
       sessionId: session.piSessionId,
       ...(options.mirrorLeafId ? { leafId: options.mirrorLeafId } : {}),
     })),
-    isSessionConnected: vi.fn(
-      () => options.mirrorConnected ?? session.mirror?.status === "connected",
-    ),
+    isSessionConnected: vi.fn(() => mirrorConnected),
   };
   const router = new SessionRuntimes(
     storage as unknown as Storage,

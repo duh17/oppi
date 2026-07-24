@@ -179,6 +179,8 @@ export interface AgentRuntimeCommandTransport {
   setMessageQueue(sessionId: string, payload: RuntimeSetQueuePayload): Promise<MessageQueueState>;
   sendAbort(sessionId: string): Promise<void>;
   stopSession(sessionId: string): Promise<void>;
+  /** True when this runtime currently owns a live process/bridge for the session. */
+  isSessionConnected(sessionId: string): boolean;
   getActiveSession(sessionId: string): Session | undefined;
   respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean;
   forwardClientCommand(
@@ -186,6 +188,8 @@ export interface AgentRuntimeCommandTransport {
     message: Record<string, unknown>,
     requestId: string | undefined,
   ): Promise<void>;
+  getToolFullOutputPath(sessionId: string, toolCallId: string): string | null;
+  getEventRing(sessionId: string): { length: number; capacity: number } | null;
 }
 
 /** Live event stream surface for a runtime-owned session. */

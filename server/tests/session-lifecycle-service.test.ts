@@ -71,7 +71,6 @@ function makeService(
   stopSession: ReturnType<typeof vi.fn>;
   stopSessionIfActive: ReturnType<typeof vi.fn>;
   isSessionConnected: ReturnType<typeof vi.fn>;
-  isSessionLive: ReturnType<typeof vi.fn>;
   getSessionSnapshot: ReturnType<typeof vi.fn>;
   getActiveSession: ReturnType<typeof vi.fn>;
   refreshSessionState: ReturnType<typeof vi.fn>;
@@ -101,8 +100,9 @@ function makeService(
     if (options.stopError) throw options.stopError;
   });
   const stopSessionIfActive = vi.fn(async () => null);
-  const isSessionConnected = vi.fn(() => options.mirrorConnected === true);
-  const isSessionLive = vi.fn(() => options.live === true);
+  const isSessionConnected = vi.fn(
+    () => options.mirrorConnected === true || options.live === true,
+  );
   const getSessionSnapshot = vi.fn(() => options.snapshot);
   const getActiveSession = vi.fn(() => options.active);
   const refreshSessionState = vi.fn(async () => null);
@@ -133,7 +133,6 @@ function makeService(
     sessions: { runCommand, sendPrompt, startSession, stopSession },
     sessionRuntimes: {
       isSessionConnected,
-      isSessionLive,
       getSessionSnapshot,
       getActiveSession,
       refreshSessionState,
@@ -163,7 +162,6 @@ function makeService(
     stopSession,
     stopSessionIfActive,
     isSessionConnected,
-    isSessionLive,
     getSessionSnapshot,
     getActiveSession,
     refreshSessionState,

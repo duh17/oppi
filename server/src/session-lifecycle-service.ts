@@ -114,7 +114,6 @@ export interface SessionLifecycleServiceDeps {
   sessionRuntimes: Pick<
     SessionRuntimes,
     | "isSessionConnected"
-    | "isSessionLive"
     | "getSessionSnapshot"
     | "getActiveSession"
     | "refreshSessionState"
@@ -303,7 +302,7 @@ export class SessionLifecycleService {
     }
 
     this.requireLaunchRestartAllowed(params.session);
-    if (this.deps.sessionRuntimes.isSessionLive(params.session.id)) {
+    if (this.deps.sessionRuntimes.isSessionConnected(params.session.id)) {
       const active = this.deps.sessionRuntimes.getActiveSession(params.session.id);
       return {
         session: active ? this.deps.ensureSessionContextWindow(active) : params.session,
@@ -324,7 +323,7 @@ export class SessionLifecycleService {
     if (session.workspaceId !== undefined || !session.control) {
       throw new SessionLifecycleError("Session is not a control session", 400);
     }
-    if (this.deps.sessionRuntimes.isSessionLive(session.id)) {
+    if (this.deps.sessionRuntimes.isSessionConnected(session.id)) {
       const active = this.deps.sessionRuntimes.getActiveSession(session.id);
       return {
         session: active ? this.deps.ensureSessionContextWindow(active) : session,
@@ -358,7 +357,7 @@ export class SessionLifecycleService {
     }
 
     this.requireLaunchRestartAllowed(params.session);
-    const hadActiveSession = this.deps.sessionRuntimes.isSessionLive(params.session.id);
+    const hadActiveSession = this.deps.sessionRuntimes.isSessionConnected(params.session.id);
     const started = await this.deps.sessions.startSession(params.session.id, params.workspace);
     return {
       session: this.deps.ensureSessionContextWindow(started),
@@ -559,7 +558,7 @@ export class SessionLifecycleService {
         } else {
           markStoredSessionStopped("oppi_stop_disconnected_terminal");
         }
-      } else if (this.deps.sessionRuntimes.isSessionLive(session.id)) {
+      } else if (this.deps.sessionRuntimes.isSessionConnected(session.id)) {
         await this.deps.sessionRuntimes.stopSession(session.id);
       } else {
         markStoredSessionStopped();

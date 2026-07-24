@@ -74,7 +74,6 @@ interface MockRouteContext {
     getActiveSession: ReturnType<typeof vi.fn>;
     getPendingUIRequestMessages: ReturnType<typeof vi.fn>;
     isSessionConnected: ReturnType<typeof vi.fn>;
-    isSessionLive: ReturnType<typeof vi.fn>;
     getSessionSnapshot: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
     stopSessionIfActive: ReturnType<typeof vi.fn>;
@@ -168,7 +167,6 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
       }
       return sessions.isActive(sessionId) === true;
     }),
-    isSessionLive: vi.fn((sessionId: string) => sessionRuntimes.isSessionConnected(sessionId)),
     getSessionSnapshot: vi.fn((sessionId: string) => {
       const session = storage.getSession(sessionId) as Session | undefined;
       if (session?.runtime === "pi-tui") {

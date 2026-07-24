@@ -186,6 +186,9 @@ function makeHarness(root: string) {
     subscribe: vi.fn(() => () => {}),
     getPendingUIRequestMessages: vi.fn(() => []),
     isActive: vi.fn(() => false),
+    isSessionConnected: vi.fn(() => false),
+    getToolFullOutputPath: vi.fn(() => null),
+    getEventRing: vi.fn(() => null),
     startSession: vi.fn(
       async (sessionId: string) => sessions.get(sessionId) ?? makeSession(sessionId),
     ),
@@ -519,6 +522,133 @@ describe("PiTuiMirrorRuntime resilience", () => {
         ),
       ).toBe(false);
       expect(mirror.getActiveSession(second.sessionId)?.name).toBe("Second terminal session");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the same session active across bridge replace without stream subscribers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-runtime-replace-"));
+    try {
+      const { mirror, sessions } = makeHarness(root);
+      const first = connectBridge(mirror, {
+        bridgeId: "bridge-same-session",
+        cwd: root,
+        piSessionId: "pi-same",
+        sessionFile: join(root, "same.jsonl"),
+        sessionName: "Same terminal session",
+      });
+
+      const secondWs = new FakeBridgeWebSocket();
+      mirror.handleBridgeWebSocket(secondWs as unknown as WebSocket);
+      secondWs.receive({
+        type: "hello",
+        protocolVersion: 2,
+        bridgeId: "bridge-same-session-2",
+        workspaceId: "w1",
+        cwd: root,
+        capabilities: ["input_preflight:v1"],
+        state: {
+          piSessionId: "pi-same",
+          sessionFile: join(root, "same.jsonl"),
+          sessionName: "Same terminal session",
+        },
+      });
+
+      const ack = secondWs.sent.find((message) => message.type === "hello_ack");
+      expect(ack?.sessionId).toBe(first.sessionId);
+      expect(mirror.isSessionConnected(first.sessionId)).toBe(true);
+      expect(mirror.getActiveSessionIds()).toEqual(new Set([first.sessionId]));
+      expect(sessions.get(first.sessionId)?.mirror?.status).toBe("connected");
+
+      const received: ServerMessage[] = [];
+      mirror.subscribe(first.sessionId, (message) => received.push(message));
+      secondWs.receive({
+        type: "queue_state",
+        queue: {
+          version: 3,
+          steering: [{ id: "s1", message: "after replace", createdAt: 1 }],
+          followUp: [],
+        },
+      });
+      expect(received).toContainEqual({
+        type: "queue_state",
+        queue: {
+          version: 3,
+          steering: [{ id: "s1", message: "after replace", createdAt: 1 }],
+          followUp: [],
+        },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("evicts hydrated mirror active state on terminal stop and idle unsubscribe", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-runtime-evict-"));
+    try {
+      const { mirror, sessions, runtimes } = makeHarness(root);
+      const connected = connectBridge(mirror, {
+        bridgeId: "bridge-evict",
+        cwd: root,
+        piSessionId: "pi-evict",
+        sessionFile: join(root, "evict.jsonl"),
+        sessionName: "Evict terminal session",
+      });
+
+      expect(mirror.getActiveSessionIds()).toEqual(new Set([connected.sessionId]));
+      expect(mirror.getEventRing(connected.sessionId)).toEqual({
+        length: 0,
+        capacity: 500,
+      });
+
+      // Keep one subscriber across terminal stop so catch-up/tool maps stay available.
+      const heldMessages: ServerMessage[] = [];
+      const unsubscribeHeld = mirror.subscribe(connected.sessionId, (message) => {
+        heldMessages.push(message);
+      });
+
+      connected.ws.receive({
+        type: "goodbye",
+        reason: "stopped",
+        state: { isIdle: true },
+      });
+      connected.ws.readyState = WebSocket.CLOSED;
+      connected.ws.emit("close");
+
+      expect(mirror.isSessionConnected(connected.sessionId)).toBe(false);
+      expect(sessions.get(connected.sessionId)?.status).toBe("stopped");
+      expect(mirror.getActiveSessionIds()).toEqual(new Set());
+      expect(mirror.getEventRing(connected.sessionId)).toEqual({
+        length: expect.any(Number),
+        capacity: 500,
+      });
+      expect(heldMessages.some((message) => message.type === "state")).toBe(true);
+
+      // Disconnected write paths must not re-pin after release.
+      unsubscribeHeld();
+      expect(mirror.getEventRing(connected.sessionId)).toBeNull();
+      await expect(
+        runtimes.sendPrompt(connected.sessionId, "should not pin", {
+          timestamp: Date.now(),
+          requestId: "req-no-pin",
+        }),
+      ).rejects.toThrow("pi-tui is not connected");
+      expect(mirror.getEventRing(connected.sessionId)).toBeNull();
+      expect(mirror.getToolFullOutputPath(connected.sessionId, "tool-1")).toBeNull();
+
+      // Read-only lookups must not re-pin a stopped mirror session.
+      expect(mirror.getPendingUIRequestMessages(connected.sessionId)).toEqual([]);
+      expect(mirror.getActiveSessionIds()).toEqual(new Set());
+
+      const unsubscribe = mirror.subscribe(connected.sessionId, () => {});
+      expect(mirror.getEventRing(connected.sessionId)).toEqual({
+        length: 0,
+        capacity: 500,
+      });
+      unsubscribe();
+      expect(mirror.getEventRing(connected.sessionId)).toBeNull();
+      expect(mirror.getActiveSessionIds()).toEqual(new Set());
     } finally {
       await rm(root, { recursive: true, force: true });
     }

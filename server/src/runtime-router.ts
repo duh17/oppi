@@ -30,16 +30,7 @@ export class SessionRuntimes implements AgentRuntimeTransport {
   }
 
   isSessionConnected(sessionId: string): boolean {
-    const session = this.storage.getSession(sessionId);
-    if (this.isPiTui(session)) {
-      return this.piTui.isSessionConnected(sessionId);
-    }
-    return this.oppi.getActiveSession(sessionId) !== undefined;
-  }
-
-  /** True when the owning runtime currently has an active process/bridge. */
-  isSessionLive(sessionId: string): boolean {
-    return this.isSessionConnected(sessionId);
+    return this.runtimeFor(sessionId).isSessionConnected(sessionId);
   }
 
   /** Runtime-owned session IDs that currently have a live process or bridge. */
@@ -51,9 +42,7 @@ export class SessionRuntimes implements AgentRuntimeTransport {
       }
     }
     for (const sessionId of this.piTui.getActiveSessionIds()) {
-      if (this.piTui.isSessionConnected(sessionId)) {
-        ids.add(sessionId);
-      }
+      ids.add(sessionId);
     }
     return ids;
   }
@@ -99,19 +88,11 @@ export class SessionRuntimes implements AgentRuntimeTransport {
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {
-    const session = this.storage.getSession(sessionId);
-    if (this.isPiTui(session)) {
-      return this.piTui.getToolFullOutputPath(sessionId, toolCallId);
-    }
-    return this.oppi.getToolFullOutputPath(sessionId, toolCallId);
+    return this.runtimeFor(sessionId).getToolFullOutputPath(sessionId, toolCallId);
   }
 
   getEventRing(sessionId: string): { length: number; capacity: number } | null {
-    const session = this.storage.getSession(sessionId);
-    if (this.isPiTui(session)) {
-      return this.piTui.getEventRing(sessionId);
-    }
-    return this.oppi.getEventRing(sessionId);
+    return this.runtimeFor(sessionId).getEventRing(sessionId);
   }
 
   sendPrompt: AgentRuntimeTransport["sendPrompt"] = (sessionId, message, opts) =>

@@ -497,6 +497,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.active.has(this.sessionKey(sessionId));
   }
 
+  isSessionConnected(sessionId: string): boolean {
+    return this.isActive(sessionId);
+  }
+
   /** Number of bound session-stream subscribers for the active session. */
   getSubscriberCount(sessionId: string): number {
     return this.active.get(this.sessionKey(sessionId))?.subscribers.size ?? 0;

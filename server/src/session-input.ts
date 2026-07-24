@@ -28,6 +28,34 @@ function runtimeLogTag(session: Session): "oppi" | "pi-tui" {
   return session.runtime === "pi-tui" ? "pi-tui" : "oppi";
 }
 
+function isPiTuiSession(session: Session): boolean {
+  return session.runtime === "pi-tui";
+}
+
+function shouldRecordPromptLocally(session: Session): boolean {
+  // Terminal-owned turns are authoritative in pi-tui; Oppi only projects them.
+  return !isPiTuiSession(session);
+}
+
+function promptBusyErrorMessage(session: Session): string {
+  return isPiTuiSession(session)
+    ? "Prompt requires an idle terminal session; use steer or follow_up while a turn is streaming"
+    : "Prompt requires an idle session; use steer or follow_up while a turn is streaming";
+}
+
+function streamingInputBusyErrorMessage(session: Session, kind: StreamingInputKind): string {
+  const label = kind === "steer" ? "Steer" : "Follow-up";
+  return isPiTuiSession(session)
+    ? `${label} requires an active streaming terminal turn`
+    : `${label} requires an active streaming turn`;
+}
+
+function attachmentWorkspaceErrorMessage(session: Session): string {
+  return isPiTuiSession(session)
+    ? "Attachments require a workspace-backed pi-tui session"
+    : "Attachments require a workspace-backed session";
+}
+
 export type SdkImageInput = { type: "image"; data: string; mimeType: string };
 export type StreamingInputKind = "steer" | "follow_up";
 
@@ -81,10 +109,6 @@ export interface SessionInputCoordinatorDeps {
   enqueueQueuedMessage?: EnqueueQueuedMessage;
   resolveWorkspaceRoot?: (session: Session) => string | null;
   onFirstMessage?: (session: Session) => void;
-  recordPromptLocally?: boolean;
-  promptBusyErrorMessage?: string;
-  streamingInputBusyErrorMessage?: (kind: StreamingInputKind) => string;
-  attachmentWorkspaceErrorMessage?: string;
   assertModelTurnAdmissionAllowed?: (key: string) => void;
 }
 
@@ -121,10 +145,8 @@ export class SessionInputCoordinator {
     }
 
     const workspaceRoot = this.deps.resolveWorkspaceRoot?.(active.session);
-    const workspaceError =
-      this.deps.attachmentWorkspaceErrorMessage ?? "Attachments require a workspace-backed session";
     if (!workspaceRoot) {
-      throw new Error(workspaceError);
+      throw new Error(attachmentWorkspaceErrorMessage(active.session));
     }
 
     const materialized = await materializeChatAttachments({
@@ -199,10 +221,7 @@ export class SessionInputCoordinator {
         turnPayload,
       )
     ) {
-      throw new Error(
-        this.deps.promptBusyErrorMessage ??
-          "Prompt requires an idle session; use steer or follow_up while a turn is streaming",
-      );
+      throw new Error(promptBusyErrorMessage(active.session));
     }
 
     if (
@@ -248,7 +267,7 @@ export class SessionInputCoordinator {
         throw new Error("Prompt turn became duplicate during serialized preflight admission");
       }
 
-      if (this.deps.recordPromptLocally !== false) {
+      if (shouldRecordPromptLocally(active.session)) {
         const capturedFirst = appendSessionMessage(active.session, {
           role: "user",
           content: dispatchMessage,
@@ -296,7 +315,7 @@ export class SessionInputCoordinator {
       imageCount: dispatchImages.length,
       attachmentCount: opts?.attachments?.length ?? 0,
       streamingBehavior: cmd.streamingBehavior as string | undefined,
-      recordPromptLocally: this.deps.recordPromptLocally !== false,
+      recordPromptLocally: shouldRecordPromptLocally(active.session),
     });
 
     const commandResult = this.deps.sendCommand(key, cmd, permit, () => {
@@ -304,16 +323,12 @@ export class SessionInputCoordinator {
       // Pi can synchronously emit agent_start immediately after preflight.
       dispatchAcceptedTurn();
     });
-    if (isPromiseLike(commandResult)) {
-      const data = await commandResult;
-      // Promise-returning runtimes resolve only after authoritative preflight acceptance.
-      acceptPreflight();
-      await this.deps.onCommandResult?.(key, cmd, data);
-    } else {
-      acceptPreflight();
-      if (this.deps.onCommandResult) {
-        await this.deps.onCommandResult(key, cmd, commandResult);
-      }
+    // Promise-returning runtimes resolve only after authoritative preflight acceptance.
+    // Sync managed sendCommand still runs onPreflightAccepted first via the callback above.
+    const data = isPromiseLike(commandResult) ? await commandResult : commandResult;
+    acceptPreflight();
+    if (this.deps.onCommandResult) {
+      await this.deps.onCommandResult(key, cmd, data);
     }
     const dispatchedTurn = dispatchAcceptedTurn();
 
@@ -393,11 +408,7 @@ export class SessionInputCoordinator {
     }
 
     if (!this.isRuntimeBusy(active)) {
-      const label = kind === "steer" ? "Steer" : "Follow-up";
-      throw new Error(
-        this.deps.streamingInputBusyErrorMessage?.(kind) ??
-          `${label} requires an active streaming turn`,
-      );
+      throw new Error(streamingInputBusyErrorMessage(active.session, kind));
     }
 
     const turnPayload = {
@@ -477,15 +488,10 @@ export class SessionInputCoordinator {
       acceptPreflight();
       dispatchAcceptedTurn();
     });
-    if (isPromiseLike(commandResult)) {
-      const data = await commandResult;
-      acceptPreflight();
-      await this.deps.onCommandResult?.(key, cmd, data);
-    } else {
-      acceptPreflight();
-      if (this.deps.onCommandResult) {
-        await this.deps.onCommandResult(key, cmd, commandResult);
-      }
+    const data = isPromiseLike(commandResult) ? await commandResult : commandResult;
+    acceptPreflight();
+    if (this.deps.onCommandResult) {
+      await this.deps.onCommandResult(key, cmd, data);
     }
     const dispatchedTurn = dispatchAcceptedTurn();
     this.deps.enqueueQueuedMessage?.(
