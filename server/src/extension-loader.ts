@@ -15,12 +15,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { isManagedExtensionName } from "../extensions/built-ins.js";
-import { createLogger } from "./logger.js";
 
 const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
 const HOST_EXTENSIONS_DIR = join(DEFAULT_AGENT_DIR, "extensions");
-
-const log = createLogger({ base: { component: "extension_loader" } });
 
 const EXTENSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 
@@ -223,83 +220,61 @@ export function listHostExtensions(options: ListHostExtensionsOptions = {}): Hos
  * List host extensions using pi's package/settings resolver.
  *
  * This includes:
- * - auto-discovered global/project extension directories
+ * - auto-discovered global/project extension entrypoints Pi would load
  * - settings-declared local extension paths
  * - package-provided extensions from `pi install` (git/npm/local package sources)
  *
- * Falls back to directory scanning if package resolution fails.
+ * Authoritative catalogs stay resolver-only so helper/test directories under
+ * `.pi/extensions` never appear as fake extensions.
  */
 export async function listConfiguredHostExtensions(
   options: ListConfiguredHostExtensionsOptions = {},
 ): Promise<HostExtensionInfo[]> {
-  const cwd = resolveWorkspaceCwd(options.cwd, homedir()) ?? homedir();
-  const agentDir = options.agentDir ?? DEFAULT_AGENT_DIR;
-
-  try {
-    const settingsManager = SettingsManager.create(cwd, agentDir);
-    const packageManager = new DefaultPackageManager({
-      cwd,
-      agentDir,
-      settingsManager,
-    });
-
-    // Do not auto-install missing packages from the server route.
-    const resolved = await packageManager.resolve(async () => "skip");
-
-    // Keep the package/settings resolver as the source of truth when it sees an
-    // extension, but also merge a direct directory scan. The resolver can miss
-    // auto-discovered directory extensions (`extensions/name/index.ts`) in some
-    // server contexts, while native pi still loads them. Workspace editing needs
-    // to show those immediately so they can be enabled for the next session.
-    return mergeHostExtensions(
-      listFromResolvedResources(resolved.extensions, { includeDisabled: false }),
-      listHostExtensions({ cwd: options.cwd, globalDir: join(agentDir, "extensions") }),
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log.warn("extensions.configured_resolution.failed", { error: message });
-
-    return listHostExtensions({
-      cwd: options.cwd,
-      globalDir: join(agentDir, "extensions"),
-    });
-  }
+  const resolved = await resolveConfiguredHostExtensionResources(options);
+  return listFromResolvedResources(resolved, { includeDisabled: false });
 }
 
 /**
- * Resolve workspace extension paths for spawn/install.
+ * List host extension resources with enabled state from Pi resolution.
  *
- * Resolves named extensions from the workspace's `extensions` list.
+ * Used by workspace settings. Matches Pi TUI / SDK session loading — no raw
+ * directory-scan merge that invents non-extension folders.
  */
 export async function listConfiguredHostExtensionResources(
   options: ListConfiguredHostExtensionsOptions = {},
 ): Promise<HostExtensionInfo[]> {
+  const resolved = await resolveConfiguredHostExtensionResources(options);
+  return listFromResolvedResources(resolved, { includeDisabled: true });
+}
+
+async function resolveConfiguredHostExtensionResources(
+  options: ListConfiguredHostExtensionsOptions,
+): Promise<ResolvedResource[]> {
   const cwd = resolveWorkspaceCwd(options.cwd, homedir()) ?? homedir();
   const agentDir = options.agentDir ?? DEFAULT_AGENT_DIR;
 
-  try {
-    const settingsManager = SettingsManager.create(cwd, agentDir);
-    const packageManager = new DefaultPackageManager({
-      cwd,
-      agentDir,
-      settingsManager,
-    });
+  const settingsManager = SettingsManager.create(cwd, agentDir);
+  throwIfSettingsErrors(settingsManager, "load");
+  const packageManager = new DefaultPackageManager({
+    cwd,
+    agentDir,
+    settingsManager,
+  });
 
-    const resolved = await packageManager.resolve(async () => "skip");
-    return mergeHostExtensions(
-      listFromResolvedResources(resolved.extensions, { includeDisabled: true }),
-      listHostExtensions({ cwd: options.cwd, globalDir: join(agentDir, "extensions") }).map(
-        (extension) => ({ ...extension, enabled: true }),
-      ),
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log.warn("extensions.configured_resources.failed", { error: message });
-    return listHostExtensions({
-      cwd: options.cwd,
-      globalDir: join(agentDir, "extensions"),
-    }).map((extension) => ({ ...extension, enabled: true }));
-  }
+  // Do not auto-install missing packages from the server route.
+  const resolved = await packageManager.resolve(async () => "skip");
+  throwIfSettingsErrors(settingsManager, "resolve");
+  return resolved.extensions;
+}
+
+function throwIfSettingsErrors(settingsManager: SettingsManager, operation: string): void {
+  const errors = settingsManager.drainErrors();
+  if (errors.length === 0) return;
+  const detail = errors
+    .slice(0, 5)
+    .map((entry) => `${entry.scope}: ${entry.error.message}`)
+    .join("; ");
+  throw new Error(`Pi settings ${operation} failed: ${detail}`);
 }
 
 export function resolveWorkspaceExtensions(
@@ -350,21 +325,6 @@ export function extensionInstallName(extension: ResolvedExtension): string {
   }
 
   return extension.name;
-}
-
-function mergeHostExtensions(
-  primary: HostExtensionInfo[],
-  secondary: HostExtensionInfo[],
-): HostExtensionInfo[] {
-  const byName = new Map<string, HostExtensionInfo>();
-
-  for (const extension of [...primary, ...secondary]) {
-    if (!byName.has(extension.name)) {
-      byName.set(extension.name, extension);
-    }
-  }
-
-  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function listFromResolvedResources(

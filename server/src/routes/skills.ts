@@ -50,6 +50,33 @@ class WorkspaceResourceScopeError extends Error {
   }
 }
 
+class PiSettingsOperationError extends Error {
+  constructor(operation: string, detail: string) {
+    super(`Pi settings ${operation} failed: ${detail}`);
+    this.name = "PiSettingsOperationError";
+  }
+}
+
+class PiResourceNotFoundError extends Error {
+  constructor(message = "Pi resource not found for cwd") {
+    super(message);
+    this.name = "PiResourceNotFoundError";
+  }
+}
+
+function httpStatusForPiResourceError(err: unknown): number {
+  if (err instanceof WorkspaceResourceScopeError) return err.status;
+  if (err instanceof PiSettingsOperationError) return 500;
+  if (err instanceof PiResourceNotFoundError) return 404;
+  // extension-loader and other Pi helpers throw plain Errors with this prefix.
+  if (err instanceof Error && err.message.startsWith("Pi settings ")) return 500;
+  return 400;
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback;
+}
+
 function resolveResourceCwd(cwd: string | undefined): string {
   const raw = cwd?.trim();
   if (!raw) return homedir();
@@ -83,9 +110,21 @@ async function resolvePiResources(cwd: string): Promise<{
 }> {
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir);
+  throwIfPiSettingsErrors(settingsManager, "load");
   const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
   const resolved = await packageManager.resolve(async () => "skip");
+  throwIfPiSettingsErrors(settingsManager, "resolve");
   return { agentDir, settingsManager, resolved };
+}
+
+function throwIfPiSettingsErrors(settingsManager: SettingsManager, operation: string): void {
+  const errors = settingsManager.drainErrors();
+  if (errors.length === 0) return;
+  const detail = errors
+    .slice(0, 5)
+    .map((entry) => `${entry.scope}: ${entry.error.message}`)
+    .join("; ");
+  throw new PiSettingsOperationError(operation, detail);
 }
 
 async function listConfiguredHostSkills(cwd: string): Promise<SkillRouteInfo[]> {
@@ -260,6 +299,36 @@ function resourcePattern(resource: ResolvedResource, cwd: string, agentDir: stri
   return toPosixPath(relative(baseDir, resource.path));
 }
 
+function isLocalPackageSource(source: string): boolean {
+  const trimmed = source.trim();
+  return !(
+    trimmed.startsWith("npm:") ||
+    trimmed.startsWith("git:") ||
+    trimmed.startsWith("github:") ||
+    trimmed.startsWith("http:") ||
+    trimmed.startsWith("https:") ||
+    trimmed.startsWith("ssh:")
+  );
+}
+
+function packageSourcesMatch(
+  leftSource: string,
+  leftScope: PiResourceScope,
+  rightSource: string,
+  rightScope: PiResourceScope,
+  cwd: string,
+  agentDir: string,
+): boolean {
+  if (leftSource === rightSource) return true;
+  if (!isLocalPackageSource(leftSource) || !isLocalPackageSource(rightSource)) {
+    return false;
+  }
+  return (
+    resolveSettingsPath(leftSource, settingsBaseDir(leftScope, cwd, agentDir)) ===
+    resolveSettingsPath(rightSource, settingsBaseDir(rightScope, cwd, agentDir))
+  );
+}
+
 function packageSourceForSettingsScope(
   resource: ResolvedResource,
   targetScope: PiResourceScope,
@@ -270,19 +339,25 @@ function packageSourceForSettingsScope(
     return resource.metadata.source;
   }
 
-  const packageRoot = resource.metadata.baseDir;
-  if (
-    !packageRoot ||
-    (resource.metadata.scope !== "user" && resource.metadata.scope !== "project")
-  ) {
-    return resource.metadata.source;
+  const source = resource.metadata.source;
+  if (!isLocalPackageSource(source)) {
+    return source;
   }
 
-  const sourceBaseDir = settingsBaseDir(resource.metadata.scope, cwd, agentDir);
-  const resolvedSource = resolveSettingsPath(resource.metadata.source, sourceBaseDir);
-  return resolvedSource === resolve(packageRoot).replace(/\/+$/, "")
-    ? packageRoot
-    : resource.metadata.source;
+  if (resource.metadata.scope !== "user" && resource.metadata.scope !== "project") {
+    return source;
+  }
+
+  // Pi TUI project deltas store local package sources relative to <cwd>/.pi.
+  const resolvedSource = resolveSettingsPath(
+    source,
+    settingsBaseDir(resource.metadata.scope, cwd, agentDir),
+  );
+  if (targetScope === "project") {
+    return toPosixPath(relative(projectSettingsBaseDir(cwd), resolvedSource)) || ".";
+  }
+
+  return resolvedSource;
 }
 
 function topLevelResourcePattern(
@@ -418,37 +493,55 @@ function writePackageResourceSettings(
       : settingsManager.getGlobalSettings();
   const packages = [...(settings.packages ?? [])] as PackageSource[];
   const packageSource = packageSourceForSettingsScope(resource, targetScope, cwd, agentDir);
+  const resourceScope =
+    resource.metadata.scope === "project" || resource.metadata.scope === "user"
+      ? resource.metadata.scope
+      : targetScope;
   let packageIndex = packages.findIndex((pkg) => {
     const source = typeof pkg === "string" ? pkg : pkg.source;
-    return source === packageSource;
+    return (
+      packageSourcesMatch(source, targetScope, packageSource, targetScope, cwd, agentDir) ||
+      packageSourcesMatch(
+        source,
+        targetScope,
+        resource.metadata.source,
+        resourceScope,
+        cwd,
+        agentDir,
+      )
+    );
   });
+
+  // Cross-scope project overrides must be Pi TUI-shaped package deltas
+  // (`autoload: false`) so they layer over the global package instead of
+  // replacing it and dropping unrelated package resources.
+  const isProjectOverride = targetScope === "project" && targetScope !== resource.metadata.scope;
 
   if (packageIndex < 0) {
     if (targetScope === resource.metadata.scope) {
-      throw new Error(`Package source not found in ${targetScope} settings`);
+      throw new Error(`Package source missing from ${targetScope} settings`);
     }
-    packages.push({ source: packageSource });
+    packages.push(
+      isProjectOverride ? { source: packageSource, autoload: false } : { source: packageSource },
+    );
     packageIndex = packages.length - 1;
   }
 
   let pkg = packages[packageIndex];
   if (typeof pkg === "string") {
-    pkg = { source: pkg };
+    pkg = isProjectOverride ? { source: pkg, autoload: false } : { source: pkg };
+    packages[packageIndex] = pkg;
+  } else if (isProjectOverride && pkg.autoload !== false) {
+    pkg = { ...pkg, autoload: false };
     packages[packageIndex] = pkg;
   }
 
-  const current = [...(pkg[resourceType] ?? [])];
+  // Toggle always writes a +/- filter entry, so the package object retains filters.
   const pattern = resourcePattern(resource, cwd, agentDir);
-  const updated = current.filter((entry) => stripPatternPrefix(entry) !== pattern);
-  updated.push(`${enabled ? "+" : "-"}${pattern}`);
-  pkg[resourceType] = updated;
-
-  const hasFilters = ["extensions", "skills", "prompts", "themes"].some(
-    (key) => (pkg as Record<string, unknown>)[key] !== undefined,
-  );
-  if (!hasFilters) {
-    packages[packageIndex] = pkg.source;
-  }
+  const current = [...(pkg[resourceType] ?? [])];
+  pkg[resourceType] = current
+    .filter((entry) => stripPatternPrefix(entry) !== pattern)
+    .concat(`${enabled ? "+" : "-"}${pattern}`);
 
   if (targetScope === "project") {
     settingsManager.setProjectPackages(packages);
@@ -500,7 +593,7 @@ async function setPiResourceEnabled(options: {
     resourceMatchesClientPath(options.type, item, requestedPath),
   );
   if (!resource) {
-    throw new Error("Pi resource not found for cwd");
+    throw new PiResourceNotFoundError();
   }
 
   const targetScope = options.preferProjectScope ? "project" : resource.metadata.scope;
@@ -518,18 +611,24 @@ async function setPiResourceEnabled(options: {
       options.enabled,
       targetScope,
     );
-    return;
+  } else {
+    writeResourceSettings(
+      settingsManager,
+      resource,
+      options.type,
+      options.cwd,
+      agentDir,
+      options.enabled,
+      targetScope,
+    );
   }
 
-  writeResourceSettings(
-    settingsManager,
-    resource,
-    options.type,
-    options.cwd,
-    agentDir,
-    options.enabled,
-    targetScope,
-  );
+  await finishPiSettingsWrite(settingsManager);
+}
+
+async function finishPiSettingsWrite(settingsManager: SettingsManager): Promise<void> {
+  await settingsManager.flush();
+  throwIfPiSettingsErrors(settingsManager, "write");
 }
 
 export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
@@ -569,11 +668,11 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       }
       helpers.json(res, { skills: ctx.skillRegistry.list() });
     } catch (err: unknown) {
-      if (err instanceof WorkspaceResourceScopeError) {
-        helpers.error(res, err.status, err.message);
-        return;
-      }
-      throw err;
+      helpers.error(
+        res,
+        httpStatusForPiResourceError(err),
+        errorMessage(err, "Failed to resolve Pi skills for cwd"),
+      );
     }
   }
 
@@ -588,49 +687,52 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         workspaceId: url.searchParams.get("workspaceId") ?? undefined,
         cwd: url.searchParams.get("cwd") ?? undefined,
       });
-      const piExtensions = (
+      // listFromResolvedResources already dedupes by extension name.
+      const extensions = (
         await listConfiguredHostExtensionResources({ cwd, agentDir: getAgentDir() })
       ).map((ext) => ({
         ...ext,
         enabled: ext.enabled ?? true,
         source: "pi" as const,
       }));
-      const byName = new Map<string, (typeof piExtensions)[number]>();
-      for (const ext of piExtensions) {
-        if (!byName.has(ext.name)) {
-          byName.set(ext.name, ext);
-        }
-      }
 
-      helpers.json(res, { extensions: Array.from(byName.values()) });
+      helpers.json(res, { extensions });
     } catch (err: unknown) {
-      if (err instanceof WorkspaceResourceScopeError) {
-        helpers.error(res, err.status, err.message);
-        return;
-      }
-      throw err;
+      helpers.error(
+        res,
+        httpStatusForPiResourceError(err),
+        errorMessage(err, "Failed to resolve Pi extensions for cwd"),
+      );
     }
   }
 
   async function handleGetSkillDetail(name: string, url: URL, res: ServerResponse): Promise<void> {
-    const cwd = url.searchParams.get("cwd") ?? undefined;
-    if (cwd) {
-      const skill = (await listConfiguredHostSkills(cwd)).find((item) => item.name === name);
-      if (!skill) {
+    try {
+      const cwd = url.searchParams.get("cwd") ?? undefined;
+      if (cwd) {
+        const skill = (await listConfiguredHostSkills(cwd)).find((item) => item.name === name);
+        if (!skill) {
+          helpers.error(res, 404, "Skill not found");
+          return;
+        }
+        const content = readSkillFileContent(skill.path, "SKILL.md") ?? "";
+        helpers.json(res, { skill, content, files: listFilesRecursive(skill.path) });
+        return;
+      }
+
+      const detail = ctx.skillRegistry.getDetail(name);
+      if (!detail) {
         helpers.error(res, 404, "Skill not found");
         return;
       }
-      const content = readSkillFileContent(skill.path, "SKILL.md") ?? "";
-      helpers.json(res, { skill, content, files: listFilesRecursive(skill.path) });
-      return;
+      helpers.json(res, detail);
+    } catch (err: unknown) {
+      helpers.error(
+        res,
+        httpStatusForPiResourceError(err),
+        errorMessage(err, "Failed to load skill detail"),
+      );
     }
-
-    const detail = ctx.skillRegistry.getDetail(name);
-    if (!detail) {
-      helpers.error(res, 404, "Skill not found");
-      return;
-    }
-    helpers.json(res, detail);
   }
 
   async function handleGetSkillFile(name: string, url: URL, res: ServerResponse): Promise<void> {
@@ -640,24 +742,32 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       return;
     }
 
-    const cwd = url.searchParams.get("cwd") ?? undefined;
-    if (cwd) {
-      const skill = (await listConfiguredHostSkills(cwd)).find((item) => item.name === name);
-      const content = skill ? readSkillFileContent(skill.path, filePath) : undefined;
+    try {
+      const cwd = url.searchParams.get("cwd") ?? undefined;
+      if (cwd) {
+        const skill = (await listConfiguredHostSkills(cwd)).find((item) => item.name === name);
+        const content = skill ? readSkillFileContent(skill.path, filePath) : undefined;
+        if (content === undefined) {
+          helpers.error(res, 404, "File not found");
+          return;
+        }
+        helpers.json(res, { content });
+        return;
+      }
+
+      const content = ctx.skillRegistry.getFileContent(name, filePath);
       if (content === undefined) {
         helpers.error(res, 404, "File not found");
         return;
       }
       helpers.json(res, { content });
-      return;
+    } catch (err: unknown) {
+      helpers.error(
+        res,
+        httpStatusForPiResourceError(err),
+        errorMessage(err, "Failed to load skill file"),
+      );
     }
-
-    const content = ctx.skillRegistry.getFileContent(name, filePath);
-    if (content === undefined) {
-      helpers.error(res, 404, "File not found");
-      return;
-    }
-    helpers.json(res, { content });
   }
 
   function handleListDirectories(url: URL, res: ServerResponse): void {
@@ -737,12 +847,11 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       });
       helpers.json(res, { ok: true });
     } catch (err: unknown) {
-      if (err instanceof WorkspaceResourceScopeError) {
-        helpers.error(res, err.status, err.message);
-        return;
-      }
-      const message = err instanceof Error ? err.message : "Failed to update Pi resource settings";
-      helpers.error(res, message.includes("not found") ? 404 : 400, message);
+      helpers.error(
+        res,
+        httpStatusForPiResourceError(err),
+        errorMessage(err, "Failed to update Pi resource settings"),
+      );
     }
   }
 

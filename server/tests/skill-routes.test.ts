@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -114,6 +114,54 @@ describe("skills module", () => {
       expect(body.extensions).toContainEqual(
         expect.objectContaining({ name: "review", enabled: true }),
       );
+    } finally {
+      if (previousAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not list helper or test directories under .pi/extensions as extensions", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-extension-route-false-dirs-"));
+    const cwd = join(root, "workspace");
+    const agentDir = join(root, "agent");
+    const projectExtensions = join(cwd, ".pi", "extensions");
+    mkdirSync(join(projectExtensions, "lib"), { recursive: true });
+    mkdirSync(join(projectExtensions, "tests"), { recursive: true });
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    writeFileSync(join(projectExtensions, "lib", "helper.ts"), "export const x = 1;\n");
+    writeFileSync(join(projectExtensions, "tests", "helper.test.ts"), "export {};\n");
+    writeFileSync(join(projectExtensions, "real-extension.ts"), "export default function () {}\n");
+
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    try {
+      const dispatch = createSkillRoutes(
+        { skillRegistry: { list: vi.fn(() => []) } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const res = makeResponse();
+
+      await dispatch({
+        method: "GET",
+        path: "/extensions",
+        url: new URL(`http://localhost/extensions?cwd=${encodeURIComponent(cwd)}`),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        extensions: Array<{ name: string; kind?: string; path: string }>;
+      };
+      const names = body.extensions.map((ext) => ext.name);
+      expect(names).toContain("real-extension");
+      expect(names).not.toContain("lib");
+      expect(names).not.toContain("tests");
     } finally {
       if (previousAgentDir === undefined) {
         delete process.env.PI_CODING_AGENT_DIR;
@@ -349,13 +397,20 @@ describe("skills module", () => {
         packages: [packageDir],
       });
       const settings = JSON.parse(readFileSync(join(cwd, ".pi", "settings.json"), "utf-8")) as {
-        packages?: Array<{ source?: string; skills?: string[]; extensions?: string[] }>;
+        packages?: Array<{
+          source?: string;
+          autoload?: boolean;
+          skills?: string[];
+          extensions?: string[];
+        }>;
         skills?: string[];
         extensions?: string[];
       };
+      const projectPackageSource = relative(join(cwd, ".pi"), packageDir).split("\\").join("/");
       expect(settings.packages).toEqual([
         {
-          source: packageDir,
+          source: projectPackageSource,
+          autoload: false,
           skills: ["-skills/package-route-skill/SKILL.md"],
           extensions: ["-extensions/package-route-extension.ts"],
         },
@@ -392,6 +447,133 @@ describe("skills module", () => {
       expect(
         extensionsBody.extensions.find((ext) => ext.name === "package-route-extension")?.enabled,
       ).toBe(false);
+    } finally {
+      if (previousAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("merges toggles into an existing relative project package delta", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-resource-route-package-merge-"));
+    const cwd = join(root, "workspace");
+    const agentDir = join(root, "agent");
+    const packageDir = join(root, "pi-package");
+    const skillA = join(packageDir, "skills", "package-skill-a");
+    const skillB = join(packageDir, "skills", "package-skill-b");
+    mkdirSync(skillA, { recursive: true });
+    mkdirSync(skillB, { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "oppi-route-package-merge", version: "1.0.0" }),
+    );
+    writeFileSync(
+      join(skillA, "SKILL.md"),
+      ["---", "name: package-skill-a", "description: First package skill.", "---", "Skill A."].join(
+        "\n",
+      ),
+    );
+    writeFileSync(
+      join(skillB, "SKILL.md"),
+      [
+        "---",
+        "name: package-skill-b",
+        "description: Second package skill.",
+        "---",
+        "Skill B.",
+      ].join("\n"),
+    );
+    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: [packageDir] }));
+
+    const projectPackageSource = relative(join(cwd, ".pi"), packageDir).split("\\").join("/");
+    writeFileSync(
+      join(cwd, ".pi", "settings.json"),
+      JSON.stringify({
+        packages: [
+          {
+            source: projectPackageSource,
+            autoload: false,
+            skills: ["-skills/package-skill-a/SKILL.md"],
+          },
+        ],
+      }),
+    );
+
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    try {
+      const dispatch = createSkillRoutes(
+        { skillRegistry: { list: vi.fn(() => []) } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+
+      const toggleRes = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: "/pi/resources/enabled",
+        url: new URL("http://localhost/pi/resources/enabled"),
+        req: makeRequest({
+          cwd,
+          type: "skills",
+          path: skillB,
+          enabled: false,
+        }) as never,
+        res: toggleRes as never,
+      });
+      expect(toggleRes.statusCode).toBe(200);
+
+      const settings = JSON.parse(readFileSync(join(cwd, ".pi", "settings.json"), "utf-8")) as {
+        packages?: Array<{ source?: string; autoload?: boolean; skills?: string[] }>;
+      };
+      expect(settings.packages).toHaveLength(1);
+      expect(settings.packages?.[0]).toEqual({
+        source: projectPackageSource,
+        autoload: false,
+        skills: ["-skills/package-skill-a/SKILL.md", "-skills/package-skill-b/SKILL.md"],
+      });
+    } finally {
+      if (previousAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 500 when project Pi settings cannot be loaded for extensions", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-extension-route-bad-settings-"));
+    const cwd = join(root, "workspace");
+    const agentDir = join(root, "agent");
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(cwd, ".pi", "settings.json"), "{ not-json");
+
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    try {
+      const dispatch = createSkillRoutes(
+        { skillRegistry: { list: vi.fn(() => []) } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const res = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/extensions",
+        url: new URL(`http://localhost/extensions?cwd=${encodeURIComponent(cwd)}`),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.body).toMatch(/Pi settings load failed/i);
     } finally {
       if (previousAgentDir === undefined) {
         delete process.env.PI_CODING_AGENT_DIR;
