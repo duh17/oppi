@@ -31,6 +31,8 @@ enum ProviderColor {
             return palette.yellow
         case "mistral", "mistralai":
             return palette.red
+        case "qwen":
+            return palette.purple
         default:
             return palette.purple
         }
@@ -56,5 +58,7 @@ enum ProviderColor {
         "google-vertex": "google-vertex",
         "minimax-cn": "minimax",
         "opencode-go": "opencode",
+        "qwen-token-plan": "qwen",
+        "qwen-token-plan-cn": "qwen",
     ]
 }

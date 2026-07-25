@@ -561,6 +561,7 @@ func providerMonogram(_ provider: String?) -> String {
     case "groq": return "Q"
     case "huggingface": return "H"
     case "kimi-coding": return "K"
+    case "qwen": return "Q"
     case "vercel-ai-gateway": return "V"
     case "lmstudio": return "L"
     case "omlx", "ollama", "opencode": return "O"
@@ -1015,6 +1016,8 @@ private let providerAliases: [String: String] = [
     "google-antigravity": "google",
     "minimax-cn": "minimax",
     "opencode-go": "opencode",
+    "qwen-token-plan": "qwen",
+    "qwen-token-plan-cn": "qwen",
 ]
 
 private let providersWithLogoAsset: Set<String> = [
@@ -1031,6 +1034,7 @@ private let providersWithLogoAsset: Set<String> = [
     "omlx",
     "openai",
     "openrouter",
+    "qwen",
     "vercel-ai-gateway",
     "xai",
     "zai",
@@ -1062,6 +1066,9 @@ private let knownProviderDisplayNames: [String: String] = [
     "opencode": "OpenCode",
     "opencode-go": "OpenCode Go",
     "openrouter": "OpenRouter",
+    "qwen": "Qwen",
+    "qwen-token-plan": "Qwen Token Plan",
+    "qwen-token-plan-cn": "Qwen Token Plan CN",
     "vercel-ai-gateway": "Vercel AI Gateway",
     "xai": "xAI",
     "zai": "Z.AI",

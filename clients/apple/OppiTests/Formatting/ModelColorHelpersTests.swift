@@ -54,6 +54,16 @@ struct ModelColorHelpersTests {
         #expect(providerDisplayLabel("omlx") == "OMLX")
     }
 
+    @Test func providerLogoAssetNamesIncludeQwen() {
+        #expect(providerLogoAssetName("qwen") == "provider-qwen")
+        #expect(providerLogoAssetName("qwen-token-plan") == "provider-qwen")
+        #expect(providerLogoAssetName("qwen-token-plan-cn") == "provider-qwen")
+        #expect(ProviderIcon.logoAssetName(for: "qwen-token-plan") == "provider-qwen")
+        #expect(providerDisplayLabel("qwen") == "Qwen")
+        #expect(providerDisplayLabel("qwen-token-plan") == "Qwen Token Plan")
+        #expect(providerDisplayLabel("qwen-token-plan-cn") == "Qwen Token Plan CN")
+    }
+
     @Test func providerIconTintMeetsContrastFloorOnThemeSurfaces() {
         let palette = ThemePalettes.dark
         let backgrounds = [palette.bg, palette.bgDark, palette.bgHighlight]
