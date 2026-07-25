@@ -851,6 +851,71 @@ describe("SdkBackend host extensions", () => {
     }
   });
 
+  it("resolves a seeded custom-provider extension model at session start", async () => {
+    // Regression for issue #19: a session seeded with a model from a custom
+    // provider extension (e.g. kiro/antigravity) must resolve it at start,
+    // instead of silently defaulting because extension providers were only
+    // registered after the seeded model was resolved.
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-ext-seed-cwd-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-ext-seed-agent-"));
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    writeFileSync(join(agentDir, "auth.json"), "{}", "utf-8");
+    writeFileSync(
+      join(agentDir, "extensions", "seed-provider.ts"),
+      `
+export default function (pi) {
+  pi.registerProvider("testprov", {
+    name: "Test Provider",
+    api: "openai-completions",
+    baseUrl: "https://api.test.local/v1",
+    apiKey: "test-key",
+    models: [
+      {
+        id: "test-model",
+        name: "Test Model",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 100000,
+        maxTokens: 8000,
+      },
+    ],
+  });
+}
+`,
+      "utf-8",
+    );
+    const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    let backend: SdkBackend | undefined;
+
+    try {
+      backend = await SdkBackend.create({
+        session: makeSession({
+          ephemeral: true,
+          model: "testprov/test-model",
+        }),
+        workspace: {
+          id: "w1",
+          name: "Extension seed test",
+          runtime: "host",
+          hostMount: cwd,
+        } as Workspace,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(backend.session.model?.provider).toBe("testprov");
+      expect(backend.session.model?.id).toBe("test-model");
+    } finally {
+      await backend?.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
+      if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
+    }
+  });
+
   it('keeps bash disabled when launch policy uses noTools: "builtin"', async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-no-builtin-tools-"));
     const backend = await SdkBackend.create({

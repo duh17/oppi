@@ -29,6 +29,7 @@ import { BoundSessionStreamMux, DictationStreamMux } from "./stream.js";
 import { RouteHandler } from "./routes/index.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
 import { ModelCatalog } from "./model-catalog.js";
+import { discoverExtensionProviders } from "./extension-model-discovery.js";
 import { LiveActivityBridge } from "./live-activity.js";
 import { SessionPushNotifier } from "./session-push-notifier.js";
 import { AgentScheduleRunner } from "./agent-schedule-runner.js";
@@ -683,6 +684,23 @@ export class Server {
     this.models = new ModelCatalog(this.modelRegistry, this.storage, () =>
       SettingsManager.create(process.cwd(), agentDir).getEnabledModels(),
     );
+
+    // Discover custom provider extensions (e.g. kiro/antigravity) and register
+    // their providers on the server-wide model runtime so their models reach the
+    // /models picker. Uses pi's own extension-loading path against the user's
+    // global extensions; registrations persist across refresh(), so this runs
+    // once at startup and auth-gated availability updates dynamically afterwards.
+    // Failures are logged, never fatal to startup.
+    try {
+      await discoverExtensionProviders(this.modelRuntime, {
+        cwd: process.cwd(),
+        agentDir,
+      });
+    } catch (error) {
+      log.warn("models.extension_discovery_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     this.providerAuth = new ProviderAuthManager({
       modelRuntime: this.modelRuntime,
       getKnownApiKeyProviderIds: () => {

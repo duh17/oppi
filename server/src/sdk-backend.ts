@@ -47,6 +47,7 @@ import {
   stripModelThinkingLevel,
 } from "./model-resolution.js";
 import { createDefaultAgentExtensionFactory } from "./default-agent-tool.js";
+import { applyPendingProviderRegistrations } from "./extension-model-discovery.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import {
   DEFAULT_OPPI_EXTENSION_SETTINGS,
@@ -640,34 +641,7 @@ export class SdkBackend {
         authPath: join(runtimeAgentDir, "auth.json"),
         modelsPath: join(runtimeAgentDir, "models.json"),
       });
-      const modelRegistry = new ModelRegistry(modelRuntime);
       const settingsManager = SettingsManager.create(hostCwd, runtimeAgentDir);
-
-      const shouldSeedFromSessionState = !sessionStartEvent;
-      const model =
-        shouldSeedFromSessionState && session.model
-          ? resolveRegistryModel(modelRegistry, session.model, settingsManager.getEnabledModels())
-          : undefined;
-      if (shouldSeedFromSessionState && session.model) {
-        if (session.launch?.modelPolicy === "required") {
-          try {
-            enforceLaunchModelPolicy(session, model);
-          } catch (error) {
-            log.error("sdk.model_resolve_required_failed", {
-              sessionId: session.id,
-              model: session.model,
-              launchSource: session.launch.source,
-              resolvedModel: model ? `${model.provider}/${model.id}` : undefined,
-            });
-            throw error;
-          }
-        }
-        if (!model) {
-          log.warn("sdk.model_resolve_defaulted", {
-            model: session.model,
-          });
-        }
-      }
 
       // Resource loader: follow Pi's normal cwd/settings/package discovery.
       // Oppi no longer applies a workspace-level skills/extensions policy for
@@ -790,6 +764,51 @@ export class SdkBackend {
         };
       }
       await loader.reload();
+
+      // Apply providers that extensions registered during reload() before
+      // resolving the seeded model, so custom provider models (e.g. kiro/
+      // antigravity) resolve at session start instead of silently defaulting.
+      // Mirrors pi's createAgentSessionServices; clearing the pending queue here
+      // means the runner bind inside createAgentSession does not re-apply them.
+      const providerRegistrations = applyPendingProviderRegistrations(
+        modelRuntime,
+        loader.getExtensions(),
+      );
+      for (const diagnostic of providerRegistrations.diagnostics) {
+        log.warn("sdk.extension_provider_registration_failed", {
+          sessionId: session.id,
+          extensionPath: diagnostic.extensionPath,
+          error: diagnostic.message,
+        });
+      }
+      await modelRuntime.refresh({ allowNetwork: false });
+
+      const modelRegistry = new ModelRegistry(modelRuntime);
+      const shouldSeedFromSessionState = !sessionStartEvent;
+      const model =
+        shouldSeedFromSessionState && session.model
+          ? resolveRegistryModel(modelRegistry, session.model, settingsManager.getEnabledModels())
+          : undefined;
+      if (shouldSeedFromSessionState && session.model) {
+        if (session.launch?.modelPolicy === "required") {
+          try {
+            enforceLaunchModelPolicy(session, model);
+          } catch (error) {
+            log.error("sdk.model_resolve_required_failed", {
+              sessionId: session.id,
+              model: session.model,
+              launchSource: session.launch.source,
+              resolvedModel: model ? `${model.provider}/${model.id}` : undefined,
+            });
+            throw error;
+          }
+        }
+        if (!model) {
+          log.warn("sdk.model_resolve_defaulted", {
+            model: session.model,
+          });
+        }
+      }
 
       // Sandbox mode: create tools backed by Gondolin micro-VM
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
