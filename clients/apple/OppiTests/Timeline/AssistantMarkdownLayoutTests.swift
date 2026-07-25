@@ -729,7 +729,12 @@ struct AssistantMarkdownLayoutTests {
     }
 
     @Test func veryLongAssistantMessageDoesNotClampBelowMarkdownHeight() {
-        let sections = (1...1_100).map { index in
+        // Regression guard for the old 10k-point height cap that clipped tall
+        // assistant rows (long review / write-up turns). The fixture only needs to
+        // exceed that cap with margin (~26k pt rendered); the previous 1,100-section
+        // version (~242k pt) added runtime and TextKit large-content measurement
+        // noise without strengthening the guarantee.
+        let sections = (1...120).map { index in
             """
             ## Section \(index)
 
@@ -738,21 +743,33 @@ struct AssistantMarkdownLayoutTests {
         }
         let markdown = sections.joined(separator: "\n\n")
 
+        // Derive the row's internal markdown width from the row's own geometry so
+        // this cannot silently rot if bubble padding changes.
+        let rowWidth: CGFloat = 338
+        let contentWidth = rowWidth
+            - AssistantTimelineRowContentView.bubbleLeadingPadding
+            - AssistantTimelineRowContentView.bubbleTrailingPadding
+
         let row = AssistantTimelineRowContentView(configuration: .init(
             text: markdown,
             isStreaming: false,
             canFork: false,
             onFork: nil
         ))
-        let rowSize = fittedTimelineSize(for: row, width: 338)
+        let rowSize = fittedTimelineSize(for: row, width: rowWidth)
 
+        // The standalone markdown must replicate the row's internal markdown
+        // exactly — same width AND the avatar exclusion path (leadingHang) — or the
+        // two measurements diverge (~6.5pt/section) and the comparison is meaningless.
         let markdownView = AssistantMarkdownContentView()
         markdownView.apply(configuration: .make(
             content: markdown,
             isStreaming: false,
             themeID: .dark
         ))
-        let markdownSize = fittedTimelineSize(for: markdownView, width: 322)
+        markdownView.leadingHangClearance = AssistantTimelineRowContentView.avatarContentClearance
+        markdownView.leadingHangHeight = AssistantTimelineRowContentView.avatarHangHeight
+        let markdownSize = fittedTimelineSize(for: markdownView, width: contentWidth)
 
         #expect(markdownSize.height > 10_000, "Fixture must exceed the old 10k height cap, got \(markdownSize.height)")
         #expect(
