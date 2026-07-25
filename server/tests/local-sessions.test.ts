@@ -11,6 +11,7 @@ import {
   invalidateLocalSessionsCache,
   validateLocalSessionPath,
   validateCwdAlignment,
+  isControlSessionLocalArtifact,
   getPiSessionsRoot,
   listCatalogedLocalSessions,
   deleteCatalogedLocalSessionPaths,
@@ -115,6 +116,32 @@ describe("validateCwdAlignment", () => {
   it("resolves ~ in hostMount", () => {
     const home = homedir();
     expect(validateCwdAlignment(`${home}/workspace`, "~/workspace")).toBe(true);
+  });
+});
+
+describe("isControlSessionLocalArtifact", () => {
+  it("matches the display-only Oppi Control label and legacy workspace-relative path", () => {
+    expect(isControlSessionLocalArtifact("Oppi Control")).toBe(true);
+    expect(
+      isControlSessionLocalArtifact("/Users/chen/workspace/oppi/server/Oppi Control"),
+    ).toBe(true);
+  });
+
+  it("matches the real data-dir control cwd tree", () => {
+    const dataDir = "/Users/chen/.config/oppi";
+    expect(
+      isControlSessionLocalArtifact(`${dataDir}/control-sessions/cwd`, { dataDir }),
+    ).toBe(true);
+    expect(isControlSessionLocalArtifact(`${dataDir}/other`, { dataDir })).toBe(false);
+  });
+
+  it("does not treat ordinary workspace cwds as control artifacts", () => {
+    expect(isControlSessionLocalArtifact("/Users/chen/workspace/oppi")).toBe(false);
+    expect(
+      isControlSessionLocalArtifact("/Users/chen/workspace/oppi/server", {
+        dataDir: "/Users/chen/.config/oppi",
+      }),
+    ).toBe(false);
   });
 });
 

@@ -38,6 +38,10 @@ Example:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Server:** Control sessions now persist Pi session files under the real `$OPPI_DATA_DIR/control-sessions/cwd` path instead of the display label `Oppi Control`, and workspace importable-local discovery excludes control-session artifacts so empty terminal rows no longer leak into workspace session lists.
+
 ### Changed
 
 - **Server:** Updated embedded Pi runtime packages to `@earendil-works/pi-coding-agent@0.82.0`, `@earendil-works/pi-ai@0.82.0`, and `@earendil-works/pi-tui@0.82.0`. Managed host bash shell-outs now receive live `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`, `PI_SESSION_ID`, and `PI_SESSION_FILE`, so scripts and extensions can read the active model/thinking without scraping prompts.

@@ -194,7 +194,7 @@ A stopped, disconnected mirror session with a canonical session file can be prom
 - `SessionStopFlowCoordinator` and `SessionStopCoordinator` own abort/stop behavior.
 - `SessionLifecycleCoordinator` handles idle timers and session end cleanup.
 
-`sdk-backend.ts` wraps Pi's `AgentSession`. It resolves workspace cwd, configures sandbox tools when requested, binds extensions through `SdkUiBridge`, injects session attachment helpers, forwards SDK commands, and emits Pi events back into the session projection pipeline. Declared control sessions use an owner-only, non-symlink `$OPPI_DATA_DIR/control-sessions/cwd` and the Default Agent safety definition; undeclared workspace-less sessions do not gain control-session privileges.
+`sdk-backend.ts` wraps Pi's `AgentSession`. It resolves workspace cwd, configures sandbox tools when requested, binds extensions through `SdkUiBridge`, injects session attachment helpers, forwards SDK commands, and emits Pi events back into the session projection pipeline. Declared control sessions use an owner-only, non-symlink `$OPPI_DATA_DIR/control-sessions/cwd` as the real Pi SessionManager cwd and the Default Agent safety definition; undeclared workspace-less sessions do not gain control-session privileges. `Oppi Control` remains display metadata only and must not be persisted as SessionManager cwd, or Pi JSONLs land under the server process working directory and leak into workspace importable-local discovery. Sandboxes still keep their guest/display cwd split with a host existence override.
 
 ## Saved Agents and schedules
 

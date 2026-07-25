@@ -498,7 +498,7 @@ export class SdkBackend {
     emitEvent: (event: SessionBackendEvent) => void,
     oppiSessionId: string,
     dataDir?: string,
-    cwdOverrides?: { existsCwd: string; displayCwd: string },
+    cwdOverrides?: { existsCwd: string; displayCwd?: string },
     oppiRuntimeSettings?: {
       holder: OppiExtensionSettingsHolder;
       get: () => OppiExtensionSettingsSnapshot;
@@ -568,13 +568,15 @@ export class SdkBackend {
     const createStartMs = Date.now();
     const { session, workspace, onEvent, onEnd: _onEnd } = config;
     const initialHostCwd = resolveSdkSessionCwd(workspace, session, { dataDir: config.dataDir });
-    const initialCwd = resolveSdkSessionDisplayCwd(workspace, session, { dataDir: config.dataDir });
+    const displayCwd = resolveSdkSessionDisplayCwd(workspace, session, { dataDir: config.dataDir });
     const sandboxMode = workspace?.runtime === "sandbox";
-    // Pi verifies a saved session's header cwd against a real host directory.
-    // Sandboxes and control sessions deliberately persist a display-only cwd,
-    // so their real cwd must remain available as the verification override.
-    const preserveDisplayCwd = sandboxMode || isDeclaredControlSession(session);
-    const runtimeAssertCwd = preserveDisplayCwd ? initialHostCwd : initialCwd;
+    // Sandboxes persist a guest/display cwd in Pi session state and need a real
+    // host path only for Pi's existence check. Control sessions are not a guest
+    // filesystem: "Oppi Control" is Oppi UI metadata only. Persisting that label
+    // as SessionManager cwd materializes JSONLs under process.cwd()/Oppi Control
+    // and leaks them into workspace importable-local discovery.
+    const piSessionCwd = sandboxMode ? displayCwd : initialHostCwd;
+    const cwdExistsOverride = sandboxMode ? initialHostCwd : piSessionCwd;
     const hostMountError = hostMountValidationError(workspace?.hostMount);
     if (hostMountError) {
       throw new Error(hostMountError);
@@ -582,8 +584,8 @@ export class SdkBackend {
     const agentDir = getAgentDir();
     const initialSessionManager = SdkBackend.createPiSessionManager(
       session,
-      initialCwd,
-      runtimeAssertCwd,
+      piSessionCwd,
+      cwdExistsOverride,
     );
     syncSessionIdentityFromManager(session, initialSessionManager);
 
@@ -904,7 +906,7 @@ export class SdkBackend {
     };
 
     const runtime = await createAgentSessionRuntime(createRuntimeFactory, {
-      cwd: runtimeAssertCwd,
+      cwd: initialHostCwd,
       agentDir,
       sessionManager: initialSessionManager,
     });
@@ -914,7 +916,11 @@ export class SdkBackend {
       onEvent,
       session.id,
       config.dataDir,
-      preserveDisplayCwd ? { existsCwd: runtimeAssertCwd, displayCwd: initialCwd } : undefined,
+      sandboxMode
+        ? { existsCwd: initialHostCwd, displayCwd }
+        : isDeclaredControlSession(session)
+          ? { existsCwd: initialHostCwd }
+          : undefined,
       ordinaryManagedRuntime
         ? {
             holder: oppiSettingsHolder,

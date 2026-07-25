@@ -20,6 +20,7 @@ import {
 import {
   deleteCatalogedLocalSessionPaths,
   invalidateLocalSessionsCache,
+  isControlSessionLocalArtifact,
   validateCwdAlignment,
   validateLocalSessionPath,
 } from "./local-sessions.js";
@@ -391,6 +392,17 @@ export class SessionLifecycleService {
     if (!validateCwdAlignment(localHeader.cwd, params.workspace.hostMount)) {
       throw new SessionLifecycleError(
         `Session CWD (${localHeader.cwd}) is not within workspace path (${params.workspace.hostMount})`,
+        400,
+      );
+    }
+
+    if (
+      isControlSessionLocalArtifact(localHeader.cwd, {
+        dataDir: this.deps.storage.getDataDir(),
+      })
+    ) {
+      throw new SessionLifecycleError(
+        "Control session transcripts cannot be imported into a workspace",
         400,
       );
     }

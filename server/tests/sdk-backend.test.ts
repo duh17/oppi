@@ -197,6 +197,7 @@ describe("SdkBackend control sessions", () => {
     });
 
     try {
+      const controlCwd = join(dataDir, "control-sessions", "cwd");
       first = await SdkBackend.create({
         session,
         dataDir,
@@ -205,9 +206,11 @@ describe("SdkBackend control sessions", () => {
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
-      expect(first.session.sessionManager.getCwd()).toBe("Oppi Control");
+      expect(first.session.sessionManager.getCwd()).toBe(controlCwd);
       expect(first.session.getActiveToolNames()).toEqual(["oppi", "ask"]);
       expect(session.piSessionFile).toBeDefined();
+      expect(session.piSessionFile).not.toContain("Oppi Control");
+      expect(resolveSdkSessionDisplayCwd(undefined, session, { dataDir })).toBe("Oppi Control");
       const oppi = first.session.getToolDefinition("oppi");
       await expect(
         oppi!.execute(
@@ -229,7 +232,7 @@ describe("SdkBackend control sessions", () => {
         onEnd: vi.fn(),
       });
 
-      expect(reopened.session.sessionManager.getCwd()).toBe("Oppi Control");
+      expect(reopened.session.sessionManager.getCwd()).toBe(controlCwd);
       expect(getOppiExtensionSettings).not.toHaveBeenCalled();
     } finally {
       await reopened?.dispose();

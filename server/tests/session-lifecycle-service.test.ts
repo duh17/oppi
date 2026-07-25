@@ -717,6 +717,44 @@ describe("SessionLifecycleService", () => {
         rmSync(workspaceDir, { recursive: true, force: true });
       }
     });
+
+    it("rejects legacy control-session Pi JSONLs", async () => {
+      const piSessionsRoot = getPiSessionsRoot();
+      mkdirSync(piSessionsRoot, { recursive: true });
+      const piSessionDir = mkdtempSync(join(piSessionsRoot, "oppi-lifecycle-control-import-"));
+      const workspaceDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-workspace-"));
+      const controlCwd = join(workspaceDir, "server", "Oppi Control");
+      const jsonlPath = join(piSessionDir, "session.jsonl");
+      writeFileSync(
+        jsonlPath,
+        [
+          JSON.stringify({
+            type: "session",
+            id: "pi-control-1",
+            cwd: controlCwd,
+            timestamp: "2026-05-03T00:00:00.000Z",
+          }),
+          "",
+        ].join("\n"),
+      );
+      const { service, createSession } = makeService();
+
+      try {
+        await expect(
+          service.importLocalSession({
+            workspace: makeWorkspace({ name: "Project", hostMount: workspaceDir }),
+            piSessionFile: jsonlPath,
+          }),
+        ).rejects.toMatchObject({
+          message: expect.stringContaining("Control session transcripts cannot be imported"),
+          statusCode: 400,
+        });
+        expect(createSession).not.toHaveBeenCalled();
+      } finally {
+        rmSync(piSessionDir, { recursive: true, force: true });
+        rmSync(workspaceDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("forkSession", () => {
