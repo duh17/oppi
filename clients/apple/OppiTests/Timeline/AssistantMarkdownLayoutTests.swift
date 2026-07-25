@@ -752,7 +752,7 @@ struct AssistantMarkdownLayoutTests {
             isStreaming: false,
             themeID: .dark
         ))
-        let markdownSize = fittedTimelineSize(for: markdownView, width: 302)
+        let markdownSize = fittedTimelineSize(for: markdownView, width: 322)
 
         #expect(markdownSize.height > 10_000, "Fixture must exceed the old 10k height cap, got \(markdownSize.height)")
         #expect(
