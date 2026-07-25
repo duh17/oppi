@@ -777,10 +777,19 @@ describe("SdkBackend host extensions", () => {
 
   it("exposes current model and thinking level to bash shell-outs", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-bash-session-env-"));
+    // CI has no Pi credentials; provide a temp agent dir and env key so model
+    // resolution finds anthropic and preserves the requested thinking level.
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-bash-agent-dir-"));
+    writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ anthropic: { type: "api_key", key: "ci-test" } }));
+    const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const prevApiKey = process.env.ANTHROPIC_API_KEY;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.ANTHROPIC_API_KEY = "ci-test";
+
     const backend = await SdkBackend.create({
       session: makeSession({
         ephemeral: true,
-        model: "openai-codex/gpt-5.3-codex",
+        model: "anthropic/claude-sonnet-4-5",
         thinkingLevel: "high",
       }),
       workspace: {
@@ -834,6 +843,11 @@ describe("SdkBackend host extensions", () => {
     } finally {
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
+      if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
+      if (prevApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prevApiKey;
     }
   });
 
