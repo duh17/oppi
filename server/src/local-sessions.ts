@@ -13,7 +13,6 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  readdirSync,
   openSync,
   readSync,
   closeSync,
@@ -25,19 +24,31 @@ import { homedir } from "node:os";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import type { LocalSession, Session } from "./types.js";
 
-/** Fixed root of pi agent sessions. */
-const PI_SESSIONS_ROOT =
-  process.env.OPPI_LOCAL_SESSIONS_ROOT?.trim() || join(homedir(), ".pi", "agent", "sessions");
+/** Default root of pi agent sessions when OPPI_LOCAL_SESSIONS_ROOT is unset. */
+const DEFAULT_PI_SESSIONS_ROOT = join(homedir(), ".pi", "agent", "sessions");
+
+/**
+ * Resolve the configured pi sessions root.
+ *
+ * Read on each call so tests can point OPPI_LOCAL_SESSIONS_ROOT at a temp tree
+ * without relying on module-load timing. Production servers typically set the
+ * env once at process start (or leave the home default).
+ */
+function resolvePiSessionsRoot(): string {
+  const override = process.env.OPPI_LOCAL_SESSIONS_ROOT?.trim();
+  return override && override.length > 0 ? override : DEFAULT_PI_SESSIONS_ROOT;
+}
 
 /**
  * Return the canonical pi sessions root, resolving symlinks.
  * Used for path confinement validation.
  */
 export function getPiSessionsRoot(): string {
+  const root = resolvePiSessionsRoot();
   try {
-    return realpathSync(PI_SESSIONS_ROOT);
+    return realpathSync(root);
   } catch {
-    return PI_SESSIONS_ROOT;
+    return root;
   }
 }
 
@@ -623,9 +634,13 @@ export function listCatalogedLocalSessions(
 /**
  * Discover all local pi sessions.
  *
- * Stats every JSONL file under ~/.pi/agent/sessions/ but only reads
- * file contents when the file is new or its mtime changed since the
- * last call. Known oppi-managed files are filtered out.
+ * Stats every JSONL file under the configured pi sessions root but only reads
+ * file contents when the file is new or its mtime changed since the last call.
+ * Known oppi-managed files are filtered out.
+ *
+ * Enumeration is async so callers (including fire-and-forget catalog refresh)
+ * do not block the event loop on large developer home trees during the first
+ * tick of the discovery promise.
  *
  * @param knownPiSessionFiles Set of piSessionFile paths already managed by oppi
  */
@@ -633,25 +648,37 @@ export async function discoverLocalSessions(
   knownPiSessions?: KnownLocalSessions,
   options: { dataDir?: string } = {},
 ): Promise<LocalSession[]> {
-  if (!existsSync(PI_SESSIONS_ROOT)) {
+  const sessionsRoot = resolvePiSessionsRoot();
+  if (!existsSync(sessionsRoot)) {
     return [];
   }
 
-  // Enumerate all JSONL files across CWD directories
-  let cwdDirs: string[];
+  // Enumerate all JSONL files across CWD directories without sync readdir storms.
+  let topLevel: string[];
   try {
-    cwdDirs = readdirSync(PI_SESSIONS_ROOT)
-      .filter((name) => {
-        try {
-          const full = join(PI_SESSIONS_ROOT, name);
-          return existsSync(full) && readdirSync(full).some((f) => f.endsWith(".jsonl"));
-        } catch {
-          return false;
-        }
-      })
-      .map((name) => join(PI_SESSIONS_ROOT, name));
+    topLevel = await readdir(sessionsRoot);
   } catch {
     return [];
+  }
+
+  const cwdDirs: string[] = [];
+  const ENUM_BATCH_SIZE = 32;
+  for (let i = 0; i < topLevel.length; i += ENUM_BATCH_SIZE) {
+    const batch = topLevel.slice(i, i + ENUM_BATCH_SIZE);
+    const batchDirs = await Promise.all(
+      batch.map(async (name) => {
+        const full = join(sessionsRoot, name);
+        try {
+          const entries = await readdir(full);
+          return entries.some((f) => f.endsWith(".jsonl")) ? full : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (const dir of batchDirs) {
+      if (dir) cwdDirs.push(dir);
+    }
   }
 
   // Collect all file paths + resolve symlinks

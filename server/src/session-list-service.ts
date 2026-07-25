@@ -335,11 +335,15 @@ export class SessionListService {
     }
 
     const knownPiSessionIdentities = this.collectKnownPiSessionIdentities();
-    void discoverLocalSessions(knownPiSessionIdentities, {
-      dataDir: this.deps.storage.getDataDir(),
-    }).catch((error: unknown) => {
-      log.warn("local_session_catalog.refresh_failed", {
-        error: safeErrorMessage(error),
+    const dataDir = this.deps.storage.getDataDir();
+    // Defer off the request stack so workspace session list responses never pay
+    // for cold Pi-home enumeration inline, even before discoverLocalSessions
+    // hits its first await.
+    setImmediate(() => {
+      void discoverLocalSessions(knownPiSessionIdentities, { dataDir }).catch((error: unknown) => {
+        log.warn("local_session_catalog.refresh_failed", {
+          error: safeErrorMessage(error),
+        });
       });
     });
   }

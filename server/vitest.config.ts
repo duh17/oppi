@@ -6,6 +6,9 @@ export default defineConfig({
     // Build the CLI once in an invocation-local directory so parallel test files or
     // external release builds cannot mutate the executable and docs under test.
     globalSetup: ["./vitest.global-setup.ts"],
+    // Point OPPI_LOCAL_SESSIONS_ROOT at a temp tree before any test file imports
+    // local-sessions discovery (avoids scanning the developer home Pi sessions root).
+    setupFiles: ["./vitest.setup.ts"],
     exclude: ["dist/**", "node_modules/**", "e2e/**"],
     coverage: {
       provider: "v8",

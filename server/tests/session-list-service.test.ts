@@ -369,5 +369,29 @@ describe("SessionListService", () => {
         }),
       ]);
     });
+
+    it("defers cold local-session catalog refresh off the request stack", async () => {
+      localSessionState.snapshot = {
+        sessions: [],
+        // stale / never scanned
+      } as typeof localSessionState.snapshot;
+      const { service } = makeService({
+        dataDir: "/tmp/oppi-session-list-defer-refresh",
+      });
+      const nowMs = Date.now();
+
+      service.listWorkspaceSessionRows({
+        workspace: makeWorkspace({ hostMount: "/tmp/project" }),
+        statuses: new Set(["stopped"]),
+        timeRange: { sinceMs: nowMs - 1_000, untilMs: nowMs },
+        nowMs,
+      });
+
+      // Must not invoke discover inline while shaping the HTTP response.
+      expect(discoverLocalSessions).not.toHaveBeenCalled();
+      await vi.waitFor(() => {
+        expect(discoverLocalSessions).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 });

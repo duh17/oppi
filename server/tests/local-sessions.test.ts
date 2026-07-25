@@ -3,8 +3,15 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, mkdtempSync, utimesSync } from "node:fs";
-import { join } from "node:path";
+import {
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  mkdtempSync,
+  utimesSync,
+  realpathSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import {
   discoverLocalSessions,
@@ -142,6 +149,59 @@ describe("isControlSessionLocalArtifact", () => {
         dataDir: "/Users/chen/.config/oppi",
       }),
     ).toBe(false);
+  });
+});
+
+// ─── Sessions root isolation ───
+
+describe("pi sessions root resolution", () => {
+  const previousRoot = process.env.OPPI_LOCAL_SESSIONS_ROOT;
+
+  afterEach(() => {
+    if (previousRoot === undefined) {
+      delete process.env.OPPI_LOCAL_SESSIONS_ROOT;
+    } else {
+      process.env.OPPI_LOCAL_SESSIONS_ROOT = previousRoot;
+    }
+  });
+
+  it("isolates vitest workers away from the developer home Pi sessions tree", () => {
+    const root = realpathSync(getPiSessionsRoot());
+    const homeRoot = resolve(join(homedir(), ".pi", "agent", "sessions"));
+    const tempRoot = realpathSync(tmpdir());
+    expect(root).not.toBe(homeRoot);
+    expect(root === tempRoot || root.startsWith(`${tempRoot}/`)).toBe(true);
+  });
+
+  it("honors OPPI_LOCAL_SESSIONS_ROOT dynamically after module load", () => {
+    const override = mkdtempSync(join(tmpdir(), "oppi-local-sessions-override-"));
+    try {
+      process.env.OPPI_LOCAL_SESSIONS_ROOT = override;
+      expect(realpathSync(getPiSessionsRoot())).toBe(realpathSync(override));
+    } finally {
+      rmSync(override, { recursive: true, force: true });
+    }
+  });
+
+  it("discoverLocalSessions finds sessions under a dynamically overridden root", async () => {
+    const override = mkdtempSync(join(tmpdir(), "oppi-local-sessions-override-scan-"));
+    process.env.OPPI_LOCAL_SESSIONS_ROOT = override;
+
+    try {
+      const cwdDir = join(override, "project");
+      mkdirSync(cwdDir, { recursive: true });
+      writeFileSync(
+        join(cwdDir, "2026-02-20T00-00-00-000Z_uuid-override-scan.jsonl"),
+        makeSessionJsonl({ id: "uuid-override-scan", cwd: cwdDir, userMessage: "hi" }),
+      );
+
+      const sessions = await discoverLocalSessions();
+      expect(sessions.some((session) => session.piSessionId === "uuid-override-scan")).toBe(
+        true,
+      );
+    } finally {
+      rmSync(override, { recursive: true, force: true });
+    }
   });
 });
 
