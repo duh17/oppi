@@ -182,7 +182,7 @@ export function readSessionTracePageFromFiles(
   const parsed: ParsedLine[] = [];
   let scannedBytes = 0;
   let parseMs = 0;
-  let selected: ParsedLine[] = [];
+  let selected: ParsedLine[];
   const sourceIndexes = pageSourceIndexes(sources, cursorSourceIndex);
 
   for (const sourceIndex of sourceIndexes) {
@@ -528,7 +528,7 @@ function readRangeWindow(source: TraceSource, start: number, endExclusive: numbe
 
   const buffer = Buffer.allocUnsafe(length);
   const fd = openSync(source.path, "r");
-  let bytesRead = 0;
+  let bytesRead: number;
   try {
     bytesRead = readSync(fd, buffer, 0, length, start);
   } finally {

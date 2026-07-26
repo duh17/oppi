@@ -210,7 +210,7 @@ function extractEmbeddedSessionData(html: string):
   const contentStart = match.index + openTag.length;
   const contentEnd = contentStart + match[2].length;
 
-  let json = "";
+  let json: string;
   try {
     json = Buffer.from(encodedPayload, "base64").toString("utf-8");
   } catch (error) {

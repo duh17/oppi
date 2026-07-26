@@ -473,7 +473,7 @@ export class AgentScheduleStore {
         failed.changes !== 1 &&
         !message.startsWith("Schedule run lease was lost:")
       ) {
-        throw new Error(`Schedule run lease was lost: ${run.id}`);
+        throw new Error(`Schedule run lease was lost: ${run.id}`, { cause: error });
       }
       throw error;
     }

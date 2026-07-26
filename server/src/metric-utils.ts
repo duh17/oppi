@@ -64,7 +64,7 @@ export function appendJsonlLineWithByteLimit(
   const lineBytes = Buffer.byteLength(line, "utf8");
   if (lineBytes > maxBytes) return false;
 
-  let currentBytes = 0;
+  let currentBytes: number;
   try {
     currentBytes = statSync(filePath).size;
   } catch {

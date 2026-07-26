@@ -174,7 +174,7 @@ export function createGondolinReadOps(
         return await vm.fs.readFile(guestPath);
       } catch (err) {
         const message = err instanceof Error ? err.message : "file not found";
-        throw new Error(`Failed to read ${guestPath}: ${message}`);
+        throw new Error(`Failed to read ${guestPath}: ${message}`, { cause: err });
       }
     },
 
@@ -222,7 +222,7 @@ export function createGondolinWriteOps(
         await vm.fs.writeFile(guestPath, content, { encoding: "utf8" });
       } catch (err) {
         const message = err instanceof Error ? err.message : "write failed";
-        throw new Error(`Failed to write ${guestPath}: ${message}`);
+        throw new Error(`Failed to write ${guestPath}: ${message}`, { cause: err });
       }
     },
 
@@ -232,7 +232,7 @@ export function createGondolinWriteOps(
         await vm.fs.mkdir(guestDir, { recursive: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : "mkdir failed";
-        throw new Error(`Failed to mkdir ${guestDir}: ${message}`);
+        throw new Error(`Failed to mkdir ${guestDir}: ${message}`, { cause: err });
       }
     },
   };

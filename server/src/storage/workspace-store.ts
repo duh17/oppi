@@ -346,6 +346,7 @@ function replaceWorkspaceMigrationFile(
         throw new AggregateError(
           [error, rollbackError],
           "Workspace icon migration failed and its original could not be restored",
+          { cause: rollbackError },
         );
       }
     }

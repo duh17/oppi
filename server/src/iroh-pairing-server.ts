@@ -166,7 +166,7 @@ export function decodeIrohPairingFrame(bytes: Uint8Array): Record<string, unknow
     }).header;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(message.replace(/^Iroh frame/, "Iroh pairing frame"));
+    throw new Error(message.replace(/^Iroh frame/, "Iroh pairing frame"), { cause: error });
   }
 }
 

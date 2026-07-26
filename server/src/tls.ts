@@ -597,6 +597,7 @@ export function promoteTailscaleMaterial(
         : `Rollback errors: ${rollbackErrors.join("; ")}`;
     throw new Error(
       `Failed to promote Tailscale TLS material: ${errorMessage(promotionError)}. ${rollbackDetail}`,
+      { cause: promotionError },
     );
   }
 
@@ -923,7 +924,7 @@ function runTailscale(args: string[]): void {
 
     const detail =
       stderr.trim() || stdout.trim() || (err instanceof Error ? err.message : String(err));
-    throw new Error(`tailscale ${args.join(" ")} failed: ${detail}`);
+    throw new Error(`tailscale ${args.join(" ")} failed: ${detail}`, { cause: err });
   }
 }
 
@@ -952,7 +953,7 @@ function runOpenSsl(args: string[]): void {
         ? String((err as { stderr?: Buffer | string }).stderr ?? "")
         : "";
     const message = stderr.trim() || (err instanceof Error ? err.message : String(err));
-    throw new Error(`openssl ${args.join(" ")} failed: ${message}`);
+    throw new Error(`openssl ${args.join(" ")} failed: ${message}`, { cause: err });
   }
 }
 

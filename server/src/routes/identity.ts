@@ -107,7 +107,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     );
     const uptimeSeconds = Math.floor((Date.now() - ctx.serverStartedAt) / 1000);
 
-    let identity: { fingerprint: string; keyId: string; algorithm: "ed25519" } | null = null;
+    let identity: { fingerprint: string; keyId: string; algorithm: "ed25519" } | null;
     try {
       const material = ensureIdentityMaterial(identityConfigForDataDir(ctx.storage.getDataDir()));
       identity = {

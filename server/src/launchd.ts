@@ -323,7 +323,7 @@ export function installService(dataDir?: string): {
   const resolvedDataDir = dataDir || join(homedir(), ".config", "oppi");
   const plist = plistPath();
   const launchAgentsDir = join(homedir(), "Library", "LaunchAgents");
-  let legacyRemoved: string[] = [];
+  let legacyRemoved: string[];
 
   try {
     legacyRemoved = disableLegacyLaunchAgents();

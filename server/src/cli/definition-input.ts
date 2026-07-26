@@ -26,7 +26,7 @@ export function readDefinitionInput(
       parsed = JSON.parse(inline) as unknown;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`--definition-json must be valid JSON: ${message}`);
+      throw new Error(`--definition-json must be valid JSON: ${message}`, { cause: error });
     }
   } else {
     const path = flags.definition?.trim();

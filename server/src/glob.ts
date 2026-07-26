@@ -96,8 +96,6 @@ function matchOne(target: string, pattern: string): boolean {
       if (dstarTi <= target.length) {
         ti = dstarTi;
         pi = dstarPi;
-        // Reset single-star state
-        starTi = -1;
         continue;
       }
     }

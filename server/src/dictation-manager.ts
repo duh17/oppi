@@ -269,7 +269,7 @@ export class DictationManager {
     // Final STT — close audio stream, get final text
     const audioSeconds = session.totalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE * NUM_CHANNELS);
     let finalTranscript;
-    let finalSttMs = 0;
+    let finalSttMs: number;
     const sttT0 = performance.now();
     try {
       finalTranscript = await this.sttProvider.stop();

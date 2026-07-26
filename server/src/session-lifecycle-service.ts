@@ -599,8 +599,8 @@ export class SessionLifecycleService {
   async deleteSession(session: Session): Promise<DeleteSessionResult> {
     await this.deps.sessionRuntimes.stopSessionIfActive(session.id);
 
-    let deletedTracePaths: string[] = [];
-    let deletedWorkspaceAttachmentCopies = false;
+    let deletedTracePaths: string[];
+    let deletedWorkspaceAttachmentCopies: boolean;
     try {
       deletedTracePaths = await this.deleteReferencedLocalPiSessionJsonlFiles(session);
       if (deletedTracePaths.length > 0) {

@@ -123,6 +123,7 @@ export function generateInvite(
           throw new Error(
             `Could not determine pairing host from live Tailscale or existing certificate: ${detail}. ` +
               "Start Tailscale to obtain or renew the certificate, or pass --host <machine>.<tailnet>.ts.net.",
+            { cause: error },
           );
         }
       }

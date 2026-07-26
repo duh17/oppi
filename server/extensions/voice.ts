@@ -821,7 +821,7 @@ async function requestJSON<T>(
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await response.text();
-  let json: unknown = {};
+  let json: unknown;
   try {
     json = text ? (JSON.parse(text) as unknown) : {};
   } catch {
