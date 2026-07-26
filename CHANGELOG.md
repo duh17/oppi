@@ -38,23 +38,23 @@ Example:
 
 ## [Unreleased]
 
-### Fixed
-
-- **Server:** Control sessions now persist Pi session files under the real `$OPPI_DATA_DIR/control-sessions/cwd` path instead of the display label `Oppi Control`, and workspace importable-local discovery excludes control-session artifacts so empty terminal rows no longer leak into workspace session lists.
-
-### Changed
-
-- **Server:** Updated embedded Pi runtime packages to `@earendil-works/pi-coding-agent@0.82.0`, `@earendil-works/pi-ai@0.82.0`, and `@earendil-works/pi-tui@0.82.0`. Managed host bash shell-outs now receive live `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`, `PI_SESSION_ID`, and `PI_SESSION_FILE`, so scripts and extensions can read the active model/thinking without scraping prompts.
+Target: iOS `1.1.0` build `44` and `oppi-server@0.46.0`; `oppi-mirror@0.45.0` is unchanged.
 
 ### Added
 
-- **Client:** Added saved Agents and schedules to the iPhone drawer and iPad sidebar, made Workspaces collapsible, and moved App Settings into the sidebar while preserving the existing New Workspace action.
-- **Client:** Added full-screen Markdown reading for schedule prompts and saved Agent definitions. Selected-text comments can be staged before editing, then moved into an Oppi Control session for one combined revision request.
-- **Client/Server:** Added comment-driven session editing for server-authorized local Skill files. Package Skills remain read-only, while editable Skill files reuse the full-screen reader and comment stash with a restricted, approval-gated `oppi skill` command boundary.
-- **Client/Server:** Added server-scoped Oppi Control sessions for creating and revising Agents, schedules, Skills, and workspaces from their existing management surfaces. Control sessions reuse the normal timeline, composer, tools, and approval UI.
-- **Server:** Added memory-only `--definition-json` input for Agent create/update and schedule update commands, with strict validation and bounded approval display.
-- **Protocol:** Added explicit control-session domain, intent, and target metadata plus a versioned control-session capability and authenticated control route family.
-- **Client:** WIP: reworking the Mac app into an interactive Oppi client for browsing workspaces, running sessions, and reviewing changes. It is not ready for general use yet.
+- **Client/Server:** Agents, schedules, Skills, and workspaces can be created or revised through an Oppi session from their management screens.
+- **Client/Server:** Custom provider extensions can contribute models. Server details show Codex and xAI quotas, and Qwen has dedicated presentation.
+- **Client:** Full-screen Markdown supports review comments, improved wide-table layout, and guided revisions from selected text.
+
+### Changed
+
+- **Protocol/Client/Server:** Agent, schedule, Skill, workspace, model, and session APIs changed incompatibly; Build 44 requires `oppi-server@0.46.0`.
+- **Server:** Explicit model selection fails visibly when the requested model is unavailable instead of substituting another provider or model.
+- **Client/Server:** Session, tool, Markdown, and cached-content presentation survives navigation, replay, and reconnection more consistently.
+
+### Fixed
+
+- **Client/Server:** Kept workspace Skill toggles scoped, patched nested schedule actions correctly, completed cache persistence before follow-up reads, preserved owner themes, and gated navigation swipes on the touched scroll edge.
 
 ## [0.44.1] - 2026-07-16
 

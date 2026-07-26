@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "components": {
+    "server": {
+      "release": true,
+      "version": "0.46.0"
+    },
+    "mirror": {
+      "release": false,
+      "version": "0.45.0"
+    },
+    "ios": {
+      "release": true,
+      "target": "Oppi",
+      "marketingVersion": "1.1.0",
+      "build": 44,
+      "whatsNewFromBuild": 43
+    }
+  },
+  "candidateTTLHours": 336,
+  "whatToTestPath": ".internal/release-notes/testflight-build-44-what-to-test.md",
+  "changelogPath": ".internal/release-notes/testflight-build-44-changelog.md"
+}

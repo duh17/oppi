@@ -53,26 +53,33 @@ private struct WhatsNewFeature: Identifiable {
 struct WhatsNewView: View {
     let onContinue: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            icon: "rectangle.split.2x1",
+            icon: "point.3.connected.trianglepath.dotted",
             iconColor: .themeGreen,
-            title: String(localized: "All Sessions Inbox"),
-            description: String(localized: "Open Oppi to Your Turn and Working sessions, followed by recent sessions grouped by day. Browse workspaces from the sidebar.")
+            title: String(localized: "Reliable Iroh Connections"),
+            description: String(localized: "Connect through authenticated direct or relay paths. Cached sessions stay visible while Oppi reconnects.")
         ),
         WhatsNewFeature(
-            icon: "circle.lefthalf.filled",
+            icon: "slider.horizontal.3",
             iconColor: .themePurple,
-            title: String(localized: "System Theme Fixes"),
-            description: String(localized: "Match System now opens with the correct light or dark theme and updates existing screens when your device appearance changes.")
+            title: String(localized: "Server Tools and Guided Editing"),
+            description: String(localized: "Open Skills and Extensions from the sidebar, then use Oppi sessions to create or revise Agents, schedules, Skills, and workspaces.")
         ),
         WhatsNewFeature(
-            icon: "terminal",
+            icon: "text.document",
             iconColor: .themeCyan,
-            title: String(localized: "Clearer Tool Rows"),
-            description: String(localized: "Tool rows now use consistent backgrounds, borders, text colors, and status colors across light and dark themes.")
+            title: String(localized: "Better Markdown Review"),
+            description: String(localized: "Read wide tables and long Markdown more comfortably, select text in full screen, and send comments as one guided revision.")
+        ),
+        WhatsNewFeature(
+            icon: "cpu",
+            iconColor: .themeOrange,
+            title: String(localized: "More Model Visibility"),
+            description: String(localized: "Discover extension-provided models, see Codex and xAI quotas, and get a clear error when a selected model is unavailable.")
         ),
     ]
 
@@ -94,8 +101,12 @@ struct WhatsNewView: View {
         }
         .background(Color.themeBg)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.5)) {
+            if reduceMotion {
                 appeared = true
+            } else {
+                withAnimation(.easeOut(duration: 0.5)) {
+                    appeared = true
+                }
             }
         }
     }
@@ -108,12 +119,12 @@ struct WhatsNewView: View {
                 .font(.largeTitle.bold())
                 .foregroundStyle(.themeFg)
 
-            Text("Build 41")
+            Text("Builds 43–44")
                 .font(.title2)
                 .foregroundStyle(.themeComment)
         }
         .opacity(appeared ? 1 : 0)
-        .offset(y: appeared ? 0 : 20)
+        .offset(y: appeared || reduceMotion ? 0 : 20)
     }
 
     // MARK: - Feature List
@@ -123,9 +134,9 @@ struct WhatsNewView: View {
             ForEach(Array(features.enumerated()), id: \.element.id) { index, feature in
                 featureRow(feature)
                     .opacity(appeared ? 1 : 0)
-                    .offset(y: appeared ? 0 : 30)
+                    .offset(y: appeared || reduceMotion ? 0 : 30)
                     .animation(
-                        .easeOut(duration: 0.5).delay(Double(index) * 0.08 + 0.15),
+                        reduceMotion ? nil : .easeOut(duration: 0.5).delay(Double(index) * 0.08 + 0.15),
                         value: appeared
                     )
             }
@@ -174,6 +185,6 @@ struct WhatsNewView: View {
         .padding(.top, 12)
         .background(Color.themeSurfaceFill(.opaqueCard).ignoresSafeArea(edges: .bottom))
         .opacity(appeared ? 1 : 0)
-        .animation(.easeOut(duration: 0.4).delay(0.6), value: appeared)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.4).delay(0.6), value: appeared)
     }
 }

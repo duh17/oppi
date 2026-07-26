@@ -293,6 +293,62 @@ describe("Oppi command descriptor matrix", () => {
     expect([...covered].sort()).toEqual([...allowlisted].sort());
   });
 
+  it("canonicalizes bounded session watch calls to session wait", () => {
+    const command = prepared([
+      "session",
+      "watch",
+      "sess-1",
+      "--until",
+      "attention",
+      "--interval",
+      "500ms",
+      "--timeout",
+      "30s",
+    ]);
+
+    expect(command).toMatchObject({
+      command: "session",
+      action: "wait",
+      category: "read",
+      normalizedArgs: [
+        "session",
+        "wait",
+        "sess-1",
+        "--for",
+        "attention",
+        "--poll",
+        "500ms",
+        "--timeout",
+        "30s",
+      ],
+      parsed: {
+        positional: ["wait", "sess-1"],
+        flags: { for: "attention", poll: "500ms", timeout: "30s" },
+      },
+      displayCommand: "oppi session wait sess-1 --for attention --poll 500ms --timeout 30s",
+    });
+  });
+
+  it.each([
+    ["session", "watch", "one", "two"],
+    ["session", "watch", "sess-1", "--all"],
+    ["session", "watch", "sess-1", "--until", "any-change"],
+    ["session", "watch", "sess-1", "--until", "idle", "--for", "attention"],
+    ["session", "watch", "sess-1", "--interval", "1s", "--poll", "2s"],
+  ])("rejects watch-only or conflicting alias input: %s", (...args) => {
+    expect(prepareOppiCommand(args)).toMatchObject({ ok: false });
+  });
+
+  it("aliases session watch help to the allowlisted wait topic", () => {
+    const command = prepared(["session", "watch", "--help"]);
+    expect(command).toMatchObject({
+      command: "session",
+      action: "wait",
+      normalizedArgs: ["session", "wait", "--help"],
+      helpPath: ["session", "wait"],
+    });
+  });
+
   it.each(MATRIX_CASES.flatMap((entry) => POLICIES.map((policy) => ({ ...entry, policy }))))(
     "$policy applies the exact policy to $command",
     async ({ args, category, command, policy }) => {
@@ -378,8 +434,6 @@ describe("Oppi command descriptor matrix", () => {
       ["update", "--help"],
       ["pair", "--help"],
       ["version", "--help"],
-      ["session", "watch", "--help"],
-      ["help", "session", "watch"],
     ].map((args) => ({ args })),
   )("denies help for commands outside the application-state allowlist: $args", ({ args }) => {
     expect(prepareOppiCommand(args)).toMatchObject({ ok: false });
@@ -476,6 +530,27 @@ describe("Oppi prepared command boundary", () => {
     expect(Object.isFrozen(command.approvalDetails)).toBe(true);
     expect(Object.isFrozen(command.approvalDetails?.bodies)).toBe(true);
     expect(Object.isFrozen(command.approvalDetails?.bodies[0])).toBe(true);
+  });
+
+  it("executes the session watch alias through bounded session wait", async () => {
+    request.mockResolvedValueOnce({
+      session: { status: "ready" },
+      events: [],
+      currentSeq: 1,
+    });
+    const command = prepared(["session", "watch", "sess-1", "--until", "idle"]);
+
+    const result = await executePreparedOppiCommand({ prepared: command });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { session_id: "sess-1", reason: "idle", status: "ready" },
+    });
+    expect(request).toHaveBeenCalledWith(
+      expect.anything(),
+      "/sessions/sess-1/events?since=0",
+      undefined,
+    );
   });
 
   it("executes Skill replacement with the decoded approved body", async () => {

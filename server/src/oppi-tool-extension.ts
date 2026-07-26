@@ -779,6 +779,8 @@ export function prepareOppiCommand(
   if (normalizedArgs.some((arg) => arg.length === 0)) {
     return denied("oppi command arguments must not be empty");
   }
+  const aliasError = normalizeOppiToolCommandAliases(normalizedArgs);
+  if (aliasError) return denied(aliasError);
   const assignment = normalizedArgs.find((arg) => arg.startsWith("--") && arg.includes("="));
   if (assignment) {
     const separator = assignment.indexOf("=");
@@ -848,6 +850,34 @@ export function prepareOppiCommand(
       : {}),
     callerSessionId: context.callerSessionId,
   });
+}
+
+function normalizeOppiToolCommandAliases(args: string[]): string | undefined {
+  const directWatch = args[0] === "session" && args[1] === "watch";
+  const helpWatch =
+    (args[0] === "help" && args[1] === "session" && args[2] === "watch") ||
+    (args[0] === "session" && args[1] === "help" && args[2] === "watch");
+  if (!directWatch && !helpWatch) return undefined;
+
+  const actionIndex = directWatch ? 1 : 2;
+  args[actionIndex] = "wait";
+  if (!directWatch) return undefined;
+
+  for (const [alias, canonical] of [
+    ["--until", "--for"],
+    ["--interval", "--poll"],
+  ] as const) {
+    if (!args.includes(alias)) continue;
+    if (args.includes(canonical)) return `Conflicting flags: ${alias} and ${canonical}`;
+    const index = args.indexOf(alias);
+    args[index] = canonical;
+  }
+
+  const conditionIndex = args.indexOf("--for");
+  if (conditionIndex >= 0 && args[conditionIndex + 1]?.trim().toLowerCase() === "any-change") {
+    return "oppi session watch aliases bounded session wait; any-change streaming is not allowed";
+  }
+  return undefined;
 }
 
 function descriptorForParsed(parsed: ParsedCliArgs): CommandDescriptor | undefined {

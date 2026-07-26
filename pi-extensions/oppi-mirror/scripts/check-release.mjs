@@ -22,7 +22,6 @@ function readProtocolVersion(source, constantName, path) {
 }
 
 const mirrorPackagePath = resolve(packageRoot, "package.json");
-const serverPackagePath = resolve(repoRoot, "server/package.json");
 const mirrorContractPath = resolve(
   packageRoot,
   "extensions/oppi-mirror-contract.ts",
@@ -32,20 +31,13 @@ const serverContractPath = resolve(
   "server/src/pi-tui-mirror-contract.ts",
 );
 
-const [mirrorPackage, serverPackage, mirrorContract, serverContract] =
-  await Promise.all([
-    readJson(mirrorPackagePath),
-    readJson(serverPackagePath),
-    readFile(mirrorContractPath, "utf8"),
-    readFile(serverContractPath, "utf8"),
-  ]);
+const [mirrorPackage, mirrorContract, serverContract] = await Promise.all([
+  readJson(mirrorPackagePath),
+  readFile(mirrorContractPath, "utf8"),
+  readFile(serverContractPath, "utf8"),
+]);
 
 const failures = [];
-if (mirrorPackage.version !== serverPackage.version) {
-  failures.push(
-    `package version ${mirrorPackage.version} does not match oppi-server ${serverPackage.version}`,
-  );
-}
 
 const mirrorProtocolVersion = readProtocolVersion(
   mirrorContract,
@@ -69,6 +61,6 @@ if (failures.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `oppi-mirror release check passed: version ${mirrorPackage.version}, bridge protocol ${mirrorProtocolVersion}`,
+    `oppi-mirror release check passed: independent package version ${mirrorPackage.version}, bridge protocol ${mirrorProtocolVersion}`,
   );
 }
