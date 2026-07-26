@@ -325,6 +325,86 @@ describe("sessions module", () => {
     }
   });
 
+  it("fails visibly without dispatching when an explicit session model is unavailable", async () => {
+    const modelError = new Error(
+      'Required model "openai-codex/gpt-5.6-sol" is not available; refusing model fallback',
+    );
+    const session: Session = {
+      id: "created-1",
+      status: "ready",
+      createdAt: 1,
+      lastActivity: 1,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    const saveSession = vi.fn((updated: Session) => Object.assign(session, updated));
+    const sendPrompt = vi.fn(async () => undefined);
+    const emitSessionCreated = vi.fn();
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getDataDir: vi.fn(() => tmpdir()),
+        createSession: vi.fn((name?: string, model?: string) => {
+          session.name = name;
+          session.model = model;
+          return session;
+        }),
+        saveSession,
+        listSessions: vi.fn(() => [session]),
+        findSessionByLaunchIdempotencyKey: vi.fn(() => undefined),
+        claimSessionLaunchRecovery: vi.fn(() => undefined),
+      },
+      sessions: {
+        startSession: vi.fn(async () => {
+          throw modelError;
+        }),
+        sendPrompt,
+      },
+      sessionRuntimes: {},
+      ensureSessionContextWindow: vi.fn((value: Session) => value),
+      appEvents: { emitSessionCreated, emitSessionSummary: vi.fn() },
+    } as unknown as RouteContext;
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/workspaces/ws-1/sessions",
+      url: new URL("http://localhost/workspaces/ws-1/sessions"),
+      req: makeRequest({
+        model: "openai-codex/gpt-5.6-sol",
+        prompt: "private implementation prompt",
+      }) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: modelError.message,
+      sessionId: "created-1",
+    });
+    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(emitSessionCreated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "created-1",
+        status: "error",
+        launch: expect.objectContaining({ status: "failed", modelPolicy: "required" }),
+      }),
+    );
+    expect(session).toMatchObject({
+      model: "openai-codex/gpt-5.6-sol",
+      status: "error",
+      launch: {
+        modelPolicy: "required",
+        status: "failed",
+        promptDispatch: "not_sent",
+        promptError: modelError.message,
+      },
+    });
+  });
+
   it("returns conflict instead of resuming removed-worktree sessions in main", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-session-route-removed-worktree-root-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-route-removed-worktree-data-"));

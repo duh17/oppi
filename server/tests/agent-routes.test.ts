@@ -594,6 +594,7 @@ describe("agent routes", () => {
           agentVersion: 1,
           agentIcon: { kind: "symbol", name: "checkmark.shield" },
           idempotencyKey: "agent-launch-1",
+          modelPolicy: "required",
           promptDispatch: "delivered",
         },
       });
@@ -602,6 +603,55 @@ describe("agent routes", () => {
         name: "Oppi",
       });
       expect(sendPrompt).toHaveBeenCalledWith(body.receipt.sessionId, "Review this", {});
+
+      const modelError = new Error(
+        'Required model "agent-model" is not available; refusing model fallback',
+      );
+      startSession.mockRejectedValueOnce(modelError);
+      const failedRes = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: `/agents/${agent.id}/sessions`,
+        url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+        req: makeRequest({
+          prompt: { text: "Must not reach another model" },
+          target: { workspaceId: "ws-1", worktreeId: "main" },
+        }) as never,
+        res: failedRes as never,
+      });
+
+      expect(failedRes.statusCode).toBe(409);
+      const failedBody = JSON.parse(failedRes.body) as {
+        error: string;
+        sessionId: string;
+        receipt: Record<string, unknown>;
+      };
+      expect(failedBody).toMatchObject({
+        error: modelError.message,
+        sessionId: expect.any(String),
+        receipt: {
+          accepted: false,
+          retryable: false,
+          reason: "required_model_unavailable",
+          agentId: agent.id,
+          agentVersion: 1,
+          sessionId: expect.any(String),
+          promptDispatch: "not_sent",
+          promptError: modelError.message,
+        },
+      });
+      expect(failedBody.receipt.sessionId).toBe(failedBody.sessionId);
+      expect(sendPrompt).toHaveBeenCalledOnce();
+      expect(sessions.at(-1)).toMatchObject({
+        model: "agent-model",
+        status: "error",
+        launch: {
+          modelPolicy: "required",
+          status: "failed",
+          promptDispatch: "not_sent",
+          promptError: modelError.message,
+        },
+      });
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

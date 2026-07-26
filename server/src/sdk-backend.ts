@@ -43,6 +43,7 @@ import { DEFAULT_AGENT_TOOL_NAMES, isDefaultAgentId } from "./default-agent.js";
 import {
   modelCandidatesFromRegistry,
   modelUnavailableMessage,
+  RequiredModelUnavailableError,
   resolveModelRequest,
   stripModelThinkingLevel,
 } from "./model-resolution.js";
@@ -105,7 +106,7 @@ export function enforceLaunchModelPolicy(
     ? `${resolvedModel.provider}/${resolvedModel.id}`
     : undefined;
   if (resolvedModel && (requested === resolvedCanonical || requested === resolvedModel.id)) return;
-  throw new Error(`Required model "${session.model}" is not available; refusing model fallback`);
+  throw new RequiredModelUnavailableError(session.model);
 }
 
 export function normalizeThinkingLevel(level: string | undefined): PiThinkingLevel | undefined {

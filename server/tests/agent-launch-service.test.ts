@@ -132,6 +132,7 @@ describe("AgentLaunchService", () => {
         launch: {
           status: "accepted",
           source: "workspace-wrapper",
+          modelPolicy: "required",
           promptDispatch: "not_sent",
           target: { workspaceId: "ws-1", worktreeId: "feature", runtime: "host" },
         },
@@ -793,11 +794,14 @@ describe("AgentLaunchService", () => {
     expect(sendPrompt).not.toHaveBeenCalled();
   });
 
-  it("retries a failed launch whose prompt was not delivered", async () => {
+  it("retries an explicit-model launch after a non-model failure", async () => {
     const failed = makeSession({
       id: "failed-1",
+      model: "openai-codex/gpt-5.6-sol",
       launch: {
         idempotencyKey: "launch-1",
+        model: "openai-codex/gpt-5.6-sol",
+        modelPolicy: "required",
         status: "failed",
         requestedAt: 1_000,
         completedAt: 1_500,
@@ -811,7 +815,10 @@ describe("AgentLaunchService", () => {
     });
 
     const result = await service.launch({
-      agent: { name: "test" },
+      agent: {
+        name: "test",
+        sessionDefaults: { model: "openai-codex/gpt-5.6-sol" },
+      },
       target: { workspace: makeWorkspace() },
       prompt: "retry prompt",
       idempotencyKey: "launch-1",

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { requiredModelLaunchFailureMessage } from "../agent-launch-service.js";
 import { SessionLifecycleError, SessionLifecycleService } from "../session-lifecycle-service.js";
 import {
   type ChatAttachmentRef,
@@ -225,6 +226,14 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         parentSessionId: body.parentSessionId,
         allowNestedDelegation: body.allowNestedDelegation === true,
       });
+      const requiredModelFailure = requiredModelLaunchFailureMessage(result.session);
+      if (requiredModelFailure) {
+        if (result.launchKind !== "existing") {
+          ctx.appEvents?.emitSessionCreated(result.session);
+        }
+        helpers.json(res, { error: requiredModelFailure, sessionId: result.session.id }, 409);
+        return;
+      }
       if (result.launchKind !== "existing") {
         ctx.appEvents?.emitSessionCreated(result.createdSession);
       }
@@ -304,6 +313,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         thinking: typeof body.thinking === "string" ? body.thinking : undefined,
         prompt: body.prompt,
       });
+      const requiredModelFailure = requiredModelLaunchFailureMessage(result.session);
+      if (requiredModelFailure) {
+        ctx.appEvents?.emitSessionCreated(result.session);
+        helpers.json(res, { error: requiredModelFailure, sessionId: result.session.id }, 409);
+        return;
+      }
       ctx.appEvents?.emitSessionCreated(result.createdSession);
       if (result.summarySession) {
         ctx.appEvents?.emitSessionSummary(result.summarySession);

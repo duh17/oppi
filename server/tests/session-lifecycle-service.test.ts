@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { requiredModelLaunchFailureMessage } from "../src/agent-launch-service.js";
 import { RuntimeDisconnectedError } from "../src/agent-runtime-transport.js";
 import { AgentDefinitionStore } from "../src/agent-definitions.js";
 import { DEFAULT_AGENT_ID } from "../src/default-agent.js";
@@ -50,6 +51,7 @@ function makeService(
     forkSession?: Session;
     runCommandError?: Error;
     sendPromptError?: Error;
+    startSessionError?: Error;
     workspace?: Workspace;
     dataDir?: string;
     agentDefinitionStore?: AgentDefinitionStore;
@@ -94,15 +96,14 @@ function makeService(
   });
   const startSession = vi.fn(async () => {
     options.onStartSession?.();
+    if (options.startSessionError) throw options.startSessionError;
     return options.started ?? makeSession({ status: "ready" });
   });
   const stopSession = vi.fn(async () => {
     if (options.stopError) throw options.stopError;
   });
   const stopSessionIfActive = vi.fn(async () => null);
-  const isSessionConnected = vi.fn(
-    () => options.mirrorConnected === true || options.live === true,
-  );
+  const isSessionConnected = vi.fn(() => options.mirrorConnected === true || options.live === true);
   const getSessionSnapshot = vi.fn(() => options.snapshot);
   const getActiveSession = vi.fn(() => options.active);
   const refreshSessionState = vi.fn(async () => null);
@@ -199,6 +200,7 @@ describe("SessionLifecycleService", () => {
       expect(result.session).toMatchObject({ id: "created-1", contextWindow: 200_000 });
       expect(result.createdSession).toMatchObject({ id: "created-1", contextWindow: 200_000 });
       expect(result.summarySession).toBeUndefined();
+      expect(result.session.launch?.modelPolicy).toBeUndefined();
     });
 
     it("persists caller lineage for managed CLI child sessions", async () => {
@@ -263,6 +265,78 @@ describe("SessionLifecycleService", () => {
         id: "created-1",
         firstMessage: "Tell me about TypeScript",
       });
+    });
+
+    it("marks an explicit model as required and never dispatches its prompt after startup rejects it", async () => {
+      const createdSession = makeSession({
+        id: "created-1",
+        model: "openai-codex/gpt-5.6-sol",
+      });
+      const modelError = new Error(
+        'Required model "openai-codex/gpt-5.6-sol" is not available; refusing model fallback',
+      );
+      const { service, saveSession, startSession, sendPrompt } = makeService({
+        forkSession: createdSession,
+        startSessionError: modelError,
+      });
+
+      const result = await service.createWorkspaceSession({
+        workspace: makeWorkspace(),
+        model: "openai-codex/gpt-5.6-sol",
+        prompt: "private implementation prompt",
+      });
+
+      expect(startSession).toHaveBeenCalledOnce();
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+        id: "created-1",
+        model: "openai-codex/gpt-5.6-sol",
+        status: "error",
+        launch: {
+          model: "openai-codex/gpt-5.6-sol",
+          modelPolicy: "required",
+          status: "failed",
+          promptDispatch: "not_sent",
+          promptError: modelError.message,
+        },
+      });
+      expect(result).toMatchObject({
+        prompted: false,
+        session: {
+          status: "error",
+          launch: { modelPolicy: "required", promptError: modelError.message },
+        },
+      });
+    });
+
+    it("keeps non-model startup failures recoverable when an explicit model was requested", async () => {
+      const createdSession = makeSession({
+        id: "created-1",
+        model: "openai-codex/gpt-5.6-sol",
+      });
+      const { service, saveSession, sendPrompt } = makeService({
+        forkSession: createdSession,
+        startSessionError: new Error("transport temporarily unavailable"),
+      });
+
+      const result = await service.createWorkspaceSession({
+        workspace: makeWorkspace(),
+        model: "openai-codex/gpt-5.6-sol",
+        prompt: "retry this prompt later",
+      });
+
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+        status: "ready",
+        launch: {
+          modelPolicy: "required",
+          status: "failed",
+          promptDispatch: "not_sent",
+          promptError: "transport temporarily unavailable",
+        },
+      });
+      expect(requiredModelLaunchFailureMessage(result.session)).toBeUndefined();
+      expect(result.prompted).toBe(false);
     });
 
     it("keeps created sessions when initial prompt dispatch fails", async () => {
@@ -339,6 +413,43 @@ describe("SessionLifecycleService", () => {
         contextWindow: 200_000,
       });
       expect(result.prompted).toBe(true);
+    });
+
+    it("marks an explicit control-session model required and does not dispatch after startup rejects it", async () => {
+      const createdSession = makeSession({
+        id: "control-1",
+        workspaceId: undefined,
+        model: "openai-codex/gpt-5.6-sol",
+      });
+      const modelError = new Error(
+        'Required model "openai-codex/gpt-5.6-sol" is not available; refusing model fallback',
+      );
+      const { service, saveSession, sendPrompt } = makeService({
+        forkSession: createdSession,
+        startSessionError: modelError,
+      });
+
+      const result = await service.createControlSession({
+        control: { domain: "agents", intent: "create" },
+        model: "openai-codex/gpt-5.6-sol",
+        prompt: "private control prompt",
+      });
+
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+        status: "error",
+        launch: {
+          model: "openai-codex/gpt-5.6-sol",
+          modelPolicy: "required",
+          status: "failed",
+          promptDispatch: "not_sent",
+          promptError: modelError.message,
+        },
+      });
+      expect(result).toMatchObject({
+        prompted: false,
+        session: { status: "error", launch: { modelPolicy: "required" } },
+      });
     });
 
     it("snapshots customized Default Agent presentation through lifecycle and summary", async () => {
@@ -498,7 +609,7 @@ describe("SessionLifecycleService", () => {
       expect(startSession).not.toHaveBeenCalled();
     });
 
-    it("does not resume a failed required-model schedule session", async () => {
+    it("retries a failed required-model session when the model becomes available", async () => {
       const session = makeSession({
         runtime: "oppi",
         status: "error",
@@ -510,16 +621,91 @@ describe("SessionLifecycleService", () => {
           promptError: 'Required model "ds4/deepseek-v4-flash" is not available',
         },
       });
-      const { service, startSession } = makeService();
+      const started = makeSession({ ...session, status: "ready" });
+      const { service, startSession } = makeService({ started });
+
+      const result = await service.resumeWorkspaceSession({
+        session,
+        workspace: makeWorkspace(),
+      });
+
+      expect(startSession).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({ owner: "oppi", startedSession: true });
+      expect(result.session).toMatchObject({ status: "ready" });
+    });
+
+    it("returns a live explicit-model session after an unrelated initial prompt failure", async () => {
+      const session = makeSession({
+        runtime: "oppi",
+        status: "error",
+        model: "openai-codex/gpt-5.6-sol",
+        launch: {
+          model: "openai-codex/gpt-5.6-sol",
+          modelPolicy: "required",
+          status: "failed",
+          requestedAt: 1,
+          promptDispatch: "not_sent",
+          promptError: "transport temporarily unavailable",
+        },
+      });
+      const active = makeSession({ ...session, status: "ready" });
+      const { service, startSession } = makeService({ live: true, active });
+
+      const result = await service.resumeWorkspaceSession({
+        session,
+        workspace: makeWorkspace(),
+      });
+
+      expect(startSession).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ owner: "oppi", startedSession: false });
+      expect(result.session).toMatchObject({ status: "ready" });
+    });
+
+    it("persists and reports required-model failure when starting a promptless session", async () => {
+      const session = makeSession({
+        runtime: "oppi",
+        status: "ready",
+        model: "openai-codex/gpt-5.6-sol",
+        launch: {
+          model: "openai-codex/gpt-5.6-sol",
+          modelPolicy: "required",
+          status: "accepted",
+          requestedAt: 1,
+          promptDispatch: "not_sent",
+        },
+      });
+      const modelError = new Error(
+        'Required model "openai-codex/gpt-5.6-sol" is not available; refusing model fallback',
+      );
+      const { service, saveSession, startSession } = makeService({
+        startSessionError: modelError,
+      });
 
       await expect(
         service.resumeWorkspaceSession({ session, workspace: makeWorkspace() }),
       ).rejects.toMatchObject({
         name: "SessionLifecycleError",
         statusCode: 409,
-        message: 'Required model "ds4/deepseek-v4-flash" is not available',
+        message: modelError.message,
       } satisfies Partial<SessionLifecycleError>);
-      expect(startSession).not.toHaveBeenCalled();
+      expect(startSession).toHaveBeenCalledOnce();
+      expect(saveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "error",
+          launch: expect.objectContaining({
+            status: "accepted",
+            modelPolicy: "required",
+            promptDispatch: "not_sent",
+          }),
+        }),
+      );
+      expect(session.launch?.promptError).toBeUndefined();
+
+      startSession.mockResolvedValueOnce(makeSession({ ...session, status: "ready" }));
+      await expect(
+        service.resumeWorkspaceSession({ session, workspace: makeWorkspace() }),
+      ).resolves.toMatchObject({ startedSession: true, session: { status: "ready" } });
+      expect(startSession).toHaveBeenCalledTimes(2);
     });
 
     it("returns already-live managed sessions without restarting", async () => {
@@ -626,7 +812,7 @@ describe("SessionLifecycleService", () => {
       expect(startSession).not.toHaveBeenCalled();
     });
 
-    it("does not open a failed required-model schedule session", async () => {
+    it("opens a failed required-model session when the model becomes available", async () => {
       const session = makeSession({
         runtime: "oppi",
         status: "error",
@@ -638,16 +824,16 @@ describe("SessionLifecycleService", () => {
           promptError: 'Required model "ds4/deepseek-v4-flash" is not available',
         },
       });
-      const { service, startSession } = makeService();
+      const started = makeSession({ ...session, status: "ready" });
+      const { service, startSession } = makeService({ started });
 
-      await expect(
-        service.openFocusedSession({ session, workspace: makeWorkspace() }),
-      ).rejects.toMatchObject({
-        name: "SessionLifecycleError",
-        statusCode: 409,
-        message: 'Required model "ds4/deepseek-v4-flash" is not available',
-      } satisfies Partial<SessionLifecycleError>);
-      expect(startSession).not.toHaveBeenCalled();
+      const result = await service.openFocusedSession({
+        session,
+        workspace: makeWorkspace(),
+      });
+
+      expect(startSession).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({ startedSession: true, session: { status: "ready" } });
     });
 
     it("keeps the focused stream started-session metric false for active managed sessions", async () => {
@@ -693,9 +879,10 @@ describe("SessionLifecycleService", () => {
         const result = await service.importLocalSession({
           workspace: makeWorkspace({ name: "Project", hostMount: workspaceDir }),
           piSessionFile: jsonlPath,
+          model: "openai-codex/gpt-5.6-sol",
         });
 
-        expect(createSession).toHaveBeenCalledWith("Imported Name", undefined);
+        expect(createSession).toHaveBeenCalledWith("Imported Name", "openai-codex/gpt-5.6-sol");
         expect(saveSession).toHaveBeenCalledWith(
           expect.objectContaining({
             id: "imported-1",
@@ -708,6 +895,14 @@ describe("SessionLifecycleService", () => {
             runtime: "pi-tui",
             status: "stopped",
             mirror: { status: "disconnected" },
+            launch: expect.objectContaining({
+              source: "human",
+              model: "openai-codex/gpt-5.6-sol",
+              modelPolicy: "required",
+              status: "accepted",
+              promptDispatch: "not_sent",
+              target: { workspaceId: "ws-1", runtime: "host" },
+            }),
           }),
         );
         expect(result.created).toBe(true);

@@ -1,4 +1,8 @@
 import { generateId } from "./id.js";
+import {
+  isRequiredModelUnavailableError,
+  isRequiredModelUnavailableMessage,
+} from "./model-resolution.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
 import type { ChatAttachmentRef, IconChoice, Session, Workspace } from "./types.js";
@@ -95,6 +99,20 @@ export interface AgentLaunchServiceDeps {
 const DEFAULT_LEASE_TTL_MS = 2 * 60_000;
 const DEFAULT_LEASE_OWNER = "workspace-session-create";
 
+/** Return the launch error that creation routes must surface instead of reporting success. */
+export function requiredModelLaunchFailureMessage(session: Session): string | undefined {
+  const launch = session.launch;
+  if (
+    launch?.modelPolicy !== "required" ||
+    launch.status !== "failed" ||
+    launch.promptDispatch !== "not_sent" ||
+    !isRequiredModelUnavailableMessage(launch.promptError)
+  ) {
+    return undefined;
+  }
+  return launch.promptError;
+}
+
 export class DelegationPolicyError extends Error {
   constructor(message: string) {
     super(message);
@@ -178,6 +196,7 @@ export class AgentLaunchService {
         session,
         "not_sent",
         error instanceof Error ? error.message : String(error),
+        isRequiredModelUnavailableError(error),
       );
       return {
         kind: "created",
@@ -196,6 +215,10 @@ export class AgentLaunchService {
     now: number,
   ): Session {
     const defaults = request.agent.sessionDefaults ?? {};
+    // A launch-level model is an explicit caller or saved-Agent choice. Workspace/Pi defaults
+    // remain fallback-capable only when no launch model was selected.
+    const modelPolicy =
+      request.modelPolicy ?? (normalizedText(defaults.model) ? "required" : undefined);
     const modelSelection = resolveInitialChatModel({
       requestModel: defaults.model,
       workspace: request.target.workspace,
@@ -244,7 +267,7 @@ export class AgentLaunchService {
         runtime: request.target.workspace.runtime === "sandbox" ? "sandbox" : "host",
       },
       model: modelSelection.model,
-      modelPolicy: request.modelPolicy,
+      modelPolicy,
       thinkingLevel: defaults.thinkingLevel,
       tools: {
         ...(defaults.tools ? { allowed: defaults.tools } : {}),
@@ -324,10 +347,11 @@ export class AgentLaunchService {
     session: Session,
     promptDispatch: PromptDispatchStatus,
     promptError?: string,
+    requiredModelUnavailable = false,
   ): void {
     if (session.launch) {
       const { promptError: _previousPromptError, ...launch } = session.launch;
-      if (promptError && launch.modelPolicy === "required") session.status = "error";
+      if (promptError && requiredModelUnavailable) session.status = "error";
       session.launch = {
         ...launch,
         status: promptDispatch === "delivered" || !promptError ? "accepted" : "failed",
@@ -373,7 +397,7 @@ export class AgentLaunchService {
     if (!launch) return false;
     if (launch.promptDispatch === "delivered") return false;
     if (!this.launchTargetMatchesRequest(existing, request)) return false;
-    if (launch.status === "failed" && launch.modelPolicy === "required") return false;
+    if (requiredModelLaunchFailureMessage(existing)) return false;
     if (launch.status === "failed") return true;
     if (launch.status !== "launching") return false;
     const lease = launch.lease;
@@ -449,6 +473,7 @@ export class AgentLaunchService {
         recovered,
         "not_sent",
         error instanceof Error ? error.message : String(error),
+        isRequiredModelUnavailableError(error),
       );
       const session = this.hydratedSnapshot(recovered);
       return { kind: "existing", session, createdSession: session, promptDispatch: "not_sent" };

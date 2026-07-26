@@ -25,6 +25,7 @@ import {
   validateLocalSessionPath,
 } from "./local-sessions.js";
 import { safeErrorMessage } from "./log-utils.js";
+import { isRequiredModelUnavailableError } from "./model-resolution.js";
 import { createLogger } from "./logger.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
@@ -205,6 +206,7 @@ export class SessionLifecycleService {
     prompt?: string;
   }): Promise<CreateWorkspaceSessionResult> {
     const now = Date.now();
+    const requestedModel = params.model?.trim() || undefined;
     const defaultAgent = this.deps.storage.getAgentDefinitionStore().getAgent(DEFAULT_AGENT_ID);
     if (!defaultAgent) {
       throw new SessionLifecycleError("Default Agent is unavailable", 500);
@@ -212,7 +214,7 @@ export class SessionLifecycleService {
     const defaultAgentIcon = defaultAgent.definition.icon;
     const session = this.deps.storage.createSession(
       params.name?.trim() || "Oppi Control",
-      params.model?.trim() || undefined,
+      requestedModel,
     );
     session.workspaceId = undefined;
     session.workspaceName = undefined;
@@ -227,6 +229,7 @@ export class SessionLifecycleService {
       ...(defaultAgentIcon ? { agentIcon: defaultAgentIcon } : {}),
       target: { server: true, displayCwd: "Oppi Control" },
       tools: { allowed: [...DEFAULT_AGENT_TOOL_NAMES], noTools: "builtin" },
+      ...(requestedModel ? { model: requestedModel, modelPolicy: "required" } : {}),
       status: "launching",
       requestedAt: now,
     };
@@ -269,6 +272,7 @@ export class SessionLifecycleService {
         launchKind: "created",
       };
     } catch (error: unknown) {
+      if (isRequiredModelUnavailableError(error)) session.status = "error";
       session.launch = {
         ...session.launch,
         status: "failed",
@@ -302,7 +306,6 @@ export class SessionLifecycleService {
       };
     }
 
-    this.requireLaunchRestartAllowed(params.session);
     if (this.deps.sessionRuntimes.isSessionConnected(params.session.id)) {
       const active = this.deps.sessionRuntimes.getActiveSession(params.session.id);
       return {
@@ -312,7 +315,7 @@ export class SessionLifecycleService {
       };
     }
 
-    const started = await this.deps.sessions.startSession(params.session.id, params.workspace);
+    const started = await this.startManagedSession(params.session, params.workspace);
     return {
       session: this.deps.ensureSessionContextWindow(started),
       owner: "oppi",
@@ -333,7 +336,7 @@ export class SessionLifecycleService {
       };
     }
 
-    const started = await this.deps.sessions.startSession(session.id, undefined);
+    const started = await this.startManagedSession(session, undefined);
     return {
       session: this.deps.ensureSessionContextWindow(started),
       owner: "oppi",
@@ -357,9 +360,8 @@ export class SessionLifecycleService {
       };
     }
 
-    this.requireLaunchRestartAllowed(params.session);
     const hadActiveSession = this.deps.sessionRuntimes.isSessionConnected(params.session.id);
-    const started = await this.deps.sessions.startSession(params.session.id, params.workspace);
+    const started = await this.startManagedSession(params.session, params.workspace);
     return {
       session: this.deps.ensureSessionContextWindow(started),
       owner: "oppi",
@@ -466,6 +468,24 @@ export class SessionLifecycleService {
     session.runtime = "pi-tui";
     session.status = "stopped";
     session.mirror = { status: "disconnected" };
+    if (modelSelection.source === "request" && modelSelection.model) {
+      session.model = modelSelection.model;
+      const now = Date.now();
+      session.launch = {
+        source: "human",
+        target: {
+          workspaceId: params.workspace.id,
+          ...(params.worktreeId ? { worktreeId: params.worktreeId } : {}),
+          runtime: params.workspace.runtime === "sandbox" ? "sandbox" : "host",
+        },
+        model: modelSelection.model,
+        modelPolicy: "required",
+        status: "accepted",
+        promptDispatch: "not_sent",
+        requestedAt: now,
+        completedAt: now,
+      };
+    }
     this.deps.storage.saveSession(session);
     invalidateLocalSessionsCache({ dataDir: this.deps.storage.getDataDir() });
 
@@ -640,12 +660,23 @@ export class SessionLifecycleService {
     return { ...this.deps.ensureSessionContextWindow(session) };
   }
 
-  private requireLaunchRestartAllowed(session: Session): void {
-    if (session.launch?.status !== "failed" || session.launch.modelPolicy !== "required") return;
-    throw new SessionLifecycleError(
-      session.launch.promptError ?? "Required schedule model was unavailable at launch",
-      409,
-    );
+  private async startManagedSession(
+    session: Session,
+    workspace: Workspace | undefined,
+  ): Promise<Session> {
+    try {
+      return await this.deps.sessions.startSession(session.id, workspace);
+    } catch (error) {
+      if (session.launch?.modelPolicy !== "required" || !isRequiredModelUnavailableError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      // Preserve the immutable launch receipt on restart failures. In particular, do not
+      // rewrite a previously delivered prompt as not_sent or make model outages sticky.
+      session.status = "error";
+      this.deps.storage.saveSession(session);
+      throw new SessionLifecycleError(message, 409);
+    }
   }
 
   private requireSessionWorktreeAvailable(session: Session, workspace?: Workspace): void {

@@ -4,6 +4,28 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 export type ModelAuthKind = "subscription" | "local" | "apiKey";
 export type ModelThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
+// The optional suffix recognizes schedule failures persisted before the typed error existed.
+const REQUIRED_MODEL_UNAVAILABLE_PATTERN =
+  /^Required model "[\s\S]+" is not available(?:; refusing model fallback)?$/;
+
+export class RequiredModelUnavailableError extends Error {
+  constructor(readonly model: string) {
+    super(`Required model "${model}" is not available; refusing model fallback`);
+    this.name = "RequiredModelUnavailableError";
+  }
+}
+
+export function isRequiredModelUnavailableMessage(message: string | undefined): boolean {
+  return typeof message === "string" && REQUIRED_MODEL_UNAVAILABLE_PATTERN.test(message);
+}
+
+export function isRequiredModelUnavailableError(error: unknown): boolean {
+  return (
+    error instanceof RequiredModelUnavailableError ||
+    (error instanceof Error && isRequiredModelUnavailableMessage(error.message))
+  );
+}
+
 export interface ModelResolutionInfo {
   /** Canonical provider/model-id. */
   id: string;

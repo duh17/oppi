@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   AgentLaunchService,
   DelegationPolicyError,
+  requiredModelLaunchFailureMessage,
   type AgentDefinition,
 } from "../agent-launch-service.js";
 import {
@@ -222,6 +223,37 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         return true;
       }
 
+      const requiredModelFailure = requiredModelLaunchFailureMessage(result.session);
+      if (requiredModelFailure) {
+        if (result.kind !== "existing") {
+          ctx.appEvents?.emitSessionCreated(result.session);
+        }
+        helpers.json(
+          res,
+          {
+            error: requiredModelFailure,
+            sessionId: result.session.id,
+            receipt: {
+              accepted: false,
+              retryable: false,
+              reason: "required_model_unavailable",
+              agentId: agent.id,
+              agentVersion: agent.version,
+              sessionId: result.session.id,
+              ...(result.session.launch?.parentSessionId
+                ? { parentSessionId: result.session.launch.parentSessionId }
+                : {}),
+              ...(result.session.launch?.idempotencyKey
+                ? { idempotencyKey: result.session.launch.idempotencyKey }
+                : {}),
+              promptDispatch: result.promptDispatch,
+              promptError: requiredModelFailure,
+            },
+          },
+          409,
+        );
+        return true;
+      }
       if (result.kind !== "existing") {
         ctx.appEvents?.emitSessionCreated(result.createdSession);
       }
