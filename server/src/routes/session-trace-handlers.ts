@@ -121,6 +121,7 @@ export function createSessionTraceRouteHandlers(
     storage: ctx.storage,
     sessionRuntimes: ctx.sessionRuntimes,
     ensureSessionContextWindow: ctx.ensureSessionContextWindow,
+    mobileRenderers: ctx.sessions?.mobileRenderer,
   });
   const sessionFileHandlers = createSessionFileHandlers(ctx, helpers, traceService);
 
@@ -317,6 +318,7 @@ export function createSessionTraceRouteHandlers(
     const result = await traceService.getSessionWithTrace({
       session,
       traceView: resolveTraceView(url),
+      includePresentationSegments: true,
     });
     helpers.compressedJson(req, res, result);
   }
@@ -388,6 +390,7 @@ export function createSessionTraceRouteHandlers(
       aroundEntryId: url.searchParams.get("aroundEntryId") ?? undefined,
       targetEvents: targetEvents.value,
       previewBytes: previewBytes.value,
+      includePresentationSegments: url.searchParams.get("presentation") === "mobile",
     });
     if (!result) {
       helpers.error(res, 404, "Session trace not found");

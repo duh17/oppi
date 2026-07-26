@@ -53,6 +53,7 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
     // Tool call fields
     let tool: String?
     let args: [String: JSONValue]?
+    let callSegments: [StyledSegment]?
 
     // Tool result fields
     let output: String?
@@ -62,6 +63,7 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
     let toolCallId: String?
     let toolName: String?
     let isError: Bool?
+    let resultSegments: [StyledSegment]?
 
     // Persisted lifecycle rides on original trace event types so older clients
     // safely ignore these fields instead of rejecting new enum discriminators.
@@ -84,6 +86,7 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         text: String? = nil,
         tool: String? = nil,
         args: [String: JSONValue]? = nil,
+        callSegments: [StyledSegment]? = nil,
         output: String? = nil,
         outputTruncated: Bool? = nil,
         outputPreviewBytes: Int? = nil,
@@ -91,6 +94,7 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         toolCallId: String? = nil,
         toolName: String? = nil,
         isError: Bool? = nil,
+        resultSegments: [StyledSegment]? = nil,
         lifecycleBefore: [TraceLifecycleEvent]? = nil,
         lifecycleAfter: [TraceLifecycleEvent]? = nil,
         details: JSONValue? = nil,
@@ -103,6 +107,7 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.text = text
         self.tool = tool
         self.args = args
+        self.callSegments = callSegments
         self.output = output
         self.outputTruncated = outputTruncated
         self.outputPreviewBytes = outputPreviewBytes
@@ -110,6 +115,7 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.toolCallId = toolCallId
         self.toolName = toolName
         self.isError = isError
+        self.resultSegments = resultSegments
         self.lifecycleBefore = lifecycleBefore
         self.lifecycleAfter = lifecycleAfter
         self.details = details

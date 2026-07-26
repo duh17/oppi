@@ -10,8 +10,10 @@ import {
   classifyOppiToolCommand,
   createDefaultAgentExtensionFactory,
   formatOppiToolExpandedText,
+  listAllowlistedOppiToolCommands,
   runOppiToolCommand,
 } from "../src/default-agent-tool.js";
+import { createOppiToolExtensionFactory } from "../src/oppi-tool-extension.js";
 import { Storage } from "../src/storage.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 
@@ -178,7 +180,17 @@ describe("Default Agent extension isolation", () => {
     );
 
     expect(confirm).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ details: { cancelled: true, reason: "declined" } });
+    expect(result).toMatchObject({
+      details: {
+        cancelled: true,
+        reason: "declined",
+        expandedText: expect.stringContaining("## Cancelled"),
+        presentationFormat: "markdown",
+      },
+    });
+    expect((result.details as { expandedText?: string }).expandedText).toContain(
+      "# Oppi session stop",
+    );
   });
 });
 
@@ -274,6 +286,78 @@ describe("Default Agent managed ask tool", () => {
 });
 
 describe("Default Agent Oppi tool presentation", () => {
+  it("preserves expanded request details on valid and rejected tool errors", async () => {
+    type ToolResultHandler = (event: {
+      toolName: string;
+      input: Record<string, unknown>;
+      content: Array<{ type: "text"; text: string }>;
+      isError: boolean;
+    }) => Promise<{ details?: Record<string, unknown>; isError?: boolean } | undefined>;
+    let toolResultHandler: ToolResultHandler | undefined;
+    createOppiToolExtensionFactory({
+      identity: "control",
+      policySnapshot: { approvalPolicy: "confirmAllChanges" },
+      callerSessionId: "control-test",
+    })({
+      on: (event: string, handler: unknown) => {
+        if (event === "tool_result") toolResultHandler = handler as ToolResultHandler;
+      },
+      registerTool: () => undefined,
+    } as unknown as never);
+
+    const handler = toolResultHandler;
+    expect(handler).toBeDefined();
+    if (!handler) return;
+
+    const valid = await handler({
+      toolName: "oppi",
+      input: { args: ["session", "send", "sess-1", "--text", "complete response"] },
+      content: [{ type: "text", text: "Session unavailable" }],
+      isError: true,
+    });
+    const validExpanded = valid?.details?.expandedText;
+    expect(typeof validExpanded).toBe("string");
+    if (typeof validExpanded !== "string") return;
+    expect(validExpanded).toContain("# Oppi session send");
+    expect(validExpanded).toContain("## Message\n\n> complete response");
+    expect(validExpanded).toContain("## Error");
+    expect(validExpanded).toContain("Session unavailable");
+
+    const rejected = await handler({
+      toolName: "oppi",
+      input: { args: ["session", "send", "sess-1", "--text=private-response"] },
+      content: [{ type: "text", text: "Assignment-style flags are not supported" }],
+      isError: true,
+    });
+    const rejectedExpanded = rejected?.details?.expandedText;
+    expect(typeof rejectedExpanded).toBe("string");
+    if (typeof rejectedExpanded !== "string") return;
+    expect(rejectedExpanded).toContain("--text=[16 chars]");
+    expect(rejectedExpanded).not.toContain("private-response");
+    expect(rejectedExpanded).toContain("## Error");
+
+    const longBody = `secret-${"x".repeat(200)}`;
+    const longRejected = await handler({
+      toolName: "oppi",
+      input: { args: ["session", "send", "sess-1", `--text=${longBody}`] },
+      content: [{ type: "text", text: `Assignment-style flags are not supported: --text=${longBody.slice(0, 73)}` }],
+      isError: true,
+    });
+    const longExpanded = longRejected?.details?.expandedText;
+    expect(typeof longExpanded).toBe("string");
+    if (typeof longExpanded !== "string") return;
+    expect(longExpanded).toContain(`--text=[${longBody.length} chars]`);
+    expect(longExpanded).not.toContain("secret-");
+
+    const malformedShape = await handler({
+      toolName: "oppi",
+      input: { args: ["workspace", "list", 42] },
+      content: [{ type: "text", text: "oppi args must be an array of strings" }],
+      isError: true,
+    } as never);
+    expect(malformedShape?.details).toMatchObject({ kind: "rejected", outcome: "error" });
+  });
+
   it("formats session search output for people without leaking the JSON envelope", () => {
     const classification = classifyOppiToolCommand([
       "session",
@@ -317,6 +401,39 @@ describe("Default Agent Oppi tool presentation", () => {
     expect(expanded).toContain("`sess-alpha`");
     expect(expanded).not.toContain('"ok"');
     expect(expanded).not.toContain('"results"');
+  });
+
+  it.each([
+    { args: ["status", "--help"], heading: "# Oppi status" },
+    { args: ["session", "help"], heading: "# Oppi session" },
+    { args: ["session", "help", "send"], heading: "# Oppi session send" },
+    { args: ["help", "session", "inspect"], heading: "# Oppi session inspect" },
+    { args: ["session", "inspect", "--help"], heading: "# Oppi session inspect" },
+  ])("uses the semantic command path for help form $args", ({ args, heading }) => {
+    const classification = classifyOppiToolCommand(args);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    const expanded = formatOppiToolExpandedText(classification, { help: true });
+    expect(expanded.split("\n")[0]).toBe(heading);
+    expect(expanded).not.toContain("## Request");
+  });
+
+  it("keeps malformed JSON bodies observable in expanded help without throwing", () => {
+    const classification = classifyOppiToolCommand([
+      "skill",
+      "update-file",
+      "--help",
+      "--content-json",
+      "not-json",
+    ]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    expect(() => formatOppiToolExpandedText(classification, { help: true })).not.toThrow();
+    const expanded = formatOppiToolExpandedText(classification, { help: true });
+    expect(expanded).toContain("--content-json [8 chars]");
+    expect(expanded).not.toContain("not-json");
   });
 
   it("shows the complete sent message and delivery details as readable Markdown", () => {
@@ -387,6 +504,30 @@ describe("Default Agent Oppi tool presentation", () => {
     expect(expanded).toContain(
       `- **Session:** [Open \`${data.session_id}\`](oppi://session/${data.session_id})`,
     );
+  });
+
+  it("shows complete dialog response parameters in expanded history", () => {
+    const answers = '{"scope":["server","apple"]}';
+    const classification = classifyOppiToolCommand([
+      "session",
+      "respond",
+      "sess-1",
+      "--dialog",
+      "dialog-1",
+      "--answers",
+      answers,
+    ]);
+    expect(classification).toMatchObject({ ok: true });
+    if (!classification.ok) return;
+
+    const expanded = formatOppiToolExpandedText(classification, { accepted: true });
+
+    expect(expanded).toContain("# Oppi session respond");
+    expect(expanded).toContain("- **Session:** `sess-1`");
+    expect(expanded).toContain("- **Dialog:** `dialog-1`");
+    expect(expanded).toContain(`## Answers\n\n> ${answers}`);
+    const commandSection = expanded.split("\n\n## Request", 1)[0] ?? "";
+    expect(commandSection).not.toContain(answers);
   });
 
   it("falls back to readable result data when session delivery fields are missing", () => {
@@ -558,6 +699,70 @@ describe("Default Agent Oppi tool presentation", () => {
 });
 
 describe("Default Agent Oppi tool command policy", () => {
+  it("keeps the audited allowlist explicit", () => {
+    expect(
+      listAllowlistedOppiToolCommands().map(({ command, action }) =>
+        [command, action].filter(Boolean).join(" "),
+      ),
+    ).toEqual([
+      "status",
+      "workspace list",
+      "workspace get",
+      "workspace create",
+      "workspace update",
+      "workspace delete",
+      "workspace remove",
+      "worktree list",
+      "worktree get",
+      "worktree status",
+      "worktree preview",
+      "worktree create",
+      "worktree open",
+      "worktree remove",
+      "agent list",
+      "agent get",
+      "agent create",
+      "agent update",
+      "agent archive",
+      "skill list",
+      "skill get",
+      "skill file",
+      "skill update-file",
+      "session list",
+      "session get",
+      "session changes",
+      "session trace-outline",
+      "session read",
+      "session events",
+      "session trace",
+      "session search",
+      "session inspect",
+      "session diff",
+      "session tool-output",
+      "session trace-page",
+      "session wait",
+      "session create",
+      "session send",
+      "session abort",
+      "session dialogs",
+      "session respond",
+      "session stop",
+      "session resume",
+      "session fork",
+      "session delete",
+      "schedule list",
+      "schedule get",
+      "schedule runs",
+      "schedule create",
+      "schedule update",
+      "schedule run",
+      "schedule pause",
+      "schedule resume",
+      "schedule archive",
+      "schedule restore",
+    ]);
+  });
+
   it("allows read-only app inspection commands", () => {
     for (const args of [
       ["status"],
@@ -594,6 +799,19 @@ describe("Default Agent Oppi tool command policy", () => {
     }
   });
 
+  it("renders every documented allowlisted subcommand help form semantically", () => {
+    for (const { command, action } of listAllowlistedOppiToolCommands()) {
+      const args = [command, ...(action ? [action] : []), "--help"];
+      const classification = classifyOppiToolCommand(args);
+      expect(classification, args.join(" ")).toMatchObject({ ok: true, kind: "read" });
+      if (!classification.ok) continue;
+      const expectedHeading = `# Oppi ${[command, action].filter(Boolean).join(" ")}`;
+      expect(formatOppiToolExpandedText(classification, { help: true }).split("\n")[0]).toBe(
+        expectedHeading,
+      );
+    }
+  });
+
   it("allows help for write and destructive commands", () => {
     for (const args of [
       ["session", "create", "--help"],
@@ -605,6 +823,30 @@ describe("Default Agent Oppi tool command policy", () => {
       expect(classifyOppiToolCommand(args), args.join(" ")).toMatchObject({
         ok: true,
         kind: "read",
+      });
+    }
+  });
+
+  it("covers safe deterministic CLI subcommands that were missing from the allowlist", () => {
+    for (const args of [
+      ["session", "dialogs", "sess-1"],
+      ["session", "abort", "sess-1"],
+      ["session", "respond", "sess-1", "--dialog", "dialog-1", "--confirm"],
+      ["schedule", "restore", "sch-1"],
+    ]) {
+      expect(classifyOppiToolCommand(args), args.join(" ")).toMatchObject({ ok: true });
+    }
+
+    expect(classifyOppiToolCommand(["session", "dialogs", "sess-1"])).toMatchObject({
+      kind: "read",
+    });
+    for (const args of [
+      ["session", "abort", "sess-1"],
+      ["session", "respond", "sess-1", "--dialog", "dialog-1", "--confirm"],
+      ["schedule", "restore", "sch-1"],
+    ]) {
+      expect(classifyOppiToolCommand(args), args.join(" ")).toMatchObject({
+        kind: "approved-write",
       });
     }
   });

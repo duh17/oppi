@@ -17,6 +17,7 @@ import {
   computeLineDiffStatsFromLines,
   reconstructBaselineFromCurrent,
 } from "./diff-core.js";
+import { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import type { Storage } from "./storage.js";
@@ -112,6 +113,7 @@ export interface SessionTraceServiceDeps {
   storage: Pick<Storage, "getDataDir" | "getSession" | "getWorkspace">;
   sessionRuntimes: Pick<SessionRuntimes, "getToolFullOutputPath" | "refreshSessionState">;
   ensureSessionContextWindow: (session: Session) => Session;
+  mobileRenderers?: Pick<MobileRendererRegistry, "renderCall" | "renderResult">;
 }
 
 /**
@@ -122,11 +124,16 @@ export interface SessionTraceServiceDeps {
  * and live runtime refresh metadata.
  */
 export class SessionTraceService {
-  constructor(private readonly deps: SessionTraceServiceDeps) {}
+  private readonly mobileRenderers: Pick<MobileRendererRegistry, "renderCall" | "renderResult">;
+
+  constructor(private readonly deps: SessionTraceServiceDeps) {
+    this.mobileRenderers = deps.mobileRenderers ?? new MobileRendererRegistry();
+  }
 
   async getSessionWithTrace(params: {
     session: Session;
     traceView?: SessionTraceViewMode;
+    includePresentationSegments?: boolean;
   }): Promise<SessionTraceResult> {
     const traceView = params.traceView ?? "context";
     const live = await this.deps.sessionRuntimes.refreshSessionState(params.session.id);
@@ -167,7 +174,9 @@ export class SessionTraceService {
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
     return {
       session: this.deps.ensureSessionContextWindow(latestSession),
-      trace: trace || [],
+      trace: params.includePresentationSegments
+        ? this.withMobileRenderSegments(trace || [])
+        : trace || [],
     };
   }
 
@@ -177,6 +186,7 @@ export class SessionTraceService {
     aroundEntryId?: string;
     targetEvents?: number;
     previewBytes?: number;
+    includePresentationSegments?: boolean;
   }): Promise<SessionTracePageResult | null> {
     const live = await this.deps.sessionRuntimes.refreshSessionState(params.session.id);
     const refreshedSession = this.deps.storage.getSession(params.session.id) || params.session;
@@ -227,7 +237,9 @@ export class SessionTraceService {
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
     return {
       session: this.deps.ensureSessionContextWindow(latestSession),
-      trace: result.trace,
+      trace: params.includePresentationSegments
+        ? this.withMobileRenderSegments(result.trace)
+        : result.trace,
       page: result.page,
       metrics: result.metrics,
     };
@@ -523,6 +535,29 @@ export class SessionTraceService {
       return (await pathExists(resolved)) ? resolved : null;
     }
     return homedir();
+  }
+
+  private withMobileRenderSegments(trace: TraceEvent[]): TraceEvent[] {
+    const toolNames = new Map<string, string>();
+    return trace.map((event) => {
+      if (event.type === "toolCall") {
+        const tool = event.tool ?? "unknown";
+        toolNames.set(event.id, tool);
+        const callSegments = this.mobileRenderers.renderCall(tool, event.args ?? {});
+        return callSegments ? { ...event, callSegments } : event;
+      }
+      if (event.type === "toolResult") {
+        const tool = event.toolName ?? toolNames.get(event.toolCallId ?? "");
+        if (!tool) return event;
+        const resultSegments = this.mobileRenderers.renderResult(
+          tool,
+          event.details,
+          event.isError === true,
+        );
+        return resultSegments ? { ...event, resultSegments } : event;
+      }
+      return event;
+    });
   }
 
   private traceBaseDir(): string {

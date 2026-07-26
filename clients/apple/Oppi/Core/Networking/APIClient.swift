@@ -365,7 +365,7 @@ actor APIClient: ClientLogUploading {
         aroundEntryId: String? = nil,
         previewBytes: Int? = nil
     ) async throws -> SessionTracePageResponse {
-        var items: [URLQueryItem] = []
+        var items = [URLQueryItem(name: "presentation", value: "mobile")]
         if let cursor {
             items.append(URLQueryItem(name: "cursor", value: cursor))
         }

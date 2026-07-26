@@ -9,6 +9,7 @@ import {
   OPPI_EXTENSION_APPROVAL_FAILED_ERROR,
   OPPI_EXTENSION_APPROVAL_REQUIRED_ERROR,
   OPPI_EXTENSION_READ_ONLY_ERROR,
+  listAllowlistedOppiToolCommands,
   prepareOppiCommand,
   type OppiApprovalPolicy,
   type OppiToolCommandCategory,
@@ -72,6 +73,7 @@ const MATRIX_CASES: MatrixCase[] = [
   },
   { category: "read", command: "session list", args: ["session", "list"] },
   { category: "read", command: "session get", args: ["session", "get", "sess-1"] },
+  { category: "read", command: "session dialogs", args: ["session", "dialogs", "sess-1"] },
   { category: "read", command: "session read", args: ["session", "read", "sess-1"] },
   { category: "read", command: "session events", args: ["session", "events", "sess-1"] },
   { category: "read", command: "session trace", args: ["session", "trace", "sess-1"] },
@@ -170,6 +172,16 @@ const MATRIX_CASES: MatrixCase[] = [
     command: "session send",
     args: ["session", "send", "sess-1", "--text", "Continue"],
   },
+  {
+    category: "nonDestructiveWrite",
+    command: "session abort",
+    args: ["session", "abort", "sess-1"],
+  },
+  {
+    category: "nonDestructiveWrite",
+    command: "session respond",
+    args: ["session", "respond", "sess-1", "--dialog", "dialog-1", "--confirm"],
+  },
   { category: "nonDestructiveWrite", command: "session stop", args: ["session", "stop", "sess-1"] },
   {
     category: "nonDestructiveWrite",
@@ -221,6 +233,11 @@ const MATRIX_CASES: MatrixCase[] = [
     command: "schedule resume",
     args: ["schedule", "resume", "sch-1"],
   },
+  {
+    category: "nonDestructiveWrite",
+    command: "schedule restore",
+    args: ["schedule", "restore", "sch-1"],
+  },
 
   {
     category: "destructiveWrite",
@@ -268,9 +285,17 @@ describe("Oppi command descriptor matrix", () => {
     expect(prepared(args).category).toBe(category);
   });
 
+  it("covers every allowlisted command in the policy matrix", () => {
+    const covered = new Set(MATRIX_CASES.map((entry) => entry.command));
+    const allowlisted = listAllowlistedOppiToolCommands().map(({ command, action }) =>
+      [command, action].filter(Boolean).join(" "),
+    );
+    expect([...covered].sort()).toEqual([...allowlisted].sort());
+  });
+
   it.each(MATRIX_CASES.flatMap((entry) => POLICIES.map((policy) => ({ ...entry, policy }))))(
     "$policy applies the exact policy to $command",
-    async ({ args, category, policy }) => {
+    async ({ args, category, command, policy }) => {
       const approve = vi.fn(async () => true);
       const execute = vi.fn(async () => successResult());
 
@@ -298,7 +323,10 @@ describe("Oppi command descriptor matrix", () => {
       });
       expect(result.kind).toBe("executed");
       const shouldApprove =
-        category !== "read" && (policy === "confirmAllChanges" || category === "destructiveWrite");
+        category !== "read" &&
+        (policy === "confirmAllChanges" ||
+          category === "destructiveWrite" ||
+          command === "session respond");
       expect(approve).toHaveBeenCalledTimes(shouldApprove ? 1 : 0);
       expect(execute).toHaveBeenCalledTimes(1);
       expect(execute).toHaveBeenCalledWith(expect.objectContaining({ category }));
@@ -311,11 +339,10 @@ describe("Oppi command descriptor matrix", () => {
       ["workspace"],
       ["workspace", "start"],
       ["session", "start", "--workspace", "ws-1", "--prompt", "x"],
-      ["schedule", "restore", "sch-1"],
-      ["session", "abort", "sess-1"],
       ["future", "list"],
       ["workspace", "future"],
       ["future", "--help"],
+      ["help"],
       ["help", "future"],
       ["workspace", "list", "extra"],
       ["workspace", "list", "--future", "x"],
@@ -323,6 +350,7 @@ describe("Oppi command descriptor matrix", () => {
       ["session", "wait", "sess-1", "--until", "idle"],
       ["session", "send", "sess-1", "--text=hidden"],
       ["workspace", "list", "--json", "false"],
+      ["session", "respond", "sess-1", "--confirm"],
     ].map((args) => ({ args })),
   )("denies unknown, implicit, alias, malformed, or future input: $args", ({ args }) => {
     expect(prepareOppiCommand(args)).toMatchObject({ ok: false });
@@ -330,7 +358,6 @@ describe("Oppi command descriptor matrix", () => {
 
   it.each(
     [
-      ["help"],
       ["help", "session", "create"],
       ["session", "help", "create"],
       ["session", "create", "--help"],
@@ -339,6 +366,23 @@ describe("Oppi command descriptor matrix", () => {
     ].map((args) => ({ args })),
   )("allows only help paths that resolve to real topics: $args", ({ args }) => {
     expect(prepared(args).category).toBe("read");
+  });
+
+  it.each(
+    [
+      ["config", "--help"],
+      ["help", "server"],
+      ["init", "--help"],
+      ["token", "rotate", "--help"],
+      ["doctor", "--help"],
+      ["update", "--help"],
+      ["pair", "--help"],
+      ["version", "--help"],
+      ["session", "watch", "--help"],
+      ["help", "session", "watch"],
+    ].map((args) => ({ args })),
+  )("denies help for commands outside the application-state allowlist: $args", ({ args }) => {
+    expect(prepareOppiCommand(args)).toMatchObject({ ok: false });
   });
 });
 
@@ -625,6 +669,8 @@ describe("Oppi structured audit boundary", () => {
 
 describe("ordinary Oppi extension factory", () => {
   type RegisteredTool = {
+    parameters?: { required?: string[]; properties?: Record<string, unknown> };
+    prepareArguments?: (raw: unknown) => { args: string[] };
     execute: (...args: unknown[]) => Promise<unknown>;
   };
 
@@ -635,12 +681,32 @@ describe("ordinary Oppi extension factory", () => {
       callerSessionId,
       policySnapshot: { approvalPolicy: "confirmDestructiveOnly" },
     })({
+      on: () => undefined,
       registerTool: (tool: RegisteredTool & { name: string }) => tools.set(tool.name, tool),
     } as never);
     const tool = tools.get("oppi");
     if (!tool) throw new Error("Oppi tool was not registered");
     return tool;
   }
+
+  it("routes malformed argument shapes through execution for durable error presentation", async () => {
+    const tool = ordinaryTool("caller-test");
+
+    expect(tool.parameters?.required ?? []).toContain("args");
+    expect(tool.prepareArguments?.({ args: ["workspace", 42] })).toEqual({ args: [] });
+    await expect(
+      tool.execute("call-malformed", {}, undefined, undefined, { hasUI: false, ui: {} }),
+    ).rejects.toThrow("oppi args must be an array of strings");
+    await expect(
+      tool.execute(
+        "call-malformed",
+        { args: ["session", 42] },
+        undefined,
+        undefined,
+        { hasUI: false, ui: {} },
+      ),
+    ).rejects.toThrow("oppi args must be an array of strings");
+  });
 
   it("registers only oppi and applies its captured policy snapshot", async () => {
     const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
@@ -649,6 +715,7 @@ describe("ordinary Oppi extension factory", () => {
       callerSessionId: "caller-test",
       policySnapshot: { approvalPolicy: "readOnly" },
     })({
+      on: () => undefined,
       registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) =>
         tools.set(tool.name, tool),
     } as never);
@@ -663,6 +730,78 @@ describe("ordinary Oppi extension factory", () => {
         ui: { confirm: vi.fn(async () => true) },
       }),
     ).rejects.toThrow(OPPI_EXTENSION_READ_ONLY_ERROR);
+  });
+
+  it("shows the pending dialog semantics before approving session respond", async () => {
+    request.mockImplementation(async (_storage, path) => {
+      if (path === "/sessions/target-session/dialogs") {
+        return {
+          dialogs: [
+            {
+              id: "dialog-1",
+              method: "confirm",
+              title: "Delete workspace?",
+              message: "This permanently removes workspace ws-1.",
+            },
+          ],
+        } as never;
+      }
+      if (path === "/sessions/target-session/command") return { ok: true } as never;
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const confirm = vi.fn(async () => true);
+    const tool = ordinaryTool("caller-session");
+
+    await tool.execute(
+      "call-respond",
+      {
+        args: [
+          "session",
+          "respond",
+          "target-session",
+          "--dialog",
+          "dialog-1",
+          "--confirm",
+        ],
+      },
+      undefined,
+      undefined,
+      { hasUI: true, ui: { confirm } },
+    );
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0]?.[1]).toContain("Delete workspace?");
+    expect(confirm.mock.calls[0]?.[1]).toContain("This permanently removes workspace ws-1.");
+    expect(request).toHaveBeenCalledWith(
+      expect.anything(),
+      "/sessions/target-session/dialogs",
+    );
+  });
+
+  it("rejects a stale dialog id before opening approval", async () => {
+    request.mockResolvedValue({ dialogs: [] } as never);
+    const confirm = vi.fn(async () => true);
+    const tool = ordinaryTool("caller-session");
+
+    await expect(
+      tool.execute(
+        "call-stale-dialog",
+        {
+          args: [
+            "session",
+            "respond",
+            "target-session",
+            "--dialog",
+            "stale-dialog",
+            "--confirm",
+          ],
+        },
+        undefined,
+        undefined,
+        { hasUI: true, ui: { confirm } },
+      ),
+    ).rejects.toThrow('No pending dialog "stale-dialog"');
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it.each([

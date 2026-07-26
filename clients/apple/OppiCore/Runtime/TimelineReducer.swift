@@ -600,6 +600,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             if !args.isEmpty {
                 toolArgsStore.set(args, for: event.id)
             }
+            if let callSegments = event.callSegments, !callSegments.isEmpty {
+                toolSegmentStore.setCallSegments(callSegments, for: event.id)
+            }
             return nil
 
         case .toolResult:
@@ -638,6 +641,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             // Store structured details so catch-up rendering matches streaming.
             if let details = event.details {
                 toolDetailsStore.set(details, for: matchId)
+            }
+            if let resultSegments = event.resultSegments, !resultSegments.isEmpty {
+                toolSegmentStore.setResultSegments(resultSegments, for: matchId)
             }
             if appendOnly {
                 // During loadSession, skip the equality check, fullOutput

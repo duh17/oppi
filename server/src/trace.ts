@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "./lifecycle-journal-extension.js";
 import { createLogger } from "./logger.js";
+import type { StyledSegment } from "./types.js";
 import {
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolResult,
@@ -126,6 +127,8 @@ export interface TraceEvent {
   tool?: string;
   /** For toolCall: arguments object */
   args?: Record<string, unknown>;
+  /** Semantic collapsed presentation reconstructed for durable replay. */
+  callSegments?: StyledSegment[];
   /** For toolResult: the tool's output */
   output?: string;
   /** For paged trace previews: true when output contains only an initial preview. */
@@ -140,6 +143,8 @@ export interface TraceEvent {
   toolName?: string;
   /** For toolResult: was it an error? */
   isError?: boolean;
+  /** Semantic trailing presentation reconstructed for durable replay. */
+  resultSegments?: StyledSegment[];
   /** For toolResult: structured details (expandedText, presentationFormat, etc.) */
   details?: unknown;
   /** Structural Pi lifecycle immediately before/after this renderable event. */

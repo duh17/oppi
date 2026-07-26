@@ -53,6 +53,7 @@ export function createSessionFileHandlers(
     storage: ctx.storage,
     sessionRuntimes: ctx.sessionRuntimes,
     ensureSessionContextWindow: ctx.ensureSessionContextWindow,
+    mobileRenderers: ctx.sessions?.mobileRenderer,
   }),
 ): SessionFileHandlers {
   function requireWorkspaceSession(

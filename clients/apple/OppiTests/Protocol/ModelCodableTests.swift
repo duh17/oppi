@@ -791,13 +791,15 @@ struct TraceEventCodableTests {
         let json = """
         {
             "id":"e3","type":"toolCall","timestamp":"2025-01-01T00:00:00Z",
-            "tool":"bash","args":{"command":"ls -la"}
+            "tool":"bash","args":{"command":"ls -la"},
+            "callSegments":[{"text":"$ ","style":"bold"},{"text":"ls -la","style":"accent"}]
         }
         """
         let event = try JSONDecoder().decode(TraceEvent.self, from: json.data(using: .utf8)!)
         #expect(event.type == .toolCall)
         #expect(event.tool == "bash")
         #expect(event.args?["command"] == .string("ls -la"))
+        #expect(event.callSegments?.map(\.text) == ["$ ", "ls -la"])
         #expect(event.text == nil)
     }
 
@@ -805,7 +807,8 @@ struct TraceEventCodableTests {
         let json = """
         {
             "id":"e4","type":"toolResult","timestamp":"2025-01-01T00:00:00Z",
-            "output":"file.txt","toolCallId":"tc1","toolName":"bash","isError":false
+            "output":"file.txt","toolCallId":"tc1","toolName":"bash","isError":false,
+            "resultSegments":[{"text":"done","style":"success"}]
         }
         """
         let event = try JSONDecoder().decode(TraceEvent.self, from: json.data(using: .utf8)!)
@@ -814,6 +817,7 @@ struct TraceEventCodableTests {
         #expect(event.toolCallId == "tc1")
         #expect(event.toolName == "bash")
         #expect(event.isError == false)
+        #expect(event.resultSegments?.map(\.text) == ["done"])
     }
 
     @Test func decodeThinkingEvent() throws {

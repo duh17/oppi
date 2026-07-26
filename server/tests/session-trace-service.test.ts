@@ -168,6 +168,65 @@ describe("SessionTraceService", () => {
     expect(result?.page.staleCursor).toBe(true);
   });
 
+  it("reconstructs semantic tool segments for durable trace replay", async () => {
+    const dataDir = tempDir("oppi-session-trace-mobile-segments-");
+    const tracePath = join(dataDir, "trace.jsonl");
+    writeJsonl(tracePath, [
+      {
+        type: "message",
+        id: "assistant-1",
+        parentId: null,
+        timestamp: "2026-05-03T00:00:01.000Z",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-oppi",
+              name: "oppi",
+              arguments: {
+                args: ["session", "search", "regression", "--all"],
+              },
+            },
+          ],
+        },
+      },
+      {
+        type: "message",
+        id: "result-1",
+        parentId: "assistant-1",
+        timestamp: "2026-05-03T00:00:02.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: "tc-oppi",
+          toolName: "oppi",
+          content: [{ type: "text", text: "inspection result" }],
+          details: {
+            args: ["session", "search", "regression", "--all"],
+            data: { total_results: 2, results: [{}, {}] },
+          },
+        },
+      },
+    ]);
+    const session = makeSession({ piSessionFile: tracePath });
+    const { service } = makeService({ dataDir, storedSession: session });
+
+    const rawResult = await service.getSessionWithTrace({ session });
+    expect(rawResult.trace.every((event) => !event.callSegments && !event.resultSegments)).toBe(true);
+
+    const result = await service.getSessionWithTrace({
+      session,
+      includePresentationSegments: true,
+    });
+    const call = result.trace.find((event) => event.type === "toolCall");
+    const toolResult = result.trace.find((event) => event.type === "toolResult");
+
+    expect(call?.callSegments?.map((segment) => segment.text).join("")).toBe(
+      "oppi session search",
+    );
+    expect(toolResult?.resultSegments?.map((segment) => segment.text).join("")).toBe("2 results");
+  });
+
   it("returns stored image metadata instead of truncated inline image bytes in trace pages", async () => {
     const dataDir = tempDir("oppi-session-trace-page-image-");
     const traceDir = join(dataDir, "ws-1", "sessions", "sess-1", "agent", "sessions", "--work--");

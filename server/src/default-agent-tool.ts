@@ -7,6 +7,7 @@ export {
   buildOppiToolResultDetails,
   classifyOppiToolCommand,
   formatOppiToolExpandedText,
+  listAllowlistedOppiToolCommands,
   runOppiToolCommand,
 } from "./oppi-tool-extension.js";
 export type {

@@ -174,6 +174,41 @@ struct TimelineReducerLoadTests {
         #expect(args?["path"] == .string("/etc/hosts"))
     }
 
+    @Test func loadSessionRestoresSemanticToolSegmentsFromTrace() {
+        let reducer = TimelineReducer()
+        let callSegments = [
+            StyledSegment(text: "oppi ", style: .bold),
+            StyledSegment(text: "session", style: .accent),
+            StyledSegment(text: " inspect", style: .muted),
+        ]
+        let resultSegments = [StyledSegment(text: "failed", style: .error)]
+        let events = [
+            TraceEvent(
+                id: "tc-oppi",
+                type: .toolCall,
+                timestamp: "2025-01-01T00:00:00.000Z",
+                tool: "oppi",
+                args: ["args": .array([.string("session"), .string("inspect")])],
+                callSegments: callSegments
+            ),
+            TraceEvent(
+                id: "tr-oppi",
+                type: .toolResult,
+                timestamp: "2025-01-01T00:00:01.000Z",
+                output: "failed",
+                toolCallId: "tc-oppi",
+                toolName: "oppi",
+                isError: true,
+                resultSegments: resultSegments
+            ),
+        ]
+
+        reducer.loadSession(events)
+
+        #expect(reducer.toolSegmentStore.callSegments(for: "tc-oppi") == callSegments)
+        #expect(reducer.toolSegmentStore.resultSegments(for: "tc-oppi") == resultSegments)
+    }
+
     // MARK: - Incremental load
 
     @Test func loadSessionUnchangedTraceUsesIncrementalNoOp() {

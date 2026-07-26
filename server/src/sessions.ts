@@ -150,6 +150,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.queueCoordinator = bundle.queueCoordinator;
     this.agentEventCoordinator = bundle.agentEventCoordinator;
     this.stopFlowCoordinator = bundle.stopFlowCoordinator;
+    this.ensureMobileRenderersLoaded();
+  }
+
+  get mobileRenderer(): Pick<MobileRendererRegistry, "renderCall" | "renderResult"> {
+    return this.mobileRenderers;
   }
 
   private resolveStoredWorkspace(sessionId: string): Workspace | undefined {

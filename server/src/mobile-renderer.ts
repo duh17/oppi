@@ -17,6 +17,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { createLogger } from "./logger.js";
 import type { StyledSegment } from "./types.js";
 
 // ─── Types ───
@@ -62,6 +63,56 @@ function shortenPath(p: string): string {
 function firstLine(s: string, max = 80): string {
   const line = s.split("\n")[0] || "";
   return line.length > max ? line.slice(0, max - 1) + "…" : line;
+}
+
+function safeTitlePart(value: string, max = 40): string {
+  const line =
+    value
+      .split(/[\r\n]/, 1)[0]
+      ?.replace(/\s+/g, " ")
+      .trim() ?? "";
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+const styledSegmentStyles = new Set([
+  "bold",
+  "muted",
+  "dim",
+  "accent",
+  "success",
+  "warning",
+  "error",
+]);
+
+function validatedSegments(
+  value: unknown,
+  onInvalid: (reason: string) => void,
+): StyledSegment[] | undefined {
+  if (!Array.isArray(value)) {
+    onInvalid("renderer returned a non-array value");
+    return undefined;
+  }
+  if (value.length === 0) return undefined;
+  const segments: StyledSegment[] = [];
+  for (const candidate of value) {
+    const segment = asRecord(candidate);
+    if (!segment || typeof segment.text !== "string") {
+      onInvalid("segment text must be a string");
+      return undefined;
+    }
+    if (
+      segment.style !== undefined &&
+      (typeof segment.style !== "string" || !styledSegmentStyles.has(segment.style))
+    ) {
+      onInvalid(`unsupported segment style: ${String(segment.style)}`);
+      return undefined;
+    }
+    segments.push({
+      text: segment.text,
+      ...(segment.style ? { style: segment.style as StyledSegment["style"] } : {}),
+    });
+  }
+  return segments;
 }
 
 const bashCommandSummaryMaxCharacters = 200;
@@ -395,10 +446,19 @@ function askAnswerLabel(question: Record<string, unknown> | undefined, answer: u
 const oppi: MobileToolRenderer = {
   renderCall(args) {
     const rawCommandArgs = Array.isArray(args.args) ? args.args.map(str).filter(Boolean) : [];
-    const commandArgs = rawCommandArgs[0] === "oppi" ? rawCommandArgs.slice(1) : rawCommandArgs;
-    const resource = commandArgs[0]?.startsWith("--") ? "command" : commandArgs[0] || "command";
+    const normalizedArgs = rawCommandArgs[0] === "oppi" ? rawCommandArgs.slice(1) : rawCommandArgs;
+    const commandArgs =
+      normalizedArgs[0] === "help" && normalizedArgs.length > 1
+        ? normalizedArgs.slice(1)
+        : normalizedArgs[1] === "help"
+          ? [normalizedArgs[0], ...normalizedArgs.slice(2)]
+          : normalizedArgs;
+    const rawResource = commandArgs[0]?.startsWith("--") ? "command" : commandArgs[0] || "command";
+    const resource = safeTitlePart(rawResource) || "command";
     const action =
-      resource === "command" || commandArgs[1]?.startsWith("--") ? "" : commandArgs[1] || "";
+      resource === "command" || commandArgs[1]?.startsWith("--")
+        ? ""
+        : safeTitlePart(commandArgs[1] || "");
     return [
       { text: "oppi ", style: "bold" },
       { text: resource, style: "accent" },
@@ -406,8 +466,9 @@ const oppi: MobileToolRenderer = {
     ];
   },
   renderResult(details, isError) {
-    if (isError) return [];
+    if (isError) return [{ text: "failed", style: "error" }];
     const payload = asRecord(details);
+    if (payload?.outcome === "cancelled") return [{ text: "cancelled", style: "dim" }];
     const data = asRecord(payload?.data);
     const args = Array.isArray(payload?.args) ? payload.args.map(str) : [];
     if (args[0] === "session" && args[1] === "search") {
@@ -496,6 +557,8 @@ const BUILTIN_RENDERERS: Record<string, MobileToolRenderer> = {
 };
 
 export class MobileRendererRegistry {
+  private readonly log = createLogger();
+  private readonly invalidWarnings = new Set<string>();
   private renderers = new Map<string, MobileToolRenderer>();
 
   constructor() {
@@ -528,9 +591,15 @@ export class MobileRendererRegistry {
     const renderer = this.renderers.get(toolName);
     if (!renderer) return undefined;
     try {
-      const segments = renderer.renderCall(args);
-      return Array.isArray(segments) && segments.length > 0 ? segments : undefined;
-    } catch {
+      return validatedSegments(renderer.renderCall(args), (reason) =>
+        this.warnInvalidRenderer(toolName, "call", reason),
+      );
+    } catch (error) {
+      this.warnInvalidRenderer(
+        toolName,
+        "call",
+        error instanceof Error ? error.message : String(error),
+      );
       return undefined;
     }
   }
@@ -540,11 +609,24 @@ export class MobileRendererRegistry {
     const renderer = this.renderers.get(toolName);
     if (!renderer) return undefined;
     try {
-      const segments = renderer.renderResult(details, isError);
-      return Array.isArray(segments) && segments.length > 0 ? segments : undefined;
-    } catch {
+      return validatedSegments(renderer.renderResult(details, isError), (reason) =>
+        this.warnInvalidRenderer(toolName, "result", reason),
+      );
+    } catch (error) {
+      this.warnInvalidRenderer(
+        toolName,
+        "result",
+        error instanceof Error ? error.message : String(error),
+      );
       return undefined;
     }
+  }
+
+  private warnInvalidRenderer(toolName: string, phase: "call" | "result", reason: string): void {
+    const key = `${toolName}\u0000${phase}\u0000${reason}`;
+    if (this.invalidWarnings.has(key)) return;
+    this.invalidWarnings.add(key);
+    this.log.warn("mobile_renderer.invalid_segments", { toolName, phase, reason });
   }
 
   /** Number of registered renderers. */

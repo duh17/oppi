@@ -51,6 +51,17 @@ describe("MobileRendererRegistry", () => {
     expect(reg.renderResult("broken", {}, false)).toBeUndefined();
   });
 
+  it("rejects invalid sidecar segment shapes and styles", () => {
+    const reg = new MobileRendererRegistry();
+    reg.register("unsafe", {
+      renderCall: () => [{ text: "unsafe", style: "html" }] as never,
+      renderResult: () => [{ text: 42 }] as never,
+    });
+
+    expect(reg.renderCall("unsafe", {})).toBeUndefined();
+    expect(reg.renderResult("unsafe", {}, false)).toBeUndefined();
+  });
+
   it("registerAll merges renderers", () => {
     const reg = new MobileRendererRegistry();
     reg.registerAll({
@@ -93,6 +104,16 @@ describe("oppi renderer", () => {
     expect(textOf(segs)).not.toContain("workspace search");
   });
 
+  it.each([
+    { args: ["status", "--help"], title: "oppi status" },
+    { args: ["session", "help"], title: "oppi session" },
+    { args: ["session", "help", "send"], title: "oppi session send" },
+    { args: ["help", "session", "inspect"], title: "oppi session inspect" },
+    { args: ["session", "inspect", "--help"], title: "oppi session inspect" },
+  ])("normalizes help form $args to $title", ({ args, title }) => {
+    expect(textOf(reg.renderCall("oppi", { args }))).toBe(title);
+  });
+
   it("normalizes the optional leading oppi accepted by the command classifier", () => {
     const segs = reg.renderCall("oppi", {
       args: ["oppi", "session", "search", "workspace"],
@@ -130,6 +151,23 @@ describe("oppi renderer", () => {
     { args: ["agent", "create", "--name", "Reviewer"], title: "oppi agent create" },
     { args: ["agent", "update", "agent-1", "--definition-json", "{}"], title: "oppi agent update" },
     { args: ["agent", "archive", "agent-1"], title: "oppi agent archive" },
+    { args: ["skill", "list"], title: "oppi skill list" },
+    { args: ["skill", "get", "skill-1"], title: "oppi skill get" },
+    { args: ["skill", "file", "skill-1", "--path", "SKILL.md"], title: "oppi skill file" },
+    {
+      args: [
+        "skill",
+        "update-file",
+        "skill-1",
+        "--path",
+        "SKILL.md",
+        "--base-revision",
+        "a".repeat(64),
+        "--content-json",
+        '"updated"',
+      ],
+      title: "oppi skill update-file",
+    },
     { args: ["session", "list", "--workspace", "ws-1"], title: "oppi session list" },
     { args: ["session", "get", "sess-1"], title: "oppi session get" },
     { args: ["session", "changes", "sess-1"], title: "oppi session changes" },
@@ -151,6 +189,12 @@ describe("oppi renderer", () => {
       title: "oppi session create",
     },
     { args: ["session", "send", "sess-1", "--text", "Continue"], title: "oppi session send" },
+    { args: ["session", "abort", "sess-1"], title: "oppi session abort" },
+    { args: ["session", "dialogs", "sess-1"], title: "oppi session dialogs" },
+    {
+      args: ["session", "respond", "sess-1", "--dialog", "dialog-1", "--confirm"],
+      title: "oppi session respond",
+    },
     { args: ["session", "stop", "sess-1"], title: "oppi session stop" },
     { args: ["session", "resume", "sess-1"], title: "oppi session resume" },
     { args: ["session", "fork", "sess-1", "--entry", "entry-1"], title: "oppi session fork" },
@@ -170,8 +214,19 @@ describe("oppi renderer", () => {
     { args: ["schedule", "pause", "sch-1"], title: "oppi schedule pause" },
     { args: ["schedule", "resume", "sch-1"], title: "oppi schedule resume" },
     { args: ["schedule", "archive", "sch-1"], title: "oppi schedule archive" },
+    { args: ["schedule", "restore", "sch-1"], title: "oppi schedule restore" },
   ])("keeps $title collapsed consistently", ({ args, title }) => {
     expect(textOf(reg.renderCall("oppi", { args }))).toBe(title);
+  });
+
+  it("bounds and sanitizes malformed command titles", () => {
+    const longResource = `resource-${"x".repeat(200)}\n# injected`;
+    const longAction = `action-${"y".repeat(200)}\n## injected`;
+    const title = textOf(reg.renderCall("oppi", { args: [longResource, longAction] }));
+
+    expect(title).not.toContain("\n");
+    expect(title.length).toBeLessThanOrEqual(90);
+    expect(title).not.toContain("injected");
   });
 
   it("does not expose malformed flag-first arguments before classification rejects them", () => {
@@ -204,6 +259,28 @@ describe("oppi renderer", () => {
 
     expect(textOf(segs)).toBe("3 results");
     expect(styleOf(segs, 0)).toBe("success");
+  });
+
+  it("renders errors explicitly", () => {
+    const segs = reg.renderResult("oppi", { args: ["session", "get", "missing"] }, true);
+
+    expect(textOf(segs)).toBe("failed");
+    expect(styleOf(segs, 0)).toBe("error");
+  });
+
+  it("renders cancellation without a successful search badge", () => {
+    const segs = reg.renderResult(
+      "oppi",
+      {
+        args: ["session", "search", "workspace"],
+        outcome: "cancelled",
+        data: { total_results: 0 },
+      },
+      false,
+    );
+
+    expect(textOf(segs)).toBe("cancelled");
+    expect(styleOf(segs, 0)).toBe("dim");
   });
 });
 

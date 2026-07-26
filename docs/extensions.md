@@ -30,11 +30,15 @@ Extensions list **Oppi** first. Its row has stable id `oppi`, built-in provenanc
 
 ### Oppi approval policies
 
-- **Confirm destructive only** (default): reads and allowlisted non-destructive changes run directly; delete, remove, and archive actions require approval.
+- **Confirm destructive only** (default): reads and allowlisted non-destructive changes run directly; delete, remove, and archive actions require approval. `session respond` also always requires approval because it can answer another session's human-confirmation dialog.
 - **Confirm all changes**: reads run directly; every allowlisted mutation requires approval.
 - **Read only**: allowlisted reads run directly; mutations fail with a deterministic read-only error and never open an approval prompt.
 
-Unknown commands, unsupported subcommands, and file- or stdin-backed mutation bodies are denied. The approval boundary uses normalized immutable input, so the approved command is the command executed.
+The command allowlist is an application capability boundary, not a copy of every CLI command. It covers bounded JSON operations on Oppi-managed application state: `status`, `workspace`, `worktree`, `agent`, `skill`, `session`, and `schedule`. Host lifecycle and credential operations (`init`, `serve`, `start`, `pair`, `server`, `token`, and `update`), local configuration, host diagnostics/version output, root aliases, and the long-running NDJSON `session watch` stream remain excluded. `session wait` is the bounded polling alternative. Help is available only for allowlisted command families and actions.
+
+Unknown commands, unsupported subcommands, and file- or stdin-backed mutation bodies are denied. Inline prompt, system-prompt, message, definition, file-content, answer, and response bodies are redacted from rejected command summaries. The approval boundary uses normalized immutable input, so the approved command is the command executed.
+
+Allowlisted Oppi calls use semantic timeline presentation: the collapsed row shows `oppi <resource> <action>`, while the expanded row contains the normalized command, target/context, options, complete inline bodies, and result, error, or cancellation details. These presentation segments are reconstructed for Apple timeline replay without being added to agent-facing CLI trace JSON.
 
 ### When a change takes effect
 
@@ -333,7 +337,7 @@ Expanded output uses this order:
 3. sanitized terminal/mobile-renderer snapshot fallback
 4. plain text
 
-Sidecars are for short collapsed summaries only. Use semantic segment styles such as `muted`, `accent`, `success`, `warning`, and `error`; the iOS app maps those roles to the active theme. Put rich readable output in `details.expandedText` instead of sidecar summary lines.
+Sidecars are for short collapsed summaries only. Segment style is a closed semantic set: `bold`, `muted`, `dim`, `accent`, `success`, `warning`, or `error`. Invalid sidecar output is omitted and logged by the server because the Apple protocol mirror decodes this set strictly. Put rich readable output in `details.expandedText` instead of sidecar summary lines.
 
 Mirror mode uses the same semantic request payloads from an interactive terminal Pi process. Mirror-specific first-wins dialog behavior lives in [`oppi-mirror.md`](oppi-mirror.md#extension-ui-compatibility-matrix).
 

@@ -169,6 +169,7 @@ actor MacWorkspaceClient {
         previewBytes: Int = 8_192
     ) async throws -> SessionTracePage {
         let queryItems = [
+            URLQueryItem(name: "presentation", value: "mobile"),
             URLQueryItem(name: "targetEvents", value: String(targetEvents)),
             URLQueryItem(name: "previewBytes", value: String(previewBytes)),
         ]
