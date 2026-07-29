@@ -1,19 +1,19 @@
 # E2E Tests
 
-End-to-end tests exercise the HTTP/TLS compatibility path and the isolated Iroh transport with a native or containerized server.
+End-to-end tests exercise the HTTP/TLS compatibility path and isolated Iroh transport against native or containerized servers.
 
 ## Prerequisites
 
-- The HTTP/TLS suites require an OMLX-compatible OpenAI API server on localhost:8400 with at least one model loaded. They prefer `Qwen3.6-*` and fall back to the first model returned by `/v1/models`.
-- Docker (OrbStack recommended) is required only for explicit Docker Compose mode and the isolated Iroh suite.
-- The isolated Iroh suite uses a deterministic server-local stub and does not access a host model endpoint.
-- The Tailscale benchmark requires the local `tailscale`, `ssh`, `rsync`, and `scp` commands plus a separately provisioned macOS peer reachable through batch-mode SSH. The peer needs Node.js, npm, Tailscale, and npm registry access; the runner installs locked dependencies in a unique `/tmp` directory and removes it afterward.
+- The HTTP/TLS suites require an OMLX-compatible OpenAI API server on localhost:8400 with at least one loaded model. They prefer `Qwen3.6-*` and fall back to the first model returned by `/v1/models`.
+- Only explicit Docker Compose mode and the isolated Iroh suite require Docker (OrbStack recommended).
+- The isolated Iroh suite uses a deterministic server-local stub and never accesses a host model endpoint.
+- The Tailscale benchmark requires local `tailscale`, `ssh`, `rsync`, and `scp` commands, plus a separately provisioned macOS peer reachable through batch-mode SSH. The peer requires Node.js, npm, Tailscale, and npm registry access. The runner installs locked dependencies in a unique `/tmp` directory, then removes it.
 
 ## Test Suites
 
 ### Pairing Flow (`pairing-flow.e2e.test.ts`)
 
-Exercises the first-time device pairing lifecycle:
+Exercises the first-time device-pairing lifecycle:
 
 1. Unauthenticated access rejected (401)
 2. Server generates invite with one-time pairing token
@@ -25,7 +25,7 @@ Exercises the first-time device pairing lifecycle:
 
 ### Paired Session Flow (`paired-session.e2e.test.ts`)
 
-Exercises the full session lifecycle for an already-paired device:
+Exercises the full session lifecycle for a paired device:
 
 1. Create workspace and session
 2. Verify `GET /workspaces/:workspaceId/sessions` snapshots
@@ -40,9 +40,9 @@ The session-list assertions use the harness `listWorkspaceSessions()` helper. Th
 
 ### Isolated Iroh transport (`npm run test:e2e:iroh`)
 
-This non-skippable harness starts separate server and client containers. They share an internal Iroh network but use separate egress networks. The server binds Oppi HTTP to `127.0.0.1`, publishes no host port, and provides the client only an Iroh endpoint ticket through a shared bootstrap volume.
+This non-skippable harness starts separate server and client containers. They share an internal Iroh network but use separate egress networks. The server binds Oppi HTTP to `127.0.0.1`, publishes no host port, and gives the client only an Iroh endpoint ticket through a shared bootstrap volume.
 
-The client proves:
+The client verifies:
 
 1. the Oppi HTTP port is unreachable from the client container;
 2. Iroh-only pairing binds the device token to the client node ID;
@@ -52,27 +52,27 @@ The client proves:
 6. stream cancellation and invalid bearer errors remain isolated to one bi-stream;
 7. dictation control and binary audio reach the existing dictation mux and a server-local deterministic STT stub.
 
-The command fails unless the client executes at least 25 assertions. It writes combined Compose logs under `/tmp/oppi-iroh-isolated-<pid>-artifacts/compose.log` and prints the exact path.
+The command fails unless the client executes at least 25 assertions. It writes combined Compose logs to `/tmp/oppi-iroh-isolated-<pid>-artifacts/compose.log` and prints the exact path.
 
 ### Iroh network benchmark (`npm run bench:iroh-network`)
 
-This separate, non-gating lane compares three paths through dedicated containers:
+This separate non-gating lane compares three paths through dedicated containers:
 
 - HTTP direct over a project-scoped Docker bridge;
 - Iroh direct, accepted only when the selected `Connection.paths()` snapshot has `isIp=true` and `isRelay=false`;
 - forced Iroh relay, accepted only when the selected snapshot has `isRelay=true` and `isIp=false`.
 
-The relay server and client use separate egress networks. After each endpoint establishes its public relay connection, the harness allowlists that relay's resolved address and blocks all other UDP with container-local firewall rules. The client also receives a relay-only `EndpointAddr` and proves that the Oppi HTTP listener is unreachable. No service uses host networking, `host.docker.internal`, Tailscale, a host model endpoint, or a host-published Oppi port.
+The relay server and client use separate egress networks. After each endpoint establishes its public relay connection, the harness allowlists that relay's resolved address and blocks all other UDP with container-local firewall rules. The client also receives a relay-only `EndpointAddr` and verifies that the Oppi HTTP listener is unreachable. No service uses host networking, `host.docker.internal`, Tailscale, a host model endpoint, or a host-published Oppi port.
 
 The fixed sample plan is 30 cold transport connections, 200 warm authenticated `/me` requests, 200 focused-WebSocket `get_state` round trips, 20 focused-WebSocket reconnects, and five uploads plus five downloads at 1, 10, and 50 MiB. Every Iroh sample records a sanitized selected-path snapshot, connection/path counter deltas, RTT, loss, congestion events, congestion window, and MTU. A path mismatch or missing sample fails the command.
 
-The runner writes raw JSON plus a Markdown comparison under `.internal/reports/iroh-benchmark-<timestamp>.{json,md}`. Runtime Compose logs remain under `/tmp/oppi-iroh-benchmark-<pid>-artifacts/`. Public relay measurements are rate-limited, shared-service observations with no SLA.
+The runner writes raw JSON and a Markdown comparison to `.internal/reports/iroh-benchmark-<timestamp>.{json,md}`. Runtime Compose logs remain in `/tmp/oppi-iroh-benchmark-<pid>-artifacts/`. Public relay measurements are rate-limited shared-service observations with no SLA.
 
 ### Tailscale direct benchmark (`npm run bench:tailscale-network`)
 
-This opt-in, non-gating lane runs the same sample counts and Oppi REST/WebSocket/file operations against a dedicated server on a separate macOS Tailscale peer. `tailscale ping` must select a direct path—not DERP—before and after the measurements. The ephemeral server uses HTTPS with a self-signed certificate; verification is disabled in the benchmark client, while the Tailscale network path remains encrypted.
+This opt-in non-gating lane runs the same sample counts and Oppi REST, WebSocket, and file operations against a dedicated server on a separate macOS Tailscale peer. `tailscale ping` must select a direct path—not DERP—before and after the measurements. The ephemeral server uses HTTPS with a self-signed certificate. The benchmark client disables verification, while the Tailscale network path remains encrypted.
 
-The runner accepts the SSH target and peer Tailscale IP only through environment variables, excludes them and other device/account identifiers from durable output, and writes sanitized JSON/Markdown under `.internal/reports/tailscale-network-benchmark-<timestamp>.{json,md}`. This real two-machine topology complements rather than replaces the same-phone physical-device A/B; it is not numerically interchangeable with the same-host container direct lanes.
+The runner accepts the SSH target and peer Tailscale IP only through environment variables, excludes them and other device and account identifiers from durable output, and writes sanitized JSON and Markdown to `.internal/reports/tailscale-network-benchmark-<timestamp>.{json,md}`. This real two-machine topology complements, rather than replaces, the same-phone physical-device A/B. It is not numerically interchangeable with the same-host container direct lanes.
 
 Relevant feature-story dispositions from `.internal/reports/feature-user-story-status.csv`:
 
@@ -114,7 +114,7 @@ cd server && \
   npm run bench:tailscale-network
 ```
 
-On Mac Studio, do not add writable repo, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context, mounts its generated `models.json` read-only, and stores server state in a named volume. Use native mode for normal local iteration.
+On Mac Studio, do not add writable repository, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context, mounts its generated `models.json` read-only, and stores server state in a named volume. Use native mode for normal local iteration.
 
 ## Configuration
 
@@ -165,6 +165,6 @@ The harness supports two modes:
 - **Native mode** (`E2E_NATIVE=1`): builds the server locally, starts it as a child process in a temp directory, and skips Docker cleanup
 - **Packaged native mode** (`E2E_NATIVE=1 E2E_SERVER_DIR=/path/to/node_modules/oppi-server`): runs the installed package tarball through the same native harness without rebuilding source
 
-Both modes generate a temporary `models.json` from the probed local OMLX model, preferring `Qwen3.6*` when available. Both modes share the same test code — only server lifecycle differs.
+Both modes generate a temporary `models.json` from the probed local OMLX model, preferring `Qwen3.6*` when available. They share the same test code; only server lifecycle differs.
 
-Apple E2E scripts remain responsible for Xcode and simulator orchestration, but server bootstrap details should flow through this harness shape: model discovery, server lifecycle, pairing, fixture workspace creation, invite files, and the guarded extension UI injection route.
+Apple E2E scripts remain responsible for Xcode and simulator orchestration. Server-bootstrap details should flow through this harness shape: model discovery, server lifecycle, pairing, fixture workspace creation, invite files, and the guarded extension UI injection route.

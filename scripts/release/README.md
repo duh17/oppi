@@ -1,13 +1,13 @@
 # Tracked release operations
 
-These scripts contain release-critical logic that must be reviewable from a fresh Oppi checkout. Chen's personal `oppi-dev` skill can provide shorter wrappers, but it must delegate to these files rather than duplicate their behavior.
+These scripts contain release-critical logic that must remain reviewable from a fresh Oppi checkout. Chen's personal `oppi-dev` skill can provide shorter wrappers, but those wrappers must delegate to these files rather than duplicate their behavior.
 
 - `preflight.ts` — verifies component versions, Apple build numbers, What's New, release-note readiness, and tracked release paths.
-- `release-notes.ts` — creates and updates the internal changelog. TestFlight What to Test stays a separate brief summary.
-- `apple/testflight.ts` — archives/uploads and exposes separate Internal TestFlight, external-group, and beta-review operations.
-- `apple/asc.ts` — read-only App Store Connect release status and usage helpers.
+- `release-notes.ts` — creates and updates the internal changelog. TestFlight What to Test remains a separate brief summary.
+- `apple/testflight.ts` — archives and uploads, and exposes separate Internal TestFlight, external-group, and beta-review operations.
+- `apple/asc.ts` — provides read-only App Store Connect release-status and usage helpers.
 
-Normal order for an internal candidate:
+For an internal candidate, run these commands in order:
 
 ```bash
 bun scripts/release/preflight.ts --build-number 44 --whats-new-from-build 43 --server-version 0.46.0 --mirror-version 0.45.0

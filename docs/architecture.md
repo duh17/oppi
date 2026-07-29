@@ -1,10 +1,10 @@
 # Oppi architecture
 
-Oppi is an Apple client plus an Oppi server for viewing, prompting, and steering Pi coding-agent sessions from iPhone, iPad, and Mac clients. The server embeds the Pi SDK for managed sessions, can mirror a live terminal-owned Pi TUI session through the Oppi Mirror extension, and stores saved Agent and schedule state. It exposes HTTP over an owner-only Unix socket for the local CLI, plus remote HTTP and scoped WebSocket handlers that Apple clients can reach through an optional network listener or an Iroh encrypted tunnel without an Oppi host, port, DNS name, TLS certificate, LAN, or Tailscale.
+Oppi pairs an Apple client with an Oppi server to view, prompt, and steer Pi coding-agent sessions from iPhone, iPad, and Mac clients. The server embeds the Pi SDK for managed sessions, can mirror live terminal-owned Pi TUI sessions through the Oppi Mirror extension, and stores saved Agent and schedule state. It exposes HTTP over an owner-only Unix socket for the local CLI. Apple clients reach remote HTTP and scoped WebSocket handlers through an optional network listener or an Iroh encrypted tunnel, without an Oppi host, port, DNS name, TLS certificate, LAN, or Tailscale.
 
 ## Audience and scope
 
-This page is the cross-system map. Use it when you need to understand how the Apple app, server, Pi SDK runtime, and terminal mirror runtime fit together.
+This page maps the system. Use it to understand how the Apple app, server, Pi SDK runtime, and terminal mirror runtime fit together.
 
 For implementation details, read the split pages:
 
@@ -129,7 +129,7 @@ Oppi keeps workspace navigation HTTP-first. WebSockets carry live state where st
 
 ## Prompt to pixel
 
-Most chat work follows this path. Managed and mirror runtimes differ in the owner of execution, then converge before projection and broadcast.
+Most chat work follows this path. Managed and mirror runtimes have different execution owners, then converge before projection and broadcast.
 
 ```mermaid
 graph TD

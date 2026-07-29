@@ -1,43 +1,49 @@
 # Oppi - Agent Guide
 
-Oppi is an iPhone/iPad app and a server you run yourself for [Pi](https://github.com/badlogic/pi-mono) coding sessions. It brings Pi's transparent, customizable sessions to iOS.
+Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone and iPad through a server you run yourself.
 
 ## Rules
 
 - Read files in full before editing code or proposing solutions. Do not rely on search snippets for broad changes.
-- Ban the word `legacy`. Don't add backward-compatibility layers unless I ask. Tell me when a change may break compatibility; if I may not know about that break, ask before proceeding.
-- Don't add a new layer when a small function or local type will do.
+- Do not use the word `legacy`. Add compatibility layers only when asked. Before making a breaking change, explain what may stop working. Ask first when the impact might surprise the user.
+- Use a small function or local type instead of adding a new layer.
 - Keep important context in comments next to the code.
-- Before changing server or Apple client structure, network connections, state stores, or extension UI, read `docs/architecture.md` and the relevant split page (`docs/architecture-server.md`, `docs/architecture-client.md`). The rules there are checked by `server/scripts/check-architecture-boundaries.ts` and local ESLint rules.
-- Protocol changes must update `server/src/types/protocol.ts`, the matching Apple models in `clients/apple/OppiCore/Models/`, and the `protocol/*.json` snapshots together, with tests on both sides. Updating only some of these is not valid. See "Protocol boundary" in `docs/architecture-server.md` for the checklist.
-- Generic extension UI code must work for any extension. Don't check specific tool, extension, status, widget, or display names; use the meaning provided by protocol metadata instead.
-- Put lasting private work files in `.internal/` (`reports/`, `research/`, `diagrams/`). Use `.pi/` for session state and reusable agent files such as todos, attachments, prompts, worktrees, and temporary caches. Use `docs/` for public docs.
-- Keep unrelated changes from other sessions. If overlapping edits cannot be separated safely, stop and ask the user.
-- Don't commit unless asked. Stage only paths or hunks changed in this session unless the user asks for more; never use `git add .` or `git add -A`.
-- After a commit and passing local checks (`server npm run check` + relevant tests), ask before pushing. Prefer one push per finished change instead of multi-day batches; small pushes make CI failures easier to find.
+- Before changing server or Apple client structure, network connections, state stores, or extension UI, read `docs/architecture.md`. Then read the relevant split page: `docs/architecture-server.md` or `docs/architecture-client.md`. `server/scripts/check-architecture-boundaries.ts` and local ESLint rules enforce these boundaries.
+- For protocol changes, follow the "Protocol boundary" checklist in `docs/architecture-server.md`. Update these files and add tests on both sides:
+  - `server/src/types/protocol.ts`
+  - the matching Apple models in `clients/apple/OppiCore/Models/`
+  - the `protocol/*.json` snapshots
+- Generic extension UI must work for every extension. Read display behavior from protocol metadata; never branch on specific tool, extension, status, widget, or display names.
+- Store files by purpose:
+  - `.internal/` for lasting private work such as reports, research, and diagrams
+  - `.pi/` for session state, todos, attachments, prompts, worktrees, and temporary caches
+  - `docs/` for public documentation
+- Keep unrelated changes from other sessions. If you cannot separate overlapping edits safely, stop and ask the user.
+- Commit only when asked. Stage only paths or hunks changed in this session unless the user asks for more. Never use `git add .` or `git add -A`.
+- After committing, run `npm run check` in `server/` and the relevant tests, then ask before pushing. Prefer one push per finished change; small pushes make CI failures easier to find.
 
 ### TypeScript
 
-- Avoid `any` unless there is no reasonable alternative.
+- Use `any` only when no reasonable typed alternative exists.
 - Check installed type definitions before guessing external API shapes.
-- Check outside input when it enters the system. Log failures clearly and return predictable errors.
+- Validate external input at the system boundary. Log failures clearly and return predictable errors.
 
 ### Swift
 
 - Swift 6 strict concurrency is on.
 - All `@Observable` classes must use `@MainActor`.
 - Prefer `if let x` over `if let x = x`.
-- Don't force-unwrap values in production code.
+- Handle optionals safely in production code; never force-unwrap them.
 
 ## Build and Test Rules
 
-- `Oppi.xcodeproj` is generated. Change `project.yml`, put plist keys under `info.properties`, and run `xcodegen generate`.
-- Always use the repository-owned `clients/apple/scripts/sim-pool.sh` for simulator builds and tests. Do not run bare `xcodebuild` unless you also set a unique `-derivedDataPath`; see `docs/testing/README.md`.
-- Use normal `sim-pool.sh` runs without video for builds, unit tests, and changes that don't affect the UI, such as networking or backend logic. Use `oppi_simulator_recording` only when a recording helps check the UI, animation, or interaction.
-- Do not pipe `sim-pool.sh` output through `grep`, `tail`, or `head`. Read the summary and inspect the printed log path.
-- If an Apple build fails or seems stuck, read the `sim-pool.sh` log and check for active `xcodebuild` or sim-pool processes before trying again.
-- Use `-scheme OppiUnitTests` for `OppiTests`. The full `Oppi` scheme also builds UI, E2E, and perf bundles.
-- With Swift Testing, `xcodebuild -only-testing` removes one trailing `()`. Use double parentheses for function-level filters:
+- `Oppi.xcodeproj` is generated. Edit `project.yml`, put plist keys under `info.properties`, and run `xcodegen generate`.
+- Run simulator builds and tests through `clients/apple/scripts/sim-pool.sh`. Bare `xcodebuild` requires a unique `-derivedDataPath`; see `docs/testing/README.md`.
+- Use normal `sim-pool.sh` runs without video for builds, unit tests, and changes to networking or backend logic. Use `oppi_simulator_recording` only when a recording helps check UI appearance, animation, or interaction.
+- Read the `sim-pool.sh` summary and its printed log path. Do not pipe its output through `grep`, `tail`, or `head`.
+- If an Apple build fails or stalls, read the `sim-pool.sh` log and check for active `xcodebuild` or sim-pool processes before trying again.
+- Use `-scheme OppiUnitTests` for `OppiTests`. The full `Oppi` scheme also builds UI, E2E, and performance bundles.
+- Swift Testing removes one trailing `()` from `xcodebuild -only-testing` filters. Use double parentheses for a function:
   - Suite: `-only-testing:OppiTests/MySuiteStruct`
   - Function: `-only-testing:'OppiTests/MySuiteStruct/myTestFunc()()'`
 - Use `docs/testing/README.md` for server, Apple, simulator, E2E, coverage, and test-gate commands. Run the smallest documented check that proves the change.

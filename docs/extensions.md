@@ -1,6 +1,6 @@
 # Oppi extension behavior
 
-This page explains Oppi's runtime behavior for pi extensions: what Oppi loads, how the workspace editor toggles Pi resources, what standalone pi sees, and how terminal-oriented extension UI appears on mobile.
+This page explains Oppi runtime behavior for pi extensions: what Oppi loads, how the workspace editor toggles Pi resources, what standalone pi sees, and how mobile displays terminal-oriented extension UI.
 
 Use it when you install an extension for Oppi, adjust Pi resource settings from a workspace, or adapt a Pi extension so its prompts and tool output work well in the Apple app.
 
@@ -59,7 +59,7 @@ For ordinary Pi extensions, disabled rows are still visible in the server catalo
 | Browser video example   | Pi package/settings install or auto-discovered extension path | `pi-extensions/browser-automation-video` | pi resource loader | Oppi-compatible Pi package: registers a public Pi tool and uses Oppi's attachment helper when available       |
 | Mobile UI compatibility | Native Oppi client + server bridge                            | Protocol and UI bridge code              | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md)    |
 
-This split keeps user consent clear: installing Oppi is not the same thing as installing a pi extension package.
+This split keeps consent clear: installing Oppi does not install a pi extension package.
 
 ## Ask extension example
 
@@ -109,7 +109,7 @@ pi -e <package-or-path>
 
 ## What Oppi changes
 
-Oppi keeps Pi's extension system, then adds these rules:
+Oppi keeps Pi's extension system and adds these rules:
 
 1. **Cwd-scoped Pi resource resolution** for host sessions. User settings, project settings, installed packages, and auto-discovered extension directories remain the source of truth.
 2. **Pi resource toggles** from the workspace editor. The editor writes Pi resource settings (`+` / `-` entries) for skills and extensions; it does not write a workspace-level extension allowlist.
@@ -175,7 +175,7 @@ If an extension uses terminal-only glyphs, colors, or fonts, branch on `ctx.mode
 
 ### Tool output that renders well
 
-Oppi reads the normal Pi tool result, then looks for structured `details` fields before falling back to generic text parsing.
+Oppi reads the normal Pi tool result, looks for structured `details` fields, then falls back to generic text parsing.
 
 ```typescript
 return {
@@ -317,7 +317,7 @@ The picker response:
 
 Oppi's native extension UI behavior is specified in [`extension-native-ui.md`](extension-native-ui.md). That contract keeps blocking prompts Pi-shaped, maps standard `select`, `confirm`, `input`, and `editor` requests to native iOS prompt presentations, projects Pi UI state such as working rows, hidden thinking labels, and tool expansion, and defines display-only widget `ExtensionUINativeSurface` snapshots with blocks such as `text`, `markdown`, `section`, `activityList`, `progress`, `terminal`, and `code`.
 
-The short version: native UI requires explicit semantics. Oppi renders semantic extension UI natively and uses sanitized terminal snapshots as fallback for opaque TUI components. Persistent widgets are grouped into bounded `aboveEditor` and `belowEditor` strips on mobile, with one expanded drawer per placement.
+Native UI requires explicit semantics. Oppi renders semantic extension UI natively and uses sanitized terminal snapshots as fallback for opaque TUI components. On mobile, persistent widgets are grouped into bounded `aboveEditor` and `belowEditor` strips, with one expanded drawer per placement.
 
 ## Mobile rendering fallback
 

@@ -1,15 +1,15 @@
 # Extension native UI contract
 
-This is Oppi's public contract for translating Pi extension UI into native Apple UI.
+This public contract defines how Oppi translates Pi extension UI into native Apple UI.
 
-The contract has two jobs:
+It has two jobs:
 
 1. Keep terminal-first Pi extensions usable in Oppi.
 2. Give extension authors a semantic path to native cards, sheets, rows, and display surfaces without writing Swift.
 
 ## Status
 
-This document defines the version 1 behavior target. Oppi clients and server code can support the contract incrementally. When a block is unsupported, the client must fall back to the provided terminal/text fallback rather than failing the extension UI request.
+This document defines the version 1 behavior target. Oppi clients and server code can support the contract incrementally. When a block is unsupported, the client must use the provided terminal/text fallback instead of failing the extension UI request.
 
 Existing behavior still applies for the current protocol fields in `extension_ui_request` and `extension_ui_notification`. The native surface described here is additive.
 
@@ -290,7 +290,7 @@ This contract follows Pi TUI lifecycle concepts, but serializes them because Opp
 | `setStatus(key, ...)` persists until cleared                | Persistent keyed status text persists until explicit clear/session cleanup                             |
 | `notify()` is fire-and-forget                               | Ephemeral native toast/banner/sheet, not durable state                                                 |
 
-The main difference is authority. In terminal Pi, the in-process TUI owns focus and disposal directly. In Oppi, the server owns request state and sends snapshots; Apple clients render those snapshots and send responses/events back. Clients can dismiss optimistically after a response is accepted, but `extension_ui_settled` remains the authoritative cross-device cleanup signal.
+Authority is the main difference. In terminal Pi, the in-process TUI owns focus and disposal directly. In Oppi, the server owns request state and sends snapshots; Apple clients render the snapshots and return responses and events. Clients can dismiss optimistically after a response is accepted, but `extension_ui_settled` remains the authoritative cross-device cleanup signal.
 
 ## Managed runtime and mirrored runtime
 
@@ -756,7 +756,7 @@ Implementation should validate at least these fixtures:
 
 ## Recommended rollout and complexity budget
 
-The contract is intentionally broader than the first implementation. Implement it in layers so native UI improves without turning extension surfaces into a second app framework.
+The contract is intentionally broader than the first implementation. Implement it in layers to improve native UI without turning extension surfaces into a second app framework.
 
 ### Phase 1: stabilize fallback and cleanup
 

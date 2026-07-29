@@ -1,10 +1,10 @@
 # Networking and connection routing
 
-Oppi carries the same authenticated HTTP and WebSocket APIs over three remote routes: verified local HTTPS, the signed paired HTTP(S) endpoint, or an Iroh tunnel. The local CLI uses a fourth route, an owner-only Unix socket, and never falls back to a remote endpoint. Plain network HTTP requires the server's explicit insecure-network escape hatch and is never eligible for Bonjour LAN selection.
+Oppi carries the same authenticated HTTP and WebSocket APIs over three remote routes: verified local HTTPS, a signed paired HTTP(S) endpoint, or an Iroh tunnel. The local CLI uses a fourth route, an owner-only Unix socket, and never falls back to a remote endpoint. Plain network HTTP requires the server's explicit insecure-network escape hatch and is never eligible for Bonjour LAN selection.
 
 ## Audience and scope
 
-Use this page to understand pairing transport policy, runtime route selection, fallback, recovery, and the boundary between Apple and server networking.
+Use this page to understand pairing transport policy, runtime route selection, fallback, recovery, and the Apple/server networking boundary.
 
 This page does not define HTTP routes or stream payloads. See [Server architecture](architecture-server.md) and [Client architecture](architecture-client.md) for those contracts. See [Onboarding and pairing](onboarding.md) for setup steps.
 
@@ -46,7 +46,7 @@ graph LR
   CLI --> Local --> Routes
 ```
 
-All Apple routes terminate in the same server handlers. Iroh is a transport adapter, not a second API. REST requests, focused streams, app events, dictation, uploads, files, and media retain their HTTP or WebSocket semantics inside the tunnel.
+All Apple routes end at the same server handlers. Iroh is a transport adapter, not a second API. REST requests, focused streams, app events, dictation, uploads, files, and media retain their HTTP or WebSocket semantics inside the tunnel.
 
 ### Route names
 
@@ -158,7 +158,7 @@ stateDiagram-v2
   FailClosed --> Recovering: explicit Retry or reconfiguration
 ```
 
-Cached UI remains visible during these transitions. Connectivity failure does not send an already paired user back to onboarding.
+Cached UI remains visible during these transitions. A connectivity failure does not send an already paired user back to onboarding.
 
 ## Server configuration
 

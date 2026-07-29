@@ -1,17 +1,17 @@
 # Config Schema
 
-Oppi server uses a JSON config file with validated fields and sensible defaults.
+Oppi server uses a JSON config file with validated fields and defaults.
 
 | Location                     | Scope            |
 | ---------------------------- | ---------------- |
 | `~/.config/oppi/config.json` | Default data dir |
 | `$OPPI_DATA_DIR/config.json` | Custom data dir  |
 
-Auto-created on first `oppi serve`, or manually via `oppi init`. Validated on load — invalid fields fall back to defaults with warnings. New fields are backfilled automatically on startup.
+Oppi creates the file on the first `oppi serve`. You can also create it with `oppi init`. On load, invalid fields fall back to defaults with warnings. Startup backfills new fields automatically.
 
 ## All settings
 
-Settings are listed in the order they appear in the config file. Auth state is documented separately — it lives in the same file but is managed by CLI commands, not edited by hand.
+Settings appear in config-file order. Auth state is documented separately: it lives in the same file but CLI commands manage it, rather than hand edits.
 
 ### Server
 
@@ -32,13 +32,13 @@ Settings are listed in the order they appear in the config file. Auth state is d
 oppi config set iroh.enabled true
 ```
 
-The setting is durable across CLI, Mac app, launchd, crash, and machine restarts. A server restart is required after changing it. `OPPI_IROH_TRANSPORT=1` and `OPPI_IROH_PAIRING=1` remain temporary compatibility overrides for development and isolated deployments. See [Networking and connection routing](../../docs/networking.md) for route selection and fallback behavior.
+The setting persists across CLI, Mac app, launchd, crash, and machine restarts. Changing it requires a server restart. `OPPI_IROH_TRANSPORT=1` and `OPPI_IROH_PAIRING=1` remain temporary compatibility overrides for development and isolated deployments. See [Networking and connection routing](../../docs/networking.md) for route selection and fallback behavior.
 
 ### Model
 
-Oppi does not define a top-level server default chat model. New chat sessions use the shared model-selection behavior documented in [`model-selection.md`](./model-selection.md): explicit model, inherited/source model, workspace `defaultModel`, then Pi settings.
+Oppi has no top-level server default chat model. New chat sessions use the shared model-selection behavior in [`model-selection.md`](./model-selection.md): explicit model, inherited or source model, workspace `defaultModel`, then Pi settings.
 
-Configure the machine-wide fallback in Pi settings, for example `~/.pi/agent/settings.json`:
+Configure the machine-wide fallback in Pi settings, for example in `~/.pi/agent/settings.json`:
 
 ```json
 {
@@ -95,13 +95,13 @@ Default `runtimePathEntries`:
 ]
 ```
 
-If you need tools from custom paths (e.g. `mise`, `pyenv`, `nvm`), add their bin directories here.
+Add bin directories for tools on custom paths, such as `mise`, `pyenv`, or `nvm`.
 
 ### Local CLI transport
 
-The local CLI always uses bearer-authenticated HTTP over an owner-only Unix socket. The normal path is `$OPPI_DATA_DIR/run/oppi.sock`; the runtime directory is mode `0700` and the socket is mode `0600`. If a custom data-directory path would exceed portable Unix socket limits, Oppi derives a deterministic owner-only socket path under the system temporary directory.
+The local CLI always uses bearer-authenticated HTTP over an owner-only Unix socket. Its normal path is `$OPPI_DATA_DIR/run/oppi.sock`; the runtime directory is mode `0700` and the socket is mode `0600`. If a custom data-directory path would exceed portable Unix socket limits, Oppi derives a deterministic owner-only socket path under the system temporary directory.
 
-`host`, `port`, and `tls` configure only the remote network listener. The CLI does not fall back to TCP when its Unix socket is missing or unavailable.
+`host`, `port`, and `tls` configure only the remote network listener. The CLI never falls back to TCP when its Unix socket is missing or unavailable.
 
 ### TLS
 
@@ -113,7 +113,7 @@ The local CLI always uses bearer-authenticated HTTP over an owner-only Unix sock
 | `tls.caPath`                   | string  | -               | CA chain path. Used in `self-signed` mode for client certificate pinning.                             |
 | `tls.allowInsecureNetworkHttp` | boolean | `false`         | Explicit escape hatch required to bind plain HTTP/WS to non-loopback interfaces with `mode=disabled`. |
 
-New configs default to `"self-signed"` so iOS pairing uses HTTPS/WSS out of the box. Configs with `tls.mode="disabled"` are auto-promoted to `"self-signed"` on first `oppi serve`. TLS applies to the remote network listener, not the local Unix socket.
+New configs default to `"self-signed"`, so iOS pairing uses HTTPS/WSS by default. On the first `oppi serve`, configs with `tls.mode="disabled"` are auto-promoted to `"self-signed"`. TLS applies to the remote network listener, not the local Unix socket.
 
 Modes:
 
@@ -127,12 +127,9 @@ Modes:
 | `cloudflare`  | Cloudflare Tunnel integration.                                                                                                                                                                                                                                                                                                                                                            |
 
 For Tailscale fallback, “locally valid” means the leaf parses, the current time
-is within its complete validity interval, it has an exact Tailnet DNS SAN, and
-the private key matches. Oppi assumes material produced by the local
-`tailscale` command or supplied at configured paths has the intended
-provenance. Startup and `oppi doctor` do not independently prove a public CA
-chain; clients use normal TLS trust verification and no insecure verification
-bypass is enabled.
+falls within its complete validity interval, it has an exact Tailnet DNS SAN,
+and the private key matches. Oppi assumes material from the local `tailscale`
+command or configured paths has the intended provenance. Startup and `oppi doctor` do not independently prove a public CA chain; clients use normal TLS trust verification, with no insecure-verification bypass enabled.
 
 ```bash
 # Tailscale (recommended for LAN)
@@ -163,7 +160,7 @@ oppi config set tls '{"mode":"disabled","allowInsecureNetworkHttp":true}'
 
 ### ASR / dictation
 
-Configures server-side dictation routing to an external STT backend.
+Configures routing for server-side dictation to an external STT backend.
 
 | Setting           | Type   | Default | Description                                                                                                                                                                                |
 | ----------------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -187,7 +184,7 @@ Controls client-side preprocessing for image attachments before upload.
 
 Oppi supports Pi's standard extension UI API on mobile, including input and confirm flows. Extensions that ask before actions use the same bridge as other Pi extension UI.
 
-Approval behavior is extension-owned. If a session needs approval before an action, install or enable a Pi extension that asks through `ctx.ui`, such as the `pi-extensions/ask` example. No Oppi-specific approval config is required.
+Extensions own approval behavior. When a session needs approval before an action, install or enable a Pi extension that asks through `ctx.ui`, such as the `pi-extensions/ask` example. No Oppi-specific approval config is required.
 
 ## Full example
 
@@ -213,7 +210,7 @@ Approval behavior is extension-owned. If a session needs approval before an acti
 
 ## Agent-friendly config changes
 
-Prefer the `oppi config` CLI over direct edits to `~/.config/oppi/config.json`. The CLI preserves managed auth fields, validates the result, and supports nested paths.
+Prefer the `oppi config` CLI to direct edits of `~/.config/oppi/config.json`. It preserves managed auth fields, validates the result, and supports nested paths.
 
 Examples:
 
@@ -228,7 +225,7 @@ oppi config set extensions.voice.defaultVoiceId warm-technical-teammate
 oppi config validate
 ```
 
-Direct agent edits to `config.json` are protected and should require approval. Most server config changes need an Oppi server restart before they take effect.
+Direct agent edits to `config.json` are protected and should require approval. Most server config changes require an Oppi server restart before they take effect.
 
 ## Validate
 
@@ -236,4 +233,4 @@ Direct agent edits to `config.json` are protected and should require approval. M
 oppi config validate
 ```
 
-Strict mode checks for unknown keys and reports them as errors. Normal startup mode (non-strict) ignores unknown keys and preserves valid fields.
+Strict mode reports unknown keys as errors. Normal startup mode (non-strict) ignores unknown keys and preserves valid fields.

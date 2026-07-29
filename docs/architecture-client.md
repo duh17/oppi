@@ -1,10 +1,10 @@
 # Oppi client architecture
 
-The Oppi Apple client is a remote control and renderer for server-owned and terminal-owned Pi sessions. It keeps workspace navigation HTTP-first, uses WebSockets only for live streams, and renders the hot chat timeline through a UIKit-backed pipeline. The same HTTP/WebSocket clients can connect to a normal remote endpoint or to an app-local loopback proxy carried by Iroh.
+The Oppi Apple client controls and renders server-owned and terminal-owned Pi sessions. It keeps workspace navigation HTTP-first, reserves WebSockets for live streams, and renders the hot chat timeline through a UIKit-backed pipeline. The same HTTP/WebSocket clients connect to a normal remote endpoint or an app-local loopback proxy carried by Iroh.
 
 ## Audience and scope
 
-Read this page when changing iOS or macOS client transport code, session/workspace stores, workspace navigation, chat timeline state, extension UI rendering, dictation, or media playback.
+Read this page before changing iOS or macOS client transport code, session and workspace stores, workspace navigation, chat timeline state, extension UI rendering, dictation, or media playback.
 
 This page covers the Apple client structure. Server route, runtime, and storage details live in [Server architecture](architecture-server.md). For end-to-end LAN, paired HTTPS, and Iroh route selection, see [Networking and connection routing](networking.md).
 
@@ -20,7 +20,7 @@ The Apple client owns:
 - extension UI sheets, ask cards, status rows, widgets, and native surfaces,
 - voice input, audio playback, file previews, media playback, Quick Session intake, sharing, diagnostics, and settings.
 
-The client does not execute Pi sessions or mutate server read models directly. It sends commands and renders the server projection.
+The client does not execute Pi sessions or directly mutate server read models. It sends commands and renders the server projection.
 
 ## Client topology
 
@@ -155,7 +155,7 @@ graph TD
   AudioWS --> Dictation[Dictation and audio input]
 ```
 
-The global app event stream and focused session stream are intentionally separate. App events update lists and attention across workspaces. Focused session streams carry timeline events, commands, queue state, and session-specific UI messages. `SessionRouteScope` selects workspace-owned or declared control-session paths; both scopes feed the same `ChatSessionManager`, reducer, and UIKit timeline.
+The global app event stream and focused session stream stay separate. App events update lists and attention across workspaces. Focused session streams carry timeline events, commands, queue state, and session-specific UI messages. `SessionRouteScope` selects workspace-owned or declared control-session paths; both scopes feed the same `ChatSessionManager`, reducer, and UIKit timeline.
 
 ## Workspace navigation flow
 

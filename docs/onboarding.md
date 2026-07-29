@@ -1,12 +1,12 @@
 # Onboarding and Pairing
 
-Install the server with npm first:
+Install the server with npm:
 
 ```bash
 npm install -g oppi-server
 ```
 
-Use `oppi ...` commands for normal installs. Source checkouts can use `node dist/src/cli.js ...` from `server/`.
+Use `oppi ...` for normal installs. Source checkouts can use `node dist/src/cli.js ...` from `server/`.
 
 ## First device
 
@@ -27,7 +27,7 @@ Use `oppi ...` commands for normal installs. Source checkouts can use `node dist
    - **Scan QR Code**: scan the QR code printed by the server.
    - **Enter manually** or **Connect to Server**: enter scheme, host, port, token, and display name.
 
-   Opening an `oppi://connect` invite link on the phone also starts pairing.
+   Opening an `oppi://connect` invite link on the phone also begins pairing.
 
 4. Confirm server trust. If **Require Face ID/Touch ID/Optic ID/Passcode** is enabled, iOS asks for local authentication before accepting the server identity.
 
@@ -54,7 +54,7 @@ For host-free Iroh-only pairing, keep `iroh.enabled` on and select Iroh-only inv
 OPPI_IROH_INVITE_MODE=irohOnly oppi serve
 ```
 
-The signed invite identifies the Iroh endpoint instead of an Oppi host and port. The app uses the same REST, file, media, focused-session, app-event, and dictation behavior through the Iroh tunnel. Iroh-only pairing and connection failures do not fall back to HTTP. See [Networking and connection routing](networking.md) for route priority, fallback, recovery, and diagrams.
+The signed invite identifies the Iroh endpoint rather than an Oppi host and port. The app uses the same REST, file, media, focused-session, app-event, and dictation behavior through the Iroh tunnel. Iroh-only pairing and connection failures do not fall back to HTTP. See [Networking and connection routing](networking.md) for route priority, fallback, recovery, and diagrams.
 
 For remote HTTP/TLS pairing (for example Tailscale or a VPS), generate an invite with an explicit host:
 

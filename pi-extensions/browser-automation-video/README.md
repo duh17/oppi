@@ -1,8 +1,8 @@
 # Browser automation video extension
 
-This is an Oppi-compatible Pi extension package. It uses public Pi package and tool APIs to register `browser_automation_video`, a tool that drives Chrome with `agent-browser`, records the run, and converts it to H.264 MP4.
+This Oppi-compatible Pi extension package uses public Pi package and tool APIs to register `browser_automation_video`. The tool drives Chrome with `agent-browser`, records the run, and converts it to H.264 MP4.
 
-When the tool runs under Oppi, it uses Oppi's documented `ctx.attachments.addFile()` helper to store the MP4 as a session attachment and return it in `details.media[]`. In standalone Pi, pass `outputDir` so the MP4 stays on disk.
+Under Oppi, the tool uses Oppi's documented `ctx.attachments.addFile()` helper to store the MP4 as a session attachment and return it in `details.media[]`. In standalone Pi, pass `outputDir` to keep the MP4 on disk.
 
 ## Prerequisites
 
@@ -24,7 +24,7 @@ From the Oppi repo root:
 ln -sfn "$PWD/pi-extensions/browser-automation-video" ~/.pi/agent/extensions/browser-automation-video
 ```
 
-Pi auto-discovers extensions in `~/.pi/agent/extensions/`, so new Oppi sessions load `browser-automation-video` automatically; enable or disable it per workspace with the workspace editor's extension toggles, which write Pi resource settings. Oppi loads it through Pi's normal extension loader and renders the returned `details.media[]` video attachment.
+Pi auto-discovers extensions in `~/.pi/agent/extensions/`, so new Oppi sessions load `browser-automation-video` automatically. Use the workspace editor's extension toggles to enable or disable it per workspace; they write Pi resource settings. Oppi loads the extension through Pi's normal loader and renders its returned `details.media[]` video attachment.
 
 ## Example tool call
 
@@ -36,9 +36,9 @@ Pi auto-discovers extensions in `~/.pi/agent/extensions/`, so new Oppi sessions 
 }
 ```
 
-In Oppi, the MP4 is copied into session attachment storage and appears in the expanded tool row as a playable video card.
+In Oppi, the MP4 is copied to session attachment storage and appears in the expanded tool row as a playable video card.
 
-In standalone Pi sessions, `ctx.attachments.addFile()` is not available. Pass `outputDir` so the tool keeps the MP4 on disk:
+In standalone Pi sessions, `ctx.attachments.addFile()` is unavailable. Pass `outputDir` to keep the MP4 on disk:
 
 ```json
 {
@@ -52,9 +52,9 @@ In standalone Pi sessions, `ctx.attachments.addFile()` is not available. Pass `o
 
 - `url`: initial URL. Defaults to `https://example.com`.
 - `steps`: structured browser actions: `click`, `fill`, `type`, `keyboardType`, `press`, `wait`, `scroll`, `hover`, `focus`, `eval`, `snapshot`, or `screenshot`.
-- `commands`: raw `agent-browser` commands without the `agent-browser` prefix. These run after `steps`.
+- `commands`: raw `agent-browser` commands without the `agent-browser` prefix; they run after `steps`.
 - `outputDir`: workspace-relative or absolute directory for a local MP4 copy. Required outside Oppi.
-- `renderInOppi`: attach the MP4 to the Oppi tool row through Oppi's attachment helper when available. Defaults to `true`.
+- `renderInOppi`: attaches the MP4 to the Oppi tool row through Oppi's attachment helper when available. Defaults to `true`.
 - `keepWebM`: keep the intermediate WebM when using `outputDir`.
 - `headed`, `viewportWidth`, `viewportHeight`, `tailWaitMs`, and `timeoutMs`: browser and recording controls.
 
@@ -92,4 +92,4 @@ The tool returns concise text for the model and structured details for clients:
 }
 ```
 
-Oppi renders `details.media[]` with `kind: "video"` through the native video attachment row. Standalone Pi still receives the text result and local output path when `outputDir` is set.
+Oppi renders `details.media[]` with `kind: "video"` in the native video attachment row. Standalone Pi still receives the text result and local output path when `outputDir` is set.

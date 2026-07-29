@@ -1,6 +1,6 @@
 # Attachment rendering
 
-This document describes how Oppi renders files attached to messages and tool results.
+This document explains how Oppi renders files attached to messages and tool results.
 
 It is for extension authors, prompt authors, and Oppi client/server developers. Use it when a tool or message needs to show a screenshot, generated image, voice clip, browser recording, PDF, or other file.
 
@@ -16,7 +16,7 @@ Expanded tool rows understand `details.media[]` for stored image and video attac
 
 ## Core rule
 
-Attachments are structured metadata plus server-owned bytes. They are not markdown URLs.
+Attachments combine structured metadata with server-owned bytes. They are not markdown URLs.
 
 Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Stored attachment retrieval is scoped by session ID and attachment ID; it does not depend on workspace file-path authorization after the server has copied the bytes. Markdown `![]()` keeps its current job: resolving image file paths and remote images. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
 
@@ -30,7 +30,7 @@ The trust boundary is:
 - workspace/session ownership checks on server routes
 - server-controlled attachment storage
 
-Network membership is not enough. Tailscale or LAN limits exposure, but bearer auth remains required.
+Network membership is insufficient. Tailscale or LAN limits exposure, but bearer authentication remains required.
 
 ## Attachment metadata
 
@@ -243,7 +243,7 @@ type StoredToolAttachment = ToolMediaAttachment & {
 
 ## Direct file paths
 
-Workspace file rendering and attachment rendering solve different jobs.
+Workspace file rendering and attachment rendering serve different purposes.
 
 Use workspace/session file routes for current project files, PDFs, reports, and generic files:
 
@@ -319,7 +319,7 @@ Clients render attachments from metadata and authenticated byte sources.
 
 ## Apple review posture
 
-This contract renders user/session media with app-owned views. Apple clients do not download or execute extension code.
+This contract uses app-owned views to render user and session media. Apple clients do not download or execute extension code.
 
 Review-friendly behavior:
 

@@ -1,8 +1,8 @@
 # Ask extension example
 
-This is a portable Pi extension package that registers an `ask` tool for clarifying questions through Pi's public `pi.registerTool()` API.
+This portable Pi extension package registers an `ask` tool for clarifying questions through Pi's public `pi.registerTool()` API.
 
-When Oppi provides `ctx.ui.ask()`, the tool renders as a native AskCard. In plain Pi contexts, it falls back to terminal or standard dialog APIs.
+When Oppi provides `ctx.ui.ask()`, the tool renders a native AskCard. In plain Pi contexts, it falls back to terminal or standard dialog APIs.
 
 It supports:
 
@@ -21,7 +21,7 @@ Install it like any other local Pi extension. From the Oppi repo root:
 ln -sfn "$PWD/pi-extensions/ask" ~/.pi/agent/extensions/ask
 ```
 
-Pi auto-discovers extensions in `~/.pi/agent/extensions/`, so new Oppi sessions load `ask` automatically. To enable or disable it per workspace, use the workspace editor's extension toggles, which write Pi resource settings for the workspace cwd.
+Pi auto-discovers extensions in `~/.pi/agent/extensions/`, so new Oppi sessions load `ask` automatically. Use the workspace editor's extension toggles to enable or disable it per workspace; they write Pi resource settings for the workspace cwd.
 
 ## Example tool call
 
@@ -43,4 +43,4 @@ Pi auto-discovers extensions in `~/.pi/agent/extensions/`, so new Oppi sessions 
 }
 ```
 
-In Oppi, this renders as a native multi-select AskCard. In a terminal Pi session, it renders as a keyboard-driven terminal dialog.
+In Oppi, this call renders a native multi-select AskCard. In a terminal Pi session, it renders a keyboard-driven terminal dialog.

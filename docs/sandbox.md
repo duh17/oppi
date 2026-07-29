@@ -1,6 +1,6 @@
 # Sandbox workspaces
 
-Sandbox workspaces run agent file tools and shell commands inside a local Gondolin Linux micro-VM. They are for users who want an agent to inspect or modify a project without giving generated code broad access to the host filesystem or host environment, while keeping network policy explicit and configurable.
+Sandbox workspaces run agent file tools and shell commands in a local Gondolin Linux micro-VM. They let an agent inspect or modify a project without giving generated code broad access to the host filesystem or host environment, while keeping network policy explicit and configurable.
 
 Oppi uses [`@earendil-works/gondolin`](https://www.npmjs.com/package/@earendil-works/gondolin) as the sandbox runtime and Pi's SDK tool plumbing to route `read`, `bash`, `edit`, and `write` into the VM.
 
@@ -22,7 +22,7 @@ Create a sandbox workspace from the app:
 5. Create the workspace.
 6. Start a new session.
 
-The first session boots a VM for that workspace. Inside the session, the agent sees the workspace at:
+The first session boots the workspace VM. In that session, the agent sees the workspace at:
 
 ```text
 /workspace/<workspace-slug>
@@ -32,12 +32,12 @@ Host paths such as `/Users/alice/...` are not part of the sandbox prompt or tool
 
 ## Expected behavior
 
-A sandbox workspace has two sides:
+A sandbox workspace has two parts:
 
 - **Trusted host side:** Oppi and Pi run the model loop, provider authentication, session storage, UI extensions, and server APIs.
 - **Sandbox guest side:** Gondolin runs agent file tools and shell commands in the VM.
 
-Expected behavior for new sandbox sessions:
+New sandbox sessions behave as follows:
 
 - The visible cwd is `/workspace/<workspace-slug>`.
 - If no host path is selected, Oppi creates a backing directory under `~/sandbox/<slug>` on the server host.
@@ -54,7 +54,7 @@ Running sessions keep their current cwd and VM until restarted. Start a new sess
 
 ## Default safety model
 
-Sandbox workspaces separate host and guest surfaces. Configure network access deliberately for the task.
+Sandbox workspaces separate host and guest environments. Configure network access deliberately for the task.
 
 | Surface          | Default                                                                                                                                                                                    | How to change it                                                              |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
@@ -140,7 +140,7 @@ Put public project instructions in `AGENTS.md`. Put workspace-specific operating
 
 ## Security boundary and limitations
 
-Gondolin's security model is: untrusted code runs in a real Linux VM, while host-controlled code mediates I/O.
+Gondolin's security model runs untrusted code in a real Linux VM while host-controlled code mediates I/O.
 
 Relevant Gondolin guarantees and constraints:
 

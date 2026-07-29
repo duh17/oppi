@@ -1,6 +1,6 @@
 # Testing Guide
 
-Canonical test commands for the Oppi monorepo.
+Use these canonical test commands for the Oppi monorepo.
 
 ## Policy as code
 
@@ -10,7 +10,7 @@ Canonical test commands for the Oppi monorepo.
 - Full threshold-enforced coverage: GitHub Actions and `cd server && npm run test:gate:ci-coverage` (`test:coverage` on the server)
 - Coverage thresholds live in `server/vitest.config.ts` and `clients/apple/scripts/check-coverage.sh`.
 
-The local hook reads the refs Git is actually pushing, classifies their changed paths, and runs platform checks concurrently. Server changes run static checks plus Vitest's affected tests; server configuration and protocol changes run the full non-coverage suite. Apple changes compile the affected test bundles with the repository simulator pool. Each lane requires its relevant worktree paths to match the pushed commit. Successful lanes are cached by commit, pushed range, lane mode, path set, and toolchain so a retry does not repeat completed work.
+The local hook reads the refs Git pushes, classifies changed paths, and runs platform checks concurrently. Server changes run static checks plus Vitest's affected tests; server configuration and protocol changes run the full non-coverage suite. Apple changes compile affected test bundles with the repository simulator pool. Each lane requires its relevant worktree paths to match the pushed commit. Successful lanes are cached by commit, pushed range, lane mode, path set, and toolchain so retries do not repeat completed work.
 
 Full server and Apple unit coverage runs in `.github/workflows/server.yml` and `.github/workflows/apple.yml`. Coverage is deliberately asynchronous; pre-push keeps compile, static-analysis, architecture, and affected-test failures local. On pull requests, both workflows always publish stable `Server CI required` and `Apple CI required` checks while running expensive coverage only for relevant paths. Those two summary checks can be required globally. Main-branch push runs remain path-filtered. `.github/workflows/hygiene.yml` runs secret and file-size checks for every push and pull request.
 
@@ -25,7 +25,7 @@ npm test
 
 ### One-shot Linux validation on macOS
 
-Use Apple `container` copy-in mode for a clean Linux check without exposing the checkout through a host bind mount. This command streams the working tree into the container, so it includes uncommitted files while excluding local build products.
+Use Apple `container` copy-in mode for a clean Linux check without exposing the checkout through a host bind mount. The command streams the working tree into the container, including uncommitted files but excluding local build products.
 
 ```bash
 container system start
@@ -53,7 +53,7 @@ container system start
   '
 ```
 
-To support Apple `container` installations without the `container cp` plugin, including 0.9, the helper uses `tar` over `container exec -i` for copy-in and optional copy-out, then deletes the ephemeral container. It does not pass `--volume` or `--mount`.
+For Apple `container` installations without the `container cp` plugin, including 0.9, the helper uses `tar` over `container exec -i` for copy-in and optional copy-out, then deletes the ephemeral container. It does not pass `--volume` or `--mount`.
 
 Writable host bind mounts in compose files and scripted container runs are rejected by `server/scripts/check-compose-mounts.ts`, which runs as part of `npm run check` (`npm run mounts:check` standalone).
 
@@ -65,7 +65,7 @@ E2E_NATIVE=1 npm run test:e2e
 npm run test:e2e # Docker Compose mode when that environment is explicitly needed
 ```
 
-The dedicated Iroh container matrix is non-skippable and does not publish the Oppi HTTP port to its client. It pairs with an Iroh-only invite, creates state through the tunnel, and exercises REST mutations, uploads, file ranges, focused/app-event WebSockets, reconnect/catch-up, cancellation, auth rejection, and binary dictation:
+The dedicated Iroh container matrix is non-skippable. It does not publish the Oppi HTTP port to its client. It pairs with an Iroh-only invite, creates state through the tunnel, and exercises REST mutations, uploads, file ranges, focused/app-event WebSockets, reconnect/catch-up, cancellation, auth rejection, and binary dictation:
 
 ```bash
 cd server
@@ -74,7 +74,7 @@ npm run test:e2e:iroh
 
 The compose topology lives in `server/e2e/docker-compose.iroh-isolated.yml`. It uses separate containers and ephemeral volumes, does not use host networking or `host.docker.internal`, and fails if the assertion harness does not execute its full matrix.
 
-Run the separate, non-gating Iroh performance lane when collecting transport evidence:
+Collect transport evidence with the separate, non-gating Iroh performance lane:
 
 ```bash
 cd server

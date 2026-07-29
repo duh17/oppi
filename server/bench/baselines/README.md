@@ -1,12 +1,12 @@
 # Benchmark baselines
 
-Store checked-in baseline snapshots here as plain text files containing `METRIC` lines.
+Store checked-in baseline snapshots here as plain-text files with `METRIC` lines.
 
 Suggested naming:
 
 - `server-hotpath.metrics`
 
-Generate a snapshot (after correctness gate passes):
+After the correctness gate passes, generate a snapshot:
 
 ```bash
 npm run bench:correctness
@@ -19,4 +19,4 @@ Validate with multi-run median gating:
 npm run bench:perf:gate
 ```
 
-Re-record baselines only after intentional performance changes or benchmark methodology changes.
+Re-record baselines only after an intentional performance or benchmark-methodology change.

@@ -1,17 +1,17 @@
 # Voice replies / TTS
 
-Oppi itself only defines a **generic audio reply contract**. It does not require a specific TTS provider, voice catalog, or synthesis workflow.
+Oppi defines only a **generic audio reply contract**. It does not require a specific TTS provider, voice catalog, or synthesis workflow.
 
-This document covers both:
+This document covers:
 
 1. the shared Oppi audio contract that any extension can target
-2. the sample `voice` extension implementation in this repo, which uses local [Yuwp](https://github.com/duh17/yuwp) TTS as one concrete implementation
+2. the sample `voice` extension in this repository, which uses local [Yuwp](https://github.com/duh17/yuwp) TTS as one concrete implementation
 
-For extension authors, the shared contract lives in `server/src/tts-provider.ts`.
+For extension authors, the shared contract is in `server/src/tts-provider.ts`.
 
 ## Shared Oppi audio contract
 
-A custom extension does not need a provider base class. It only needs to:
+A custom extension does not need a provider base class. It needs only to:
 
 1. emit optional in-flight tool details with `kind: "audio_presentation"`
 2. stream optional live audio with `createAudioStreamEmitter({ ui: ctx?.ui, streamId: toolCallId })`
@@ -75,28 +75,28 @@ return {
 };
 ```
 
-Use `toolCallId` as the live audio stream id. That correlation lets Oppi attach stream playback controls to the right tool row.
+Use `toolCallId` as the live audio stream ID. This correlation lets Oppi attach stream playback controls to the correct tool row.
 
 ## Audio playback behavior
 
-`playbackBehavior` is intentionally small:
+`playbackBehavior` has two values:
 
 - `tapToPlay` — show a playable card
 - `playNow` — request immediate playback when the current session allows reply-controlled playback
 
 Notes:
 
-- default missing behavior to `tapToPlay`
-- manual mode suppresses autoplay even when a reply says `playNow`
-- keep the contract local-file/session-attachment based, not arbitrary remote URL playback
+- Default missing behavior to `tapToPlay`.
+- Manual mode suppresses autoplay even when a reply says `playNow`.
+- Keep the contract based on local files and session attachments, rather than arbitrary remote-URL playback.
 
 ## Sample `voice` extension
 
-The repository contains a sample `voice` extension implementation at `server/extensions/voice.ts`. It is not the core protocol or an installed Pi resource; it is one example of how to implement voice creation, synthesis, and playback on top of Oppi's generic audio contract.
+The repository contains a sample `voice` extension at `server/extensions/voice.ts`. It is neither the core protocol nor an installed Pi resource. It shows one way to implement voice creation, synthesis, and playback on Oppi's generic audio contract.
 
 ### What the sample implementation adds
 
-When registered by an embedding host or packaged as a Pi resource, the implementation exposes these tools:
+When an embedding host registers it or it is packaged as a Pi resource, the extension exposes these tools:
 
 - `voice_create` — create or update a saved Yuwp voice from a VoiceDesign prompt.
 - `voice_speak` — generate a spoken reply and attach the audio to the timeline.
@@ -120,11 +120,11 @@ swift build -c release --product yuwp-tts
 bash scripts/build_mlx_metallib.sh release
 ```
 
-You also need a local Qwen3-TTS model directory or Hugging Face snapshot.
+You also need a local Qwen3-TTS model directory or a Hugging Face snapshot.
 
 ### Option A: let Oppi start TTS
 
-On first `voice_*` tool use, Oppi tries to start Yuwp TTS automatically.
+On the first `voice_*` tool use, Oppi tries to start Yuwp TTS automatically.
 
 Default binary lookup:
 
@@ -139,7 +139,7 @@ Default model lookup checks Qwen3-TTS snapshots under:
 ~/.cache/huggingface/hub
 ```
 
-If your paths are different, save them in Oppi config:
+If your paths differ, save them in Oppi config:
 
 ```bash
 oppi config set runtimeEnv.TTS_LOCAL_BIN /path/to/yuwp-tts
@@ -148,7 +148,7 @@ oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
 oppi config validate
 ```
 
-Then restart Oppi server.
+Then restart the Oppi server.
 
 ### Option B: run TTS yourself
 
@@ -167,20 +167,20 @@ Check it:
 curl -sf http://127.0.0.1:7937/v1/info | jq .
 ```
 
-If you use a non-default URL, save it for Oppi server:
+If you use a non-default URL, save it in the Oppi server config:
 
 ```bash
 oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
 oppi config validate
 ```
 
-Then restart Oppi server.
+Then restart the Oppi server.
 
 ### Availability
 
-The current server does not register the sample factory, and Pi's resource loader does not auto-discover `server/extensions/voice.ts`. It therefore does not appear in the workspace editor's extension toggles or load in sessions by default. A separately packaged Pi extension can use this implementation and the generic audio contract above.
+The current server does not register the sample factory, and Pi's resource loader does not auto-discover `server/extensions/voice.ts`. Therefore, it does not appear in the workspace editor's extension toggles or load in sessions by default. A separately packaged Pi extension can use this implementation and the generic audio contract above.
 
-Once such an extension is installed and enabled, ask the agent to create or use a voice. Example:
+After you install and enable such an extension, ask the agent to create or use a voice:
 
 ```text
 Create a warm technical teammate voice and save it as my default.
@@ -199,11 +199,11 @@ In **Settings → Voice → Voice Replies**:
 - **Manual** — keep audio replies tap-to-play.
 - **Agent decides** — follow each reply's playback behavior.
 
-The agent can still change the behavior for the current session with `voice_reply_mode`, so a user can say things like “keep this chat manual” or “for this session, let the agent decide.”
+The agent can still change the current session's behavior with `voice_reply_mode`. For example, a user can say “keep this chat manual” or “for this session, let the agent decide.”
 
 ## Sample extension notes
 
-- Oppi only allows local TTS URLs by default.
-- To use a remote TTS URL, set `TTS_ALLOW_REMOTE=1` deliberately.
+- Oppi allows only local TTS URLs by default.
+- To use a remote TTS URL, deliberately set `TTS_ALLOW_REMOTE=1`.
 - Generated audio is saved under `~/Library/Application Support/Yuwp/Audio/pi-voice`.
-- The sample source does not become a loadable extension until it is packaged or registered by a host.
+- The sample source becomes loadable only after a host packages or registers it.

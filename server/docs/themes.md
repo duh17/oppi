@@ -1,6 +1,6 @@
 # Oppi Theme System
 
-Create custom color themes for the Oppi iOS app. A theme is a single JSON file with 49 color tokens. Write it to the server's theme directory, then import it from Settings in the app.
+Create custom color themes for the Oppi iOS app. A theme is one JSON file with 49 color tokens. Write it to the server's theme directory, then import it from Settings in the app.
 
 ## File format
 
@@ -15,17 +15,17 @@ Create custom color themes for the Oppi iOS app. A theme is a single JSON file w
 }
 ```
 
-- `name` — display name shown in the app
-- `colorScheme` — `"dark"` or `"light"` (controls status bar, system chrome)
-- `colors` — object with all 49 keys below, each a `#RRGGBB` hex string
+- `name` — display name in the app
+- `colorScheme` — `"dark"` or `"light"`; controls the status bar and system chrome
+- `colors` — object with all 49 keys below; each is a `#RRGGBB` hex string
 
-All 49 keys are required. Use `""` (empty string) to fall back to the default for that token.
+All 49 keys are required. Use `""` (an empty string) to use the default for that token.
 
 ## Color tokens
 
 ### Base palette (14)
 
-The foundation. Every other group derives from these when using defaults.
+The foundation. With default values, every other group derives from these tokens.
 
 | Key            | Purpose                                               |
 | -------------- | ----------------------------------------------------- |
@@ -53,7 +53,7 @@ The foundation. Every other group derives from these when using defaults.
 
 ### Tool state (5)
 
-Colors for tool call rows (read, edit, bash, etc.) in different states.
+Colors for tool-call rows (read, edit, bash, and others) in different states.
 
 | Key             | Purpose                          |
 | --------------- | -------------------------------- |
@@ -65,7 +65,7 @@ Colors for tool call rows (read, edit, bash, etc.) in different states.
 
 ### Markdown (10)
 
-Rendered markdown in assistant messages.
+Colors for rendered Markdown in assistant messages.
 
 | Key                 | Purpose                        |
 | ------------------- | ------------------------------ |
@@ -82,7 +82,7 @@ Rendered markdown in assistant messages.
 
 ### Diffs (3)
 
-Unified diff rendering in tool output.
+Colors for unified diffs in tool output.
 
 | Key               | Purpose                               |
 | ----------------- | ------------------------------------- |
@@ -92,7 +92,7 @@ Unified diff rendering in tool output.
 
 ### Syntax highlighting (9)
 
-Code blocks use tree-sitter tokenization mapped to these colors.
+Code blocks map tree-sitter tokens to these colors.
 
 | Key                 | Purpose                                    |
 | ------------------- | ------------------------------------------ |
@@ -108,7 +108,7 @@ Code blocks use tree-sitter tokenization mapped to these colors.
 
 ### Thinking level indicators (6)
 
-The thinking budget indicator changes color based on how much thinking the model is doing.
+The thinking-budget indicator changes color with how much thinking the model is doing.
 
 | Key               | Purpose           |
 | ----------------- | ----------------- |
@@ -121,7 +121,7 @@ The thinking budget indicator changes color based on how much thinking the model
 
 ## Creating a theme
 
-Start from a bundled example in `server/themes/`. The bundled themes are:
+Start with a bundled example in `server/themes/`:
 
 - `night.json` — dark, high-contrast Night theme
 - `latte-things.json` — light, Latte Things theme
@@ -132,12 +132,12 @@ Start from a bundled example in `server/themes/`. The bundled themes are:
 
 ### Tips
 
-- For dark themes: `bg` should be dark (#1a1b26 range), `fg` should be light (#c0caf5 range)
-- For light themes: invert that. `bg` light, `fg` dark
-- Tool state backgrounds should be very subtle — use low-opacity tints of your accent colors (e.g. blue at 12% for pending, green at 8% for success, red at 10% for error)
-- Diff backgrounds are rendered as accent + left bar; the app adds its own background opacity
-- Ensure enough contrast between `bg` and `fg` (aim for WCAG AA, 4.5:1 ratio minimum)
-- Syntax colors should be distinguishable from each other against `bgDark`
+- For dark themes, `bg` should be dark (#1a1b26 range) and `fg` should be light (#c0caf5 range).
+- For light themes, use a light `bg` and a dark `fg`.
+- Tool-state backgrounds should be subtle. Use low-opacity tints of accent colors—for example, blue at 12% for pending, green at 8% for success, and red at 10% for error.
+- Diff backgrounds render as an accent plus a left bar; the app adds its own background opacity.
+- Ensure enough contrast between `bg` and `fg`; aim for WCAG AA's 4.5:1 minimum ratio.
+- Syntax colors should be distinguishable from one another against `bgDark`.
 
 ## Installing a theme
 
@@ -149,15 +149,15 @@ mkdir -p ~/.config/oppi/themes
 cp my-theme.json ~/.config/oppi/themes/my-theme.json
 ```
 
-If the server runs with `OPPI_DATA_DIR`, use `$OPPI_DATA_DIR/themes/` instead.
+If the server uses `OPPI_DATA_DIR`, use `$OPPI_DATA_DIR/themes/` instead.
 
-The server picks it up automatically. Then in the iOS app: **Settings > Import Theme > select server > select your theme**.
+The server picks it up automatically. Then, in the iOS app, choose **Settings > Import Theme > select server > select your theme**.
 
-All 49 color keys must be present. Each value must be `#RRGGBB` or `""` (empty = use default). Filename should use `[a-zA-Z0-9_-]` only.
+All 49 color keys must be present. Each value must be `#RRGGBB` or `""` (empty uses the default). The filename should use only `[a-zA-Z0-9_-]`.
 
 ## Agent-friendly theme creation
 
-Create themes by writing the JSON file directly to `~/.config/oppi/themes/`, or `$OPPI_DATA_DIR/themes/` when the server uses a custom data dir. No server restart is required.
+Create themes by writing the JSON file directly to `~/.config/oppi/themes/`, or to `$OPPI_DATA_DIR/themes/` when the server uses a custom data dir. No server restart is required.
 
 Theme routes are available for clients:
 
@@ -166,13 +166,13 @@ Theme routes are available for clients:
 | `GET`  | `/themes`       | List bundled, pi, and user themes |
 | `GET`  | `/themes/:name` | Fetch a theme                     |
 
-Bundled themes live in `server/themes/`. User themes live in `~/.config/oppi/themes/`. Pi TUI themes in `~/.pi/agent/themes/` are detected and converted for Oppi automatically when possible. The current server API does not write or delete themes; create, update, or remove user themes by changing files in the theme directory.
+Bundled themes live in `server/themes/`. User themes live in `~/.config/oppi/themes/`. When possible, Oppi detects and converts Pi TUI themes in `~/.pi/agent/themes/` automatically. The current server API does not write or delete themes; create, update, or remove user themes by changing files in the theme directory.
 
 ## Relationship to pi TUI themes
 
-Oppi's theme tokens are a subset of the [pi TUI theme system](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/themes.md). Pi's TUI uses 51 color tokens; Oppi uses 49 — the shared tokens (markdown, syntax, diffs, tool state, thinking) are identical. Oppi drops TUI-only tokens (`border`, `borderAccent`, `borderMuted`, `selectedBg`, `customMessage*`, `bashMode`) and adds mobile equivalents (`bg`, `bgDark`, `bgHighlight`, `fg`, `fgDim`, `comment`).
+Oppi's theme tokens are a subset of the [Pi TUI theme system](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/themes.md). Pi's TUI uses 51 color tokens; Oppi uses 49. The shared tokens—Markdown, syntax, diffs, tool state, and thinking—are identical. Oppi drops TUI-only tokens (`border`, `borderAccent`, `borderMuted`, `selectedBg`, `customMessage*`, `bashMode`) and adds mobile equivalents (`bg`, `bgDark`, `bgHighlight`, `fg`, `fgDim`, `comment`).
 
-You can ask pi to create a theme for you — point it at this doc and describe what you want. If you already have a pi TUI theme, reuse the same color palette — map the overlapping tokens and fill in the Oppi-specific ones.
+You can ask Pi to create a theme; point it to this document and describe what you want. If you already have a Pi TUI theme, reuse its color palette: map the overlapping tokens and fill in the Oppi-specific ones.
 
 ## Complete example
 

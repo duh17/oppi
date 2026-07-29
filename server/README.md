@@ -1,6 +1,6 @@
 # oppi-server
 
-Server for [Oppi](../README.md). Embeds the [Pi SDK](https://github.com/badlogic/pi-mono) for server-owned sessions and supports terminal-owned mirror sessions through the `oppi-mirror` Pi extension.
+Server for [Oppi](../README.md). It embeds the [Pi SDK](https://github.com/badlogic/pi-mono) for server-owned sessions and supports terminal-owned mirror sessions through the `oppi-mirror` Pi extension.
 
 ## Quickstart
 
@@ -12,7 +12,7 @@ oppi --version
 oppi serve
 ```
 
-On first `serve`, Oppi creates `~/.config/oppi/`, generates owner credentials, starts the local CLI API at `~/.config/oppi/run/oppi.sock`, bootstraps remote HTTPS/WSS with `tls.mode=self-signed`, and prints a pairing QR plus invite link for the iPhone/iPad app. Use `oppi pair` later to generate a fresh single-use invite.
+On the first `serve`, Oppi creates `~/.config/oppi/`, generates owner credentials, starts the local CLI API at `~/.config/oppi/run/oppi.sock`, bootstraps remote HTTPS/WSS with `tls.mode=self-signed`, and prints a pairing QR and invite link for the iPhone/iPad app. Use `oppi pair` later to generate a fresh single-use invite.
 
 Upgrade or uninstall the global CLI with npm:
 
@@ -41,7 +41,7 @@ cd oppi/server
 bash setup.sh --install
 ```
 
-The global npm link points `oppi` at this checkout's `dist/src/cli.js`. Rebuilding the checkout therefore updates the terminal CLI, background server, and managed host-session CLI together. Running `setup.sh --install` again repairs the link if another npm install replaced it.
+The global npm link points `oppi` to this checkout's `dist/src/cli.js`. Rebuilding the checkout therefore updates the terminal CLI, background server, and managed host-session CLI together. Run `setup.sh --install` again if another npm install replaces the link.
 
 If you prefer the repo bootstrapper from outside the repo, use:
 
@@ -57,7 +57,7 @@ cd oppi
 bash install.sh
 ```
 
-Use this command only if you need to switch back to self-signed later:
+Use this command only when you need to switch back to self-signed later:
 
 ```bash
 oppi config set tls '{"mode":"self-signed"}'
@@ -69,14 +69,14 @@ Optional: enable Tailscale HTTPS/WSS (Let's Encrypt cert via `tailscale cert`):
 oppi config set tls '{"mode":"tailscale"}'
 ```
 
-Tailscale must be connected to obtain or renew this certificate and for remote Tailnet access. Existing locally valid cert/key material can restart the remote listener while Tailscale is stopped. Without usable material, the remote listener stays unavailable and fails closed; the local Unix-socket CLI remains available because it does not use Tailscale or TLS.
+Tailscale must be connected to obtain or renew this certificate and for remote Tailnet access. Existing locally valid certificate and key material can restart the remote listener while Tailscale is stopped. Without usable material, the remote listener stays unavailable and fails closed. The local Unix-socket CLI remains available because it uses neither Tailscale nor TLS.
 
 Oppi checks the certificate's full validity interval, Tailnet DNS SAN, and
-certificate/key match. It assumes material renewed by the local `tailscale`
-command or placed at the configured paths has the intended provenance; it does
-not independently validate a public CA chain during startup or `oppi doctor`.
-HTTPS clients keep normal certificate-chain verification enabled and reject
-untrusted material.
+certificate/key match. It assumes that material renewed by the local
+`tailscale` command or placed at the configured paths has the intended
+provenance. During startup and `oppi doctor`, it does not independently
+validate a public CA chain. HTTPS clients keep normal certificate-chain
+verification enabled and reject untrusted material.
 
 Create a workspace in the app and start a session.
 
@@ -101,13 +101,13 @@ Iroh tunnel limits are fixed at 64 QUIC connections, 16 concurrent bi-streams pe
 
 ## Docker (skills-ready compose setup)
 
-A containerized setup is included in this directory:
+This directory includes a containerized setup:
 
 - `Dockerfile`
 - `docker-compose.yml`
 - `docker/entrypoint.sh`
 
-The container runs `oppi serve`, persists state in Docker volumes, and seeds Pi auth and skills from your host on first start. Mounting the Docker socket is optional and only needed for Docker-backed skill wrappers.
+The container runs `oppi serve`, persists state in Docker volumes, and seeds Pi auth and skills from your host on its first start. Mount the Docker socket only for Docker-backed skill wrappers.
 
 Quick start:
 
@@ -131,7 +131,7 @@ export SEARXNG_URL=http://host.docker.internal:8888
 docker compose up -d --build
 ```
 
-What it does:
+This setup:
 
 - installs `oppi` as the canonical CLI inside the image and runs `oppi serve` as PID 1
 - auto-restarts via `restart: unless-stopped`
@@ -147,7 +147,7 @@ Important security note:
 - Mounting `/var/run/docker.sock` gives the container root-equivalent host control.
 - Keep this only if you need Docker-backed skill wrappers (`web-nav`, `web-eval`, `web-screenshot`, etc.).
 
-Useful commands:
+Use these commands:
 
 ```bash
 # Logs (watch startup + pairing hints)
@@ -194,17 +194,17 @@ oppi token rotate            # rotate owner bearer token
 oppi update                  # update the npm-installed server and CLI
 ```
 
-Commands that call the local API use bearer-authenticated HTTP over `$OPPI_DATA_DIR/run/oppi.sock`. They never auto-fallback to a network host or plaintext TCP. Deep custom data-directory paths use a deterministic owner-only socket under the system temporary directory to stay within Unix socket path limits. Remote HTTPS/WSS can be unavailable while local CLI commands continue to work. Oppi Mirror and Oppi subagents still require the network WebSocket listener.
+Commands that call the local API use bearer-authenticated HTTP over `$OPPI_DATA_DIR/run/oppi.sock`. They never fall back automatically to a network host or plaintext TCP. Deep custom data-directory paths use a deterministic owner-only socket under the system temporary directory to stay within Unix socket path limits. Local CLI commands continue to work when remote HTTPS/WSS is unavailable. Oppi Mirror and Oppi subagents still require the network WebSocket listener.
 
-Session history reads are consolidated under `oppi session inspect`. Start with its default turn outline, use `--view summary` for counts, and request `--turns <spec> --view messages|tools` only for the smallest relevant turn set.
+`oppi session inspect` consolidates session-history reads. Start with its default turn outline, use `--view summary` for counts, and request `--turns <spec> --view messages|tools` only for the smallest relevant turn set.
 
-Managed host sessions cannot use `oppi session` to target themselves. They may create direct child sessions; a root can pass `oppi session create --allow-nested-delegation` to authorize that child to create sessions at one additional nesting level. Descendants cannot extend this authorization. Human terminal CLI invocations remain unrestricted.
+Managed host sessions cannot use `oppi session` to target themselves. They may create direct child sessions. A root can pass `oppi session create --allow-nested-delegation` to authorize that child to create sessions at one additional nesting level. Descendants cannot extend this authorization. Human terminal CLI invocations remain unrestricted.
 
 ### Saved Agents and schedules
 
-Saved Agents store reusable Agent definitions. An optional `icon` string accepts one Unicode emoji or an SF Symbol name; `icon: null` clears it. Saved-Agent launches and Default Agent control sessions snapshot the current Agent version and icon into session launch metadata, so later Agent edits do not change existing session rows or chat identity. Unsupported SF Symbols and malformed persisted values render the generic Agent icon without affecting execution. The shipped Default Agent is restricted to the server-managed `oppi` and structured `ask` tools: it can ask native clarifying questions and wait for session status with `oppi session wait` or its bounded one-session `oppi session watch` alias, while state-changing Oppi commands still require explicit approval and filesystem/shell tools remain unavailable. Launch inputs such as workspace, worktree, prompt, and session name stay on `oppi session create`, so the same Agent definition can run in different workspaces.
+Saved Agents store reusable Agent definitions. An optional `icon` string accepts one Unicode emoji or an SF Symbol name; `icon: null` clears it. Saved-Agent launches and Default Agent control sessions snapshot the current Agent version and icon into session launch metadata, so later Agent edits do not change existing session rows or chat identity. Unsupported SF Symbols and malformed persisted values render the generic Agent icon without affecting execution. The shipped Default Agent is limited to the server-managed `oppi` and structured `ask` tools. It can ask native clarifying questions and wait for session status with `oppi session wait` or its bounded one-session `oppi session watch` alias. State-changing Oppi commands still require explicit approval, and filesystem and shell tools remain unavailable. Launch inputs such as workspace, worktree, prompt, and session name stay on `oppi session create`, so the same Agent definition can run in different workspaces.
 
-Schedules store a trigger plus an action. `oppi schedule create` accepts `--at`, `--every`, or `--cron`; actions can start a new session in a workspace or send input to an existing session. The background schedule runner materializes due runs, dispatches active schedules, and records run history. Pause or archive a schedule to stop future automatic runs.
+Schedules store a trigger and an action. `oppi schedule create` accepts `--at`, `--every`, or `--cron`; actions can start a new session in a workspace or send input to an existing session. The background schedule runner materializes due runs, dispatches active schedules, and records run history. Pause or archive a schedule to stop future automatic runs.
 
 ### Install and update modes
 
@@ -214,7 +214,7 @@ Schedules store a trigger plus an action. `oppi schedule create` accepts `--at`,
 
 ## Extensions
 
-Oppi uses Pi's extension system and adds mobile rendering for standard extension UI requests. Extension approval behavior lives in Pi extensions, not in server config.
+Oppi uses Pi's extension system and adds mobile rendering for standard extension UI requests. Pi extensions own approval behavior, not server config.
 
 See [Oppi extension behavior](../docs/extensions.md) for extension loading, per-workspace Pi resource toggles, and mobile rendering. Use [Oppi Mirror mode](../docs/oppi-mirror.md) for terminal-owned sessions.
 
@@ -241,8 +241,7 @@ Key config sections:
 | `asr`    | Dictation pipeline: STT backend endpoint                                    |
 | `images` | Image attachment preprocessing before upload                                |
 
-Model routing and API keys are managed by pi (`pi auth`), not the oppi config.
-Unknown config keys are ignored on startup and reported by `oppi config validate`.
+Manage provider API keys with `pi auth`, not Oppi config. See [model-selection.md](docs/model-selection.md) for model routing. Unknown config keys are ignored on startup and reported by `oppi config validate`.
 
 Quick inspection:
 
@@ -256,7 +255,7 @@ oppi config set tls '{"mode":"self-signed"}'
 # Source checkouts: use `node dist/src/cli.js` instead of `oppi`.
 ```
 
-For unsupported nested keys, edit `config.json` directly and restart the server.
+For unsupported nested keys, edit `config.json` directly, then restart the server.
 
 See [config-schema.md](docs/config-schema.md) for full reference.
 
@@ -264,16 +263,14 @@ See [config-schema.md](docs/config-schema.md) for full reference.
 
 ### Dependency installation and script runtimes
 
-CI, Docker builds, and the development checks use `npm`; `package-lock.json` is
-the authoritative dependency lockfile for those flows. Use `npm ci` when you
-need the same dependency tree as CI. Bun is otherwise used only to execute the
-TypeScript repository scripts referenced by `package.json`.
+CI, Docker builds, and development checks use `npm`; `package-lock.json` is the
+authoritative dependency lockfile for those flows. Use `npm ci` when you need
+CI's dependency tree. Otherwise, Bun executes only the TypeScript repository
+scripts referenced by `package.json`.
 
-The source-checkout bootstrapper is currently an exception: root `install.sh`
-delegates to `server/setup.sh`, which prefers Bun when it is installed and runs
-`bun install --ignore-scripts`. That documented flow consumes `bun.lock`, so the
-Bun lockfile cannot be removed until the bootstrapper installs dependencies
-with npm. Its dependency tree can diverge from the npm/CI tree in the meantime.
+The source-checkout bootstrapper is currently an exception. Root `install.sh`
+delegates to `server/setup.sh`, which prefers Bun when installed and runs `bun install --ignore-scripts`. That documented flow consumes `bun.lock`, so the Bun lockfile cannot be removed until the bootstrapper installs dependencies with
+npm. In the meantime, its dependency tree can diverge from the npm/CI tree.
 
 ```bash
 npm test                            # vitest unit tests
@@ -296,7 +293,7 @@ Benchmark conventions, baselines, and comparison workflow live in [bench/README.
 
 ## Local release telemetry dashboard (SQLite + Grafana)
 
-This stack builds directly on telemetry JSONL files written by oppi-server at:
+This stack reads telemetry JSONL files that oppi-server writes to:
 
 - `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/*.jsonl`
 
@@ -317,20 +314,20 @@ Importer behavior:
 - reads telemetry JSONL from `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/*.jsonl`
 - writes SQLite into a Docker-managed volume mounted at `/var/lib/oppi-telemetry-db/telemetry.db`
 - runs one import immediately on startup
-- runs SQLite integrity checks on startup/recovery only by default, not on every watch tick
-- continues in watch mode (poll interval: `OPPI_TELEMETRY_IMPORT_INTERVAL_MS`, default `15000`)
-- ingests incrementally for append-only daily JSONL files instead of reimporting the whole hot file each cycle
-- normalizes source file keys so Docker and host imports target the same rows
+- runs SQLite integrity checks on startup and recovery by default, not on every watch tick
+- continues in watch mode; `OPPI_TELEMETRY_IMPORT_INTERVAL_MS` defaults to `15000`
+- ingests append-only daily JSONL files incrementally instead of reimporting the whole hot file each cycle
+- normalizes source-file keys so Docker and host imports target the same rows
 - flattens common server-ops tags (`path`, `type`, `level`, `lane`, `ring`, `code`, `outcome`) for split-stream Grafana panels
-- keeps at most `OPPI_TELEMETRY_BROKEN_DB_KEEP_COUNT` malformed-db backups (default `1`)
-- uses a short-lived lock file so overlapping importer runs skip instead of clobbering each other
+- keeps at most `OPPI_TELEMETRY_BROKEN_DB_KEEP_COUNT` malformed-db backups; the default is `1`
+- uses a short-lived lock file so overlapping importer runs skip rather than clobber each other
 
 Open:
 
 - `http://localhost:13001`
 - default login: `admin` / `admin`
 
-The datasource and dashboard are provisioned automatically:
+The stack provisions this datasource and these dashboards automatically:
 
 - datasource: `Oppi Telemetry SQLite`
 - dashboards: `Oppi Release Preflight` and `Oppi Server Health` (folder: `Oppi`)
@@ -344,7 +341,7 @@ npm run telemetry:grafana:down
 
 ### Optional manual import commands
 
-Use these if you want to import without Docker:
+Use these commands to import without Docker:
 
 ```bash
 cd server
@@ -355,10 +352,10 @@ npm run telemetry:import:watch
 Notes:
 
 - Services are defined in `server/docker-compose.telemetry.yml`.
-- The Docker stack keeps SQLite inside a named volume instead of the host-mounted telemetry directory. This avoids SQLite corruption on macOS bind mounts while still reading host JSONL input files. Grafana opens this database read-write because SQLite WAL-mode readers may need sidecar shared-memory files even for read queries.
-- Manual `telemetry:import` runs still write `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/telemetry.db` on the host, share the same normalized file keys as the Docker watcher, and skip if another importer run currently holds the lock.
-- Importer integrity-check mode is `startup` by default; use `--integrity-check always` for old every-run checking or `--integrity-check never` for trusted throwaway databases.
-- If you use a non-default data dir, export `OPPI_DATA_DIR` before running commands.
+- The Docker stack keeps SQLite in a named volume rather than the host-mounted telemetry directory. It avoids SQLite corruption on macOS bind mounts while still reading host JSONL input files. Grafana opens this database read-write because SQLite WAL-mode readers may need sidecar shared-memory files, even for read queries.
+- Manual `telemetry:import` runs still write `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/telemetry.db` on the host, share the Docker watcher's normalized file keys, and skip when another importer run holds the lock.
+- Importer integrity-check mode defaults to `startup`; use `--integrity-check always` for old every-run checking or `--integrity-check never` for trusted throwaway databases.
+- When you use a non-default data dir, export `OPPI_DATA_DIR` before running commands.
 
 ## License
 

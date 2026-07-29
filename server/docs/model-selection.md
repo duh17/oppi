@@ -1,6 +1,6 @@
 # Chat Model Selection
 
-Oppi does not define a top-level server default chat model. If Oppi does not choose an explicit model for a new session, it leaves the model unset and lets the Pi SDK use Pi's normal settings and trace fallback.
+Oppi has no top-level server default chat model. When it does not choose an explicit model for a new session, it leaves the model unset. The Pi SDK then uses Pi's normal settings and trace fallback.
 
 Pi settings live in the Pi agent settings file, for example `~/.pi/agent/settings.json`:
 
@@ -14,7 +14,7 @@ Pi settings live in the Pi agent settings file, for example `~/.pi/agent/setting
 
 ## Initial model precedence
 
-New Oppi-created chat sessions resolve their initial model in one shared helper, `resolveInitialChatModel`:
+One shared helper, `resolveInitialChatModel`, resolves the initial model for new Oppi-created chat sessions:
 
 1. Explicit request model.
 2. Source session model, when the flow has an origin, selected session, or fork source.
@@ -23,15 +23,15 @@ New Oppi-created chat sessions resolve their initial model in one shared helper,
 
 Model IDs stored in Oppi workspace defaults should use canonical `provider/model-id` form, such as `ds4/deepseek-v4-flash`.
 
-The Oppi CLI resolves `--model` for `session create` and new-session `schedule create` through the server `/models` catalog before it submits the request. That catalog is filtered by Pi `enabledModels`, accepts fuzzy text such as `sonnet`, prefers subscription/OAuth-backed matches over API-key matches, and sends the canonical `provider/model-id` to the server. If no match is found, the CLI error includes the exact available model IDs so an agent can retry with a valid value.
+Before submitting a request, the Oppi CLI resolves `--model` for `session create` and new-session `schedule create` through the server `/models` catalog. The catalog is filtered by Pi `enabledModels`, accepts fuzzy text such as `sonnet`, prefers subscription/OAuth-backed matches over API-key matches, and sends the canonical `provider/model-id` to the server. If no match exists, the CLI error lists the exact available model IDs so an agent can retry with a valid value.
 
 ## Flow notes
 
 - Workspace “New Session” uses an explicit request model, then the workspace default, then Pi settings.
-- Quick Session sheet sends the last/current explicit quick-session model when present; otherwise the server applies the workspace default, then Pi settings. It displays workspace defaults but does not send them as client overrides.
-- Quick-action sessions inherit the selected/source session model when available, otherwise use the workspace default, then Pi settings.
-- Fork sessions preserve the source session model before falling back to workspace/Pi defaults.
-- Local session imports intentionally do not apply the workspace default unless the client passes an explicit model. This lets Pi restore the imported trace’s original model.
+- The Quick Session sheet sends the last or current explicit quick-session model when present. Otherwise, the server applies the workspace default, then Pi settings. The sheet displays workspace defaults but does not send them as client overrides.
+- Quick-action sessions inherit the selected or source session model when available. Otherwise, they use the workspace default, then Pi settings.
+- Fork sessions preserve the source session model before they fall back to workspace or Pi defaults.
+- Local session imports intentionally skip the workspace default unless the client passes an explicit model. This lets Pi restore the imported trace’s original model.
 
 ## Non-goals
 

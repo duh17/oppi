@@ -1,6 +1,6 @@
 # Deep Links
 
-Oppi supports `oppi://` links for pairing a server and opening specific places in the Apple app.
+Use `oppi://` links to pair a server or open a specific place in the Apple app.
 
 The app registers only the `oppi` scheme.
 
@@ -55,14 +55,14 @@ The signed payload contains the host, port, transport scheme, one-time pairing t
 
 Rules:
 
-- Pairing invites are sensitive until they expire or are used.
+- Treat pairing invites as sensitive until they expire or are used.
 - Invites are single-use and short-lived; the default TTL is 90 seconds.
 - Do not hand-edit invite payloads.
 - Do not put owner tokens or device tokens in deep links.
 
 ## Workspace links
 
-Workspace links are navigation and prefill links, not remote commands.
+Workspace links navigate and prefill; they do not run remote commands.
 
 ```text
 oppi://workspace?path=/Users/example/workspace/oppi&name=Oppi&server=sha256:<server-fingerprint>
@@ -91,7 +91,7 @@ Encoding:
 
 ## Links inside assistant output
 
-The chat timeline intercepts links before UIKit opens them:
+The chat timeline handles links before UIKit opens them:
 
 - `oppi://` becomes an internal deep link.
 - `http://` and `https://` follow the Browser link-opening setting: Oppi's in-app browser or the external browser.

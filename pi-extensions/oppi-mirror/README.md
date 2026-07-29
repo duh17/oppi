@@ -1,6 +1,6 @@
 # oppi-mirror
 
-`oppi-mirror` is a Pi extension that mirrors an interactive terminal `pi` session into Oppi. The terminal keeps execution ownership; Oppi can watch output, send prompts, steer the active turn, queue follow-ups, answer extension UI, and stop or abort through the bridge.
+`oppi-mirror` mirrors an interactive terminal `pi` session into Oppi. The terminal retains execution ownership. Through the bridge, Oppi can watch output, send prompts, steer the active turn, queue follow-ups, answer extension UI, and stop or abort.
 
 ## Install
 
@@ -8,7 +8,7 @@
 pi install npm:oppi-mirror
 ```
 
-Update an existing install before starting a matching Oppi server release:
+Update an existing install before starting the matching Oppi server release:
 
 ```bash
 pi update --extension npm:oppi-mirror
@@ -22,7 +22,7 @@ If Pi is already running, reload extensions:
 
 ## Use
 
-Start the Oppi server once so the extension can read `~/.config/oppi/config.json`, then start Pi in an interactive terminal:
+Start the Oppi server so the extension can read `~/.config/oppi/config.json`. Then start Pi in an interactive terminal:
 
 ```bash
 pi
@@ -59,7 +59,7 @@ Configure startup and missing-workspace behavior in `~/.pi/agent/settings.json`:
 }
 ```
 
-`workspaceCreation` accepts `ask`, `always`, or `never`. The default is `ask`: if the terminal cwd is not inside an Oppi workspace, Pi prompts before creating one. Approved workspaces use the nearest parent git repo as `hostMount`; without a git repo, they use the terminal cwd.
+`workspaceCreation` accepts `ask`, `always`, or `never`. The default, `ask`, prompts before creating a workspace when the terminal cwd is outside an Oppi workspace. Approved workspaces use the nearest parent git repo as `hostMount`; without a git repo, they use the terminal cwd.
 
 For one process:
 
@@ -71,13 +71,13 @@ pi
 
 ## What it supports
 
-Mirror supports prompts, steering and follow-up messages, stop or abort, queue updates, model and thinking changes, tree navigation, and standard Pi extension UI flows such as select, confirm, input, editor, notify, title, status, widgets, and working-row customization.
+Mirror supports prompts; steering and follow-up messages; stop or abort; queue updates; model and thinking changes; tree navigation; and standard Pi extension UI flows such as select, confirm, input, editor, notify, title, status, widgets, and working-row customization.
 
-Session replacement stays terminal-owned. Use terminal Pi for `/new`, `/fork`, and session switching.
+The terminal owns session replacement. Use terminal Pi for `/new`, `/fork`, and session switching.
 
 ## Requirements
 
 - Oppi server `0.45.0` or newer
-- Interactive terminal `pi`; print, JSON, RPC, and server-owned SDK sessions are not mirror sessions
+- Interactive terminal `pi`; print, JSON, RPC, and server-owned SDK sessions do not become mirror sessions
 
 See the full mirror contract and compatibility matrix in the Oppi repo: https://github.com/duh17/oppi/blob/main/docs/oppi-mirror.md

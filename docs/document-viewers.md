@@ -1,6 +1,6 @@
 # Document viewers
 
-Oppi renders text and document output in native full-screen viewers on iPhone and iPad. These viewers are for reading, review, copy/share, and selection. They do not modify the underlying file, tool output, session transcript, or agent context.
+Oppi renders text and document output in native full-screen viewers on iPhone and iPad. Use them to read, review, copy, share, and select. They do not modify the underlying file, tool output, session transcript, or agent context.
 
 This page covers full-screen viewers for markdown, code, source text, diffs, terminal output, HTML, and rendered document formats such as Org, LaTeX, Mermaid, and Graphviz. Media viewers such as images, audio, video players, and PDFs use their own controls.
 
@@ -18,7 +18,7 @@ Full-screen document viewers show a **Viewing Options** button near the bottom-r
 | HTML | Text Size slider, Reset View |
 | Org, LaTeX, and Mermaid rendered documents | Text Size slider, Spacing where text-based, Reset View |
 
-The options affect only the current viewer family. For example, changing terminal wrapping does not change markdown spacing, and changing markdown text size does not change code text size.
+Options affect only the current viewer family. Changing terminal wrapping does not change markdown spacing, and changing markdown text size does not change code text size.
 
 ## Text size
 

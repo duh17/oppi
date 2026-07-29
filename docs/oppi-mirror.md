@@ -1,8 +1,8 @@
 # Oppi Mirror mode
 
-Oppi Mirror makes an interactive terminal `pi` session visible in Oppi as a live session. The terminal keeps execution ownership; Oppi can watch output, send prompts, steer the active turn, queue follow-ups, answer extension UI, and stop or abort through the bridge.
+Oppi Mirror makes an interactive terminal `pi` session visible in Oppi as a live session. The terminal keeps execution ownership. Through the bridge, Oppi can watch output, send prompts, steer the active turn, queue follow-ups, answer extension UI, and stop or abort.
 
-Use mirror mode when you want the same Pi session open in both places: terminal for hands-on work, Oppi for mobile viewing and steering.
+Use mirror mode to open the same Pi session in both places: the terminal for hands-on work and Oppi for mobile viewing and steering.
 
 Do not use mirror mode for server-owned SDK sessions, `pi -p`, JSON mode, RPC mode, or other non-interactive Pi processes.
 
@@ -14,7 +14,7 @@ Do not use mirror mode for server-owned SDK sessions, `pi -p`, JSON mode, RPC mo
 
 ## Install from npm
 
-Pi installs public extension packages from npm with the `npm:` source prefix:
+Install public extension packages from npm with Pi's `npm:` source prefix:
 
 ```bash
 pi install npm:oppi-mirror
@@ -100,7 +100,7 @@ pi
 
 ## Commands
 
-The extension adds one Pi command with three actions:
+The extension adds one Pi command with these three actions:
 
 ```text
 /oppi-mirror start
@@ -116,7 +116,7 @@ The extension adds one Pi command with three actions:
 
 ## Behavior
 
-Mirror sessions appear in the normal Oppi session list and use the same timeline, tool rendering, and stored session state as other Oppi sessions.
+Mirror sessions appear in the normal Oppi session list. They use the same timeline, tool rendering, and stored session state as other Oppi sessions.
 
 The terminal Pi process remains the source of truth. Oppi can watch, send prompts, steer the active turn, queue follow-ups, answer supported extension UI, and stop the session, but it does not silently take over execution.
 
@@ -128,7 +128,7 @@ In Oppi clients:
 
 ## What works from mobile
 
-Mirror mode keeps an active terminal session available from Oppi for viewing, prompts, and steering.
+Mirror mode makes an active terminal session available in Oppi for viewing, prompts, and steering.
 
 Supported from Oppi:
 

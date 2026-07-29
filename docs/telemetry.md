@@ -1,8 +1,8 @@
 # Telemetry and diagnostics
 
-Oppi records diagnostics to answer one question: **does the app feel fast, reliable, and safe while someone is supervising a Pi session from Apple clients?**
+Oppi records diagnostics to answer one question: **does the app feel fast, reliable, and safe while someone supervises a Pi session from Apple clients?**
 
-This page is the public source of truth for what telemetry exists, how it is gated, where it is stored, and which metrics matter for user experience.
+This page is the public source of truth for available telemetry, its gates and storage, and the metrics that matter to user experience.
 
 ## Scope
 
@@ -110,7 +110,7 @@ Use this split when reading dashboards or telemetry reviews:
 
 ## Experience metrics that belong on the front page
 
-The front page should focus on metrics that map directly to user experience. Low-level counters stay available for drill-down, but they should not define the product health story.
+The front page should focus on metrics that directly map to user experience. Keep low-level counters available for drill-down, but do not let them define the product health story.
 
 ### App and session responsiveness
 
@@ -249,7 +249,7 @@ Current handling guidance:
 
 ## How Oppi uses Pi observability
 
-Pi persists sessions as JSONL and emits structured `AgentSessionEvent` values for lifecycle, streaming, tool execution, retry, compaction, and queue state. Oppi uses those primitives as the raw truth, then derives user-facing diagnostics:
+Pi persists sessions as JSONL and emits structured `AgentSessionEvent` values for lifecycle, streaming, tool execution, retry, compaction, and queue state. Oppi treats those primitives as the raw truth, then derives user-facing diagnostics:
 
 - server turn duration and server-side time to first token
 - token and cost snapshots

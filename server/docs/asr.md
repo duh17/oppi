@@ -1,11 +1,11 @@
 # Dictation / ASR
 
-Oppi supports two dictation paths:
+Oppi provides two dictation paths:
 
 1. **On-device dictation** — Apple local speech recognition on iPhone.
 2. **Server dictation** — iPhone audio streams to Oppi server, and Oppi forwards it to an STT backend.
 
-ASR is wired into Oppi server globally through `~/.config/oppi/config.json`. It is not a workspace extension.
+ASR is configured globally in Oppi server through `~/.config/oppi/config.json`, not as a workspace extension.
 
 ## iOS dictation engines
 
@@ -14,7 +14,7 @@ In **Settings → Voice → Dictation Engine**:
 - **Server** — route dictation through Oppi server and the configured STT backend.
 - **On-device** — use Apple local dictation.
 
-Older installs that still have a saved Automatic preference are migrated to Server.
+Older installs with a saved Automatic preference migrate to Server.
 
 ## Architecture
 
@@ -22,7 +22,7 @@ Older installs that still have a saved Automatic preference are migrated to Serv
 iPhone mic → WSS /dictation/stream → Oppi server → STT backend → transcript
 ```
 
-Dictation uses the server-level dictation WebSocket. The stream carries JSON control messages and binary PCM audio frames.
+Dictation uses the server-level dictation WebSocket, which carries JSON control messages and binary PCM audio frames.
 
 Message flow:
 
@@ -80,14 +80,14 @@ Check it:
 curl -sf http://127.0.0.1:7936/v1/info | jq .
 ```
 
-Configure Oppi server:
+Configure the Oppi server:
 
 ```bash
 oppi config set asr.sttEndpoint http://127.0.0.1:7936
 oppi config validate
 ```
 
-Restart Oppi server, then choose **Settings → Voice → Dictation Engine → Server** in the iOS app.
+Restart the Oppi server. Then choose **Settings → Voice → Dictation Engine → Server** in the iOS app.
 
 ## Remote ASR
 
@@ -103,17 +103,17 @@ Restart Oppi server, then choose **Settings → Voice → Dictation Engine → S
 
 Notes:
 
-- Connectivity is from **Oppi server → STT backend**, not phone → STT backend.
+- The connection runs from **Oppi server → STT backend**, not phone → STT backend.
 - Use `https://` for non-local endpoints.
 - Network latency directly affects partial and final transcript latency.
 - Oppi currently configures only `asr.sttEndpoint`. If your STT backend needs custom auth headers, put a reverse proxy in front of it.
 
 ## Audio retention
 
-Oppi server does not persist dictation audio locally. If you need archival or replay fixtures, configure that in your STT backend.
+Oppi server does not persist dictation audio locally. Configure archival or replay fixtures in your STT backend.
 
 ## Troubleshooting
 
-- If server dictation is unavailable, switch iOS Dictation Engine to **On-device** to verify microphone and permissions.
-- Check `curl -sf <sttEndpoint>/v1/info` from the Mac running Oppi server.
+- If server dictation is unavailable, switch the iOS Dictation Engine to **On-device** to verify the microphone and permissions.
+- Run `curl -sf <sttEndpoint>/v1/info` from the Mac that runs Oppi server.
 - Check Oppi server logs for `dictation_error` and STT HTTP failures.

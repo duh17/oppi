@@ -1,12 +1,12 @@
 # Oppi server architecture
 
-The Oppi server is the authority for sessions, workspace access, runtime configuration, and the mobile-facing projection of Pi session state. It exposes authenticated HTTP over an owner-only Unix socket to the local CLI. Apple clients, dictation, app events, and the terminal mirror bridge use the same remote HTTP and WebSocket handlers through an independently available network listener or an Iroh encrypted tunnel.
+The Oppi server owns sessions, workspace access, runtime configuration, and the mobile-facing projection of Pi session state. It exposes authenticated HTTP over an owner-only Unix socket to the local CLI. Apple clients, dictation, app events, and the terminal mirror bridge use the same remote HTTP and WebSocket handlers through an independently available network listener or Iroh encrypted tunnel.
 
 ## Audience and scope
 
 Read this page when changing server routes, WebSocket transports, session lifecycle code, runtime ownership, the Pi SDK adapter, terminal mirror behavior, storage projections, or protocol contracts.
 
-This page covers production server structure. It does not cover Apple UI composition; see [Client architecture](architecture-client.md). For route selection, Iroh fallback, and connection recovery across both sides, see [Networking and connection routing](networking.md).
+This page covers production server structure. For Apple UI composition, see [Client architecture](architecture-client.md). For route selection, Iroh fallback, and cross-system connection recovery, see [Networking and connection routing](networking.md).
 
 ## Server responsibilities
 
@@ -21,7 +21,7 @@ The server owns:
 - extension UI relay and attention state,
 - telemetry, push, Live Activity updates, runtime version status, and diagnostics.
 
-The server does not render the chat timeline. It sends protocol messages and HTTP snapshots that the Apple client renders.
+The server does not render the chat timeline. It sends protocol messages and HTTP snapshots for the Apple client to render.
 
 ## Server topology
 
@@ -145,7 +145,7 @@ The local socket intentionally has no WebSocket upgrade handler. Oppi Mirror and
 
 When Iroh is enabled, `iroh-pairing-server.ts` owns one persistent endpoint with `oppi/pair/1` and `oppi/http/1` ALPNs. Pairing binds the issued device token to the Apple endpoint ID. Each authenticated HTTP tunnel stream is pumped into `iroh-http-loopback.ts`, which invokes the same request and WebSocket upgrade handlers as the network listener. Limits on connections, streams, preface size and timeout, bearer size, and pump chunks bound resource use. Iroh-only startup and authentication fail closed.
 
-The private loopback is an adapter, not another API. Iroh transport code must not branch on route names, session types, or feature payloads.
+The private loopback is an adapter, not a second API. Iroh transport code must not branch on route names, session types, or feature payloads.
 
 `RouteHandler` owns route dispatch across domain files:
 
