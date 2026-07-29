@@ -92,6 +92,129 @@ struct AssistantMarkdownLayoutTests {
         }
     }
 
+    /// Regression: markdown images decode asynchronously. Soft layout invalidation
+    /// is skipped while detached from bottom, so scroll-away/recycle can leave the
+    /// image cut off until another interaction. Size changes must force-invalidate.
+    @Test func asyncPNGImageGrowsWhileDetachedFromBottom() async throws {
+        let hostSize = CGSize(width: 393, height: 852)
+        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let collectionView = AnchoredCollectionView(
+            frame: CGRect(origin: .zero, size: hostSize),
+            collectionViewLayout: layout
+        )
+        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 80, height: 320)).image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 80, height: 320))
+        }
+        let imageData = try #require(image.pngData())
+
+        let items: [(String, AssistantTimelineRowConfiguration)] = [
+            (
+                "msg-image",
+                AssistantTimelineRowConfiguration(
+                    text: """
+                    Detached markdown image regression fixture.
+
+                    ![Tall chart](fixtures/tall.png)
+
+                    Tail prose under the image.
+                    """,
+                    isStreaming: false,
+                    canFork: false,
+                    onFork: nil,
+                    sessionId: "assistant-png-detached-relayout",
+                    workspaceID: "ws-png",
+                    serverBaseURL: URL(string: "https://server.example.com")!,
+                    fetchWorkspaceFile: { _, _ in
+                        try await Task.sleep(for: .milliseconds(80))
+                        return imageData
+                    }
+                )
+            ),
+            (
+                "msg-after",
+                AssistantTimelineRowConfiguration(
+                    text: "This row must move down after detached image render.",
+                    isStreaming: false,
+                    canFork: false,
+                    onFork: nil,
+                    sessionId: "assistant-png-detached-relayout"
+                )
+            ),
+        ]
+
+        let registration = UICollectionView.CellRegistration<SafeSizingCell, String> { cell, _, itemID in
+            guard let config = items.first(where: { $0.0 == itemID })?.1 else { return }
+            cell.contentConfiguration = config
+        }
+        let dataSource = UICollectionViewDiffableDataSource<Int, String>(collectionView: collectionView) { cv, ip, id in
+            cv.dequeueConfiguredReusableCell(using: registration, for: ip, item: id)
+        }
+
+        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems(items.map(\.0))
+        await dataSource.apply(snapshot, animatingDifferences: false)
+        window.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+
+        let firstIP = IndexPath(item: 0, section: 0)
+        let initialFirstHeight = try #require(
+            collectionView.layoutAttributesForItem(at: firstIP)?.frame.height
+        )
+
+        collectionView.isDetachedFromBottom = true
+        collectionView.captureDetachedAnchor()
+        #expect(collectionView.detachedAnchorIsActive)
+
+        let imageRendered = await waitForTimelineCondition(timeoutMs: 1_800) {
+            await MainActor.run {
+                window.layoutIfNeeded()
+                collectionView.layoutIfNeeded()
+                guard let firstCell = collectionView.cellForItem(at: firstIP),
+                      let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: firstCell.contentView)
+                else {
+                    return false
+                }
+                return timelineAllImageViews(in: imageView).contains { $0.image != nil && !$0.isHidden }
+            }
+        }
+        #expect(imageRendered, "Expected delayed markdown PNG to decode while detached")
+
+        let reflowed = await waitForTimelineCondition(timeoutMs: 1_400) {
+            await MainActor.run {
+                window.layoutIfNeeded()
+                collectionView.layoutIfNeeded()
+                guard let firstFrame = collectionView.layoutAttributesForItem(at: firstIP)?.frame,
+                      let firstCell = collectionView.cellForItem(at: firstIP),
+                      let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: firstCell.contentView)
+                else {
+                    return false
+                }
+                let expectedImageHeight = ImageViewportSizing.fittedHeight(
+                    forWidth: max(1, imageView.bounds.width),
+                    heightToWidthRatio: 320.0 / 80.0,
+                    surface: .inlineProse,
+                    screenHeight: window.windowScene?.screen.bounds.height ?? hostSize.height
+                )
+                let imageTallEnough = imageView.bounds.height >= expectedImageHeight - 8
+                let rowGrew = firstFrame.height > initialFirstHeight + 40
+                // The user-visible bug is the image row staying short while detached.
+                return imageTallEnough && rowGrew
+            }
+        }
+
+        #expect(
+            reflowed,
+            "Detached markdown image stayed cut off after decode; initialRow=\(initialFirstHeight)"
+        )
+    }
+
     /// Regression: inline markdown images render asynchronously after the
     /// assistant row is first measured. If the enclosing collection view layout
     /// is not invalidated when the image appears, following rows can overlap it.

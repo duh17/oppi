@@ -1296,7 +1296,11 @@ final class NativeExpandedInlineImageView: UIView {
         // cell for a fresh fitting size.
         enclosingToolRow?.layoutIfNeeded()
 
-        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        // Image decode often finishes while the user is detached from bottom
+        // (scroll-away / recycle). Soft invalidation skips in that state and
+        // leaves the row cut off until another interaction; force-invalidate
+        // so self-sizing picks up the natural aspect height immediately.
+        ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     private func targetPreviewHeight(forWidth width: CGFloat, ratio: CGFloat) -> CGFloat {

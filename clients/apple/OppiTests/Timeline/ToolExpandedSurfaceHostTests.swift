@@ -490,6 +490,293 @@ struct ToolExpandedSurfaceHostTests {
         #expect(decoded)
     }
 
+    /// Regression: expanded read-tool images decode asynchronously. Soft layout
+    /// invalidation is skipped while the timeline is detached from bottom, so after
+    /// scroll-away/recycle the row can stay cut off until another interaction.
+    /// Image size changes must force-invalidate even while detached.
+    @Test func readMediaImageGrowsToAspectHeightWhileDetachedFromBottom() async throws {
+        let hostSize = CGSize(width: 390, height: 700)
+        let image = makeReadToolTestImage(size: CGSize(width: 80, height: 320))
+        let imageData = try #require(image.pngData())
+        let attachmentID = "att-detached-read-image-\(UUID().uuidString)"
+        let gate = AttachmentFetchGate(data: imageData)
+        let attachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: attachmentID,
+            mimeType: "image/png",
+            fileName: "tall-detached.png",
+            sizeBytes: imageData.count,
+            width: nil,
+            height: nil
+        )
+        let configuration = makeTimelineToolConfiguration(
+            title: "read /tmp/tall-detached.png",
+            expandedContent: .readMedia(
+                output: "",
+                filePath: "/tmp/tall-detached.png",
+                startLine: 1,
+                attachments: [attachment]
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        ).withSessionAttachmentFetcher { attachmentId in
+            #expect(attachmentId == attachmentID)
+            return await gate.fetch()
+        }
+
+        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let collectionView = AnchoredCollectionView(
+            frame: CGRect(origin: .zero, size: hostSize),
+            collectionViewLayout: layout
+        )
+        let hostController = UIViewController()
+        hostController.view.frame = CGRect(origin: .zero, size: hostSize)
+        hostController.view.addSubview(collectionView)
+        collectionView.frame = hostController.view.bounds
+        collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+
+        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let registration = UICollectionView.CellRegistration<SafeSizingCell, String> { cell, _, itemID in
+            if itemID == "tool-image" {
+                cell.contentConfiguration = configuration
+            } else {
+                cell.contentConfiguration = makeTimelineToolConfiguration(
+                    title: "read /tmp/after.txt",
+                    expandedContent: .text(
+                        text: "This row must move down after the image grows while detached.",
+                        language: nil
+                    ),
+                    toolNamePrefix: "read",
+                    isExpanded: true
+                )
+            }
+        }
+        let dataSource = UICollectionViewDiffableDataSource<Int, String>(
+            collectionView: collectionView
+        ) { cv, indexPath, itemID in
+            cv.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: itemID)
+        }
+
+        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems(["tool-image", "tool-after"])
+        await dataSource.apply(snapshot, animatingDifferences: false)
+        hostController.view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+
+        let firstIP = IndexPath(item: 0, section: 0)
+        let initialFirstHeight = try #require(
+            collectionView.layoutAttributesForItem(at: firstIP)?.frame.height
+        )
+
+        collectionView.isDetachedFromBottom = true
+        collectionView.captureDetachedAnchor()
+        #expect(collectionView.detachedAnchorIsActive)
+
+        let fetchStarted = await waitForTimelineCondition(timeoutMs: 1_200) {
+            await gate.fetchCount >= 1
+        }
+        #expect(fetchStarted, "Expected gated read-tool image fetch to start while detached")
+        #expect(
+            initialFirstHeight < 320,
+            "Pre-decode detached image row should start compact; got \(initialFirstHeight)"
+        )
+
+        await gate.release()
+
+        // Force-invalidate drives growth. Avoid settleTimelineLayout here so a
+        // soft-invalidate regression cannot be masked by test-driven remeasure.
+        let reflowed = await waitForTimelineCondition(timeoutMs: 2_400) { @MainActor in
+            guard let firstCell = collectionView.cellForItem(at: firstIP),
+                  let preview = firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: firstCell.contentView),
+                  readMediaContentImageView(in: preview) != nil,
+                  let firstFrame = collectionView.layoutAttributesForItem(at: firstIP)?.frame
+            else {
+                return false
+            }
+            // NativeExpandedInlineImageView uses window.bounds.height for the cap.
+            let expectedImageHeight = ImageViewportSizing.fittedHeight(
+                forWidth: max(1, preview.bounds.width),
+                heightToWidthRatio: 320.0 / 80.0,
+                surface: .primaryMedia,
+                screenHeight: window.bounds.height
+            )
+            let imageTallEnough = preview.bounds.height >= expectedImageHeight - 8
+            let rowGrew = firstFrame.height > initialFirstHeight + 80
+            return imageTallEnough && rowGrew
+        }
+
+        let finalPreviewHeight: CGFloat = {
+            guard let firstCell = collectionView.cellForItem(at: firstIP),
+                  let preview = firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: firstCell.contentView)
+            else {
+                return -1
+            }
+            return preview.bounds.height
+        }()
+        let finalFirstHeight = collectionView.layoutAttributesForItem(at: firstIP)?.frame.height ?? -1
+        #expect(
+            reflowed,
+            "Detached read-tool image stayed cut off after decode; initialRow=\(initialFirstHeight), finalRow=\(finalFirstHeight), previewHeight=\(finalPreviewHeight)"
+        )
+    }
+
+    /// Recycled/remounted image while detached: no dimension metadata, gated
+    /// decode, prove short → tall without test-driven settle loops.
+    ///
+    /// This is the user scroll-away/back path reduced to its layout-critical
+    /// core: a brand-new cell mounts short under an active detached anchor,
+    /// then async image height must force-invalidate to grow the row.
+    @Test func readMediaImageKeepsAspectHeightAfterScrollRecycleWhileDetached() async throws {
+        let hostSize = CGSize(width: 390, height: 700)
+        let image = makeReadToolTestImage(size: CGSize(width: 80, height: 320))
+        let imageData = try #require(image.pngData())
+        let attachmentID = "att-recycle-remount-\(UUID().uuidString)"
+        let gate = AttachmentFetchGate(data: imageData)
+        let attachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: attachmentID,
+            mimeType: "image/png",
+            fileName: "recycle-remount.png",
+            sizeBytes: imageData.count,
+            width: nil,
+            height: nil
+        )
+        let imageConfiguration = makeTimelineToolConfiguration(
+            title: "read /tmp/recycle-remount.png",
+            expandedContent: .readMedia(
+                output: "",
+                filePath: "/tmp/recycle-remount.png",
+                startLine: 1,
+                attachments: [attachment]
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        ).withSessionAttachmentFetcher { id in
+            #expect(id == attachmentID)
+            return await gate.fetch()
+        }
+        let afterConfiguration = makeTimelineToolConfiguration(
+            title: "read /tmp/after-recycle.txt",
+            expandedContent: .text(
+                text: "Trailing row after recycled image.",
+                language: nil
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+
+        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let collectionView = AnchoredCollectionView(
+            frame: CGRect(origin: .zero, size: hostSize),
+            collectionViewLayout: layout
+        )
+        let hostController = UIViewController()
+        hostController.view.frame = CGRect(origin: .zero, size: hostSize)
+        hostController.view.addSubview(collectionView)
+        collectionView.frame = hostController.view.bounds
+        collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+
+        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let registration = UICollectionView.CellRegistration<SafeSizingCell, String> { cell, _, itemID in
+            if itemID == "tool-image" {
+                cell.contentConfiguration = imageConfiguration
+            } else {
+                cell.contentConfiguration = afterConfiguration
+            }
+        }
+        let dataSource = UICollectionViewDiffableDataSource<Int, String>(
+            collectionView: collectionView
+        ) { cv, indexPath, itemID in
+            cv.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: itemID)
+        }
+
+        // Phase 1: mount a plain row, detach, then replace it with the gated
+        // image row so the image cell is a true remount under detached anchor.
+        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems(["tool-after"])
+        await dataSource.apply(snapshot, animatingDifferences: false)
+        hostController.view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+
+        collectionView.isDetachedFromBottom = true
+        collectionView.captureDetachedAnchor()
+        #expect(collectionView.detachedAnchorIsActive)
+
+        snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems(["tool-image", "tool-after"])
+        await dataSource.apply(snapshot, animatingDifferences: false)
+        collectionView.layoutIfNeeded()
+
+        let imageIP = IndexPath(item: 0, section: 0)
+        let fetchStarted = await waitForTimelineCondition(timeoutMs: 1_200) {
+            await gate.fetchCount >= 1
+        }
+        #expect(fetchStarted, "Expected recycled image fetch to start while gated")
+
+        let mountedShort = await waitForTimelineCondition(timeoutMs: 800) { @MainActor in
+            guard let cell = collectionView.cellForItem(at: imageIP),
+                  let preview = firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: cell.contentView),
+                  let rowFrame = collectionView.layoutAttributesForItem(at: imageIP)?.frame
+            else {
+                return false
+            }
+            return preview.bounds.height <= ImageViewportSizing.defaultPlaceholderHeight + 1
+                && rowFrame.height < 320
+                && readMediaContentImageView(in: preview) == nil
+        }
+        #expect(mountedShort, "Remounted detached image cell should start short before decode")
+
+        let shortRowHeight = collectionView.layoutAttributesForItem(at: imageIP)?.frame.height ?? -1
+        await gate.release()
+
+        // Do not call settleTimelineLayout / setNeedsLayout after release. The
+        // production force-invalidate path must drive the growth itself; soft
+        // invalidation while detached would leave the short height stuck.
+        let recovered = await waitForTimelineCondition(timeoutMs: 2_400) { @MainActor in
+            guard let cell = collectionView.cellForItem(at: imageIP),
+                  let preview = firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: cell.contentView),
+                  readMediaContentImageView(in: preview) != nil,
+                  let rowFrame = collectionView.layoutAttributesForItem(at: imageIP)?.frame
+            else {
+                return false
+            }
+            let expected = ImageViewportSizing.fittedHeight(
+                forWidth: max(1, preview.bounds.width),
+                heightToWidthRatio: 320.0 / 80.0,
+                surface: .primaryMedia,
+                screenHeight: window.bounds.height
+            )
+            return preview.bounds.height >= expected - 8
+                && rowFrame.height > shortRowHeight + 80
+                && rowFrame.height >= expected
+        }
+
+        let finalPreviewHeight: CGFloat = {
+            guard let cell = collectionView.cellForItem(at: imageIP),
+                  let preview = firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: cell.contentView)
+            else {
+                return -1
+            }
+            return preview.bounds.height
+        }()
+        let finalRowHeight = collectionView.layoutAttributesForItem(at: imageIP)?.frame.height ?? -1
+        #expect(
+            recovered,
+            "Remounted detached image stayed cut off after gated decode; shortRow=\(shortRowHeight), finalPreview=\(finalPreviewHeight), finalRow=\(finalRowHeight)"
+        )
+    }
+
     @Test func readMediaTallImageKeepsExpandedScrollPinnedWhileOuterTimelineScrolls() async throws {
         let image = makeReadToolTestImage(size: CGSize(width: 80, height: 220))
         let imageData = try #require(image.pngData())

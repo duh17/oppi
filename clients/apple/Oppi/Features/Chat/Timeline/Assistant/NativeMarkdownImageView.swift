@@ -711,7 +711,11 @@ final class NativeMarkdownImageView: UIView {
     }
 
     private func invalidateTimelineLayout() {
-        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        // Image decode commonly completes while the user is scrolled up and
+        // detached from bottom. Soft invalidation is skipped in that state and
+        // can leave the assistant row cut off until another interaction.
+        // Force-invalidate so self-sizing adopts the loaded image height now.
+        ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     @objc private func handleTap() {
