@@ -201,7 +201,8 @@ extension ChatTimelineCollectionHost.Controller {
         let assistantRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
             // Set streaming flag for self-sizing throttle. When streaming,
             // the cell skips expensive auto layout on alternate ticks.
-            let isStreaming = self?.streamingAssistantID == itemID
+            let isStreaming = self?.isAssistantStreamingPresentationActive == true
+                && self?.streamingAssistantID == itemID
             cell.isStreamingAssistant = isStreaming
             if !isStreaming {
                 cell.invalidateStreamingHeightCache()

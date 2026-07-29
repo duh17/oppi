@@ -540,4 +540,40 @@ struct StreamingFastPathTests {
         #expect(preview == "Hmm... I need to look at the code", "Thinking must update when assistant unchanged")
         #expect(hasMore == true, "Thinking hasMore must update when assistant unchanged")
     }
+
+    /// A completed session can briefly retain its last streaming assistant ID
+    /// after busy state clears. The cell must still leave streaming sizing mode;
+    /// otherwise its monotonic height cache preserves a large blank tail.
+    @Test func idleTransitionClearsStaleStreamingAssistantHeight() throws {
+        let h = Harness()
+        let streamingID = "assistant-digest"
+        let item = ChatItem.assistantMessage(
+            id: streamingID,
+            text: "## Audit\n\n- **Limitations:** Final digest text.",
+            timestamp: timestamp
+        )
+
+        h.apply(items: [item], streamingAssistantID: streamingID, isBusy: true)
+
+        let streamingCell = try #require(
+            h.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? SafeSizingCell
+        )
+        #expect(streamingCell.isStreamingAssistant)
+        let contentSizedHeight = streamingCell.frame.height
+        streamingCell.cachedStreamingHeight = contentSizedHeight + 1_200
+
+        // Mirror the observed ready session: execution is idle, while the
+        // reducer still exposes the final assistant ID for one render pass.
+        h.apply(items: [item], streamingAssistantID: streamingID, isBusy: false)
+
+        let completedCell = try #require(
+            h.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? SafeSizingCell
+        )
+        #expect(!completedCell.isStreamingAssistant)
+        #expect(completedCell.cachedStreamingHeight == nil)
+        #expect(
+            abs(completedCell.frame.height - contentSizedHeight) < 1,
+            "Completed assistant should return to its content-sized height without a blank tail"
+        )
+    }
 }

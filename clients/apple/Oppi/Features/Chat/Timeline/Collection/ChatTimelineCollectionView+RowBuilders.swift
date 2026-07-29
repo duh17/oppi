@@ -20,7 +20,8 @@ extension ChatTimelineCollectionHost.Controller {
     func assistantRowConfiguration(itemID: String, item: ChatItem) -> AssistantTimelineRowConfiguration? {
         guard case .assistantMessage(_, let text, _) = item else { return nil }
 
-        let isStreaming = itemID == streamingAssistantID
+        let isStreaming = isAssistantStreamingPresentationActive
+            && itemID == streamingAssistantID
 
         // Unified native markdown renderer — handles all content (plain
         // text, rich markdown, code blocks, tables) via

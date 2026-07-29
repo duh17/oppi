@@ -313,6 +313,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var detachedProgrammaticTargetOffsetY: CGFloat?
         var isApplyingDetachedProgrammaticCorrection = false
         var isTimelineBusy = false
+        /// Rendering/sizing must stop treating an assistant as streaming as soon
+        /// as execution becomes idle, even if the reducer retains its final ID
+        /// for one more render pass.
+        var isAssistantStreamingPresentationActive = false
         var lastDistanceFromBottom: CGFloat = 0
         private var lastBusyAmbientScrollReconcileNs: UInt64 = 0
         let toolOutputLoader = ExpandedToolOutputLoader()
@@ -554,6 +558,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             hasOlderServerPage = configuration.hasOlderServerPage
             renderWindowStep = configuration.renderWindowStep
             streamingAssistantID = configuration.streamingAssistantID
+            let timelineBusyChanged = configuration.isBusy != isTimelineBusy
+            isAssistantStreamingPresentationActive = configuration.isBusy
             // Note: isTimelineBusy is updated AFTER the structurallyUnchanged
             // check so the comparison detects busy→idle transitions.
 
@@ -848,6 +854,14 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                         nextItemByID: applyPlan.nextItemByID
                     )
                 )
+            }
+            if timelineBusyChanged,
+               let finalAssistantID = configuration.streamingAssistantID ?? previousStreamingAssistantID {
+                // Completion can arrive before the reducer clears its streaming
+                // ID. Reconfigure anyway so SafeSizingCell drops its monotonic
+                // streaming-height cache and the final markdown gets a settled
+                // non-streaming layout instead of retaining a blank tail.
+                forceReconfigureIDs.append(finalAssistantID)
             }
             if configuration.showsWorkingIndicator,
                configuration.extensionWorkingState != previousExtensionWorkingState {
