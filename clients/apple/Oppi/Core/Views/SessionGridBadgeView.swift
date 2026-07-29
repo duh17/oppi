@@ -162,6 +162,10 @@ final class SessionGridBadgeView: UIView {
         didSet { updateIfNeeded() }
     }
 
+    var agentVisualScale: CGFloat = 1 {
+        didSet { updateIfNeeded() }
+    }
+
     /// Injectable only at this rendering boundary so focused tests can prove
     /// Agent rows never consult the device-local assistant avatar.
     var assistantAvatarProvider: @MainActor () -> AssistantAvatarSnapshot = { AssistantAvatar.currentSnapshot }
@@ -235,13 +239,15 @@ final class SessionGridBadgeView: UIView {
         sessionId: String,
         agentId: String?,
         agentIcon: IconChoice?,
-        iconAssetCache: IconAssetCache?
+        iconAssetCache: IconAssetCache?,
+        agentVisualScale: CGFloat = 1
     ) {
         isConfiguring = true
         self.sessionId = sessionId
         self.agentId = agentId
         self.agentIcon = agentIcon
         self.iconAssetCache = iconAssetCache
+        self.agentVisualScale = agentVisualScale
         isConfiguring = false
         updateIfNeeded()
     }
@@ -296,6 +302,13 @@ final class SessionGridBadgeView: UIView {
             accessibilityLabel = "Saved Agent, \(content.accessibilityDescription)"
             identity = "agent:\(content)"
         }
+        imageView.transform = switch presentation {
+        case .agent:
+            CGAffineTransform(scaleX: agentVisualScale, y: agentVisualScale)
+        case .globalAvatar:
+            .identity
+        }
+
         let cacheKey = "\(sessionId):\(themeId):\(identity)"
         guard cacheKey != lastCacheKey else { return }
         lastCacheKey = cacheKey

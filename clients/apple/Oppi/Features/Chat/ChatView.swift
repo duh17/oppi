@@ -1068,7 +1068,8 @@ struct ChatView: View {
                     AgentIconView(
                         value: session?.launch?.agentIcon,
                         size: 18,
-                        frameSize: 20
+                        frameSize: 20,
+                        visualScale: ChatAgentIconStyle.compactVisualScale
                     )
                 case .globalAvatar:
                     CurrentAssistantAvatarPreview(

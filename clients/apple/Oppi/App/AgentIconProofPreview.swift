@@ -192,7 +192,8 @@ struct AgentIconProofPreview: View {
                     value: agent.definition.icon,
                     size: 20,
                     frameSize: 24,
-                    isDecorative: false
+                    isDecorative: false,
+                    visualScale: ChatAgentIconStyle.compactVisualScale
                 )
                 Text(agentSession.displayTitle)
                     .font(.headline)

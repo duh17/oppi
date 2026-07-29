@@ -277,7 +277,8 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             sessionId: configuration.sessionId,
             agentId: configuration.agentId,
             agentIcon: configuration.agentIcon,
-            iconAssetCache: configuration.iconAssetCache
+            iconAssetCache: configuration.iconAssetCache,
+            agentVisualScale: ChatAgentIconStyle.compactVisualScale
         )
         bubbleContainer.backgroundColor = UIColor(palette.purple).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
 

@@ -75,6 +75,13 @@ func loadIconAssetForView(
     }
 }
 
+enum ChatAgentIconStyle {
+    /// Agent artwork often includes more internal whitespace than the Pi mark.
+    /// Scale it optically on chat surfaces without changing layout geometry.
+    static let compactVisualScale: CGFloat = 1.18
+    static let heroVisualScale: CGFloat = 1.45
+}
+
 enum AgentIconSizingPolicy {
     static func contentSize(
         baseSize: CGFloat,
@@ -114,6 +121,7 @@ struct IconChoiceView: View {
     let frameSize: CGFloat?
     let isDecorative: Bool
     let assetCache: IconAssetCache?
+    let visualScale: CGFloat
 
     @Environment(\.iconAssetCache) private var environmentAssetCache
     @State private var loadedGenmoji: UIImage?
@@ -126,7 +134,8 @@ struct IconChoiceView: View {
         size: CGFloat,
         frameSize: CGFloat? = nil,
         isDecorative: Bool = true,
-        assetCache: IconAssetCache? = nil
+        assetCache: IconAssetCache? = nil,
+        visualScale: CGFloat = 1
     ) {
         self.value = value
         self.purpose = purpose
@@ -134,6 +143,7 @@ struct IconChoiceView: View {
         self.frameSize = frameSize
         self.isDecorative = isDecorative
         self.assetCache = assetCache
+        self.visualScale = visualScale
         _scaledSize = ScaledMetric(wrappedValue: size, relativeTo: .body)
     }
 
@@ -180,6 +190,7 @@ struct IconChoiceView: View {
         }
         .font(.system(size: displaySize))
         .frame(width: frameSize ?? size, height: frameSize ?? size)
+        .scaleEffect(visualScale)
         .accessibilityHidden(isDecorative)
         .accessibilityLabel(isDecorative ? "" : accessibilityDescription)
         .task(id: IconAssetLoadKey(
@@ -220,19 +231,22 @@ struct AgentIconView: View {
     let frameSize: CGFloat?
     let isDecorative: Bool
     let assetCache: IconAssetCache?
+    let visualScale: CGFloat
 
     init(
         value: IconChoice?,
         size: CGFloat,
         frameSize: CGFloat? = nil,
         isDecorative: Bool = true,
-        assetCache: IconAssetCache? = nil
+        assetCache: IconAssetCache? = nil,
+        visualScale: CGFloat = 1
     ) {
         self.value = value
         self.size = size
         self.frameSize = frameSize
         self.isDecorative = isDecorative
         self.assetCache = assetCache
+        self.visualScale = visualScale
     }
 
     var body: some View {
@@ -242,7 +256,8 @@ struct AgentIconView: View {
             size: size,
             frameSize: frameSize,
             isDecorative: isDecorative,
-            assetCache: assetCache
+            assetCache: assetCache,
+            visualScale: visualScale
         )
     }
 }

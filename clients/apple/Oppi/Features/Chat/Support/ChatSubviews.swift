@@ -25,7 +25,13 @@ struct ChatEmptyState: View {
                 agentIcon: agentIcon
             ) {
             case .agent:
-                AgentIconView(value: agentIcon, size: 64, frameSize: 112, isDecorative: false)
+                AgentIconView(
+                    value: agentIcon,
+                    size: 64,
+                    frameSize: 112,
+                    isDecorative: false,
+                    visualScale: ChatAgentIconStyle.heroVisualScale
+                )
             case .globalAvatar:
                 AssistantAvatarPreview(
                     avatar: avatar,

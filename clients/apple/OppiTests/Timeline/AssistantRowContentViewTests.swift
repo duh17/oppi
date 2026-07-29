@@ -247,6 +247,23 @@ struct AssistantTimelineRowContentViewTests {
         }
 
         #expect(imageView.image === expectedImage)
+        #expect(imageView.transform.a > 1.1)
+        #expect(imageView.transform.d > 1.1)
+    }
+
+    @MainActor
+    @Test func ordinaryAssistantBadgeKeepsTheUnscaledPiIdentity() throws {
+        let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
+            text: "Ordinary assistant",
+            isStreaming: false,
+            canFork: false,
+            onFork: nil,
+            sessionId: "session-ordinary"
+        ))
+        let badge = try #require(timelineFirstView(ofType: SessionGridBadgeView.self, in: view))
+        let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
+
+        #expect(imageView.transform == .identity)
     }
 
     @MainActor
