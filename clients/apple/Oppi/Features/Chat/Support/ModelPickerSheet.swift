@@ -16,6 +16,7 @@ struct ModelPickerSheet: View {
     @State private var searchText = ""
     @State private var collapsedProviders: Set<String> = []
     @State private var providerQuotas: ProviderQuotasInfo?
+    @State private var modelLoadError: String?
     private var recentIds: [String] { AppPreferences.RecentModels.load() }
 
     private var models: [ModelInfo] { chatState.cachedModels }
@@ -76,15 +77,24 @@ struct ModelPickerSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if models.isEmpty && !chatState.modelsCacheReady {
+                if models.isEmpty && !chatState.modelsCacheReady && modelLoadError == nil {
                     ProgressView("Loading models…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if models.isEmpty {
-                    ContentUnavailableView(
-                        "No Models Available",
-                        systemImage: "cpu",
-                        description: Text("Server returned no models.")
-                    )
+                    ContentUnavailableView {
+                        Label(
+                            modelLoadError == nil ? "No Models Available" : "Models Unavailable",
+                            systemImage: modelLoadError == nil ? "cpu" : "wifi.exclamationmark"
+                        )
+                    } description: {
+                        Text(modelLoadError ?? "Server returned no models.")
+                    } actions: {
+                        if modelLoadError != nil, let apiClient {
+                            Button("Try Again") {
+                                Task { await loadModels(api: apiClient) }
+                            }
+                        }
+                    }
                 } else {
                     modelList
                 }
@@ -101,7 +111,7 @@ struct ModelPickerSheet: View {
             .task {
                 // Background refresh — UI already shows cached data
                 if let api = apiClient {
-                    async let refresh: Void = chatState.refreshModelCache(api: api)
+                    async let refresh: Void = loadModels(api: api)
                     async let usage: Void = loadProviderQuotas(api: api)
                     _ = await (refresh, usage)
                 }
@@ -265,6 +275,17 @@ struct ModelPickerSheet: View {
         }
         guard !quotaSummary.isEmpty else { return base }
         return "\(base), quota \(quotaSummary)"
+    }
+
+    @MainActor
+    private func loadModels(api: APIClient) async {
+        modelLoadError = nil
+        do {
+            chatState.cachedModels = try await api.listModels()
+            chatState.modelsCacheReady = true
+        } catch {
+            modelLoadError = error.localizedDescription
+        }
     }
 
     @MainActor
