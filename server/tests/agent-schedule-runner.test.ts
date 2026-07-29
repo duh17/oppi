@@ -116,6 +116,33 @@ describe("agent schedule runner", () => {
     expect(sessions[0]?.launch?.modelPolicy).toBeUndefined();
   });
 
+  it("applies a schedule thinking override to the launched session", async () => {
+    const schedule = store.createSchedule(
+      {
+        name: "Deep thinking check",
+        trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+        action: { ...action(), thinkingLevel: "high" },
+      },
+      500,
+    );
+    const runner = new AgentScheduleRunner({
+      storage: storage(),
+      sessions: { startSession, sendPrompt },
+      ensureSessionContextWindow: (session) => session,
+      nowMs: () => 2_000,
+    });
+
+    await runner.runOnce();
+
+    expect(store.listRunSummaries(schedule.id)).toEqual([
+      expect.objectContaining({ status: "completed" }),
+    ]);
+    expect(sessions[0]).toMatchObject({
+      thinkingLevel: "high",
+      launch: { thinkingLevel: "high" },
+    });
+  });
+
   it("marks explicitly modeled schedule launches as fail-closed", async () => {
     const schedule = store.createSchedule(
       {

@@ -72,6 +72,27 @@ extension APIClient {
         return try JSONDecoder().decode(AgentResponse.self, from: data).agent
     }
 
+    func updateAgentNative(
+        agentId: String,
+        name: String,
+        description: String?,
+        instructions: AgentInstructions?,
+        model: String?,
+        thinkingLevel: ThinkingLevel?
+    ) async throws -> StoredAgentDefinition {
+        let encodedAgentId = try percentEncodePathSegment(agentId)
+        let data = try await patch(
+            "/agents/\(encodedAgentId)",
+            body: NativeAgentUpdateBody(
+                name: name,
+                description: description,
+                instructions: instructions,
+                sessionDefaults: .init(model: model, thinkingLevel: thinkingLevel)
+            )
+        )
+        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+    }
+
     func updateAgentIcon(agentId: String, icon: IconChoice) async throws -> StoredAgentDefinition {
         struct IconUpdateBody: Encodable {
             let icon: IconChoice
@@ -180,6 +201,24 @@ extension APIClient {
         return try JSONDecoder().decode(AgentScheduleSummaryResponse.self, from: data).schedule
     }
 
+    func updateAgentScheduleNative(
+        scheduleId: String,
+        name: String,
+        trigger: AgentScheduleTrigger,
+        action: AgentScheduleAction
+    ) async throws -> AgentScheduleSummary {
+        let encodedScheduleId = try percentEncodePathSegment(scheduleId)
+        let data = try await patch(
+            "/schedules/\(encodedScheduleId)",
+            body: NativeScheduleUpdateBody(
+                name: name,
+                trigger: trigger,
+                action: NativeScheduleActionUpdate(action)
+            )
+        )
+        return try JSONDecoder().decode(AgentScheduleSummaryResponse.self, from: data).schedule
+    }
+
     func pauseAgentSchedule(_ scheduleId: String) async throws -> AgentScheduleSummary {
         try await scheduleStateMutation(scheduleId: scheduleId, action: "pause")
     }
@@ -232,6 +271,90 @@ private extension APIClient {
         let (data, response) = try await request("DELETE", path: path)
         try checkStatus(response, data: data)
         return data
+    }
+}
+
+private struct NativeAgentUpdateBody: Encodable {
+    struct SessionDefaults: Encodable {
+        let model: String?
+        let thinkingLevel: ThinkingLevel?
+
+        enum CodingKeys: String, CodingKey { case model, thinkingLevel }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeNullable(model, forKey: .model)
+            try container.encodeNullable(thinkingLevel, forKey: .thinkingLevel)
+        }
+    }
+
+    let name: String
+    let description: String?
+    let instructions: AgentInstructions?
+    let sessionDefaults: SessionDefaults
+
+    enum CodingKeys: String, CodingKey { case name, description, instructions, sessionDefaults }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encodeNullable(description, forKey: .description)
+        try container.encodeNullable(instructions, forKey: .instructions)
+        try container.encode(sessionDefaults, forKey: .sessionDefaults)
+    }
+}
+
+private struct NativeScheduleUpdateBody: Encodable {
+    let name: String
+    let trigger: AgentScheduleTrigger
+    let action: NativeScheduleActionUpdate
+}
+
+private struct NativeScheduleActionUpdate: Encodable {
+    let action: AgentScheduleAction
+
+    init(_ action: AgentScheduleAction) {
+        self.action = action
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case workspaceId, sessionId, prompt, agentId, model, thinkingLevel, name, streamingBehavior
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch action {
+        case .newSession(
+            let workspaceId,
+            let prompt,
+            let agentId,
+            let model,
+            let thinkingLevel,
+            _,
+            let name
+        ):
+            try container.encode(workspaceId, forKey: .workspaceId)
+            try container.encode(prompt, forKey: .prompt)
+            try container.encodeNullable(agentId, forKey: .agentId)
+            try container.encodeNullable(model, forKey: .model)
+            try container.encodeNullable(thinkingLevel, forKey: .thinkingLevel)
+            try container.encodeNullable(name, forKey: .name)
+        case .existingSession(let workspaceId, let sessionId, let prompt, let streamingBehavior):
+            try container.encode(workspaceId, forKey: .workspaceId)
+            try container.encode(sessionId, forKey: .sessionId)
+            try container.encode(prompt, forKey: .prompt)
+            try container.encodeNullable(streamingBehavior, forKey: .streamingBehavior)
+        }
+    }
+}
+
+private extension KeyedEncodingContainer {
+    mutating func encodeNullable<T: Encodable>(_ value: T?, forKey key: Key) throws {
+        if let value {
+            try encode(value, forKey: key)
+        } else {
+            try encodeNil(forKey: key)
+        }
     }
 }
 

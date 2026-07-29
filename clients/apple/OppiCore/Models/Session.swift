@@ -108,17 +108,19 @@ enum ControlSessionStarterPrompt {
         } ?? ""
         let workflow = switch domain {
         case .agents:
-            "Use the `oppi agent` command family to list and inspect existing definitions, then create or update the approved definition. If Agent behavior is ambiguous, ask focused questions about responsibilities, boundaries, resources, defaults, and success criteria."
+            "Use the `oppi agent` command family to list and inspect existing definitions, then create or update the proposed definition. If Agent behavior is ambiguous, ask focused questions about responsibilities, boundaries, resources, defaults, and success criteria."
         case .schedules:
-            "Use the `oppi schedule` command family to list and inspect existing schedules, then create or update the approved schedule. If schedule behavior or timing is ambiguous, ask focused questions about the task, target workspace or session, cadence, time zone, safety constraints, and expected output."
+            "Use the `oppi schedule` command family to list and inspect existing schedules, then create or update the proposed schedule. If schedule behavior or timing is ambiguous, ask focused questions about the task, target workspace or session, cadence, time zone, safety constraints, and expected output. Every model change must use a canonical `provider/model` ID. If the user omits the provider and inspected server state does not identify it, ask one focused provider question before proposing the change; do not guess. Once the provider is known, name the canonical ID and use `oppi schedule update <id> --model <provider/model>` for a model-only update instead of embedding the model in definition JSON."
         case .skills:
-            "Use the restricted `oppi skill` command family to inspect the canonical Skill and read each current file revision. Update only approved, existing editable files with `oppi skill update-file --base-revision <revision> --content-json <json-string>`; package Skills are read-only. If a revision conflicts, re-read the file and reconcile instead of overwriting it."
+            "Use the restricted `oppi skill` command family to inspect the canonical Skill and read each current file revision. Update only proposed, existing editable files with `oppi skill update-file --base-revision <revision> --content-json <json-string>`; package Skills are read-only. If a revision conflicts, re-read the file and reconcile instead of overwriting it."
         case .workspaces:
-            "Use the `oppi workspace` command family to inspect existing workspaces, then create or update the approved workspace. Ask focused questions about paths, runtime, and access when they are ambiguous."
+            "Use the `oppi workspace` command family to inspect existing workspaces, then create or update the proposed workspace. Ask focused questions about paths, runtime, and access when they are ambiguous."
         }
         let definitionRequirement = switch (domain, intent) {
-        case (.agents, _), (.schedules, .revise):
-            " Pass the approved definition directly with `--definition-json`; do not use a definition file."
+        case (.agents, _):
+            " Pass definition changes directly with `--definition-json`; do not use a definition file."
+        case (.schedules, .revise):
+            " Pass non-model definition changes directly with `--definition-json`; do not use a definition file."
         default:
             ""
         }
@@ -129,7 +131,7 @@ enum ControlSessionStarterPrompt {
         return """
         Help the user \(intent == .create ? "create" : "revise") an Oppi \(subject).\(target)\(workspace)
 
-        Act as Default Agent. First inspect the current server state using only approved `oppi` commands. \(workflow) Summarize the proposed changes and wait for explicit approval before making them. After approval, apply the change with the appropriate approved `oppi` command.\(definitionRequirement)
+        Act as Default Agent. First inspect the current server state using only approved `oppi` commands. \(workflow) Summarize the exact proposed changes, then immediately invoke the appropriate `oppi` command so its existing native confirmation is the sole approval gate. Do not ask the user to type approve before invoking the command.\(definitionRequirement)
 
         Do not use filesystem tools or temporary files for this task.\(requestBlock)
         """

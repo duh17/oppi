@@ -128,6 +128,42 @@ struct AgentScheduleAPIClientTests {
         #expect(agent.definition.description == nil)
     }
 
+    @Test func agentUpdateSendsReplacePromptModelAndThinkingDefaults() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "PATCH")
+            #expect(request.url?.path == "/agents/agent-1")
+            let data = requestBodyData(request)
+            let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(Set(json.keys) == ["name", "description", "instructions", "sessionDefaults"])
+            let definition = try JSONDecoder().decode(AgentDefinition.self, from: data)
+            #expect(definition.instructions?.mode == .replace)
+            #expect(definition.instructions?.text == "Use only these instructions.")
+            #expect(definition.sessionDefaults?.model == "openai/gpt-5.6")
+            #expect(definition.sessionDefaults?.thinkingLevel == .xhigh)
+            return mockResponse(json: """
+            {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":3,"definition":{"name":"Reviewer","instructions":{"mode":"replace","text":"Use only these instructions."},"sessionDefaults":{"model":"openai/gpt-5.6","thinkingLevel":"xhigh"}},"createdAt":1000,"updatedAt":3000}}
+            """)
+        }
+
+        let updated = try await client.updateAgentNative(
+            agentId: "agent-1",
+            name: "Reviewer",
+            description: nil,
+            instructions: AgentInstructions(
+                mode: .replace,
+                text: "Use only these instructions."
+            ),
+            model: "openai/gpt-5.6",
+            thinkingLevel: .xhigh
+        )
+
+        #expect(updated.definition.instructions?.mode == .replace)
+        #expect(updated.definition.sessionDefaults?.thinkingLevel == .xhigh)
+    }
+
     @Test func agentIconUpdateSendsOnlyIconForSetAndClear() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -211,7 +247,7 @@ struct AgentScheduleAPIClientTests {
             #expect(request.httpMethod == "GET")
             #expect(request.url?.path == "/schedules/sch-1")
             return mockResponse(json: """
-            {"schedule":{"id":"sch-1","name":"Daily QA","status":"active","trigger":{"type":"cron","expression":"0 9 * * *","timeZone":"America/Los_Angeles"},"action":{"type":"new_session","workspaceId":"ws-1","prompt":"Run QA","agentId":"agent-1","model":"openai/gpt-5.5","worktreeId":"wt-1","name":"QA run"},"createdAt":1000,"updatedAt":2000}}
+            {"schedule":{"id":"sch-1","name":"Daily QA","status":"active","trigger":{"type":"cron","expression":"0 9 * * *","timeZone":"America/Los_Angeles"},"action":{"type":"new_session","workspaceId":"ws-1","prompt":"Run QA","agentId":"agent-1","model":"openai/gpt-5.5","thinkingLevel":"high","worktreeId":"wt-1","name":"QA run"},"createdAt":1000,"updatedAt":2000}}
             """)
         }
 
@@ -219,7 +255,15 @@ struct AgentScheduleAPIClientTests {
 
         #expect(schedule.name == "Daily QA")
         #expect(schedule.trigger.displaySummary.contains("0 9 * * *"))
-        guard case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name) = schedule.action else {
+        guard case .newSession(
+            let workspaceId,
+            let prompt,
+            let agentId,
+            let model,
+            let thinkingLevel,
+            let worktreeId,
+            let name
+        ) = schedule.action else {
             Issue.record("Expected new-session action")
             return
         }
@@ -227,8 +271,46 @@ struct AgentScheduleAPIClientTests {
         #expect(prompt == "Run QA")
         #expect(agentId == "agent-1")
         #expect(model == "openai/gpt-5.5")
+        #expect(thinkingLevel == .high)
         #expect(worktreeId == "wt-1")
         #expect(name == "QA run")
+    }
+
+    @Test func scheduleUpdateEncodesThinkingOverride() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "PATCH")
+            #expect(request.url?.path == "/schedules/sch-1")
+            let json = try #require(
+                JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
+            )
+            let action = try #require(json["action"] as? [String: Any])
+            #expect(action["thinkingLevel"] as? String == "xhigh")
+            #expect(action["agentId"] is NSNull)
+            #expect(action["model"] is NSNull)
+            #expect(action["name"] is NSNull)
+            #expect(action["worktreeId"] == nil)
+            return mockResponse(json: """
+            {"schedule":{"id":"sch-1","name":"Daily QA","status":"active","trigger":{"type":"cron","expression":"0 9 * * *","timeZone":"UTC"},"action":{"type":"new_session","workspaceId":"ws-1","promptChars":6},"createdAt":1000,"updatedAt":2000}}
+            """)
+        }
+
+        _ = try await client.updateAgentScheduleNative(
+            scheduleId: "sch-1",
+            name: "Daily QA",
+            trigger: .cron(expression: "0 9 * * *", timeZone: "UTC"),
+            action: .newSession(
+                workspaceId: "ws-1",
+                prompt: "Run QA",
+                agentId: nil,
+                model: nil,
+                thinkingLevel: .xhigh,
+                worktreeId: nil,
+                name: nil
+            )
+        )
     }
 
     @Test func scheduleRestorePostsActionAndDecodesActiveSchedule() async throws {
@@ -851,6 +933,42 @@ struct SchedulePresentationTests {
     }
 }
 
+@Suite("Native schedule editing")
+struct NativeScheduleEditingTests {
+    @Test func simpleDailyAndWeeklyCronRoundTripThroughNativeDraft() {
+        let daily = AgentScheduleTrigger.cron(
+            expression: "15 8 * * *",
+            timeZone: "America/Los_Angeles"
+        )
+        let weekly = AgentScheduleTrigger.cron(
+            expression: "30 9 * * 1",
+            timeZone: "America/New_York"
+        )
+
+        let dailyDraft = ScheduleTriggerDraft(trigger: daily, now: Date(timeIntervalSince1970: 0))
+        let weeklyDraft = ScheduleTriggerDraft(trigger: weekly, now: Date(timeIntervalSince1970: 0))
+
+        #expect(dailyDraft.cadence == .daily)
+        #expect(dailyDraft.makeTrigger() == daily)
+        #expect(weeklyDraft.cadence == .weekly)
+        #expect(weeklyDraft.makeTrigger() == weekly)
+    }
+
+    @Test func advancedCronIsPreservedUntilTheUserChoosesANativeCadence() {
+        let custom = AgentScheduleTrigger.cron(
+            expression: "0 8 1 * *",
+            timeZone: "UTC"
+        )
+        var draft = ScheduleTriggerDraft(trigger: custom)
+
+        #expect(draft.cadence == .custom)
+        #expect(draft.makeTrigger() == custom)
+
+        draft.cadence = .daily
+        #expect(draft.makeTrigger()?.scheduleScreenCadence == "DAILY")
+    }
+}
+
 @Suite("Control session starter prompts")
 struct ControlSessionStarterPromptTests {
     @Test func scheduleCreationPromptCarriesRequestWorkspaceAndClarificationContract() {
@@ -867,7 +985,9 @@ struct ControlSessionStarterPromptTests {
         #expect(prompt.contains("Canonical workspace name: Dream"))
         #expect(prompt.contains("`oppi schedule`"))
         #expect(prompt.contains("schedule behavior or timing is ambiguous"))
-        #expect(prompt.contains("wait for explicit approval"))
+        #expect(prompt.contains("native confirmation"))
+        #expect(prompt.contains("Do not ask the user to type approve"))
+        #expect(!prompt.contains("wait for explicit approval"))
     }
 
     @Test func agentCreationPromptTeachesTheAgentCommandAndBehaviorClarification() {
@@ -920,7 +1040,13 @@ struct ControlSessionStarterPromptTests {
         #expect(first.contains("Canonical target ID: schedule-7"))
         #expect(first.contains("Canonical target name: Nightly review"))
         #expect(first.contains("--definition-json"))
+        #expect(first.contains("--model <provider/model>"))
+        #expect(first.contains("canonical `provider/model`"))
+        #expect(first.contains("ask one focused provider question"))
+        #expect(first.contains("do not guess"))
         #expect(first.contains("Do not use filesystem tools or temporary files"))
-        #expect(first.contains("wait for explicit approval"))
+        #expect(first.contains("native confirmation"))
+        #expect(first.contains("Do not ask the user to type approve"))
+        #expect(!first.contains("wait for explicit approval"))
     }
 }

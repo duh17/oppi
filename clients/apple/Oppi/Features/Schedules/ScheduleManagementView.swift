@@ -286,6 +286,7 @@ private struct ScheduleDetailView: View {
     @State private var isLoading = false
     @State private var isMutating = false
     @State private var error: String?
+    @State private var showNativeEdit = false
     @State private var showRevision = false
     @State private var showPromptReader = false
     @State private var confirmArchive = false
@@ -370,8 +371,26 @@ private struct ScheduleDetailView: View {
         .navigationTitle(schedule?.name ?? "Schedule")
         .navigationBarTitleDisplayMode(.inline)
         .themedListSurface()
+        .toolbar {
+            if let schedule, schedule.status != .archived {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Edit") {
+                        showNativeEdit = true
+                    }
+                    .accessibilityIdentifier("schedule.detail.nativeEdit")
+                }
+            }
+        }
         .task(id: scheduleId) { await load() }
         .refreshable { await load() }
+        .fullScreenCover(isPresented: $showNativeEdit) {
+            if let schedule {
+                ScheduleNativeEditView(schedule: schedule) { updated, summary in
+                    self.schedule = updated
+                    onChanged(summary)
+                }
+            }
+        }
         .sheet(isPresented: $showRevision) {
             if let schedule {
                 GuidedControlSessionSheet(
@@ -487,13 +506,24 @@ private struct ScheduleDetailView: View {
     @ViewBuilder
     private func runWithDetail(_ action: AgentScheduleAction) -> some View {
         switch action {
-        case .newSession(let workspaceId, _, let agentId, let model, _, let name):
+        case .newSession(
+            let workspaceId,
+            _,
+            let agentId,
+            let model,
+            let thinkingLevel,
+            _,
+            let name
+        ):
             detailRow("Workspace", humanWorkspaceName(workspaceId))
             if let agentLabel = humanAgentName(agentId) {
                 detailRow("Agent", agentLabel)
             }
             if let model, !model.isEmpty {
                 detailRow("Model", SessionFormatting.shortModelName(model) ?? model)
+            }
+            if let thinkingLevel {
+                detailRow("Thinking", thinkingTitle(thinkingLevel))
             }
             if let name, !name.isEmpty {
                 detailRow("Session title", name)
@@ -547,7 +577,7 @@ private struct ScheduleDetailView: View {
 
     private func prompt(in action: AgentScheduleAction) -> String {
         switch action {
-        case .newSession(_, let prompt, _, _, _, _),
+        case .newSession(_, let prompt, _, _, _, _, _),
              .existingSession(_, _, let prompt, _):
             return prompt
         }

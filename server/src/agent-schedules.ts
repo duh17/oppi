@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { validateCronExpression, validateScheduleTimeZone } from "./agent-schedule-cron.js";
+import type { ThinkingLevel } from "./agent-launch-service.js";
 import { generateId } from "./id.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 
@@ -21,6 +22,7 @@ export type AgentScheduleAction =
       prompt: string;
       agentId?: string;
       model?: string;
+      thinkingLevel?: ThinkingLevel;
       worktreeId?: string;
       name?: string;
     }
@@ -38,6 +40,7 @@ export type AgentScheduleActionPatch = {
   prompt?: string;
   agentId?: string | null;
   model?: string | null;
+  thinkingLevel?: ThinkingLevel | null;
   worktreeId?: string | null;
   name?: string | null;
   sessionId?: string;
@@ -118,6 +121,15 @@ export interface CreateAgentScheduleRequest {
   trigger: AgentScheduleTrigger;
   action: AgentScheduleAction;
 }
+
+const THINKING_LEVELS = new Set<ThinkingLevel>([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
 
 export interface AgentScheduleClaimOptions {
   now: number;
@@ -733,6 +745,12 @@ function validateAction(action: AgentScheduleAction): AgentScheduleAction {
     if (cleanAction.model !== undefined && !model) {
       throw new Error("Schedule action model cannot be empty");
     }
+    if (
+      cleanAction.thinkingLevel !== undefined &&
+      !THINKING_LEVELS.has(cleanAction.thinkingLevel)
+    ) {
+      throw new Error("Schedule action thinkingLevel is invalid");
+    }
     const next: AgentScheduleAction = { ...cleanAction, workspaceId };
     if (agentId) next.agentId = agentId;
     else delete next.agentId;
@@ -792,6 +810,7 @@ function validateActionPatch(input: unknown): AgentScheduleActionPatch {
       "prompt",
       "agentId",
       "model",
+      "thinkingLevel",
       "worktreeId",
       "name",
       "sessionId",
@@ -815,6 +834,13 @@ function validateActionPatch(input: unknown): AgentScheduleActionPatch {
     if (input[key] !== undefined && input[key] !== null && typeof input[key] !== "string") {
       throw new Error(`Schedule action ${key} must be a string or null`);
     }
+  }
+  if (
+    input.thinkingLevel !== undefined &&
+    input.thinkingLevel !== null &&
+    !THINKING_LEVELS.has(input.thinkingLevel as ThinkingLevel)
+  ) {
+    throw new Error("Schedule action thinkingLevel is invalid");
   }
   if (
     input.streamingBehavior !== undefined &&
@@ -853,13 +879,28 @@ function validateActionShape(input: unknown): AgentScheduleAction {
   if (input.type === "new_session") {
     assertAllowedKeys(
       input,
-      new Set(["type", "workspaceId", "prompt", "agentId", "model", "worktreeId", "name"]),
+      new Set([
+        "type",
+        "workspaceId",
+        "prompt",
+        "agentId",
+        "model",
+        "thinkingLevel",
+        "worktreeId",
+        "name",
+      ]),
       "Schedule action",
     );
     validateRequiredString(input.workspaceId, "Schedule action workspaceId");
     validateRequiredString(input.prompt, "Schedule action prompt");
     for (const key of ["agentId", "model", "worktreeId", "name"] as const) {
       validateOptionalString(input[key], `Schedule action ${key}`);
+    }
+    if (
+      input.thinkingLevel !== undefined &&
+      !THINKING_LEVELS.has(input.thinkingLevel as ThinkingLevel)
+    ) {
+      throw new Error("Schedule action thinkingLevel is invalid");
     }
     return validateAction(input as unknown as AgentScheduleAction);
   }

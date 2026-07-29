@@ -515,6 +515,7 @@ enum AgentScheduleAction: Sendable, Equatable {
         prompt: String,
         agentId: String?,
         model: String?,
+        thinkingLevel: ThinkingLevel?,
         worktreeId: String?,
         name: String?
     )
@@ -527,7 +528,7 @@ enum AgentScheduleAction: Sendable, Equatable {
 
     var workspaceId: String {
         switch self {
-        case .newSession(let workspaceId, _, _, _, _, _),
+        case .newSession(let workspaceId, _, _, _, _, _, _),
              .existingSession(let workspaceId, _, _, _):
             return workspaceId
         }
@@ -535,7 +536,7 @@ enum AgentScheduleAction: Sendable, Equatable {
 
     var prompt: String {
         switch self {
-        case .newSession(_, let prompt, _, _, _, _),
+        case .newSession(_, let prompt, _, _, _, _, _),
              .existingSession(_, _, let prompt, _):
             return prompt
         }
@@ -567,7 +568,7 @@ enum AgentScheduleActionKind: String, Codable, Sendable, Equatable {
 
 extension AgentScheduleAction: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, workspaceId, sessionId, prompt, agentId, model, worktreeId, name, streamingBehavior
+        case type, workspaceId, sessionId, prompt, agentId, model, thinkingLevel, worktreeId, name, streamingBehavior
     }
 
     init(from decoder: Decoder) throws {
@@ -580,6 +581,7 @@ extension AgentScheduleAction: Codable {
                 prompt: try c.decode(String.self, forKey: .prompt),
                 agentId: try c.decodeIfPresent(String.self, forKey: .agentId),
                 model: try c.decodeIfPresent(String.self, forKey: .model),
+                thinkingLevel: try c.decodeIfPresent(ThinkingLevel.self, forKey: .thinkingLevel),
                 worktreeId: try c.decodeIfPresent(String.self, forKey: .worktreeId),
                 name: try c.decodeIfPresent(String.self, forKey: .name)
             )
@@ -596,12 +598,21 @@ extension AgentScheduleAction: Codable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .newSession(let workspaceId, let prompt, let agentId, let model, let worktreeId, let name):
+        case .newSession(
+            let workspaceId,
+            let prompt,
+            let agentId,
+            let model,
+            let thinkingLevel,
+            let worktreeId,
+            let name
+        ):
             try c.encode(AgentScheduleActionKind.newSession, forKey: .type)
             try c.encode(workspaceId, forKey: .workspaceId)
             try c.encode(prompt, forKey: .prompt)
             try c.encodeIfPresent(agentId, forKey: .agentId)
             try c.encodeIfPresent(model, forKey: .model)
+            try c.encodeIfPresent(thinkingLevel, forKey: .thinkingLevel)
             try c.encodeIfPresent(worktreeId, forKey: .worktreeId)
             try c.encodeIfPresent(name, forKey: .name)
         case .existingSession(let workspaceId, let sessionId, let prompt, let streamingBehavior):

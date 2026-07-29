@@ -15,6 +15,8 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     nonisolated(unsafe) private var themeSwitchSessionId: String?
     nonisolated(unsafe) private var activeScheduleId: String?
     nonisolated(unsafe) private var archivedScheduleId: String?
+    nonisolated(unsafe) private var nativeEditorAgentId: String?
+    nonisolated(unsafe) private var nativeEditorScheduleId: String?
 
     override var e2eLaunchesSessionsInboxOnly: Bool {
         true
@@ -88,6 +90,27 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             for index in 1...18 {
                 _ = try createLabWorkspace(named: "Scroll Workspace \(index)")
             }
+        } else if name.contains("testNativeAgentEditorSavesReplacePromptAndThinking") {
+            let response = try e2eLabAPIJSON(
+                method: "POST",
+                path: "/agents",
+                body: [
+                    "name": "Native editor reviewer",
+                    "instructions": [
+                        "mode": "append",
+                        "text": "Review carefully.",
+                    ],
+                    "sessionDefaults": ["thinkingLevel": "medium"],
+                ]
+            )
+            let agent = try XCTUnwrap(response["agent"] as? [String: Any])
+            nativeEditorAgentId = try XCTUnwrap(agent["id"] as? String)
+        } else if name.contains("testNativeScheduleEditorSavesThinkingAndPrompt") {
+            nativeEditorScheduleId = try createScheduleFixture(
+                name: "Native schedule editor",
+                expression: "0 7 * * *",
+                workspaceId: anchorWorkspaceId
+            )
         } else if name.contains("testScheduleScreenCreatesAndRestoresWithSimpleControls") {
             activeScheduleId = try createScheduleFixture(
                 name: "Daily telemetry review",
@@ -377,6 +400,69 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             "Workspace-only Files control must stay absent from a control session"
         )
         try saveLabScreenshot(name: "iphone-control-session-existing-chat-e2e")
+    }
+
+    func testNativeAgentEditorSavesReplacePromptAndThinking() throws {
+        XCUIDevice.shared.orientation = .portrait
+
+        let agentId = try XCTUnwrap(nativeEditorAgentId, "Native editor Agent was not seeded")
+        openWorkspaceSidebar()
+        tap(app.buttons["workspace.agents.open"], named: "Agents sidebar destination")
+        tap(app.buttons["agents.row.\(agentId)"], named: "native editor Agent", timeout: 10)
+        tap(app.buttons["agents.detail.edit"], named: "native Agent Edit", timeout: 10)
+
+        XCTAssertTrue(app.navigationBars["Edit Agent"].waitForExistence(timeout: 10))
+        let promptMode = app.segmentedControls["agent.nativeEdit.promptMode"]
+        XCTAssertTrue(promptMode.waitForExistence(timeout: 5), "Append/Replace control did not appear")
+        tap(promptMode.buttons["Replace"], named: "Replace prompt mode")
+        XCTAssertTrue(promptMode.buttons["Replace"].isSelected)
+        XCTAssertTrue(app.buttons["agent.nativeEdit.model"].exists, "Model picker did not appear")
+        XCTAssertTrue(app.buttons["agent.nativeEdit.thinking"].exists, "Thinking picker did not appear")
+
+        tap(app.buttons["agent.nativeEdit.thinking"], named: "Agent thinking picker")
+        tap(app.buttons["Max"], named: "Max Agent thinking")
+        replaceText(in: app.textViews["agent.nativeEdit.prompt"], with: "Use only native instructions.")
+        try saveLabScreenshot(name: "iphone-native-agent-editor-e2e")
+        tap(app.buttons["agent.nativeEdit.save"], named: "Save native Agent edit")
+        XCTAssertTrue(app.navigationBars["Native editor reviewer"].waitForExistence(timeout: 10))
+
+        let response = try e2eLabAPIJSON(method: "GET", path: "/agents/\(agentId)")
+        let storedAgent = try XCTUnwrap(response["agent"] as? [String: Any])
+        let definition = try XCTUnwrap(storedAgent["definition"] as? [String: Any])
+        let instructions = try XCTUnwrap(definition["instructions"] as? [String: Any])
+        let defaults = try XCTUnwrap(definition["sessionDefaults"] as? [String: Any])
+        XCTAssertEqual(instructions["mode"] as? String, "replace")
+        XCTAssertEqual(instructions["text"] as? String, "Use only native instructions.")
+        XCTAssertEqual(defaults["thinkingLevel"] as? String, "xhigh")
+    }
+
+    func testNativeScheduleEditorSavesThinkingAndPrompt() throws {
+        XCUIDevice.shared.orientation = .portrait
+
+        let scheduleId = try XCTUnwrap(nativeEditorScheduleId, "Native editor schedule was not seeded")
+        openWorkspaceSidebar()
+        tap(app.buttons["workspace.schedules.open"], named: "Schedules sidebar destination")
+        tap(app.buttons["schedules.row.\(scheduleId)"], named: "native editor schedule", timeout: 10)
+        tap(app.buttons["schedule.detail.nativeEdit"], named: "native Schedule Edit", timeout: 10)
+
+        XCTAssertTrue(app.navigationBars["Edit Schedule"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["schedule.nativeEdit.cadence"].exists)
+        XCTAssertTrue(app.buttons["schedule.nativeEdit.timeZone"].exists)
+        replaceText(in: app.textViews["schedule.nativeEdit.prompt"], with: "Run the edited native briefing.")
+        app.swipeUp()
+        XCTAssertTrue(app.buttons["schedule.nativeEdit.model"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["schedule.nativeEdit.thinking"].waitForExistence(timeout: 5))
+        tap(app.buttons["schedule.nativeEdit.thinking"], named: "Schedule thinking picker")
+        tap(app.buttons["High"], named: "High Schedule thinking")
+        try saveLabScreenshot(name: "iphone-native-schedule-editor-e2e")
+        tap(app.buttons["schedule.nativeEdit.save"], named: "Save native Schedule edit")
+        XCTAssertTrue(app.navigationBars["Native schedule editor"].waitForExistence(timeout: 10))
+
+        let response = try e2eLabAPIJSON(method: "GET", path: "/schedules/\(scheduleId)")
+        let storedSchedule = try XCTUnwrap(response["schedule"] as? [String: Any])
+        let action = try XCTUnwrap(storedSchedule["action"] as? [String: Any])
+        XCTAssertEqual(action["prompt"] as? String, "Run the edited native briefing.")
+        XCTAssertEqual(action["thinkingLevel"] as? String, "high")
     }
 
     func testScheduleScreenCreatesAndRestoresWithSimpleControls() throws {
@@ -699,6 +785,16 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
         let schedule = try XCTUnwrap(response["schedule"] as? [String: Any])
         return try XCTUnwrap(schedule["id"] as? String)
+    }
+
+    private func replaceText(in element: XCUIElement, with text: String) {
+        let currentValue = element.value as? String ?? ""
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.80)).tap()
+        if !currentValue.isEmpty {
+            element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentValue.count))
+        }
+        element.typeText(text)
+        XCTAssertEqual(element.value as? String, text)
     }
 
     private func selectManualTheme(_ themeName: String) {

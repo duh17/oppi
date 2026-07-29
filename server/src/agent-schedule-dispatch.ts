@@ -107,6 +107,7 @@ function resolveScheduledAgent(
         name: input.action.name?.trim() || `Schedule ${input.schedule.id}`,
         sessionDefaults: {
           ...(input.action.model ? { model: input.action.model } : {}),
+          ...(input.action.thinkingLevel ? { thinkingLevel: input.action.thinkingLevel } : {}),
         },
       },
     };
@@ -120,6 +121,7 @@ function resolveScheduledAgent(
       sessionDefaults: {
         ...(agent.definition.sessionDefaults ?? {}),
         ...(input.action.model ? { model: input.action.model } : {}),
+        ...(input.action.thinkingLevel ? { thinkingLevel: input.action.thinkingLevel } : {}),
       },
     },
     agentId: agent.id,

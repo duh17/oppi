@@ -186,6 +186,7 @@ private struct AgentDetailView: View {
     @State private var agent: StoredAgentDefinition?
     @State private var isLoading = false
     @State private var error: String?
+    @State private var isShowingNativeEdit = false
     @State private var isShowingRevision = false
     @State private var isShowingDefinitionReview = false
     @State private var isShowingIconPicker = false
@@ -307,9 +308,9 @@ private struct AgentDetailView: View {
         .themedListSurface()
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if agent != nil {
+                if agent?.status == .active {
                     Button("Edit") {
-                        isShowingDefinitionReview = true
+                        isShowingNativeEdit = true
                     }
                     .accessibilityIdentifier("agents.detail.edit")
 
@@ -317,7 +318,7 @@ private struct AgentDetailView: View {
                         Button {
                             isShowingRevision = true
                         } label: {
-                            Label("Describe Changes in Session", systemImage: "text.bubble")
+                            Label("Edit with Oppi", systemImage: "text.bubble")
                         }
 
                         Button("Archive Agent", role: .destructive) {
@@ -333,6 +334,14 @@ private struct AgentDetailView: View {
         }
         .task(id: agentId) { await loadAgent() }
         .refreshable { await loadAgent() }
+        .fullScreenCover(isPresented: $isShowingNativeEdit) {
+            if let agent {
+                AgentNativeEditView(agent: agent) { updated in
+                    self.agent = updated
+                    onUpdated(updated)
+                }
+            }
+        }
         .sheet(isPresented: $isShowingIconPicker) {
             if let agent {
                 AgentIconPickerView(agent: agent) { updated in

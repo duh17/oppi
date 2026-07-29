@@ -78,7 +78,22 @@ describe("agent schedule durable core", () => {
     ).toThrow("Schedule timeZone is invalid: Mars/Phobos");
   });
 
-  it("rejects blank explicit models instead of treating them as defaults", () => {
+  it("persists thinking overrides in schedules and frozen run snapshots", () => {
+    const schedule = createSchedule({
+      action: {
+        type: "new_session",
+        workspaceId: "ws-1",
+        prompt: "Run automatically",
+        thinkingLevel: "high",
+      },
+    });
+    const run = store.createManualRun(schedule.id, "thinking-snapshot");
+
+    expect(store.getSchedule(schedule.id)?.action).toMatchObject({ thinkingLevel: "high" });
+    expect(store.getRun(run.id)?.actionSnapshot).toMatchObject({ thinkingLevel: "high" });
+  });
+
+  it("rejects blank explicit models and invalid thinking levels", () => {
     expect(() =>
       createSchedule({
         action: {
@@ -89,6 +104,17 @@ describe("agent schedule durable core", () => {
         },
       }),
     ).toThrow("Schedule action model cannot be empty");
+
+    expect(() =>
+      createSchedule({
+        action: {
+          type: "new_session",
+          workspaceId: "ws-1",
+          prompt: "Run automatically",
+          thinkingLevel: "extreme",
+        } as AgentScheduleAction,
+      }),
+    ).toThrow("Schedule action thinkingLevel is invalid");
   });
 
   it("rejects removed approval fields from new schedule definitions", () => {
@@ -553,14 +579,27 @@ describe("agent schedule durable core", () => {
       prompt: "Keep this long prompt",
       agentId: "agent-1",
       model: "openai-codex/gpt-5.5",
+      thinkingLevel: "medium",
       worktreeId: "main",
     };
 
-    expect(mergeScheduleActionPatch(current, { model: "ds4/deepseek-v4-flash" })).toEqual({
+    expect(
+      mergeScheduleActionPatch(current, {
+        model: "ds4/deepseek-v4-flash",
+        thinkingLevel: "high",
+      }),
+    ).toEqual({
       ...current,
       model: "ds4/deepseek-v4-flash",
+      thinkingLevel: "high",
     });
-    expect(mergeScheduleActionPatch(current, { model: null, worktreeId: null })).toEqual({
+    expect(
+      mergeScheduleActionPatch(current, {
+        model: null,
+        thinkingLevel: null,
+        worktreeId: null,
+      }),
+    ).toEqual({
       type: "new_session",
       workspaceId: "ws-1",
       prompt: "Keep this long prompt",

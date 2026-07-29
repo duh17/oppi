@@ -428,6 +428,7 @@
 		5BAC579C2B70DDFFDE277E66 /* WorkingIndicatorTimelineRowContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D2E07CC90070195DB911FF0 /* WorkingIndicatorTimelineRowContent.swift */; };
 		5C4C570D41FAEAC3E8633B52 /* SkillInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0BDD324CE2BD1D22E6C2D53 /* SkillInfo.swift */; };
 		5C5C754B8C18D9B4E331EC1D /* WorkspaceSessionNavigationChromePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DD88414E47013F43E2DC863 /* WorkspaceSessionNavigationChromePolicyTests.swift */; };
+		5C903F89D98A14F5FA71AFE1 /* ScheduleNativeEditView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C41EEFC45C0DDD5DD58BB7B7 /* ScheduleNativeEditView.swift */; };
 		5C9F859E2A726D81FC0F6018 /* SyntaxTokenScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AAC5859DC05B80A91840AF4 /* SyntaxTokenScanner.swift */; };
 		5CADA2374E762DBB86F5B09D /* ServerResourceCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F9612B968EAE7AAAC6B1C0A /* ServerResourceCatalog.swift */; };
 		5CBAEB85BF401C31A3FDB85F /* AgentEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25CB78D462F0D1F9B0BE02AC /* AgentEvent.swift */; };
@@ -547,6 +548,7 @@
 		760DA416B18D3EC2B21751E9 /* AppNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F913345C6AC390A0913E3B6F /* AppNavigationTests.swift */; };
 		765329F758983E0FA45EF651 /* ToolDetailsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A6EE44430C95A2FB1C358BB /* ToolDetailsStore.swift */; };
 		76EFF489B888D226F3E1A8B1 /* IrohEndpointSecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 729A6F11EFA674924AEF3A25 /* IrohEndpointSecretStore.swift */; };
+		773106D4ECE458964901599D /* AgentNativeEditView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147AA8755F380ADB6488261B /* AgentNativeEditView.swift */; };
 		7747419D039E7F0C739353EA /* BashToolRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42BB6A03DD8FEF3287493701 /* BashToolRowView.swift */; };
 		776E0B18BD9714DB5C2E83A8 /* NearbyPairingInviteMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 036E70B04782CB208DE18873 /* NearbyPairingInviteMessage.swift */; };
 		776FD190BF71A53DF7632066 /* UserMessageTextProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4AFF3CB51FFC38FB3B90BB9 /* UserMessageTextProjection.swift */; };
@@ -1358,6 +1360,7 @@
 		13B201117843BA2106A11208 /* WorkingIndicatorVisibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkingIndicatorVisibilityTests.swift; sourceTree = "<group>"; };
 		140B3F538CF49F38A9782A3F /* OppiControlWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiControlWidgetBundle.swift; sourceTree = "<group>"; };
 		14576FB5D56EC9B5C55D35D0 /* CascadiaCode-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "CascadiaCode-SemiBold.ttf"; sourceTree = "<group>"; };
+		147AA8755F380ADB6488261B /* AgentNativeEditView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentNativeEditView.swift; sourceTree = "<group>"; };
 		14DDA3F31F7CE81B83A5E3C8 /* PiSessionAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiSessionAttributes.swift; sourceTree = "<group>"; };
 		14F4E6616EE3AE9922D062C4 /* DocumentParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentParser.swift; sourceTree = "<group>"; };
 		151193FBB066CCBFFF875D20 /* ReviewCommentSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentSelection.swift; sourceTree = "<group>"; };
@@ -2052,6 +2055,7 @@
 		C2D67ADB6CCCF099AFBB5D52 /* ChatTimelinePerf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelinePerf.swift; sourceTree = "<group>"; };
 		C36272C428E9D190E7C187E1 /* FileIndexStore+Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileIndexStore+Environment.swift"; sourceTree = "<group>"; };
 		C3E4708C3677D2364AFE9EFA /* WorkspaceDetailSortTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceDetailSortTests.swift; sourceTree = "<group>"; };
+		C41EEFC45C0DDD5DD58BB7B7 /* ScheduleNativeEditView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleNativeEditView.swift; sourceTree = "<group>"; };
 		C44B3063E520673FC4B91517 /* ComposerDraftEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerDraftEnvironment.swift; sourceTree = "<group>"; };
 		C49641185163971C7B698503 /* MarkdownContentViewWrapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownContentViewWrapper.swift; sourceTree = "<group>"; };
 		C4CF2DCA9F90102E5D75300B /* Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workspace.swift; sourceTree = "<group>"; };
@@ -3773,6 +3777,7 @@
 			isa = PBXGroup;
 			children = (
 				8211B1814772DF5BFC215BFB /* ScheduleManagementView.swift */,
+				C41EEFC45C0DDD5DD58BB7B7 /* ScheduleNativeEditView.swift */,
 			);
 			path = Schedules;
 			sourceTree = "<group>";
@@ -4112,6 +4117,7 @@
 			children = (
 				38DB0954C2905517F2B36F6D /* AgentIconPickerView.swift */,
 				EA07D5EEE1CC96D407F5D26F /* AgentManagementView.swift */,
+				147AA8755F380ADB6488261B /* AgentNativeEditView.swift */,
 			);
 			path = Agents;
 			sourceTree = "<group>";
@@ -5418,6 +5424,7 @@
 				2608A10EDB02FA09755CA789 /* AgentIconView.swift in Sources */,
 				15F0EDDE0593C87639DF2EED /* AgentManagement.swift in Sources */,
 				4EBC861D76E236144064A1AD /* AgentManagementView.swift in Sources */,
+				773106D4ECE458964901599D /* AgentNativeEditView.swift in Sources */,
 				6C4BF92133C0B85A956B73AE /* AnchoredCollectionView.swift in Sources */,
 				3AAF0578F2F44DD11FB1F6BF /* AppDelegate.swift in Sources */,
 				CD6E0D0FCAD95BFEB7C9589D /* AppDiagnosticsService.swift in Sources */,
@@ -5710,6 +5717,7 @@
 				0AE6BD5B1AF184C335639E16 /* ReviewFileSummaryBar.swift in Sources */,
 				84ADCEACDC1A3BF57074879F /* ReviewableControlMarkdownView.swift in Sources */,
 				D40231F6C7C04FF68838EF5C /* ScheduleManagementView.swift in Sources */,
+				5C903F89D98A14F5FA71AFE1 /* ScheduleNativeEditView.swift in Sources */,
 				ADF06B8FAEBE776D8AFCBE9B /* ScreenAwakeController.swift in Sources */,
 				5122C8B2718776089E04452A /* ScreenshotPreviewView.swift in Sources */,
 				DB93DFD411999D321188ECFB /* SegmentRenderer.swift in Sources */,
