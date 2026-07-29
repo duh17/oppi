@@ -64,6 +64,14 @@ struct ModelColorHelpersTests {
         #expect(providerDisplayLabel("qwen-token-plan-cn") == "Qwen Token Plan CN")
     }
 
+    @Test func qwenTemplateAssetPreservesNegativeSpace() throws {
+        let image = try #require(UIImage(named: "provider-qwen"))
+        let raster = try #require(rasterize(image))
+
+        #expect(raster.alpha(normalizedX: 0.5, normalizedY: 0.5) == 255)
+        #expect(raster.alpha(normalizedX: 0.5, normalizedY: 0.375) == 0)
+    }
+
     @Test func providerIconTintMeetsContrastFloorOnThemeSurfaces() {
         let palette = ThemePalettes.dark
         let backgrounds = [palette.bg, palette.bgDark, palette.bgHighlight]
@@ -75,6 +83,38 @@ struct ModelColorHelpersTests {
             #expect(ratio != nil)
             #expect((ratio ?? 0) >= 3.0)
         }
+    }
+
+    private struct RasterAlpha {
+        let width: Int
+        let height: Int
+        let pixels: [UInt8]
+
+        func alpha(normalizedX: CGFloat, normalizedY: CGFloat) -> UInt8 {
+            let x = min(width - 1, max(0, Int(CGFloat(width) * normalizedX)))
+            let y = min(height - 1, max(0, Int(CGFloat(height) * normalizedY)))
+            return pixels[((y * width) + x) * 4 + 3]
+        }
+    }
+
+    private func rasterize(_ image: UIImage) -> RasterAlpha? {
+        guard let cgImage = image.cgImage else { return nil }
+        let width = cgImage.width
+        let height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                | CGBitmapInfo.byteOrder32Big.rawValue
+        ) else { return nil }
+
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return RasterAlpha(width: width, height: height, pixels: pixels)
     }
 
     private struct HSBA {
