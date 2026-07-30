@@ -1,9 +1,9 @@
 /**
- * Experimental live-only projection of Pi's opt-in cache-miss notice.
+ * Pi-compatible cache-miss detection for live notices and session diagnostics.
  *
- * Tracking starts with the first assistant response observed by the current
- * runtime; notices are neither persisted nor reconstructed from history. Keep
- * this detector aligned with Pi until Pi exposes the notice through its SDK.
+ * Live tracking starts with the first assistant response observed by the current
+ * runtime, and notices remain gated by Pi's showCacheMissNotices setting.
+ * Session diagnostics reconstruct cache re-billing from available history.
  */
 
 /** Anthropic's default prompt-cache TTL, matching Pi's transcript notice. */
@@ -20,6 +20,12 @@ export interface CacheMissNotice {
   missedCost: number;
   idleMs: number;
   reason: CacheMissReason;
+}
+
+export interface CacheWasteTotals {
+  missedTokens: number;
+  missedCost: number;
+  missCount: number;
 }
 
 export interface CacheMissTrackerState {
@@ -115,15 +121,15 @@ function previousRequest(
   };
 }
 
-export function observeCacheMiss(
+function detectCacheMiss(
   tracker: CacheMissTrackerState,
   message: CacheMissAssistantMessage,
   models?: CacheMissModelPriceSource,
-): CacheMissNotice | undefined {
+): (Omit<CacheMissNotice, "id" | "reason"> & { modelChanged: boolean }) | undefined {
   const previous = tracker.previous;
   const { usage } = message;
   const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
-  let notice: CacheMissNotice | undefined;
+  let miss: (Omit<CacheMissNotice, "id" | "reason"> & { modelChanged: boolean }) | undefined;
 
   if (
     previous &&
@@ -139,28 +145,82 @@ export function observeCacheMiss(
         usage.cacheRead > 0
           ? usage.cost.cacheRead / usage.cacheRead
           : (models?.find(message.provider, message.model)?.cost.cacheRead ?? 0) / 1_000_000;
-      const missedCost = missedTokens * Math.max(0, paidPerToken - readPerToken);
-
-      if (missedTokens >= CACHE_MISS_NOTICE_TOKENS || missedCost >= CACHE_MISS_NOTICE_COST) {
-        const idleMs = Math.max(0, message.timestamp - previous.timestamp);
-        const modelChanged = `${message.provider}/${message.model}` !== previous.modelKey;
-        notice = {
-          id: `cache-miss:${message.timestamp}:${message.provider}/${message.model}`,
-          missedTokens,
-          missedCost,
-          idleMs,
-          reason: modelChanged ? "model_switch" : idleMs >= CACHE_MISS_TTL_MS ? "idle" : "other",
-        };
-      }
+      miss = {
+        missedTokens,
+        missedCost: missedTokens * Math.max(0, paidPerToken - readPerToken),
+        idleMs: Math.max(0, message.timestamp - previous.timestamp),
+        modelChanged: `${message.provider}/${message.model}` !== previous.modelKey,
+      };
     }
   }
 
   tracker.previous = previousRequest(message, previous?.reportedCache ?? false) ?? previous;
-  return notice;
+  return miss;
+}
+
+export function observeCacheMiss(
+  tracker: CacheMissTrackerState,
+  message: CacheMissAssistantMessage,
+  models?: CacheMissModelPriceSource,
+): CacheMissNotice | undefined {
+  const miss = detectCacheMiss(tracker, message, models);
+  if (
+    !miss ||
+    (miss.missedTokens < CACHE_MISS_NOTICE_TOKENS && miss.missedCost < CACHE_MISS_NOTICE_COST)
+  ) {
+    return undefined;
+  }
+
+  return {
+    id: `cache-miss:${message.timestamp}:${message.provider}/${message.model}`,
+    missedTokens: miss.missedTokens,
+    missedCost: miss.missedCost,
+    idleMs: miss.idleMs,
+    reason: miss.modelChanged
+      ? "model_switch"
+      : miss.idleMs >= CACHE_MISS_TTL_MS
+        ? "idle"
+        : "other",
+  };
+}
+
+/** Full-history cache re-billing, reset at intentional structural context changes. */
+export function computeCacheWaste(
+  entries: readonly unknown[],
+  models?: CacheMissModelPriceSource,
+): CacheWasteTotals {
+  const tracker: CacheMissTrackerState = {};
+  const totals: CacheWasteTotals = { missedTokens: 0, missedCost: 0, missCount: 0 };
+
+  for (const value of entries) {
+    if (!value || typeof value !== "object") continue;
+    const entry = value as Record<string, unknown>;
+    if (entry.type === "compaction" || entry.type === "branch_summary") {
+      resetCacheMissTracker(tracker);
+      continue;
+    }
+    if (entry.type !== "message") continue;
+
+    const message = asCacheMissAssistantMessage(entry.message);
+    if (!message) continue;
+    const miss = detectCacheMiss(tracker, message, models);
+    if (!miss) continue;
+    totals.missedTokens += miss.missedTokens;
+    totals.missedCost += miss.missedCost;
+    totals.missCount += 1;
+  }
+
+  return totals;
 }
 
 export function resetCacheMissTracker(tracker: CacheMissTrackerState): void {
   tracker.previous = undefined;
+}
+
+export function navigationCreatedBranchSummary(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const summaryEntry = (value as Record<string, unknown>).summaryEntry;
+  return typeof summaryEntry === "object" && summaryEntry !== null;
 }
 
 export function shouldDisplayCacheMissForMessage(message: CacheMissAssistantMessage): boolean {

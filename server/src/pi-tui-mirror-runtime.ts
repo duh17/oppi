@@ -7,6 +7,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
 
 import { trustedSessionAttachmentSourceRoots } from "./chat-attachments.js";
+import { navigationCreatedBranchSummary, resetCacheMissTracker } from "./cache-miss.js";
 import {
   RuntimeDisconnectedError,
   applyForwardedCommandResultToSession,
@@ -139,7 +140,12 @@ interface PiBridgeStateMessage {
 
 interface PiBridgeAgentEventMessage {
   type: "event";
-  event: AgentSessionEvent;
+  event:
+    | AgentSessionEvent
+    | {
+        type: "session_tree";
+        summaryEntry?: unknown;
+      };
   state?: PiBridgeStateSnapshot;
 }
 
@@ -1301,6 +1307,12 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         return;
 
       case "event":
+        if (message.event.type === "session_tree") {
+          if (message.event.summaryEntry) {
+            resetCacheMissTracker(active.cacheMissTracker);
+          }
+          return;
+        }
         this.ingestAgentEvent(active, message.event);
         return;
 
@@ -1427,6 +1439,13 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const pendingCommandType = connection.pendingCommands.get(message.id)?.commandType;
     const matched = this.bridgeCommandDriver.resolveResult(connection, message, () => {
       const resultData = asRecord(message.data);
+      if (
+        message.success &&
+        pendingCommandType === "navigate_tree" &&
+        navigationCreatedBranchSummary(message.data)
+      ) {
+        resetCacheMissTracker(this.requireActive(connection.sessionId).cacheMissTracker);
+      }
       const queueErrorCode = resultData?.code;
       if (
         !message.success &&

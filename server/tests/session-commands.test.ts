@@ -25,6 +25,7 @@ function makeCoordinator(
     sdkBackend?: Partial<SdkBackend>;
     reloadRuntimeConfig?: () => void;
     session?: Session;
+    cacheMissTracker?: CommandSessionState["cacheMissTracker"];
   } = {},
 ): {
   coordinator: SessionCommandCoordinator;
@@ -36,6 +37,7 @@ function makeCoordinator(
       session: agentSession,
       ...options.sdkBackend,
     } as unknown as SdkBackend,
+    cacheMissTracker: options.cacheMissTracker,
   };
 
   const broadcast = vi.fn();
@@ -136,6 +138,117 @@ describe("SessionCommandCoordinator", () => {
     await expect(reloadPromise).resolves.toEqual({ success: true });
     coordinator.sendCommand("s1", { type: "prompt", message: "after" });
     expect(piPrompt).toHaveBeenCalledOnce();
+  });
+
+  it("returns full-history cache and per-model usage from get_session_stats", async () => {
+    const entries = [
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          provider: "anthropic",
+          model: "claude-sonnet",
+          timestamp: 1_000,
+          usage: {
+            input: 1_000,
+            output: 100,
+            cacheRead: 69_000,
+            cacheWrite: 0,
+            cost: { input: 0.012, output: 0.002, cacheRead: 0.069, cacheWrite: 0, total: 0.083 },
+          },
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          provider: "anthropic",
+          model: "claude-sonnet",
+          timestamp: 310_700,
+          usage: {
+            input: 70_000,
+            output: 200,
+            cacheRead: 0,
+            cacheWrite: 0,
+            cost: { input: 0.84, output: 0.004, cacheRead: 0, cacheWrite: 0, total: 0.844 },
+          },
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          usage: {
+            input: 10,
+            output: 5,
+            cacheRead: 0,
+            cacheWrite: 0,
+            cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+          },
+        },
+      },
+      {
+        type: "branch_summary",
+        usage: {
+          input: 20,
+          output: 10,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { input: 0.02, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.04 },
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          provider: "openai-codex",
+          model: "gpt-5.6-sol",
+          responseModel: "gpt-5.6-sol-2026-07-01",
+          timestamp: 320_000,
+          usage: {
+            input: 10_000,
+            output: 500,
+            cacheRead: 20_000,
+            cacheWrite: 0,
+            cost: { input: 0.1, output: 0.02, cacheRead: 0.02, cacheWrite: 0, total: 0.14 },
+          },
+        },
+      },
+    ];
+    const agentSession = {
+      getSessionStats: () => ({
+        tokens: { input: 81_030, output: 815, cacheRead: 89_000, cacheWrite: 0, total: 170_845 },
+        cost: 1.137,
+      }),
+      systemPrompt: "system",
+      sessionManager: { getEntries: () => entries },
+      resourceLoader: {
+        getAgentsFiles: () => ({ agentsFiles: [] }),
+        getSkills: () => ({ skills: [] }),
+        getExtensions: () => ({ extensions: [] }),
+      },
+    } as unknown as AgentSession;
+    const { coordinator } = makeCoordinator(agentSession, {
+      sdkBackend: {
+        cacheMissModelPriceSource: { find: () => ({ cost: { cacheRead: 1 } }) },
+      },
+    });
+
+    const result = await coordinator.sendCommandAsync("s1", { type: "get_session_stats" });
+
+    expect(result).toMatchObject({
+      cacheWaste: { missedTokens: 70_000, missedCost: expect.closeTo(0.77, 6), missCount: 1 },
+      modelBreakdown: [
+        {
+          provider: "anthropic",
+          model: "claude-sonnet",
+          tokens: 140_300,
+          cost: expect.closeTo(0.927, 6),
+        },
+        { provider: "openai-codex", model: "gpt-5.6-sol-2026-07-01", tokens: 30_500, cost: 0.14 },
+        { model: "Tools & summaries", tokens: 45, cost: 0.07 },
+      ],
+    });
   });
 
   it("supports get_commands passthrough", async () => {
@@ -599,6 +712,32 @@ describe("SessionCommandCoordinator", () => {
       ["entry-3", true],
       ["entry-4", true],
     ]);
+  });
+
+  it("resets live cache comparison after navigation creates a branch summary", async () => {
+    const cacheMissTracker = {
+      previous: {
+        promptTokens: 70_000,
+        modelKey: "anthropic/claude-sonnet",
+        timestamp: 1_000,
+        reportedCache: true,
+      },
+    };
+    const navigateTree = vi.fn(async () => ({
+      cancelled: false,
+      summaryEntry: { id: "summary-1" },
+    }));
+    const { coordinator } = makeCoordinator({ navigateTree } as unknown as AgentSession, {
+      cacheMissTracker,
+    });
+
+    await coordinator.sendCommandAsync("s1", {
+      type: "navigate_tree",
+      targetId: "entry-12",
+      summarize: true,
+    });
+
+    expect(cacheMissTracker.previous).toBeUndefined();
   });
 
   it("forwards navigate_tree options to AgentSession.navigateTree", async () => {

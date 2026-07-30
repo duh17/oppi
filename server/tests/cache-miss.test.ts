@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  computeCacheWaste,
   observeCacheMiss,
   resetCacheMissTracker,
   type CacheMissAssistantMessage,
@@ -72,6 +73,22 @@ describe("Pi-compatible cache miss notices", () => {
     expect(notice?.missedCost).toBeCloseTo(0.77, 6);
   });
 
+  it("keeps insignificant cache churn out of the timeline", () => {
+    const tracker: CacheMissTrackerState = {};
+    observeCacheMiss(
+      tracker,
+      assistant({ timestamp: 1_000, input: 1_000, cacheRead: 69_000, cacheReadCost: 0.069 }),
+    );
+
+    const notice = observeCacheMiss(
+      tracker,
+      assistant({ timestamp: 2_000, input: 5_000, inputCost: 0.06 }),
+      prices,
+    );
+
+    expect(notice).toBeUndefined();
+  });
+
   it("does not compare across a compaction boundary", () => {
     const tracker: CacheMissTrackerState = {};
     observeCacheMiss(
@@ -86,5 +103,39 @@ describe("Pi-compatible cache miss notices", () => {
       prices,
     );
     expect(notice).toBeUndefined();
+  });
+
+  it("aggregates full-history re-billing while resetting at structural context changes", () => {
+    const entries = [
+      {
+        type: "message",
+        message: assistant({
+          timestamp: 1_000,
+          input: 1_000,
+          cacheRead: 69_000,
+          inputCost: 0.012,
+          cacheReadCost: 0.069,
+        }),
+      },
+      { type: "message", message: assistant({ timestamp: 2_000, input: 70_000, inputCost: 0.84 }) },
+      { type: "compaction" },
+      { type: "message", message: assistant({ timestamp: 3_000, input: 40_000, inputCost: 0.48 }) },
+      {
+        type: "message",
+        message: assistant({
+          timestamp: 4_000,
+          input: 1_000,
+          cacheRead: 39_000,
+          inputCost: 0.012,
+          cacheReadCost: 0.039,
+        }),
+      },
+    ];
+
+    expect(computeCacheWaste(entries, prices)).toEqual({
+      missedTokens: 70_000,
+      missedCost: expect.closeTo(0.77, 6),
+      missCount: 1,
+    });
   });
 });

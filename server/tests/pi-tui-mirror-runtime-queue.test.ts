@@ -188,6 +188,41 @@ function connectBridge(
   return { ws, sessionId: String(ack?.sessionId) };
 }
 
+function receiveCacheAssistantEvent(
+  ws: FakeBridgeWebSocket,
+  timestamp: number,
+  cached: boolean,
+): void {
+  ws.receive({
+    type: "event",
+    event: {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        provider: "anthropic",
+        model: "claude-sonnet",
+        timestamp,
+        stopReason: "stop",
+        content: [{ type: "text", text: cached ? "cached" : "uncached" }],
+        usage: {
+          input: cached ? 1_000 : 70_000,
+          output: 0,
+          cacheRead: cached ? 69_000 : 0,
+          cacheWrite: 0,
+          totalTokens: 70_000,
+          cost: {
+            input: cached ? 0.012 : 0.84,
+            output: 0,
+            cacheRead: cached ? 0.069 : 0,
+            cacheWrite: 0,
+            total: cached ? 0.081 : 0.84,
+          },
+        },
+      },
+    },
+  });
+}
+
 function latestCommand(ws: FakeBridgeWebSocket): Record<string, unknown> {
   const command = ws.sent.findLast((message) => message.type === "command");
   expect(command).toBeTruthy();
@@ -1706,6 +1741,91 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
         session: expect.objectContaining({ name: "Terminal Name" }),
       }),
     );
+  });
+
+  it("resets live cache comparison when mirror navigation creates a branch summary", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    ws.receive({
+      type: "event",
+      event: {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          provider: "anthropic",
+          model: "claude-sonnet",
+          timestamp: 1_000,
+          stopReason: "stop",
+          content: [{ type: "text", text: "cached" }],
+          usage: {
+            input: 1_000,
+            output: 0,
+            cacheRead: 69_000,
+            cacheWrite: 0,
+            totalTokens: 70_000,
+            cost: { input: 0.012, output: 0, cacheRead: 0.069, cacheWrite: 0, total: 0.081 },
+          },
+        },
+      },
+    });
+
+    const commandPromise = runtime.forwardClientCommand(
+      sessionId,
+      { type: "navigate_tree", targetId: "entry-1", summarize: true },
+      "req-navigate-summary",
+    );
+    const command = latestCommand(ws);
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { cancelled: false, summaryEntry: { id: "summary-1" } },
+    });
+    await expect(commandPromise).resolves.toBeUndefined();
+
+    ws.receive({
+      type: "event",
+      event: {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          provider: "anthropic",
+          model: "claude-sonnet",
+          timestamp: 310_700,
+          stopReason: "stop",
+          content: [{ type: "text", text: "new branch" }],
+          usage: {
+            input: 70_000,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 70_000,
+            cost: { input: 0.84, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.84 },
+          },
+        },
+      },
+    });
+
+    expect(received.some((message) => message.type === "cache_miss")).toBe(false);
+  });
+
+  it("resets live cache comparison after terminal-local summarized navigation", () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    receiveCacheAssistantEvent(ws, 1_000, true);
+    ws.receive({
+      type: "event",
+      event: { type: "session_tree", summaryEntry: { id: "summary-1" } },
+    });
+    receiveCacheAssistantEvent(ws, 310_700, false);
+
+    expect(received.some((message) => message.type === "cache_miss")).toBe(false);
   });
 
   it("forwards supported terminal-control commands through the bridge", async () => {

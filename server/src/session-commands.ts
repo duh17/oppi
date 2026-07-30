@@ -1,6 +1,12 @@
 import { formatSkillsForPrompt, type AgentSession } from "@earendil-works/pi-coding-agent";
 
 import { applyForwardedCommandResultToSession } from "./agent-runtime-transport.js";
+import {
+  computeCacheWaste,
+  navigationCreatedBranchSummary,
+  resetCacheMissTracker,
+  type CacheMissTrackerState,
+} from "./cache-miss.js";
 import { parsePiStateSnapshot, type PiStateSnapshot } from "./pi-events.js";
 import { createLogger } from "./logger.js";
 import {
@@ -130,6 +136,95 @@ function collectLoadedSessionResources(session: AgentSession): {
   return { skills, extensions };
 }
 
+interface SessionModelUsageSnapshot {
+  provider?: string;
+  model: string;
+  tokens: number;
+  cost: number;
+}
+
+function finiteNonNegative(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function addUsageToModelBreakdown(
+  byModel: Map<string, SessionModelUsageSnapshot>,
+  key: string,
+  model: string,
+  provider: string | undefined,
+  value: unknown,
+): void {
+  const usage = toRecord(value);
+  const cost = toRecord(usage.cost);
+  const current = byModel.get(key) ?? {
+    ...(provider ? { provider } : {}),
+    model,
+    tokens: 0,
+    cost: 0,
+  };
+  current.tokens +=
+    finiteNonNegative(usage.input) +
+    finiteNonNegative(usage.output) +
+    finiteNonNegative(usage.cacheRead) +
+    finiteNonNegative(usage.cacheWrite);
+  current.cost += finiteNonNegative(cost.total);
+  byModel.set(key, current);
+}
+
+function collectModelUsage(entries: readonly unknown[]): SessionModelUsageSnapshot[] {
+  const byModel = new Map<string, SessionModelUsageSnapshot>();
+
+  for (const value of entries) {
+    if (!value || typeof value !== "object") continue;
+    const entry = value as Record<string, unknown>;
+
+    if (entry.type === "message" && entry.message && typeof entry.message === "object") {
+      const message = entry.message as Record<string, unknown>;
+      if (message.role === "assistant") {
+        const provider = typeof message.provider === "string" ? message.provider : "unknown";
+        const configuredModel = typeof message.model === "string" ? message.model : "unknown";
+        const model =
+          typeof message.responseModel === "string" && message.responseModel.length > 0
+            ? message.responseModel
+            : configuredModel;
+        addUsageToModelBreakdown(byModel, `${provider}/${model}`, model, provider, message.usage);
+      } else if (message.role === "toolResult") {
+        addUsageToModelBreakdown(
+          byModel,
+          "tools-summaries",
+          "Tools & summaries",
+          undefined,
+          message.usage,
+        );
+      }
+    } else if (entry.type === "compaction" || entry.type === "branch_summary") {
+      addUsageToModelBreakdown(
+        byModel,
+        "tools-summaries",
+        "Tools & summaries",
+        undefined,
+        entry.usage,
+      );
+    }
+  }
+
+  return [...byModel.values()]
+    .filter((entry) => entry.tokens > 0 || entry.cost > 0)
+    .sort((left, right) => right.cost - left.cost);
+}
+
+function collectSessionStats(backend: SdkBackend): Record<string, unknown> {
+  const session = backend.session;
+  const entries = session.sessionManager.getEntries();
+  return {
+    ...session.getSessionStats(),
+    cacheWaste: computeCacheWaste(entries, backend.cacheMissModelPriceSource),
+    modelBreakdown: collectModelUsage(entries),
+    contextComposition: collectSessionContextComposition(session),
+    loadedResources: collectLoadedSessionResources(session),
+  };
+}
+
 const BUILTIN_SLASH_COMMANDS: readonly SessionCommandDescriptor[] = [
   {
     name: "reload",
@@ -225,6 +320,7 @@ function readShareSessionRedactionPolicy(
 export interface CommandSessionState extends SessionStateActiveSession {
   session: Session;
   sdkBackend: SdkBackend;
+  cacheMissTracker?: CacheMissTrackerState;
 }
 
 export interface SessionCommandCoordinatorDeps {
@@ -274,6 +370,7 @@ export class SessionCommandCoordinator {
 
   private static readonly SERVER_LOGIC_HANDLERS = new Map<string, BackendCommandHandler>([
     ["get_state", (backend) => backend.getStateSnapshot()],
+    ["get_session_stats", (backend) => collectSessionStats(backend)],
 
     [
       "set_model",
@@ -355,14 +452,6 @@ export class SessionCommandCoordinator {
           replaceInstructions: readOptionalBoolean(cmd.replaceInstructions),
           label: readOptionalString(cmd.label),
         }),
-    ],
-    [
-      "get_session_stats",
-      (session) => ({
-        ...session.getSessionStats(),
-        contextComposition: collectSessionContextComposition(session),
-        loadedResources: collectLoadedSessionResources(session),
-      }),
     ],
     ["get_available_models", () => []],
     ["get_commands", (session) => collectSessionCommands(session)],
@@ -473,7 +562,15 @@ export class SessionCommandCoordinator {
       throw new Error(`Unhandled SDK command: ${type}`);
     }
 
-    return sessionHandler(active.sdkBackend.session, command);
+    const result = await sessionHandler(active.sdkBackend.session, command);
+    if (
+      type === "navigate_tree" &&
+      active.cacheMissTracker &&
+      navigationCreatedBranchSummary(result)
+    ) {
+      resetCacheMissTracker(active.cacheMissTracker);
+    }
+    return result;
   }
 
   async forwardClientCommand(

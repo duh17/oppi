@@ -73,6 +73,16 @@ interface EditableAgentSession {
     getShowCacheMissNotices?: () => boolean;
   };
   getToolDefinition?: (name: string) => ToolDefinition | undefined;
+  getSessionStats?: () => {
+    tokens: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      total: number;
+    };
+    cost: number;
+  };
   resourceLoader?: {
     getSkills?: () => {
       skills: Array<{
@@ -179,6 +189,7 @@ const EVENT_TYPES = [
   "tool_execution_start",
   "tool_execution_update",
   "tool_execution_end",
+  "session_tree",
 ] as const;
 
 const OPPI_LIFECYCLE_CUSTOM_TYPE = "oppi-lifecycle";
@@ -238,6 +249,7 @@ function mirrorLifecycleEntryData(
     case "message_update":
     case "message_end":
     case "tool_execution_update":
+    case "session_tree":
       return undefined;
   }
 }
@@ -602,25 +614,273 @@ function loadedResourcesWire(session: EditableAgentSession | undefined) {
   return { skills, extensions };
 }
 
+interface MirrorTokenUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  inputCost: number;
+  cacheReadCost: number;
+  cacheWriteCost: number;
+  totalCost: number;
+}
+
+interface MirrorAssistantUsage extends MirrorTokenUsage {
+  provider: string;
+  model: string;
+  responseModel?: string;
+  timestamp: number;
+}
+
+interface MirrorUsageCostSnapshot {
+  provider?: string;
+  model: string;
+  tokens: number;
+  cost: number;
+}
+
+interface MirrorUsageAnalysis {
+  tokens: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+  cost: number;
+  cacheWaste: { missedTokens: number; missedCost: number; missCount: number };
+  modelBreakdown: MirrorUsageCostSnapshot[];
+}
+
+function finiteUsageNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, value)
+    : 0;
+}
+
+function mirrorTokenUsage(value: unknown): MirrorTokenUsage | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const usage = value as Record<string, unknown>;
+  const cost =
+    usage.cost && typeof usage.cost === "object"
+      ? (usage.cost as Record<string, unknown>)
+      : {};
+  return {
+    input: finiteUsageNumber(usage.input),
+    output: finiteUsageNumber(usage.output),
+    cacheRead: finiteUsageNumber(usage.cacheRead),
+    cacheWrite: finiteUsageNumber(usage.cacheWrite),
+    inputCost: finiteUsageNumber(cost.input),
+    cacheReadCost: finiteUsageNumber(cost.cacheRead),
+    cacheWriteCost: finiteUsageNumber(cost.cacheWrite),
+    totalCost: finiteUsageNumber(cost.total),
+  };
+}
+
+function mirrorAssistantUsage(
+  value: unknown,
+): MirrorAssistantUsage | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const entry = value as Record<string, unknown>;
+  if (
+    entry.type !== "message" ||
+    !entry.message ||
+    typeof entry.message !== "object"
+  )
+    return undefined;
+  const message = entry.message as Record<string, unknown>;
+  if (
+    message.role !== "assistant" ||
+    typeof message.provider !== "string" ||
+    typeof message.model !== "string" ||
+    typeof message.timestamp !== "number"
+  )
+    return undefined;
+  const usage = mirrorTokenUsage(message.usage);
+  if (!usage) return undefined;
+  return {
+    ...usage,
+    provider: message.provider,
+    model: message.model,
+    ...(typeof message.responseModel === "string"
+      ? { responseModel: message.responseModel }
+      : {}),
+    timestamp: message.timestamp,
+  };
+}
+
+function addMirrorUsage(
+  totals: MirrorTokenUsage,
+  usage: MirrorTokenUsage,
+): void {
+  totals.input += usage.input;
+  totals.output += usage.output;
+  totals.cacheRead += usage.cacheRead;
+  totals.cacheWrite += usage.cacheWrite;
+  totals.totalCost += usage.totalCost;
+}
+
+function addMirrorUsageCost(
+  models: Map<string, MirrorUsageCostSnapshot>,
+  key: string,
+  model: string,
+  provider: string | undefined,
+  usage: MirrorTokenUsage,
+): void {
+  const current = models.get(key) ?? {
+    ...(provider ? { provider } : {}),
+    model,
+    tokens: 0,
+    cost: 0,
+  };
+  current.tokens +=
+    usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+  current.cost += usage.totalCost;
+  models.set(key, current);
+}
+
+function mirrorUsageBreakdown(
+  ctx: ExtensionContext,
+  entries: readonly unknown[],
+): MirrorUsageAnalysis {
+  let previous: { promptTokens: number; reportedCache: boolean } | undefined;
+  const cacheWaste = { missedTokens: 0, missedCost: 0, missCount: 0 };
+  const totals: MirrorTokenUsage = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    inputCost: 0,
+    cacheReadCost: 0,
+    cacheWriteCost: 0,
+    totalCost: 0,
+  };
+  const models = new Map<string, MirrorUsageCostSnapshot>();
+
+  for (const value of entries) {
+    const entry =
+      value && typeof value === "object"
+        ? (value as Record<string, unknown>)
+        : undefined;
+    if (entry?.type === "compaction" || entry?.type === "branch_summary") {
+      previous = undefined;
+      const usage = mirrorTokenUsage(entry.usage);
+      if (usage) {
+        addMirrorUsage(totals, usage);
+        addMirrorUsageCost(
+          models,
+          "tools-summaries",
+          "Tools & summaries",
+          undefined,
+          usage,
+        );
+      }
+      continue;
+    }
+
+    if (
+      entry?.type === "message" &&
+      entry.message &&
+      typeof entry.message === "object"
+    ) {
+      const message = entry.message as Record<string, unknown>;
+      if (message.role === "toolResult") {
+        const usage = mirrorTokenUsage(message.usage);
+        if (usage) {
+          addMirrorUsage(totals, usage);
+          addMirrorUsageCost(
+            models,
+            "tools-summaries",
+            "Tools & summaries",
+            undefined,
+            usage,
+          );
+        }
+        continue;
+      }
+    }
+
+    const usage = mirrorAssistantUsage(value);
+    if (!usage) continue;
+    addMirrorUsage(totals, usage);
+    const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+    if (
+      previous &&
+      promptTokens > 0 &&
+      (usage.cacheRead + usage.cacheWrite > 0 || previous.reportedCache)
+    ) {
+      const missedTokens =
+        Math.min(previous.promptTokens, promptTokens) - usage.cacheRead;
+      if (missedTokens > 1_024) {
+        const paidTokens = usage.input + usage.cacheWrite;
+        const paidPerToken =
+          paidTokens > 0
+            ? (usage.inputCost + usage.cacheWriteCost) / paidTokens
+            : 0;
+        const cacheReadPerToken =
+          usage.cacheRead > 0
+            ? usage.cacheReadCost / usage.cacheRead
+            : (ctx.modelRegistry.find(usage.provider, usage.model)?.cost
+                .cacheRead ?? 0) / 1_000_000;
+        cacheWaste.missedTokens += missedTokens;
+        cacheWaste.missedCost +=
+          missedTokens * Math.max(0, paidPerToken - cacheReadPerToken);
+        cacheWaste.missCount += 1;
+      }
+    }
+    if (promptTokens > 0) {
+      previous = {
+        promptTokens,
+        reportedCache:
+          (previous?.reportedCache ?? false) ||
+          usage.cacheRead + usage.cacheWrite > 0,
+      };
+    }
+
+    const model = usage.responseModel ?? usage.model;
+    addMirrorUsageCost(
+      models,
+      `${usage.provider}/${model}`,
+      model,
+      usage.provider,
+      usage,
+    );
+  }
+
+  return {
+    tokens: {
+      input: totals.input,
+      output: totals.output,
+      cacheRead: totals.cacheRead,
+      cacheWrite: totals.cacheWrite,
+      total:
+        totals.input + totals.output + totals.cacheRead + totals.cacheWrite,
+    },
+    cost: totals.totalCost,
+    cacheWaste,
+    modelBreakdown: [...models.values()]
+      .filter((entry) => entry.tokens > 0 || entry.cost > 0)
+      .sort((left, right) => right.cost - left.cost),
+  };
+}
+
 export function sessionStatsWire(
   ctx: ExtensionContext,
   session: EditableAgentSession | undefined,
 ) {
   const entries = ctx.sessionManager.getEntries();
   const contextUsage = contextUsageWire(ctx);
+  const reported = session?.getSessionStats?.();
+  const usage = mirrorUsageBreakdown(ctx, entries);
   return {
     sessionFile: ctx.sessionManager.getSessionFile(),
     piSessionId: ctx.sessionManager.getSessionId(),
     totalMessages: entries.length,
     contextUsage,
-    tokens: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: contextUsage?.tokens ?? 0,
-    },
-    cost: 0,
+    tokens: reported?.tokens ?? usage.tokens,
+    cost: reported?.cost ?? usage.cost,
+    cacheWaste: usage.cacheWaste,
+    modelBreakdown: usage.modelBreakdown,
     contextComposition: contextCompositionWire(ctx, session),
     loadedResources: loadedResourcesWire(session),
   };
