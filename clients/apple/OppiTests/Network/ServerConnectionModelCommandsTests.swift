@@ -503,6 +503,16 @@ struct ServerConnectionModelCommandsTests {
                 "cacheWrite": 6,
             ],
             "cost": "1.25",
+            "cacheWaste": [
+                "missedTokens": "20000",
+                "missedCost": "0.15",
+                "missCount": 2,
+            ],
+            "modelBreakdown": [
+                ["provider": "anthropic", "model": "claude-sonnet", "tokens": "40", "cost": "0.75"],
+                ["provider": "openai-codex", "model": "gpt-5.6-sol", "tokens": 17, "cost": 0.5],
+                ["model": "Tools & summaries", "tokens": 9, "cost": 0.1],
+            ],
             "contextComposition": [
                 "piSystemPromptChars": "100",
                 "piSystemPromptTokens": 20,
@@ -523,6 +533,16 @@ struct ServerConnectionModelCommandsTests {
         #expect(stats?.tokens.cacheWrite == 6)
         #expect(stats?.tokens.total == 57)
         #expect(stats?.cost == 1.25)
+        #expect(stats?.cacheWaste == SessionCacheWasteSnapshot(
+            missedTokens: 20_000,
+            missedCost: 0.15,
+            missCount: 2
+        ))
+        #expect(stats?.modelBreakdown == [
+            SessionModelUsageSnapshot(provider: "anthropic", model: "claude-sonnet", tokens: 40, cost: 0.75),
+            SessionModelUsageSnapshot(provider: "openai-codex", model: "gpt-5.6-sol", tokens: 17, cost: 0.5),
+            SessionModelUsageSnapshot(provider: nil, model: "Tools & summaries", tokens: 9, cost: 0.1),
+        ])
         #expect(stats?.contextComposition?.agentsFiles == [
             ContextFileTokenSnapshot(path: "/tmp/AGENTS.md", chars: 40, tokens: 8)
         ])

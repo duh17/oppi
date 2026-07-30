@@ -96,6 +96,32 @@ struct SessionTokenStats: Equatable, Sendable {
     let cacheRead: Int
     let cacheWrite: Int
     let total: Int
+
+    /// Complete prompt volume billed or served from cache.
+    var promptInput: Int { input + cacheRead + cacheWrite }
+
+    /// Prompt volume that was not served from cache. Cache writes are uncached work.
+    var uncachedInput: Int { input + cacheWrite }
+
+    var cacheHitRate: Double? {
+        guard promptInput > 0 else { return nil }
+        return Double(cacheRead) / Double(promptInput)
+    }
+}
+
+struct SessionCacheWasteSnapshot: Equatable, Sendable {
+    let missedTokens: Int
+    let missedCost: Double
+    let missCount: Int
+}
+
+struct SessionModelUsageSnapshot: Equatable, Sendable, Identifiable {
+    let provider: String?
+    let model: String
+    let tokens: Int
+    let cost: Double
+
+    var id: String { provider.map { "\($0)/\(model)" } ?? model }
 }
 
 struct ContextFileTokenSnapshot: Equatable, Sendable {
@@ -130,6 +156,8 @@ struct SessionLoadedResourcesSnapshot: Equatable, Sendable {
 struct SessionStatsSnapshot: Equatable, Sendable {
     let tokens: SessionTokenStats
     let cost: Double
+    let cacheWaste: SessionCacheWasteSnapshot?
+    let modelBreakdown: [SessionModelUsageSnapshot]
     let contextComposition: SessionContextCompositionSnapshot?
     let loadedResources: SessionLoadedResourcesSnapshot?
 }

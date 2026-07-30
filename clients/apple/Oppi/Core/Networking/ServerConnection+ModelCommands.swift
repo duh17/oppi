@@ -504,9 +504,35 @@ extension ServerConnection {
                 total: total
             ),
             cost: cost,
+            cacheWaste: parseCacheWaste(root["cacheWaste"]),
+            modelBreakdown: parseModelBreakdown(root["modelBreakdown"]),
             contextComposition: parseContextComposition(root["contextComposition"]),
             loadedResources: parseLoadedResources(root["loadedResources"])
         )
+    }
+
+    private static func parseCacheWaste(_ value: JSONValue?) -> SessionCacheWasteSnapshot? {
+        guard let object = value?.objectValue else { return nil }
+        return SessionCacheWasteSnapshot(
+            missedTokens: parseInt(object["missedTokens"]) ?? 0,
+            missedCost: parseDouble(object["missedCost"]) ?? 0,
+            missCount: parseInt(object["missCount"]) ?? 0
+        )
+    }
+
+    private static func parseModelBreakdown(_ value: JSONValue?) -> [SessionModelUsageSnapshot] {
+        value?.arrayValue?.compactMap { item in
+            guard let object = item.objectValue,
+                  let model = object["model"]?.stringValue else {
+                return nil
+            }
+            return SessionModelUsageSnapshot(
+                provider: object["provider"]?.stringValue,
+                model: model,
+                tokens: parseInt(object["tokens"]) ?? 0,
+                cost: parseDouble(object["cost"]) ?? 0
+            )
+        } ?? []
     }
 
     private static func parseLoadedResources(_ value: JSONValue?) -> SessionLoadedResourcesSnapshot? {

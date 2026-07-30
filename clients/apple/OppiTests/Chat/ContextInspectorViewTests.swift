@@ -61,7 +61,35 @@ struct ContextInspectorViewTests {
         #expect(snap.accessibilityLabel == "Context usage unavailable")
     }
 
-    // MARK: - formatTokenCount (removed from production code)
+    // MARK: - Session usage
+
+    @Test func tokenStatsSeparateCachedAndUncachedPromptVolume() {
+        let stats = SessionTokenStats(
+            input: 12_000,
+            output: 2_000,
+            cacheRead: 80_000,
+            cacheWrite: 8_000,
+            total: 102_000
+        )
+
+        #expect(stats.promptInput == 100_000)
+        #expect(stats.uncachedInput == 20_000)
+        #expect(stats.cacheHitRate == 0.8)
+    }
+
+    @Test func tokenStatsReportsZeroHitRateForAnUncachedPrompt() {
+        let stats = SessionTokenStats(
+            input: 12_000,
+            output: 2_000,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 14_000
+        )
+
+        #expect(stats.promptInput == 12_000)
+        #expect(stats.uncachedInput == 12_000)
+        #expect(stats.cacheHitRate == 0)
+    }
 
     // MARK: - inferContextWindow
 
