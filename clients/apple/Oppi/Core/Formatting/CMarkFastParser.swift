@@ -112,8 +112,13 @@ private enum MarkdownMathDelimiterRewriter {
 ///
 /// Used for the non-streaming full-document parse path where source
 /// positions are not needed.
+private struct CMarkParsedDocument {
+    let root: UnsafeMutablePointer<cmark_node>
+    let wikiLinkRestoration: MarkdownWikiLinkRewriter.Restoration
+}
+
 /// Shared parser setup: register GFM extensions, create parser, attach extensions, feed source.
-private func cmarkParsedDocument(_ source: String) -> UnsafeMutablePointer<cmark_node>? {
+private func cmarkParsedDocument(_ source: String) -> CMarkParsedDocument? {
     cmark_gfm_core_extensions_ensure_registered()
 
     let options = CMARK_OPT_DEFAULT | CMARK_OPT_SMART | CMARK_OPT_SOURCEPOS
@@ -130,28 +135,28 @@ private func cmarkParsedDocument(_ source: String) -> UnsafeMutablePointer<cmark
         cmark_parser_attach_syntax_extension(parser, tasklistExt)
     }
 
-    // Feed source text. Escape wiki-link label separators before cmark-gfm
-    // sees table delimiters so `[[target|label]]` survives inside table cells.
-    let parserSource = MarkdownWikiLinkRewriter.sourceForCommonMarkParsing(
-        MarkdownMathDelimiterRewriter.sourceForCommonMarkParsing(source)
-    )
-    parserSource.withCString { ptr in
-        cmark_parser_feed(parser, ptr, parserSource.utf8.count)
+    // Math owns its sentinels independently. Wiki-link protection then
+    // carries per-parse restoration context through CMark conversion.
+    let mathSource = MarkdownMathDelimiterRewriter.sourceForCommonMarkParsing(source)
+    let parserInput = MarkdownWikiLinkRewriter.parserInput(mathSource)
+    parserInput.source.withCString { ptr in
+        cmark_parser_feed(parser, ptr, parserInput.source.utf8.count)
     }
 
     let doc = cmark_parser_finish(parser)
     cmark_parser_free(parser)
-    return doc
+    guard let doc else { return nil }
+    return CMarkParsedDocument(root: doc, wikiLinkRestoration: parserInput.restoration)
 }
 
 nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
-    guard let doc = cmarkParsedDocument(source) else { return [] }
-    defer { cmark_node_free(doc) }
+    guard let parsed = cmarkParsedDocument(source) else { return [] }
+    defer { cmark_node_free(parsed.root) }
 
     var blocks: [MarkdownBlock] = []
-    var child = cmark_node_first_child(doc)
+    var child = cmark_node_first_child(parsed.root)
     while let node = child {
-        if let block = convertCMarkBlock(node) {
+        if let block = convertCMarkBlock(node, restoration: parsed.wikiLinkRestoration) {
             blocks.append(block)
         }
         child = cmark_node_next(node)
@@ -160,13 +165,13 @@ nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
 }
 
 nonisolated func parseCommonMarkFastLocated(_ source: String) -> [LocatedMarkdownBlock] {
-    guard let doc = cmarkParsedDocument(source) else { return [] }
-    defer { cmark_node_free(doc) }
+    guard let parsed = cmarkParsedDocument(source) else { return [] }
+    defer { cmark_node_free(parsed.root) }
 
     var blocks: [LocatedMarkdownBlock] = []
-    var child = cmark_node_first_child(doc)
+    var child = cmark_node_first_child(parsed.root)
     while let node = child {
-        if let block = convertCMarkBlock(node) {
+        if let block = convertCMarkBlock(node, restoration: parsed.wikiLinkRestoration) {
             blocks.append(LocatedMarkdownBlock(
                 block: block,
                 lineRange: sourceLineRange(for: node)
@@ -179,15 +184,15 @@ nonisolated func parseCommonMarkFastLocated(_ source: String) -> [LocatedMarkdow
 
 /// Fast parse with last block start line — used by the streaming incremental path.
 nonisolated func parseCommonMarkFastWithLastLine(_ source: String) -> (blocks: [MarkdownBlock], lastBlockStartLine: Int) {
-    guard let doc = cmarkParsedDocument(source) else { return ([], 1) }
-    defer { cmark_node_free(doc) }
+    guard let parsed = cmarkParsedDocument(source) else { return ([], 1) }
+    defer { cmark_node_free(parsed.root) }
 
     var blocks: [MarkdownBlock] = []
     var childCount = 0
     var lastNode: UnsafeMutablePointer<cmark_node>?
-    var child = cmark_node_first_child(doc)
+    var child = cmark_node_first_child(parsed.root)
     while let node = child {
-        if let block = convertCMarkBlock(node) {
+        if let block = convertCMarkBlock(node, restoration: parsed.wikiLinkRestoration) {
             blocks.append(block)
         }
         lastNode = node
@@ -228,22 +233,27 @@ private func sourceLineRange(for node: UnsafeMutablePointer<cmark_node>) -> Clos
     return start...max(start, end)
 }
 
-private func convertCMarkBlock(_ node: UnsafeMutablePointer<cmark_node>) -> MarkdownBlock? {
+private func convertCMarkBlock(
+    _ node: UnsafeMutablePointer<cmark_node>,
+    restoration: MarkdownWikiLinkRewriter.Restoration
+) -> MarkdownBlock? {
     let nodeType = cmark_node_get_type(node)
 
     switch nodeType {
     case CMARK_NODE_PARAGRAPH:
-        return .paragraph(convertCMarkInlines(node))
+        return .paragraph(convertCMarkInlines(node, restoration: restoration))
 
     case CMARK_NODE_HEADING:
         let level = Int(cmark_node_get_heading_level(node))
-        return .heading(level: level, inlines: convertCMarkInlines(node))
+        return .heading(level: level, inlines: convertCMarkInlines(node, restoration: restoration))
 
     case CMARK_NODE_CODE_BLOCK:
         let rawCode = cmark_node_get_literal(node).flatMap { String(cString: $0) } ?? ""
-        var code = rawCode.hasSuffix("\n") ? String(rawCode.dropLast()) : rawCode
-        let lang = cmark_node_get_fence_info(node).flatMap { String(cString: $0) }
-        let language = (lang?.isEmpty == false) ? lang : nil
+        let restoredCode = restoration.restore(rawCode)
+        var code = restoredCode.hasSuffix("\n") ? String(restoredCode.dropLast()) : restoredCode
+        let rawInfo = cmark_node_get_fence_info(node).flatMap { String(cString: $0) }
+        let restoredInfo = rawInfo.map(restoration.restore)
+        let language = (restoredInfo?.isEmpty == false) ? restoredInfo : nil
         // Strip trailing inner fences from 4+ backtick code blocks.
         var fl: Int32 = 0; var fo: Int32 = 0; var fc: CChar = 0
         cmark_node_get_fenced(node, &fl, &fo, &fc)
@@ -254,7 +264,7 @@ private func convertCMarkBlock(_ node: UnsafeMutablePointer<cmark_node>) -> Mark
         var children: [MarkdownBlock] = []
         var child = cmark_node_first_child(node)
         while let c = child {
-            if let block = convertCMarkBlock(c) {
+            if let block = convertCMarkBlock(c, restoration: restoration) {
                 children.append(block)
             }
             child = cmark_node_next(c)
@@ -283,7 +293,7 @@ private func convertCMarkBlock(_ node: UnsafeMutablePointer<cmark_node>) -> Mark
             var itemBlocks: [MarkdownBlock] = []
             var itemChild = cmark_node_first_child(itemNode)
             while let c = itemChild {
-                if let block = convertCMarkBlock(c) {
+                if let block = convertCMarkBlock(c, restoration: restoration) {
                     itemBlocks.append(block)
                 }
                 itemChild = cmark_node_next(c)
@@ -308,14 +318,14 @@ private func convertCMarkBlock(_ node: UnsafeMutablePointer<cmark_node>) -> Mark
 
     case CMARK_NODE_HTML_BLOCK:
         let html = cmark_node_get_literal(node).flatMap { String(cString: $0) } ?? ""
-        return .htmlBlock(html)
+        return .htmlBlock(restoration.restore(html))
 
     default:
         // Check for table extension node.
         if let typeStr = cmark_node_get_type_string(node) {
             let type = String(cString: typeStr)
             if type == "table" {
-                return convertCMarkTable(node)
+                return convertCMarkTable(node, restoration: restoration)
             }
         }
         return nil
@@ -324,7 +334,10 @@ private func convertCMarkBlock(_ node: UnsafeMutablePointer<cmark_node>) -> Mark
 
 // MARK: - Table Conversion
 
-private func convertCMarkTable(_ node: UnsafeMutablePointer<cmark_node>) -> MarkdownBlock {
+private func convertCMarkTable(
+    _ node: UnsafeMutablePointer<cmark_node>,
+    restoration: MarkdownWikiLinkRewriter.Restoration
+) -> MarkdownBlock {
     var headers: [[MarkdownInline]] = []
     var rows: [[[MarkdownInline]]] = []
 
@@ -334,7 +347,7 @@ private func convertCMarkTable(_ node: UnsafeMutablePointer<cmark_node>) -> Mark
         var cells: [[MarkdownInline]] = []
         var cellNode = cmark_node_first_child(row)
         while let cell = cellNode {
-            cells.append(convertCMarkInlines(cell))
+            cells.append(convertCMarkInlines(cell, restoration: restoration))
             cellNode = cmark_node_next(cell)
         }
         if isHeader {
@@ -349,20 +362,23 @@ private func convertCMarkTable(_ node: UnsafeMutablePointer<cmark_node>) -> Mark
     return .table(headers: headers, rows: rows)
 }
 
-private func extractCMarkPlainText(_ node: UnsafeMutablePointer<cmark_node>) -> String {
+private func extractCMarkPlainText(
+    _ node: UnsafeMutablePointer<cmark_node>,
+    restoration: MarkdownWikiLinkRewriter.Restoration
+) -> String {
     var result = ""
     var child = cmark_node_first_child(node)
     while let c = child {
         let childType = cmark_node_get_type(c)
         if childType == CMARK_NODE_TEXT || childType == CMARK_NODE_CODE {
             if let literal = cmark_node_get_literal(c) {
-                result += String(cString: literal)
+                result += restoration.restore(String(cString: literal))
             }
         } else if childType == CMARK_NODE_SOFTBREAK || childType == CMARK_NODE_LINEBREAK {
             result += "\n"
         } else {
             // Recurse into inline containers (emphasis, strong, link, etc.)
-            result += extractCMarkPlainText(c)
+            result += extractCMarkPlainText(c, restoration: restoration)
         }
         child = cmark_node_next(c)
     }
@@ -371,11 +387,14 @@ private func extractCMarkPlainText(_ node: UnsafeMutablePointer<cmark_node>) -> 
 
 // MARK: - Inline Conversion
 
-private func convertCMarkInlines(_ parentNode: UnsafeMutablePointer<cmark_node>) -> [MarkdownInline] {
+private func convertCMarkInlines(
+    _ parentNode: UnsafeMutablePointer<cmark_node>,
+    restoration: MarkdownWikiLinkRewriter.Restoration
+) -> [MarkdownInline] {
     var inlines: [MarkdownInline] = []
     var child = cmark_node_first_child(parentNode)
     while let node = child {
-        if let inline = convertCMarkInline(node) {
+        if let inline = convertCMarkInline(node, restoration: restoration) {
             inlines.append(inline)
         }
         child = cmark_node_next(node)
@@ -383,31 +402,40 @@ private func convertCMarkInlines(_ parentNode: UnsafeMutablePointer<cmark_node>)
     return inlines
 }
 
-private func convertCMarkInline(_ node: UnsafeMutablePointer<cmark_node>) -> MarkdownInline? {
+private func convertCMarkInline(
+    _ node: UnsafeMutablePointer<cmark_node>,
+    restoration: MarkdownWikiLinkRewriter.Restoration
+) -> MarkdownInline? {
     let nodeType = cmark_node_get_type(node)
 
     switch nodeType {
     case CMARK_NODE_TEXT:
         guard let literal = cmark_node_get_literal(node) else { return nil }
-        return .text(MarkdownMathDelimiterRewriter.restoreCommonMarkText(String(cString: literal)))
+        let mathRestored = MarkdownMathDelimiterRewriter.restoreCommonMarkText(String(cString: literal))
+        return .text(restoration.restore(mathRestored))
 
     case CMARK_NODE_EMPH:
-        return .emphasis(convertCMarkInlines(node))
+        return .emphasis(convertCMarkInlines(node, restoration: restoration))
 
     case CMARK_NODE_STRONG:
-        return .strong(convertCMarkInlines(node))
+        return .strong(convertCMarkInlines(node, restoration: restoration))
 
     case CMARK_NODE_CODE:
         guard let literal = cmark_node_get_literal(node) else { return nil }
-        return .code(String(cString: literal))
+        return .code(restoration.restore(String(cString: literal)))
 
     case CMARK_NODE_LINK:
-        let dest = cmark_node_get_url(node).flatMap { String(cString: $0) }
-        return .link(children: convertCMarkInlines(node), destination: dest)
+        let rawDestination = cmark_node_get_url(node).flatMap { String(cString: $0) }
+        let destination = rawDestination.map { restoration.restore($0) }
+        return .link(
+            children: convertCMarkInlines(node, restoration: restoration),
+            destination: destination
+        )
 
     case CMARK_NODE_IMAGE:
-        let alt = extractCMarkPlainText(node)
-        let source = cmark_node_get_url(node).flatMap { String(cString: $0) }
+        let alt = extractCMarkPlainText(node, restoration: restoration)
+        let rawSource = cmark_node_get_url(node).flatMap { String(cString: $0) }
+        let source = rawSource.map { restoration.restore($0) }
         return .image(alt: alt, source: source)
 
     case CMARK_NODE_SOFTBREAK:
@@ -418,14 +446,14 @@ private func convertCMarkInline(_ node: UnsafeMutablePointer<cmark_node>) -> Mar
 
     case CMARK_NODE_HTML_INLINE:
         guard let literal = cmark_node_get_literal(node) else { return nil }
-        return .html(String(cString: literal))
+        return .html(restoration.restore(String(cString: literal)))
 
     default:
         // Check for strikethrough extension.
         if let typeStr = cmark_node_get_type_string(node) {
             let type = String(cString: typeStr)
             if type == "strikethrough" {
-                return .strikethrough(convertCMarkInlines(node))
+                return .strikethrough(convertCMarkInlines(node, restoration: restoration))
             }
         }
         return nil

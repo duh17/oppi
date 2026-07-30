@@ -7,6 +7,8 @@ final class AssistantMarkdownSegmentApplier {
 
     /// Segment types currently rendered — used for structural diff.
     private var renderedSegmentSignatures: [SegmentSignature] = []
+    /// Scope-sensitive inputs embedded into links and rendered prefix views.
+    private var renderedBuildContext: SegmentRenderContext?
     /// References to text views in the stack for in-place content updates.
     private var textViews: [Int: BaselineSafeTextView] = [:]
     /// References to code block views for in-place updates.
@@ -81,6 +83,7 @@ final class AssistantMarkdownSegmentApplier {
         mermaidViews.removeAll()
         latexViews.removeAll()
         renderedSegmentSignatures = []
+        renderedBuildContext = nil
         stackView.isLayoutMarginsRelativeArrangement = false
         stackView.layoutMargins = .zero
         hungTextView = nil
@@ -180,6 +183,11 @@ final class AssistantMarkdownSegmentApplier {
         }
 
         let signatures = segments.map(SegmentSignature.init)
+        let buildContext = SegmentRenderContext(config)
+        if renderedBuildContext != buildContext {
+            rebuild(segments: segments, signatures: signatures, config: config)
+            return
+        }
 
         if signatures == renderedSegmentSignatures {
             updateInPlace(segments: segments, config: config)
@@ -208,6 +216,7 @@ final class AssistantMarkdownSegmentApplier {
 
         appendSegmentViews(segments: segments, in: segments.indices, config: config)
         renderedSegmentSignatures = signatures
+        renderedBuildContext = SegmentRenderContext(config)
 
         // Seed the incremental cache for the streaming tail.
         if config.isStreaming, let lastIdx = segments.lastIndex(where: {
@@ -279,6 +288,10 @@ final class AssistantMarkdownSegmentApplier {
                     config: config,
                     lineRange: sourceLineRange(at: index)
                 )
+            )
+            tableView.configureResourceReferenceScope(
+                serverID: config.serverID,
+                workspaceID: config.workspaceID
             )
             tableView.apply(headers: headers, rows: rows, palette: palette)
             stackView.addArrangedSubview(tableView)
@@ -507,6 +520,10 @@ final class AssistantMarkdownSegmentApplier {
                             config: config,
                             lineRange: sourceLineRange(at: index)
                         )
+                    )
+                    tableView.configureResourceReferenceScope(
+                        serverID: config.serverID,
+                        workspaceID: config.workspaceID
                     )
                     tableView.apply(headers: headers, rows: rows, palette: palette)
                 }
@@ -816,6 +833,24 @@ final class AssistantMarkdownSegmentApplier {
                 self?.codeBlockViews[index]?.applyHighlightedCode(wrapper.value)
             }
         }
+    }
+}
+
+private struct SegmentRenderContext: Equatable {
+    let themeID: ThemeID
+    let serverID: String?
+    let workspaceID: String?
+    let sessionID: String?
+    let serverBaseURL: URL?
+    let sourceDirectory: String?
+
+    init(_ config: AssistantMarkdownContentView.Configuration) {
+        themeID = config.themeID
+        serverID = config.serverID
+        workspaceID = config.workspaceID
+        sessionID = config.sessionID
+        serverBaseURL = config.serverBaseURL
+        sourceDirectory = config.sourceDirectory
     }
 }
 

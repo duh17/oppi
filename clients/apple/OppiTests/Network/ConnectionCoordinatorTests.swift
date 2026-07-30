@@ -2,6 +2,32 @@ import Foundation
 import Testing
 @testable import Oppi
 
+private actor CoordinatorPreparationGate {
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var hasStarted = false
+    private var isReleased = false
+
+    func waitUntilStarted() async {
+        guard !hasStarted else { return }
+        await withCheckedContinuation { startedContinuation = $0 }
+    }
+
+    func suspendPreparation() async {
+        hasStarted = true
+        startedContinuation?.resume()
+        startedContinuation = nil
+        guard !isReleased else { return }
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func release() {
+        isReleased = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
 @Suite("ConnectionCoordinator", .serialized)
 @MainActor
 struct ConnectionCoordinatorTests {
@@ -36,6 +62,53 @@ struct ConnectionCoordinatorTests {
         // Second switch should return true immediately
         let result = coordinator.switchToServer(server)
         #expect(result == true)
+    }
+
+    @Test func supersededPreparationDoesNotActivateServerOrNavigate() async {
+        let (coordinator, _) = makeCoordinator()
+        let newerServer = makeServer(id: "sha256:newer-server", name: "Newer")
+        let staleServer = makeServer(id: "sha256:stale-server", name: "Stale")
+        coordinator.serverStore.addOrUpdate(newerServer)
+        coordinator.serverStore.addOrUpdate(staleServer)
+        coordinator.switchToServer(newerServer)
+
+        let navigation = AppNavigation()
+        navigation.openWorkspaceSession(.init(
+            serverId: newerServer.id,
+            sessionId: "newer-session",
+            workspaceId: "newer-workspace"
+        ))
+        let requestCoordinator = ResourceReferenceRequestCoordinator()
+        let gate = CoordinatorPreparationGate()
+        coordinator._initialLANEndpointForTesting = { serverID in
+            guard serverID == staleServer.id else { return nil }
+            await gate.suspendPreparation()
+            return nil
+        }
+
+        requestCoordinator.perform { token in
+            let switched = await coordinator.switchToServerReady(
+                staleServer,
+                shouldActivate: { requestCoordinator.isCurrent(token) }
+            )
+            guard switched, requestCoordinator.isCurrent(token) else { return }
+            navigation.openReferencedSession(.init(
+                serverId: staleServer.id,
+                sessionId: "stale-session",
+                workspaceId: "stale-workspace"
+            ))
+        }
+        await gate.waitUntilStarted()
+
+        requestCoordinator.perform { token in
+            #expect(requestCoordinator.isCurrent(token))
+        }
+        await gate.release()
+        for _ in 0..<10 { await Task.yield() }
+
+        #expect(coordinator.activeServerId == newerServer.id)
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "newer-session")
     }
 
     @Test func missingBonjourCandidateUsesPairedTransport() async {

@@ -312,13 +312,15 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func rendersWikiLinksAsClickableWorkspaceNoteLinks() throws {
+    @Test func rendersWikiLinksAsClickableResourceReferences() throws {
         let text = "See [[notes/sessions/oppi-jZhDRKeV|session note]] for context"
         let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
             text: text,
             isStreaming: false,
             canFork: false,
             onFork: nil,
+            sessionId: "session-source",
+            serverID: "server-1",
             workspaceID: "workspace-1"
         ))
         let textView = try #require(timelineFirstTextView(in: view))
@@ -331,9 +333,12 @@ struct AssistantTimelineRowContentViewTests {
 
         let linkedValue = textView.attributedText.attribute(.link, at: labelRange.location, effectiveRange: nil)
         let linkedURL = try #require(linkedValue as? URL)
-        let parsed = try #require(WorkspaceWikiLinkURL.parse(linkedURL))
+        let parsed = try #require(ResourceReferenceURL.parse(linkedURL))
+        #expect(parsed.target == "notes/sessions/oppi-jZhDRKeV")
+        #expect(parsed.sourceServerID == "server-1")
         #expect(parsed.workspaceID == "workspace-1")
-        #expect(parsed.filePath == "notes/sessions/oppi-jZhDRKeV.md")
+        #expect(parsed.sourceSessionID == "session-source")
+        #expect(parsed.fileCandidatePath == "notes/sessions/oppi-jZhDRKeV.md")
     }
 
     @MainActor
@@ -659,7 +664,7 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func rendersWikiLinksInsideTableCellsAsClickableWorkspaceNoteLinks() throws {
+    @Test func rendersWikiLinksInsideTableCellsAsClickableResourceReferences() throws {
         let text = """
         | Title | Link |
         | --- | --- |
@@ -687,9 +692,80 @@ struct AssistantTimelineRowContentViewTests {
         #expect(labelRange.location != NSNotFound)
         let linkedValue = textView.attributedText.attribute(.link, at: labelRange.location, effectiveRange: nil)
         let linkedURL = try #require(linkedValue as? URL)
-        let parsed = try #require(WorkspaceWikiLinkURL.parse(linkedURL))
+        let parsed = try #require(ResourceReferenceURL.parse(linkedURL))
+        #expect(parsed.target == "notes/sessions/oppi-jZhDRKeV")
         #expect(parsed.workspaceID == "workspace-1")
-        #expect(parsed.filePath == "notes/sessions/oppi-jZhDRKeV.md")
+        #expect(parsed.fileCandidatePath == "notes/sessions/oppi-jZhDRKeV.md")
+    }
+
+    @MainActor
+    @Test func formattedWikiLinkInsideTableCellRemainsSelectableAndTappable() throws {
+        let text = """
+        | Link |
+        | --- |
+        | **[[RV97TbYj|session note]]** |
+        """
+        let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
+            text: text,
+            isStreaming: false,
+            canFork: false,
+            onFork: nil,
+            serverID: "server-1",
+            workspaceID: "workspace-1"
+        ))
+        _ = fittedTimelineSize(for: view, width: 370)
+        let tableView = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: view))
+        let textView = try #require(timelineAllTextViews(in: tableView).first { !$0.isHidden })
+        let labelRange = (textView.attributedText.string as NSString).range(of: "session note")
+
+        #expect(textView.isSelectable)
+        #expect(labelRange.location != NSNotFound)
+        let linkedURL = try #require(
+            textView.attributedText.attribute(.link, at: labelRange.location, effectiveRange: nil) as? URL
+        )
+        #expect(ResourceReferenceURL.parse(linkedURL)?.target == "RV97TbYj")
+    }
+
+    @MainActor
+    @Test func reusedTableRefreshesResourceURLWhenServerScopeChanges() throws {
+        let tableView = NativeTableBlockView()
+        tableView.frame = CGRect(x: 0, y: 0, width: 370, height: 120)
+        let referenceA = ResourceReference(
+            target: "RV97TbYj",
+            sourceServerID: "server-a",
+            workspaceID: "workspace-1",
+            sourceSessionID: "source-a",
+            fileCandidatePath: "RV97TbYj.md"
+        )
+        let referenceB = ResourceReference(
+            target: "RV97TbYj",
+            sourceServerID: "server-b",
+            workspaceID: "workspace-1",
+            sourceSessionID: "source-b",
+            fileCandidatePath: "RV97TbYj.md"
+        )
+        let urlA = try #require(ResourceReferenceURL.make(referenceA))
+        let urlB = try #require(ResourceReferenceURL.make(referenceB))
+        let headers: [[MarkdownInline]] = [[.text("Link")]]
+
+        tableView.configureResourceReferenceScope(serverID: "server-a", workspaceID: "workspace-1")
+        tableView.apply(
+            headers: headers,
+            rows: [[[.link(children: [.text("session")], destination: urlA.absoluteString)]]],
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        tableView.configureResourceReferenceScope(serverID: "server-b", workspaceID: "workspace-1")
+        tableView.apply(
+            headers: headers,
+            rows: [[[.link(children: [.text("session")], destination: urlB.absoluteString)]]],
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        tableView.layoutIfNeeded()
+
+        let textView = try #require(timelineAllTextViews(in: tableView).first { !$0.isHidden })
+        let range = (textView.attributedText.string as NSString).range(of: "session")
+        let linkedURL = try #require(textView.attributedText.attribute(.link, at: range.location, effectiveRange: nil) as? URL)
+        #expect(ResourceReferenceURL.parse(linkedURL)?.sourceServerID == "server-b")
     }
 
     @MainActor
@@ -936,6 +1012,57 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func streamingViewReuseRebuildsEveryResourceLinkWhenScopeChanges() throws {
+        let content = """
+        Intro [[RV97TbYj|prose session]].
+
+        | Link |
+        | --- |
+        | [[RV97TbYj|table session]] |
+
+        Streaming tail
+        """
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.apply(configuration: .make(
+            content: content,
+            isStreaming: true,
+            themeID: .dark,
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "source-a"
+        ))
+        markdownView.apply(configuration: .make(
+            content: content + " grows",
+            isStreaming: true,
+            themeID: .dark,
+            serverID: "server-b",
+            workspaceID: "workspace-b",
+            sessionID: "source-b"
+        ))
+
+        let references = timelineAllTextViews(in: markdownView).flatMap { textView in
+            let attributed = textView.attributedText ?? NSAttributedString()
+            var values: [ResourceReference] = []
+            attributed.enumerateAttribute(
+                .link,
+                in: NSRange(location: 0, length: attributed.length)
+            ) { value, _, _ in
+                guard let url = value as? URL,
+                      let reference = ResourceReferenceURL.parse(url) else { return }
+                values.append(reference)
+            }
+            return values
+        }
+
+        #expect(references.count == 2)
+        #expect(references.allSatisfy { reference in
+            reference.sourceServerID == "server-b"
+                && reference.workspaceID == "workspace-b"
+                && reference.sourceSessionID == "source-b"
+        })
+    }
+
+    @MainActor
     @Test func streamingTableStructuralChangeRebuilds() throws {
         // When structure changes (text → text + table), a rebuild happens.
         // Phase 1: just text, no table yet
@@ -1106,27 +1233,50 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func givenWorkspaceContextWhenClassifyingWikiLinkThenItRoutesAsWorkspaceFileLink() throws {
+    @Test func givenWorkspaceContextWhenClassifyingWikiLinkThenItRoutesAsResourceReference() throws {
         let markdownView = AssistantMarkdownContentView()
         markdownView.apply(configuration: .make(
             content: "See [[notes/sessions/oppi-jZhDRKeV|session note]]",
             isStreaming: false,
             themeID: .light,
-            workspaceID: "workspace-1"
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-source"
         ))
 
-        let url = try #require(WorkspaceWikiLinkURL.make(
+        let reference = ResourceReference(
+            target: "notes/sessions/oppi-jZhDRKeV",
+            sourceServerID: "server-1",
             workspaceID: "workspace-1",
-            filePath: "notes/sessions/oppi-jZhDRKeV.md"
-        ))
+            sourceSessionID: "session-source",
+            fileCandidatePath: "notes/sessions/oppi-jZhDRKeV.md"
+        )
+        let url = try #require(ResourceReferenceURL.make(reference))
         let action = markdownView.classifyLink(url)
-        guard case .fileLink(let payload) = action else {
-            Issue.record("Expected .fileLink, got \(action)")
-            return
-        }
-        #expect(payload.workspaceID == "workspace-1")
-        #expect(payload.filePath == "notes/sessions/oppi-jZhDRKeV.md")
-        #expect(payload.originalURL == url)
+        #expect(action == .resourceReference(reference))
+    }
+
+    @MainActor
+    @Test func givenNoWorkspaceWhenClassifyingGenericWikiLinkThenItRoutesAsResourceReference() throws {
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.apply(configuration: .make(
+            content: "See [[RV97TbYj]]",
+            isStreaming: false,
+            themeID: .light,
+            serverID: "server-1",
+            sessionID: "session-source"
+        ))
+        let textView = try #require(timelineFirstTextView(in: markdownView))
+        let url = try #require(textView.attributedText.attribute(
+            .link,
+            at: 4,
+            effectiveRange: nil
+        ) as? URL)
+        let reference = try #require(ResourceReferenceURL.parse(url))
+
+        #expect(reference.workspaceID == nil)
+        #expect(reference.fileCandidatePath == nil)
+        #expect(markdownView.classifyLink(url) == .resourceReference(reference))
     }
 
     @MainActor
@@ -1139,12 +1289,45 @@ struct AssistantTimelineRowContentViewTests {
             workspaceID: "workspace-1"
         ))
 
-        let url = try #require(WorkspaceWikiLinkURL.make(
+        let url = try #require(ResourceReferenceURL.make(ResourceReference(
+            target: "notes/sessions/oppi-jZhDRKeV",
+            sourceServerID: "server-1",
             workspaceID: "workspace-2",
-            filePath: "notes/sessions/oppi-jZhDRKeV.md"
-        ))
+            sourceSessionID: "session-source",
+            fileCandidatePath: "notes/sessions/oppi-jZhDRKeV.md"
+        )))
         let action = markdownView.classifyLink(url)
         #expect(action == .systemDefault)
+    }
+
+    @MainActor
+    @Test func givenDifferentServerWhenClassifyingResourceReferenceThenItUsesSystemDefault() throws {
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.apply(configuration: .make(
+            content: "See [[RV97TbYj]]",
+            isStreaming: false,
+            themeID: .light,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-source"
+        ))
+        let url = try #require(ResourceReferenceURL.make(ResourceReference(
+            target: "RV97TbYj",
+            sourceServerID: "server-2",
+            workspaceID: "workspace-1",
+            sourceSessionID: "session-source",
+            fileCandidatePath: "RV97TbYj.md"
+        )))
+
+        #expect(markdownView.classifyLink(url) == .systemDefault)
+    }
+
+    @MainActor
+    @Test func explicitSessionDeepLinkStillRoutesInternally() throws {
+        let markdownView = makeMarkdownView()
+        let url = try #require(URL(string: "oppi://session/RV97TbYj"))
+
+        #expect(markdownView.classifyLink(url) == .deepLink(url))
     }
 
     @MainActor

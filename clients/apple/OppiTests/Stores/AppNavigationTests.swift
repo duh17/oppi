@@ -2,6 +2,24 @@ import SwiftUI
 import Testing
 @testable import Oppi
 
+private actor ResourceReferenceAsyncGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func open() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 @Suite("AppNavigation shell routing")
 @MainActor
 struct AppNavigationShellRoutingTests {
@@ -115,6 +133,203 @@ struct AppNavigationShellRoutingTests {
         navigation.setWorkspaceSessionPath(serverId: "server-1", sessionId: "session-1")
 
         #expect(navigation.workspacePath.count == 1)
+    }
+
+    @Test func referencedSessionAppendsToCompactChatHistoryAndSelfLinkIsNoOp() {
+        let navigation = AppNavigation()
+        let source = WorkspaceSessionNavTarget(
+            serverId: "server-1",
+            sessionId: "source",
+            workspaceId: "workspace-1"
+        )
+        let target = WorkspaceSessionNavTarget(
+            serverId: "server-2",
+            sessionId: "target",
+            workspaceId: "workspace-2"
+        )
+        navigation.openWorkspaceSession(source)
+
+        navigation.openReferencedSession(target)
+
+        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "target")
+        navigation.openReferencedSession(target)
+        #expect(navigation.workspacePath.count == 2)
+        navigation.workspacePath.removeLast()
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "source")
+    }
+
+    @Test func referencedSessionPushesFromSplitChatAndSelfLinkIsNoOp() {
+        let navigation = AppNavigation()
+        let source = WorkspaceSessionNavTarget(
+            serverId: "server-1",
+            sessionId: "source",
+            workspaceId: "workspace-1"
+        )
+        let target = WorkspaceSessionNavTarget(
+            serverId: "server-2",
+            sessionId: "target",
+            workspaceId: "workspace-2"
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceSession(source)
+
+        navigation.openReferencedSession(target)
+
+        #expect(navigation.splitDetailTarget == .session(source))
+        #expect(navigation.splitDetailPath.count == 1)
+        navigation.openReferencedSession(target)
+        #expect(navigation.splitDetailPath.count == 1)
+        navigation.splitDetailPath.removeLast()
+        #expect(navigation.splitDetailTarget == .session(source))
+    }
+
+    @Test func referencedSessionChainSurvivesCompactToSplitToCompactTransition() {
+        let navigation = AppNavigation()
+        let source = WorkspaceSessionNavTarget(
+            serverId: "server-1",
+            sessionId: "source",
+            workspaceId: "workspace-1"
+        )
+        let target = WorkspaceSessionNavTarget(
+            serverId: "server-2",
+            sessionId: "target",
+            workspaceId: "workspace-2"
+        )
+        navigation.openWorkspaceSession(source)
+        navigation.openReferencedSession(target)
+
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        #expect(navigation.splitDetailTarget == .session(source))
+        #expect(navigation.splitDetailPath.count == 1)
+
+        navigation.setWorkspaceNavigationPresentation(.stack)
+
+        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "target")
+        navigation.workspacePath.removeLast()
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "source")
+    }
+
+    @Test func latestResourceReferenceRequestSuppressesSlowerEarlierCompletion() async {
+        let coordinator = ResourceReferenceRequestCoordinator()
+        let firstGate = ResourceReferenceAsyncGate()
+        var committed: [String] = []
+
+        coordinator.perform { token in
+            await firstGate.wait()
+            if coordinator.isCurrent(token) {
+                committed.append("first")
+            }
+        }
+        await Task.yield()
+        coordinator.perform { token in
+            if coordinator.isCurrent(token) {
+                committed.append("second")
+            }
+        }
+        for _ in 0..<10 { await Task.yield() }
+        await firstGate.open()
+        for _ in 0..<10 { await Task.yield() }
+
+        #expect(committed == ["second"])
+    }
+
+    @Test func cancellingNewestResourceReferenceRequestSuppressesItsDialogAndOlderWork() async {
+        let coordinator = ResourceReferenceRequestCoordinator()
+        let firstGate = ResourceReferenceAsyncGate()
+        let secondGate = ResourceReferenceAsyncGate()
+        var committed: [String] = []
+
+        coordinator.perform { token in
+            await firstGate.wait()
+            if coordinator.isCurrent(token) {
+                committed.append("first")
+            }
+        }
+        await Task.yield()
+        coordinator.perform { token in
+            await secondGate.wait()
+            if coordinator.isCurrent(token) {
+                committed.append("second dialog")
+            }
+        }
+        coordinator.cancel()
+
+        await firstGate.open()
+        await secondGate.open()
+        for _ in 0..<10 { await Task.yield() }
+
+        #expect(committed.isEmpty)
+    }
+
+    @Test func supersededRequestDuringPreparationCannotActivateServerOrNavigate() async {
+        let requestCoordinator = ResourceReferenceRequestCoordinator()
+        let preparationGate = ResourceReferenceAsyncGate()
+        let navigation = AppNavigation()
+        let newerSession = WorkspaceSessionNavTarget(
+            serverId: "server-newer",
+            sessionId: "newer",
+            workspaceId: "workspace-newer"
+        )
+        let staleSession = WorkspaceSessionNavTarget(
+            serverId: "server-stale",
+            sessionId: "stale",
+            workspaceId: "workspace-stale"
+        )
+        navigation.openWorkspaceSession(newerSession)
+        var activeServerID = "server-newer"
+
+        requestCoordinator.perform { token in
+            _ = await PreparedServerActivation.run(
+                prepare: {
+                    await preparationGate.wait()
+                    return "server-stale"
+                },
+                shouldActivate: { requestCoordinator.isCurrent(token) },
+                activate: { serverID in
+                    activeServerID = serverID
+                    navigation.openReferencedSession(staleSession)
+                }
+            )
+        }
+        await Task.yield()
+
+        requestCoordinator.perform { token in
+            #expect(requestCoordinator.isCurrent(token))
+        }
+        for _ in 0..<10 { await Task.yield() }
+        await preparationGate.open()
+        for _ in 0..<10 { await Task.yield() }
+
+        #expect(activeServerID == "server-newer")
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "newer")
+    }
+
+    @Test func workspaceLessCandidateCollectionResolvesKnownSessionWithoutFileLookup() {
+        let reference = ResourceReference(
+            target: "RV97TbYj",
+            sourceServerID: "server-source",
+            workspaceID: nil,
+            sourceSessionID: "session-source",
+            fileCandidatePath: nil
+        )
+        let session = ResourceReferenceMatch.session(.init(
+            serverID: "server-target",
+            sessionID: "RV97TbYj",
+            workspaceID: nil,
+            displayName: "Known session",
+            workspaceName: nil,
+            serverName: "Mac"
+        ))
+
+        #expect(ResourceReferenceCandidateCollector.resolve(
+            reference,
+            sessionMatches: [session],
+            fileLookup: .notApplicable
+        ) == .resolution(.resolved(session)))
     }
 
     @Test func splitPresentationClearsStackPath() {
@@ -601,6 +816,40 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspacePath.count == 1)
     }
 
+    @Test func truncatedFileIndexRequiresFreshDirectoryCheckInsteadOfReportingMissing() {
+        #expect(ResourceFileCandidatePolicy.indexDecision(
+            candidatePath: "notes/RV97TbYj.md",
+            paths: ["README.md"],
+            truncated: true
+        ) == .inspectDirectory)
+        #expect(ResourceFileCandidatePolicy.indexDecision(
+            candidatePath: "notes/RV97TbYj.md",
+            paths: ["README.md"],
+            truncated: false
+        ) == .missing)
+    }
+
+    @Test func truncatedDirectoryWithoutCandidateRemainsUnavailable() {
+        let entries = [FileEntry(
+            name: "other.md",
+            type: .file,
+            size: 10,
+            modifiedAt: 0,
+            path: "notes/other.md"
+        )]
+
+        #expect(ResourceFileCandidatePolicy.directoryResult(
+            fileName: "RV97TbYj.md",
+            entries: entries,
+            truncated: true
+        ) == nil)
+        #expect(ResourceFileCandidatePolicy.directoryResult(
+            fileName: "RV97TbYj.md",
+            entries: entries,
+            truncated: false
+        ) == false)
+    }
+
     @Test func givenWorkspaceFileInsideHostMountWhenResolvingThenItOpensThatWorkspaceFile() {
         let workspace = makeTestWorkspace(id: "workspace-1", hostMount: "~/workspace/oppi")
         let payload = FileLinkPayload(
@@ -622,10 +871,13 @@ struct AppNavigationShellRoutingTests {
 
     @Test func givenWorkspaceRelativeFileWhenResolvingThenItOpensThatWorkspaceFile() throws {
         let workspace = makeTestWorkspace(id: "workspace-1", hostMount: "~/workspace/oppi")
-        let originalURL = try #require(WorkspaceWikiLinkURL.make(
+        let originalURL = try #require(ResourceReferenceURL.make(ResourceReference(
+            target: "notes/sessions/oppi-jZhDRKeV",
+            sourceServerID: "server-1",
             workspaceID: "workspace-1",
-            filePath: "notes/sessions/oppi-jZhDRKeV.md"
-        ))
+            sourceSessionID: "session-source",
+            fileCandidatePath: "notes/sessions/oppi-jZhDRKeV.md"
+        )))
         let payload = FileLinkPayload(
             workspaceID: "workspace-1",
             filePath: "notes/sessions/oppi-jZhDRKeV.md",

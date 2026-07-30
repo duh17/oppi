@@ -160,6 +160,11 @@ enum WorkspaceDeepLink {
     }
 }
 
+private struct PendingResourceReferenceChoice {
+    let reference: ResourceReference
+    let matches: [ResourceReferenceMatch]
+}
+
 enum FileLinkOpenPolicy {
     struct ResolvedLink: Equatable {
         let serverId: String
@@ -208,9 +213,22 @@ struct OppiApp: App {
 
     @State private var inviteBootstrapInFlight = false
     @State private var pendingSessionDeepLinkId: String?
+    @State private var pendingResourceReferenceChoice: PendingResourceReferenceChoice?
+    @State private var resourceReferenceRequestCoordinator = ResourceReferenceRequestCoordinator()
     @State private var foregroundReconnectGate = ForegroundReconnectGate()
     @State private var backgroundKeepAlive = BackgroundKeepAlive()
     @Environment(\.scenePhase) private var scenePhase
+
+    private var resourceReferenceChoiceIsPresented: Binding<Bool> {
+        Binding(
+            get: { pendingResourceReferenceChoice != nil },
+            set: { isPresented in
+                if !isPresented, pendingResourceReferenceChoice != nil {
+                    cancelResourceReferenceRequest()
+                }
+            }
+        )
+    }
 
     init() {
 #if DEBUG
@@ -251,7 +269,7 @@ struct OppiApp: App {
     }
 
     private var appRootView: some View {
-        ContentView()
+        let root = ContentView()
             .environment(coordinator)
             .withServerScopedEnvironment(coordinator.activeConnection)
             .environment(navigation)
@@ -316,10 +334,37 @@ struct OppiApp: App {
                     UIApplication.shared.open(url)
                 }
             }
+
+        return root
+            .onReceive(NotificationCenter.default.publisher(for: .resourceReferenceTapped)) { notification in
+                guard let reference = notification.object as? ResourceReference else { return }
+                startResourceReferenceRequest(reference)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .fileLinkTapped)) { notification in
                 guard let payload = notification.object as? FileLinkPayload else { return }
                 Task { @MainActor in
                     _ = await handleIncomingFileLink(payload)
+                }
+            }
+            .confirmationDialog(
+                "Choose a resource",
+                isPresented: resourceReferenceChoiceIsPresented,
+                titleVisibility: .visible
+            ) {
+                if let choice = pendingResourceReferenceChoice {
+                    ForEach(choice.matches, id: \.id) { match in
+                        Button(match.choiceLabel) {
+                            startOpeningResourceReferenceMatch(match)
+                        }
+                        .accessibilityLabel(match.accessibilityLabel)
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    cancelResourceReferenceRequest()
+                }
+            } message: {
+                if let choice = pendingResourceReferenceChoice {
+                    Text("[[\(choice.reference.target)]] matches more than one resource.")
                 }
             }
             .onOpenURL { url in Task { @MainActor in await handleIncomingURL(url) } }
@@ -422,6 +467,252 @@ struct OppiApp: App {
             return
         }
         await handleIncomingInviteURL(url)
+    }
+
+    @MainActor
+    private func startResourceReferenceRequest(_ reference: ResourceReference) {
+        pendingResourceReferenceChoice = nil
+        resourceReferenceRequestCoordinator.perform { token in
+            await handleResourceReference(reference, token: token)
+        }
+    }
+
+    @MainActor
+    private func startOpeningResourceReferenceMatch(_ match: ResourceReferenceMatch) {
+        guard let reference = pendingResourceReferenceChoice?.reference else { return }
+        pendingResourceReferenceChoice = nil
+        resourceReferenceRequestCoordinator.perform { token in
+            await openResourceReferenceMatch(match, reference: reference, token: token)
+        }
+    }
+
+    @MainActor
+    private func cancelResourceReferenceRequest() {
+        pendingResourceReferenceChoice = nil
+        resourceReferenceRequestCoordinator.cancel()
+    }
+
+    @MainActor
+    private func handleResourceReference(
+        _ reference: ResourceReference,
+        token: ResourceReferenceRequestCoordinator.Token
+    ) async {
+        guard !ResourceReferenceSelfLinkPolicy.isCurrentSession(reference) else {
+            return
+        }
+        let sessionMatches = knownSessionMatches(for: reference.target)
+        let fileLookup = await currentWorkspaceFileMatches(for: reference)
+        guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
+
+        switch ResourceReferenceCandidateCollector.resolve(
+            reference,
+            sessionMatches: sessionMatches,
+            fileLookup: fileLookup
+        ) {
+        case .unavailable:
+            connection.extensionToast = "Could not resolve [[\(reference.target)]] right now"
+        case .resolution(.unresolved(let target)):
+            connection.extensionToast = "Could not resolve [[\(target)]]"
+        case .resolution(.resolved(let match)):
+            await openResourceReferenceMatch(match, reference: reference, token: token)
+        case .resolution(.ambiguous(let matches)):
+            guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
+            pendingResourceReferenceChoice = PendingResourceReferenceChoice(
+                reference: reference,
+                matches: matches
+            )
+        }
+    }
+
+    @MainActor
+    private func knownSessionMatches(for target: String) -> [ResourceReferenceMatch] {
+        coordinator.connections.flatMap { serverID, connection in
+            connection.sessionStore.sessions.compactMap { session in
+                guard session.id == target else { return nil }
+                let workspaceName = session.workspaceId.flatMap { workspaceID in
+                    connection.workspaceStore.workspaces.first { $0.id == workspaceID }?.name
+                }
+                return .session(SessionResourceReference(
+                    serverID: serverID,
+                    sessionID: session.id,
+                    workspaceID: session.workspaceId,
+                    displayName: session.displayTitle,
+                    workspaceName: workspaceName,
+                    serverName: resourceReferenceServerName(serverID)
+                ))
+            }
+        }
+    }
+
+    @MainActor
+    private func currentWorkspaceFileMatches(
+        for reference: ResourceReference
+    ) async -> ResourceReferenceFileLookup {
+        guard let workspaceID = reference.workspaceID,
+              let fileCandidatePath = reference.fileCandidatePath else {
+            return .notApplicable
+        }
+
+        let scopes: [(serverID: String, connection: ServerConnection, workspace: Workspace)]
+        if let sourceServerID = reference.sourceServerID {
+            guard let connection = coordinator.connection(for: sourceServerID),
+                  let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == workspaceID }) else {
+                return .unavailable
+            }
+            scopes = [(sourceServerID, connection, workspace)]
+        } else {
+            scopes = coordinator.connections.compactMap { serverID, connection in
+                guard let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == workspaceID }) else {
+                    return nil
+                }
+                return (serverID, connection, workspace)
+            }
+            guard !scopes.isEmpty else { return .unavailable }
+        }
+
+        var matches: [ResourceReferenceMatch] = []
+        for scope in scopes {
+            guard let apiClient = scope.connection.apiClient else { return .unavailable }
+            let worktreeID: String?
+            if let sourceSessionID = reference.sourceSessionID {
+                guard let sourceSession = scope.connection.sessionStore.session(id: sourceSessionID),
+                      sourceSession.workspaceId == workspaceID else {
+                    return .unavailable
+                }
+                worktreeID = sourceSession.worktreeId
+            } else {
+                worktreeID = nil
+            }
+
+            do {
+                let index = try await apiClient.fetchFileIndex(
+                    workspaceId: workspaceID,
+                    worktreeId: worktreeID
+                )
+                try Task.checkCancellation()
+                let fileExists: Bool
+                switch ResourceFileCandidatePolicy.indexDecision(
+                    candidatePath: fileCandidatePath,
+                    paths: index.paths,
+                    truncated: index.truncated
+                ) {
+                case .found:
+                    fileExists = true
+                case .missing:
+                    fileExists = false
+                case .inspectDirectory:
+                    guard let listingResult = try await exactFileListingResult(
+                        fileCandidatePath,
+                        workspaceID: workspaceID,
+                        worktreeID: worktreeID,
+                        apiClient: apiClient
+                    ) else {
+                        return .unavailable
+                    }
+                    fileExists = listingResult
+                }
+
+                if fileExists {
+                    matches.append(.workspaceFile(WorkspaceFileResourceReference(
+                        serverID: scope.serverID,
+                        workspaceID: workspaceID,
+                        worktreeID: worktreeID,
+                        path: fileCandidatePath,
+                        workspaceName: scope.workspace.name,
+                        serverName: resourceReferenceServerName(scope.serverID)
+                    )))
+                }
+                try Task.checkCancellation()
+            } catch {
+                return .unavailable
+            }
+        }
+
+        return .complete(matches)
+    }
+
+    @MainActor
+    private func exactFileListingResult(
+        _ filePath: String,
+        workspaceID: String,
+        worktreeID: String?,
+        apiClient: APIClient
+    ) async throws -> Bool? {
+        let fileName = (filePath as NSString).lastPathComponent
+        let parent = (filePath as NSString).deletingLastPathComponent
+        let directoryPath = parent.isEmpty || parent == "." ? "" : parent + "/"
+        let listing = try await apiClient.listWorkspaceDirectory(
+            workspaceId: workspaceID,
+            path: directoryPath,
+            worktreeId: worktreeID
+        )
+        try Task.checkCancellation()
+        return ResourceFileCandidatePolicy.directoryResult(
+            fileName: fileName,
+            entries: listing.entries,
+            truncated: listing.truncated
+        )
+    }
+
+    @MainActor
+    private func openResourceReferenceMatch(
+        _ match: ResourceReferenceMatch,
+        reference: ResourceReference,
+        token: ResourceReferenceRequestCoordinator.Token
+    ) async {
+        switch match {
+        case .session(let session):
+            guard !ResourceReferenceSelfLinkPolicy.isCurrentSession(reference) else {
+                return
+            }
+            guard let connection = coordinator.connection(for: session.serverID) else {
+                guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
+                self.connection.extensionToast = "Could not open session \(session.sessionID)"
+                return
+            }
+            guard await coordinator.switchToServerReady(session.serverID, shouldActivate: {
+                resourceReferenceRequestCoordinator.isCurrent(token)
+            }), resourceReferenceRequestCoordinator.isCurrent(token) else {
+                return
+            }
+            let workspaceID = connection.sessionReentryWorkspaceId(for: session.sessionID)
+            let routeScope = connection.sessionStore.routeScope(for: session.sessionID)
+            connection.sessionStore.activeSessionId = session.sessionID
+            connection.prepareForSessionReentry(session.sessionID, workspaceIdHint: workspaceID)
+            navigation.openReferencedSession(WorkspaceSessionNavTarget(
+                serverId: session.serverID,
+                sessionId: session.sessionID,
+                workspaceId: workspaceID,
+                routeScope: routeScope
+            ))
+
+        case .workspaceFile(let file):
+            guard let connection = coordinator.connection(for: file.serverID),
+                  let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == file.workspaceID }) else {
+                guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
+                self.connection.extensionToast = "Could not open file \(file.path)"
+                return
+            }
+            guard await coordinator.switchToServerReady(file.serverID, shouldActivate: {
+                resourceReferenceRequestCoordinator.isCurrent(token)
+            }), resourceReferenceRequestCoordinator.isCurrent(token) else {
+                return
+            }
+
+            navigation.openWorkspaceLinkedFile(
+                .workspaceFile(
+                    serverId: file.serverID,
+                    workspaceId: file.workspaceID,
+                    worktreeId: file.worktreeID,
+                    path: file.path
+                ),
+                workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace)
+            )
+        }
+    }
+
+    private func resourceReferenceServerName(_ serverID: String) -> String {
+        serverStore.server(for: serverID)?.name ?? "Server \(serverID.prefix(8))"
     }
 
     @MainActor

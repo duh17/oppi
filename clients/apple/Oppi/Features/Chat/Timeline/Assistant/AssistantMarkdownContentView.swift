@@ -35,7 +35,9 @@ final class AssistantMarkdownContentView: UIView {
         let textSelectionEnabled: Bool
         let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
         let reviewCommentSourceContext: ReviewCommentSourceContext?
-        /// Workspace context for resolving inline image paths.
+        /// Stable server scope for resolving resource references at tap time.
+        let serverID: String?
+        /// Workspace context for resolving inline image paths and file candidates.
         let workspaceID: String?
         /// Session context retained for review and full-screen presentation.
         let sessionID: String?
@@ -70,6 +72,7 @@ final class AssistantMarkdownContentView: UIView {
             textSelectionEnabled: Bool = true,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
             reviewCommentSourceContext: ReviewCommentSourceContext? = nil,
+            serverID: String? = nil,
             workspaceID: String? = nil,
             sessionID: String? = nil,
             serverBaseURL: URL? = nil,
@@ -84,6 +87,7 @@ final class AssistantMarkdownContentView: UIView {
             self.textSelectionEnabled = textSelectionEnabled
             self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
             self.reviewCommentSourceContext = reviewCommentSourceContext
+            self.serverID = serverID
             self.workspaceID = workspaceID
             self.sessionID = sessionID
             self.serverBaseURL = serverBaseURL
@@ -100,6 +104,7 @@ final class AssistantMarkdownContentView: UIView {
             textSelectionEnabled: Bool = true,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
             reviewCommentSourceContext: ReviewCommentSourceContext? = nil,
+            serverID: String? = nil,
             workspaceID: String? = nil,
             sessionID: String? = nil,
             serverBaseURL: URL? = nil,
@@ -115,6 +120,7 @@ final class AssistantMarkdownContentView: UIView {
                 textSelectionEnabled: textSelectionEnabled,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 reviewCommentSourceContext: reviewCommentSourceContext,
+                serverID: serverID,
                 workspaceID: workspaceID,
                 sessionID: sessionID,
                 serverBaseURL: serverBaseURL,
@@ -132,6 +138,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.textSelectionEnabled == rhs.textSelectionEnabled
                 && lhs.reviewCommentSelectionRouter === rhs.reviewCommentSelectionRouter
                 && lhs.reviewCommentSourceContext == rhs.reviewCommentSourceContext
+                && lhs.serverID == rhs.serverID
                 && lhs.workspaceID == rhs.workspaceID
                 && lhs.sessionID == rhs.sessionID
                 && lhs.serverBaseURL == rhs.serverBaseURL
@@ -303,13 +310,18 @@ struct FileLinkPayload: Equatable {
 enum LinkAction: Equatable {
     case deepLink(URL)
     case webLink(URL)
+    case resourceReference(ResourceReference)
     case fileLink(FileLinkPayload)
     case systemDefault
 }
 
 @MainActor
 enum MarkdownLinkInteractionSupport {
-    static func classify(_ url: URL, workspaceID: String?) -> LinkAction {
+    static func classify(
+        _ url: URL,
+        serverID: String? = nil,
+        workspaceID: String?
+    ) -> LinkAction {
         let normalizedURL = AssistantMarkdownContentView.normalizedInteractionURL(url)
         guard let scheme = normalizedURL.scheme?.lowercased() else {
             return .systemDefault
@@ -320,14 +332,11 @@ enum MarkdownLinkInteractionSupport {
         if scheme == "http" || scheme == "https" {
             return .webLink(normalizedURL)
         }
-        if scheme == WorkspaceWikiLinkURL.scheme,
-           let parsed = WorkspaceWikiLinkURL.parse(normalizedURL),
-           parsed.workspaceID == workspaceID {
-            return .fileLink(FileLinkPayload(
-                workspaceID: parsed.workspaceID,
-                filePath: parsed.filePath,
-                originalURL: normalizedURL
-            ))
+        if scheme == ResourceReferenceURL.scheme,
+           let reference = ResourceReferenceURL.parse(normalizedURL),
+           reference.workspaceID == workspaceID,
+           reference.sourceServerID == nil || reference.sourceServerID == serverID {
+            return .resourceReference(reference)
         }
         if scheme == "file",
            normalizedURL.isFileURL,
@@ -353,6 +362,10 @@ enum MarkdownLinkInteractionSupport {
         case .webLink(let normalizedURL):
             return UIAction { _ in
                 NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
+            }
+        case .resourceReference(let reference):
+            return UIAction { _ in
+                NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
             }
         case .fileLink(let payload):
             return UIAction { _ in
@@ -405,7 +418,11 @@ enum MarkdownLinkInteractionSupport {
 extension AssistantMarkdownContentView: UITextViewDelegate {
     /// Classify a URL for tap/long-press behavior. Exposed for testing.
     func classifyLink(_ url: URL) -> LinkAction {
-        MarkdownLinkInteractionSupport.classify(url, workspaceID: currentConfig?.workspaceID)
+        MarkdownLinkInteractionSupport.classify(
+            url,
+            serverID: currentConfig?.serverID,
+            workspaceID: currentConfig?.workspaceID
+        )
     }
 
     func textView(

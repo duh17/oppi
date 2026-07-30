@@ -425,6 +425,8 @@ extension NativeCodeBlockView: UITextViewDelegate {
 final class NativeTableBlockView: UIView {
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
+    private var resourceReferenceServerID: String?
+    private var resourceReferenceWorkspaceID: String?
 
     /// Inner card that wraps the scroll view. Carries the background, border,
     /// and corner radius so it shrink-wraps to content width while the outer
@@ -624,6 +626,11 @@ final class NativeTableBlockView: UIView {
         tableLabel.isSelectable = selectionEnabled
         applySelectionStateToWrapCells(selectionEnabled: selectionEnabled || hasLinks)
         longPressCopyGesture.isEnabled = !selectionEnabled
+    }
+
+    func configureResourceReferenceScope(serverID: String?, workspaceID: String?) {
+        resourceReferenceServerID = serverID
+        resourceReferenceWorkspaceID = workspaceID
     }
 
     func apply(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]], palette: ThemePalette) {
@@ -917,9 +924,19 @@ final class NativeTableBlockView: UIView {
     }
 
     private static func containsLink(_ cells: [[MarkdownInline]]) -> Bool {
-        cells.contains { cell in
-            cell.contains { inline in
-                if case .link = inline { return true }
+        cells.contains { containsLink($0) }
+    }
+
+    private static func containsLink(_ inlines: [MarkdownInline]) -> Bool {
+        inlines.contains { inline in
+            switch inline {
+            case .link:
+                return true
+            case .emphasis(let children),
+                 .strong(let children),
+                 .strikethrough(let children):
+                return containsLink(children)
+            case .text, .code, .image, .softBreak, .hardBreak, .html:
                 return false
             }
         }
@@ -936,9 +953,35 @@ final class NativeTableBlockView: UIView {
         headers: [[MarkdownInline]],
         rows: [[[MarkdownInline]]]
     ) -> String {
-        func cellKey(_ cell: [MarkdownInline]) -> String {
-            plainText(from: cell)
+        func inlineKey(_ inline: MarkdownInline) -> String {
+            switch inline {
+            case .text(let value):
+                return "text:\(value.count):\(value)"
+            case .emphasis(let children):
+                return "emphasis:[\(children.map(inlineKey).joined(separator: ","))]"
+            case .strong(let children):
+                return "strong:[\(children.map(inlineKey).joined(separator: ","))]"
+            case .code(let value):
+                return "code:\(value.count):\(value)"
+            case .link(let children, let destination):
+                return "link:\(destination ?? ""):[\(children.map(inlineKey).joined(separator: ","))]"
+            case .image(let alt, let source):
+                return "image:\(alt):\(source ?? "")"
+            case .softBreak:
+                return "softBreak"
+            case .hardBreak:
+                return "hardBreak"
+            case .html(let value):
+                return "html:\(value.count):\(value)"
+            case .strikethrough(let children):
+                return "strikethrough:[\(children.map(inlineKey).joined(separator: ","))]"
+            }
         }
+
+        func cellKey(_ cell: [MarkdownInline]) -> String {
+            cell.map(inlineKey).joined(separator: ",")
+        }
+
         let headerKey = headers.map(cellKey).joined(separator: "|")
         let rowKey = rows.map { row in
             row.map(cellKey).joined(separator: "|")
@@ -1276,18 +1319,16 @@ extension NativeTableBlockView: UITextViewDelegate {
         defaultAction: UIAction
     ) -> UIAction? {
         guard case let .link(url) = textItem.content,
-              let parsed = WorkspaceWikiLinkURL.parse(url) else {
+              let reference = ResourceReferenceURL.parse(url),
+              reference.workspaceID == resourceReferenceWorkspaceID,
+              reference.sourceServerID == nil || reference.sourceServerID == resourceReferenceServerID else {
             return defaultAction
         }
 
         return UIAction { _ in
             NotificationCenter.default.post(
-                name: .fileLinkTapped,
-                object: FileLinkPayload(
-                    workspaceID: parsed.workspaceID,
-                    filePath: parsed.filePath,
-                    originalURL: url
-                )
+                name: .resourceReferenceTapped,
+                object: reference
             )
         }
     }

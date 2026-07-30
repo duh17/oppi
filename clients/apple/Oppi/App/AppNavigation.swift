@@ -325,6 +325,53 @@ final class AppNavigation {
         }
     }
 
+    /// Push a session referenced from the currently visible chat without
+    /// replacing its compact or split back stack. An exact self-link is a no-op.
+    func openReferencedSession(_ target: WorkspaceSessionNavTarget) {
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            if case .session(let current) = workspaceStackRouteElements.last,
+               Self.isSameSession(current, target) {
+                return
+            }
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.sessionDiagnosticContext(target),
+                routeElement: .session(target)
+            )
+
+        case .split:
+            let currentTarget: WorkspaceSessionNavTarget? = {
+                if case .session(let pushed) = splitDetailPathElements.last {
+                    return pushed
+                }
+                if splitDetailPathElements.isEmpty,
+                   case .session(let root) = splitDetailTarget {
+                    return root
+                }
+                return nil
+            }()
+            if let currentTarget, Self.isSameSession(currentTarget, target) {
+                return
+            }
+            if splitDetailTarget == nil {
+                splitDetailTarget = .session(target)
+                resetSplitDetailPath()
+            } else {
+                pushSplitDetailSession(target)
+            }
+            splitColumnVisibility = .detailOnly
+        }
+    }
+
+    private static func isSameSession(
+        _ lhs: WorkspaceSessionNavTarget,
+        _ rhs: WorkspaceSessionNavTarget
+    ) -> Bool {
+        lhs.serverId == rhs.serverId && lhs.sessionId == rhs.sessionId
+    }
+
     func openWorkspaceFileBrowser(_ target: FileBrowserNavTarget, workspace: WorkspaceNavTarget? = nil) {
         selectedTab = .workspaces
         if let workspace {
@@ -890,11 +937,10 @@ final class AppNavigation {
             case .workspace(let target):
                 workspace = target
             case .session(let target):
-                if case .utility = detail {
-                    detailPathElements.append(.session(target))
-                } else {
+                if detail == nil {
                     detail = .session(target)
-                    detailPathElements = []
+                } else {
+                    detailPathElements.append(.session(target))
                 }
             case .fileBrowser(let target):
                 if detail == nil {

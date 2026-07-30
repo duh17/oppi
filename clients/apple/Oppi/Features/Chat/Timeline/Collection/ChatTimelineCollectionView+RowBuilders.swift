@@ -37,6 +37,7 @@ extension ChatTimelineCollectionHost.Controller {
             agentIcon: agentIcon,
             iconAssetCache: connection?.iconAssetCache,
             interactionContext: interactionContext,
+            serverID: connection?.currentServerId ?? connection?.sessionStore.activeServerId,
             workspaceID: workspaceId,
             serverBaseURL: connection?.apiClient?.baseURL,
             fetchWorkspaceFile: connection?.apiClient.map { client in

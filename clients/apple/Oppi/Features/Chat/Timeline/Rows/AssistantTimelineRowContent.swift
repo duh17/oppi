@@ -21,6 +21,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let iconAssetCache: IconAssetCache?
     /// Shared interaction context for π text-selection actions.
     let interactionContext: TimelineInteractionContext?
+    /// Stable server scope for resource references.
+    let serverID: String?
     /// Workspace context for resolving markdown image paths.
     let workspaceID: String?
     let serverBaseURL: URL?
@@ -41,6 +43,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         agentIcon: IconChoice? = nil,
         iconAssetCache: IconAssetCache? = nil,
         interactionContext: TimelineInteractionContext? = nil,
+        serverID: String? = nil,
         workspaceID: String? = nil,
         serverBaseURL: URL? = nil,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
@@ -56,6 +59,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.agentIcon = agentIcon
         self.iconAssetCache = iconAssetCache
         self.interactionContext = interactionContext
+        self.serverID = serverID
         self.workspaceID = workspaceID
         self.serverBaseURL = serverBaseURL
         self.fetchWorkspaceFile = fetchWorkspaceFile
@@ -301,6 +305,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             themeID: ThemeRuntimeState.currentThemeID(),
             reviewCommentSelectionRouter: configuration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
             reviewCommentSourceContext: reviewCommentSourceContext,
+            serverID: configuration.serverID,
             workspaceID: configuration.workspaceID,
             sessionID: configuration.sessionId,
             serverBaseURL: configuration.serverBaseURL,

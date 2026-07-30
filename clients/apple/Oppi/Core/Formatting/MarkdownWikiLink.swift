@@ -1,40 +1,278 @@
 import Foundation
 
-/// Client-local URL used for Obsidian-style wiki links in workspace markdown.
+/// Unresolved `[[target]]` carried through the attributed-link pipeline.
 ///
-/// The URL is never sent to the server. It gives UIKit's attributed-link
-/// pipeline a scheme to carry a workspace-relative markdown target until the
-/// tap handler converts it back into `FileLinkPayload` navigation.
-enum WorkspaceWikiLinkURL {
-    static let scheme = "oppi-workspace-note"
+/// Resolution stays client-local and happens only when the user taps. The
+/// source scope identifies the workspace file candidate without constraining
+/// exact session-ID matches to one server.
+struct ResourceReference: Hashable, Sendable {
+    let target: String
+    let sourceServerID: String?
+    let workspaceID: String?
+    let sourceSessionID: String?
+    let fileCandidatePath: String?
+}
 
-    static func make(workspaceID: String, filePath: String) -> URL? {
-        let workspaceID = workspaceID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filePath = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !workspaceID.isEmpty, !filePath.isEmpty else { return nil }
+struct SessionResourceReference: Hashable, Sendable {
+    let serverID: String
+    let sessionID: String
+    let workspaceID: String?
+    let displayName: String
+    let workspaceName: String?
+    let serverName: String
+}
+
+struct WorkspaceFileResourceReference: Hashable, Sendable {
+    let serverID: String
+    let workspaceID: String
+    let worktreeID: String?
+    let path: String
+    let workspaceName: String
+    let serverName: String
+}
+
+enum ResourceReferenceMatch: Hashable, Sendable {
+    case session(SessionResourceReference)
+    case workspaceFile(WorkspaceFileResourceReference)
+
+    var id: String {
+        switch self {
+        case .session(let session):
+            return "session|\(session.serverID)|\(session.sessionID)"
+        case .workspaceFile(let file):
+            return "file|\(file.serverID)|\(file.workspaceID)|\(file.worktreeID ?? "")|\(file.path)"
+        }
+    }
+
+    var choiceLabel: String {
+        switch self {
+        case .session(let session):
+            let workspace = session.workspaceName ?? "Oppi Control"
+            return "Session: \(session.displayName) — \(workspace) on \(serverLabel(name: session.serverName, id: session.serverID))"
+        case .workspaceFile(let file):
+            let fileName = (file.path as NSString).lastPathComponent
+            return "File: \(fileName) — \(file.workspaceName) on \(serverLabel(name: file.serverName, id: file.serverID))"
+        }
+    }
+
+    private func serverLabel(name: String, id: String) -> String {
+        let normalizedID = id.lowercased().hasPrefix("sha256:")
+            ? String(id.dropFirst("sha256:".count))
+            : id
+        let discriminator = String(normalizedID.prefix(8))
+        return discriminator.isEmpty ? name : "\(name) [\(discriminator)]"
+    }
+
+    var accessibilityLabel: String { choiceLabel }
+
+    fileprivate func matches(_ reference: ResourceReference) -> Bool {
+        switch self {
+        case .session(let session):
+            return session.sessionID == reference.target
+        case .workspaceFile(let file):
+            guard let workspaceID = reference.workspaceID,
+                  let fileCandidatePath = reference.fileCandidatePath else {
+                return false
+            }
+            return file.workspaceID == workspaceID
+                && file.path == fileCandidatePath
+                && (reference.sourceServerID == nil || file.serverID == reference.sourceServerID)
+        }
+    }
+
+    fileprivate var sortKey: String {
+        switch self {
+        case .session(let session):
+            return "0|\(session.serverID)|\(session.sessionID)"
+        case .workspaceFile(let file):
+            return "1|\(file.serverID)|\(file.workspaceID)|\(file.worktreeID ?? "")|\(file.path)"
+        }
+    }
+}
+
+enum ResourceReferenceResolution: Equatable, Sendable {
+    case unresolved(String)
+    case resolved(ResourceReferenceMatch)
+    case ambiguous([ResourceReferenceMatch])
+}
+
+enum ResourceReferenceResolver {
+    static func resolve(
+        _ reference: ResourceReference,
+        matches: [ResourceReferenceMatch]
+    ) -> ResourceReferenceResolution {
+        let uniqueMatches = Array(Set(matches.filter { $0.matches(reference) }))
+            .sorted { $0.sortKey < $1.sortKey }
+        switch uniqueMatches.count {
+        case 0:
+            return .unresolved(reference.target)
+        case 1:
+            return .resolved(uniqueMatches[0])
+        default:
+            return .ambiguous(uniqueMatches)
+        }
+    }
+}
+
+enum ResourceReferenceFileLookup: Equatable, Sendable {
+    case notApplicable
+    case complete([ResourceReferenceMatch])
+    case unavailable
+}
+
+enum ResourceReferenceCandidateCollectionResult: Equatable, Sendable {
+    case resolution(ResourceReferenceResolution)
+    case unavailable
+}
+
+enum ResourceReferenceSelfLinkPolicy {
+    /// A rendered chat carries its own server/session identity. Check that
+    /// immutable source scope before any mutable catalog lookup, activation, or
+    /// navigation so a current-session wiki link is genuinely inert.
+    static func isCurrentSession(_ reference: ResourceReference) -> Bool {
+        guard reference.sourceServerID != nil,
+              let sourceSessionID = reference.sourceSessionID else {
+            return false
+        }
+        return reference.target == sourceSessionID
+    }
+}
+
+enum ResourceReferenceCandidateCollector {
+    static func resolve(
+        _ reference: ResourceReference,
+        sessionMatches: [ResourceReferenceMatch],
+        fileLookup: ResourceReferenceFileLookup
+    ) -> ResourceReferenceCandidateCollectionResult {
+        switch fileLookup {
+        case .notApplicable:
+            return .resolution(ResourceReferenceResolver.resolve(reference, matches: sessionMatches))
+        case .complete(let fileMatches):
+            return .resolution(ResourceReferenceResolver.resolve(
+                reference,
+                matches: sessionMatches + fileMatches
+            ))
+        case .unavailable:
+            return .unavailable
+        }
+    }
+}
+
+/// Cancels superseded tap work and provides a generation token for guarding
+/// UI commits after asynchronous session/file lookup.
+@MainActor
+final class ResourceReferenceRequestCoordinator {
+    struct Token: Equatable, Sendable {
+        fileprivate let generation: UInt64
+    }
+
+    private var generation: UInt64 = 0
+    private var task: Task<Void, Never>?
+
+    func perform(_ operation: @escaping @MainActor (Token) async -> Void) {
+        cancel()
+        generation &+= 1
+        let token = Token(generation: generation)
+        task = Task { @MainActor [weak self] in
+            await operation(token)
+            guard let self, isCurrent(token) else { return }
+            task = nil
+        }
+    }
+
+    func cancel() {
+        generation &+= 1
+        task?.cancel()
+        task = nil
+    }
+
+    func isCurrent(_ token: Token) -> Bool {
+        token.generation == generation && !Task.isCancelled
+    }
+}
+
+enum ResourceFileCandidateIndexDecision: Equatable {
+    case found
+    case missing
+    case inspectDirectory
+}
+
+enum ResourceFileCandidatePolicy {
+    static func indexDecision(
+        candidatePath: String,
+        paths: [String],
+        truncated: Bool
+    ) -> ResourceFileCandidateIndexDecision {
+        if paths.contains(candidatePath) { return .found }
+        return truncated ? .inspectDirectory : .missing
+    }
+
+    /// Nil means the listing was truncated before it could prove absence.
+    static func directoryResult(
+        fileName: String,
+        entries: [FileEntry],
+        truncated: Bool
+    ) -> Bool? {
+        if entries.contains(where: { $0.name == fileName && $0.isFile }) {
+            return true
+        }
+        return truncated ? nil : false
+    }
+}
+
+/// Client-local URL for unresolved resource references.
+/// The URL is never sent to the server.
+enum ResourceReferenceURL {
+    static let scheme = "oppi-resource-reference"
+
+    static func make(_ reference: ResourceReference) -> URL? {
+        let target = reference.target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return nil }
+
+        var queryItems = [URLQueryItem(name: "target", value: target)]
+        if let workspaceID = nonEmpty(reference.workspaceID),
+           let fileCandidatePath = nonEmpty(reference.fileCandidatePath) {
+            queryItems.append(URLQueryItem(name: "workspaceId", value: workspaceID))
+            queryItems.append(URLQueryItem(name: "fileCandidate", value: fileCandidatePath))
+        }
+        if let sourceServerID = nonEmpty(reference.sourceServerID) {
+            queryItems.append(URLQueryItem(name: "sourceServerId", value: sourceServerID))
+        }
+        if let sourceSessionID = nonEmpty(reference.sourceSessionID) {
+            queryItems.append(URLQueryItem(name: "sourceSessionId", value: sourceSessionID))
+        }
 
         var components = URLComponents()
         components.scheme = scheme
-        components.host = "open"
-        components.queryItems = [
-            URLQueryItem(name: "workspaceId", value: workspaceID),
-            URLQueryItem(name: "path", value: filePath),
-        ]
+        components.host = "resolve"
+        components.queryItems = queryItems
         return components.url
     }
 
-    static func parse(_ url: URL) -> (workspaceID: String, filePath: String)? {
-        guard url.scheme?.lowercased() == scheme else { return nil }
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let workspaceID = components?.queryItems?.first(where: { $0.name == "workspaceId" })?.value?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let filePath = components?.queryItems?.first(where: { $0.name == "path" })?.value?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let workspaceID, !workspaceID.isEmpty,
-              let filePath, !filePath.isEmpty else {
+    static func parse(_ url: URL) -> ResourceReference? {
+        guard url.scheme?.lowercased() == scheme,
+              url.host?.lowercased() == "resolve",
+              let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let target = queryValue("target", in: queryItems) else {
             return nil
         }
-        return (workspaceID, filePath)
+
+        return ResourceReference(
+            target: target,
+            sourceServerID: queryValue("sourceServerId", in: queryItems),
+            workspaceID: queryValue("workspaceId", in: queryItems),
+            sourceSessionID: queryValue("sourceSessionId", in: queryItems),
+            fileCandidatePath: queryValue("fileCandidate", in: queryItems)
+        )
+    }
+
+    private static func queryValue(_ name: String, in queryItems: [URLQueryItem]) -> String? {
+        nonEmpty(queryItems.first(where: { $0.name == name })?.value)
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
     }
 }
 
@@ -44,51 +282,200 @@ enum WorkspaceWikiLinkURL {
 /// - `[[target]]`
 /// - `[[target|label]]`
 ///
-/// Targets resolve to workspace-relative file paths. If a target has no file
-/// extension, `.md` is appended. Targets starting with `./` or `../` resolve
-/// against the source markdown file's directory; all other targets are treated
-/// as workspace-relative paths.
+/// The raw target stays unresolved. A workspace-relative file candidate travels
+/// beside it so tap-time resolution can compare that candidate with exact Oppi
+/// session matches. Extension and relative-path rules apply only to the file
+/// candidate: extensionless paths gain `.md`, and `./` or `../` resolve against
+/// the source markdown file's directory.
 enum MarkdownWikiLinkRewriter {
-    static func sourceForCommonMarkParsing(_ source: String) -> String {
-        guard source.contains("[["), source.contains("|") else { return source }
+    struct ParserInput {
+        let source: String
+        let restoration: Restoration
+    }
+
+    struct Restoration {
+        fileprivate let labelSeparatorToken: String?
+
+        func restore(_ literal: String) -> String {
+            guard let labelSeparatorToken else { return literal }
+            return literal.replacingOccurrences(of: labelSeparatorToken, with: "|")
+        }
+    }
+
+    private static let parserBoundaryTokens = [
+        "q0q", "q1q", "q2q", "q3q", "q4q", "q5q", "q6q", "q7q",
+    ]
+    private static let maximumTokenSelectionAttempts = 8
+    private static let parserBoundaryTokenByteCount = 3
+
+    private struct ParserBoundaryCandidate {
+        let end: String.Index
+        let separator: String.Index?
+        let canProtect: Bool
+    }
+
+    /// Selects at most eight source-absent, three-byte alphanumeric tokens.
+    /// Returning nil is the fail-closed result when the bounded set is exhausted.
+    static func selectParserBoundaryToken(
+        absentFrom source: String,
+        candidates: [String]
+    ) -> String? {
+        for candidate in candidates.prefix(maximumTokenSelectionAttempts) {
+            guard candidate.utf8.count == parserBoundaryTokenByteCount,
+                  candidate.utf8.allSatisfy(isASCIILetterOrDigit) else {
+                continue
+            }
+            if !source.contains(candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    /// Protect wiki-link separators before cmark-gfm decides table cell
+    /// boundaries. This deliberately knows nothing about CommonMark containers:
+    /// transformed bytes are restored from every literal field during AST
+    /// conversion, including code and HTML where wiki syntax stays literal.
+    ///
+    /// Candidate recognition is atomic. Nested opens, escaped closes, multiple
+    /// unescaped separators, empty labels/targets, unsupported targets, and
+    /// unmatched candidates are copied without transforming any bytes. A valid
+    /// minimum `[[a|b]]` grows from seven to nine bytes, so total parser input
+    /// amplification is at most 9/7. Token selection is capped at eight checks;
+    /// exhaustion returns the original source with no restoration context.
+    static func parserInput(_ source: String) -> ParserInput {
+        guard source.contains("[["), source.contains("|"),
+              let token = selectParserBoundaryToken(
+                absentFrom: source,
+                candidates: parserBoundaryTokens
+              ) else {
+            return unchangedParserInput(source)
+        }
 
         var result = ""
         result.reserveCapacity(source.utf8.count)
-        var inFence = false
-        var lineStart = source.startIndex
+        var cursor = source.startIndex
+        var replacedSeparator = false
 
-        while lineStart < source.endIndex {
-            let lineEnd = source[lineStart...].firstIndex(of: "\n") ?? source.endIndex
-            let includesNewline = lineEnd < source.endIndex
-            let line = String(source[lineStart ..< lineEnd])
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if isFenceLine(trimmed) {
-                result += line
-                inFence.toggle()
-            } else if !inFence, !isIndentedCodeLine(line), needsWikiLinkPipeEscaping(in: line) {
-                result += escapingWikiLinkPipes(in: line)
-            } else {
-                result += line
+        while cursor < source.endIndex,
+              let open = source.range(of: "[[", range: cursor ..< source.endIndex) {
+            guard let candidate = parserBoundaryCandidate(in: source, opening: open) else {
+                result.append(contentsOf: source[cursor ..< source.endIndex])
+                cursor = source.endIndex
+                break
             }
 
-            if includesNewline {
-                result += "\n"
-                lineStart = source.index(after: lineEnd)
+            if candidate.canProtect, let separator = candidate.separator {
+                result.append(contentsOf: source[cursor ..< separator])
+                result += token
+                let afterSeparator = source.index(after: separator)
+                result.append(contentsOf: source[afterSeparator ..< candidate.end])
+                replacedSeparator = true
             } else {
-                lineStart = lineEnd
+                result.append(contentsOf: source[cursor ..< candidate.end])
             }
+            cursor = candidate.end
         }
 
-        return result
+        if cursor < source.endIndex {
+            result.append(contentsOf: source[cursor ..< source.endIndex])
+        }
+
+        guard replacedSeparator else { return unchangedParserInput(source) }
+        return ParserInput(source: result, restoration: Restoration(labelSeparatorToken: token))
+    }
+
+    private static func parserBoundaryCandidate(
+        in source: String,
+        opening: Range<String.Index>
+    ) -> ParserBoundaryCandidate? {
+        var cursor = opening.upperBound
+        var precedingBackslashes = 0
+        var separator: String.Index?
+        var canProtect = true
+
+        while cursor < source.endIndex {
+            let character = source[cursor]
+            let next = source.index(after: cursor)
+            let escaped = precedingBackslashes % 2 == 1
+
+            if character == "[", next < source.endIndex, source[next] == "[" {
+                canProtect = false
+            } else if character == "]", escaped {
+                canProtect = false
+            } else if character == "]", next < source.endIndex, source[next] == "]" {
+                let end = source.index(after: next)
+                guard let separator else {
+                    return ParserBoundaryCandidate(end: end, separator: nil, canProtect: false)
+                }
+                let target = source[opening.upperBound ..< separator]
+                let labelStart = source.index(after: separator)
+                let label = source[labelStart ..< cursor]
+                return ParserBoundaryCandidate(
+                    end: end,
+                    separator: separator,
+                    canProtect: canProtect
+                        && isPotentiallySupportedWikiTarget(target)
+                        && !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
+            } else if character == "|", !escaped {
+                if separator == nil {
+                    separator = cursor
+                } else {
+                    canProtect = false
+                }
+            }
+
+            precedingBackslashes = character == "\\" ? precedingBackslashes + 1 : 0
+            cursor = next
+        }
+
+        return nil
+    }
+
+    private static func isPotentiallySupportedWikiTarget(_ rawTarget: Substring) -> Bool {
+        let target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return false }
+
+        let path = target.replacingOccurrences(of: "\\", with: "/")
+        return !path.hasPrefix("/")
+            && !path.hasPrefix("~")
+            && !path.contains("#")
+            && !path.contains("?")
+            && !path.contains(":")
+    }
+
+    private static func unchangedParserInput(_ source: String) -> ParserInput {
+        ParserInput(source: source, restoration: Restoration(labelSeparatorToken: nil))
+    }
+
+    private static func isASCIILetterOrDigit(_ byte: UInt8) -> Bool {
+        (byte >= 48 && byte <= 57)
+            || (byte >= 65 && byte <= 90)
+            || (byte >= 97 && byte <= 122)
+    }
+
+    private struct RewriteContext {
+        let serverID: String?
+        let workspaceID: String?
+        let sessionID: String?
+        let sourceDirectory: String?
     }
 
     static func rewrite(
         blocks: [MarkdownBlock],
+        serverID: String? = nil,
         workspaceID: String?,
+        sessionID: String? = nil,
         sourceDirectory: String?
     ) -> [MarkdownBlock] {
-        blocks.map { rewrite(block: $0, workspaceID: workspaceID, sourceDirectory: sourceDirectory) }
+        let context = RewriteContext(
+            serverID: serverID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            sourceDirectory: sourceDirectory
+        )
+        return rewrite(blocks: blocks, context: context)
     }
 
     static func resolvedWorkspacePath(target: String, sourceDirectory: String?) -> String? {
@@ -113,65 +500,53 @@ enum MarkdownWikiLinkRewriter {
         return normalized
     }
 
-    private static func rewrite(
-        block: MarkdownBlock,
-        workspaceID: String?,
-        sourceDirectory: String?
-    ) -> MarkdownBlock {
+    private static func rewrite(blocks: [MarkdownBlock], context: RewriteContext) -> [MarkdownBlock] {
+        blocks.map { rewrite(block: $0, context: context) }
+    }
+
+    private static func rewrite(block: MarkdownBlock, context: RewriteContext) -> MarkdownBlock {
         switch block {
         case .heading(let level, let inlines):
-            return .heading(
-                level: level,
-                inlines: rewrite(inlines: inlines, workspaceID: workspaceID, sourceDirectory: sourceDirectory)
-            )
+            return .heading(level: level, inlines: rewrite(inlines: inlines, context: context))
         case .paragraph(let inlines):
-            return .paragraph(rewrite(inlines: inlines, workspaceID: workspaceID, sourceDirectory: sourceDirectory))
+            return .paragraph(rewrite(inlines: inlines, context: context))
         case .blockQuote(let children):
-            return .blockQuote(rewrite(blocks: children, workspaceID: workspaceID, sourceDirectory: sourceDirectory))
+            return .blockQuote(rewrite(blocks: children, context: context))
         case .unorderedList(let items):
-            return .unorderedList(items.map { rewrite(blocks: $0, workspaceID: workspaceID, sourceDirectory: sourceDirectory) })
+            return .unorderedList(items.map { rewrite(blocks: $0, context: context) })
         case .orderedList(let start, let items):
-            return .orderedList(
-                start: start,
-                items.map { rewrite(blocks: $0, workspaceID: workspaceID, sourceDirectory: sourceDirectory) }
-            )
+            return .orderedList(start: start, items.map { rewrite(blocks: $0, context: context) })
         case .taskList(let items):
             return .taskList(items.map { item in
                 MarkdownBlock.TaskItem(
                     checked: item.checked,
-                    content: rewrite(blocks: item.content, workspaceID: workspaceID, sourceDirectory: sourceDirectory)
+                    content: rewrite(blocks: item.content, context: context)
                 )
             })
         case .table(let headers, let rows):
             return .table(
-                headers: headers.map { rewrite(inlines: $0, workspaceID: workspaceID, sourceDirectory: sourceDirectory) },
-                rows: rows.map { row in
-                    row.map { rewrite(inlines: $0, workspaceID: workspaceID, sourceDirectory: sourceDirectory) }
-                }
+                headers: headers.map { rewrite(inlines: $0, context: context) },
+                rows: rows.map { row in row.map { rewrite(inlines: $0, context: context) } }
             )
         case .codeBlock, .thematicBreak, .htmlBlock:
             return block
         }
     }
 
-    private static func rewrite(
-        inlines: [MarkdownInline],
-        workspaceID: String?,
-        sourceDirectory: String?
-    ) -> [MarkdownInline] {
+    private static func rewrite(inlines: [MarkdownInline], context: RewriteContext) -> [MarkdownInline] {
         var result: [MarkdownInline] = []
         result.reserveCapacity(inlines.count)
 
         for inline in inlines {
             switch inline {
             case .text(let text):
-                result.append(contentsOf: rewriteText(text, workspaceID: workspaceID, sourceDirectory: sourceDirectory))
+                result.append(contentsOf: rewriteText(text, context: context))
             case .emphasis(let children):
-                result.append(.emphasis(rewrite(inlines: children, workspaceID: workspaceID, sourceDirectory: sourceDirectory)))
+                result.append(.emphasis(rewrite(inlines: children, context: context)))
             case .strong(let children):
-                result.append(.strong(rewrite(inlines: children, workspaceID: workspaceID, sourceDirectory: sourceDirectory)))
+                result.append(.strong(rewrite(inlines: children, context: context)))
             case .strikethrough(let children):
-                result.append(.strikethrough(rewrite(inlines: children, workspaceID: workspaceID, sourceDirectory: sourceDirectory)))
+                result.append(.strikethrough(rewrite(inlines: children, context: context)))
             case .link, .code, .image, .softBreak, .hardBreak, .html:
                 result.append(inline)
             }
@@ -180,11 +555,7 @@ enum MarkdownWikiLinkRewriter {
         return result
     }
 
-    private static func rewriteText(
-        _ text: String,
-        workspaceID: String?,
-        sourceDirectory: String?
-    ) -> [MarkdownInline] {
+    private static func rewriteText(_ text: String, context: RewriteContext) -> [MarkdownInline] {
         guard text.contains("[[") else { return [.text(text)] }
 
         var result: [MarkdownInline] = []
@@ -203,7 +574,7 @@ enum MarkdownWikiLinkRewriter {
             }
 
             let rawContent = String(text[contentStart ..< close.lowerBound])
-            if let rewritten = inline(forWikiLinkContent: rawContent, workspaceID: workspaceID, sourceDirectory: sourceDirectory) {
+            if let rewritten = inline(forWikiLinkContent: rawContent, context: context) {
                 result.append(rewritten)
             } else {
                 result.append(.text(String(text[open.lowerBound ..< close.upperBound])))
@@ -220,15 +591,14 @@ enum MarkdownWikiLinkRewriter {
 
     private static func inline(
         forWikiLinkContent rawContent: String,
-        workspaceID: String?,
-        sourceDirectory: String?
+        context: RewriteContext
     ) -> MarkdownInline? {
         let normalizedContent = rawContent.replacingOccurrences(of: #"\|"#, with: "|")
         let pieces = normalizedContent.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
         guard let rawTarget = pieces.first else { return nil }
 
         let target = String(rawTarget).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let filePath = resolvedWorkspacePath(target: target, sourceDirectory: sourceDirectory) else {
+        guard let filePath = resolvedWorkspacePath(target: target, sourceDirectory: context.sourceDirectory) else {
             return nil
         }
 
@@ -236,127 +606,19 @@ enum MarkdownWikiLinkRewriter {
         let label = rawLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         let display = label.isEmpty ? target : label
 
-        guard let workspaceID,
-              !workspaceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let url = WorkspaceWikiLinkURL.make(workspaceID: workspaceID, filePath: filePath) else {
+        let workspaceID = context.workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasWorkspaceScope = workspaceID?.isEmpty == false
+        guard let url = ResourceReferenceURL.make(ResourceReference(
+            target: target,
+            sourceServerID: context.serverID,
+            workspaceID: hasWorkspaceScope ? workspaceID : nil,
+            sourceSessionID: context.sessionID,
+            fileCandidatePath: hasWorkspaceScope ? filePath : nil
+        )) else {
             return .text(display)
         }
 
         return .link(children: [.text(display)], destination: url.absoluteString)
-    }
-
-    private static func needsWikiLinkPipeEscaping(in line: String) -> Bool {
-        guard line.contains("[["), line.contains("|") else { return false }
-
-        var cursor = line.startIndex
-        var inCode = false
-        var inWikiLink = false
-
-        while cursor < line.endIndex {
-            if line[cursor] == "`", !isEscaped(at: cursor, in: line) {
-                inCode.toggle()
-                cursor = line.index(after: cursor)
-                continue
-            }
-
-            if !inCode, matches("[[", in: line, at: cursor) {
-                inWikiLink = true
-                cursor = line.index(cursor, offsetBy: 2)
-                continue
-            }
-
-            if !inCode, inWikiLink, matches("]]", in: line, at: cursor) {
-                inWikiLink = false
-                cursor = line.index(cursor, offsetBy: 2)
-                continue
-            }
-
-            if line[cursor] == "|", !inCode, !inWikiLink, !isEscaped(at: cursor, in: line) {
-                return true
-            }
-
-            cursor = line.index(after: cursor)
-        }
-
-        return false
-    }
-
-    private static func escapingWikiLinkPipes(in line: String) -> String {
-        var result = ""
-        result.reserveCapacity(line.utf8.count)
-        var cursor = line.startIndex
-
-        while cursor < line.endIndex,
-              let open = nextWikiLinkOpenOutsideCode(in: line, from: cursor) {
-            let contentStart = line.index(open, offsetBy: 2)
-            result.append(contentsOf: line[cursor ..< contentStart])
-            guard let close = line.range(of: "]]", range: contentStart ..< line.endIndex) else {
-                result.append(contentsOf: line[contentStart ..< line.endIndex])
-                return result
-            }
-
-            var contentCursor = contentStart
-            while contentCursor < close.lowerBound {
-                let character = line[contentCursor]
-                if character == "|", !isEscaped(at: contentCursor, in: line) {
-                    result += #"\|"#
-                } else {
-                    result.append(character)
-                }
-                contentCursor = line.index(after: contentCursor)
-            }
-
-            result.append(contentsOf: "]]")
-            cursor = close.upperBound
-        }
-
-        if cursor < line.endIndex {
-            result.append(contentsOf: line[cursor ..< line.endIndex])
-        }
-        return result
-    }
-
-    private static func nextWikiLinkOpenOutsideCode(in line: String, from start: String.Index) -> String.Index? {
-        var cursor = start
-        var inCode = false
-
-        while cursor < line.endIndex {
-            if line[cursor] == "`", !isEscaped(at: cursor, in: line) {
-                inCode.toggle()
-                cursor = line.index(after: cursor)
-                continue
-            }
-            if !inCode, matches("[[", in: line, at: cursor) {
-                return cursor
-            }
-            cursor = line.index(after: cursor)
-        }
-
-        return nil
-    }
-
-    private static func matches(_ needle: String, in source: String, at index: String.Index) -> Bool {
-        source[index...].hasPrefix(needle)
-    }
-
-    private static func isEscaped(at index: String.Index, in source: String) -> Bool {
-        guard index > source.startIndex else { return false }
-        var slashCount = 0
-        var cursor = source.index(before: index)
-        while source[cursor] == "\\" {
-            slashCount += 1
-            guard cursor > source.startIndex else { break }
-            cursor = source.index(before: cursor)
-        }
-        return slashCount % 2 == 1
-    }
-
-    private static func isFenceLine(_ trimmedLine: String) -> Bool {
-        trimmedLine.hasPrefix("```") || trimmedLine.hasPrefix("~~~")
-    }
-
-    private static func isIndentedCodeLine(_ line: String) -> Bool {
-        line.hasPrefix("    ") || line.hasPrefix("\t")
     }
 
     private static func normalizeWorkspacePath(_ path: String) -> String? {

@@ -5,6 +5,7 @@ final class AssistantMarkdownSegmentSource {
     /// Rendering inputs that affect cached prefix segments independently of source text.
     private struct SegmentBuildContext: Equatable {
         let themeID: ThemeID
+        let serverID: String?
         let workspaceID: String?
         let sessionID: String?
         let serverBaseURL: URL?
@@ -52,6 +53,7 @@ final class AssistantMarkdownSegmentSource {
            let cached = MarkdownSegmentCache.shared.get(
                content,
                themeID: config.themeID,
+               serverID: config.serverID,
                workspaceID: config.workspaceID,
                sessionID: config.sessionID,
                serverBaseURL: config.serverBaseURL,
@@ -70,6 +72,7 @@ final class AssistantMarkdownSegmentSource {
         let segments = FlatSegment.build(
             from: blocks,
             themeID: config.themeID,
+            serverID: config.serverID,
             workspaceID: config.workspaceID,
             sessionID: config.sessionID,
             serverBaseURL: config.serverBaseURL,
@@ -90,6 +93,7 @@ final class AssistantMarkdownSegmentSource {
             MarkdownSegmentCache.shared.set(
                 content,
                 themeID: config.themeID,
+                serverID: config.serverID,
                 workspaceID: config.workspaceID,
                 sessionID: config.sessionID,
                 serverBaseURL: config.serverBaseURL,
@@ -118,6 +122,7 @@ final class AssistantMarkdownSegmentSource {
         let build = FlatSegment.buildWithSourceLineRanges(
             from: blocks,
             themeID: config.themeID,
+            serverID: config.serverID,
             workspaceID: config.workspaceID,
             sessionID: config.sessionID,
             serverBaseURL: config.serverBaseURL,
@@ -162,12 +167,14 @@ final class AssistantMarkdownSegmentSource {
     ) -> [FlatSegment] {
         let content = config.content
         let themeID = config.themeID
+        let serverID = config.serverID
         let workspaceID = config.workspaceID
         let sessionID = config.sessionID
         let serverBaseURL = config.serverBaseURL
         let sourceDirectory = config.sourceDirectory
         let buildContext = SegmentBuildContext(
             themeID: themeID,
+            serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
@@ -214,6 +221,7 @@ final class AssistantMarkdownSegmentSource {
                     prefixSegments = FlatSegment.build(
                         from: state.prefixBlocks,
                         themeID: themeID,
+                        serverID: serverID,
                         workspaceID: workspaceID,
                         sessionID: sessionID,
                         serverBaseURL: serverBaseURL,
@@ -224,6 +232,7 @@ final class AssistantMarkdownSegmentSource {
                 let tailSegments = FlatSegment.build(
                     from: tailBlocks,
                     themeID: themeID,
+                    serverID: serverID,
                     workspaceID: workspaceID,
                     sessionID: sessionID,
                     serverBaseURL: serverBaseURL,
@@ -249,6 +258,7 @@ final class AssistantMarkdownSegmentSource {
                         let tailFinalizedSegments = FlatSegment.build(
                             from: tailFinalizedBlocks,
                             themeID: themeID,
+                            serverID: serverID,
                             workspaceID: workspaceID,
                             sessionID: sessionID,
                             serverBaseURL: serverBaseURL,
@@ -291,6 +301,7 @@ final class AssistantMarkdownSegmentSource {
         let segments = FlatSegment.build(
             from: allBlocks,
             themeID: themeID,
+            serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
@@ -315,6 +326,7 @@ final class AssistantMarkdownSegmentSource {
                 allBlocks: allBlocks,
                 lastBlockLine: lastBlockLine,
                 themeID: themeID,
+                serverID: serverID,
                 workspaceID: workspaceID,
                 sessionID: sessionID,
                 serverBaseURL: serverBaseURL,
@@ -332,6 +344,7 @@ final class AssistantMarkdownSegmentSource {
         allBlocks: [MarkdownBlock],
         lastBlockLine: Int,
         themeID: ThemeID,
+        serverID: String?,
         workspaceID: String?,
         sessionID: String?,
         serverBaseURL: URL?,
@@ -353,6 +366,7 @@ final class AssistantMarkdownSegmentSource {
         let prefixSegments = FlatSegment.build(
             from: prefixBlocks,
             themeID: themeID,
+            serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,

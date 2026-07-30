@@ -4,6 +4,19 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Coordinator")
 
+@MainActor
+enum PreparedServerActivation {
+    static func run<Prepared>(
+        prepare: () async -> Prepared?,
+        shouldActivate: () -> Bool,
+        activate: (Prepared) -> Void
+    ) async -> Bool {
+        guard let prepared = await prepare(), shouldActivate() else { return false }
+        activate(prepared)
+        return true
+    }
+}
+
 enum NetworkPathRecoveryDecision {
     static func isRecoveryBoundary(
         previousSignature: String?,
@@ -619,27 +632,43 @@ final class ConnectionCoordinator {
     /// while an unprepared Iroh listener starts, so navigation never receives a
     /// disconnected sentinel.
     @discardableResult
-    func switchToServerReady(_ serverId: String) async -> Bool {
+    func switchToServerReady(
+        _ serverId: String,
+        shouldActivate: @escaping @MainActor () -> Bool = { true }
+    ) async -> Bool {
         guard let server = serverStore.server(for: serverId) else {
             logger.error("Cannot switch to unknown server \(serverId.prefix(16), privacy: .public)")
             return false
         }
-        return await switchToServerReady(server)
+        return await switchToServerReady(server, shouldActivate: shouldActivate)
     }
 
     @discardableResult
-    func switchToServerReady(_ server: PairedServer) async -> Bool {
+    func switchToServerReady(
+        _ server: PairedServer,
+        shouldActivate: @escaping @MainActor () -> Bool = { true }
+    ) async -> Bool {
         if server.id == activeServerId,
            let connection = connections[server.id],
            connection.credentials == server.credentials,
            connection.apiClient != nil {
-            return true
+            return shouldActivate()
         }
 
-        let connection = await ensureConnectionReady(for: server)
-        guard connection !== disconnectedSentinel, connection.apiClient != nil else { return false }
-        activatePreparedConnection(connection, server: server)
-        return true
+        return await PreparedServerActivation.run(
+            prepare: {
+                let connection = await self.ensureConnectionReady(for: server)
+                guard connection !== self.disconnectedSentinel,
+                      connection.apiClient != nil else {
+                    return nil
+                }
+                return connection
+            },
+            shouldActivate: shouldActivate,
+            activate: { connection in
+                self.activatePreparedConnection(connection, server: server)
+            }
+        )
     }
 
     private func activatePreparedConnection(_ connection: ServerConnection, server: PairedServer) {

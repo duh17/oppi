@@ -473,16 +473,79 @@ struct WorkspaceWikiLinkRenderingTests {
         try #require(attributed.runs.compactMap(\.link).first)
     }
 
-    @Test func givenBareWikiLinkWhenWorkspaceContextExistsThenItRendersAsInternalWorkspaceNoteLink() throws {
+    private struct ParsedTable {
+        let headers: [[MarkdownInline]]
+        let rows: [[[MarkdownInline]]]
+    }
+
+    struct AtomicWikiTableCase: Sendable {
+        let content: String
+        let expectedCells: [String]
+    }
+
+    private func firstTable(in blocks: [MarkdownBlock]) -> ParsedTable? {
+        for block in blocks {
+            switch block {
+            case .table(let headers, let rows):
+                return ParsedTable(headers: headers, rows: rows)
+            case .blockQuote(let children):
+                if let table = firstTable(in: children) { return table }
+            case .unorderedList(let items), .orderedList(_, let items):
+                for item in items {
+                    if let table = firstTable(in: item) { return table }
+                }
+            case .taskList(let items):
+                for item in items {
+                    if let table = firstTable(in: item.content) { return table }
+                }
+            case .heading, .paragraph, .codeBlock, .thematicBreak, .htmlBlock:
+                continue
+            }
+        }
+        return nil
+    }
+
+    private func firstCodeBlock(in blocks: [MarkdownBlock]) -> (language: String?, code: String)? {
+        for block in blocks {
+            switch block {
+            case .codeBlock(let language, let code):
+                return (language, code)
+            case .blockQuote(let children):
+                if let code = firstCodeBlock(in: children) { return code }
+            case .unorderedList(let items), .orderedList(_, let items):
+                for item in items {
+                    if let code = firstCodeBlock(in: item) { return code }
+                }
+            case .taskList(let items):
+                for item in items {
+                    if let code = firstCodeBlock(in: item.content) { return code }
+                }
+            case .heading, .paragraph, .table, .thematicBreak, .htmlBlock:
+                continue
+            }
+        }
+        return nil
+    }
+
+    @Test func givenBareWikiLinkWhenWorkspaceContextExistsThenItRendersAsUnresolvedResourceReference() throws {
         let blocks = parseCommonMark("See [[oppi-jZhDRKeV]] next")
-        let segments = FlatSegment.build(from: blocks, themeID: .dark, workspaceID: "workspace-1")
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-source"
+        )
         let attributed = try textSegment(from: segments)
 
         #expect(String(attributed.characters) == "See oppi-jZhDRKeV next")
         let url = try firstLink(in: attributed)
-        let parsed = try #require(WorkspaceWikiLinkURL.parse(url))
+        let parsed = try #require(ResourceReferenceURL.parse(url))
+        #expect(parsed.target == "oppi-jZhDRKeV")
+        #expect(parsed.sourceServerID == "server-1")
         #expect(parsed.workspaceID == "workspace-1")
-        #expect(parsed.filePath == "oppi-jZhDRKeV.md")
+        #expect(parsed.sourceSessionID == "session-source")
+        #expect(parsed.fileCandidatePath == "oppi-jZhDRKeV.md")
     }
 
     @Test func givenLabeledWikiLinkThenVisibleTextUsesLabelAndTargetUsesPath() throws {
@@ -492,8 +555,9 @@ struct WorkspaceWikiLinkRenderingTests {
 
         #expect(String(attributed.characters) == "Read session note.")
         let url = try firstLink(in: attributed)
-        let parsed = try #require(WorkspaceWikiLinkURL.parse(url))
-        #expect(parsed.filePath == "notes/sessions/oppi-jZhDRKeV.md")
+        let parsed = try #require(ResourceReferenceURL.parse(url))
+        #expect(parsed.target == "notes/sessions/oppi-jZhDRKeV")
+        #expect(parsed.fileCandidatePath == "notes/sessions/oppi-jZhDRKeV.md")
     }
 
     @Test func givenMarkdownExtensionInTargetThenPathIsPreserved() throws {
@@ -502,8 +566,9 @@ struct WorkspaceWikiLinkRenderingTests {
         let attributed = try textSegment(from: segments)
 
         let url = try firstLink(in: attributed)
-        let parsed = try #require(WorkspaceWikiLinkURL.parse(url))
-        #expect(parsed.filePath == "notes/daily/2026-06-06.md")
+        let parsed = try #require(ResourceReferenceURL.parse(url))
+        #expect(parsed.target == "notes/daily/2026-06-06.md")
+        #expect(parsed.fileCandidatePath == "notes/daily/2026-06-06.md")
     }
 
     @Test func givenExplicitRelativeWikiLinkThenItResolvesAgainstSourceDirectory() throws {
@@ -518,17 +583,284 @@ struct WorkspaceWikiLinkRenderingTests {
 
         #expect(String(attributed.characters) == "See topic note")
         let url = try firstLink(in: attributed)
-        let parsed = try #require(WorkspaceWikiLinkURL.parse(url))
-        #expect(parsed.filePath == "notes/sessions/topic.md")
+        let parsed = try #require(ResourceReferenceURL.parse(url))
+        #expect(parsed.target == "./topic")
+        #expect(parsed.fileCandidatePath == "notes/sessions/topic.md")
     }
 
-    @Test func givenWorkspaceContextMissingThenWikiLinkRendersAsPlainLabelWithoutTapTarget() throws {
-        let blocks = parseCommonMark("See [[notes/daily/2026-06-06|today]]")
-        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+    @Test func givenWorkspaceContextMissingThenWikiLinkRemainsATappableGenericResourceReference() throws {
+        let blocks = parseCommonMark("See [[RV97TbYj|that session]]")
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            serverID: "server-1",
+            sessionID: "session-source"
+        )
         let attributed = try textSegment(from: segments)
 
-        #expect(String(attributed.characters) == "See today")
-        #expect(attributed.runs.compactMap(\.link).isEmpty)
+        #expect(String(attributed.characters) == "See that session")
+        let url = try firstLink(in: attributed)
+        let parsed = try #require(ResourceReferenceURL.parse(url))
+        #expect(parsed.target == "RV97TbYj")
+        #expect(parsed.sourceServerID == "server-1")
+        #expect(parsed.sourceSessionID == "session-source")
+    }
+
+    @Test(arguments: [
+        "| Value |\n| :---: |\n| ``[[note|label]]`` |",
+        "> | Value |\n> | ---: |\n> | ``[[note|label]]`` |",
+        "- | Value |\n  | :--- |\n  | ``[[note|label]]`` |",
+    ])
+    func inlineCodeWikiLinkInGFMTableKeepsOneCellAndLiteralPipe(source: String) throws {
+        let table = try #require(firstTable(in: parseCommonMark(source)))
+        #expect(table.headers.count == 1)
+        #expect(table.rows.count == 1)
+        #expect(table.rows[0].count == 1)
+        guard case .code(let code) = try #require(table.rows[0][0].first) else {
+            Issue.record("Expected one inline-code cell")
+            return
+        }
+        #expect(code == "[[note|label]]")
+    }
+
+    @Test(arguments: [
+        AtomicWikiTableCase(
+            content: "[[outer [[inner|inner]]|outer]]",
+            expectedCells: ["[[outer [[inner", "inner]]", "outer]]", "x"]
+        ),
+        AtomicWikiTableCase(
+            content: #"[[target|label\]]|tail]]"#,
+            expectedCells: ["[[target", "label]]", "tail]]", "x"]
+        ),
+        AtomicWikiTableCase(
+            content: #"[[target|label]\]tail]]"#,
+            expectedCells: ["[[target", "label]]tail]]", "x", ""]
+        ),
+        AtomicWikiTableCase(
+            content: "[[target|one|two]]",
+            expectedCells: ["[[target", "one", "two]]", "x"]
+        ),
+        AtomicWikiTableCase(
+            content: "[[|label]]",
+            expectedCells: ["[[", "label]]", "x", ""]
+        ),
+        AtomicWikiTableCase(
+            content: "[[target|]]",
+            expectedCells: ["[[target", "]]", "x", ""]
+        ),
+        AtomicWikiTableCase(
+            content: "[[notes#Heading|label]]",
+            expectedCells: ["[[notes#Heading", "label]]", "x", ""]
+        ),
+        AtomicWikiTableCase(
+            content: "[[target|label",
+            expectedCells: ["[[target", "label", "x", ""]
+        ),
+    ])
+    func unsupportedWikiCandidatesRemainAtomicInGFMTable(testCase: AtomicWikiTableCase) throws {
+        let source = "| A | B | C | D |\n| --- | --- | --- | --- |\n| \(testCase.content) | x |"
+        #expect(MarkdownWikiLinkRewriter.parserInput(source).source == source)
+
+        let table = try #require(firstTable(in: parseCommonMark(source)))
+        #expect(table.rows.count == 1)
+        #expect(table.rows[0].map { plainText(from: $0) } == testCase.expectedCells)
+    }
+
+    @Test func validEscapedWikiSeparatorKeepsGFMTableCellAndRewritesLink() throws {
+        let source = #"""
+        | Value | Extra |
+        | --- | --- |
+        | [[note\|label]] | x |
+        """#
+        #expect(MarkdownWikiLinkRewriter.parserInput(source).source == source)
+
+        let table = try #require(firstTable(in: parseCommonMark(source)))
+        #expect(table.rows[0].map { plainText(from: $0) } == ["[[note|label]]", "x"])
+
+        let segments = FlatSegment.build(
+            from: [.table(headers: table.headers, rows: table.rows)],
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        )
+        guard case .table(_, let rows) = try #require(segments.first),
+              case .link(let children, _) = try #require(rows[0][0].first) else {
+            Issue.record("Expected escaped separator to produce a wiki link")
+            return
+        }
+        #expect(plainText(from: children) == "label")
+    }
+
+    @Test func validWikiProtectionHasBoundedParserInputAmplification() {
+        let minimumLabeledReference = "[[a|b]]"
+        let source = String(repeating: minimumLabeledReference, count: 20_000)
+        let parserInput = MarkdownWikiLinkRewriter.parserInput(source)
+
+        // A three-byte token replaces one byte, so the worst valid reference
+        // expands from seven to nine bytes: at most 9/7 overall.
+        #expect(parserInput.source.utf8.count * 7 <= source.utf8.count * 9)
+        #expect(parserInput.restoration.restore(parserInput.source) == source)
+        #expect(MarkdownWikiLinkRewriter.parserInput(source).source == parserInput.source)
+    }
+
+    @Test func parserBoundaryTokenSelectionIsBoundedAndFailsClosed() {
+        let candidates = (0...8).map { "z\($0)z" }
+        let firstEightCollisions = candidates.prefix(8).joined()
+
+        #expect(MarkdownWikiLinkRewriter.selectParserBoundaryToken(
+            absentFrom: firstEightCollisions,
+            candidates: candidates
+        ) == nil)
+        #expect(MarkdownWikiLinkRewriter.selectParserBoundaryToken(
+            absentFrom: candidates[0],
+            candidates: candidates
+        ) == candidates[1])
+
+        let productionCollisions = (0...7).map { "q\($0)q" }.joined()
+        let source = "\(productionCollisions) | [[a|b]] |"
+        #expect(MarkdownWikiLinkRewriter.parserInput(source).source == source)
+    }
+
+    @Test(arguments: [
+        ("> ~~~text[[meta|label]]\n> | [[note|label]] |\n> ~~~", "text[[meta|label]]"),
+        ("- ```text\n  | [[note|label]] |\n  ```", "text"),
+    ])
+    func containerFencedCodePreservesExactWikiLinkSource(
+        source: String,
+        expectedLanguage: String
+    ) throws {
+        let codeBlock = try #require(firstCodeBlock(in: parseCommonMark(source)))
+        #expect(codeBlock.language == expectedLanguage)
+        #expect(codeBlock.code == "| [[note|label]] |")
+    }
+
+    @Test func parserBoundaryRoundTripsPrivateUseAndTokenLikeText() throws {
+        let literal = "\u{E002} \u{E100} \u{F8FF} OPPIWIKIPIPEPROTECTION OPPIWIKIPIPEPROTECTIONX"
+        let source = """
+        \(literal) [[note|label]]
+
+        `\(literal) [[note|label]]`
+
+        ```text
+        \(literal) [[note|label]]
+        ```
+        """
+
+        let blocks = parseCommonMark(source)
+        guard case .paragraph(let prose) = try #require(blocks.first) else {
+            Issue.record("Expected prose paragraph")
+            return
+        }
+        #expect(plainText(from: prose) == "\(literal) [[note|label]]")
+
+        guard case .paragraph(let codeParagraph) = try #require(blocks.dropFirst().first),
+              case .code(let inlineCode) = try #require(codeParagraph.first) else {
+            Issue.record("Expected inline-code paragraph")
+            return
+        }
+        #expect(inlineCode == "\(literal) [[note|label]]")
+
+        let codeBlock = try #require(firstCodeBlock(in: blocks))
+        #expect(codeBlock.language == "text")
+        #expect(codeBlock.code == "\(literal) [[note|label]]")
+
+        let indentedCode = try #require(firstCodeBlock(in: parseCommonMark(
+            "    \(literal) [[note|label]]"
+        )))
+        #expect(indentedCode.language == nil)
+        #expect(indentedCode.code == "\(literal) [[note|label]]")
+    }
+
+    @Test func parserBoundaryRoundTripsHTMLLiterals() throws {
+        let literal = "\u{E002} \u{E100} OPPIWIKIPIPEPROTECTION"
+        let inlineOpen = #"<span data-note="[[note|label]]" data-extra="|" data-literal="\#(literal)">"#
+        let blockOpen = #"<div data-note="[[note|label]]" data-extra="|" data-literal="\#(literal)">"#
+        let source = "\(inlineOpen)body</span>\n\n\(blockOpen)\nbody\n</div>"
+
+        let blocks = parseCommonMark(source)
+        guard case .paragraph(let inlines) = try #require(blocks.first),
+              case .html(let parsedInlineOpen) = try #require(inlines.first) else {
+            Issue.record("Expected inline HTML")
+            return
+        }
+        #expect(parsedInlineOpen == inlineOpen)
+
+        guard case .htmlBlock(let html) = try #require(blocks.dropFirst().first) else {
+            Issue.record("Expected HTML block")
+            return
+        }
+        #expect(html == "\(blockOpen)\nbody\n</div>\n")
+    }
+
+    @Test func parserBoundaryRoundTripsLinkAndImageFields() throws {
+        let literal = "\u{E002}-OPPIWIKIPIPEPROTECTION"
+        let linkDestination = "https://example.com/\(literal)/[[note|label]]"
+        let imageDestination = "https://example.com/\(literal)/[[image|label]].png"
+        let source = "[link \(literal) [[link|label]]](\(linkDestination)) | "
+            + "![image \(literal) [[alt|label]]](\(imageDestination))"
+
+        let blocks = parseCommonMark(source)
+        guard case .paragraph(let inlines) = try #require(blocks.first),
+              case .link(let linkChildren, let parsedLinkDestination) = try #require(inlines.first),
+              case .image(let imageAlt, let parsedImageDestination) = try #require(inlines.dropFirst(2).first) else {
+            Issue.record("Expected link and image")
+            return
+        }
+        #expect(plainText(from: linkChildren) == "link \(literal) [[link|label]]")
+        #expect(parsedLinkDestination == linkDestination)
+        #expect(imageAlt == "image \(literal) [[alt|label]]")
+        #expect(parsedImageDestination == imageDestination)
+    }
+
+    @Test func unmatchedBacktickRunDoesNotHideWikiSyntax() throws {
+        let source = "| Value |\n| --- |\n| `[[note|label]]`` |"
+        let table = try #require(firstTable(in: parseCommonMark(source)))
+        #expect(table.rows.count == 1)
+        #expect(table.rows[0].count == 1)
+        #expect(plainText(from: table.rows[0][0]).contains("[[note|label]]"))
+    }
+
+    @Test(arguments: [
+        "`start\n| [[note|label]] |\nend`",
+        "``start\n` shorter run\n| [[note|label]] |\nend``",
+    ])
+    func multilineCodeSpanKeepsWikiPipeLiteral(source: String) throws {
+        guard case .paragraph(let inlines) = try #require(parseCommonMark(source).first),
+              case .code(let code) = try #require(inlines.first) else {
+            Issue.record("Expected multiline inline code")
+            return
+        }
+        #expect(code.contains("[[note|label]]"))
+    }
+
+    @Test func unmatchedMultilineBacktickRunDoesNotHideWikiSyntax() throws {
+        let source = "`start\n| [[note|label]] |"
+        guard case .paragraph(let inlines) = try #require(parseCommonMark(source).first) else {
+            Issue.record("Expected literal paragraph")
+            return
+        }
+        #expect(plainText(from: inlines).contains("[[note|label]]"))
+    }
+
+    @Test(arguments: [
+        "````md\n| Value |\n| --- |\n```\n| [[note|label]] |\n````",
+        "```md\n~~~\n| [[note|label]] |\n```",
+    ])
+    func mismatchedFenceTypeOrShorterRunDoesNotExposeWikiSyntax(source: String) throws {
+        let codeBlock = try #require(firstCodeBlock(in: parseCommonMark(source)))
+        #expect(codeBlock.code.contains("[[note|label]]"))
+        #expect(!codeBlock.code.contains("\\|"))
+    }
+
+    @Test func sameTypeLongerFenceClosesBeforeFollowingWikiLink() throws {
+        let source = "```md\ncontent\n````\n| [[note|label]] |"
+        let blocks = parseCommonMark(source)
+        let codeBlock = try #require(firstCodeBlock(in: blocks))
+        #expect(codeBlock.code == "content")
+        guard case .paragraph(let inlines) = try #require(blocks.last) else {
+            Issue.record("Expected paragraph after closed fence")
+            return
+        }
+        #expect(plainText(from: inlines) == "| [[note|label]] |")
     }
 
     @Test func givenUnsupportedHeadingSuffixThenRawWikiSyntaxIsPreserved() throws {
@@ -561,6 +893,237 @@ struct WorkspaceWikiLinkRenderingTests {
 
 private struct WikiLinkTestFailure: Error {}
 
+@Suite("Resource reference resolution")
+struct ResourceReferenceResolutionTests {
+    private let reference = ResourceReference(
+        target: "RV97TbYj",
+        sourceServerID: "server-source",
+        workspaceID: "workspace-1",
+        sourceSessionID: "session-source",
+        fileCandidatePath: "RV97TbYj.md"
+    )
+
+    @Test func URLCarriesUnresolvedTargetAndSourceScopeUntilTap() throws {
+        let url = try #require(ResourceReferenceURL.make(reference))
+        let parsed = try #require(ResourceReferenceURL.parse(url))
+
+        #expect(parsed == reference)
+        #expect(parsed.target == "RV97TbYj")
+        #expect(parsed.fileCandidatePath == "RV97TbYj.md")
+    }
+
+    @Test func currentSessionIdentityRejectsCrossServerCatalogMatchBeforeLookup() {
+        let selfReference = ResourceReference(
+            target: "session-source",
+            sourceServerID: "server-source",
+            workspaceID: "workspace-1",
+            sourceSessionID: "session-source",
+            fileCandidatePath: "session-source.md"
+        )
+        let sameIDOnAnotherServer = ResourceReferenceMatch.session(.init(
+            serverID: "server-other",
+            sessionID: "session-source",
+            workspaceID: "workspace-2",
+            displayName: "Other session",
+            workspaceName: "Elsewhere",
+            serverName: "Other Mac"
+        ))
+
+        #expect(ResourceReferenceSelfLinkPolicy.isCurrentSession(selfReference))
+        #expect(ResourceReferenceResolver.resolve(
+            selfReference,
+            matches: [sameIDOnAnotherServer]
+        ) == .resolved(sameIDOnAnotherServer))
+    }
+
+    @Test func exactlyOneSessionMatchResolvesToThatSession() {
+        let session = ResourceReferenceMatch.session(.init(
+            serverID: "server-a",
+            sessionID: "RV97TbYj",
+            workspaceID: "workspace-1",
+            displayName: "Fix wiki links",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+
+        #expect(ResourceReferenceResolver.resolve(reference, matches: [session]) == .resolved(session))
+    }
+
+    @Test func exactlyOneFileMatchResolvesToThatFile() {
+        let file = ResourceReferenceMatch.workspaceFile(.init(
+            serverID: "server-source",
+            workspaceID: "workspace-1",
+            worktreeID: "worktree-1",
+            path: "RV97TbYj.md",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+
+        #expect(ResourceReferenceResolver.resolve(reference, matches: [file]) == .resolved(file))
+    }
+
+    @Test func sessionAndFileCollisionIsAmbiguousInsteadOfGuessing() {
+        let session = ResourceReferenceMatch.session(.init(
+            serverID: "server-a",
+            sessionID: "RV97TbYj",
+            workspaceID: "workspace-1",
+            displayName: "Fix wiki links",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+        let file = ResourceReferenceMatch.workspaceFile(.init(
+            serverID: "server-source",
+            workspaceID: "workspace-1",
+            worktreeID: nil,
+            path: "RV97TbYj.md",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+
+        #expect(ResourceReferenceResolver.resolve(reference, matches: [file, session]) == .ambiguous([session, file]))
+    }
+
+    @Test func sameSessionIDOnMultipleServersIsAmbiguous() {
+        let serverA = ResourceReferenceMatch.session(.init(
+            serverID: "server-a",
+            sessionID: "RV97TbYj",
+            workspaceID: "workspace-1",
+            displayName: "First",
+            workspaceName: "Oppi",
+            serverName: "Laptop"
+        ))
+        let serverB = ResourceReferenceMatch.session(.init(
+            serverID: "server-b",
+            sessionID: "RV97TbYj",
+            workspaceID: "workspace-2",
+            displayName: "Second",
+            workspaceName: "Notes",
+            serverName: "Studio"
+        ))
+
+        #expect(ResourceReferenceResolver.resolve(reference, matches: [serverB, serverA]) == .ambiguous([serverA, serverB]))
+    }
+
+    @Test func duplicateCandidateDoesNotCreateFalseAmbiguity() {
+        let session = ResourceReferenceMatch.session(.init(
+            serverID: "server-a",
+            sessionID: "RV97TbYj",
+            workspaceID: "workspace-1",
+            displayName: "Fix wiki links",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+
+        #expect(ResourceReferenceResolver.resolve(reference, matches: [session, session]) == .resolved(session))
+    }
+
+    @Test func nonmatchingCandidatesAreIgnored() {
+        let otherSession = ResourceReferenceMatch.session(.init(
+            serverID: "server-a",
+            sessionID: "different-session",
+            workspaceID: "workspace-1",
+            displayName: "Other",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+        let otherFile = ResourceReferenceMatch.workspaceFile(.init(
+            serverID: "server-source",
+            workspaceID: "workspace-1",
+            worktreeID: nil,
+            path: "different.md",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+
+        #expect(ResourceReferenceResolver.resolve(
+            reference,
+            matches: [otherSession, otherFile]
+        ) == .unresolved("RV97TbYj"))
+    }
+
+    @Test func noMatchReportsTheOriginalTargetPredictably() {
+        #expect(ResourceReferenceResolver.resolve(reference, matches: []) == .unresolved("RV97TbYj"))
+    }
+
+    @Test func candidateCollectorCombinesSessionAndFileLookupBeforeResolving() {
+        let session = ResourceReferenceMatch.session(.init(
+            serverID: "server-a",
+            sessionID: "RV97TbYj",
+            workspaceID: "workspace-1",
+            displayName: "Fix wiki links",
+            workspaceName: "Oppi",
+            serverName: "Mac"
+        ))
+        let file = ResourceReferenceMatch.workspaceFile(.init(
+            serverID: "server-source",
+            workspaceID: "workspace-1",
+            worktreeID: "worktree-1",
+            path: "RV97TbYj.md",
+            workspaceName: "Oppi",
+            serverName: "Mac"
+        ))
+
+        #expect(ResourceReferenceCandidateCollector.resolve(
+            reference,
+            sessionMatches: [session],
+            fileLookup: .complete([file])
+        ) == .resolution(.ambiguous([session, file])))
+        #expect(ResourceReferenceCandidateCollector.resolve(
+            reference,
+            sessionMatches: [session],
+            fileLookup: .unavailable
+        ) == .unavailable)
+    }
+
+    @Test func sameNamedServersProduceDistinctStableChoiceAndAccessibilityLabels() {
+        let serverA = ResourceReferenceMatch.session(.init(
+            serverID: "server-a-12345678",
+            sessionID: "RV97TbYj",
+            workspaceID: "workspace-1",
+            displayName: "Fix wiki links",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+        let serverB = ResourceReferenceMatch.session(.init(
+            serverID: "server-b-87654321",
+            sessionID: "RV97TbYj",
+            workspaceID: "workspace-1",
+            displayName: "Fix wiki links",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+
+        #expect(serverA.choiceLabel != serverB.choiceLabel)
+        #expect(serverA.accessibilityLabel != serverB.accessibilityLabel)
+        #expect(serverA.choiceLabel.contains("server-a"))
+        #expect(serverB.choiceLabel.contains("server-b"))
+    }
+
+    @Test func nativeChoiceLabelsIdentifyResourceWorkspaceAndServer() {
+        let session = ResourceReferenceMatch.session(.init(
+            serverID: "server-a",
+            sessionID: "RV97TbYj",
+            workspaceID: "workspace-1",
+            displayName: "Fix wiki links",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+        let file = ResourceReferenceMatch.workspaceFile(.init(
+            serverID: "server-source",
+            workspaceID: "workspace-1",
+            worktreeID: nil,
+            path: "RV97TbYj.md",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+
+        #expect(session.choiceLabel == "Session: Fix wiki links — Oppi on Mac Studio [server-a]")
+        #expect(file.choiceLabel == "File: RV97TbYj.md — Oppi on Mac Studio [server-s]")
+        #expect(session.accessibilityLabel == session.choiceLabel)
+        #expect(file.accessibilityLabel == file.choiceLabel)
+    }
+}
+
 // MARK: - MarkdownSegmentCache
 
 @Suite("MarkdownSegmentCache")
@@ -586,6 +1149,26 @@ struct MarkdownSegmentCacheTests {
         cache.set("content", themeID: .dark, segments: [.thematicBreak])
         let result = cache.get("content", themeID: .light)
         #expect(result == nil, "Different theme should produce a cache miss")
+    }
+
+    @Test func cacheKeyDiffersByResourceReferenceServerScope() {
+        let cache = MarkdownSegmentCache()
+        cache.set(
+            "[[RV97TbYj]]",
+            themeID: .dark,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            segments: [.thematicBreak]
+        )
+
+        let result = cache.get(
+            "[[RV97TbYj]]",
+            themeID: .dark,
+            serverID: "server-2",
+            workspaceID: "workspace-1"
+        )
+
+        #expect(result == nil, "Markdown segment cache must not reuse resource links across servers")
     }
 
     @Test func cacheKeyDiffersByImageResolutionContext() {
@@ -1185,6 +1768,51 @@ struct TableCellInlineContentTests {
         #expect(hasLink, "FlatSegment.table should preserve link inlines")
     }
 
+    @Test func codeSpanClosingAfterBackslashKeepsTableStructureAndRewritesFollowingWikiLink() throws {
+        let markdown = """
+        | Code | Reference |
+        | --- | --- |
+        | ``literal \\`` [[RV97TbYj|open target]] `` |
+        """
+
+        let blocks = parseCommonMark(markdown)
+        guard case .table(let headers, let rows) = try #require(blocks.first) else {
+            Issue.record("Expected a table block")
+            return
+        }
+        #expect(headers.count == 2)
+        #expect(rows.count == 1)
+        #expect(rows[0].count == 2)
+
+        // The preprocessor feeds cmark-gfm, while wiki-link rewrite consumes
+        // its CommonMark inline result. Model that result directly to prove
+        // the wiki text after the closed code span remains a tappable link.
+        let segments = FlatSegment.build(
+            from: [.table(
+                headers: [[.text("Code")], [.text("Reference")]],
+                rows: [[
+                    [.code(#"literal \"#)],
+                    [.text(" "), .text("[[RV97TbYj|open target]]")],
+                ]]
+            )],
+            themeID: .dark,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-source"
+        )
+        guard case .table(_, let renderedRows) = try #require(segments.first) else {
+            Issue.record("Expected a table segment")
+            return
+        }
+        guard case .link(_, let destination) = try #require(renderedRows[0][1].last),
+              let url = try #require(destination.flatMap(URL.init(string:))),
+              let reference = try #require(ResourceReferenceURL.parse(url)) else {
+            Issue.record("Expected a tappable resource reference")
+            return
+        }
+        #expect(reference.target == "RV97TbYj")
+    }
+
     @Test func flatSegmentTableRewritesWikiLinksWithWorkspaceContext() throws {
         let md = """
         | Title | Link |
@@ -1206,9 +1834,10 @@ struct TableCellInlineContentTests {
         }
         #expect(plainText(from: children) == "session note")
         let url = try #require(destination.flatMap(URL.init(string:)))
-        let parsed = try #require(WorkspaceWikiLinkURL.parse(url))
+        let parsed = try #require(ResourceReferenceURL.parse(url))
+        #expect(parsed.target == "notes/sessions/oppi-jZhDRKeV")
         #expect(parsed.workspaceID == "workspace-1")
-        #expect(parsed.filePath == "notes/sessions/oppi-jZhDRKeV.md")
+        #expect(parsed.fileCandidatePath == "notes/sessions/oppi-jZhDRKeV.md")
     }
 }
 

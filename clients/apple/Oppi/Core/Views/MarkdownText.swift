@@ -42,6 +42,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
     func get(
         _ content: String,
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
+        serverID: String? = nil,
         workspaceID: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
@@ -51,6 +52,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         let key = stableKey(
             for: content,
             themeID: themeID,
+            serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
@@ -68,6 +70,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
     func set(
         _ content: String,
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
+        serverID: String? = nil,
         workspaceID: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
@@ -80,6 +83,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         let key = stableKey(
             for: content,
             themeID: themeID,
+            serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
@@ -125,6 +129,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
     private func stableKey(
         for content: String,
         themeID: ThemeID,
+        serverID: String? = nil,
         workspaceID: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
@@ -143,11 +148,12 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         }
 
         mix(themeID.rawValue, separator: 0xFF)
-        mix(workspaceID, separator: 0xFE)
-        mix(sessionID, separator: 0xFD)
-        mix(serverBaseURL?.absoluteString, separator: 0xFC)
-        mix(sourceDirectory, separator: 0xFB)
-        mix(content, separator: 0xFA)
+        mix(serverID, separator: 0xFE)
+        mix(workspaceID, separator: 0xFD)
+        mix(sessionID, separator: 0xFC)
+        mix(serverBaseURL?.absoluteString, separator: 0xFB)
+        mix(sourceDirectory, separator: 0xFA)
+        mix(content, separator: 0xF9)
         return hash
     }
 }
@@ -270,6 +276,7 @@ enum FlatSegment: Sendable {
     static func build(
         from blocks: [MarkdownBlock],
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
+        serverID: String? = nil,
         workspaceID: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
@@ -286,6 +293,7 @@ enum FlatSegment: Sendable {
         buildResult(
             from: blocks,
             themeID: themeID,
+            serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
@@ -297,6 +305,7 @@ enum FlatSegment: Sendable {
     static func buildWithSourceLineRanges(
         from blocks: [LocatedMarkdownBlock],
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
+        serverID: String? = nil,
         workspaceID: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
@@ -306,6 +315,7 @@ enum FlatSegment: Sendable {
         buildResult(
             from: blocks.map(\.block),
             themeID: themeID,
+            serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
@@ -318,6 +328,7 @@ enum FlatSegment: Sendable {
     private static func buildResult(
         from blocks: [MarkdownBlock],
         themeID: ThemeID,
+        serverID: String?,
         workspaceID: String?,
         sessionID: String?,
         serverBaseURL: URL?,
@@ -328,7 +339,9 @@ enum FlatSegment: Sendable {
         let palette = themeID.palette
         let blocks = MarkdownWikiLinkRewriter.rewrite(
             blocks: blocks,
+            serverID: serverID,
             workspaceID: workspaceID,
+            sessionID: sessionID,
             sourceDirectory: sourceDirectory
         )
         var result: [Self] = []

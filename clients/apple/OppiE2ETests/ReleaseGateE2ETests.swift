@@ -168,6 +168,50 @@ final class ReleaseGateE2ETests: E2ETestCase {
     }
 
     @MainActor
+    func testRenderedSessionWikiLinkOpensReferencedChat() throws {
+        createSession()
+        let sourceSessionID = waitForFocusedSessionId(timeout: 20)
+
+        navigateBackToWorkspace()
+        createSession()
+        let targetSessionID = waitForFocusedSessionId(excluding: sourceSessionID, timeout: 20)
+
+        navigateBackToWorkspace()
+        enterSession(id: sourceSessionID)
+        sendMessageAndWaitForResponse(
+            "Reply with exactly [[\(targetSessionID)]] and nothing else. Do not use a code span or code fence.",
+            timeout: 240
+        )
+
+        let assistantRows = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "chat.timeline.assistant.")
+        )
+        guard assistantRows.count > 0 else {
+            XCTFail("Assistant response row did not render")
+            return
+        }
+        let latestAssistantResponse = assistantRows.element(boundBy: assistantRows.count - 1)
+        let matchingLinks = app.links
+            .matching(NSPredicate(format: "label == %@", targetSessionID))
+            .allElementsBoundByIndex
+        let assistantLinks = matchingLinks.filter {
+            latestAssistantResponse.frame.intersects($0.frame)
+        }
+        XCTAssertEqual(
+            assistantLinks.count,
+            2,
+            "Expected the assistant row's two accessibility projections for its rendered session wiki link"
+        )
+        guard let renderedLink = assistantLinks.last else { return }
+        XCTAssertTrue(
+            waitForElementToExist(renderedLink, timeout: 20),
+            "Assistant response did not render a tappable session wiki link"
+        )
+        tap(renderedLink, named: "rendered session wiki link", timeout: 5)
+        XCTAssertEqual(waitForFocusedSessionId(targetSessionID, timeout: 20), targetSessionID)
+    }
+
+    @MainActor
     func testFocusedSessionStreamSurvivesSessionSwitch() throws {
         createSession()
         waitForRequiredSplitStreamCapabilities()
