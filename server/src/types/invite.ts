@@ -34,9 +34,14 @@ export interface IrohInviteTransport {
   alpns: string[];
   addressMode: IrohInviteAddressMode;
   ticket?: string;
+  /** Optional live custom relay URLs. Missing or empty retains public defaults. */
+  relayUrls?: string[];
 }
 
+/** Protected local state written only by the running endpoint. */
 export interface IrohInviteState extends IrohInviteTransport {
+  relayMode?: "default" | "custom";
+  ticketHomeRelay?: string;
   readinessId: string;
   processId: number;
 }

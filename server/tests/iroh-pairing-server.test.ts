@@ -37,6 +37,7 @@ afterEach(async () => {
 });
 
 type FakeEndpointOptions = { secretKey?: number[]; alpns?: number[][] };
+type FakeRelayMap = { insert: ReturnType<typeof vi.fn> };
 type FakeStream = ReturnType<typeof makeStream>;
 
 function nodeIdForSecret(secretKey: number[]): string {
@@ -98,10 +99,13 @@ function makeIncoming(options: { alpn?: number[]; remoteId?: string; streams: Fa
   return { incoming, connection, close };
 }
 
-function makeRuntime(options: { online?: () => Promise<void>; incoming?: Incoming } = {}) {
+function makeRuntime(
+  options: { online?: () => Promise<void>; incoming?: Incoming; relayUrl?: string | null } = {},
+) {
   let nextGeneratedByte = 7;
   let closed = false;
   const endpoints: Array<{ close: ReturnType<typeof vi.fn> }> = [];
+  const relayMaps: FakeRelayMap[] = [];
   const incomingQueue: Incoming[] = options.incoming ? [options.incoming] : [];
   const acceptWaiters: Array<{
     resolve: (incoming: Incoming | null) => void;
@@ -128,12 +132,22 @@ function makeRuntime(options: { online?: () => Promise<void>; incoming?: Incomin
         );
       }),
       id: () => ({ toString: () => nodeId }),
-      addr: () => ({ nodeId }),
+      addr: () => ({
+        nodeId,
+        relayUrl: () => options.relayUrl ?? "https://use1-1.relay.n0.iroh.link/",
+      }),
       secretKey: () => ({ toBytes: () => [...secretKey] }),
     };
   });
+  const emptyRelayMap = vi.fn(() => {
+    const relayMap = { insert: vi.fn() };
+    relayMaps.push(relayMap);
+    return relayMap;
+  });
+  const customRelayMode = vi.fn((relayMap: FakeRelayMap) => ({ relayMap }));
   return {
     endpoints,
+    relayMaps,
     pushIncoming(incoming: Incoming) {
       const waiter = acceptWaiters.shift();
       if (waiter) waiter.resolve(incoming);
@@ -151,6 +165,8 @@ function makeRuntime(options: { online?: () => Promise<void>; incoming?: Incomin
           toString: () => `endpoint-ticket-for-${addr.nodeId}`,
         })),
       },
+      RelayMap: { empty: emptyRelayMap },
+      RelayMode: { custom: customRelayMode },
     },
   };
 }
@@ -384,6 +400,94 @@ describe("Iroh endpoint runtime", () => {
       alpns: [PAIR_ALPN_BYTES, HTTP_ALPN_BYTES],
     });
     expect(second.nodeId).toBe(first.nodeId);
+  });
+
+  it("binds a configured custom relay map and records only local live relay facts", async () => {
+    storage.updateConfig({
+      iroh: {
+        enabled: true,
+        relays: [
+          { url: "https://relay-us.example/" },
+          { url: "https://relay-eu.example/", quicPort: 7842 },
+        ],
+      },
+    });
+    const fake = makeRuntime({ relayUrl: "https://relay-eu.example/" });
+    const server = await startIrohPairingServer(storage, {
+      runtime: fake.runtime,
+      onlineTimeoutMs: 50,
+      tunnelTarget: nullTunnelTarget(),
+    });
+
+    const relayMap = fake.relayMaps[0];
+    expect(relayMap).toBeDefined();
+    expect(relayMap?.insert).toHaveBeenNthCalledWith(1, {
+      url: "https://relay-us.example/",
+      quicPort: 7842,
+    });
+    expect(relayMap?.insert).toHaveBeenNthCalledWith(2, {
+      url: "https://relay-eu.example/",
+      quicPort: 7842,
+    });
+    expect(fake.runtime.Endpoint.bind).toHaveBeenCalledWith(
+      { alpns: [PAIR_ALPN_BYTES, HTTP_ALPN_BYTES] },
+      { relayMap },
+    );
+    expect(readIrohInviteState(dataDir)).toMatchObject({
+      relayMode: "custom",
+      relayUrls: ["https://relay-us.example/", "https://relay-eu.example/"],
+      ticketHomeRelay: "https://relay-eu.example/",
+    });
+
+    await server.close();
+  });
+
+  it.each([
+    ["case", "HTTPS://RELAY.EXAMPLE/"],
+    ["default port", "https://relay.example:443"],
+    ["trailing root", "https://relay.example/"],
+  ])(
+    "accepts a custom ticket home with equivalent canonical origin (%s)",
+    async (_label, homeRelay) => {
+      storage.updateConfig({
+        iroh: { enabled: true, relays: [{ url: "https://relay.example" }] },
+      });
+      const fake = makeRuntime({ relayUrl: homeRelay });
+
+      const server = await startIrohPairingServer(storage, {
+        runtime: fake.runtime,
+        onlineTimeoutMs: 50,
+        tunnelTarget: nullTunnelTarget(),
+      });
+
+      expect(readIrohInviteState(dataDir)?.ticketHomeRelay).toBe(homeRelay);
+      await server.close();
+    },
+  );
+
+  it("refuses a custom ticket home outside the configured map with host-only diagnostics", async () => {
+    storage.updateConfig({
+      iroh: { enabled: true, relays: [{ url: "https://relay-us.example/" }] },
+    });
+    const fake = makeRuntime({
+      relayUrl: "https://unexpected-relay.example/private-path?token=not-for-logs",
+    });
+
+    const failure = await startIrohPairingServer(storage, {
+      runtime: fake.runtime,
+      onlineTimeoutMs: 50,
+      tunnelTarget: nullTunnelTarget(),
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).toContain(
+      "ticket home relay host unexpected-relay.example is not in the configured custom relay set",
+    );
+    expect(message).not.toContain("private-path");
+    expect(message).not.toContain("token=not-for-logs");
+    expect(readIrohInviteState(dataDir)).toBeUndefined();
+    expect(fake.endpoints[0]?.close).toHaveBeenCalledOnce();
   });
 
   it("pairs on the dedicated ALPN and binds the token to the remote node ID", async () => {

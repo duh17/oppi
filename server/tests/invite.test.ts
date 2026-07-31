@@ -424,6 +424,7 @@ describe("generateInvite", () => {
             alpns: ["oppi/pair/1"],
             addressMode: "ticket",
             ticket: "iroh-ticket-hint",
+            relayUrls: ["https://relay-live.example/"],
           },
         },
       },
@@ -447,6 +448,7 @@ describe("generateInvite", () => {
           nodeId: "iroh-node-preferred",
           addressMode: "ticket",
           ticket: "iroh-ticket-hint",
+          relayUrls: ["https://relay-live.example/"],
         },
         http: {
           host: "server.local",
@@ -456,5 +458,13 @@ describe("generateInvite", () => {
         },
       },
     });
+    expect(
+      verify(
+        null,
+        Buffer.from(envelope.signedPayload, "utf-8"),
+        createPublicKey(identity.publicKeyPem),
+        Buffer.from(envelope.signature, "base64url"),
+      ),
+    ).toBe(true);
   });
 });

@@ -513,6 +513,15 @@ function isLoopbackHost(host: string): boolean {
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
+function canonicalRelayOrigin(relayUrl: string | undefined): string | undefined {
+  if (!relayUrl) return undefined;
+  try {
+    return new URL(relayUrl).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 function cmdDoctor(storage: CliConnectionConfig): void {
   type CheckLevel = "pass" | "warn" | "fail";
   type Check = { level: CheckLevel; message: string };
@@ -686,6 +695,51 @@ function cmdDoctor(storage: CliConnectionConfig): void {
         checks.push({ level: "fail", message: `TLS CA missing: ${tls.caPath}` });
       } else {
         checks.push({ level: "pass", message: `TLS CA found (${tls.caPath})` });
+      }
+    }
+  }
+
+  if (config.iroh?.enabled) {
+    const configuredRelays = config.iroh.relays ?? [];
+    const irohState = readIrohInviteState(storage.getDataDir());
+    const configuredCustom = configuredRelays.length > 0;
+    const configuredMode = configuredCustom
+      ? `custom (${configuredRelays.length})`
+      : "public defaults";
+
+    if (!irohState) {
+      checks.push({
+        level: "warn",
+        message: `Iroh relay mode: ${configuredMode}; no live state (restart required)`,
+      });
+    } else {
+      const liveRelays = irohState.relayUrls ?? [];
+      const matchesLive = configuredCustom
+        ? irohState.relayMode === "custom" &&
+          liveRelays.length === configuredRelays.length &&
+          liveRelays.every((url, index) => url === configuredRelays[index]?.url)
+        : irohState.relayMode === "default";
+      checks.push({
+        level: matchesLive ? "pass" : "warn",
+        message: matchesLive
+          ? configuredCustom
+            ? `Iroh relay mode: ${configuredMode}; configured and live match`
+            : "Iroh relay mode: public defaults"
+          : `Iroh relay mode: ${configuredMode}; configured/live drift`,
+      });
+      if (irohState.relayMode === "custom" && irohState.ticketHomeRelay) {
+        const ticketHomeOrigin = canonicalRelayOrigin(irohState.ticketHomeRelay);
+        const ticketHomeMember =
+          ticketHomeOrigin !== undefined &&
+          liveRelays.some((relayUrl) => canonicalRelayOrigin(relayUrl) === ticketHomeOrigin);
+        checks.push({
+          level: ticketHomeMember ? "pass" : "fail",
+          message: ticketHomeMember
+            ? "Iroh ticket home belongs to the live custom relay set"
+            : "Iroh ticket home is outside the live custom relay set",
+        });
+      } else if (irohState.relayMode === "custom") {
+        checks.push({ level: "warn", message: "Iroh ticket home is unavailable in live state" });
       }
     }
   }
@@ -917,6 +971,7 @@ const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
   },
   iroh: { type: "json", desc: "Iroh transport config JSON object" },
   "iroh.enabled": { type: "boolean", desc: "Enable host-free Iroh transport" },
+  "iroh.relays": { type: "json", desc: "Custom Iroh relay entries JSON array (restart required)" },
   tls: { type: "json", desc: "TLS config JSON object" },
   "tls.mode": { type: "string", desc: "TLS mode" },
   "tls.certPath": { type: "string", desc: "Manual TLS certificate path" },

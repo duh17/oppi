@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { createLogger } from "../logger.js";
-import type { AuthTransport, IrohInviteMode, ServerConfig } from "../types.js";
+import type { AuthTransport, IrohInviteMode, IrohRelayConfig, ServerConfig } from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
@@ -32,6 +33,186 @@ function normalizeIrohInviteMode(value: unknown): IrohInviteMode | undefined {
   return value === "irohOnly" || value === "irohPreferred" || value === "httpOnly"
     ? value
     : undefined;
+}
+
+const MAX_IROH_RELAYS = 8;
+const DEFAULT_IROH_RELAY_QUIC_PORT = 7842;
+
+type DisallowedIpKind =
+  | "loopback"
+  | "private"
+  | "link-local"
+  | "unspecified"
+  | "carrier-grade NAT"
+  | "benchmarking"
+  | "multicast"
+  | "broadcast";
+
+function disallowedIpv4Kind(value: string): DisallowedIpKind | undefined {
+  const octets = value.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet))) return undefined;
+  const [first, second] = octets;
+  if (first === 0) return "unspecified";
+  if (first === 127) return "loopback";
+  if (
+    first === 10 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  ) {
+    return "private";
+  }
+  if (first === 169 && second === 254) return "link-local";
+  if (first === 100 && second >= 64 && second <= 127) return "carrier-grade NAT";
+  if (first === 198 && (second === 18 || second === 19)) return "benchmarking";
+  if (first >= 224 && first <= 239) return "multicast";
+  if (value === "255.255.255.255") return "broadcast";
+  return undefined;
+}
+
+function ipv6Value(value: string): bigint | undefined {
+  const normalized = value.toLowerCase();
+  const ipv4Index = normalized.lastIndexOf(":");
+  let expanded = normalized;
+  if (normalized.includes(".")) {
+    const ipv4 = normalized.slice(ipv4Index + 1);
+    if (isIP(ipv4) !== 4) return undefined;
+    const octets = ipv4.split(".").map(Number);
+    const groups = [
+      ((octets[0] ?? 0) << 8) | (octets[1] ?? 0),
+      ((octets[2] ?? 0) << 8) | (octets[3] ?? 0),
+    ];
+    expanded = `${normalized.slice(0, ipv4Index)}:${groups.map((group) => group.toString(16)).join(":")}`;
+  }
+  const halves = expanded.split("::");
+  if (halves.length > 2) return undefined;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if (missing < 0 || (halves.length === 1 && missing !== 0)) return undefined;
+  const groups = [...left, ...Array(missing).fill("0"), ...right];
+  if (groups.length !== 8 || groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) {
+    return undefined;
+  }
+  return BigInt(`0x${groups.map((group) => group.padStart(4, "0")).join("")}`);
+}
+
+function disallowedIpKind(host: string): DisallowedIpKind | undefined {
+  const value = host.replace(/^\[|\]$/g, "");
+  const family = isIP(value);
+  if (family === 4) return disallowedIpv4Kind(value);
+  if (family !== 6) return undefined;
+  const ipv6 = ipv6Value(value);
+  if (ipv6 === undefined) return undefined;
+  if (ipv6 === 0n) return "unspecified";
+  if (ipv6 === 1n) return "loopback";
+  if (ipv6 >> 121n === 0b1111110n) return "private";
+  if (ipv6 >> 118n === 0b1111111010n) return "link-local";
+  if (ipv6 >> 120n === 0xffn) return "multicast";
+  // IPv4-mapped IPv6 literals must obey the IPv4 address policy too.
+  if (ipv6 >> 32n === 0xffffn) {
+    const ipv4 = Number(ipv6 & 0xffff_ffffn);
+    return disallowedIpv4Kind(
+      [ipv4 >>> 24, (ipv4 >>> 16) & 0xff, (ipv4 >>> 8) & 0xff, ipv4 & 0xff].join("."),
+    );
+  }
+  return undefined;
+}
+
+function normalizeIrohRelays(
+  value: unknown,
+  errors: string[],
+  strictUnknown: boolean,
+): IrohRelayConfig[] | undefined {
+  const errorCountBeforeRelays = errors.length;
+  if (!Array.isArray(value)) {
+    errors.push("config.iroh.relays: expected array");
+    return undefined;
+  }
+  if (value.length > MAX_IROH_RELAYS) {
+    errors.push(`config.iroh.relays: expected at most ${MAX_IROH_RELAYS} entries`);
+    return undefined;
+  }
+
+  const relays: IrohRelayConfig[] = [];
+  const seen = new Set<string>();
+  for (const [index, entry] of value.entries()) {
+    const path = `config.iroh.relays[${index}]`;
+    if (!isRecord(entry)) {
+      errors.push(`${path}: expected object`);
+      continue;
+    }
+    const allowedKeys = new Set(["url", "quicPort"]);
+    if (strictUnknown) {
+      for (const key of Object.keys(entry)) {
+        if (!allowedKeys.has(key)) errors.push(`${path}.${key}: unknown key`);
+      }
+    }
+    if (typeof entry.url !== "string") {
+      errors.push(`${path}.url: expected HTTPS URL with host`);
+      continue;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(entry.url);
+    } catch {
+      errors.push(`${path}.url: expected HTTPS URL with host`);
+      continue;
+    }
+    if (parsed.protocol !== "https:") {
+      errors.push(`${path}.url: expected HTTPS URL`);
+      continue;
+    }
+    if (!parsed.hostname) {
+      errors.push(`${path}.url: expected HTTPS URL with host`);
+      continue;
+    }
+    if (parsed.username || parsed.password) {
+      errors.push(`${path}.url: must not include userinfo`);
+      continue;
+    }
+    if (parsed.search) {
+      errors.push(`${path}.url: must not include a query`);
+      continue;
+    }
+    if (parsed.hash) {
+      errors.push(`${path}.url: must not include a fragment`);
+      continue;
+    }
+    if (parsed.pathname !== "/") {
+      errors.push(`${path}.url: must use the root path`);
+      continue;
+    }
+    const ipKind = disallowedIpKind(parsed.hostname);
+    if (ipKind) {
+      errors.push(
+        `${path}.url: must not use ${ipKind === "unspecified" ? "an" : "a"} ${ipKind} IP literal`,
+      );
+      continue;
+    }
+
+    let quicPort: number | undefined;
+    if ("quicPort" in entry) {
+      if (
+        typeof entry.quicPort !== "number" ||
+        !Number.isInteger(entry.quicPort) ||
+        entry.quicPort < 1 ||
+        entry.quicPort > 65_535
+      ) {
+        errors.push(`${path}.quicPort: expected integer 1-65535`);
+        continue;
+      }
+      quicPort = entry.quicPort;
+    }
+
+    const url = parsed.toString();
+    if (seen.has(url)) continue;
+    seen.add(url);
+    // RelayMap.fromUrls assigns 7842. Keep object entries equivalent so
+    // configured relays retain QUIC address discovery when the port is omitted.
+    relays.push({ url, quicPort: quicPort ?? DEFAULT_IROH_RELAY_QUIC_PORT });
+  }
+  return errors.length === errorCountBeforeRelays ? relays : undefined;
 }
 
 function defaultRuntimePathEntries(): string[] {
@@ -334,7 +515,7 @@ function normalizeConfig(
     changed = true;
   } else if (isRecord(obj.iroh)) {
     const iroh = obj.iroh;
-    const allowedIrohKeys = new Set(["enabled"]);
+    const allowedIrohKeys = new Set(["enabled", "relays"]);
 
     if (strictUnknown) {
       for (const key of Object.keys(iroh)) {
@@ -344,9 +525,12 @@ function normalizeConfig(
       }
     }
 
+    const irohConfig: NonNullable<ServerConfig["iroh"]> = {
+      ...(config.iroh ?? { enabled: false }),
+    };
     if ("enabled" in iroh) {
       if (typeof iroh.enabled === "boolean") {
-        config.iroh = { enabled: iroh.enabled };
+        irohConfig.enabled = iroh.enabled;
       } else {
         errors.push("config.iroh.enabled: expected boolean");
         changed = true;
@@ -354,6 +538,11 @@ function normalizeConfig(
     } else {
       changed = true;
     }
+    if ("relays" in iroh) {
+      const relays = normalizeIrohRelays(iroh.relays, errors, strictUnknown);
+      if (relays) irohConfig.relays = relays;
+    }
+    config.iroh = irohConfig;
   } else {
     errors.push("config.iroh: expected object");
     changed = true;
@@ -875,9 +1064,15 @@ export class ConfigStore {
     const merged: ServerConfig = {
       ...this.config,
       ...updates,
+      ...(updates.iroh === undefined
+        ? {}
+        : { iroh: { ...(this.config.iroh ?? { enabled: false }), ...updates.iroh } }),
     };
 
-    const normalized = normalizeConfig(merged, this.dataDir, false);
+    const normalized = normalizeConfig(merged, this.dataDir, true);
+    if (!normalized.valid) {
+      throw new Error(`Invalid config update: ${normalized.errors.join("; ")}`);
+    }
     this.config = normalized.config;
     this.saveConfig(this.config);
   }

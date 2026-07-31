@@ -27,6 +27,12 @@ export interface UploadStoreConfig {
 export type AuthTransport = "http" | "iroh";
 export type IrohInviteMode = "irohOnly" | "irohPreferred" | "httpOnly";
 
+/** A server-owned relay entry. A custom non-empty list replaces Iroh's public relay map. */
+export interface IrohRelayConfig {
+  url: string;
+  quicPort?: number;
+}
+
 export interface IrohDeviceTokenBinding {
   token: string;
   clientNodeId: string;
@@ -63,6 +69,8 @@ export interface ServerConfig {
   /** Host-free Iroh transport activation. */
   iroh?: {
     enabled: boolean;
+    /** Omitted or empty keeps Iroh's public relay defaults. */
+    relays?: IrohRelayConfig[];
   };
 
   /** Transport security (HTTPS/WSS). */

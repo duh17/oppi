@@ -31,6 +31,9 @@ describe("Iroh invite state persistence", () => {
       alpns: [PAIR_ALPN],
       addressMode: "ticket" as const,
       ticket: "endpoint-ticket-hint",
+      relayMode: "custom" as const,
+      relayUrls: ["https://relay.example/"],
+      ticketHomeRelay: "https://relay.example/",
       readinessId: "ready-ticket",
       processId: process.pid,
     };
@@ -48,7 +51,9 @@ describe("Iroh invite state persistence", () => {
       alpns: state.alpns,
       addressMode: state.addressMode,
       ticket: state.ticket,
+      relayUrls: state.relayUrls,
     });
+    expect(irohInviteTransportFromState(state)).not.toHaveProperty("ticketHomeRelay");
   });
 
   it("accepts node-id state without a ticket hint", async () => {
@@ -57,6 +62,8 @@ describe("Iroh invite state persistence", () => {
       nodeId: "iroh-node-id-only",
       alpns: [PAIR_ALPN],
       addressMode: "node-id" as const,
+      relayMode: "default" as const,
+      ticketHomeRelay: "https://use1-1.relay.n0.iroh.link/",
       readinessId: "ready-node-id",
       processId: process.pid,
     };
@@ -72,12 +79,34 @@ describe("Iroh invite state persistence", () => {
     });
   });
 
+  it("omits empty relay URLs so clients retain public defaults", () => {
+    expect(
+      irohInviteTransportFromState({
+        version: 2,
+        nodeId: "iroh-node-empty-relays",
+        alpns: [PAIR_ALPN],
+        addressMode: "node-id",
+        relayMode: "default",
+        relayUrls: [],
+        readinessId: "ready-empty-relays",
+        processId: process.pid,
+      }),
+    ).toEqual({
+      version: 2,
+      nodeId: "iroh-node-empty-relays",
+      alpns: [PAIR_ALPN],
+      addressMode: "node-id",
+    });
+  });
+
   it("clears persisted invite state without removing other Iroh files", async () => {
     const state = {
       version: 2 as const,
       nodeId: "iroh-node-clear",
       alpns: [PAIR_ALPN],
       addressMode: "node-id" as const,
+      relayMode: "default" as const,
+      ticketHomeRelay: "https://use1-1.relay.n0.iroh.link/",
       readinessId: "ready-clear",
       processId: process.pid,
     };
@@ -99,6 +128,8 @@ describe("Iroh invite state persistence", () => {
       nodeId: "iroh-node-no-pairing",
       alpns: ["oppi/http/1"],
       addressMode: "node-id" as const,
+      relayMode: "default" as const,
+      ticketHomeRelay: "https://use1-1.relay.n0.iroh.link/",
       readinessId: "ready-no-pair",
       processId: process.pid,
     };

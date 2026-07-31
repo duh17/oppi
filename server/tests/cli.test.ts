@@ -723,6 +723,23 @@ describe("oppi config", () => {
     expect(run(["config", "get", "iroh.enabled"]).stdout.trim()).toBe("true");
   });
 
+  it("config set validates relays before saving and preserves Iroh siblings", () => {
+    const setRelays = run([
+      "config",
+      "set",
+      "iroh.relays",
+      '[{"url":"https://relay-us.example"},{"url":"https://relay-eu.example","quicPort":7842}]',
+    ]);
+    expect(setRelays.exitCode).toBe(0);
+    expect(run(["config", "get", "iroh.enabled"]).stdout.trim()).toBe("true");
+    const beforeInvalid = run(["config", "get", "iroh.relays"]).stdout;
+
+    const invalid = run(["config", "set", "iroh.relays", '[{"url":"http://127.0.0.1"}]']);
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.stdout).toContain("expected HTTPS URL");
+    expect(run(["config", "get", "iroh.relays"]).stdout).toBe(beforeInvalid);
+  });
+
   it("config set/get supports Oppi prompt toggles", () => {
     run(["config", "set", "oppiDocsPrompt.enabled", "false"]);
     expect(run(["config", "get", "oppiDocsPrompt.enabled"]).stdout.trim()).toBe("false");
@@ -2367,6 +2384,76 @@ describe("oppi pair persisted Iroh policy", () => {
     },
   );
 
+  it("signs custom relay URLs from live state rather than edited config", () => {
+    const dir = preparePersistedPolicy("irohOnly", "ready");
+    const liveRelay = "https://relay-live.example/";
+    const editedRelay = "https://relay-edited.example/";
+    try {
+      const storage = new Storage(dir);
+      storage.updateConfig({ iroh: { enabled: true, relays: [{ url: editedRelay }] } });
+      writeIrohInviteState(dir, {
+        version: 2,
+        nodeId: "node-live-relay",
+        alpns: ["oppi/pair/1", "oppi/http/1"],
+        addressMode: "ticket",
+        ticket: "ticket-live-relay",
+        relayMode: "custom",
+        relayUrls: [liveRelay],
+        ticketHomeRelay: liveRelay,
+        readinessId: "readiness-irohOnly",
+        processId: process.pid,
+      });
+
+      const { stdout, exitCode } = run(["pair", "--json"], plainPairEnv(dir));
+      expect(exitCode).toBe(0);
+      const invite = JSON.parse(stdout) as { inviteURL: string };
+      const encodedInvite = new URL(invite.inviteURL).searchParams.get("invite");
+      if (!encodedInvite) throw new Error("missing signed invite");
+      const envelope = JSON.parse(Buffer.from(encodedInvite, "base64url").toString("utf8")) as {
+        signedPayload: string;
+      };
+      const signedPayload = JSON.parse(
+        Buffer.from(envelope.signedPayload, "base64url").toString("utf8"),
+      ) as { transports: { iroh?: { relayUrls?: string[] } } };
+
+      expect(signedPayload.transports.iroh).toMatchObject({
+        nodeId: "node-live-relay",
+        ticket: "ticket-live-relay",
+        alpns: ["oppi/pair/1", "oppi/http/1"],
+        relayUrls: [liveRelay],
+      });
+      expect(signedPayload.transports.iroh?.relayUrls).not.toContain(editedRelay);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("omits relay URLs from public-default Iroh invites", () => {
+    const dir = preparePersistedPolicy("irohOnly", "ready");
+    try {
+      const { stdout, exitCode } = run(["pair", "--json"], plainPairEnv(dir));
+      expect(exitCode).toBe(0);
+      const invite = JSON.parse(stdout) as { inviteURL: string };
+      const encodedInvite = new URL(invite.inviteURL).searchParams.get("invite");
+      if (!encodedInvite) throw new Error("missing signed invite");
+      const envelope = JSON.parse(Buffer.from(encodedInvite, "base64url").toString("utf8")) as {
+        signedPayload: string;
+      };
+      const signedPayload = JSON.parse(
+        Buffer.from(envelope.signedPayload, "base64url").toString("utf8"),
+      ) as { transports: { iroh?: Record<string, unknown> } };
+
+      expect(signedPayload.transports.iroh).toMatchObject({
+        nodeId: "node-irohOnly",
+        ticket: "ticket-irohOnly",
+        alpns: ["oppi/pair/1", "oppi/http/1"],
+      });
+      expect(signedPayload.transports.iroh).not.toHaveProperty("relayUrls");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("preserves preferred invites with HTTP and plain HTTP mode", () => {
     const preferredDir = preparePersistedPolicy("irohPreferred", "ready");
     const httpDir = preparePersistedPolicy("httpOnly", "missing");
@@ -2663,6 +2750,121 @@ describe("oppi doctor", () => {
       rmSync(doctorDir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it("reports custom relay health without exposing relay URLs", () => {
+    const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-iroh-"));
+    const relayUrl = "https://private-relay.example/";
+
+    try {
+      const storage = new Storage(doctorDir);
+      storage.updateConfig({ iroh: { enabled: true, relays: [{ url: relayUrl }] } });
+      writeIrohInviteState(doctorDir, {
+        version: 2,
+        nodeId: "node-doctor",
+        alpns: ["oppi/pair/1", "oppi/http/1"],
+        addressMode: "ticket",
+        ticket: "ticket-doctor",
+        relayMode: "custom",
+        relayUrls: [relayUrl],
+        ticketHomeRelay: "https://PRIVATE-relay.example:443/",
+        readinessId: "doctor-ready",
+        processId: process.pid,
+      });
+
+      const { stdout } = run(["doctor"], { OPPI_DATA_DIR: doctorDir });
+      const text = stripAnsi(stdout);
+      expect(text).toContain("Iroh relay mode: custom (1); configured and live match");
+      expect(text).toContain("Iroh ticket home belongs to the live custom relay set");
+      expect(text).not.toContain("private-relay.example");
+    } finally {
+      rmSync(doctorDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports drift when default config leaves a custom relay map live", () => {
+    const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-iroh-default-drift-"));
+    const relayUrl = "https://private-relay.example/";
+
+    try {
+      const storage = new Storage(doctorDir);
+      storage.updateConfig({ iroh: { enabled: true } });
+      writeIrohInviteState(doctorDir, {
+        version: 2,
+        nodeId: "node-doctor-default-drift",
+        alpns: ["oppi/pair/1", "oppi/http/1"],
+        addressMode: "ticket",
+        ticket: "ticket-doctor-default-drift",
+        relayMode: "custom",
+        relayUrls: [relayUrl],
+        ticketHomeRelay: relayUrl,
+        readinessId: "doctor-default-drift",
+        processId: process.pid,
+      });
+
+      const text = stripAnsi(run(["doctor"], { OPPI_DATA_DIR: doctorDir }).stdout);
+      expect(text).toContain("Iroh relay mode: public defaults; configured/live drift");
+      expect(text).not.toContain("private-relay.example");
+    } finally {
+      rmSync(doctorDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports drift when custom config has a default relay map live", () => {
+    const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-iroh-custom-drift-"));
+
+    try {
+      const storage = new Storage(doctorDir);
+      storage.updateConfig({
+        iroh: { enabled: true, relays: [{ url: "https://private-relay.example/" }] },
+      });
+      writeIrohInviteState(doctorDir, {
+        version: 2,
+        nodeId: "node-doctor-custom-drift",
+        alpns: ["oppi/pair/1", "oppi/http/1"],
+        addressMode: "ticket",
+        ticket: "ticket-doctor-custom-drift",
+        relayMode: "default",
+        readinessId: "doctor-custom-drift",
+        processId: process.pid,
+      });
+
+      const text = stripAnsi(run(["doctor"], { OPPI_DATA_DIR: doctorDir }).stdout);
+      expect(text).toContain("Iroh relay mode: custom (1); configured/live drift");
+      expect(text).not.toContain("private-relay.example");
+    } finally {
+      rmSync(doctorDir, { recursive: true, force: true });
+    }
+  });
+
+  it("omits Iroh relay checks while Iroh is disabled", () => {
+    const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-iroh-disabled-"));
+
+    try {
+      const storage = new Storage(doctorDir);
+      storage.updateConfig({
+        iroh: { enabled: false, relays: [{ url: "https://private-relay.example/" }] },
+      });
+      writeIrohInviteState(doctorDir, {
+        version: 2,
+        nodeId: "node-doctor-disabled",
+        alpns: ["oppi/pair/1", "oppi/http/1"],
+        addressMode: "ticket",
+        ticket: "ticket-doctor-disabled",
+        relayMode: "custom",
+        relayUrls: ["https://private-relay.example/"],
+        ticketHomeRelay: "https://private-relay.example/",
+        readinessId: "doctor-disabled",
+        processId: process.pid,
+      });
+
+      const text = stripAnsi(run(["doctor"], { OPPI_DATA_DIR: doctorDir }).stdout);
+      expect(text).not.toContain("Iroh relay mode");
+      expect(text).not.toContain("Iroh ticket home");
+      expect(text).not.toContain("private-relay.example");
+    } finally {
+      rmSync(doctorDir, { recursive: true, force: true });
+    }
+  });
 
   describe.skipIf(
     logSkip(!hasOpenSSL, "oppi doctor (tailscale)", "openssl executable is unavailable"),

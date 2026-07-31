@@ -102,13 +102,33 @@ function normalizeIrohInviteState(value: unknown): IrohInviteState | undefined {
   ) {
     return undefined;
   }
+  if (
+    record.relayMode !== undefined &&
+    record.relayMode !== "default" &&
+    record.relayMode !== "custom"
+  ) {
+    return undefined;
+  }
+  if (record.relayUrls !== undefined && !isStringArray(record.relayUrls)) {
+    return undefined;
+  }
+  if (record.ticketHomeRelay !== undefined && !isNonEmptyString(record.ticketHomeRelay)) {
+    return undefined;
+  }
+  if (record.relayMode === "custom" && !isStringArray(record.relayUrls)) {
+    return undefined;
+  }
 
+  const relayUrls = isStringArray(record.relayUrls) ? record.relayUrls : undefined;
   return {
     version: IROH_INVITE_STATE_VERSION,
     nodeId: record.nodeId,
     alpns: [...record.alpns],
     addressMode: record.addressMode,
     ...(record.ticket ? { ticket: record.ticket } : {}),
+    ...(record.relayMode ? { relayMode: record.relayMode } : {}),
+    ...(relayUrls && relayUrls.length > 0 ? { relayUrls: [...relayUrls] } : {}),
+    ...(record.ticketHomeRelay ? { ticketHomeRelay: record.ticketHomeRelay } : {}),
     readinessId: record.readinessId,
     processId: record.processId,
   };
@@ -125,6 +145,9 @@ export function irohInviteTransportFromState(
     alpns: normalized.alpns,
     addressMode: normalized.addressMode,
     ...(normalized.ticket ? { ticket: normalized.ticket } : {}),
+    ...(normalized.relayUrls && normalized.relayUrls.length > 0
+      ? { relayUrls: [...normalized.relayUrls] }
+      : {}),
   };
 }
 

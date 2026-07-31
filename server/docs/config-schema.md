@@ -24,15 +24,28 @@ Settings appear in config-file order. Auth state is documented separately: it li
 
 ### Iroh transport
 
-| Setting        | Type    | Default | Description                                                                                                       |
-| -------------- | ------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
-| `iroh.enabled` | boolean | `false` | Starts the host-free Iroh HTTP/WebSocket tunnel and includes Iroh in new pairing invites when readiness succeeds. |
+| Setting        | Type     | Default | Description                                                                                                                    |
+| -------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `iroh.enabled` | boolean  | `false` | Starts the host-free Iroh HTTP/WebSocket tunnel. New signed invites can authorize Iroh when the running endpoint is available. |
+| `iroh.relays`  | object[] | unset   | Optional custom relay map. A non-empty list replaces Iroh's public relay defaults for the running server after restart.        |
+
+Each relay entry has this shape:
+
+```json
+{ "url": "https://relay.example", "quicPort": 7842 }
+```
+
+`url` must be an HTTPS root URL with a host. It cannot contain userinfo, a query, a fragment, a non-root path, or a loopback, private, link-local, or unspecified IP literal. At most eight normalized, unique entries are allowed. `quicPort` is optional; when omitted, Oppi stores `7842`. An explicit port must be an integer from 1 through 65535.
 
 ```bash
 oppi config set iroh.enabled true
+oppi config set iroh.relays '[{"url":"https://relay-us.example"},{"url":"https://relay-eu.example","quicPort":7842}]'
+oppi config validate
 ```
 
-The setting persists across CLI, Mac app, launchd, crash, and machine restarts. Changing it requires a server restart. `OPPI_IROH_TRANSPORT=1` and `OPPI_IROH_PAIRING=1` remain temporary compatibility overrides for development and isolated deployments. See [Networking and connection routing](../../docs/networking.md) for route selection and fallback behavior.
+Changes persist across CLI, Mac app, launchd, crash, and machine restarts, but Iroh settings take effect only after the server restarts. For a LaunchAgent installation, run `oppi server restart`; for a foreground `oppi serve` process, stop and start that process. Then run `oppi pair` and re-pair devices so the signed invite reflects the running endpoint's live relay map. `oppi doctor` reports public/default or custom relay mode and configuration/live drift without exposing relay URLs.
+
+`OPPI_IROH_TRANSPORT=1` and `OPPI_IROH_PAIRING=1` remain temporary compatibility overrides for development and isolated deployments. See [Networking and connection routing](../../docs/networking.md) for client route selection, relay-map compatibility, and fallback behavior.
 
 ### Model
 
@@ -201,7 +214,13 @@ Extensions own approval behavior. When a session needs approval before an action
   "runtimePathEntries": ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"],
   "runtimeEnv": {},
   "oppiDocsPrompt": { "enabled": true },
-  "iroh": { "enabled": true },
+  "iroh": {
+    "enabled": true,
+    "relays": [
+      { "url": "https://relay-us.example/", "quicPort": 7842 },
+      { "url": "https://relay-eu.example/", "quicPort": 7842 }
+    ]
+  },
   "tls": { "mode": "tailscale" },
   "autoTitle": { "enabled": true, "model": "omlx/Qwen3.5-122B-A10B-4bit" },
   "images": { "autoResize": false }
@@ -219,6 +238,7 @@ oppi config get asr.sttEndpoint
 oppi config set asr.sttEndpoint http://127.0.0.1:7936
 oppi config set images.autoResize false
 oppi config set iroh.enabled true
+oppi config set iroh.relays '[{"url":"https://relay-us.example"}]'
 oppi config set oppiDocsPrompt.enabled false
 oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
 oppi config set extensions.voice.defaultVoiceId warm-technical-teammate

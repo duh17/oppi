@@ -4,7 +4,15 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { Socket } from "node:net";
 
-import { Endpoint, EndpointTicket, type Incoming } from "@number0/iroh";
+import {
+  Endpoint,
+  EndpointTicket,
+  RelayMap,
+  RelayMode,
+  type Incoming,
+  type RelayConfig,
+  type RelayMode as IrohRelayMode,
+} from "@number0/iroh";
 
 import { decodeIrohFrame, encodeIrohFrame } from "./iroh-frame-codec.js";
 import {
@@ -18,6 +26,7 @@ import type { IrohLoopbackContext } from "./iroh-http-loopback.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { Storage } from "./storage.js";
+import type { IrohRelayConfig } from "./types.js";
 
 export { IROH_PAIR_ALPN_TEXT } from "./iroh-invite-state.js";
 export const IROH_HTTP_ALPN_TEXT = "oppi/http/1";
@@ -77,7 +86,7 @@ type IrohConnection = {
 
 type IrohEndpoint = {
   id(): { toString(): string };
-  addr(): unknown;
+  addr(): { relayUrl?: () => string | null };
   secretKey(): { toBytes(): number[] };
   online(): Promise<void>;
   acceptNext(): Promise<Incoming | null>;
@@ -85,12 +94,25 @@ type IrohEndpoint = {
   isClosed(): boolean;
 };
 
+type IrohRelayMap = {
+  insert(config: RelayConfig): void;
+};
+
 type IrohRuntime = {
   Endpoint: {
-    bind(options?: { secretKey?: number[]; alpns?: number[][] } | null): Promise<IrohEndpoint>;
+    bind(
+      options?: { secretKey?: number[]; alpns?: number[][] } | null,
+      relayMode?: IrohRelayMode | null,
+    ): Promise<IrohEndpoint>;
   };
   EndpointTicket: {
     fromAddr(addr: unknown): { toString(): string };
+  };
+  RelayMap: {
+    empty(): IrohRelayMap;
+  };
+  RelayMode: {
+    custom(map: IrohRelayMap): IrohRelayMode;
   };
 };
 
@@ -146,6 +168,44 @@ export type IrohTunnelPreface = {
   kind: "httpTunnel";
   authorization: string;
 };
+
+function customRelayMode(
+  runtime: IrohRuntime,
+  relays: readonly IrohRelayConfig[],
+): IrohRelayMode | undefined {
+  if (relays.length === 0) return undefined;
+  const relayMap = runtime.RelayMap.empty();
+  for (const relay of relays) {
+    relayMap.insert({
+      url: relay.url,
+      ...(relay.quicPort === undefined ? {} : { quicPort: relay.quicPort }),
+    });
+  }
+  return runtime.RelayMode.custom(relayMap);
+}
+
+function ticketHomeRelay(addr: { relayUrl?: () => string | null }): string | undefined {
+  const relayUrl = addr.relayUrl?.();
+  return relayUrl ?? undefined;
+}
+
+function canonicalRelayOrigin(relayUrl: string | undefined): string | undefined {
+  if (!relayUrl) return undefined;
+  try {
+    return new URL(relayUrl).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function relayHostForDiagnostic(relayUrl: string | undefined): string {
+  if (!relayUrl) return "unknown";
+  try {
+    return new URL(relayUrl).hostname || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -610,12 +670,19 @@ export async function startIrohPairingServer(
 
   const dataDir = storage.getDataDir();
   clearIrohInviteState(dataDir);
-  const runtime: IrohRuntime = options.runtime ?? { Endpoint, EndpointTicket };
+  const runtime: IrohRuntime = options.runtime ?? { Endpoint, EndpointTicket, RelayMap, RelayMode };
+  const configuredRelays = storage.getConfig().iroh?.relays ?? [];
+  const relayMode = customRelayMode(runtime, configuredRelays);
   const secretKey = await loadSecretBytes(dataDir);
-  const endpoint = await runtime.Endpoint.bind({
+  const bindOptions = {
     ...(secretKey ? { secretKey } : {}),
     alpns: [IROH_PAIR_ALPN, IROH_HTTP_ALPN],
-  });
+  };
+  // @number0/iroh@1.0.0 accepts custom RelayMode as Endpoint.bind's second argument.
+  const endpoint =
+    relayMode === undefined
+      ? await runtime.Endpoint.bind(bindOptions)
+      : await runtime.Endpoint.bind(bindOptions, relayMode);
 
   try {
     await waitForOnline(endpoint, options.onlineTimeoutMs ?? DEFAULT_ONLINE_TIMEOUT_MS);
@@ -636,8 +703,22 @@ export async function startIrohPairingServer(
   const shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
 
   const nodeId = endpoint.id().toString();
-  const ticket = runtime.EndpointTicket.fromAddr(endpoint.addr()).toString();
+  const endpointAddr = endpoint.addr();
+  const ticket = runtime.EndpointTicket.fromAddr(endpointAddr).toString();
+  const homeRelay = ticketHomeRelay(endpointAddr);
   const alpns = [IROH_PAIR_ALPN_TEXT, IROH_HTTP_ALPN_TEXT];
+
+  const homeRelayOrigin = canonicalRelayOrigin(homeRelay);
+  if (
+    configuredRelays.length > 0 &&
+    !configuredRelays.some((relay) => canonicalRelayOrigin(relay.url) === homeRelayOrigin)
+  ) {
+    await endpoint.close().catch(() => {});
+    clearIrohInviteState(dataDir);
+    throw new Error(
+      `Iroh ticket home relay host ${relayHostForDiagnostic(homeRelay)} is not in the configured custom relay set`,
+    );
+  }
 
   writeIrohInviteState(dataDir, {
     version: 2,
@@ -645,6 +726,11 @@ export async function startIrohPairingServer(
     alpns,
     addressMode: "ticket",
     ticket,
+    relayMode: configuredRelays.length > 0 ? "custom" : "default",
+    ...(configuredRelays.length > 0
+      ? { relayUrls: configuredRelays.map((relay) => relay.url) }
+      : {}),
+    ...(homeRelay ? { ticketHomeRelay: homeRelay } : {}),
     readinessId: options.readinessId ?? randomUUID(),
     processId: process.pid,
   });
