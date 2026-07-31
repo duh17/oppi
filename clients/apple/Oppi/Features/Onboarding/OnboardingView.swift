@@ -550,7 +550,7 @@ enum InviteBootstrapService {
                 }
                 return candidate
             } catch {
-                guard mayAdvance(after: error) else { throw error }
+                guard ServerRouteFailure.mayAdvance(after: error) else { throw error }
                 lastAvailabilityFailure = error
             }
         }
@@ -564,16 +564,6 @@ enum InviteBootstrapService {
             )
         }
         throw InviteBootstrapError.message("Could not reach the server. Check your network and try again.")
-    }
-
-    private static func mayAdvance(after error: Error) -> Bool {
-        if APIClientAvailabilityFailure(error: error) != nil {
-            return true
-        }
-        if let error = error as? IrohTransportError {
-            return error.isFallbackEligible
-        }
-        return false
     }
 
     private static func bootstrapSessions(using api: any InviteBootstrapAPI) async throws -> [Session] {

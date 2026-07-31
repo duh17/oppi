@@ -6,21 +6,23 @@ import Testing
 
 @Suite("Iroh transport policy and protocol")
 struct IrohTransportTests {
-    @Test func preferredAndOnlySelectTunnelBeforeHTTP() throws {
+    @Test func preferredAndOnlyAuthorizeIrohCandidates() throws {
         let preferred = credentials(preference: .irohPreferred, includeHTTP: true)
         let only = credentials(preference: .irohOnly, includeHTTP: false)
 
-        guard case .iroh = try IrohTransportPolicy.select(credentials: preferred) else {
-            Issue.record("irohPreferred with tunnel metadata must select Iroh")
-            return
-        }
-        guard case .iroh = try IrohTransportPolicy.select(credentials: only) else {
-            Issue.record("irohOnly with tunnel metadata must select Iroh")
-            return
-        }
+        #expect(try ServerTransportPlanResolver.candidates(
+            credentials: preferred,
+            mode: .automatic,
+            discoveredLANEndpoint: nil
+        ).map(Self.routeKind) == [.paired, .iroh])
+        #expect(try ServerTransportPlanResolver.candidates(
+            credentials: only,
+            mode: .automatic,
+            discoveredLANEndpoint: nil
+        ).map(Self.routeKind) == [.iroh])
     }
 
-    @Test func preferredWithoutTunnelUsesHTTPButOnlyFailsClosed() throws {
+    @Test func preferredWithoutTunnelALPNStillBuildsHTTPAndIrohCandidates() throws {
         let preferred = credentials(
             preference: .irohPreferred,
             includeHTTP: true,
@@ -32,9 +34,25 @@ struct IrohTransportTests {
             alpns: ["oppi/pair/1"]
         )
 
-        #expect(try IrohTransportPolicy.select(credentials: preferred) == .http)
+        // Candidate build must not validate unused Iroh metadata. Walk-time
+        // validation fails closed when Iroh is actually selected.
+        #expect(try ServerTransportPlanResolver.candidates(
+            credentials: preferred,
+            mode: .automatic,
+            discoveredLANEndpoint: nil
+        ).map(Self.routeKind) == [.paired, .iroh])
+        let onlyCandidates = try ServerTransportPlanResolver.candidates(
+            credentials: only,
+            mode: .automatic,
+            discoveredLANEndpoint: nil
+        )
+        #expect(onlyCandidates.map(Self.routeKind) == [.iroh])
+        guard case .iroh(let transport) = onlyCandidates[0] else {
+            Issue.record("irohOnly must produce an Iroh candidate")
+            return
+        }
         #expect(throws: IrohTransportError.unsupportedALPN(IrohTunnelProtocol.alpn)) {
-            _ = try IrohTransportPolicy.select(credentials: only)
+            try IrohPeerValidator.validate(transport, requiredALPN: IrohTunnelProtocol.alpn)
         }
     }
 
@@ -49,19 +67,27 @@ struct IrohTransportTests {
         try IrohPeerValidator.validateConnectedPeer(expectedNodeID: "signed", remoteNodeID: "signed")
     }
 
-    @Test func preferredTunnelProtocolErrorsDoNotDowngradeToHTTP() {
+    @Test func preferredTunnelProtocolErrorsDoNotDowngradeToHTTP() throws {
         let invalid = credentials(
             preference: .irohPreferred,
             includeHTTP: true,
             alpns: [IrohTunnelProtocol.alpn],
             addressMode: .ticket
         )
+        // Building candidates must leave malformed later Iroh metadata alone so a
+        // healthy HTTPS candidate can still win. Validation happens at walk time.
+        let candidates = try ServerTransportPlanResolver.candidates(
+            credentials: invalid,
+            mode: .automatic,
+            discoveredLANEndpoint: nil
+        )
+        #expect(candidates.map(Self.routeKind) == [.paired, .iroh])
+        guard case .iroh(let transport) = candidates[1] else {
+            Issue.record("Expected trailing Iroh candidate")
+            return
+        }
         #expect(throws: IrohTransportError.missingTicket) {
-            _ = try ServerTransportPlanResolver.candidates(
-                credentials: invalid,
-                mode: .automatic,
-                discoveredLANEndpoint: nil
-            )
+            try IrohPeerValidator.validate(transport, requiredALPN: IrohTunnelProtocol.alpn)
         }
     }
 
@@ -91,17 +117,17 @@ struct IrohTransportTests {
             credentials: credentials,
             mode: .automatic,
             discoveredLANEndpoint: lan
-        ).map(\.candidateKind) == [.lan, .paired, .iroh])
+        ).map(Self.routeKind) == [.lan, .paired, .iroh])
         #expect(try ServerTransportPlanResolver.candidates(
             credentials: credentials,
             mode: .httpsOnly,
             discoveredLANEndpoint: lan
-        ).map(\.candidateKind) == [.lan, .paired])
+        ).map(Self.routeKind) == [.lan, .paired])
         #expect(try ServerTransportPlanResolver.candidates(
             credentials: credentials,
             mode: .irohOnly,
             discoveredLANEndpoint: lan
-        ).map(\.candidateKind) == [.iroh])
+        ).map(Self.routeKind) == [.iroh])
     }
 
     @Test func HTTPSOnlyRejectsPlaintextHTTPWhileAutomaticKeepsAuthorizedCompatibility() throws {
@@ -115,7 +141,7 @@ struct IrohTransportTests {
             credentials: plaintext,
             mode: .automatic,
             discoveredLANEndpoint: nil
-        ).map(\.candidateKind) == [.paired])
+        ).map(Self.routeKind) == [.paired])
         #expect(throws: IrohTransportError.protocolViolation(
             "HTTPS Only requires a signed HTTPS endpoint"
         )) {
@@ -135,12 +161,21 @@ struct IrohTransportTests {
             mode: .automatic,
             discoveredLANEndpoint: nil,
             excluding: [.paired]
-        ).map(\.candidateKind) == [.iroh])
+        ).map(Self.routeKind) == [.iroh])
         #expect(try ServerTransportPlanResolver.candidates(
             credentials: credentials,
             mode: .automatic,
             discoveredLANEndpoint: nil
-        ).map(\.candidateKind) == [.paired, .iroh])
+        ).map(Self.routeKind) == [.paired, .iroh])
+    }
+
+    private static func routeKind(_ plan: ServerTransportPlan) -> ServerRouteCandidateKind {
+        switch plan {
+        case .http(let endpoint):
+            endpoint.transportPath == .lan ? .lan : .paired
+        case .iroh:
+            .iroh
+        }
     }
 
     @Test func ticketModeRequiresTicketAndSupportedVersion() {
@@ -895,7 +930,72 @@ struct ServerTransportAPIClientTests {
         #expect(managerCreations.value() == 0)
     }
 
-    private func server(mode: PairedServerRouteMode) -> PairedServer {
+    @Test func malformedTrailingIrohIsIgnoredWhenHTTPSWins() async throws {
+        let events = ShortLivedTransportEvents()
+        let managerCreations = AsyncCounter()
+
+        let result = try await ServerTransportAPIClient.withClient(
+            for: server(mode: .automatic, irohAddressMode: .ticket, irohTicket: nil),
+            lanEndpointProvider: { _ in nil },
+            managerFactory: { metadata in
+                managerCreations.increment()
+                return IrohConnectionManager(iroh: metadata)
+            },
+            irohRelayPreparer: { _ in await events.append("irohRelayPreparation") },
+            httpAvailabilityProbe: { client in
+                let host = await client.baseURL.host ?? ""
+                await events.append("httpsProbe:\(host)")
+            },
+            irohAvailabilityProbe: { _ in await events.append("irohProbe") },
+            operation: { client in
+                let host = await client.baseURL.host ?? ""
+                await events.append("operation:\(host)")
+                return host
+            }
+        )
+
+        #expect(result == "server.example.test")
+        #expect(await events.snapshot() == [
+            "httpsProbe:server.example.test",
+            "operation:server.example.test",
+        ])
+        #expect(managerCreations.value() == 0)
+    }
+
+    @Test func malformedIrohFailsBeforeRelayPrepWhenReached() async throws {
+        let events = ShortLivedTransportEvents()
+        let managerCreations = AsyncCounter()
+
+        await #expect(throws: IrohTransportError.missingTicket) {
+            _ = try await ServerTransportAPIClient.withClient(
+                for: server(mode: .automatic, irohAddressMode: .ticket, irohTicket: nil),
+                lanEndpointProvider: { _ in nil },
+                managerFactory: { metadata in
+                    managerCreations.increment()
+                    return IrohConnectionManager(iroh: metadata)
+                },
+                irohRelayPreparer: { _ in await events.append("irohRelayPreparation") },
+                httpAvailabilityProbe: { _ in
+                    await events.append("httpsProbe")
+                    throw URLError(.cannotConnectToHost)
+                },
+                irohAvailabilityProbe: { _ in await events.append("irohProbe") },
+                operation: { _ in
+                    await events.append("operation")
+                    return "unused"
+                }
+            )
+        }
+
+        #expect(await events.snapshot() == ["httpsProbe"])
+        #expect(managerCreations.value() == 0)
+    }
+
+    private func server(
+        mode: PairedServerRouteMode,
+        irohAddressMode: IrohAddressMode = .nodeId,
+        irohTicket: String? = nil
+    ) -> PairedServer {
         let credentials = ServerCredentials(
             host: "server.example.test",
             port: 443,
@@ -909,8 +1009,8 @@ struct ServerTransportAPIClientTests {
                     version: 2,
                     nodeId: "signed-node",
                     alpns: [IrohTunnelProtocol.alpn],
-                    addressMode: .nodeId,
-                    ticket: nil
+                    addressMode: irohAddressMode,
+                    ticket: irohTicket
                 ),
                 http: HTTPServerTransport(
                     host: "server.example.test",

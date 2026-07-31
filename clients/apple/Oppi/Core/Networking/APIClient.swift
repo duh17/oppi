@@ -1790,7 +1790,7 @@ actor APIClient: ClientLogUploading {
         do {
             return try await session.data(for: request)
         } catch {
-            await reportAvailabilityFailure(for: error)
+            reportAvailabilityFailure(for: error)
             throw error
         }
     }
@@ -1816,7 +1816,7 @@ actor APIClient: ClientLogUploading {
                 return result
             }
         } catch {
-            await reportAvailabilityFailure(for: error)
+            reportAvailabilityFailure(for: error)
             throw error
         }
     }
@@ -1869,9 +1869,13 @@ actor APIClient: ClientLogUploading {
         })
     }
 
-    private func reportAvailabilityFailure(for error: Error) async {
+    /// Classified availability is reported without awaiting recovery. The failed
+    /// request must unwind so single-flight owners can clear; recovery runs for
+    /// future work and must not sit on this call stack.
+    private func reportAvailabilityFailure(for error: Error) {
         guard let failure = APIClientAvailabilityFailure(error: error) else { return }
-        await availabilityObserver?(failure)
+        guard let availabilityObserver else { return }
+        Task { await availabilityObserver(failure) }
     }
 
     func get(_ path: String) async throws -> Data {

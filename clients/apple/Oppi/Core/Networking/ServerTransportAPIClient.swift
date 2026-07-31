@@ -72,7 +72,7 @@ enum ServerTransportAPIClient {
                 do {
                     try await httpAvailabilityProbe(client)
                 } catch {
-                    guard mayAdvance(after: error) else { throw error }
+                    guard ServerRouteFailure.mayAdvance(after: error) else { throw error }
                     continue
                 }
 
@@ -82,10 +82,19 @@ enum ServerTransportAPIClient {
                 return try await operation(client)
 
             case .iroh(let metadata):
+                // Validate before any process-global relay membership change or
+                // manager construction — same order as main app and onboarding.
+                do {
+                    try IrohPeerValidator.validate(metadata, requiredALPN: IrohTunnelProtocol.alpn)
+                } catch {
+                    guard ServerRouteFailure.mayAdvance(after: error) else { throw error }
+                    continue
+                }
+
                 do {
                     try await irohRelayPreparer(metadata)
                 } catch {
-                    guard mayAdvance(after: error) else { throw error }
+                    guard ServerRouteFailure.mayAdvance(after: error) else { throw error }
                     continue
                 }
 
@@ -101,7 +110,7 @@ enum ServerTransportAPIClient {
                     return result
                 } catch {
                     await manager.shutdown()
-                    guard !operationStarted, mayAdvance(after: error) else { throw error }
+                    guard !operationStarted, ServerRouteFailure.mayAdvance(after: error) else { throw error }
                 }
             }
         }
@@ -145,13 +154,4 @@ enum ServerTransportAPIClient {
         ))
     }
 
-    private static func mayAdvance(after error: Error) -> Bool {
-        if APIClientAvailabilityFailure(error: error) != nil {
-            return true
-        }
-        if let error = error as? IrohTransportError {
-            return error.isFallbackEligible
-        }
-        return false
-    }
 }

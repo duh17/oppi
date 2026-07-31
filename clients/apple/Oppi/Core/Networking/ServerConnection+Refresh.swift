@@ -48,9 +48,11 @@ extension ServerConnection {
 
     /// Refresh the recent workspace-scoped session projection used by cold UI.
     /// Uses single-flight coalescing so overlapping callers share one request.
-    func refreshSessionList(force: Bool = false) async {
-        guard let apiClient else { return }
-
+    ///
+    /// `retryAfterJoinedFailure` is only for route recovery: after joining a
+    /// pre-recovery pass that left `lastSyncFailed`, run exactly one fresh pass
+    /// on the post-recovery client. Ordinary callers join once and return.
+    func refreshSessionList(force: Bool = false, retryAfterJoinedFailure: Bool = false) async {
         // Cold list/home paths also need capability discovery so the global
         // app-event stream starts before users focus a chat session.
         await refreshStreamCapabilitiesIfNeeded()
@@ -70,9 +72,18 @@ extension ServerConnection {
                 ]) { _, new in new }
             )
             await inFlight.value
-            return
+            guard retryAfterJoinedFailure, sessionStore.lastSyncFailed else { return }
+            // A peer may have installed a replacement while we were suspended.
+            // Join it; do not overwrite (its defer would clear our follow-up).
+            if let replacement = sessionListRefreshTask {
+                await replacement.value
+                return
+            }
+            // Nil on MainActor with no further await: safe to install one follow-up.
         }
 
+        // Re-capture after join — recovery may have replaced the route.
+        guard let apiClient else { return }
         guard shouldRefreshSessionList(force: force) else {
             logger.debug("Skipping session list refresh (recent successful sync)")
             recordRefreshEvent(
@@ -160,9 +171,8 @@ extension ServerConnection {
     }
 
     /// Refresh workspaces + skills catalog with single-flight coalescing.
-    func refreshWorkspaceCatalog(force: Bool = false) async {
-        guard let apiClient else { return }
-
+    /// See `refreshSessionList` for `retryAfterJoinedFailure`.
+    func refreshWorkspaceCatalog(force: Bool = false, retryAfterJoinedFailure: Bool = false) async {
         let callStartedAt = Date()
         let callMetadata: [String: String] = [
             "force": force ? "1" : "0",
@@ -179,9 +189,14 @@ extension ServerConnection {
                 ]) { _, new in new }
             )
             await inFlight.value
-            return
+            guard retryAfterJoinedFailure, workspaceStore.lastSyncFailed else { return }
+            if let replacement = workspaceCatalogRefreshTask {
+                await replacement.value
+                return
+            }
         }
 
+        guard let apiClient else { return }
         guard shouldRefreshWorkspaceCatalog(force: force) else {
             logger.debug("Skipping workspace catalog refresh (recent successful sync)")
             recordRefreshEvent(
@@ -224,9 +239,12 @@ extension ServerConnection {
 
     /// Refresh both global lists. Each branch has its own single-flight task,
     /// so overlapping callers don't trigger duplicate network fan-out.
-    func refreshWorkspaceAndSessionLists(force: Bool = false) async {
-        await refreshWorkspaceCatalog(force: force)
-        await refreshSessionList(force: force)
+    func refreshWorkspaceAndSessionLists(
+        force: Bool = false,
+        retryAfterJoinedFailure: Bool = false
+    ) async {
+        await refreshWorkspaceCatalog(force: force, retryAfterJoinedFailure: retryAfterJoinedFailure)
+        await refreshSessionList(force: force, retryAfterJoinedFailure: retryAfterJoinedFailure)
     }
 
     /// Called when app returns to foreground.

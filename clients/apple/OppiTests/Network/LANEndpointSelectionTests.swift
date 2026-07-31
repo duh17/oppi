@@ -68,10 +68,16 @@ struct LANEndpointSelectionTests {
 
         let selected = try #require(result)
         #expect(selected.transportPath == .lan)
-        #expect(try ServerTransportPlanResolver.resolve(
+        let candidates = try ServerTransportPlanResolver.candidates(
             credentials: credentials,
+            mode: .automatic,
             discoveredLANEndpoint: discovered
-        ) == .http(selected))
+        )
+        guard case .http(let first) = candidates.first else {
+            Issue.record("Automatic with verified LAN must lead with LAN HTTPS")
+            return
+        }
+        #expect(first == selected)
     }
 
     @Test func irohOnlyIsNotEligibleForLANSelection() {

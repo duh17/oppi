@@ -2939,7 +2939,299 @@ struct ServerConnectionAutomaticRoutingTests {
         }
         #expect(attempts == 1)
     }
+
+    @Test func listRefreshAvailabilityFailureRecoversWithoutDeadlockingSingleFlight() async throws {
+        defer { TestURLProtocol.handler = nil }
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:42120"))
+        var irohDials = 0
+        let requestLog = ListRefreshRequestLog()
+
+        TestURLProtocol.handler = { request in
+            let host = request.url?.host ?? ""
+            let path = request.url?.path ?? ""
+            requestLog.append(host: host, path: path)
+            if host == "preferred.tailnet.ts.net" {
+                throw URLError(.cannotConnectToHost)
+            }
+            let body: String
+            if path.hasPrefix("/sessions/recent") {
+                body = #"{"sessions":[]}"#
+            } else if path.hasPrefix("/workspaces") {
+                body = #"{"serverNow":1700000000000,"workspaces":[],"summaries":[]}"#
+            } else if path.hasPrefix("/skills") {
+                body = #"{"skills":[]}"#
+            } else {
+                body = #"{}"#
+            }
+            let response = HTTPURLResponse(
+                url: request.url ?? localURL,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (Data(body.utf8), response)
+        }
+
+        let apiFactory: ServerConnectionAPIClientFactory = { environment, observer in
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [TestURLProtocol.self]
+            return APIClient(
+                environment: environment,
+                configuration: configuration,
+                availabilityObserver: observer
+            )
+        }
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .automatic,
+            apiClientFactory: apiFactory,
+            serverInfoBootstrap: { _, _ in successfulServerInfo() },
+            irohProxyFactory: { _, _ in
+                irohDials += 1
+                return (nil, localURL)
+            }
+        ))
+        #expect(conn.transportPath == .paired)
+
+        // Preload catalog so the failing single-flight body is the session list.
+        conn.workspaceStore.workspaces = []
+        conn.workspaceStore.isLoaded = true
+        conn.workspaceStore.markSyncSucceeded(at: Date())
+
+        // Real list-refresh path without the recovery-refresh seam. Fire-and-forget
+        // availability lets the failed request unwind; recovery then reaches Iroh.
+        await conn.refreshSessionList(force: true)
+        await conn.awaitPersistentHealthRecoveryForTesting()
+
+        #expect(conn.transportPath == .iroh)
+        #expect(irohDials == 1)
+        #expect(await requestLog.sessionListHits(host: "127.0.0.1") >= 1)
+        #expect(conn.sessionStore.lastSyncFailed == false)
+        #expect(conn.sessionListRefreshTask == nil)
+    }
+
+    @Test func ordinarySessionListWaitersJoinOnceAndNeverRetry() async throws {
+        let startCount = JoinPassStartCounter()
+        let conn = makeSessionListJoinConnection(
+            failNetwork: true,
+            onSessionListStart: { startCount.increment() }
+        )
+        defer { TestURLProtocol.handler = nil }
+
+        let gate = RoutingGate()
+        let gated = Task { @MainActor in
+            defer { conn.sessionListRefreshTask = nil }
+            await gate.waitUntilReleased()
+            conn.sessionStore.markSyncFailed()
+        }
+        conn.sessionListRefreshTask = gated
+
+        // Ordinary callers (default retryAfterJoinedFailure: false) only join.
+        let waiters = (0..<4).map { _ in
+            Task { @MainActor in await conn.refreshSessionList(force: true) }
+        }
+        await gate.waitUntilBlocked()
+        await gate.release()
+        for waiter in waiters { await waiter.value }
+
+        #expect(startCount.value == 0)
+        #expect(conn.sessionStore.lastSyncFailed == true)
+        #expect(conn.sessionListRefreshTask == nil)
+    }
+
+    @Test func recoveryOwnerJoinsFailedPassAndPerformsExactlyOneRefresh() async throws {
+        let startCount = JoinPassStartCounter()
+        let conn = makeSessionListJoinConnection(
+            failNetwork: false,
+            onSessionListStart: { startCount.increment() }
+        )
+        defer { TestURLProtocol.handler = nil }
+
+        let gate = RoutingGate()
+        let gated = Task { @MainActor in
+            defer { conn.sessionListRefreshTask = nil }
+            await gate.waitUntilReleased()
+            conn.sessionStore.markSyncFailed()
+        }
+        conn.sessionListRefreshTask = gated
+
+        // Mirrors performAutomaticRouteRecovery's refresh flags only.
+        let recoveryRefresh = Task { @MainActor in
+            await conn.refreshSessionList(force: true, retryAfterJoinedFailure: true)
+        }
+        // Ordinary waiters must still not amplify.
+        let ordinary = (0..<3).map { _ in
+            Task { @MainActor in await conn.refreshSessionList(force: true) }
+        }
+        await gate.waitUntilBlocked()
+        await gate.release()
+        await recoveryRefresh.value
+        for waiter in ordinary { await waiter.value }
+
+        #expect(startCount.value == 1)
+        #expect(conn.sessionStore.lastSyncFailed == false)
+        #expect(conn.sessionListRefreshTask == nil)
+    }
+
+    @Test func recoveryOwnerJoinsPeerReplacementInsteadOfOverwriting() async throws {
+        let startCount = JoinPassStartCounter()
+        let conn = makeSessionListJoinConnection(
+            failNetwork: false,
+            onSessionListStart: { startCount.increment() }
+        )
+        defer { TestURLProtocol.handler = nil }
+
+        let originalGate = RoutingGate()
+        let replacementGate = RoutingGate()
+        var replacementRan = false
+
+        // A completes failed, then installs peer B on the shared property before
+        // ending. Recovery is still awaiting A (local handle); its post-join
+        // recheck must join B rather than install C.
+        let original = Task { @MainActor in
+            await originalGate.waitUntilReleased()
+            conn.sessionStore.markSyncFailed()
+            let replacement = Task { @MainActor in
+                defer { conn.sessionListRefreshTask = nil }
+                replacementRan = true
+                await replacementGate.waitUntilReleased()
+                conn.sessionStore.markSyncSucceeded(at: Date())
+            }
+            conn.sessionListRefreshTask = replacement
+        }
+        conn.sessionListRefreshTask = original
+
+        let recoveryRefresh = Task { @MainActor in
+            await conn.refreshSessionList(force: true, retryAfterJoinedFailure: true)
+        }
+        await originalGate.waitUntilBlocked()
+        await originalGate.release()
+        await replacementGate.waitUntilBlocked()
+
+        #expect(replacementRan)
+        #expect(startCount.value == 0)
+
+        await replacementGate.release()
+        await recoveryRefresh.value
+
+        #expect(startCount.value == 0)
+        #expect(conn.sessionStore.lastSyncFailed == false)
+        #expect(conn.sessionListRefreshTask == nil)
+    }
+
+    @MainActor
+    private func makeSessionListJoinConnection(
+        failNetwork: Bool,
+        onSessionListStart: @escaping @MainActor () -> Void
+    ) -> ServerConnection {
+        let conn = ServerConnection()
+        precondition(conn.configure(credentials: ServerCredentials(
+            host: "join.example.test",
+            port: 443,
+            token: "sk_join",
+            name: "Join",
+            scheme: .https,
+            serverFingerprint: "sha256:join"
+        )))
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TestURLProtocol.self]
+        conn.setAPIClientForTesting(APIClient(
+            environment: OppiClientEnvironment(
+                baseURL: URL(string: "https://join.example.test")!,
+                bearerToken: "sk_join"
+            ),
+            configuration: configuration
+        ))
+        conn.setSplitStreamCapabilitiesForTesting()
+        conn.workspaceStore.workspaces = []
+        conn.workspaceStore.isLoaded = true
+        conn.workspaceStore.markSyncSucceeded(at: Date())
+
+        conn._onRefreshEventForTesting = { message, _, _ in
+            if message == "session_list.start" {
+                onSessionListStart()
+            }
+        }
+
+        TestURLProtocol.handler = { request in
+            if failNetwork {
+                throw URLError(.cannotConnectToHost)
+            }
+            let body: String
+            switch request.url?.path {
+            case "/sessions/recent":
+                body = #"{"sessions":[]}"#
+            case "/workspaces":
+                body = #"{"serverNow":1700000000000,"workspaces":[],"summaries":[]}"#
+            case "/skills":
+                body = #"{"skills":[]}"#
+            default:
+                body = #"{}"#
+            }
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://join.example.test")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (Data(body.utf8), response)
+        }
+
+        return conn
+    }
+
+    @Test func staleForegroundIrohRecoveryIsFencedFromNewerConfiguration() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let gate = RoutingGate()
+        let staleProvider = GatedForegroundIrohProvider(gate: gate)
+        let staleManager = IrohConnectionManager(iroh: metadata, provider: staleProvider)
+        let freshProvider = TrackingIrohProvider()
+        let freshManager = IrohConnectionManager(iroh: metadata, provider: freshProvider)
+        let staleURL = try #require(URL(string: "http://127.0.0.1:42121"))
+        let freshURL = try #require(URL(string: "http://127.0.0.1:42122"))
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: { _, _ in successfulServerInfo() },
+            irohProxyFactory: { _, _ in (staleManager, staleURL) }
+        ))
+        let generationBefore = conn.transportConfigurationGenerationForTesting
+
+        let recovery = Task { @MainActor in
+            await conn.resetIrohTransportForForegroundRecoveryIfNeeded()
+        }
+        await gate.waitUntilBlocked()
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: { _, _ in successfulServerInfo() },
+            irohProxyFactory: { _, _ in (freshManager, freshURL) }
+        ))
+        let generationAfter = conn.transportConfigurationGenerationForTesting
+        #expect(generationAfter > generationBefore)
+        #expect(conn.irohManagerIdentityForTesting == ObjectIdentifier(freshManager))
+
+        await gate.release()
+        let result = await recovery.value
+
+        #expect(result == .notActive)
+        #expect(conn.transportConfigurationGenerationForTesting == generationAfter)
+        #expect(conn.transportPath == .iroh)
+        #expect(conn.apiClient != nil)
+        #expect(await conn.apiClient?.baseURL == freshURL)
+        #expect(conn.irohManagerIdentityForTesting == ObjectIdentifier(freshManager))
+        #expect(await freshProvider.shutdownCount == 0)
+    }
 }
+
 
 enum RoutingBootstrapFailure: Sendable {
     case authentication
@@ -3137,4 +3429,57 @@ private actor ForegroundRecoveryIrohProvider: IrohConnectionProviding {
 
     func suspendConnections() async {}
     func shutdown() async {}
+}
+
+private actor GatedForegroundIrohProvider: IrohConnectionProviding {
+    let gate: RoutingGate
+
+    init(gate: RoutingGate) {
+        self.gate = gate
+    }
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+    }
+
+    func recycleEndpoint() async throws {
+        await gate.waitUntilReleased()
+    }
+
+    func suspendConnections() async {}
+    func shutdown() async {}
+}
+
+private final class ListRefreshRequestLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(host: String, path: String)] = []
+
+    func append(host: String, path: String) {
+        lock.lock()
+        entries.append((host, path))
+        lock.unlock()
+    }
+
+    func sessionListHits(host: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.filter { $0.host == host && $0.path.hasPrefix("/sessions/recent") }.count
+    }
+}
+
+private final class JoinPassStartCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func increment() {
+        lock.withLock { count += 1 }
+    }
+
+    var value: Int {
+        lock.withLock { count }
+    }
 }

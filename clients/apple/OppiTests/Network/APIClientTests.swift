@@ -89,6 +89,19 @@ private actor AvailabilityFailureRecorder {
     func failures() -> [APIClientAvailabilityFailure] {
         recorded
     }
+
+    /// Availability observers are fire-and-forget from APIClient.
+    func waitForFailures(
+        count: Int,
+        timeoutMs: Int = 1_000
+    ) async -> [APIClientAvailabilityFailure] {
+        let attempts = max(1, timeoutMs / 5)
+        for _ in 0..<attempts {
+            if recorded.count >= count { return recorded }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return recorded
+    }
 }
 
 @Suite("APIClient", .serialized)
@@ -206,7 +219,7 @@ struct APIClientTests {
             _ = try await request.value
         }
         await probe.waitForCancellation()
-        #expect(await recorder.failures() == [.timedOut])
+        #expect(await recorder.waitForFailures(count: 1) == [.timedOut])
     }
 
     @Test(arguments: [
@@ -291,7 +304,7 @@ struct APIClientTests {
         await #expect(throws: URLError.self) {
             _ = try await client.me()
         }
-        #expect(await recorder.failures() == [.cannotConnectToHost])
+        #expect(await recorder.waitForFailures(count: 1) == [.cannotConnectToHost])
     }
 
     @Test func healthReturnsTrue() async throws {

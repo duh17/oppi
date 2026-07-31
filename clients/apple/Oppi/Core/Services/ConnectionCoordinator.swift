@@ -127,7 +127,9 @@ final class ConnectionCoordinator {
     /// mutation. Production navigation never calls this path.
     @discardableResult
     func ensureConnection(for server: PairedServer) -> ServerConnection {
-        guard (try? IrohTransportPolicy.select(credentials: server.credentials)) == .http else {
+        // Synchronous test seam is HTTP-only. Iroh needs configureForUse.
+        guard server.credentials.transports.http != nil,
+              server.effectiveRouteMode.requestedTransports.contains(.https) else {
             return disconnectedSentinel
         }
         return ensureHTTPConnectionForTesting(for: server)
@@ -764,7 +766,10 @@ final class ConnectionCoordinator {
     func addServerReady(_ server: PairedServer, switchTo: Bool = true) async -> Bool {
         let previous = serverStore.server(for: server.id)
         serverStore.addOrUpdate(server)
-        let connection = await ensureConnectionReady(for: server)
+        // Re-pair preserves local routeMode/badge via ServerStore. Configure from
+        // that canonical merged row, not the incoming automatic PairedServer.
+        guard let canonical = serverStore.server(for: server.id) else { return false }
+        let connection = await ensureConnectionReady(for: canonical)
         guard connection !== disconnectedSentinel else {
             // Transport setup failed closed. Do not leave unusable replacement
             // credentials persisted; restore the prior pairing when this was a re-pair.
@@ -776,7 +781,7 @@ final class ConnectionCoordinator {
             return false
         }
         if switchTo {
-            activatePreparedConnection(connection, server: server)
+            activatePreparedConnection(connection, server: canonical)
         }
         return true
     }

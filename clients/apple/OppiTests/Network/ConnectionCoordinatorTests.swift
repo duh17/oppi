@@ -85,6 +85,36 @@ struct ConnectionCoordinatorRouteModeTests {
         #expect(constructedHosts == ["127.0.0.1"])
     }
 
+    @Test func addServerReadyRePairConfiguresFromStoredRouteMode() async throws {
+        let (coordinator, existing) = try makeCoordinatorAndServer(routeMode: .irohOnly)
+        var constructedHosts: [String] = []
+        var irohDials = 0
+        coordinator._apiClientFactoryForTesting = { environment, observer in
+            constructedHosts.append(environment.baseURL.host ?? "")
+            return APIClient(environment: environment, availabilityObserver: observer)
+        }
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            irohDials += 1
+            return (nil, try #require(URL(string: "http://127.0.0.1:42104")))
+        }
+
+        // Fresh pairing payload defaults to Automatic, but ServerStore keeps the
+        // explicit local mode. Configuration must use that canonical merged row.
+        var incoming = existing
+        incoming.routeMode = .automatic
+        incoming.token = "dt_repaired"
+        #expect(incoming.routeMode == .automatic)
+
+        #expect(await coordinator.addServerReady(incoming, switchTo: true))
+
+        #expect(coordinator.serverStore.server(for: existing.id)?.routeMode == .irohOnly)
+        #expect(coordinator.serverStore.server(for: existing.id)?.token == "dt_repaired")
+        #expect(coordinator.activeConnection.configuredRouteModeForTesting == .irohOnly)
+        #expect(coordinator.activeConnection.transportPath == .iroh)
+        #expect(irohDials == 1)
+        #expect(constructedHosts == ["127.0.0.1"])
+    }
+
     private func makeCoordinatorAndServer(
         routeMode: PairedServerRouteMode
     ) throws -> (ConnectionCoordinator, PairedServer) {

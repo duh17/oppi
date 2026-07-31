@@ -47,7 +47,7 @@ enum LANEndpointSelection {
         credentials: ServerCredentials,
         discoveredEndpoint: LANDiscoveredEndpoint?
     ) -> EndpointSelection? {
-        // Iroh-preferred credentials still permit their signed HTTP transport.
+        // Iroh-authorized credentials still permit their signed HTTP transport.
         // Cross-lane priority is owned by ServerTransportPlanResolver; this
         // helper only validates and constructs HTTP/LAN endpoint selections.
         guard credentials.transports.preference != .irohOnly,

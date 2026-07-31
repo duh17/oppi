@@ -81,23 +81,9 @@ enum IrohTransportError: LocalizedError, Equatable, Sendable {
     }
 }
 
-enum ServerTransportSelection: Equatable, Sendable {
-    case iroh(IrohServerTransport)
-    case http
-}
-
 enum ServerTransportPlan: Equatable, Sendable {
     case http(EndpointSelection)
     case iroh(IrohServerTransport)
-
-    var candidateKind: ServerRouteCandidateKind {
-        switch self {
-        case .http(let endpoint):
-            endpoint.transportPath == .lan ? .lan : .paired
-        case .iroh:
-            .iroh
-        }
-    }
 }
 
 /// A route identifier used only to exclude candidates within one selection pass.
@@ -107,14 +93,31 @@ enum ServerRouteCandidateKind: Sendable, Equatable, Hashable {
     case iroh
 }
 
+enum ServerRouteFailure {
+    /// Availability failures may advance to the next candidate. Auth, TLS,
+    /// peer, ALPN, framing, and protocol failures fail closed.
+    static func mayAdvance(after error: Error) -> Bool {
+        if APIClientAvailabilityFailure(error: error) != nil {
+            return true
+        }
+        if let error = error as? IrohTransportError {
+            return error.isFallbackEligible
+        }
+        return false
+    }
+}
+
 enum ServerTransportPlanResolver {
     /// Builds ordered, authorized routes without retaining connection state.
     /// Exclusions apply only to this invocation; callers own pass lifecycle.
+    ///
+    /// Iroh metadata is not validated here. A healthy earlier HTTPS candidate
+    /// must not inspect a later unused Iroh route; callers validate when the
+    /// walk reaches `.iroh`.
     static func candidates(
         credentials: ServerCredentials,
         mode: PairedServerRouteMode,
         discoveredLANEndpoint: LANDiscoveredEndpoint?,
-        validateIrohMetadata: Bool = true,
         excluding: Set<ServerRouteCandidateKind> = []
     ) throws -> [ServerTransportPlan] {
         let authorization = credentials.transports.authorizedTransports
@@ -154,94 +157,12 @@ enum ServerTransportPlanResolver {
             guard let iroh = credentials.transports.iroh else {
                 throw IrohTransportError.protocolViolation("Signed Iroh transport is missing metadata")
             }
-            if validateIrohMetadata {
-                try IrohPeerValidator.validate(iroh, requiredALPN: IrohTunnelProtocol.alpn)
-            }
             if !excluding.contains(.iroh) {
                 result.append(.iroh(iroh))
             }
         }
 
         return result
-    }
-
-    /// Temporary compatibility seam for callers that have not yet walked
-    /// candidates. It retains their current behavior; new routing code must use
-    /// `candidates` so `irohPreferred` is never interpreted as candidate order.
-    static func resolve(
-        credentials: ServerCredentials,
-        discoveredLANEndpoint: LANDiscoveredEndpoint?,
-        suppressIroh: Bool = false
-    ) throws -> ServerTransportPlan {
-        if credentials.transports.preference != .irohOnly,
-           let lan = LANEndpointSelection.select(
-               credentials: credentials,
-               discoveredEndpoint: discoveredLANEndpoint
-           ),
-           lan.transportPath == .lan {
-            return .http(lan)
-        }
-
-        if suppressIroh {
-            guard credentials.transports.preference == .irohPreferred,
-                  let http = LANEndpointSelection.select(
-                      credentials: credentials,
-                      discoveredEndpoint: nil
-                  ) else {
-                throw IrohTransportError.protocolViolation(
-                    "Iroh fallback requires a signed HTTP transport"
-                )
-            }
-            return .http(http)
-        }
-
-        switch try IrohTransportPolicy.select(credentials: credentials) {
-        case .http:
-            guard let http = LANEndpointSelection.select(
-                credentials: credentials,
-                discoveredEndpoint: nil
-            ) else {
-                throw IrohTransportError.protocolViolation("HTTP transport has no valid endpoint")
-            }
-            return .http(http)
-        case .iroh(let iroh):
-            return .iroh(iroh)
-        }
-    }
-}
-
-enum IrohTransportPolicy {
-    static func select(credentials: ServerCredentials) throws -> ServerTransportSelection {
-        switch credentials.transports.preference {
-        case .httpOnly:
-            guard credentials.transports.http != nil else {
-                throw IrohTransportError.protocolViolation("HTTP-only credentials have no HTTP transport")
-            }
-            return .http
-
-        case .irohOnly:
-            guard let iroh = credentials.transports.iroh else {
-                throw IrohTransportError.protocolViolation("Iroh-only credentials have no Iroh transport")
-            }
-            try IrohPeerValidator.validate(iroh, requiredALPN: IrohTunnelProtocol.alpn)
-            return .iroh(iroh)
-
-        case .irohPreferred:
-            if let iroh = credentials.transports.iroh,
-               iroh.alpns.contains(IrohTunnelProtocol.alpn) {
-                // Advertising the tunnel commits this connection attempt to
-                // Iroh. Invalid version/address metadata is a protocol error,
-                // not a reason to silently downgrade to HTTP.
-                try IrohPeerValidator.validate(iroh, requiredALPN: IrohTunnelProtocol.alpn)
-                return .iroh(iroh)
-            }
-            guard credentials.transports.http != nil else {
-                throw IrohTransportError.protocolViolation(
-                    "Iroh-preferred credentials support neither the tunnel nor HTTP"
-                )
-            }
-            return .http
-        }
     }
 }
 
