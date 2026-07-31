@@ -243,7 +243,7 @@ describe("AgentLaunchService", () => {
     expect(createSession).not.toHaveBeenCalled();
   });
 
-  it("allows multiple grandchildren at one explicitly authorized nested level", async () => {
+  it("allows multiple grandchildren and propagates the grant down the subtree", async () => {
     const root = makeSession({ id: "root-1" });
     const { service, createSession } = makeService({ sessions: [root] });
 
@@ -274,26 +274,154 @@ describe("AgentLaunchService", () => {
         session: {
           launch: {
             parentSessionId: child.session.id,
-            allowsNestedDelegation: undefined,
+            // The nested-delegation grant propagates: grandchildren inherit it.
+            allowsNestedDelegation: true,
           },
         },
       });
       if (grandchild.kind === "launch_in_progress") throw new Error("Expected grandchild session");
     }
 
+    // An explicitly requested grandchild can itself spawn: the grant travels
+    // down the subtree instead of stopping at one extra level.
     const [grandchild] = grandchildren;
     if (!grandchild || grandchild.kind === "launch_in_progress") {
       throw new Error("Expected a grandchild session");
     }
+    const greatGrandchild = await service.launch({
+      agent: { name: "great-grandchild" },
+      target: { workspace: makeWorkspace() },
+      parentSessionId: grandchild.session.id,
+    });
+    expect(greatGrandchild).toMatchObject({
+      kind: "created",
+      session: {
+        launch: {
+          parentSessionId: grandchild.session.id,
+          allowsNestedDelegation: true,
+        },
+      },
+    });
+    expect(createSession).toHaveBeenCalledTimes(4);
+  });
+
+  it("honors the grant for pre-propagation grandchildren through ancestry", async () => {
+    // Sessions created before grant propagation stored no inherited flag on
+    // grandchildren; the effective grant walks the ancestry chain.
+    const root = makeSession({ id: "root-1" });
+    const child = makeSession({
+      id: "child-1",
+      launch: {
+        parentSessionId: root.id,
+        allowsNestedDelegation: true,
+        status: "accepted",
+        requestedAt: 1,
+      },
+    });
+    const legacyGrandchild = makeSession({
+      id: "grandchild-1",
+      launch: { parentSessionId: child.id, status: "accepted", requestedAt: 1 },
+    });
+    const { service, createSession } = makeService({ sessions: [root, child, legacyGrandchild] });
+
+    const greatGrandchild = await service.launch({
+      agent: { name: "great-grandchild" },
+      target: { workspace: makeWorkspace() },
+      parentSessionId: legacyGrandchild.id,
+    });
+    expect(greatGrandchild).toMatchObject({
+      kind: "created",
+      session: {
+        launch: {
+          parentSessionId: legacyGrandchild.id,
+          allowsNestedDelegation: true,
+        },
+      },
+    });
+    expect(createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts idempotent retries of pre-propagation grandchildren", async () => {
+    const root = makeSession({ id: "root-1" });
+    const child = makeSession({
+      id: "child-1",
+      launch: {
+        parentSessionId: root.id,
+        allowsNestedDelegation: true,
+        status: "accepted",
+        requestedAt: 1,
+      },
+    });
+    const legacyGrandchild = makeSession({
+      id: "grandchild-1",
+      launch: {
+        parentSessionId: child.id,
+        idempotencyKey: "legacy-grandchild",
+        status: "accepted",
+        requestedAt: 1,
+      },
+    });
+    const { service, createSession } = makeService({ sessions: [root, child, legacyGrandchild] });
+
     await expect(
       service.launch({
-        agent: { name: "great-grandchild" },
+        agent: { name: "grandchild" },
         target: { workspace: makeWorkspace() },
-        parentSessionId: grandchild.session.id,
-        allowNestedDelegation: true,
+        parentSessionId: child.id,
+        idempotencyKey: "legacy-grandchild",
       }),
-    ).rejects.toThrow("Nested delegation is not authorized");
-    expect(createSession).toHaveBeenCalledTimes(3);
+    ).resolves.toMatchObject({ kind: "existing", session: { id: legacyGrandchild.id } });
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an idempotent retry that drops an explicit grant", async () => {
+    const root = makeSession({ id: "root-1" });
+    const existing = makeSession({
+      id: "child-1",
+      launch: {
+        parentSessionId: root.id,
+        allowsNestedDelegation: true,
+        idempotencyKey: "granted-retry",
+        status: "accepted",
+        requestedAt: 1,
+      },
+    });
+    const { service, createSession } = makeService({ sessions: [root, existing] });
+
+    await expect(
+      service.launch({
+        agent: { name: "child" },
+        target: { workspace: makeWorkspace() },
+        parentSessionId: root.id,
+        idempotencyKey: "granted-retry",
+      }),
+    ).rejects.toThrow("Idempotency key is already associated with a different delegation lineage");
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects an idempotent retry that adds a grant the existing lineage lacks", async () => {
+    const root = makeSession({ id: "root-1" });
+    const existing = makeSession({
+      id: "child-1",
+      launch: {
+        parentSessionId: root.id,
+        idempotencyKey: "plain-retry",
+        status: "accepted",
+        requestedAt: 1,
+      },
+    });
+    const { service, createSession } = makeService({ sessions: [root, existing] });
+
+    await expect(
+      service.launch({
+        agent: { name: "child" },
+        target: { workspace: makeWorkspace() },
+        parentSessionId: root.id,
+        allowNestedDelegation: true,
+        idempotencyKey: "plain-retry",
+      }),
+    ).rejects.toThrow("Idempotency key is already associated with a different delegation lineage");
+    expect(createSession).not.toHaveBeenCalled();
   });
 
   it("returns an existing launch for an authorized idempotent retry", async () => {

@@ -198,7 +198,7 @@ Commands that call the local API use bearer-authenticated HTTP over `$OPPI_DATA_
 
 `oppi session inspect` consolidates session-history reads. Start with its default turn outline, use `--view summary` for counts, and request `--turns <spec> --view messages|tools` only for the smallest relevant turn set.
 
-Managed host sessions cannot use `oppi session` to target themselves. They may create direct child sessions. A root can pass `oppi session create --allow-nested-delegation` to authorize that child to create sessions at one additional nesting level. Descendants cannot extend this authorization. Human terminal CLI invocations remain unrestricted.
+Managed host sessions cannot use `oppi session` to target themselves. They may create direct child sessions. A root can pass `oppi session create --allow-nested-delegation` to authorize a child to spawn its own children; the grant propagates down the subtree, so an explicitly requested grandchild session can always be created under an authorized child. Human terminal CLI invocations remain unrestricted.
 
 ### Saved Agents and schedules
 

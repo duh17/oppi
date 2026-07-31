@@ -316,7 +316,7 @@ describe("oppi help", () => {
     expect(text).toContain("--workspace <workspace>");
     expect(text).toContain("--prompt <text>");
     expect(text).toContain("--allow-nested-delegation");
-    expect(text).toContain("one nested level");
+    expect(text).toContain("grant then propagates down the subtree");
     expect(text).toContain("--idempotency-key <key>");
     expect(text).toContain("reuses the existing launch");
   });

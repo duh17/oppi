@@ -209,7 +209,10 @@ export class AgentLaunchService {
 
   private buildSession(
     request: AgentLaunchRequest,
-    delegation: { parentSessionId?: string; allowsNestedDelegation?: boolean },
+    delegation: {
+      parentSessionId?: string;
+      allowsNestedDelegation?: boolean;
+    },
     idempotencyKey: string | undefined,
     leaseOwner: string,
     now: number,
@@ -309,34 +312,59 @@ export class AgentLaunchService {
       throw new DelegationPolicyError("Caller session not found");
     }
 
-    if (!parent.launch?.parentSessionId) {
-      return {
-        parentSessionId,
-        ...(request.allowNestedDelegation ? { allowsNestedDelegation: true } : {}),
-      };
-    }
-
-    if (!parent.launch.allowsNestedDelegation) {
+    const inheritedGrant = this.effectiveNestedGrant(parent);
+    if (parent.launch?.parentSessionId && !inheritedGrant) {
       throw new DelegationPolicyError(
         "Nested delegation is not authorized for this caller session",
       );
     }
-    if (request.allowNestedDelegation) {
-      throw new DelegationPolicyError("Nested sessions cannot extend delegation authorization");
+
+    // The nested-delegation grant propagates down the subtree: children of an
+    // authorized session inherit the grant, so an explicitly requested
+    // grandchild session can be created without re-authorizing each level.
+    return {
+      parentSessionId,
+      ...(inheritedGrant || request.allowNestedDelegation ? { allowsNestedDelegation: true } : {}),
+    };
+  }
+
+  /**
+   * True when this session may spawn children with full nested delegation.
+   * The stored grant propagates down the subtree; walking the ancestry also
+   * honors sessions created before propagation existed, whose ancestors hold
+   * the stored grant.
+   */
+  private effectiveNestedGrant(session: Session): boolean {
+    let current: Session | undefined = session;
+    const seen = new Set<string>();
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      if (current.launch?.allowsNestedDelegation) return true;
+      if (!current.launch?.parentSessionId) return false;
+      current = this.deps.storage.getSession(current.launch.parentSessionId);
     }
-    return { parentSessionId };
+    return false;
   }
 
   private assertIdempotentDelegationMatches(
     existing: Session,
-    delegation: { parentSessionId?: string; allowsNestedDelegation?: boolean },
+    delegation: {
+      parentSessionId?: string;
+      allowsNestedDelegation?: boolean;
+    },
   ): void {
     const existingParentSessionId = normalizedText(existing.launch?.parentSessionId);
     const existingAllowsNestedDelegation = existing.launch?.allowsNestedDelegation === true;
-    if (
-      existingParentSessionId !== delegation.parentSessionId ||
-      existingAllowsNestedDelegation !== (delegation.allowsNestedDelegation === true)
-    ) {
+    const requestedGrant = delegation.allowsNestedDelegation === true;
+    // Compare effective grants: an old-format session may lack the stored
+    // inherited flag, but its ancestry (or an explicit stored grant) still
+    // authorizes nesting. A retry that would add a grant where the existing
+    // session's lineage grants none is a different delegation lineage.
+    const existingEffectiveGrant =
+      existingAllowsNestedDelegation ||
+      (existingParentSessionId ? this.effectiveNestedGrant(existing) : false);
+    const grantMismatch = existingEffectiveGrant !== requestedGrant;
+    if (existingParentSessionId !== delegation.parentSessionId || grantMismatch) {
       throw new DelegationPolicyError(
         "Idempotency key is already associated with a different delegation lineage",
       );

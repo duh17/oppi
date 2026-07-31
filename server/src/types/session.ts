@@ -63,7 +63,12 @@ export interface SessionLaunchMetadata {
   /** Immutable launch-time presentation snapshot; never used for execution identity. */
   agentIcon?: IconChoice;
   parentSessionId?: string;
-  /** This session may create children at one additional delegation level. */
+  /**
+   * This session may create children, and the authorization propagates down
+   * the delegation subtree: children inherit the grant, so explicitly
+   * requested grandchild (or deeper) sessions can be created without
+   * re-authorizing at each level.
+   */
   allowsNestedDelegation?: boolean;
   /** Client-supplied key used to make agent launch retries create at most one session. */
   idempotencyKey?: string;
