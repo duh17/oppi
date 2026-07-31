@@ -3,6 +3,34 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "APIClient")
 
+/// Network failures that may make an HTTP route unavailable for future work.
+/// HTTP responses, decoding failures, cancellation, and TLS failures are intentionally excluded.
+enum APIClientAvailabilityFailure: Sendable, Equatable {
+    case timedOut
+    case cannotFindHost
+    case cannotConnectToHost
+    case networkConnectionLost
+    case notConnectedToInternet
+    case dnsLookupFailed
+    case cannotLoadFromNetwork
+
+    init?(error: Error) {
+        guard let urlError = error as? URLError else { return nil }
+        switch urlError.code {
+        case .timedOut: self = .timedOut
+        case .cannotFindHost: self = .cannotFindHost
+        case .cannotConnectToHost: self = .cannotConnectToHost
+        case .networkConnectionLost: self = .networkConnectionLost
+        case .notConnectedToInternet: self = .notConnectedToInternet
+        case .dnsLookupFailed: self = .dnsLookupFailed
+        case .cannotLoadFromNetwork: self = .cannotLoadFromNetwork
+        default: return nil
+        }
+    }
+}
+
+typealias APIClientAvailabilityObserver = @Sendable (APIClientAvailabilityFailure) async -> Void
+
 /// REST client for oppi server.
 ///
 /// Handles session CRUD, health checks, and authentication.
@@ -11,6 +39,24 @@ actor APIClient: ClientLogUploading {
     enum SessionTraceView: String, Sendable {
         case context
         case full
+    }
+
+    /// A total deadline for one candidate bootstrap request. This races the
+    /// complete URLSession task and cancels that task when the deadline wins.
+    struct BootstrapDeadline: Sendable {
+        private let wait: @Sendable () async throws -> Void
+
+        static func after(_ duration: Duration) -> Self {
+            Self(wait: { try await Task.sleep(for: duration) })
+        }
+
+        init(wait: @escaping @Sendable () async throws -> Void) {
+            self.wait = wait
+        }
+
+        func waitForExpiry() async throws {
+            try await wait()
+        }
     }
 
     struct SessionTracePageResponse: Decodable, Sendable {
@@ -31,12 +77,17 @@ actor APIClient: ClientLogUploading {
     private let tlsCertFingerprint: String?
     private let session: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
+    private let availabilityObserver: APIClientAvailabilityObserver?
 
-    init(environment: OppiClientEnvironment) {
+    init(
+        environment: OppiClientEnvironment,
+        availabilityObserver: APIClientAvailabilityObserver? = nil
+    ) {
         self.environment = environment
         self.baseURL = environment.baseURL
         self.token = environment.bearerToken
         self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
+        self.availabilityObserver = availabilityObserver
         trustDelegate = PinnedServerTrustDelegate(
             pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
             expectedServerName: environment.tlsServerName
@@ -52,7 +103,12 @@ actor APIClient: ClientLogUploading {
         )
     }
 
-    init(baseURL: URL, token: String, tlsCertFingerprint: String? = nil) {
+    init(
+        baseURL: URL,
+        token: String,
+        tlsCertFingerprint: String? = nil,
+        availabilityObserver: APIClientAvailabilityObserver? = nil
+    ) {
         let environment = OppiClientEnvironment(
             baseURL: baseURL,
             bearerToken: token,
@@ -62,6 +118,7 @@ actor APIClient: ClientLogUploading {
         self.baseURL = environment.baseURL
         self.token = environment.bearerToken
         self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
+        self.availabilityObserver = availabilityObserver
         trustDelegate = PinnedServerTrustDelegate(
             pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
             expectedServerName: environment.tlsServerName
@@ -81,12 +138,14 @@ actor APIClient: ClientLogUploading {
     /// Test-only init with custom URLSessionConfiguration.
     init(
         environment: OppiClientEnvironment,
-        configuration: URLSessionConfiguration
+        configuration: URLSessionConfiguration,
+        availabilityObserver: APIClientAvailabilityObserver? = nil
     ) {
         self.environment = environment
         self.baseURL = environment.baseURL
         self.token = environment.bearerToken
         self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
+        self.availabilityObserver = availabilityObserver
         trustDelegate = PinnedServerTrustDelegate(
             pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
             expectedServerName: environment.tlsServerName
@@ -104,7 +163,8 @@ actor APIClient: ClientLogUploading {
         baseURL: URL,
         token: String,
         configuration: URLSessionConfiguration,
-        tlsCertFingerprint: String? = nil
+        tlsCertFingerprint: String? = nil,
+        availabilityObserver: APIClientAvailabilityObserver? = nil
     ) {
         let environment = OppiClientEnvironment(
             baseURL: baseURL,
@@ -115,6 +175,7 @@ actor APIClient: ClientLogUploading {
         self.baseURL = environment.baseURL
         self.token = environment.bearerToken
         self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
+        self.availabilityObserver = availabilityObserver
         trustDelegate = PinnedServerTrustDelegate(
             pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
             expectedServerName: environment.tlsServerName
@@ -144,7 +205,7 @@ actor APIClient: ClientLogUploading {
             request.timeoutInterval = timeoutInterval
         }
         ServerAuthorization.apply(token: token, to: &request)
-        let (_, response) = try await session.data(for: request)
+        let (_, response) = try await performData(for: request)
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
@@ -165,6 +226,20 @@ actor APIClient: ClientLogUploading {
     /// Fetch server metadata (version, uptime, stats) for the server detail view.
     func serverInfo() async throws -> ServerInfo {
         let data = try await get("/server/info")
+        return try JSONDecoder().decode(ServerInfo.self, from: data)
+    }
+
+    /// Fetch authenticated server metadata while bounding the entire request.
+    /// The deadline applies only to this bootstrap call; the retained client's
+    /// normal 15-second request and 30-second resource policies remain intact.
+    func serverInfo(bootstrapDeadline: BootstrapDeadline) async throws -> ServerInfo {
+        var request = try URLRequest(url: makeURL(path: "/server/info"))
+        request.httpMethod = "GET"
+        ServerAuthorization.apply(token: token, to: &request)
+        logger.debug("GET /server/info [bootstrap]")
+
+        let (data, response) = try await bootstrapData(for: request, deadline: bootstrapDeadline)
+        try checkStatus(response, data: data)
         return try JSONDecoder().decode(ServerInfo.self, from: data)
     }
 
@@ -1470,7 +1545,7 @@ actor APIClient: ClientLogUploading {
         req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         logger.debug("GET \(url.path)")
 
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await performData(for: req)
         try checkStatus(response, data: data)
         try checkCompleteSessionAttachmentResponse(response, data: data)
         return data
@@ -1711,6 +1786,94 @@ actor APIClient: ClientLogUploading {
 
     // MARK: - Private
 
+    private func performData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            return try await session.data(for: request)
+        } catch {
+            await reportAvailabilityFailure(for: error)
+            throw error
+        }
+    }
+
+    private func bootstrapData(
+        for request: URLRequest,
+        deadline: BootstrapDeadline
+    ) async throws -> (Data, URLResponse) {
+        do {
+            return try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
+                group.addTask { [session] in
+                    try await Self.dataTask(session: session, request: request)
+                }
+                group.addTask {
+                    try await deadline.waitForExpiry()
+                    try Task.checkCancellation()
+                    throw URLError(.timedOut)
+                }
+                defer { group.cancelAll() }
+                guard let result = try await group.next() else {
+                    throw APIError.invalidResponse
+                }
+                return result
+            }
+        } catch {
+            await reportAvailabilityFailure(for: error)
+            throw error
+        }
+    }
+
+    private final class BootstrapTaskCancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var task: URLSessionDataTask?
+        private var cancelled = false
+
+        func install(_ task: URLSessionDataTask) {
+            lock.lock()
+            self.task = task
+            let shouldCancel = cancelled
+            lock.unlock()
+            if shouldCancel {
+                task.cancel()
+            }
+        }
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            let task = task
+            lock.unlock()
+            task?.cancel()
+        }
+    }
+
+    private static func dataTask(
+        session: URLSession,
+        request: URLRequest
+    ) async throws -> (Data, URLResponse) {
+        let cancellation = BootstrapTaskCancellation()
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = session.dataTask(with: request) { data, response, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else if let data, let response {
+                        continuation.resume(returning: (data, response))
+                    } else {
+                        continuation.resume(throwing: APIError.invalidResponse)
+                    }
+                }
+                cancellation.install(task)
+                task.resume()
+            }
+        }, onCancel: {
+            cancellation.cancel()
+        })
+    }
+
+    private func reportAvailabilityFailure(for error: Error) async {
+        guard let failure = APIClientAvailabilityFailure(error: error) else { return }
+        await availabilityObserver?(failure)
+    }
+
     func get(_ path: String) async throws -> Data {
         let (data, response) = try await request("GET", path: path)
         try checkStatus(response, data: data)
@@ -1750,7 +1913,7 @@ actor APIClient: ClientLogUploading {
         req.httpMethod = method
         ServerAuthorization.apply(token: token, to: &req)
         logger.debug("\(method) \(path)")
-        return try await session.data(for: req)
+        return try await performData(for: req)
     }
 
     private func request(_ method: String, url: URL) async throws -> (Data, URLResponse) {
@@ -1758,7 +1921,7 @@ actor APIClient: ClientLogUploading {
         req.httpMethod = method
         ServerAuthorization.apply(token: token, to: &req)
         logger.debug("\(method) \(url.path)")
-        return try await session.data(for: req)
+        return try await performData(for: req)
     }
 
     private func request<T: Encodable>(
@@ -1773,7 +1936,7 @@ actor APIClient: ClientLogUploading {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try (encoder ?? JSONEncoder()).encode(body)
         logger.debug("\(method) \(url.path)")
-        return try await session.data(for: req)
+        return try await performData(for: req)
     }
 
     func request<T: Encodable>(
@@ -1788,7 +1951,7 @@ actor APIClient: ClientLogUploading {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try (encoder ?? JSONEncoder()).encode(body)
         logger.debug("\(method) \(path)")
-        return try await session.data(for: req)
+        return try await performData(for: req)
     }
 
     func request(_ method: String, path: String, body: Data, contentType: String) async throws -> (Data, URLResponse) {
@@ -1798,7 +1961,7 @@ actor APIClient: ClientLogUploading {
         req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         req.httpBody = body
         logger.debug("\(method) \(path)")
-        return try await session.data(for: req)
+        return try await performData(for: req)
     }
 
     private func requestNoAuth<T: Encodable>(_ method: String, path: String, body: T) async throws -> (Data, URLResponse) {
@@ -1807,7 +1970,7 @@ actor APIClient: ClientLogUploading {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(body)
         logger.debug("\(method) \(path) [no-auth]")
-        return try await session.data(for: req)
+        return try await performData(for: req)
     }
 
     private func encodeQueryPath(_ path: String) throws -> String {

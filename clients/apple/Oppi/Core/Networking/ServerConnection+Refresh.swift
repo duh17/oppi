@@ -243,8 +243,18 @@ extension ServerConnection {
         // Iroh's local URLSession tasks and cached QUIC connection can survive suspension
         // long enough to look healthy after the server has timed them out. Reset only the
         // transport tasks; focused-session continuations stay attached for catch-up.
-        await resetIrohTransportForForegroundRecoveryIfNeeded()
-        await reevaluateIrohPreferredTransportAtBoundary()
+        let foregroundIrohRecovery = await resetIrohTransportForForegroundRecoveryIfNeeded()
+        switch foregroundIrohRecovery {
+        case .availabilityFailure:
+            await reevaluateIrohPreferredTransportAtBoundary(excluding: [.iroh])
+        case .terminalFailure:
+            return
+        case .notActive, .retained:
+            break
+        }
+        if apiClient == nil {
+            await reevaluateIrohPreferredTransportAtBoundary()
+        }
         guard let apiClient else { return }
 
         // 0. If a chat session owns a prepared bound stream, keep that focused transport alive.

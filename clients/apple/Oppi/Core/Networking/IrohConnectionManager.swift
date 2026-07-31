@@ -150,6 +150,75 @@ actor IrohEndpointRecycleCoordinator {
     }
 }
 
+/// Tracks custom relay membership by signed server node ID. The desired map is
+/// the union of current owners, so replacing or removing one server cannot drop
+/// a relay still used by another server and old relay metadata does not linger.
+struct IrohRelayMapMembership: Sendable {
+    private var desiredByOwner: [String: Set<String>] = [:]
+    private var installed = Set<String>()
+    private var installedEndpointGeneration: UInt64?
+
+    var desiredURLs: [String] { desired.sorted() }
+    var urlsNeedingInstallation: [String] { desired.subtracting(installed).sorted() }
+    var urlsNeedingRemoval: [String] { installed.subtracting(desired).sorted() }
+
+    private var desired: Set<String> {
+        desiredByOwner.values.reduce(into: Set<String>()) { union, urls in
+            union.formUnion(urls)
+        }
+    }
+
+    mutating func register(_ transport: IrohServerTransport) throws {
+        let urls = Set(try IrohRelayURLs.canonicalize(transport.relayUrls) ?? [])
+        if urls.isEmpty {
+            desiredByOwner.removeValue(forKey: transport.nodeId)
+        } else {
+            desiredByOwner[transport.nodeId] = urls
+        }
+    }
+
+    mutating func remove(ownerNodeID: String) {
+        desiredByOwner.removeValue(forKey: ownerNodeID)
+    }
+
+    /// Insertions belong to one concrete Endpoint instance, not the process.
+    /// A replacement starts with public defaults and must receive every desired
+    /// signed relay again even if an older endpoint had installed it.
+    mutating func associate(withEndpointGeneration generation: UInt64) {
+        guard installedEndpointGeneration != generation else { return }
+        installed.removeAll()
+        installedEndpointGeneration = generation
+    }
+
+    mutating func markInstalled(_ relayURLs: [String], onEndpointGeneration generation: UInt64) {
+        associate(withEndpointGeneration: generation)
+        installed.formUnion(relayURLs)
+    }
+
+    mutating func markRemoved(_ relayURLs: [String], onEndpointGeneration generation: UInt64) {
+        associate(withEndpointGeneration: generation)
+        installed.subtract(relayURLs)
+    }
+
+    mutating func endpointWasRecycled() {
+        installed.removeAll()
+        installedEndpointGeneration = nil
+    }
+}
+
+/// Converts relay insertion errors before any public logging boundary. Signed
+/// relay URLs are sensitive transport metadata, while telemetry only needs an
+/// error category.
+enum IrohRelayMapFailure {
+    static func redacted(_ error: Error) -> IrohTransportError {
+        IrohTransportTelemetry.recordReconnect(
+            status: "failed",
+            reason: IrohTransportTelemetry.errorKind(error)
+        )
+        return .unavailable("Unable to update signed Iroh relays")
+    }
+}
+
 /// Process-wide endpoint owner. All paired servers use the same stable
 /// Keychain-backed client node identity without binding duplicate endpoints
 /// for concurrent requests or concurrent servers.
@@ -159,6 +228,29 @@ private actor IrohAppEndpoint {
     private var endpoint: Endpoint?
     private var endpointTask: Task<Endpoint, Error>?
     private var generation: UInt64 = 0
+    private var relayMembership = IrohRelayMapMembership()
+
+    /// Reconciles one signed server's relays on the process-global endpoint
+    /// before dialing. Runtime changes preserve Iroh's public n0 defaults and
+    /// relays still owned by another signed server.
+    func prepare(relaysFor transport: IrohServerTransport) async throws {
+        try relayMembership.register(transport)
+        let endpoint = try await get()
+        try await reconcileRelays(on: endpoint)
+    }
+
+    func removeRelays(ownerNodeID: String) async {
+        relayMembership.remove(ownerNodeID: ownerNodeID)
+        guard let endpoint, !endpoint.isClosed() else { return }
+        do {
+            try await reconcileRelays(on: endpoint)
+        } catch {
+            IrohTransportTelemetry.recordReconnect(
+                status: "failed",
+                reason: IrohTransportTelemetry.errorKind(error)
+            )
+        }
+    }
 
     func get() async throws -> Endpoint {
         if let endpoint, !endpoint.isClosed() { return endpoint }
@@ -172,6 +264,7 @@ private actor IrohAppEndpoint {
             return created
         }
 
+        generation &+= 1
         let bindingGeneration = generation
         let task = Task<Endpoint, Error> {
             let secret = try IrohEndpointSecretStore.loadOrCreateSecretBytes()
@@ -184,11 +277,16 @@ private actor IrohAppEndpoint {
                 try? await created.close()
                 throw CancellationError()
             }
-            endpoint = created
             endpointTask = nil
-            irohManagerLogger.info(
-                "Iroh endpoint ready: \(created.id().fmtShort(), privacy: .public), generation=\(bindingGeneration)"
-            )
+            relayMembership.associate(withEndpointGeneration: bindingGeneration)
+            do {
+                try await reconcileRelays(on: created)
+            } catch {
+                try? await created.close()
+                throw error
+            }
+            endpoint = created
+            irohManagerLogger.info("Iroh endpoint ready, generation=\(bindingGeneration)")
             return created
         } catch {
             if generation == bindingGeneration {
@@ -203,17 +301,45 @@ private actor IrohAppEndpoint {
     /// relay state, discovery state, and timers are recreated like a process restart.
     func recycleAfterSuspension() async throws {
         generation &+= 1
-        let recycledGeneration = generation
         let staleEndpoint = endpoint
         let staleBinding = endpointTask
         endpoint = nil
         endpointTask = nil
         staleBinding?.cancel()
+        relayMembership.endpointWasRecycled()
         if let staleEndpoint, !staleEndpoint.isClosed() {
             try await staleEndpoint.close()
         }
-        _ = try await get()
-        irohManagerLogger.info("Iroh endpoint recycled after suspension, generation=\(recycledGeneration)")
+        let rebound = try await get()
+        try await reconcileRelays(on: rebound)
+        irohManagerLogger.info("Iroh endpoint recycled after suspension, generation=\(self.generation)")
+    }
+
+    private func reconcileRelays(on endpoint: Endpoint) async throws {
+        relayMembership.associate(withEndpointGeneration: generation)
+        let stale = relayMembership.urlsNeedingRemoval
+        for relayURL in stale {
+            do {
+                _ = try await endpoint.removeRelay(url: relayURL)
+            } catch {
+                throw IrohRelayMapFailure.redacted(error)
+            }
+            relayMembership.markRemoved([relayURL], onEndpointGeneration: generation)
+        }
+
+        let missing = relayMembership.urlsNeedingInstallation
+        for relayURL in missing {
+            // `RelayMap.fromUrls` defaults this to 7842. The runtime seam takes
+            // a config, so preserve the same QUIC discovery behavior explicitly.
+            do {
+                try await endpoint.insertRelay(
+                    config: RelayConfig(url: relayURL, quicPort: 7_842)
+                )
+            } catch {
+                throw IrohRelayMapFailure.redacted(error)
+            }
+            relayMembership.markInstalled([relayURL], onEndpointGeneration: generation)
+        }
     }
 }
 
@@ -553,6 +679,20 @@ actor IrohConnectionManager {
     ) {
         self.iroh = iroh
         self.provider = provider ?? IrohLibConnectionProvider(iroh: iroh)
+    }
+
+    /// Opens and immediately resets a stream to prove the signed peer accepts
+    /// an ALPN without sending an application frame. Pairing calls this before
+    /// its one-time `pairRequest`, so route selection stays read-only.
+    func probeReachability(alpn: String) async throws {
+        let opening = Task { [provider] in
+            try await provider.openStream(alpn: alpn)
+        }
+        let stream = try await waitForConnectivityOperation(
+            opening,
+            timeout: Self.connectivityTimeoutDefault
+        )
+        await stream.reset(errorCode: 0)
     }
 
     func exchange(
@@ -978,7 +1118,24 @@ actor IrohTransportRegistry {
     private var managers: [String: IrohConnectionManager] = [:]
     private var metadata: [String: IrohServerTransport] = [:]
 
-    func manager(for iroh: IrohServerTransport) async -> IrohConnectionManager {
+    /// Bulk preparation is the paired-server owner's hook for restoring every
+    /// persisted relay before a normal Iroh dial. The pairing path passes its
+    /// in-flight invite through the single-transport overload below.
+    func prepare(relaysFor transports: [IrohServerTransport]) async throws {
+        for transport in transports {
+            try await IrohAppEndpoint.shared.prepare(relaysFor: transport)
+        }
+    }
+
+    /// Must run before creating a manager or opening a pairing frame: the
+    /// membership experiment proved ticket and endpoint-address hints cannot
+    /// substitute for a relay in the local endpoint map.
+    func prepare(iroh: IrohServerTransport) async throws {
+        try await prepare(relaysFor: [iroh])
+    }
+
+    func manager(for iroh: IrohServerTransport) async throws -> IrohConnectionManager {
+        try await prepare(iroh: iroh)
         if let manager = managers[iroh.nodeId], metadata[iroh.nodeId] == iroh {
             return manager
         }
@@ -993,7 +1150,7 @@ actor IrohTransportRegistry {
     }
 
     func startProxy(iroh: IrohServerTransport, token: String) async throws -> (IrohConnectionManager, URL) {
-        let manager = await manager(for: iroh)
+        let manager = try await manager(for: iroh)
         return (manager, try await manager.startProxy(token: token))
     }
 
@@ -1002,5 +1159,6 @@ actor IrohTransportRegistry {
         if let manager = managers.removeValue(forKey: nodeID) {
             await manager.shutdown()
         }
+        await IrohAppEndpoint.shared.removeRelays(ownerNodeID: nodeID)
     }
 }

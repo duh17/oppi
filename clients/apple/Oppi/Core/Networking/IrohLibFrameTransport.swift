@@ -9,7 +9,7 @@ struct IrohLibFrameTransport: IrohFrameTransport {
         requestFrame: Data,
         maxResponseBytes: UInt32
     ) async throws -> Data {
-        let manager = await IrohTransportRegistry.shared.manager(for: iroh)
+        let manager = try await IrohTransportRegistry.shared.manager(for: iroh)
         return try await manager.exchange(
             alpn: alpn,
             requestFrame: requestFrame,

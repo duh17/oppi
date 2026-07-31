@@ -23,6 +23,8 @@ struct ServerConnectionLifecycleTests {
         let localURL = try #require(URL(string: "http://127.0.0.1:41991"))
         let result = await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in (nil, localURL) }
         )
 
@@ -44,7 +46,7 @@ struct ServerConnectionLifecycleTests {
         #expect(await conn.apiClient?.baseURL == localURL)
     }
 
-    @Test func configureIrohPreferredUsesVerifiedLANBeforeMalformedIroh() async throws {
+    @Test func automaticUsesVerifiedLANBeforeMalformedIroh() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials(
             iroh: IrohServerTransport(
@@ -65,7 +67,7 @@ struct ServerConnectionLifecycleTests {
 
         let result = await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in true },
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
                 proxyStarted = true
                 throw IrohTransportError.unavailable("must not start")
@@ -78,81 +80,96 @@ struct ServerConnectionLifecycleTests {
         #expect(await conn.apiClient?.baseURL.host == "192.168.1.42")
     }
 
-    @Test func unavailableVerifiedLANContinuesToIrohBeforeHTTPFallback() async throws {
+    @Test func unavailableVerifiedLANContinuesToPairedHTTPSBeforeIroh() async {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
-        let metadata = try #require(credentials.transports.iroh)
-        let provider = TrackingReachableIrohProvider()
-        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
-        let localURL = try #require(URL(string: "http://127.0.0.1:42015"))
         conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "preferred-server-fp",
             tlsCertFingerprintPrefix: "preferred-tls-fp"
         ))
-        var probeCount = 0
+        var lanBootstraps = 0
+        var irohDials = 0
 
         let configured = await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { selection, _ in
-                probeCount += 1
-                #expect(selection.transportPath == .lan)
-                return false
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "192.168.1.42" {
+                    lanBootstraps += 1
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
             },
-            irohProxyFactory: { _, _ in (manager, localURL) }
-        )
-
-        #expect(configured)
-        #expect(probeCount == 1)
-        #expect(conn.transportPath == .iroh)
-        #expect(!conn.irohFallbackActive)
-        #expect(await conn.apiClient?.baseURL == localURL)
-    }
-
-    @Test func unavailableLANAndIrohFallBackToSignedHTTPNotLAN() async {
-        let conn = ServerConnection()
-        let credentials = makeIrohPreferredCredentials()
-        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
-            host: "192.168.1.42",
-            port: 7749,
-            serverFingerprintPrefix: "preferred-server-fp",
-            tlsCertFingerprintPrefix: "preferred-tls-fp"
-        ))
-
-        let configured = await conn.configureForUse(
-            credentials: credentials,
-            lanReachabilityProbe: { _, _ in false },
             irohProxyFactory: { _, _ in
-                throw IrohTransportError.unavailable("relay unreachable")
+                irohDials += 1
+                throw IrohTransportError.unavailable("must not dial")
             }
         )
 
         #expect(configured)
+        #expect(lanBootstraps == 1)
+        #expect(irohDials == 0)
         #expect(conn.transportPath == .paired)
-        #expect(conn.irohFallbackActive)
         #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
     }
 
-    @Test func configureIrohPreferredFallsBackOnlyWhenIrohIsUnavailable() async throws {
-        let unavailable = ServerConnection()
+    @Test func unavailableLANUsesSignedPairedHTTPSWithoutIrohDial() async {
+        let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+        var irohDials = 0
 
-        let configured = await unavailable.configureForUse(
+        let configured = await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "192.168.1.42" {
+                    throw URLError(.notConnectedToInternet)
+                }
+                return successfulServerInfo()
+            },
             irohProxyFactory: { _, _ in
-                throw IrohTransportError.unavailable("relay unreachable")
+                irohDials += 1
+                throw IrohTransportError.unavailable("must not dial")
             }
         )
 
         #expect(configured)
-        #expect(unavailable.transportPath == .paired)
-        #expect(unavailable.irohFallbackActive)
-        #expect(await unavailable.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
+        #expect(irohDials == 0)
+        #expect(conn.transportPath == .paired)
+        #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
+    }
+
+    @Test func pairedAvailabilityFailureUsesIrohAndTerminalIrohFailsClosed() async throws {
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:42015"))
+        let pairedUnavailable: ServerConnectionInfoBootstrap = { client, _ in
+            if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                throw URLError(.cannotConnectToHost)
+            }
+            return successfulServerInfo()
+        }
+        let available = ServerConnection()
+
+        let configured = await available.configureForUse(
+            credentials: credentials,
+            serverInfoBootstrap: pairedUnavailable,
+            irohProxyFactory: { _, _ in (nil, localURL) }
+        )
+
+        #expect(configured)
+        #expect(available.transportPath == .iroh)
+        #expect(await available.apiClient?.baseURL == localURL)
 
         let terminal = ServerConnection()
         let rejected = await terminal.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: pairedUnavailable,
             irohProxyFactory: { _, _ in
                 throw IrohTransportError.authentication("token rejected")
             }
@@ -160,10 +177,10 @@ struct ServerConnectionLifecycleTests {
 
         #expect(!rejected)
         #expect(terminal.apiClient == nil)
-        #expect(!terminal.irohFallbackActive)
+        #expect(terminal.wsClient == nil)
     }
 
-    @Test func irohPreferredFallsBackWhenReachabilityProbeExceedsDeadline() async throws {
+    @Test func pairedFailureThenIrohReachabilityTimeoutExhaustsThePass() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
@@ -175,6 +192,12 @@ struct ServerConnectionLifecycleTests {
             await conn.configureForUse(
                 credentials: credentials,
                 irohReachabilityTimeout: .milliseconds(20),
+                serverInfoBootstrap: { client, _ in
+                    if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                        throw URLError(.cannotConnectToHost)
+                    }
+                    return successfulServerInfo()
+                },
                 irohProxyFactory: { _, _ in (manager, localURL) }
             )
         }
@@ -184,15 +207,14 @@ struct ServerConnectionLifecycleTests {
 
         let configured = await configurationTask.value
 
-        #expect(configured)
-        #expect(conn.transportPath == .paired)
-        #expect(conn.irohFallbackActive)
-        #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
+        #expect(!configured)
+        #expect(conn.apiClient == nil)
+        #expect(conn.wsClient == nil)
         #expect(await provider.suspendCount == 1, "A timed-out probe must discard the poisoned provider connection")
         await provider.releaseEvidence()
     }
 
-    @Test func establishedIrohFailureImmediatelyPerformsFullRebuildAndRefresh() async throws {
+    @Test func establishedIrohFailureExcludesRouteUntilExplicitRetryRebuilds() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
@@ -203,71 +225,72 @@ struct ServerConnectionLifecycleTests {
         let firstURL = try #require(URL(string: "http://127.0.0.1:42037"))
         let replacementURL = try #require(URL(string: "http://127.0.0.1:42038"))
         var factoryCalls = 0
-        var refreshCalls = 0
-        conn._refreshAfterAutomaticIrohRecoveryForTesting = {
-            refreshCalls += 1
-        }
 
+        let factory: @MainActor (IrohServerTransport, String) async throws -> (IrohConnectionManager?, URL) = { _, _ in
+            factoryCalls += 1
+            return factoryCalls == 1
+                ? (firstManager, firstURL)
+                : (replacementManager, replacementURL)
+        }
         #expect(await conn.configureForUse(
             credentials: credentials,
-            irohProxyFactory: { _, _ in
-                factoryCalls += 1
-                return factoryCalls == 1
-                    ? (firstManager, firstURL)
-                    : (replacementManager, replacementURL)
-            }
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: factory
         ))
         let originalAPIClient = conn.apiClient
 
         await firstProvider.failEstablishedStream()
 
-        #expect(factoryCalls == 2)
+        #expect(factoryCalls == 1, "The failed route is excluded for its recovery pass")
         #expect(await firstProvider.shutdownCount == 1)
         #expect(await firstProvider.suspendCount == 0)
+        #expect(conn.apiClient == nil)
+
+        #expect(await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: factory
+        ))
+        #expect(factoryCalls == 2)
         #expect(conn.apiClient !== originalAPIClient)
         #expect(await conn.apiClient?.baseURL == replacementURL)
-        #expect(refreshCalls == 1)
     }
 
-    @Test func repeatedAutomaticIrohRebuildsUseBackoffUntilAStreamReconnects() async throws {
+    @Test func repeatedAutomaticRouteRecoveriesUseBackoffUntilAStreamReconnects() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
-        let metadata = try #require(credentials.transports.iroh)
-        let managers = [
-            IrohConnectionManager(iroh: metadata, provider: TrackingReachableIrohProvider()),
-            IrohConnectionManager(iroh: metadata, provider: TrackingReachableIrohProvider()),
-            IrohConnectionManager(iroh: metadata, provider: TrackingReachableIrohProvider()),
-            IrohConnectionManager(iroh: metadata, provider: TrackingReachableIrohProvider()),
-        ]
-        let urls = try [42039, 42040, 42041, 42042].map { port in
-            try #require(URL(string: "http://127.0.0.1:\(port)"))
-        }
+        let localURL = try #require(URL(string: "http://127.0.0.1:42039"))
         var now = Date(timeIntervalSince1970: 1_700_000_000)
-        var factoryCalls = 0
+        var irohDials = 0
         conn._automaticIrohRecoveryNowForTesting = { now }
         conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
 
         #expect(await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
-                defer { factoryCalls += 1 }
-                return (managers[factoryCalls], urls[factoryCalls])
+                irohDials += 1
+                return (nil, localURL)
             }
         ))
 
         await conn.handlePersistentStreamHealthFailure(.establishedStreamFailure)
-        #expect(factoryCalls == 2)
+        #expect(irohDials == 1)
+        #expect(conn.transportPath == .iroh)
 
         await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 6))
-        #expect(factoryCalls == 2, "A repeated failure inside the first cooldown must not rebuild again")
+        #expect(irohDials == 1, "A repeated failure inside the first cooldown must not select again")
 
         now = now.addingTimeInterval(1)
         await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 7))
-        #expect(factoryCalls == 3)
+        #expect(conn.transportPath == .paired)
 
         conn.setAppEventStreamTransportState(.connected)
         await conn.handlePersistentStreamHealthFailure(.establishedStreamFailure)
-        #expect(factoryCalls == 4, "A proven stream reconnect resets automatic recovery backoff")
+        #expect(irohDials == 2, "A proven stream reconnect resets automatic recovery backoff")
+        #expect(conn.transportPath == .iroh)
     }
 
     @Test func automaticIrohRecoveryUsesFiveAttemptExponentialBudget() {
@@ -279,45 +302,54 @@ struct ServerConnectionLifecycleTests {
         #expect(ServerConnection.automaticIrohRecoveryBackoff(attempt: 5) == 16)
     }
 
-    @Test func automaticIrohRecoveryStopsAfterFiveAttemptsUntilAStreamReconnects() async throws {
+    @Test func automaticRouteRecoveryStopsAfterFiveAttemptsUntilAStreamReconnects() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
-        let metadata = try #require(credentials.transports.iroh)
-        let managers = (0..<7).map { _ in
-            IrohConnectionManager(iroh: metadata, provider: TrackingReachableIrohProvider())
-        }
-        let urls = try (42060..<42067).map { port in
-            try #require(URL(string: "http://127.0.0.1:\(port)"))
-        }
+        let localURL = try #require(URL(string: "http://127.0.0.1:42060"))
         var now = Date(timeIntervalSince1970: 1_700_000_000)
-        var factoryCalls = 0
+        var irohDials = 0
         conn._automaticIrohRecoveryNowForTesting = { now }
         conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
+        let factory: @MainActor (IrohServerTransport, String) async throws -> (IrohConnectionManager?, URL) = { _, _ in
+            irohDials += 1
+            return (nil, localURL)
+        }
 
         #expect(await conn.configureForUse(
             credentials: credentials,
-            irohProxyFactory: { _, _ in
-                defer { factoryCalls += 1 }
-                return (managers[factoryCalls], urls[factoryCalls])
-            }
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: factory
         ))
 
-        for delay in [0.0, 1.0, 2.0, 4.0, 8.0] {
+        for (index, delay) in [0.0, 1.0, 2.0, 4.0, 8.0].enumerated() {
+            if index > 0 {
+                #expect(await conn.configureForUse(
+                    credentials: credentials,
+                    serverInfoBootstrap: successfulServerInfoBootstrap,
+                    irohProxyFactory: factory
+                ))
+                #expect(conn.transportPath == .paired)
+            }
             now = now.addingTimeInterval(delay)
             await conn.handlePersistentStreamHealthFailure(.establishedStreamFailure)
         }
-        #expect(factoryCalls == 6, "The initial setup plus five automatic rebuilds should run")
+        #expect(irohDials == 5, "Five automatic route selections should run")
 
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: factory
+        ))
         now = now.addingTimeInterval(16)
         await conn.handlePersistentStreamHealthFailure(.establishedStreamFailure)
-        #expect(factoryCalls == 6, "The sixth automatic rebuild must remain blocked")
+        #expect(irohDials == 5, "The sixth automatic selection must remain blocked")
 
         conn.setAppEventStreamTransportState(.connected)
         await conn.handlePersistentStreamHealthFailure(.establishedStreamFailure)
-        #expect(factoryCalls == 7, "A proven stream reconnect restores the automatic retry budget")
+        #expect(irohDials == 6, "A proven stream reconnect restores the automatic retry budget")
     }
 
-    @Test func terminalFailureDuringAutomaticFullRebuildRemainsFailClosed() async throws {
+    @Test func terminalFailureDuringExplicitIrohRebuildRemainsFailClosed() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
@@ -325,27 +357,39 @@ struct ServerConnectionLifecycleTests {
         let manager = IrohConnectionManager(iroh: metadata, provider: provider)
         let localURL = try #require(URL(string: "http://127.0.0.1:42048"))
         var factoryCalls = 0
+        let factory: @MainActor (IrohServerTransport, String) async throws -> (IrohConnectionManager?, URL) = { _, _ in
+            factoryCalls += 1
+            if factoryCalls == 1 { return (manager, localURL) }
+            throw IrohTransportError.authentication("peer rejected replacement")
+        }
 
         #expect(await conn.configureForUse(
             credentials: credentials,
-            irohProxyFactory: { _, _ in
-                factoryCalls += 1
-                if factoryCalls == 1 { return (manager, localURL) }
-                throw IrohTransportError.authentication("peer rejected replacement")
-            }
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: factory
         ))
 
         await provider.failEstablishedStream()
+        #expect(factoryCalls == 1)
+        #expect(conn.apiClient == nil)
+
+        let rejected = await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: factory
+        )
+        #expect(!rejected)
         #expect(factoryCalls == 2)
         #expect(conn.apiClient == nil)
         #expect(conn.wsClient == nil)
-        #expect(!conn.irohFallbackActive)
 
         await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 7))
         #expect(factoryCalls == 2, "Terminal integrity failures must not enter automatic retry")
     }
 
-    @Test func IrohOnlyEstablishedStreamFailureFullRebuildsWithoutHTTPFallback() async throws {
+    @Test func IrohOnlyEstablishedStreamFailureGoesOfflineUntilExplicitRetry() async throws {
         let conn = ServerConnection()
         let credentials = makeTestIrohOnlyCredentials()
         let metadata = try #require(credentials.transports.iroh)
@@ -360,6 +404,8 @@ struct ServerConnectionLifecycleTests {
 
         #expect(await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
                 factoryCalls += 1
                 return factoryCalls == 1
@@ -371,15 +417,26 @@ struct ServerConnectionLifecycleTests {
 
         await firstProvider.failEstablishedStream()
 
-        #expect(factoryCalls == 2)
+        #expect(factoryCalls == 1)
         #expect(await firstProvider.shutdownCount == 1)
+        #expect(conn.apiClient == nil)
+
+        #expect(await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: { _, _ in
+                factoryCalls += 1
+                return (replacementManager, replacementURL)
+            }
+        ))
+        #expect(factoryCalls == 2)
         #expect(conn.transportPath == .iroh)
-        #expect(!conn.irohFallbackActive)
         #expect(conn.apiClient !== originalAPIClient)
         #expect(await conn.apiClient?.baseURL == replacementURL)
     }
 
-    @Test func serverScopedFullRebuildLeavesOtherIrohManagerUntouched() async throws {
+    @Test func serverScopedIrohRetryLeavesOtherManagerUntouched() async throws {
         let firstConnection = ServerConnection()
         let secondConnection = ServerConnection()
         let firstCredentials = makeIrohPreferredCredentials()
@@ -400,6 +457,8 @@ struct ServerConnectionLifecycleTests {
 
         #expect(await firstConnection.configureForUse(
             credentials: firstCredentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
                 firstFactoryCalls += 1
                 return firstFactoryCalls == 1
@@ -409,105 +468,130 @@ struct ServerConnectionLifecycleTests {
         ))
         #expect(await secondConnection.configureForUse(
             credentials: secondCredentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in (secondManager, secondURL) }
         ))
         let secondAPIClient = secondConnection.apiClient
 
         await firstProvider.failEstablishedStream()
 
-        #expect(firstFactoryCalls == 2)
+        #expect(firstFactoryCalls == 1)
         #expect(await firstProvider.shutdownCount == 1)
+        #expect(firstConnection.apiClient == nil)
+        #expect(await firstConnection.reconfigureForExplicitRetry(
+            credentials: firstCredentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: { _, _ in
+                firstFactoryCalls += 1
+                return (replacementManager, replacementURL)
+            }
+        ))
+        #expect(firstFactoryCalls == 2)
+        #expect(await firstConnection.apiClient?.baseURL == replacementURL)
         #expect(await secondProvider.suspendCount == 0)
         #expect(await secondProvider.shutdownCount == 0)
         #expect(secondConnection.apiClient === secondAPIClient)
         #expect(secondConnection.transportPath == .iroh)
     }
 
-    @Test func automaticFullRebuildFallsBackWhenFreshIrohSetupIsUnavailable() async throws {
+    @Test func activeIrohFailureRestoresPairedHTTPSEligibility() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
         let provider = EstablishedStreamFailureRecoveryProvider()
         let manager = IrohConnectionManager(iroh: metadata, provider: provider)
         let localURL = try #require(URL(string: "http://127.0.0.1:42014"))
+        var pairedAvailable = false
         var factoryCalls = 0
         conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
 
         #expect(await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net", !pairedAvailable {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
+            },
             irohProxyFactory: { _, _ in
                 factoryCalls += 1
-                if factoryCalls == 1 { return (manager, localURL) }
-                throw IrohTransportError.unavailable("fresh Iroh setup unavailable")
+                return (manager, localURL)
             }
         ))
+        #expect(conn.transportPath == .iroh)
+        pairedAvailable = true
 
         await provider.failEstablishedStream()
 
-        #expect(factoryCalls == 2)
+        #expect(factoryCalls == 1, "The failed Iroh route is excluded for this pass")
         #expect(await provider.shutdownCount == 1)
         #expect(conn.transportPath == .paired)
-        #expect(conn.irohFallbackActive)
         #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
     }
 
-    @Test func irohPreferredRetriesStickyFallbackAtExplicitBoundary() async throws {
+    @Test func pairedFailureUsesIrohAndLaterExplicitRetryRestoresPaired() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let localURL = try #require(URL(string: "http://127.0.0.1:41993"))
-        var attempts = 0
+        var irohDials = 0
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
 
-        let configured = await conn.configureForUse(
+        #expect(await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
-                attempts += 1
-                if attempts == 1 {
-                    throw IrohTransportError.unavailable("initial outage")
-                }
+                irohDials += 1
                 return (nil, localURL)
             }
-        )
-        #expect(configured)
+        ))
         #expect(conn.transportPath == .paired)
-        #expect(conn.irohFallbackActive)
 
-        await conn.reevaluateIrohPreferredTransportAtBoundary()
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
 
-        #expect(attempts == 2)
+        #expect(irohDials == 1)
         #expect(conn.transportPath == .iroh)
-        #expect(!conn.irohFallbackActive)
         #expect(await conn.apiClient?.baseURL == localURL)
         #expect(await conn.apiClient?.environment.pinnedCertificateFingerprint == nil)
+
+        #expect(await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: { _, _ in
+                irohDials += 1
+                throw IrohTransportError.unavailable("must not dial after paired recovers")
+            }
+        ))
+        #expect(irohDials == 1)
+        #expect(conn.transportPath == .paired)
     }
 
-    @Test func unhealthyStickyFallbackRetriesIrohWithoutWaitingForForegroundBoundary() async throws {
+    @Test func unhealthyPairedRouteTriesIrohWithoutWaitingForForeground() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let localURL = try #require(URL(string: "http://127.0.0.1:42019"))
         var attempts = 0
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
 
         #expect(await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
                 attempts += 1
-                if attempts == 1 {
-                    throw IrohTransportError.unavailable("initial outage")
-                }
                 return (nil, localURL)
             }
         ))
         #expect(conn.transportPath == .paired)
-        #expect(conn.irohFallbackActive)
 
         await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
 
-        #expect(attempts == 2)
+        #expect(attempts == 1)
         #expect(conn.transportPath == .iroh)
-        #expect(!conn.irohFallbackActive)
         #expect(await conn.apiClient?.baseURL == localURL)
     }
 
-    @Test func IrohPingTimeoutPerformsFullRebuild() async throws {
+    @Test func IrohPingTimeoutGoesOfflineUntilExplicitRetry() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
@@ -522,6 +606,8 @@ struct ServerConnectionLifecycleTests {
 
         #expect(await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
                 factoryCalls += 1
                 return factoryCalls == 1
@@ -532,8 +618,20 @@ struct ServerConnectionLifecycleTests {
 
         await conn.handlePersistentStreamHealthFailure(.pingTimeout)
 
-        #expect(factoryCalls == 2)
+        #expect(factoryCalls == 1)
         #expect(await firstProvider.shutdownCount == 1)
+        #expect(conn.apiClient == nil)
+
+        #expect(await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: { _, _ in
+                factoryCalls += 1
+                return (replacementManager, replacementURL)
+            }
+        ))
+        #expect(factoryCalls == 2)
         #expect(conn.transportPath == .iroh)
         #expect(await conn.apiClient?.baseURL == replacementURL)
     }
@@ -550,7 +648,12 @@ struct ServerConnectionLifecycleTests {
         ))
         #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in true },
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
+            },
             irohProxyFactory: { _, _ in (nil, localURL) }
         ))
         #expect(conn.transportPath == .lan)
@@ -568,6 +671,8 @@ struct ServerConnectionLifecycleTests {
         let secondURL = try #require(URL(string: "http://127.0.0.1:42034"))
         #expect(await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: { _, _ in successfulServerInfo(appEventStream: true) },
             irohProxyFactory: { _, _ in (nil, firstURL) }
         ))
         conn.setSplitStreamCapabilitiesForTesting(appEventStream: true)
@@ -580,6 +685,8 @@ struct ServerConnectionLifecycleTests {
 
         #expect(await conn.reconfigureForExplicitRetry(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: { _, _ in successfulServerInfo(appEventStream: true) },
             irohProxyFactory: { _, _ in (nil, secondURL) }
         ))
 
@@ -592,7 +699,7 @@ struct ServerConnectionLifecycleTests {
         conn.disconnectStream()
     }
 
-    @Test func focusedWebSocketHealthCallbackPerformsFullIrohRebuild() async throws {
+    @Test func focusedWebSocketHealthCallbackExcludesIrohUntilExplicitRetry() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
@@ -606,6 +713,8 @@ struct ServerConnectionLifecycleTests {
         conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
         #expect(await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
                 factoryCalls += 1
                 return factoryCalls == 1
@@ -616,8 +725,20 @@ struct ServerConnectionLifecycleTests {
 
         await conn.reportFocusedStreamHealthFailureForTesting(.pingTimeout)
 
-        #expect(factoryCalls == 2)
+        #expect(factoryCalls == 1)
         #expect(await firstProvider.shutdownCount == 1)
+        #expect(conn.apiClient == nil)
+
+        #expect(await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: { _, _ in
+                factoryCalls += 1
+                return (replacementManager, replacementURL)
+            }
+        ))
+        #expect(factoryCalls == 2)
         #expect(conn.transportPath == .iroh)
         #expect(await conn.apiClient?.baseURL == replacementURL)
     }
@@ -634,11 +755,15 @@ struct ServerConnectionLifecycleTests {
         let secondURL = try #require(URL(string: "http://127.0.0.1:42028"))
         #expect(await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in (firstManager, firstURL) }
         ))
         let staleGeneration = conn.persistentStreamGenerationForTesting
         #expect(await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in (secondManager, secondURL) }
         ))
         let replacementAPI = conn.apiClient
@@ -655,35 +780,26 @@ struct ServerConnectionLifecycleTests {
         #expect(await conn.apiClient?.baseURL == secondURL)
     }
 
-    @Test func concurrentPersistentStreamFailuresCoalesceIntoOneFullRebuild() async throws {
+    @Test func concurrentPersistentStreamFailuresCoalesceIntoOneRouteWalk() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
-        let metadata = try #require(credentials.transports.iroh)
-        let firstProvider = EstablishedStreamFailureRecoveryProvider()
-        let replacementProvider = TrackingReachableIrohProvider()
-        let firstManager = IrohConnectionManager(iroh: metadata, provider: firstProvider)
-        let replacementManager = IrohConnectionManager(iroh: metadata, provider: replacementProvider)
-        let firstURL = try #require(URL(string: "http://127.0.0.1:42021"))
-        let replacementURL = try #require(URL(string: "http://127.0.0.1:42047"))
+        let localURL = try #require(URL(string: "http://127.0.0.1:42047"))
         let gate = SupersededSetupGate()
-        var factoryCalls = 0
+        var irohDials = 0
         conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
 
         #expect(await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
-                factoryCalls += 1
-                if factoryCalls == 2 {
-                    await gate.waitUntilReleased()
-                }
-                return factoryCalls == 1
-                    ? (firstManager, firstURL)
-                    : (replacementManager, replacementURL)
+                irohDials += 1
+                await gate.waitUntilReleased()
+                return (nil, localURL)
             }
         ))
 
         let firstRecovery = Task { @MainActor in
-            await firstProvider.failEstablishedStream()
+            await conn.handlePersistentStreamHealthFailure(.pingTimeout)
         }
         while !gate.isWaiting { await Task.yield() }
         let secondRecovery = Task { @MainActor in
@@ -696,23 +812,25 @@ struct ServerConnectionLifecycleTests {
         await firstRecovery.value
         await secondRecovery.value
 
-        #expect(factoryCalls == 2)
-        #expect(await firstProvider.shutdownCount == 1)
+        #expect(irohDials == 1)
         #expect(conn.transportPath == .iroh)
-        #expect(await conn.apiClient?.baseURL == replacementURL)
+        #expect(await conn.apiClient?.baseURL == localURL)
     }
 
     @Test func concurrentFailureRetainsFollowUpWhenRecoveryDoesNotReplaceStreams() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let gate = SupersededSetupGate()
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
         var attempts = 0
+        conn._automaticIrohRecoveryNowForTesting = { now }
 
         #expect(await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
                 attempts += 1
-                if attempts == 2 {
+                if attempts == 1 {
                     await gate.waitUntilReleased()
                 }
                 throw IrohTransportError.unavailable("relay remains unavailable")
@@ -735,26 +853,30 @@ struct ServerConnectionLifecycleTests {
             )
         }
         while !conn.persistentHealthRecoveryPendingForTesting { await Task.yield() }
+        now = now.addingTimeInterval(1)
         gate.release()
         await firstRecovery.value
         await secondRecovery.value
 
-        #expect(attempts == 3)
-        #expect(conn.transportPath == .paired)
+        #expect(attempts == 2)
+        #expect(conn.apiClient == nil)
     }
 
-    @Test func persistentHealthFailureDoesNotChangeHTTPOnlyConnection() async {
+    @Test func persistentHealthFailureOnHTTPOnlyConnectionFailsOfflineWithoutExpandingRoutes() async {
         let conn = ServerConnection()
-        #expect(await conn.configureForUse(credentials: makeHTTPOnlyCredentials()))
-        let originalAPIClient = conn.apiClient
+        #expect(await conn.configureForUse(
+            credentials: makeHTTPOnlyCredentials(),
+            serverInfoBootstrap: successfulServerInfoBootstrap
+        ))
 
         await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 7))
 
         #expect(conn.transportPath == .paired)
-        #expect(conn.apiClient === originalAPIClient)
+        #expect(conn.apiClient == nil)
+        #expect(conn.wsClient == nil)
     }
 
-    @Test func LANDiscoveredDuringInitialIrohProbeWinsBeforeAdoption() async throws {
+    @Test func LANDiscoveredDuringInitialIrohProbeWinsAtNextBoundary() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
@@ -765,7 +887,12 @@ struct ServerConnectionLifecycleTests {
         let configurationTask = Task { @MainActor in
             await conn.configureForUse(
                 credentials: credentials,
-                lanReachabilityProbe: { _, _ in true },
+                serverInfoBootstrap: { client, _ in
+                    if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                        throw URLError(.cannotConnectToHost)
+                    }
+                    return successfulServerInfo()
+                },
                 irohProxyFactory: { _, _ in (manager, localURL) }
             )
         }
@@ -779,118 +906,119 @@ struct ServerConnectionLifecycleTests {
             tlsCertFingerprintPrefix: "preferred-tls-fp"
         ))
         await provider.releaseEvidence()
-        let configured = await configurationTask.value
+        #expect(await configurationTask.value)
+        #expect(conn.transportPath == .iroh)
 
-        #expect(configured)
+        await conn.reevaluateIrohPreferredTransportAtBoundary()
+
         #expect(conn.transportPath == .lan)
         #expect(await provider.shutdownCount == 1)
     }
 
-    @Test func LANDiscoveredDuringActiveIrohProbeWinsAtBoundary() async throws {
+    @Test func verifiedLANAppearanceReplacesActiveIrohAtBoundary() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
-        let provider = SecondEvidenceGateIrohProvider()
+        let provider = TrackingReachableIrohProvider()
         let manager = IrohConnectionManager(iroh: metadata, provider: provider)
         let localURL = try #require(URL(string: "http://127.0.0.1:42008"))
-        let configured = await conn.configureForUse(
+        #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in true },
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
+            },
             irohProxyFactory: { _, _ in (manager, localURL) }
-        )
-        #expect(configured)
+        ))
         #expect(conn.transportPath == .iroh)
 
-        let boundaryTask = Task { @MainActor in
-            await conn.reevaluateIrohPreferredTransportAtBoundary()
-        }
-        while !(await provider.secondEvidenceIsWaiting) {
-            await Task.yield()
-        }
-        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+        let transition = conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "preferred-server-fp",
             tlsCertFingerprintPrefix: "preferred-tls-fp"
         ))
-        await provider.releaseSecondEvidence()
-        await boundaryTask.value
+        await transition?.value
 
         #expect(conn.transportPath == .lan)
         #expect(await provider.shutdownCount == 1)
     }
 
-    @Test func LANDiscoveredDuringBoundaryProbeStillWinsOverIroh() async throws {
+    @Test func LANDiscoveredDuringIrohRecoveryStillWinsTheSupersedingPass() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
         let provider = GatedReachableEvidenceIrohProvider()
         let manager = IrohConnectionManager(iroh: metadata, provider: provider)
         let localURL = try #require(URL(string: "http://127.0.0.1:42006"))
-        var attempts = 0
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
 
-        let configured = await conn.configureForUse(
+        #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in true },
-            irohProxyFactory: { _, _ in
-                attempts += 1
-                if attempts == 1 {
-                    throw IrohTransportError.unavailable("initial outage")
-                }
-                return (manager, localURL)
-            }
-        )
-        #expect(configured)
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        ))
         #expect(conn.transportPath == .paired)
 
-        let boundaryTask = Task { @MainActor in
-            await conn.reevaluateIrohPreferredTransportAtBoundary()
+        let recovery = Task { @MainActor in
+            await conn.handlePersistentStreamHealthFailure(.pingTimeout)
         }
         while !(await provider.evidenceIsWaiting) {
             await Task.yield()
         }
-        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+        let transition = conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "preferred-server-fp",
             tlsCertFingerprintPrefix: "preferred-tls-fp"
         ))
         await provider.releaseEvidence()
-        await boundaryTask.value
+        await recovery.value
+        await transition?.value
 
         #expect(conn.transportPath == .lan)
         #expect(await provider.shutdownCount == 1)
     }
 
-    @Test func overlappingBoundaryReevaluationsCoalesceInsteadOfDroppingRecovery() async throws {
+    @Test func overlappingBoundaryReevaluationsCoalesceAndRestorePairedEligibility() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let metadata = try #require(credentials.transports.iroh)
         let provider = CoalescedBoundaryIrohProvider()
         let manager = IrohConnectionManager(iroh: metadata, provider: provider)
         let localURL = try #require(URL(string: "http://127.0.0.1:42012"))
+        var pairedAvailable = false
 
         #expect(await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net", !pairedAvailable {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
+            },
             irohProxyFactory: { _, _ in (manager, localURL) }
         ))
+        #expect(conn.transportPath == .iroh)
+        pairedAvailable = true
 
         let firstBoundary = Task { @MainActor in
-            await conn.reevaluateIrohPreferredTransportAtBoundary()
+            await conn.reevaluateIrohPreferredTransportAtBoundary(excluding: [.paired])
         }
         while !(await provider.secondEvidenceIsWaiting) {
             await Task.yield()
         }
-        await conn.reevaluateIrohPreferredTransportAtBoundary()
+        await conn.reevaluateIrohPreferredTransportAtBoundary(excluding: [.iroh])
         await provider.releaseSecondEvidence()
         await firstBoundary.value
 
-        #expect(await provider.evidenceCount == 3)
+        #expect(await provider.evidenceCount == 2)
         #expect(conn.transportPath == .paired)
-        #expect(conn.irohFallbackActive)
     }
 
-    @Test func irohPreferredFallsBackWhenBoundaryProbeBecomesUnavailable() async throws {
+    @Test func unavailableIrohPassGoesOfflineThenLaterRetryRestoresPaired() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let localURL = try #require(URL(string: "http://127.0.0.1:41994"))
@@ -900,97 +1028,115 @@ struct ServerConnectionLifecycleTests {
         ])
         let metadata = try #require(credentials.transports.iroh)
         let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        var pairedAvailable = false
+        let bootstrap: ServerConnectionInfoBootstrap = { client, _ in
+            if await client.baseURL.host == "preferred.tailnet.ts.net", !pairedAvailable {
+                throw URLError(.cannotConnectToHost)
+            }
+            return successfulServerInfo()
+        }
 
-        let configured = await conn.configureForUse(
+        #expect(await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: bootstrap,
             irohProxyFactory: { _, _ in (manager, localURL) }
-        )
-        #expect(configured)
+        ))
         #expect(conn.transportPath == .iroh)
 
-        await conn.reevaluateIrohPreferredTransportAtBoundary()
+        let unavailableRetry = await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            serverInfoBootstrap: bootstrap,
+            irohProxyFactory: { _, _ in (manager, localURL) }
+        )
+        #expect(!unavailableRetry)
+        #expect(conn.apiClient == nil)
 
+        pairedAvailable = true
+        #expect(await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            serverInfoBootstrap: bootstrap,
+            irohProxyFactory: { _, _ in
+                throw IrohTransportError.unavailable("must not dial")
+            }
+        ))
         #expect(conn.transportPath == .paired)
-        #expect(conn.irohFallbackActive)
         #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
     }
 
-    @Test func verifiedLANReplacesIrohAtExplicitBoundary() async throws {
+    @Test func verifiedLANAppearanceReplacesIrohUsingAutomaticOrder() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let localURL = try #require(URL(string: "http://127.0.0.1:41995"))
-        let configured = await conn.configureForUse(
+        #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in true },
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
+            },
             irohProxyFactory: { _, _ in (nil, localURL) }
-        )
-        #expect(configured)
+        ))
         #expect(conn.transportPath == .iroh)
 
-        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+        let transition = conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "preferred-server-fp",
             tlsCertFingerprintPrefix: "preferred-tls-fp"
         ))
-        #expect(conn.transportPath == .iroh, "Healthy Iroh is not interrupted immediately")
-
-        await conn.reevaluateIrohPreferredTransportAtBoundary()
+        await transition?.value
 
         #expect(conn.transportPath == .lan)
-        #expect(!conn.irohFallbackActive)
     }
 
-    @Test func leavingVerifiedLANRetriesIrohAtBoundary() async throws {
+    @Test func leavingVerifiedLANSelectsPairedHTTPSBeforeIroh() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let localURL = try #require(URL(string: "http://127.0.0.1:41997"))
+        var irohDials = 0
         conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "preferred-server-fp",
             tlsCertFingerprintPrefix: "preferred-tls-fp"
         ))
-        let configured = await conn.configureForUse(
+        #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in true },
-            irohProxyFactory: { _, _ in (nil, localURL) }
-        )
-        #expect(configured)
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: { _, _ in
+                irohDials += 1
+                return (nil, localURL)
+            }
+        ))
         #expect(conn.transportPath == .lan)
 
-        conn.setDiscoveredLANEndpoint(nil)
-        for _ in 0..<100 where conn.transportPath != .iroh {
-            await Task.yield()
-        }
+        let transition = conn.setDiscoveredLANEndpoint(nil)
+        await transition?.value
 
-        #expect(conn.transportPath == .iroh)
-        #expect(await conn.apiClient?.baseURL == localURL)
+        #expect(irohDials == 0)
+        #expect(conn.transportPath == .paired)
+        #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
     }
 
-    @Test func terminalBoundaryFailureDisablesStickyHTTPFallback() async throws {
+    @Test func terminalIrohFailureAfterPairedRouteFailureRemainsLocked() async {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         var attempts = 0
 
-        let configured = await conn.configureForUse(
+        #expect(await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
                 attempts += 1
-                if attempts == 1 {
-                    throw IrohTransportError.unavailable("initial outage")
-                }
                 throw IrohTransportError.authentication("token rejected")
             }
-        )
-        #expect(configured)
-        #expect(conn.irohFallbackActive)
-        #expect(conn.apiClient != nil)
+        ))
+        #expect(conn.transportPath == .paired)
 
-        await conn.reevaluateIrohPreferredTransportAtBoundary()
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
 
-        #expect(attempts == 2)
-        #expect(!conn.irohFallbackActive)
+        #expect(attempts == 1)
         #expect(conn.apiClient == nil)
         #expect(conn.wsClient == nil)
 
@@ -1013,6 +1159,8 @@ struct ServerConnectionLifecycleTests {
 
         let configured = await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in (manager, localURL) }
         )
 
@@ -1067,28 +1215,34 @@ struct ServerConnectionLifecycleTests {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         var attempts = 0
-        let initiallyConfigured = await conn.configureForUse(
+        #expect(await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
                 attempts += 1
-                if attempts == 1 {
-                    throw IrohTransportError.unavailable("initial outage")
-                }
                 throw IrohTransportError.authentication("token rejected")
             }
-        )
-        #expect(initiallyConfigured)
+        ))
 
-        await conn.reevaluateIrohPreferredTransportAtBoundary()
+        await conn.handlePersistentStreamHealthFailure(.reconnectThreshold(attempt: 4))
+        #expect(attempts == 1)
         #expect(conn.apiClient == nil)
 
         let rejected = await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
+            },
             irohProxyFactory: { _, _ in
+                attempts += 1
                 throw IrohTransportError.authentication("still rejected")
             }
         )
         #expect(!rejected)
+        #expect(attempts == 2)
 
         conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
             host: "192.168.1.42",
@@ -1099,21 +1253,27 @@ struct ServerConnectionLifecycleTests {
         #expect(conn.apiClient == nil, "A failed explicit retry must not clear terminal lockout")
     }
 
-    @Test func terminalExplicitReconfigurationInvalidatesUsableFallback() async {
+    @Test func terminalExplicitReconfigurationInvalidatesUsablePairedRoute() async {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
-        let initiallyConfigured = await conn.configureForUse(
+        #expect(await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
-                throw IrohTransportError.unavailable("initial outage")
+                throw IrohTransportError.unavailable("must not dial")
             }
-        )
-        #expect(initiallyConfigured)
-        #expect(conn.irohFallbackActive)
+        ))
+        #expect(conn.transportPath == .paired)
         #expect(conn.apiClient != nil)
 
         let rejected = await conn.configureForUse(
             credentials: credentials,
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
+            },
             irohProxyFactory: { _, _ in
                 throw IrohTransportError.authentication("token rejected")
             }
@@ -1122,10 +1282,9 @@ struct ServerConnectionLifecycleTests {
         #expect(!rejected)
         #expect(conn.apiClient == nil)
         #expect(conn.wsClient == nil)
-        #expect(!conn.irohFallbackActive)
     }
 
-    @Test func supersededAvailabilityFallbackCannotOverwriteNewerConfiguration() async throws {
+    @Test func supersededAvailabilityPassCannotOverwriteNewerConfiguration() async throws {
         let conn = ServerConnection()
         let staleCredentials = makeIrohPreferredCredentials()
         let middleCredentials = ServerCredentials(
@@ -1152,6 +1311,12 @@ struct ServerConnectionLifecycleTests {
         let staleTask = Task { @MainActor in
             await conn.configureForUse(
                 credentials: staleCredentials,
+                serverInfoBootstrap: { client, _ in
+                    if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                        throw URLError(.cannotConnectToHost)
+                    }
+                    return successfulServerInfo()
+                },
                 irohProxyFactory: { _, _ in (manager, localURL) }
             )
         }
@@ -1160,11 +1325,11 @@ struct ServerConnectionLifecycleTests {
         }
 
         let middleTask = Task { @MainActor in
-            await conn.configureForUse(credentials: middleCredentials)
+            await conn.configureForUse(credentials: middleCredentials, serverInfoBootstrap: successfulServerInfoBootstrap)
         }
         await Task.yield()
         let newestTask = Task { @MainActor in
-            await conn.configureForUse(credentials: newestCredentials)
+            await conn.configureForUse(credentials: newestCredentials, serverInfoBootstrap: successfulServerInfoBootstrap)
         }
         await Task.yield()
         await provider.releaseShutdown()
@@ -1178,7 +1343,7 @@ struct ServerConnectionLifecycleTests {
         #expect(await conn.apiClient?.baseURL.host == "newest.ts.net")
     }
 
-    @Test func unavailableLANCandidateDoesNotOverwritePairedFallback() async {
+    @Test func unavailableLANCandidateDoesNotOverwritePairedRoute() async {
         let conn = ServerConnection()
         let credentials = ServerCredentials(
             host: "my-server.tail00000.ts.net",
@@ -1189,31 +1354,31 @@ struct ServerConnectionLifecycleTests {
             serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
             tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
         )
-        var probeCount = 0
+        var lanBootstraps = 0
         #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in
-                probeCount += 1
-                return false
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "192.168.1.42" {
+                    lanBootstraps += 1
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
             }
         ))
-        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+        let transition = conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "SERVERFINGERPRINT",
             tlsCertFingerprintPrefix: "TLSFINGERPRINT"
         ))
-        while probeCount == 0 {
-            await Task.yield()
-        }
-        await Task.yield()
+        await transition?.value
 
-        #expect(probeCount == 1)
+        #expect(lanBootstraps == 1)
         #expect(conn.transportPath == .paired)
         #expect(await conn.apiClient?.baseURL.host == "my-server.tail00000.ts.net")
     }
 
-    @Test func replacingLANCandidateCannotAdoptStaleProbeResult() async {
+    @Test func replacingLANCandidateCannotAdoptStaleBootstrapResult() async {
         let conn = ServerConnection()
         let credentials = makeHTTPOnlyCredentials()
         let gate = LANCandidateProbeGate(
@@ -1222,7 +1387,17 @@ struct ServerConnectionLifecycleTests {
         )
         #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { selection, _ in await gate.probe(selection) }
+            serverInfoBootstrap: { client, _ in
+                let url = await client.baseURL
+                guard url.host?.hasPrefix("192.168.1.") == true else {
+                    return successfulServerInfo()
+                }
+                let selection = EndpointSelection(baseURL: url, transportPath: .lan)
+                guard await gate.probe(selection) else {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
+            }
         ))
 
         let staleTransition = conn.setDiscoveredLANEndpoint(
@@ -1254,7 +1429,19 @@ struct ServerConnectionLifecycleTests {
         )
         #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { selection, _ in await gate.probe(selection) },
+            serverInfoBootstrap: { client, _ in
+                let url = await client.baseURL
+                if url.host == "preferred.tailnet.ts.net" {
+                    throw URLError(.cannotConnectToHost)
+                }
+                if url.host?.hasPrefix("192.168.1.") == true {
+                    let selection = EndpointSelection(baseURL: url, transportPath: .lan)
+                    guard await gate.probe(selection) else {
+                        throw URLError(.cannotConnectToHost)
+                    }
+                }
+                return successfulServerInfo()
+            },
             irohProxyFactory: { _, _ in (manager, localURL) }
         ))
 
@@ -1280,24 +1467,24 @@ struct ServerConnectionLifecycleTests {
         #expect(await gate.probeCount == 2)
     }
 
-    @Test func repeatedIdenticalLANCandidateStartsOneProbe() async {
+    @Test func repeatedIdenticalLANCandidateStartsOneBootstrap() async {
         let conn = ServerConnection()
         let credentials = makeHTTPOnlyCredentials()
         let counter = LANProbeCounter()
         #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in
-                await counter.increment()
-                return true
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "192.168.1.42" {
+                    await counter.increment()
+                }
+                return successfulServerInfo()
             }
         ))
         let candidate = makeLANCandidate(host: "192.168.1.42")
 
+        let transition = conn.setDiscoveredLANEndpoint(candidate)
         conn.setDiscoveredLANEndpoint(candidate)
-        conn.setDiscoveredLANEndpoint(candidate)
-        for _ in 0..<100 where conn.transportPath != .lan {
-            await Task.yield()
-        }
+        await transition?.value
 
         #expect(await counter.value == 1)
         #expect(conn.transportPath == .lan)
@@ -1312,20 +1499,23 @@ struct ServerConnectionLifecycleTests {
         let localURL = try #require(URL(string: "http://127.0.0.1:42016"))
         #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in true },
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
+            },
             irohProxyFactory: { _, _ in (manager, localURL) }
         ))
         #expect(conn.transportPath == .iroh)
 
-        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+        let transition = conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "preferred-server-fp",
             tlsCertFingerprintPrefix: "preferred-tls-fp"
         ))
-        for _ in 0..<100 where conn.transportPath != .lan {
-            await Task.yield()
-        }
+        await transition?.value
 
         #expect(conn.transportPath == .lan)
         #expect(await provider.shutdownCount == 1)
@@ -1338,31 +1528,34 @@ struct ServerConnectionLifecycleTests {
         let provider = TrackingReachableIrohProvider()
         let manager = IrohConnectionManager(iroh: metadata, provider: provider)
         let localURL = try #require(URL(string: "http://127.0.0.1:42018"))
-        var probeCount = 0
+        var lanBootstraps = 0
         #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in
-                probeCount += 1
-                return false
+            serverInfoBootstrap: { client, _ in
+                switch await client.baseURL.host {
+                case "preferred.tailnet.ts.net":
+                    throw URLError(.cannotConnectToHost)
+                case "192.168.1.42":
+                    lanBootstraps += 1
+                    throw URLError(.notConnectedToInternet)
+                default:
+                    return successfulServerInfo()
+                }
             },
             irohProxyFactory: { _, _ in (manager, localURL) }
         ))
 
-        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+        let transition = conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
             host: "192.168.1.42",
             port: 7749,
             serverFingerprintPrefix: "preferred-server-fp",
             tlsCertFingerprintPrefix: "preferred-tls-fp"
         ))
-        while probeCount == 0 {
-            await Task.yield()
-        }
-        await Task.yield()
+        await transition?.value
         conn.setDiscoveredLANEndpoint(nil)
-        await conn.reevaluateIrohPreferredTransportAtBoundary()
 
+        #expect(lanBootstraps == 1)
         #expect(conn.transportPath == .iroh)
-        #expect(!conn.irohFallbackActive)
         #expect(await conn.apiClient?.baseURL == localURL)
     }
 
@@ -1385,7 +1578,7 @@ struct ServerConnectionLifecycleTests {
         ))
         #expect(await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in true }
+            serverInfoBootstrap: successfulServerInfoBootstrap
         ))
         #expect(conn.transportPath == .lan)
         conn._setActiveSessionIdForTesting("session-1")
@@ -1422,6 +1615,8 @@ struct ServerConnectionLifecycleTests {
         let firstTask = Task { @MainActor in
             await conn.configureForUse(
                 credentials: credentials,
+                routeMode: .irohOnly,
+                serverInfoBootstrap: successfulServerInfoBootstrap,
                 irohProxyFactory: { _, _ in
                     await gate.waitUntilReleased()
                     return (firstManager, firstURL)
@@ -1434,6 +1629,8 @@ struct ServerConnectionLifecycleTests {
 
         let secondResult = await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in (adoptedManager, adoptedURL) }
         )
         gate.release()
@@ -1459,6 +1656,8 @@ struct ServerConnectionLifecycleTests {
         let firstTask = Task { @MainActor in
             await conn.configureForUse(
                 credentials: credentials,
+                routeMode: .irohOnly,
+                serverInfoBootstrap: successfulServerInfoBootstrap,
                 irohProxyFactory: { _, _ in
                     await gate.waitUntilReleased()
                     return (sharedManager, firstURL)
@@ -1471,6 +1670,8 @@ struct ServerConnectionLifecycleTests {
 
         let secondResult = await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in (sharedManager, adoptedURL) }
         )
         gate.release()
@@ -1482,7 +1683,7 @@ struct ServerConnectionLifecycleTests {
         #expect(await conn.apiClient?.baseURL == adoptedURL)
     }
 
-    @Test func leavingVerifiedLANUsesStickyHTTPOnlyAfterIrohUnavailable() async throws {
+    @Test func leavingVerifiedLANUsesPairedHTTPSWithoutIrohDial() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
@@ -1491,21 +1692,23 @@ struct ServerConnectionLifecycleTests {
             serverFingerprintPrefix: "preferred-server-fp",
             tlsCertFingerprintPrefix: "preferred-tls-fp"
         ))
+        var irohDials = 0
         let configured = await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in true },
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
-                throw IrohTransportError.unavailable("remote path unavailable")
+                irohDials += 1
+                throw IrohTransportError.unavailable("must not dial")
             }
         )
         #expect(configured)
         #expect(conn.transportPath == .lan)
 
-        conn.setDiscoveredLANEndpoint(nil)
-        await conn.reevaluateIrohPreferredTransportAtBoundary(forceIrohRetry: true)
+        let transition = conn.setDiscoveredLANEndpoint(nil)
+        await transition?.value
 
+        #expect(irohDials == 0)
         #expect(conn.transportPath == .paired)
-        #expect(conn.irohFallbackActive)
         #expect(await conn.apiClient?.baseURL.host == "preferred.tailnet.ts.net")
     }
 
@@ -1520,7 +1723,7 @@ struct ServerConnectionLifecycleTests {
         ))
         let configured = await conn.configureForUse(
             credentials: credentials,
-            lanReachabilityProbe: { _, _ in true }
+            serverInfoBootstrap: successfulServerInfoBootstrap
         )
         let originalAPIClient = conn.apiClient
         #expect(configured)
@@ -1541,6 +1744,8 @@ struct ServerConnectionLifecycleTests {
         let manager = IrohConnectionManager(iroh: metadata, provider: provider)
         let configured = await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in (manager, localURL) }
         )
         #expect(configured)
@@ -1548,6 +1753,8 @@ struct ServerConnectionLifecycleTests {
 
         let rejected = await conn.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
                 throw IrohTransportError.authentication("rejected before manager return")
             }
@@ -1559,25 +1766,34 @@ struct ServerConnectionLifecycleTests {
         #expect(conn.wsClient == nil)
     }
 
-    @Test func terminalActiveIrohFailureShutsDownManager() async throws {
+    @Test func terminalActiveIrohFailureShutsDownActiveAndRejectedManagers() async throws {
         let conn = ServerConnection()
         let credentials = makeIrohPreferredCredentials()
         let localURL = try #require(URL(string: "http://127.0.0.1:41999"))
-        let provider = SequencedPathEvidenceProvider(results: [
-            .success(IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)),
-            .failure(IrohTransportError.authentication("peer rejected")),
-        ])
+        let activeProvider = TrackingReachableIrohProvider()
+        let rejectedProvider = TrackingTerminalIrohProvider()
         let metadata = try #require(credentials.transports.iroh)
-        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let activeManager = IrohConnectionManager(iroh: metadata, provider: activeProvider)
+        let rejectedManager = IrohConnectionManager(iroh: metadata, provider: rejectedProvider)
+        var factoryCalls = 0
         let configured = await conn.configureForUse(
             credentials: credentials,
-            irohProxyFactory: { _, _ in (manager, localURL) }
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
+            irohProxyFactory: { _, _ in
+                factoryCalls += 1
+                return factoryCalls == 1
+                    ? (activeManager, localURL)
+                    : (rejectedManager, localURL)
+            }
         )
         #expect(configured)
 
-        await conn.reevaluateIrohPreferredTransportAtBoundary()
+        await conn.reevaluateIrohPreferredTransportAtBoundary(excluding: [.paired])
 
-        #expect(await provider.shutdownCount == 1)
+        #expect(factoryCalls == 2)
+        #expect(await activeProvider.shutdownCount == 1)
+        #expect(await rejectedProvider.shutdownCount == 1)
         #expect(conn.apiClient == nil)
         #expect(conn.wsClient == nil)
     }
@@ -1598,7 +1814,7 @@ struct ServerConnectionLifecycleTests {
         #expect(attempts == 1)
     }
 
-    @Test func shortLivedClientFallsBackBeforeRunningOperation() async throws {
+    @Test func shortLivedClientUsesPairedHTTPSBeforeIroh() async throws {
         let credentials = makeIrohPreferredCredentials()
         let server = try #require(PairedServer(from: credentials))
         let operationCount = LifecycleOperationCounter()
@@ -1609,6 +1825,7 @@ struct ServerConnectionLifecycleTests {
             managerFactory: { metadata in
                 IrohConnectionManager(iroh: metadata, provider: UnavailableIrohProvider())
             },
+            httpAvailabilityProbe: { _ in },
             operation: { api in
                 await operationCount.increment()
                 return await api.baseURL.host
@@ -1633,13 +1850,14 @@ struct ServerConnectionLifecycleTests {
                 )
             },
             lanReachabilityProbe: { _, _ in true },
+            httpAvailabilityProbe: { _ in },
             operation: { api in await api.baseURL.port }
         )
 
         #expect(selectedPort == 8443)
     }
 
-    @Test func shortLivedClientRejectsUnreachableLANBeforeRunningOperation() async throws {
+    @Test func shortLivedClientRejectsUnreachableLANThenUsesPairedHTTPS() async throws {
         let credentials = makeIrohPreferredCredentials()
         let server = try #require(PairedServer(from: credentials))
         let operationCount = LifecycleOperationCounter()
@@ -1657,6 +1875,7 @@ struct ServerConnectionLifecycleTests {
             managerFactory: { metadata in
                 IrohConnectionManager(iroh: metadata, provider: TrackingReachableIrohProvider())
             },
+            httpAvailabilityProbe: { _ in },
             operation: { api in
                 await operationCount.increment()
                 return await api.baseURL.host
@@ -1664,7 +1883,7 @@ struct ServerConnectionLifecycleTests {
         )
 
         #expect(await operationCount.value == 1)
-        #expect(selectedHost == "127.0.0.1")
+        #expect(selectedHost == "preferred.tailnet.ts.net")
     }
 
     @Test func shortLivedUnpinnedLANClientCarriesSignedTLSServerName() async throws {
@@ -1681,6 +1900,7 @@ struct ServerConnectionLifecycleTests {
                 )
             },
             lanReachabilityProbe: { _, _ in true },
+            httpAvailabilityProbe: { _ in },
             operation: { api in
                 (await api.baseURL.host, await api.environment.tlsServerName)
             }
@@ -1702,6 +1922,7 @@ struct ServerConnectionLifecycleTests {
                 managerFactory: { metadata in
                     IrohConnectionManager(iroh: metadata, provider: ReachableIrohProvider())
                 },
+                httpAvailabilityProbe: { _ in },
                 operation: { _ in
                     await operationCount.increment()
                     throw IrohTransportError.unavailable("operation failed")
@@ -1717,6 +1938,8 @@ struct ServerConnectionLifecycleTests {
         var proxyStarted = false
         let result = await conn.configureForUse(
             credentials: makeTestIrohOnlyCredentials(alpns: ["oppi/pair/1"]),
+            routeMode: .irohOnly,
+            serverInfoBootstrap: successfulServerInfoBootstrap,
             irohProxyFactory: { _, _ in
                 proxyStarted = true
                 return (nil, URL(string: "http://127.0.0.1:41992")!)
@@ -2193,6 +2416,723 @@ private struct ReachableIrohProvider: IrohConnectionProviding {
 
     func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
         IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+    }
+
+    func suspendConnections() async {}
+    func shutdown() async {}
+}
+
+@Suite("ServerConnection Automatic Routing", .serialized)
+@MainActor
+struct ServerConnectionAutomaticRoutingTests {
+    @Test func deadHTTPCandidateUsesFastDeadlineBeforeIrohGetsIndependentBudget() async throws {
+        let conn = ServerConnection()
+        let probe = CandidateDeadlineProbe()
+        let irohDeadlineGate = CandidateDeadlineGate()
+        let localURL = try #require(URL(string: "http://127.0.0.1:42112"))
+        conn.setDiscoveredLANEndpoint(LANDiscoveredEndpoint(
+            host: "192.168.1.42",
+            port: 7749,
+            serverFingerprintPrefix: "preferred-server-fp",
+            tlsCertFingerprintPrefix: "preferred-tls-fp"
+        ))
+
+        let configured = await conn.configureForUse(
+            credentials: makeIrohPreferredCredentials(),
+            routeMode: .automatic,
+            httpBootstrapDeadline: {
+                probe.recordHTTPFactory()
+                return .init(wait: { probe.expireHTTPDeadline() })
+            },
+            irohCandidateDeadline: {
+                probe.recordIrohFactory()
+                return .init(wait: { try await irohDeadlineGate.waitForExpiry() })
+            },
+            serverInfoBootstrap: { client, deadline in
+                if await client.baseURL.host != "127.0.0.1" {
+                    try await deadline.waitForExpiry()
+                    throw URLError(.timedOut)
+                }
+                return successfulServerInfo()
+            },
+            irohProxyFactory: { _, _ in
+                await irohDeadlineGate.waitUntilStarted()
+                return (nil, localURL)
+            }
+        )
+
+        #expect(configured)
+        #expect(conn.transportPath == .iroh)
+        #expect(probe.httpFactoryCount == 2)
+        #expect(probe.httpDeadlineExpirations == 2)
+        #expect(probe.irohFactoryCount == 1)
+        #expect(ServerConnection.httpCandidateTimeoutDefault == .milliseconds(1_500))
+        #expect(ServerConnection.irohReachabilityTimeoutDefault == .seconds(8))
+    }
+
+    @Test func automaticPairedBootstrapRetainsWinningClientWithoutIrohDial() async throws {
+        let conn = ServerConnection()
+        var constructedClients: [APIClient] = []
+        var irohDials = 0
+
+        let configured = await conn.configureForUse(
+            credentials: makeIrohPreferredCredentials(),
+            routeMode: .automatic,
+            apiClientFactory: { environment, observer in
+                let client = APIClient(environment: environment, availabilityObserver: observer)
+                constructedClients.append(client)
+                return client
+            },
+            serverInfoBootstrap: { _, _ in successfulServerInfo() },
+            irohProxyFactory: { _, _ in
+                irohDials += 1
+                throw IrohTransportError.unavailable("must not dial")
+            }
+        )
+
+        #expect(configured)
+        #expect(conn.transportPath == .paired)
+        #expect(irohDials == 0)
+        #expect(constructedClients.count == 1)
+        #expect(conn.apiClient === constructedClients[0])
+    }
+
+    @Test func automaticPairedAvailabilityFailureDialsIrohOnce() async throws {
+        let conn = ServerConnection()
+        let localURL = try #require(URL(string: "http://127.0.0.1:42101"))
+        var irohDials = 0
+
+        let configured = await conn.configureForUse(
+            credentials: makeIrohPreferredCredentials(),
+            routeMode: .automatic,
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
+            },
+            irohProxyFactory: { _, _ in
+                irohDials += 1
+                return (nil, localURL)
+            }
+        )
+
+        #expect(configured)
+        #expect(irohDials == 1)
+        #expect(conn.transportPath == .iroh)
+    }
+
+    @Test(arguments: [
+        RoutingBootstrapFailure.authentication,
+        .decoding,
+    ])
+    func automaticDoesNotRouteAroundAuthenticationOrDecodeFailure(
+        failure: RoutingBootstrapFailure
+    ) async {
+        let conn = ServerConnection()
+        var irohDials = 0
+
+        let configured = await conn.configureForUse(
+            credentials: makeIrohPreferredCredentials(),
+            routeMode: .automatic,
+            serverInfoBootstrap: { _, _ in try failure.throwError() },
+            irohProxyFactory: { _, _ in
+                irohDials += 1
+                throw IrohTransportError.unavailable("must not dial")
+            }
+        )
+
+        #expect(!configured)
+        #expect(irohDials == 0)
+        #expect(conn.apiClient == nil)
+    }
+
+    @Test func APIAvailabilityObserverAcceptsCurrentClientAndIgnoresStaleClient() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:42102"))
+        var observers: [APIClientAvailabilityObserver] = []
+        var irohDials = 0
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
+
+        let factory: ServerConnectionAPIClientFactory = { environment, observer in
+            if let observer { observers.append(observer) }
+            return APIClient(environment: environment, availabilityObserver: observer)
+        }
+        let bootstrap: ServerConnectionInfoBootstrap = { _, _ in successfulServerInfo() }
+        let irohFactory: @MainActor (IrohServerTransport, String) async throws -> (IrohConnectionManager?, URL) = { _, _ in
+            irohDials += 1
+            return (nil, localURL)
+        }
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .automatic,
+            apiClientFactory: factory,
+            serverInfoBootstrap: bootstrap,
+            irohProxyFactory: irohFactory
+        ))
+        let staleObserver = try #require(observers.first)
+
+        #expect(await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            routeMode: .automatic,
+            apiClientFactory: factory,
+            serverInfoBootstrap: bootstrap,
+            irohProxyFactory: irohFactory
+        ))
+        let currentObserver = try #require(observers.last)
+
+        await staleObserver(.cannotConnectToHost)
+        #expect(irohDials == 0)
+
+        await currentObserver(.cannotConnectToHost)
+        #expect(irohDials == 1)
+        #expect(conn.transportPath == .iroh)
+    }
+
+    @Test func failedRouteExclusionIsRestoredOnLaterExplicitRetry() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        var pairedBootstraps = 0
+        var irohDials = 0
+        var currentObserver: APIClientAvailabilityObserver?
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .automatic,
+            apiClientFactory: { environment, observer in
+                currentObserver = observer
+                return APIClient(environment: environment, availabilityObserver: observer)
+            },
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                    pairedBootstraps += 1
+                }
+                return successfulServerInfo()
+            },
+            irohProxyFactory: { _, _ in
+                irohDials += 1
+                throw IrohTransportError.unavailable("iroh unavailable")
+            }
+        ))
+
+        await currentObserver?(.cannotConnectToHost)
+        #expect(pairedBootstraps == 1, "The failed paired route is excluded from its recovery pass")
+        #expect(irohDials == 1)
+        #expect(conn.apiClient == nil)
+
+        #expect(await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            routeMode: .automatic,
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                    pairedBootstraps += 1
+                }
+                return successfulServerInfo()
+            },
+            irohProxyFactory: { _, _ in
+                irohDials += 1
+                throw IrohTransportError.unavailable("must not dial after paired recovers")
+            }
+        ))
+        #expect(pairedBootstraps == 2)
+        #expect(irohDials == 1)
+        #expect(conn.transportPath == .paired)
+    }
+
+    @Test func healthyForegroundIrohRecyclesInPlaceWithoutRouteHandoff() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let provider = ForegroundRecoveryIrohProvider()
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .automatic,
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return successfulServerInfo()
+            },
+            irohProxyFactory: { _, token in
+                (manager, try await manager.startProxy(token: token))
+            }
+        ))
+        let originalAPIClient = conn.apiClient
+        let originalGeneration = conn.persistentStreamGenerationForTesting
+
+        let result = await conn.resetIrohTransportForForegroundRecoveryIfNeeded()
+
+        #expect(result == .retained)
+        #expect(conn.transportPath == .iroh)
+        #expect(conn.apiClient === originalAPIClient)
+        #expect(conn.persistentStreamGenerationForTesting == originalGeneration)
+        #expect(await provider.recycleCount == 1)
+        #expect(await provider.evidenceCount == 2)
+    }
+
+    @Test func changedForegroundLoopbackRestoresFocusedAndAppEventStreamsWithOneRebuild() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let provider = ForegroundRecoveryIrohProvider()
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42113"))
+        let secondURL = try #require(URL(string: "http://127.0.0.1:42114"))
+        var commits: [ConnectionTransportPath] = []
+        var appEventStarts = 0
+        var focusedConnects = 0
+        var focusedStreamContinuations: [AsyncStream<StreamFrameEvent>.Continuation] = []
+        conn._onCommittedCompositionForTesting = { commits.append($0) }
+        conn._startAppEventStreamForTesting = { _ in appEventStarts += 1 }
+        conn._connectStreamForTesting = {
+            focusedConnects += 1
+            return AsyncStream { focusedStreamContinuations.append($0) }
+        }
+        conn._foregroundIrohProxyURLForTesting = { _, _ in secondURL }
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: { _, _ in successfulServerInfo(appEventStream: true) },
+            irohProxyFactory: { _, _ in (manager, firstURL) }
+        ))
+        conn._setActiveSessionIdForTesting("session-foreground")
+        conn.prepareFocusedSessionStreamEndpointForTesting(
+            sessionId: "session-foreground",
+            workspaceId: "workspace-foreground"
+        )
+        let sessionEvents = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["session-foreground"] = continuation
+        }
+        conn.connectStream()
+        let originalGeneration = conn.persistentStreamGenerationForTesting
+
+        let result = await conn.resetIrohTransportForForegroundRecoveryIfNeeded()
+
+        #expect(result == .retained)
+        #expect(commits == [.iroh, .iroh])
+        #expect(conn.persistentStreamGenerationForTesting == originalGeneration + 1)
+        #expect(conn.focusedSessionStreamEndpointKind == "split_session")
+        #expect(conn.focusedSessionStreamURLForTesting?.port == 42114)
+        #expect(conn.sessionEventContinuations["session-foreground"] != nil)
+        #expect(focusedConnects == 2)
+        #expect(appEventStarts == 2)
+        #expect(focusedStreamContinuations.count == 2)
+        _ = sessionEvents
+        conn.disconnectAppEventStream()
+        conn.disconnectStream()
+    }
+
+    @Test func failedForegroundIrohRecycleWalksAlternativesOnce() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let provider = ForegroundRecoveryIrohProvider(recycleFails: true)
+        let manager = IrohConnectionManager(iroh: metadata, provider: provider)
+        let localURL = try #require(URL(string: "http://127.0.0.1:42105"))
+        var pairedAvailable = false
+        var pairedBootstraps = 0
+        var irohDials = 0
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .automatic,
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "preferred.tailnet.ts.net" {
+                    pairedBootstraps += 1
+                    if !pairedAvailable { throw URLError(.cannotConnectToHost) }
+                }
+                return successfulServerInfo()
+            },
+            irohProxyFactory: { _, _ in
+                irohDials += 1
+                return (manager, localURL)
+            }
+        ))
+        pairedAvailable = true
+
+        let recovery = await conn.resetIrohTransportForForegroundRecoveryIfNeeded()
+        #expect(recovery == .availabilityFailure)
+        await conn.reevaluateIrohPreferredTransportAtBoundary(excluding: [.iroh])
+
+        #expect(conn.transportPath == .paired)
+        #expect(pairedBootstraps == 2)
+        #expect(irohDials == 1)
+        #expect(await provider.recycleCount == 1)
+    }
+
+    @Test func committedTransitionPreservesFocusedIntentAndAdvancesOneComposition() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:42106"))
+        var pairedObserver: APIClientAvailabilityObserver?
+        var commits: [ConnectionTransportPath] = []
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
+        conn._onCommittedCompositionForTesting = { commits.append($0) }
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .automatic,
+            apiClientFactory: { environment, observer in
+                if environment.baseURL.host == "preferred.tailnet.ts.net" {
+                    pairedObserver = observer
+                }
+                return APIClient(environment: environment, availabilityObserver: observer)
+            },
+            serverInfoBootstrap: { _, _ in successfulServerInfo() },
+            irohProxyFactory: { _, _ in (nil, localURL) }
+        ))
+        conn.prepareFocusedSessionStreamEndpointForTesting(
+            sessionId: "session-composition",
+            workspaceId: "workspace-composition"
+        )
+        let initialGeneration = conn.persistentStreamGenerationForTesting
+
+        await pairedObserver?(.cannotConnectToHost)
+
+        #expect(commits == [.paired, .iroh])
+        #expect(conn.persistentStreamGenerationForTesting == initialGeneration + 1)
+        #expect(conn.focusedSessionStreamEndpointKind == "split_session")
+        #expect(conn.focusedSessionStreamURLForTesting?.port == 42106)
+    }
+
+    @Test func HTTPSOnlyNeverDialsIroh() async {
+        let conn = ServerConnection()
+        var irohDials = 0
+
+        let configured = await conn.configureForUse(
+            credentials: makeIrohPreferredCredentials(),
+            routeMode: .httpsOnly,
+            serverInfoBootstrap: { _, _ in successfulServerInfo() },
+            irohProxyFactory: { _, _ in
+                irohDials += 1
+                throw IrohTransportError.unavailable("must not dial")
+            }
+        )
+
+        #expect(configured)
+        #expect(conn.transportPath == .paired)
+        #expect(irohDials == 0)
+    }
+
+    @Test func IrohOnlyNeverConstructsHTTPClient() async throws {
+        let conn = ServerConnection()
+        let localURL = try #require(URL(string: "http://127.0.0.1:42107"))
+        var constructedHosts: [String] = []
+
+        let configured = await conn.configureForUse(
+            credentials: makeIrohPreferredCredentials(),
+            routeMode: .irohOnly,
+            apiClientFactory: { environment, observer in
+                constructedHosts.append(environment.baseURL.host ?? "")
+                return APIClient(environment: environment, availabilityObserver: observer)
+            },
+            serverInfoBootstrap: { _, _ in successfulServerInfo() },
+            irohProxyFactory: { _, _ in (nil, localURL) }
+        )
+
+        #expect(configured)
+        #expect(constructedHosts == ["127.0.0.1"])
+        #expect(conn.transportPath == .iroh)
+    }
+
+    @Test func concurrentCurrentAvailabilityReportsCoalesceIntoOneRouteWalk() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let localURL = try #require(URL(string: "http://127.0.0.1:42108"))
+        let gate = RoutingGate()
+        var observer: APIClientAvailabilityObserver?
+        var irohDials = 0
+        conn._refreshAfterAutomaticIrohRecoveryForTesting = {}
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .automatic,
+            apiClientFactory: { environment, nextObserver in
+                if environment.baseURL.host == "preferred.tailnet.ts.net" {
+                    observer = nextObserver
+                }
+                return APIClient(environment: environment, availabilityObserver: nextObserver)
+            },
+            serverInfoBootstrap: { _, _ in successfulServerInfo() },
+            irohProxyFactory: { _, _ in
+                irohDials += 1
+                await gate.waitUntilReleased()
+                return (nil, localURL)
+            }
+        ))
+        let currentObserver = try #require(observer)
+
+        let first = Task { await currentObserver(.cannotConnectToHost) }
+        await gate.waitUntilBlocked()
+        await currentObserver(.networkConnectionLost)
+        await gate.release()
+        await first.value
+
+        #expect(irohDials == 1)
+        #expect(conn.transportPath == .iroh)
+    }
+
+    @Test func supersededIrohCandidateCleansOnlyLosingManager() async throws {
+        let conn = ServerConnection()
+        let credentials = makeIrohPreferredCredentials()
+        let metadata = try #require(credentials.transports.iroh)
+        let firstProvider = TrackingIrohProvider()
+        let winningProvider = TrackingIrohProvider()
+        let firstManager = IrohConnectionManager(iroh: metadata, provider: firstProvider)
+        let winningManager = IrohConnectionManager(iroh: metadata, provider: winningProvider)
+        let firstURL = try #require(URL(string: "http://127.0.0.1:42109"))
+        let winningURL = try #require(URL(string: "http://127.0.0.1:42110"))
+        let gate = RoutingGate()
+
+        let first = Task { @MainActor in
+            await conn.configureForUse(
+                credentials: credentials,
+                routeMode: .irohOnly,
+                serverInfoBootstrap: { _, _ in successfulServerInfo() },
+                irohProxyFactory: { _, _ in
+                    await gate.waitUntilReleased()
+                    return (firstManager, firstURL)
+                }
+            )
+        }
+        await gate.waitUntilBlocked()
+
+        let winner = await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: { _, _ in successfulServerInfo() },
+            irohProxyFactory: { _, _ in (winningManager, winningURL) }
+        )
+        await gate.release()
+        let superseded = await first.value
+
+        #expect(winner)
+        #expect(!superseded)
+        #expect(await firstProvider.shutdownCount == 1)
+        #expect(await winningProvider.shutdownCount == 0)
+        #expect(await conn.apiClient?.baseURL == winningURL)
+    }
+
+    @Test func routeNeutralRecoveryKeepsFiveAttemptBudgetAndSenderFence() async {
+        #expect(ServerConnection.automaticIrohRecoveryMaximumAttempts == 5)
+        #expect(ServerConnection.automaticIrohRecoveryBackoff(attempt: 1) == 1)
+        #expect(ServerConnection.automaticIrohRecoveryBackoff(attempt: 2) == 2)
+        #expect(ServerConnection.automaticIrohRecoveryBackoff(attempt: 3) == 4)
+        #expect(ServerConnection.automaticIrohRecoveryBackoff(attempt: 4) == 8)
+        #expect(ServerConnection.automaticIrohRecoveryBackoff(attempt: 5) == 16)
+
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("session-1")
+        var attempts = 0
+        conn._sendMessageForTesting = { _ in
+            attempts += 1
+            conn.sender.advanceTransportGeneration()
+        }
+        await #expect(throws: CancellationError.self) {
+            try await conn.sendPrompt("do not replay")
+        }
+        #expect(attempts == 1)
+    }
+}
+
+enum RoutingBootstrapFailure: Sendable {
+    case authentication
+    case decoding
+
+    func throwError() throws -> ServerInfo {
+        switch self {
+        case .authentication:
+            throw APIError.server(status: 401, message: "unauthorized")
+        case .decoding:
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [],
+                debugDescription: "invalid server info"
+            ))
+        }
+    }
+}
+
+@MainActor
+private func makeIrohPreferredCredentials() -> ServerCredentials {
+    ServerCredentials(
+        host: "preferred.tailnet.ts.net",
+        port: 7749,
+        token: "dt_preferred",
+        name: "Preferred",
+        scheme: .https,
+        serverFingerprint: "sha256:preferred-server-fp",
+        tlsCertFingerprint: "sha256:preferred-tls-fp",
+        transports: ServerTransports(
+            preference: .irohPreferred,
+            iroh: IrohServerTransport(
+                version: 2,
+                nodeId: "preferred-node-id",
+                alpns: [IrohTunnelProtocol.alpn],
+                addressMode: .nodeId,
+                ticket: nil
+            ),
+            http: HTTPServerTransport(
+                host: "preferred.tailnet.ts.net",
+                port: 7749,
+                scheme: .https,
+                tlsCertFingerprint: "sha256:preferred-tls-fp"
+            )
+        )
+    )
+}
+
+@MainActor
+private func successfulServerInfoBootstrap(
+    _: APIClient,
+    _: APIClient.BootstrapDeadline
+) async throws -> ServerInfo {
+    successfulServerInfo()
+}
+
+@MainActor
+private func successfulServerInfo(appEventStream: Bool = false) -> ServerInfo {
+    ServerInfo(
+        name: "Test",
+        version: "1.0.0",
+        uptime: 1,
+        os: "darwin",
+        arch: "arm64",
+        hostname: "test.local",
+        nodeVersion: "22",
+        piVersion: "1",
+        configVersion: 1,
+        identity: nil,
+        runtimeUpdate: nil,
+        uploadProtocol: nil,
+        images: nil,
+        capabilities: .init(
+            sessionStream: .init(version: 1),
+            dictationStream: nil,
+            appEventStream: appEventStream ? .init(version: 1) : nil,
+            extensionNativeUI: nil,
+            controlSessions: nil
+        ),
+        stats: .init(
+            workspaceCount: 0,
+            activeSessionCount: 0,
+            totalSessionCount: 0,
+            skillCount: 0,
+            modelCount: 0
+        )
+    )
+}
+
+private final class CandidateDeadlineProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _httpFactoryCount = 0
+    private var _httpDeadlineExpirations = 0
+    private var _irohFactoryCount = 0
+
+    var httpFactoryCount: Int { lock.withLock { _httpFactoryCount } }
+    var httpDeadlineExpirations: Int { lock.withLock { _httpDeadlineExpirations } }
+    var irohFactoryCount: Int { lock.withLock { _irohFactoryCount } }
+
+    func recordHTTPFactory() {
+        lock.withLock { _httpFactoryCount += 1 }
+    }
+
+    func expireHTTPDeadline() {
+        lock.withLock { _httpDeadlineExpirations += 1 }
+    }
+
+    func recordIrohFactory() {
+        lock.withLock { _irohFactoryCount += 1 }
+    }
+
+}
+
+private actor CandidateDeadlineGate {
+    private var started = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitForExpiry() async throws {
+        started = true
+        startWaiters.forEach { $0.resume() }
+        startWaiters.removeAll()
+        try await Task.sleep(for: .seconds(3_600))
+    }
+
+    func waitUntilStarted() async {
+        guard !started else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+}
+
+private actor RoutingGate {
+    private var blocked = false
+    private var released = false
+    private var blockedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitUntilReleased() async {
+        blocked = true
+        blockedWaiters.forEach { $0.resume() }
+        blockedWaiters.removeAll()
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilBlocked() async {
+        guard !blocked else { return }
+        await withCheckedContinuation { blockedWaiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        releaseWaiters.forEach { $0.resume() }
+        releaseWaiters.removeAll()
+    }
+}
+
+private actor TrackingIrohProvider: IrohConnectionProviding {
+    private(set) var shutdownCount = 0
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+    }
+
+    func suspendConnections() async {}
+    func shutdown() async { shutdownCount += 1 }
+}
+
+private actor ForegroundRecoveryIrohProvider: IrohConnectionProviding {
+    let recycleFails: Bool
+    private(set) var recycleCount = 0
+    private(set) var evidenceCount = 0
+
+    init(recycleFails: Bool = false) {
+        self.recycleFails = recycleFails
+    }
+
+    func openStream(alpn: String) async throws -> any IrohByteStream {
+        throw IrohTransportError.unavailable("unused")
+    }
+
+    func selectedPathEvidence(alpn: String) async throws -> IrohSelectedPathEvidence? {
+        evidenceCount += 1
+        return IrohSelectedPathEvidence(isIP: true, isRelay: false, rttMs: 1)
+    }
+
+    func recycleEndpoint() async throws {
+        recycleCount += 1
+        if recycleFails {
+            throw IrohTransportError.unavailable("recycle failed")
+        }
     }
 
     func suspendConnections() async {}

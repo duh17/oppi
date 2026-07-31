@@ -1,225 +1,114 @@
 # Networking and connection routing
 
-Oppi carries the same authenticated HTTP and WebSocket APIs over three remote routes: verified local HTTPS, a signed paired HTTP(S) endpoint, or an Iroh tunnel. The local CLI uses a fourth route, an owner-only Unix socket, and never falls back to a remote endpoint. Plain network HTTP requires the server's explicit insecure-network escape hatch and is never eligible for Bonjour LAN selection.
+Oppi carries the same authenticated HTTP and WebSocket API over verified LAN HTTPS, paired HTTPS, or an Iroh tunnel. The local CLI uses an owner-only Unix socket and never selects a remote route.
 
-## Audience and scope
+## Transport authorization and route mode
 
-Use this page to understand pairing transport policy, runtime route selection, fallback, recovery, and the Apple/server networking boundary.
+A signed invite authorizes HTTPS, Iroh, or both. Its historical wire value `irohPreferred` means **both transports are authorized**; it does not label a product route order.
 
-This page does not define HTTP routes or stream payloads. See [Server architecture](architecture-server.md) and [Client architecture](architecture-client.md) for those contracts. See [Onboarding and pairing](onboarding.md) for setup steps.
+Each paired server has an Apple route mode:
 
-## Connection routes
+| Mode           | Candidate order                          |
+| -------------- | ---------------------------------------- |
+| **Automatic**  | verified LAN HTTPS → paired HTTPS → Iroh |
+| **HTTPS Only** | verified LAN HTTPS → paired HTTPS        |
+| **Iroh Only**  | Iroh                                     |
 
-```mermaid
-graph LR
-  subgraph Apple[Apple client]
-    App[Oppi]
-    HTTP[APIClient and WebSocket clients]
-    Proxy[Ephemeral localhost proxy]
-  end
-
-  subgraph Network[Available network routes]
-    LAN[Verified Bonjour HTTPS]
-    Paired[Signed paired HTTP or HTTPS<br/>normally HTTPS; often Tailscale]
-    Direct[Iroh direct QUIC]
-    Relay[Iroh relay]
-  end
-
-  subgraph Server[Oppi server]
-    Listener[HTTPS and WebSocket listener]
-    Iroh[Iroh endpoint<br/>oppi/http/1]
-    Loopback[Private authenticated loopback]
-    Routes[Shared HTTP routes and<br/>WebSocket upgrade handlers]
-    Local[Owner-only Unix socket]
-  end
-
-  CLI[Local oppi CLI]
-
-  App --> HTTP
-  HTTP --> LAN --> Listener
-  HTTP --> Paired --> Listener
-  HTTP --> Proxy
-  Proxy --> Direct --> Iroh
-  Proxy --> Relay --> Iroh
-  Iroh --> Loopback --> Routes
-  Listener --> Routes
-  CLI --> Local --> Routes
-```
-
-All Apple routes end at the same server handlers. Iroh is a transport adapter, not a second API. REST requests, focused streams, app events, dictation, uploads, files, and media retain their HTTP or WebSocket semantics inside the tunnel.
-
-### Route names
-
-| Route                 | Client transport path | Identity and trust                                                                                                                                                           |
-| --------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Verified local HTTPS  | `lan`                 | Bonjour server identity must match the paired server. TLS uses the paired certificate pin or the exact signed Tailscale hostname and port.                                   |
-| Signed paired HTTP(S) | `paired`              | Uses the host, port, scheme, and TLS identity from signed pairing credentials. This is commonly Tailscale HTTPS. Plain HTTP requires explicit insecure server configuration. |
-| Iroh                  | `iroh`                | Uses the signed server node ID, ticket/address metadata, `oppi/http/1` ALPN, and a device token bound to the Apple endpoint ID.                                              |
-| Local CLI             | Unix socket           | Uses bearer-authenticated HTTP over an owner-only local socket. It does not participate in Apple route selection.                                                            |
-
-## Pairing policy and runtime selection
-
-Pairing credentials declare one policy:
-
-- `httpOnly`: use verified local HTTPS when available; otherwise use the signed paired HTTP(S) endpoint.
-- `irohOnly`: use Iroh and fail closed. HTTP fallback is forbidden.
-- `irohPreferred`: use verified local HTTPS when available, otherwise probe Iroh, then use the signed paired HTTP(S) endpoint only for an eligible Iroh availability failure.
+Automatic is the default. The selected mode can narrow the invite's signed transport set, never expand it. A verified LAN candidate must match the paired server identity and use HTTPS. Plaintext LAN HTTP is never selected.
 
 ```mermaid
-flowchart TD
-  Start[Persisted paired server] --> Cache[Load server-scoped cache]
-  Cache --> Reveal[Reveal normal app shell]
-  Reveal --> Policy{Pairing policy}
-
-  Policy -->|httpOnly| LANHTTP{Verified LAN available?}
-  LANHTTP -->|yes| LAN[Use verified local HTTPS]
-  LANHTTP -->|no| HTTP[Use signed paired HTTP or HTTPS]
-
-  Policy -->|irohOnly| IrohOnly[Validate metadata and connect Iroh]
-  IrohOnly -->|success| Iroh[Use Iroh tunnel]
-  IrohOnly -->|any failure| Closed[Offline; fail closed]
-
-  Policy -->|irohPreferred| LANPreferred{Verified LAN available?}
-  LANPreferred -->|yes| LAN
-  LANPreferred -->|no| Probe[Validate metadata and probe Iroh]
-  Probe -->|success| Iroh
-  Probe -->|availability failure| HTTP
-  Probe -->|identity, auth, ALPN,<br/>framing, or protocol failure| Closed
+flowchart LR
+  App[Apple client] --> LAN[Verified LAN HTTPS]
+  App --> Paired[Paired HTTPS]
+  App --> Iroh[Iroh direct QUIC or relay]
+  LAN --> Routes[Shared HTTP and WebSocket handlers]
+  Paired --> Routes
+  Iroh --> Loopback[Private loopback adapter] --> Routes
+  CLI[oppi CLI] --> Socket[Owner-only Unix socket] --> Routes
 ```
 
-A verified LAN endpoint discovered while Iroh setup is in flight can still win before application traffic starts. Once an operation starts on a route, Oppi does not replay that mutation on another route.
+## Selection, fallback, and recovery
 
-## Iroh tunnel shape
+A working installed route stays in use when it has current health evidence. That evidence is a recent authenticated HTTP success, a focused or app-event stream that has reconnected and passed its heartbeat policy, or successful in-place Iroh foreground recovery with selected-path evidence.
 
-```mermaid
-sequenceDiagram
-  participant App as Apple HTTP/WS client
-  participant Proxy as Localhost proxy
-  participant IrohClient as Apple Iroh endpoint
-  participant IrohServer as Server Iroh endpoint
-  participant Loopback as Private loopback
-  participant Routes as Shared server handlers
+When a route has no current health evidence, the client evaluates its allowed candidates in mode order under a bounded bootstrap deadline. An availability failure excludes that route only for the current selection pass. The next recovery or retry starts a new pass, so the route becomes eligible again. Route selection does not use readiness leases, readiness IDs, or server-readiness routing. Authentication, TLS identity, signed-peer, ALPN, framing, and protocol failures fail closed; they do not select another route.
 
-  App->>Proxy: HTTP request or WebSocket upgrade
-  Proxy->>IrohClient: Open bidirectional stream
-  IrohClient->>IrohServer: QUIC direct path or relay
-  IrohClient->>IrohServer: Authenticated tunnel preface
-  IrohServer->>Loopback: Open private authenticated connection
-  Loopback->>Routes: Existing HTTP request or WS upgrade
-  Routes-->>Loopback: HTTP response or WS frames
-  Loopback-->>IrohServer: Bytes
-  IrohServer-->>IrohClient: Encrypted stream
-  IrohClient-->>Proxy: Bytes
-  Proxy-->>App: Normal URLSession response or WS frames
+The operation that reported a failure is not replayed after a route change. Transport generations fence in-flight mutations so they cannot retry on another lane.
+
+For HTTPS candidates, the client builds the final authenticated API client, probes authenticated `GET /server/info`, and retains that client if it wins. For Iroh, it validates signed metadata, starts the local proxy, obtains selected-path evidence, then completes the same authenticated bootstrap before committing the composition.
+
+A healthy paired HTTPS route stays installed across ordinary network and foreground boundaries. A route failure, missing composition, verified LAN change, explicit **Retry Connection**, or explicit reconfiguration starts a new pass where previously excluded routes are eligible again. Iroh recovery is server-scoped and uses the shared automatic retry budget; another server's healthy transport stays untouched.
+
+### Foreground recovery
+
+On foreground, an active Iroh route first recycles its endpoint **in place**, verifies selected-path evidence, rebuilds loopback-bound clients if needed, and reconnects streams. It stays on Iroh when that succeeds. Automatic walks other allowed candidates only if the in-place recovery fails. There is no unconditional Iroh → HTTPS → Iroh handoff.
+
+## Pairing
+
+Before the one non-replayed `POST /pair` mutation, onboarding probes authorized candidates:
+
+- HTTPS uses bounded read-only `GET /health` probes.
+- Iroh validates its signed metadata and obtains selected-path evidence.
+
+The client sends `/pair` once on the selected route. If its response is lost after dispatch, pairing might have completed; obtain a fresh invite rather than replaying the one-time mutation. After pairing, authenticated bootstrap is retained to test and install normal candidates.
+
+## Iroh relay configuration
+
+By default, Iroh uses its public relay map. An owner can replace the server map with up to eight relay entries:
+
+```json
+{
+  "iroh": {
+    "enabled": true,
+    "relays": [
+      { "url": "https://relay-us.example" },
+      { "url": "https://relay-eu.example", "quicPort": 7842 }
+    ]
+  }
+}
 ```
 
-The localhost URL exists only inside the running Apple process. It never replaces the paired server identity.
+`url` must be an HTTPS root URL with a host. Entries cannot contain credentials, queries, fragments, paths, loopback/private/link-local/unspecified IP literals, or duplicate normalized URLs. `quicPort` must be an integer from 1 through 65535. An omitted port is normalized to `7842`; this preserves QUIC address discovery. A non-empty custom list replaces the server's public defaults.
 
-## Fallback and recovery
-
-Only an Iroh reachability or availability failure can downgrade `irohPreferred` to the signed paired HTTP(S) route. These failures do not permit fallback:
-
-- malformed or unsupported signed metadata
-- ticket or connected-peer mismatch
-- authentication failure
-- ALPN negotiation failure
-- framing failure
-- protocol violation
-
-The HTTPS fallback remains sticky between recovery boundaries. Oppi reevaluates transport when:
-
-- the network path changes
-- the app returns to the foreground
-- the user selects **Retry Connection**
-- the connection is explicitly reconfigured
-
-Focused-session and app-event WebSockets report persistent ping or reconnect failure through the same server-scoped recovery coordinator. Concurrent reports are coalesced, with one pending follow-up retained when it still belongs to the current stream generation. An unhealthy established Iroh route triggers a full rebuild for that server: Oppi closes its persistent streams and Iroh manager, reruns signed route selection, rebuilds the API and WebSocket clients, restores focused-session and app-event subscription intent, and force-refreshes server data. A closed or timed-out QUIC connection is replaced rather than repeatedly redialed through the same cached connection and loopback proxy. If the replacement remains unhealthy, automatic rebuilds use a five-attempt budget. The first rebuild is immediate, subsequent attempts use exponential 1-, 2-, 4-, and 8-second spacing, and the fifth attempt reserves the final 16-second cooldown without permitting a sixth automatic rebuild. A proven focused or app-event stream reconnect restores the budget. Another paired server's healthy manager remains untouched.
-
-An availability failure during the rebuild can still select the signed HTTP fallback for `irohPreferred`. Authentication, identity, ALPN, framing, and protocol failures remain fail-closed and do not enter automatic retry. **Retry Connection** invokes the same full rebuild immediately, bypassing automatic-recovery cooldown. If an ordinary preparation is already running, the forced rebuild runs immediately after it instead of being dropped. Retry never rebuilds another server's connection.
-
-```mermaid
-stateDiagram-v2
-  [*] --> Connecting
-  Connecting --> ConnectedIroh: Iroh succeeds
-  Connecting --> ConnectedLAN: verified LAN wins
-  Connecting --> ConnectedPaired: eligible Iroh failure
-  Connecting --> Offline: no usable route
-
-  ConnectedIroh --> Recovering: path or foreground boundary
-  ConnectedLAN --> Recovering: path or foreground boundary
-  ConnectedPaired --> Recovering: path or foreground boundary
-  Offline --> Recovering: availability boundary or explicit Retry
-
-  Recovering --> ConnectedIroh: Iroh succeeds
-  Recovering --> ConnectedLAN: verified LAN wins
-  Recovering --> ConnectedPaired: eligible Iroh failure
-  Recovering --> Offline: no usable route
-  Recovering --> FailClosed: terminal integrity or auth failure
-  FailClosed --> Recovering: explicit Retry or reconfiguration
-```
-
-Cached UI remains visible during these transitions. A connectivity failure does not send an already paired user back to onboarding.
-
-## Server configuration
-
-Enable Iroh durably:
+Change configuration with the implemented CLI:
 
 ```bash
 oppi config set iroh.enabled true
+oppi config set iroh.relays '[{"url":"https://relay-us.example"},{"url":"https://relay-eu.example","quicPort":7842}]'
+oppi config validate
+oppi doctor
 ```
 
-Restart the server after changing the setting. On successful startup, the server log contains:
+Relay changes require a server restart and a fresh pairing invite. For a LaunchAgent installation, `oppi server restart` restarts it; when running `oppi serve` directly, stop and start that process instead. Then run `oppi pair` to create a new invite. `oppi doctor` reports public/default versus custom mode and configured/live drift without printing relay URLs.
 
-```text
-iroh_transport.started
-```
+The running endpoint writes the live relay set used in new invites. Editing config does not change a running endpoint or an already paired client. Re-pair devices after a relay change.
 
-`OPPI_IROH_TRANSPORT=1` and `OPPI_IROH_PAIRING=1` remain temporary compatibility overrides. Persistent installations, including the Oppi Mac app and launchd, should use `iroh.enabled`.
+### Apple relay-map compatibility
 
-Iroh startup and the network HTTPS listener are independent. A failed optional Iroh startup leaves an allowed HTTPS route usable. `irohOnly` mode requires Iroh readiness and fails server startup closed when that readiness cannot be established.
+The relay membership experiment found that a default-map client cannot reach a server homed on an out-of-map relay when direct UDP is unavailable, even with a full ticket or relay-bearing address. Therefore Iroh metadata v2 can carry optional `relayUrls`.
 
-## Diagnose the active route
+Apple maintains one process-global Iroh map: public defaults plus relays from every paired server and the in-flight invite. It adds these URLs before pairing or dialing; one server's custom relays do not replace public defaults or another server's relays. Missing `relayUrls` retains public-default behavior.
 
-The server badge reports connection health and the active or attempted route. Uploaded telemetry uses bounded route names and coarse error categories.
+Older clients can ignore this additive field and might fail against a private-only relay deployment. There is no in-app relay editor or per-phone override. Running a custom relay is separate from Oppi.
 
-Check server startup and recent transport failures:
+## Privacy and security
+
+Relays carry encrypted Iroh traffic but can observe client IP addresses, timing, and volume and can deny availability. They do not replace signed-peer validation, TLS identity checks, or tunnel bearer authentication.
+
+Uploaded telemetry and ordinary client logs must not contain relay URLs or hosts, IP addresses, tokens, tickets, node IDs, endpoint IDs, or raw transport errors. Diagnostics use bounded transport and path categories only. See [Telemetry](telemetry.md).
+
+## Diagnose a server
 
 ```bash
 oppi status
 oppi doctor
 ```
 
-For repository development, use the incident and client-log lanes described in [Telemetry](telemetry.md). Relevant server events include:
+Useful server events include `iroh_transport.started`, `iroh_transport.start_failed`, `iroh_transport.connection_failed`, `iroh_tunnel.pump_failed`, and `iroh_transport.stopped`. The absence of `iroh_transport.started` after restart means Iroh is unavailable even if an invite contains Iroh metadata.
 
-| Event                              | Meaning                                                                              |
-| ---------------------------------- | ------------------------------------------------------------------------------------ |
-| `iroh_transport.started`           | The server Iroh endpoint is accepting connections.                                   |
-| `iroh_transport.start_failed`      | Endpoint startup failed. HTTPS can remain available in preferred mode.               |
-| `iroh_transport.connection_failed` | A client reached the server endpoint, but connection establishment did not complete. |
-| `iroh_tunnel.pump_failed`          | An established tunnel failed while copying traffic.                                  |
-| `iroh_transport.stopped`           | The server endpoint shut down.                                                       |
+## Related docs
 
-The absence of `iroh_transport.started` after a server restart means clients cannot connect through Iroh, even when their signed pairing metadata is valid.
-
-## Security and correctness invariants
-
-- Iroh-only credentials never fall back to HTTP.
-- Only availability failures can downgrade Iroh-preferred credentials.
-- LAN selection requires matching paired server identity and authenticated HTTPS.
-- Tailscale public-CA fallback uses the exact signed hostname and port.
-- Sender generations advance across persistent route replacement so in-flight mutations cannot replay on another route.
-- Iroh device tokens remain bound to the paired Apple endpoint ID.
-- Uploaded telemetry never includes node IDs, tickets, relay URLs, IP addresses, hostnames, or tokens.
-- The local CLI socket never discovers or falls back to LAN, Tailscale, or Iroh.
-
-## Code ownership
-
-| Concern                                          | Owners                                                                  |
-| ------------------------------------------------ | ----------------------------------------------------------------------- |
-| Durable activation and server composition        | `server/src/storage/config-store.ts`, `server/src/server.ts`            |
-| Server Iroh endpoint and tunnel limits           | `server/src/iroh-pairing-server.ts`, `server/src/iroh-http-loopback.ts` |
-| Pairing invite transport metadata                | `server/src/cli.ts`, `server/src/iroh-invite-state.ts`                  |
-| Client route policy                              | `IrohTransportPolicy.swift`, `LANEndpointSelection.swift`               |
-| Client endpoint, connection, and localhost proxy | `IrohConnectionManager.swift`, `IrohLoopbackProxy.swift`                |
-| Connection composition and recovery              | `ServerConnection.swift`, `ConnectionCoordinator.swift`                 |
-| Transport telemetry                              | `IrohTransportTelemetry.swift`, [Telemetry](telemetry.md)               |
+- [Onboarding and pairing](onboarding.md)
+- [Client architecture](architecture-client.md)
+- [Server architecture](architecture-server.md)
+- [Config schema](../server/docs/config-schema.md)

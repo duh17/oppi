@@ -9,6 +9,88 @@ import Foundation
 /// Backward-compatible alias. Shared implementation lives in Support/TestDoubles.swift.
 typealias MockURLProtocol = TestURLProtocol
 
+private actor BootstrapDeadlineGate {
+    private var expired = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        guard !expired else { return }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func expire() {
+        expired = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private actor BootstrapRequestProbe {
+    private var started = false
+    private var cancelled = false
+    private var startContinuation: CheckedContinuation<Void, Never>?
+    private var cancellationContinuation: CheckedContinuation<Void, Never>?
+
+    func requestDidStart() {
+        started = true
+        startContinuation?.resume()
+        startContinuation = nil
+    }
+
+    func requestDidCancel() {
+        cancelled = true
+        cancellationContinuation?.resume()
+        cancellationContinuation = nil
+    }
+
+    func waitForStart() async {
+        guard !started else { return }
+        await withCheckedContinuation { continuation in
+            startContinuation = continuation
+        }
+    }
+
+    func waitForCancellation() async {
+        guard !cancelled else { return }
+        await withCheckedContinuation { continuation in
+            cancellationContinuation = continuation
+        }
+    }
+}
+
+private final class BlockingBootstrapURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var probe: BootstrapRequestProbe?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        if let probe = Self.probe {
+            Task { await probe.requestDidStart() }
+        }
+    }
+
+    override func stopLoading() {
+        if let probe = Self.probe {
+            Task { await probe.requestDidCancel() }
+        }
+    }
+}
+
+private actor AvailabilityFailureRecorder {
+    private var recorded: [APIClientAvailabilityFailure] = []
+
+    func record(_ failure: APIClientAvailabilityFailure) {
+        recorded.append(failure)
+    }
+
+    func failures() -> [APIClientAvailabilityFailure] {
+        recorded
+    }
+}
+
 @Suite("APIClient", .serialized)
 struct APIClientTests {
 
@@ -74,6 +156,143 @@ struct APIClientTests {
     }
 
     // MARK: - Health
+
+    @Test func serverInfoBootstrapUsesAuthenticatedRequestAndDecodesResponse() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/server/info")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
+            return self.mockResponse(json: """
+            {"name":"Test","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"test","nodeVersion":"22","piVersion":"1","configVersion":1,"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}}
+            """)
+        }
+
+        let info = try await client.serverInfo(bootstrapDeadline: .after(.seconds(1)))
+        #expect(info.name == "Test")
+    }
+
+    @Test func bootstrapDeadlineCancelsItsURLSessionRequestAndReportsTimeout() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [BlockingBootstrapURLProtocol.self]
+        let probe = BootstrapRequestProbe()
+        let deadlineGate = BootstrapDeadlineGate()
+        let recorder = AvailabilityFailureRecorder()
+        BlockingBootstrapURLProtocol.probe = probe
+        defer { BlockingBootstrapURLProtocol.probe = nil }
+
+        let client = APIClient(
+            environment: OppiClientEnvironment(
+                baseURL: URL(string: "http://localhost:7749")!,
+                bearerToken: "sk_test"
+            ),
+            configuration: configuration,
+            availabilityObserver: { failure in
+                await recorder.record(failure)
+            }
+        )
+        let request = Task {
+            try await client.serverInfo(bootstrapDeadline: .init(wait: {
+                await deadlineGate.wait()
+            }))
+        }
+
+        await probe.waitForStart()
+        await deadlineGate.expire()
+
+        await #expect(throws: URLError.self) {
+            _ = try await request.value
+        }
+        await probe.waitForCancellation()
+        #expect(await recorder.failures() == [.timedOut])
+    }
+
+    @Test(arguments: [
+        (URLError.Code.timedOut, APIClientAvailabilityFailure.timedOut),
+        (.cannotFindHost, .cannotFindHost),
+        (.cannotConnectToHost, .cannotConnectToHost),
+        (.networkConnectionLost, .networkConnectionLost),
+        (.notConnectedToInternet, .notConnectedToInternet),
+        (.dnsLookupFailed, .dnsLookupFailed),
+        (.cannotLoadFromNetwork, .cannotLoadFromNetwork),
+    ])
+    func availabilityClassifierRecognizesOnlyRoutingFailures(
+        code: URLError.Code,
+        expected: APIClientAvailabilityFailure
+    ) {
+        #expect(APIClientAvailabilityFailure(error: URLError(code)) == expected)
+    }
+
+    @Test(arguments: [
+        URLError.Code.cancelled,
+        .secureConnectionFailed,
+        .serverCertificateHasBadDate,
+        .serverCertificateUntrusted,
+    ])
+    func availabilityClassifierIgnoresCancellationAndTLSFailures(code: URLError.Code) {
+        #expect(APIClientAvailabilityFailure(error: URLError(code)) == nil)
+    }
+
+    @Test func availabilityObserverIgnoresHTTPStatusAndDecodingFailures() async throws {
+        let recorder = AvailabilityFailureRecorder()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let client = APIClient(
+            environment: OppiClientEnvironment(
+                baseURL: URL(string: "http://localhost:7749")!,
+                bearerToken: "sk_test"
+            ),
+            configuration: configuration,
+            availabilityObserver: { failure in
+                await recorder.record(failure)
+            }
+        )
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { _ in
+            self.mockResponse(status: 503, json: "{\"error\":\"unavailable\"}")
+        }
+        await #expect(throws: APIError.self) {
+            _ = try await client.me()
+        }
+
+        MockURLProtocol.handler = { _ in
+            self.mockResponse(json: "{\"not\":\"a user\"}")
+        }
+        await #expect(throws: DecodingError.self) {
+            _ = try await client.me()
+        }
+
+        #expect(await recorder.failures().isEmpty)
+    }
+
+    @Test func availabilityObserverReportsNetworkFailureOnce() async throws {
+        let recorder = AvailabilityFailureRecorder()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let client = APIClient(
+            environment: OppiClientEnvironment(
+                baseURL: URL(string: "http://localhost:7749")!,
+                bearerToken: "sk_test"
+            ),
+            configuration: configuration,
+            availabilityObserver: { failure in
+                await recorder.record(failure)
+            }
+        )
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { _ in
+            throw URLError(.cannotConnectToHost)
+        }
+
+        await #expect(throws: URLError.self) {
+            _ = try await client.me()
+        }
+        #expect(await recorder.failures() == [.cannotConnectToHost])
+    }
 
     @Test func healthReturnsTrue() async throws {
         let client = makeClient()

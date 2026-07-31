@@ -453,6 +453,8 @@ struct ServerBadgeConnectionStateTests {
         let connection = ServerConnection()
         let configured = await connection.configureForUse(
             credentials: credentials,
+            routeMode: .irohOnly,
+            serverInfoBootstrap: { _, _ in badgeServerInfo() },
             irohProxyFactory: { _, _ in
                 (nil, try #require(URL(string: "http://127.0.0.1:41995")))
             }
@@ -460,6 +462,38 @@ struct ServerBadgeConnectionStateTests {
         #expect(configured)
         return (server, connection)
     }
+}
+
+private func badgeServerInfo() -> ServerInfo {
+    ServerInfo(
+        name: "Test",
+        version: "1.0.0",
+        uptime: 1,
+        os: "darwin",
+        arch: "arm64",
+        hostname: "test.local",
+        nodeVersion: "22",
+        piVersion: "1",
+        configVersion: 1,
+        identity: nil,
+        runtimeUpdate: nil,
+        uploadProtocol: nil,
+        images: nil,
+        capabilities: .init(
+            sessionStream: .init(version: 1),
+            dictationStream: nil,
+            appEventStream: nil,
+            extensionNativeUI: nil,
+            controlSessions: nil
+        ),
+        stats: .init(
+            workspaceCount: 0,
+            activeSessionCount: 0,
+            totalSessionCount: 0,
+            skillCount: 0,
+            modelCount: 0
+        )
+    )
 }
 
 typealias WorkspaceStoreMockURLProtocol = TestURLProtocol

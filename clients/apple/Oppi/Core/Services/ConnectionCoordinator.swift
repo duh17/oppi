@@ -17,6 +17,14 @@ enum PreparedServerActivation {
     }
 }
 
+private struct ConnectionPreparation {
+    let id: UUID
+    let routeMode: PairedServerRouteMode
+    let credentials: ServerCredentials
+    let isForced: Bool
+    let task: Task<ServerConnection?, Never>
+}
+
 enum NetworkPathRecoveryDecision {
     static func isRecoveryBoundary(
         previousSignature: String?,
@@ -79,6 +87,8 @@ final class ConnectionCoordinator {
     ) async throws -> (IrohConnectionManager?, URL))?
     var _onConnectionPreparedForTesting: ((String, ServerConnection) -> Void)?
     var _initialLANEndpointForTesting: (@MainActor (String) async -> LANDiscoveredEndpoint?)?
+    var _serverInfoBootstrapForTesting: ServerConnectionInfoBootstrap?
+    var _apiClientFactoryForTesting: ServerConnectionAPIClientFactory?
     #endif
 
     private let lanDiscovery = LANDiscovery()
@@ -109,10 +119,7 @@ final class ConnectionCoordinator {
     /// Server IDs whose transport is being prepared. Views keep showing their
     /// current connection until the requested server's API surface is ready.
     private(set) var preparingServerIds: Set<String> = []
-    private var connectionPreparationTasks: [
-        String: (id: UUID, task: Task<ServerConnection?, Never>)
-    ] = [:]
-    private var forcedConnectionPreparationServerIds: Set<String> = []
+    private var connectionPreparationTasks: [String: ConnectionPreparation] = [:]
     private var retryPreparationAfterBoundaryServerIds: Set<String> = []
 
     #if DEBUG
@@ -177,11 +184,16 @@ final class ConnectionCoordinator {
     ) async -> ServerConnection {
         let serverId = server.id
         if let preparation = connectionPreparationTasks[serverId] {
-            let activePreparationIsForced = forcedConnectionPreparationServerIds.contains(serverId)
             let prepared = await preparation.task.value ?? disconnectedSentinel
-            if forceReconfigure, !activePreparationIsForced {
+            let latestServer = serverStore.server(for: serverId) ?? server
+            let requestChanged = preparation.routeMode != latestServer.effectiveRouteMode
+                || preparation.credentials != latestServer.credentials
+            if forceReconfigure, !preparation.isForced || requestChanged {
                 finishConnectionPreparation(serverId: serverId, id: preparation.id)
-                return await ensureConnectionReady(for: server, forceReconfigure: true)
+                return await ensureConnectionReady(
+                    for: latestServer,
+                    forceReconfigure: true
+                )
             }
             return prepared
         }
@@ -193,14 +205,17 @@ final class ConnectionCoordinator {
         }
 
         preparingServerIds.insert(serverId)
-        if forceReconfigure {
-            forcedConnectionPreparationServerIds.insert(serverId)
-        }
         let task = Task { @MainActor [weak self] in
             await self?.prepareConnection(for: server, forceReconfigure: forceReconfigure)
         }
         let preparationID = UUID()
-        connectionPreparationTasks[serverId] = (preparationID, task)
+        connectionPreparationTasks[serverId] = ConnectionPreparation(
+            id: preparationID,
+            routeMode: server.effectiveRouteMode,
+            credentials: server.credentials,
+            isForced: forceReconfigure,
+            task: task
+        )
         let prepared = await task.value
         finishConnectionPreparation(serverId: serverId, id: preparationID)
 
@@ -216,7 +231,6 @@ final class ConnectionCoordinator {
     private func finishConnectionPreparation(serverId: String, id: UUID) {
         guard connectionPreparationTasks[serverId]?.id == id else { return }
         connectionPreparationTasks.removeValue(forKey: serverId)
-        forcedConnectionPreparationServerIds.remove(serverId)
         preparingServerIds.remove(serverId)
     }
 
@@ -241,6 +255,7 @@ final class ConnectionCoordinator {
                 guard await configureConnection(
                     existing,
                     credentials: server.credentials,
+                    routeMode: server.effectiveRouteMode,
                     preservingPersistentStreams: forceReconfigure
                 ) else {
                     logger.error("Failed to prepare paired server transport")
@@ -262,7 +277,11 @@ final class ConnectionCoordinator {
         // Feed verified discovery into the policy before initial configuration
         // so private LAN wins over Iroh at the initial transport boundary.
         connection.setDiscoveredLANEndpoint(initialLANEndpoint)
-        guard await configureConnection(connection, credentials: server.credentials) else {
+        guard await configureConnection(
+            connection,
+            credentials: server.credentials,
+            routeMode: server.effectiveRouteMode
+        ) else {
             logger.error("Failed to configure connection for \(server.name, privacy: .public)")
             return nil
         }
@@ -313,28 +332,45 @@ final class ConnectionCoordinator {
     private func configureConnection(
         _ connection: ServerConnection,
         credentials: ServerCredentials,
+        routeMode: PairedServerRouteMode,
         preservingPersistentStreams: Bool = false
     ) async -> Bool {
         #if DEBUG
         if let factory = _irohProxyFactoryForTesting {
+            let bootstrap = _serverInfoBootstrapForTesting ?? { client, deadline in
+                try await client.serverInfo(bootstrapDeadline: deadline)
+            }
+            let apiFactory = _apiClientFactoryForTesting ?? { environment, observer in
+                APIClient(environment: environment, availabilityObserver: observer)
+            }
             if preservingPersistentStreams {
                 return await connection.reconfigureForExplicitRetry(
                     credentials: credentials,
-                    lanReachabilityProbe: { _, _ in true },
+                    routeMode: routeMode,
+                    apiClientFactory: apiFactory,
+                    serverInfoBootstrap: bootstrap,
                     irohProxyFactory: factory
                 )
             }
             return await connection.configureForUse(
                 credentials: credentials,
-                lanReachabilityProbe: { _, _ in true },
+                routeMode: routeMode,
+                apiClientFactory: apiFactory,
+                serverInfoBootstrap: bootstrap,
                 irohProxyFactory: factory
             )
         }
         #endif
         if preservingPersistentStreams {
-            return await connection.reconfigureForExplicitRetry(credentials: credentials)
+            return await connection.reconfigureForExplicitRetry(
+                credentials: credentials,
+                routeMode: routeMode
+            )
         }
-        return await connection.configureForUse(credentials: credentials)
+        return await connection.configureForUse(
+            credentials: credentials,
+            routeMode: routeMode
+        )
     }
 
     private func initializeStores(for connection: ServerConnection, serverId: String) {

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Network
 
 /// Authenticated user info returned by `GET /me`.
 struct User: Codable, Sendable, Equatable {
@@ -27,9 +28,151 @@ enum TransportPreference: String, Codable, Sendable, Equatable, Hashable {
     case httpOnly
 }
 
+/// Transport lanes authorized by signed invite metadata.
+struct SignedTransportAuthorization: OptionSet, Sendable, Equatable, Hashable {
+    let rawValue: UInt8
+
+    static let https = Self(rawValue: 1 << 0)
+    static let iroh = Self(rawValue: 1 << 1)
+}
+
+/// Per-server client preference persisted independently of signed transport authorization.
+enum PairedServerRouteMode: String, Codable, Sendable, Equatable, Hashable {
+    case automatic
+    case httpsOnly
+    case irohOnly
+
+    func effective(for authorization: SignedTransportAuthorization) -> Self {
+        guard requestedTransports.intersection(authorization).isEmpty else {
+            return self
+        }
+        // Re-pairing can replace the signed transport set. Pick its one
+        // authorized lane rather than leaving an impossible explicit mode.
+        if authorization == [.https] {
+            return .httpsOnly
+        }
+        if authorization == [.iroh] {
+            return .irohOnly
+        }
+        return .automatic
+    }
+
+    var requestedTransports: SignedTransportAuthorization {
+        switch self {
+        case .automatic:
+            [.https, .iroh]
+        case .httpsOnly:
+            [.https]
+        case .irohOnly:
+            [.iroh]
+        }
+    }
+}
+
 enum IrohAddressMode: String, Codable, Sendable, Equatable, Hashable {
     case nodeId = "node-id"
     case ticket
+}
+
+/// The signed relay list is intentionally constrained to public HTTPS origins.
+/// Invalid metadata is a transport-integrity failure, never a reason to try a
+/// default relay map.
+enum IrohRelayURLValidationError: LocalizedError, Equatable {
+    case invalidMetadata
+
+    var errorDescription: String? {
+        "Invalid signed Iroh relay metadata"
+    }
+}
+
+enum IrohRelayURLs {
+    static let maximumCount = 8
+
+    /// Returns canonical HTTPS origins, or `nil` when the signed field is
+    /// absent or empty. Relay paths and URL credentials are not part of the
+    /// signed relay contract and must not reach Iroh.
+    static func canonicalize(_ relayURLs: [String]?) throws -> [String]? {
+        guard let relayURLs, !relayURLs.isEmpty else { return nil }
+        guard relayURLs.count <= maximumCount else {
+            throw IrohRelayURLValidationError.invalidMetadata
+        }
+
+        var canonical = Set<String>()
+        for value in relayURLs {
+            guard let components = URLComponents(string: value),
+                  components.scheme?.lowercased() == "https",
+                  let host = components.host?.lowercased(), !host.isEmpty,
+                  !isDisallowedHost(host),
+                  components.user == nil, components.password == nil,
+                  components.query == nil, components.fragment == nil,
+                  components.percentEncodedPath.isEmpty || components.percentEncodedPath == "/",
+                  components.port.map({ (1...65_535).contains($0) }) ?? true else {
+                throw IrohRelayURLValidationError.invalidMetadata
+            }
+
+            var normalized = URLComponents()
+            normalized.scheme = "https"
+            normalized.host = host
+            normalized.port = components.port
+            guard let url = normalized.url else {
+                throw IrohRelayURLValidationError.invalidMetadata
+            }
+            canonical.insert(url.absoluteString)
+        }
+
+        return canonical.sorted()
+    }
+
+    /// Relay hostnames remain DNS-unresolved: owners may use public DNS names
+    /// for self-hosted relays. IP literals and localhost names are rejected
+    /// locally so signed metadata cannot direct the endpoint to local ranges.
+    private static func isDisallowedHost(_ host: String) -> Bool {
+        let hostname = host
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            .lowercased()
+        if hostname == "localhost" || hostname.hasSuffix(".localhost") {
+            return true
+        }
+        if let ipv4 = IPv4Address(hostname) {
+            return disallowedIPv4(Array(ipv4.rawValue))
+        }
+        if let ipv6 = IPv6Address(hostname) {
+            return disallowedIPv6(Array(ipv6.rawValue))
+        }
+        return false
+    }
+
+    private static func disallowedIPv4(_ octets: [UInt8]) -> Bool {
+        guard octets.count == 4 else { return true }
+        let first = octets[0]
+        let second = octets[1]
+        return first == 0
+            || first == 127
+            || first == 10
+            || (first == 172 && (16...31).contains(second))
+            || (first == 192 && second == 168)
+            || (first == 169 && second == 254)
+    }
+
+    private static func disallowedIPv6(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count == 16 else { return true }
+        let isUnspecified = bytes.allSatisfy { $0 == 0 }
+        let isLoopback = bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1
+        if isUnspecified || isLoopback {
+            return true
+        }
+        // fc00::/7 private and fe80::/10 link-local.
+        let isPrivate = bytes[0] & 0xfe == 0xfc
+        let isLinkLocal = bytes[0] == 0xfe && bytes[1] & 0xc0 == 0x80
+        if isPrivate || isLinkLocal {
+            return true
+        }
+        // ::ffff:0:0/96 embeds an IPv4 address that must follow the same policy.
+        if bytes.prefix(10).allSatisfy({ $0 == 0 }) && bytes[10] == 0xff && bytes[11] == 0xff {
+            return disallowedIPv4(Array(bytes.suffix(4)))
+        }
+        return false
+    }
 }
 
 struct IrohServerTransport: Codable, Sendable, Equatable, Hashable {
@@ -38,6 +181,58 @@ struct IrohServerTransport: Codable, Sendable, Equatable, Hashable {
     let alpns: [String]
     let addressMode: IrohAddressMode
     let ticket: String?
+    /// Optional signed v2 metadata. Absent or empty retains public defaults.
+    let relayUrls: [String]?
+
+    init(
+        version: Int,
+        nodeId: String,
+        alpns: [String],
+        addressMode: IrohAddressMode,
+        ticket: String?,
+        relayUrls: [String]? = nil
+    ) {
+        self.version = version
+        self.nodeId = nodeId
+        self.alpns = alpns
+        self.addressMode = addressMode
+        self.ticket = ticket
+        self.relayUrls = relayUrls
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case nodeId
+        case alpns
+        case addressMode
+        case ticket
+        case relayUrls
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        nodeId = try container.decode(String.self, forKey: .nodeId)
+        alpns = try container.decode([String].self, forKey: .alpns)
+        addressMode = try container.decode(IrohAddressMode.self, forKey: .addressMode)
+        ticket = try container.decodeIfPresent(String.self, forKey: .ticket)
+        relayUrls = try IrohRelayURLs.canonicalize(
+            container.decodeIfPresent([String].self, forKey: .relayUrls)
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(nodeId, forKey: .nodeId)
+        try container.encode(alpns, forKey: .alpns)
+        try container.encode(addressMode, forKey: .addressMode)
+        try container.encodeIfPresent(ticket, forKey: .ticket)
+        try container.encodeIfPresent(
+            IrohRelayURLs.canonicalize(relayUrls),
+            forKey: .relayUrls
+        )
+    }
 }
 
 struct HTTPServerTransport: Codable, Sendable, Equatable, Hashable {
@@ -64,6 +259,19 @@ struct ServerTransports: Codable, Sendable, Equatable, Hashable {
         self.preference = preference
         self.iroh = iroh
         self.http = http
+    }
+
+    /// Maps raw signed invite values at the compatibility boundary. In
+    /// particular, `irohPreferred` authorizes both lanes; it does not order them.
+    var authorizedTransports: SignedTransportAuthorization {
+        switch preference {
+        case .httpOnly:
+            [.https]
+        case .irohOnly:
+            [.iroh]
+        case .irohPreferred:
+            [.https, .iroh]
+        }
     }
 
     static func legacyHTTP(

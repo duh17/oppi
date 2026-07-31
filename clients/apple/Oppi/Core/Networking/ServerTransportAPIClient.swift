@@ -28,78 +28,85 @@ enum ServerTransportAPIClient {
         managerFactory: @Sendable (IrohServerTransport) -> IrohConnectionManager = { metadata in
             IrohConnectionManager(iroh: metadata)
         },
+        irohRelayPreparer: @Sendable (IrohServerTransport) async throws -> Void = { metadata in
+            try await IrohTransportRegistry.shared.prepare(iroh: metadata)
+        },
+        httpAvailabilityProbe: @Sendable (APIClient) async throws -> Void = { client in
+            guard try await client.health() else {
+                throw IrohTransportError.protocolViolation("Server health probe did not succeed")
+            }
+        },
+        irohAvailabilityProbe: @Sendable (IrohConnectionManager) async throws -> Void = { manager in
+            _ = try await manager.selectedPathEvidence()
+        },
         operation: @Sendable (APIClient) async throws -> Result
     ) async throws -> Result {
-        let discoveredLANCandidate: LANDiscoveredEndpoint? = if server.credentials.transports.preference != .irohOnly {
-            await lanEndpointProvider(server.credentials)
+        let credentials = server.credentials
+        let discoveredLANCandidate: LANDiscoveredEndpoint? = if server.effectiveRouteMode.requestedTransports.contains(.https) {
+            await lanEndpointProvider(credentials)
         } else {
             nil
         }
         let verifiedLANEndpoint: LANDiscoveredEndpoint?
         if let discoveredLANCandidate,
            let selection = LANEndpointSelection.select(
-               credentials: server.credentials,
+               credentials: credentials,
                discoveredEndpoint: discoveredLANCandidate
            ), selection.transportPath == .lan,
-           await lanReachabilityProbe(selection, server.credentials) {
+           await lanReachabilityProbe(selection, credentials) {
             verifiedLANEndpoint = discoveredLANCandidate
         } else {
             verifiedLANEndpoint = nil
         }
-        let plan = try ServerTransportPlanResolver.resolve(
-            credentials: server.credentials,
+
+        let candidates = try ServerTransportPlanResolver.candidates(
+            credentials: credentials,
+            mode: server.effectiveRouteMode,
             discoveredLANEndpoint: verifiedLANEndpoint
         )
 
-        switch plan {
-        case .http(let selection):
-            return try await withHTTPClient(
-                for: server,
-                selection: selection,
-                operation: operation
-            )
-
-        case .iroh(let metadata):
-            let manager = managerFactory(metadata)
-            let baseURL: URL
-            do {
-                baseURL = try await manager.startProxy(token: server.token)
-                // Establish reachability before invoking the operation. This
-                // makes fallback safe even when the operation is mutating.
-                _ = try await manager.selectedPathEvidence()
-            } catch let error as IrohTransportError where error.isFallbackEligible {
-                await manager.shutdown()
-                guard server.credentials.transports.preference == .irohPreferred else {
-                    throw error
+        for candidate in candidates {
+            switch candidate {
+            case .http(let selection):
+                let client = makeHTTPClient(for: server, selection: selection)
+                do {
+                    try await httpAvailabilityProbe(client)
+                } catch {
+                    guard mayAdvance(after: error) else { throw error }
+                    continue
                 }
-                let fallback = try ServerTransportPlanResolver.resolve(
-                    credentials: server.credentials,
-                    discoveredLANEndpoint: verifiedLANEndpoint,
-                    suppressIroh: true
-                )
-                guard case .http(let selection) = fallback else { throw error }
-                return try await withHTTPClient(
-                    for: server,
-                    selection: selection,
-                    operation: operation
-                )
-            } catch {
-                await manager.shutdown()
-                throw error
-            }
 
-            do {
-                let client = APIClient(baseURL: baseURL, token: server.token)
-                let result = try await operation(client)
-                await manager.shutdown()
-                return result
-            } catch {
-                // The operation has started. Never replay it over HTTP when its
-                // acknowledgement state may be unknown.
-                await manager.shutdown()
-                throw error
+                // The operation starts only after the read-only availability
+                // probe succeeds. Never catch and route around this call: a
+                // mutation can have reached the server before its error returns.
+                return try await operation(client)
+
+            case .iroh(let metadata):
+                do {
+                    try await irohRelayPreparer(metadata)
+                } catch {
+                    guard mayAdvance(after: error) else { throw error }
+                    continue
+                }
+
+                let manager = managerFactory(metadata)
+                var operationStarted = false
+                do {
+                    try await irohAvailabilityProbe(manager)
+                    let baseURL = try await manager.startProxy(token: server.token)
+                    let client = APIClient(baseURL: baseURL, token: server.token)
+                    operationStarted = true
+                    let result = try await operation(client)
+                    await manager.shutdown()
+                    return result
+                } catch {
+                    await manager.shutdown()
+                    guard !operationStarted, mayAdvance(after: error) else { throw error }
+                }
             }
         }
+
+        throw IrohTransportError.unavailable("No authorized server transport is reachable")
     }
 
     @MainActor
@@ -126,17 +133,25 @@ enum ServerTransportAPIClient {
         return nil
     }
 
-    private static func withHTTPClient<Result: Sendable>(
+    private static func makeHTTPClient(
         for server: PairedServer,
-        selection: EndpointSelection,
-        operation: @Sendable (APIClient) async throws -> Result
-    ) async throws -> Result {
-        let client = APIClient(environment: OppiClientEnvironment(
+        selection: EndpointSelection
+    ) -> APIClient {
+        APIClient(environment: OppiClientEnvironment(
             baseURL: selection.baseURL,
             bearerToken: server.token,
             pinnedCertificateFingerprint: server.tlsCertFingerprint,
             tlsServerName: selection.tlsServerName
         ))
-        return try await operation(client)
+    }
+
+    private static func mayAdvance(after error: Error) -> Bool {
+        if APIClientAvailabilityFailure(error: error) != nil {
+            return true
+        }
+        if let error = error as? IrohTransportError {
+            return error.isFallbackEligible
+        }
+        return false
     }
 }

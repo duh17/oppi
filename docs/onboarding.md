@@ -1,4 +1,4 @@
-# Onboarding and Pairing
+# Onboarding and pairing
 
 Install the server with npm:
 
@@ -8,7 +8,7 @@ npm install -g oppi-server
 
 Use `oppi ...` for normal installs. Source checkouts can use `node dist/src/cli.js ...` from `server/`.
 
-## First device
+## Pair a first device
 
 1. Start the server:
 
@@ -16,121 +16,145 @@ Use `oppi ...` for normal installs. Source checkouts can use `node dist/src/cli.
    oppi serve
    ```
 
-   On first run, Oppi shows:
-   - pairing QR code
-   - invite link
+   On first run, Oppi prints a pairing QR code and invite link.
 
-2. Open Oppi on iPhone.
+2. Open Oppi on iPhone, then choose **Pair Nearby Mac**, **Scan QR Code**, or **Enter manually / Connect to Server**. Opening an `oppi://connect` invite also starts pairing.
 
-3. In onboarding, choose one:
-   - **Pair Nearby Mac**: discover a Mac already showing Oppi pairing.
-   - **Scan QR Code**: scan the QR code printed by the server.
-   - **Enter manually** or **Connect to Server**: enter scheme, host, port, token, and display name.
+3. Confirm server trust. If local authentication is enabled, iOS asks for it before accepting the server identity.
 
-   Opening an `oppi://connect` invite link on the phone also begins pairing.
+4. Oppi opens **Workspaces** at **All Sessions**. If the server has no workspaces, it opens guided **Create Workspace** setup.
 
-4. Confirm server trust. If **Require Face ID/Touch ID/Optic ID/Passcode** is enabled, iOS asks for local authentication before accepting the server identity.
+Oppi does not create starter workspaces. Manual connection requires host and token; an invalid manual port uses `7749`.
 
-5. Oppi opens **Workspaces** at **All Sessions**.
+## Choose transports
 
-6. If the server has no workspaces, Oppi opens guided **Create Workspace** setup.
+A signed invite authorizes HTTPS, Iroh, or both. The historical signed value `irohPreferred` means both are authorized; it is not a product route-order label.
 
-Notes:
+After pairing, each server offers these Apple connection modes:
 
-- Oppi does not auto-create starter workspaces for you.
-- The guided create flow lets you pick a project, enter a path manually, or start with a blank workspace.
-- Manual connection keeps **Connect** disabled until host and token are filled. If the port is invalid, Oppi uses `7749`.
+| Mode           | Route order                              |
+| -------------- | ---------------------------------------- |
+| **Automatic**  | verified LAN HTTPS → paired HTTPS → Iroh |
+| **HTTPS Only** | verified LAN HTTPS → paired HTTPS        |
+| **Iroh Only**  | Iroh                                     |
 
-For Iroh with verified HTTPS fallback, enable the transport durably and restart the server:
+Automatic is the default. A mode can restrict the signed transport set but cannot enable a route absent from the invite.
+
+Before pairing, the app uses read-only probes to choose one authorized route: `GET /health` for HTTPS or validated Iroh metadata plus selected-path evidence for Iroh. It then sends exactly one `POST /pair`. It never replays that mutation on another route. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
+
+After pairing, the client keeps the route with current health evidence. When it must select again, availability failures suppress a route only for that pass; authentication, identity, ALPN, framing, and protocol failures fail closed. See [Networking and connection routing](networking.md) for recovery details.
+
+## Enable Iroh
+
+Enable Iroh durably, validate the configuration, then restart the server:
 
 ```bash
 oppi config set iroh.enabled true
-oppi serve
+oppi config validate
 ```
 
-For host-free Iroh-only pairing, keep `iroh.enabled` on and select Iroh-only invite mode when starting the server:
+For a LaunchAgent installation, restart with:
+
+```bash
+oppi server restart
+```
+
+When running `oppi serve` directly, stop and start that process instead. Generate a fresh invite after it starts:
+
+```bash
+oppi pair
+```
+
+Iroh-only pairing requires the server to be running with Iroh enabled and a host-free Iroh-only invite mode:
 
 ```bash
 OPPI_IROH_INVITE_MODE=irohOnly oppi serve
 ```
 
-The signed invite identifies the Iroh endpoint rather than an Oppi host and port. The app uses the same REST, file, media, focused-session, app-event, and dictation behavior through the Iroh tunnel. Iroh-only pairing and connection failures do not fall back to HTTP. See [Networking and connection routing](networking.md) for route priority, fallback, recovery, and diagrams.
+Iroh-only pairing never falls back to HTTPS. Iroh carries the same REST, file, media, focused-session, app-event, and dictation traffic through the tunnel.
 
-For remote HTTP/TLS pairing (for example Tailscale or a VPS), generate an invite with an explicit host:
+## Configure owner relays
+
+Unset relay configuration uses Iroh's public defaults. To use owner-configured relays, set a non-empty list; it replaces the server's public relay map:
+
+```bash
+oppi config set iroh.relays '[{"url":"https://relay-us.example"},{"url":"https://relay-eu.example","quicPort":7842}]'
+oppi config validate
+oppi doctor
+```
+
+Relay URLs must be HTTPS root URLs without credentials, query, fragment, path, or disallowed IP literals. At most eight entries are allowed. An omitted `quicPort` is stored as `7842`.
+
+Restart the server, then generate new invites and re-pair devices. Configuration changes do not alter the running endpoint or already paired devices. `oppi doctor` reports relay mode and configured/live drift without printing relay URLs.
+
+Newer Apple clients add relay URLs from signed Iroh metadata to their process-global Iroh map before pairing and dialing. Older clients might ignore these URLs and fail when a server uses private-only relays. Oppi has no in-app relay editor; custom relay operation is separate from Oppi.
+
+## Pair another device
+
+Generate a new invite:
+
+```bash
+oppi pair
+```
+
+Then pair through Nearby Mac, QR scan, manual entry, or the invite link.
+
+For remote HTTPS pairing, generate an invite with an explicit host:
 
 ```bash
 oppi pair --host <hostname-or-ip>
 ```
 
-Host override notes:
+`--host` accepts a host or IP only: no scheme and no port. The invite port comes from the server configuration:
 
-- `--host` must be host/IP only (no `https://`, no `:port`).
-- Invite port comes from server config:
+```bash
+oppi config get port
+```
 
-  ```bash
-  oppi config get port
-  ```
+If the public port changes, set it, restart the server, and create a new invite:
 
-- If clients must connect on a different port, set it first, restart `serve`, then generate a fresh invite:
-
-  ```bash
-  oppi config set port <public-port>
-  ```
-
-## Additional devices
-
-1. Generate a new invite:
-
-   ```bash
-   oppi pair
-   ```
-
-2. On the new phone, use **Pair Nearby Mac**, scan the QR code, enter details manually, or open the invite link.
+```bash
+oppi config set port <public-port>
+```
 
 ## Invite rules
 
-- Invite is single-use.
-- Invite expires after 90 seconds by default.
-- Invite includes server identity and transport details.
-- Deep-link format details live in [Deep links](deeplinks.md).
+- Each invite is single-use.
+- Invites expire after 90 seconds by default.
+- Invites contain signed server identity and transport authorization.
+- Deep-link details are in [Deep links](deeplinks.md).
 
 ## Troubleshooting
 
-### Invite expired or already used
+### Invite expired, used, or pairing result unknown
 
-1. Generate a new invite:
+Generate a fresh invite and pair again:
 
-   ```bash
-   oppi pair
-   ```
+```bash
+oppi pair
+```
 
-2. Retry pairing immediately.
+Do not retry a `/pair` mutation after a lost response.
 
-### Could not reach server
+### Could not reach the server
 
-1. For Iroh, confirm the invite advertises `oppi/http/1`, the server log reports `iroh_transport.started`, and the device can reach the configured Iroh address-lookup or relay infrastructure. Generate a fresh invite if its ticket is stale.
-
-2. For HTTP/TLS, confirm phone-to-server connectivity through LAN, Tailscale, or public DNS.
-
-3. Check server health and config:
+1. Check server state and relay configuration:
 
    ```bash
    oppi status
    oppi doctor
    ```
 
-4. For HTTP/TLS, regenerate the invite with an explicit host:
+2. For Iroh, confirm the server log contains `iroh_transport.started`. For custom relays, confirm the client is current enough to read signed relay URLs.
+
+3. For HTTPS, confirm phone-to-server connectivity through LAN, Tailscale, or public DNS. Regenerate an explicit-host invite if needed:
 
    ```bash
    oppi pair --host <hostname-or-ip>
    ```
 
-5. Retry pairing.
+4. Retry with a fresh invite.
 
 ### Secure connection failed
 
-1. Generate a fresh invite from the same server.
-
-2. Retry pairing.
-
-3. Do not edit invite content manually.
+Generate a fresh invite from the same server, retry, and do not edit invite content manually.

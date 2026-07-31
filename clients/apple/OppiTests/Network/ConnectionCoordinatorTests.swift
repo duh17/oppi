@@ -28,6 +28,146 @@ private actor CoordinatorPreparationGate {
     }
 }
 
+@Suite("ConnectionCoordinator Route Modes", .serialized)
+@MainActor
+struct ConnectionCoordinatorRouteModeTests {
+    @Test func passesEffectiveHTTPSOnlyModeToInitialAndExplicitRetry() async throws {
+        defer { TestURLProtocol.handler = nil }
+        TestURLProtocol.handler = { request in
+            let body = switch request.url?.path {
+            case "/workspaces": #"{"serverNow":1700000000000,"workspaces":[],"summaries":[]}"#
+            case "/skills": #"{"skills":[]}"#
+            case "/sessions/recent": #"{"sessions":[]}"#
+            default: #"{}"#
+            }
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "https://studio.tailnet.ts.net")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (Data(body.utf8), response)
+        }
+
+        let (coordinator, server) = try makeCoordinatorAndServer(routeMode: .httpsOnly)
+        var irohDials = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            irohDials += 1
+            throw IrohTransportError.unavailable("HTTPS Only must not dial Iroh")
+        }
+
+        let connection = await coordinator.ensureConnectionReady(for: server)
+        #expect(connection.transportPath == .paired)
+        #expect(irohDials == 0)
+
+        await coordinator.retryServerConnection(server.id)
+        #expect(connection.transportPath == .paired)
+        #expect(irohDials == 0)
+    }
+
+    @Test func passesEffectiveIrohOnlyModeWithoutConstructingHTTPClient() async throws {
+        let (coordinator, server) = try makeCoordinatorAndServer(routeMode: .irohOnly)
+        var constructedHosts: [String] = []
+        var irohDials = 0
+        coordinator._apiClientFactoryForTesting = { environment, observer in
+            constructedHosts.append(environment.baseURL.host ?? "")
+            return APIClient(environment: environment, availabilityObserver: observer)
+        }
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            irohDials += 1
+            return (nil, try #require(URL(string: "http://127.0.0.1:42103")))
+        }
+
+        let connection = await coordinator.ensureConnectionReady(for: server)
+
+        #expect(connection.transportPath == .iroh)
+        #expect(irohDials == 1)
+        #expect(constructedHosts == ["127.0.0.1"])
+    }
+
+    private func makeCoordinatorAndServer(
+        routeMode: PairedServerRouteMode
+    ) throws -> (ConnectionCoordinator, PairedServer) {
+        UserDefaults.standard.removeObject(forKey: "pairedServerIds")
+        KeychainService.deleteAllServers()
+        let store = ServerStore()
+        let coordinator = ConnectionCoordinator(serverStore: store)
+        coordinator._initialLANEndpointForTesting = { _ in nil }
+        coordinator._serverInfoBootstrapForTesting = { _, _ in routeModeServerInfo() }
+        coordinator._apiClientFactoryForTesting = { environment, observer in
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [TestURLProtocol.self]
+            return APIClient(
+                environment: environment,
+                configuration: configuration,
+                availabilityObserver: observer
+            )
+        }
+
+        let credentials = ServerCredentials(
+            host: "studio.tailnet.ts.net",
+            port: 7749,
+            token: "dt_route_mode",
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: "sha256:ROUTEMODE",
+            tlsCertFingerprint: "sha256:ROUTEMODETLS",
+            transports: ServerTransports(
+                preference: .irohPreferred,
+                iroh: IrohServerTransport(
+                    version: 2,
+                    nodeId: "route-mode-node",
+                    alpns: [IrohTunnelProtocol.alpn],
+                    addressMode: .nodeId,
+                    ticket: nil
+                ),
+                http: HTTPServerTransport(
+                    host: "studio.tailnet.ts.net",
+                    port: 7749,
+                    scheme: .https,
+                    tlsCertFingerprint: "sha256:ROUTEMODETLS"
+                )
+            )
+        )
+        var server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        server.routeMode = routeMode
+        store.addOrUpdate(server)
+        return (coordinator, server)
+    }
+
+    private func routeModeServerInfo() -> ServerInfo {
+        ServerInfo(
+            name: "Test",
+            version: "1.0.0",
+            uptime: 1,
+            os: "darwin",
+            arch: "arm64",
+            hostname: "test.local",
+            nodeVersion: "22",
+            piVersion: "1",
+            configVersion: 1,
+            identity: nil,
+            runtimeUpdate: nil,
+            uploadProtocol: nil,
+            images: nil,
+            capabilities: .init(
+                sessionStream: .init(version: 1),
+                dictationStream: nil,
+                appEventStream: nil,
+                extensionNativeUI: nil,
+                controlSessions: nil
+            ),
+            stats: .init(
+                workspaceCount: 0,
+                activeSessionCount: 0,
+                totalSessionCount: 0,
+                skillCount: 0,
+                modelCount: 0
+            )
+        )
+    }
+}
+
 @Suite("ConnectionCoordinator", .serialized)
 @MainActor
 struct ConnectionCoordinatorTests {
@@ -121,6 +261,67 @@ struct ConnectionCoordinatorTests {
         #expect(connection.transportPath == .paired)
     }
 
+    @Test func coordinatorPassesEffectiveHTTPSOnlyModeToInitialAndExplicitRetry() async throws {
+        defer { TestURLProtocol.handler = nil }
+        installEmptyCatalogHandler()
+
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeIrohPreferredCredentials(token: "dt_https_only")
+        var server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        server.routeMode = .httpsOnly
+        coordinator.serverStore.addOrUpdate(server)
+        var irohDials = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            irohDials += 1
+            throw IrohTransportError.unavailable("HTTPS Only must not dial Iroh")
+        }
+
+        let connection = await coordinator.ensureConnectionReady(for: server)
+        #expect(connection.transportPath == .paired)
+        #expect(irohDials == 0)
+
+        await coordinator.retryServerConnection(server.id)
+        #expect(connection.transportPath == .paired)
+        #expect(irohDials == 0)
+    }
+
+    @Test func coordinatorRejectsPlaintextEndpointInHTTPSOnlyMode() async throws {
+        let (coordinator, _) = makeCoordinator()
+        var server = makeServer(
+            id: "sha256:https-only-plaintext",
+            name: "Plaintext",
+            host: "plaintext.test",
+            scheme: .http
+        )
+        server.routeMode = .httpsOnly
+        coordinator.serverStore.addOrUpdate(server)
+        let shell = coordinator.activatePairedServerShell(server)
+
+        let prepared = await coordinator.ensureConnectionReady(for: server)
+
+        #expect(prepared !== shell)
+        #expect(shell.credentials == nil)
+        #expect(shell.apiClient == nil)
+    }
+
+    @Test func coordinatorPassesEffectiveIrohOnlyModeWithoutHTTPBootstrap() async throws {
+        let (coordinator, _) = makeCoordinator()
+        let credentials = makeIrohPreferredCredentials(token: "dt_iroh_only")
+        var server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        server.routeMode = .irohOnly
+        coordinator.serverStore.addOrUpdate(server)
+        var irohDials = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            irohDials += 1
+            return (nil, try #require(URL(string: "http://127.0.0.1:42103")))
+        }
+
+        let connection = await coordinator.ensureConnectionReady(for: server)
+
+        #expect(connection.transportPath == .iroh)
+        #expect(irohDials == 1)
+    }
+
     @Test func pairedShellPublishesIrohServerBeforeTransportPreparation() throws {
         let (coordinator, _) = makeCoordinator()
         let credentials = makeIrohPreferredCredentials(token: "dt_staged_launch")
@@ -193,10 +394,11 @@ struct ConnectionCoordinatorTests {
         #expect(shellConnection.apiClient != nil)
     }
 
-    @Test func terminalInitialFailureDoesNotAutomaticallyRetryAtPathBoundary() async throws {
+    @Test func terminalIrohOnlyInitialFailureDoesNotAutomaticallyRetryAtPathBoundary() async throws {
         let (coordinator, _) = makeCoordinator()
         let credentials = makeIrohPreferredCredentials(token: "dt_terminal_staged_launch")
-        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        var server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        server.routeMode = .irohOnly
         coordinator.serverStore.addOrUpdate(server)
         let shellConnection = coordinator.activatePairedServerShell(server)
         var attempts = 0
@@ -214,13 +416,14 @@ struct ConnectionCoordinatorTests {
         #expect(!shellConnection.canAutomaticallyRetryInitialTransport)
     }
 
-    @Test func explicitRetryRebuildsConfiguredTerminalTransport() async throws {
+    @Test func explicitRetryRebuildsConfiguredTerminalIrohOnlyTransport() async throws {
         defer { TestURLProtocol.handler = nil }
         installEmptyCatalogHandler()
 
         let (coordinator, _) = makeCoordinator()
         let credentials = makeIrohPreferredCredentials(token: "dt_explicit_terminal_retry")
-        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        var server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        server.routeMode = .irohOnly
         coordinator.serverStore.addOrUpdate(server)
         var attempts = 0
         coordinator._irohProxyFactoryForTesting = { _, _ in
@@ -247,20 +450,18 @@ struct ConnectionCoordinatorTests {
         #expect(!connection.sessionStore.lastSyncFailed)
     }
 
-    @Test func explicitRetryFullyRebuildsConfiguredFallbackWhenForegroundRecoveryIsBusy() async throws {
+    @Test func explicitRetryRebuildsIrohOnlyTransportWhenForegroundRecoveryIsBusy() async throws {
         defer { TestURLProtocol.handler = nil }
         installEmptyCatalogHandler()
 
         let (coordinator, _) = makeCoordinator()
         let credentials = makeIrohPreferredCredentials(token: "dt_busy_explicit_retry")
-        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        var server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        server.routeMode = .irohOnly
         coordinator.serverStore.addOrUpdate(server)
         var attempts = 0
         coordinator._irohProxyFactoryForTesting = { _, _ in
             attempts += 1
-            if attempts == 1 {
-                throw IrohTransportError.unavailable("server listener was disabled")
-            }
             return (nil, try #require(URL(string: "http://127.0.0.1:42022")))
         }
         coordinator._onConnectionPreparedForTesting = { _, connection in
@@ -270,7 +471,8 @@ struct ConnectionCoordinatorTests {
         }
 
         let connection = await coordinator.ensureConnectionReady(for: server)
-        #expect(connection.transportPath == .paired)
+        let originalAPIClient = connection.apiClient
+        #expect(connection.transportPath == .iroh)
         connection.foregroundRecoveryInFlight = true
 
         await coordinator.retryServerConnection(server.id)
@@ -279,15 +481,17 @@ struct ConnectionCoordinatorTests {
         #expect(attempts == 2)
         #expect(connection.transportPath == .iroh)
         #expect(connection.apiClient != nil)
+        #expect(connection.apiClient !== originalAPIClient)
     }
 
-    @Test func explicitRetryQueuesForcedRebuildBehindNonForcedPreparation() async throws {
+    @Test func explicitRetryQueuesForcedRebuildBehindNonForcedIrohOnlyPreparation() async throws {
         defer { TestURLProtocol.handler = nil }
         installEmptyCatalogHandler()
 
         let (coordinator, _) = makeCoordinator()
         let credentials = makeIrohPreferredCredentials(token: "dt_forced_join_retry")
-        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        var server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        server.routeMode = .irohOnly
         coordinator.serverStore.addOrUpdate(server)
         var attempts = 0
         let gate = CoordinatorIrohSetupGate()
@@ -323,13 +527,73 @@ struct ConnectionCoordinatorTests {
         #expect(connection.apiClient != nil)
     }
 
-    @Test func ordinaryPreparationAwaitsInFlightForcedRetry() async throws {
+    @Test func rapidModeChangeQueuesOneSerializedFollowUpWithoutTouchingOtherServer() async throws {
+        defer { TestURLProtocol.handler = nil }
+        installEmptyCatalogHandler()
+
+        let (coordinator, _) = makeCoordinator()
+        coordinator._apiClientFactoryForTesting = { environment, observer in
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [TestURLProtocol.self]
+            return APIClient(
+                environment: environment,
+                configuration: configuration,
+                availabilityObserver: observer
+            )
+        }
+        let credentials = makeIrohPreferredCredentials(token: "dt_rapid_mode")
+        var changingServer = try #require(PairedServer(from: credentials, sortOrder: 0))
+        changingServer.routeMode = .irohOnly
+        let otherServer = makeServer(
+            id: "sha256:rapid-mode-other",
+            name: "Other",
+            host: "other.test"
+        )
+        coordinator.serverStore.addOrUpdate(changingServer)
+        coordinator.serverStore.addOrUpdate(otherServer)
+
+        let otherConnection = coordinator.ensureConnection(for: otherServer)
+        let otherAPIClient = otherConnection.apiClient
+        let changingConnection = coordinator.activatePairedServerShell(changingServer)
+        var commits: [ConnectionTransportPath] = []
+        changingConnection._onCommittedCompositionForTesting = { commits.append($0) }
+        let gate = CoordinatorIrohSetupGate()
+        var irohDials = 0
+        coordinator._irohProxyFactoryForTesting = { _, _ in
+            irohDials += 1
+            await gate.waitUntilReleased()
+            return (nil, try #require(URL(string: "http://127.0.0.1:42040")))
+        }
+
+        let irohOnlyRetry = Task { @MainActor in
+            await coordinator.retryServerConnection(changingServer.id)
+        }
+        while !gate.isWaiting { await Task.yield() }
+
+        coordinator.serverStore.setRouteMode(id: changingServer.id, to: .httpsOnly)
+        let httpsOnlyRetry = Task { @MainActor in
+            await coordinator.retryServerConnection(changingServer.id)
+        }
+        await Task.yield()
+        gate.release()
+        await irohOnlyRetry.value
+        await httpsOnlyRetry.value
+
+        #expect(irohDials == 1)
+        #expect(commits == [.iroh, .paired])
+        #expect(changingConnection.transportPath == .paired)
+        #expect(await changingConnection.apiClient?.baseURL.host == "studio.tailnet.ts.net")
+        #expect(otherConnection.apiClient === otherAPIClient)
+    }
+
+    @Test func ordinaryPreparationAwaitsInFlightForcedIrohOnlyRetry() async throws {
         defer { TestURLProtocol.handler = nil }
         installEmptyCatalogHandler()
 
         let (coordinator, _) = makeCoordinator()
         let credentials = makeIrohPreferredCredentials(token: "dt_wait_for_forced_retry")
-        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        var server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        server.routeMode = .irohOnly
         coordinator.serverStore.addOrUpdate(server)
         let gate = CoordinatorIrohSetupGate()
         var attempts = 0
@@ -387,7 +651,7 @@ struct ConnectionCoordinatorTests {
         #expect(connection.sessionStore.lastSyncFailed)
     }
 
-    @Test func explicitRetryRebuildsOnlySelectedServer() async throws {
+    @Test func explicitRetryRebuildsOnlySelectedIrohOnlyServer() async throws {
         defer { TestURLProtocol.handler = nil }
         installEmptyCatalogHandler()
 
@@ -400,8 +664,10 @@ struct ConnectionCoordinatorTests {
             token: "dt_retry_second",
             serverFingerprint: "sha256:RETRYSECOND"
         )
-        let first = try #require(PairedServer(from: firstCredentials, sortOrder: 0))
-        let second = try #require(PairedServer(from: secondCredentials, sortOrder: 1))
+        var first = try #require(PairedServer(from: firstCredentials, sortOrder: 0))
+        var second = try #require(PairedServer(from: secondCredentials, sortOrder: 1))
+        first.routeMode = .irohOnly
+        second.routeMode = .irohOnly
         coordinator.serverStore.addOrUpdate(first)
         coordinator.serverStore.addOrUpdate(second)
         var attemptsByToken: [String: Int] = [:]
@@ -707,7 +973,7 @@ struct ConnectionCoordinatorTests {
         #expect(await connection.apiClient?.baseURL.absoluteString == "https://192.168.1.42:7749")
     }
 
-    @Test func LANDiscoveredDuringInitialIrohSetupWinsBeforePublication() async throws {
+    @Test func LANDiscoveredAfterInitialPairedBootstrapWinsBeforePublication() async throws {
         let (coordinator, _) = makeCoordinator()
         let credentials = makeIrohPreferredCredentials(token: "dt_late_lan")
         let server = try #require(PairedServer(from: credentials, sortOrder: 0))
@@ -731,13 +997,13 @@ struct ConnectionCoordinatorTests {
 
         let connection = await coordinator.ensureConnectionReady(for: server)
 
-        #expect(irohStarted)
+        #expect(!irohStarted)
         #expect(discoveryChecks == 3)
         #expect(connection.transportPath == .lan)
         #expect(await connection.apiClient?.baseURL.absoluteString == "https://192.168.1.42:7749")
     }
 
-    @Test func LANRemovedDuringInitialSetupIsClearedBeforePublication() async throws {
+    @Test func LANRemovedDuringInitialSetupFallsBackToPairedBeforePublication() async throws {
         let (coordinator, _) = makeCoordinator()
         let credentials = makeIrohPreferredCredentials(token: "dt_removed_lan")
         let server = try #require(PairedServer(from: credentials, sortOrder: 0))
@@ -762,9 +1028,9 @@ struct ConnectionCoordinatorTests {
         let connection = await coordinator.ensureConnectionReady(for: server)
 
         #expect(discoveryChecks == 3)
-        #expect(irohStarted)
-        #expect(connection.transportPath == .iroh)
-        #expect(await connection.apiClient?.baseURL.host == "127.0.0.1")
+        #expect(!irohStarted)
+        #expect(connection.transportPath == .paired)
+        #expect(await connection.apiClient?.baseURL.host == "studio.tailnet.ts.net")
     }
 
     // MARK: - Cross-Server Queries
@@ -1328,7 +1594,40 @@ struct ConnectionCoordinatorTests {
             (nil, irohLoopbackURL)
         }
         coordinator._initialLANEndpointForTesting = { _ in nil }
+        coordinator._serverInfoBootstrapForTesting = { _, _ in successfulServerInfo() }
         return (coordinator, store)
+    }
+
+    private func successfulServerInfo() -> ServerInfo {
+        ServerInfo(
+            name: "Test",
+            version: "1.0.0",
+            uptime: 1,
+            os: "darwin",
+            arch: "arm64",
+            hostname: "test.local",
+            nodeVersion: "22",
+            piVersion: "1",
+            configVersion: 1,
+            identity: nil,
+            runtimeUpdate: nil,
+            uploadProtocol: nil,
+            images: nil,
+            capabilities: .init(
+                sessionStream: .init(version: 1),
+                dictationStream: nil,
+                appEventStream: nil,
+                extensionNativeUI: nil,
+                controlSessions: nil
+            ),
+            stats: .init(
+                workspaceCount: 0,
+                activeSessionCount: 0,
+                totalSessionCount: 0,
+                skillCount: 0,
+                modelCount: 0
+            )
+        )
     }
 
     private func installEmptyCatalogHandler() {

@@ -89,14 +89,85 @@ enum ServerTransportSelection: Equatable, Sendable {
 enum ServerTransportPlan: Equatable, Sendable {
     case http(EndpointSelection)
     case iroh(IrohServerTransport)
+
+    var candidateKind: ServerRouteCandidateKind {
+        switch self {
+        case .http(let endpoint):
+            endpoint.transportPath == .lan ? .lan : .paired
+        case .iroh:
+            .iroh
+        }
+    }
+}
+
+/// A route identifier used only to exclude candidates within one selection pass.
+enum ServerRouteCandidateKind: Sendable, Equatable, Hashable {
+    case lan
+    case paired
+    case iroh
 }
 
 enum ServerTransportPlanResolver {
-    /// Resolve cross-lane priority without performing network I/O.
-    ///
-    /// A verified LAN endpoint is independent of unused Iroh metadata, so it
-    /// wins for every credential that permits HTTP. Suppressing Iroh is used
-    /// only after an eligible `irohPreferred` availability failure.
+    /// Builds ordered, authorized routes without retaining connection state.
+    /// Exclusions apply only to this invocation; callers own pass lifecycle.
+    static func candidates(
+        credentials: ServerCredentials,
+        mode: PairedServerRouteMode,
+        discoveredLANEndpoint: LANDiscoveredEndpoint?,
+        validateIrohMetadata: Bool = true,
+        excluding: Set<ServerRouteCandidateKind> = []
+    ) throws -> [ServerTransportPlan] {
+        let authorization = credentials.transports.authorizedTransports
+        let effectiveMode = mode.effective(for: authorization)
+        var result: [ServerTransportPlan] = []
+
+        if effectiveMode.requestedTransports.contains(.https), authorization.contains(.https) {
+            guard credentials.transports.http != nil,
+                  let paired = LANEndpointSelection.select(
+                      credentials: credentials,
+                      discoveredEndpoint: nil
+                  ) else {
+                throw IrohTransportError.protocolViolation("Signed HTTPS transport has no valid endpoint")
+            }
+            if effectiveMode == .httpsOnly,
+               paired.baseURL.scheme?.lowercased() != ServerScheme.https.rawValue {
+                // Historical signed HTTP credentials remain available through
+                // Automatic compatibility only. The explicit product setting
+                // named HTTPS Only must never authorize plaintext transport.
+                throw IrohTransportError.protocolViolation(
+                    "HTTPS Only requires a signed HTTPS endpoint"
+                )
+            }
+
+            if let lan = LANEndpointSelection.select(
+                credentials: credentials,
+                discoveredEndpoint: discoveredLANEndpoint
+            ), lan.transportPath == .lan, !excluding.contains(.lan) {
+                result.append(.http(lan))
+            }
+            if !excluding.contains(.paired) {
+                result.append(.http(paired))
+            }
+        }
+
+        if effectiveMode.requestedTransports.contains(.iroh), authorization.contains(.iroh) {
+            guard let iroh = credentials.transports.iroh else {
+                throw IrohTransportError.protocolViolation("Signed Iroh transport is missing metadata")
+            }
+            if validateIrohMetadata {
+                try IrohPeerValidator.validate(iroh, requiredALPN: IrohTunnelProtocol.alpn)
+            }
+            if !excluding.contains(.iroh) {
+                result.append(.iroh(iroh))
+            }
+        }
+
+        return result
+    }
+
+    /// Temporary compatibility seam for callers that have not yet walked
+    /// candidates. It retains their current behavior; new routing code must use
+    /// `candidates` so `irohPreferred` is never interpreted as candidate order.
     static func resolve(
         credentials: ServerCredentials,
         discoveredLANEndpoint: LANDiscoveredEndpoint?,

@@ -90,15 +90,11 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(startedStreamURL?.path == "/app/events/stream")
     }
 
-    @Test func networkPathChangeRecomputesPreparedFocusedStreamURL() async {
-        let connection = makeConnection(
-            host: "100.64.0.2",
-            scheme: .https,
-            tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
-        )
+    @Test func networkPathChangeRecomputesPreparedFocusedStreamURL() async throws {
+        let connection = ServerConnection()
         defer { cleanup(connection) }
 
-        connection._adoptVerifiedLANEndpointForTesting(
+        connection.setDiscoveredLANEndpoint(
             LANDiscoveredEndpoint(
                 host: "192.168.1.42",
                 port: 7749,
@@ -106,14 +102,29 @@ struct ServerConnectionStreamRecoveryTests {
                 tlsCertFingerprintPrefix: "TLSFINGERPRINT"
             )
         )
+        let configured = await connection.configureForUse(
+            credentials: ServerCredentials(
+                host: "100.64.0.2",
+                port: 7749,
+                token: "sk_test",
+                name: "Test",
+                scheme: .https,
+                serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
+                tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
+            ),
+            serverInfoBootstrap: { _, _ in try self.mockServerInfo() }
+        )
+        #expect(configured)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
 
         #expect(connection.transportPath == .lan)
         #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "wss://192.168.1.42:7749/workspaces/w1/sessions/s1/stream")
 
-        connection.wsClient?._setStatusForTesting(.connected)
         connection.handleNetworkPathChange()
+        for _ in 0..<100 where connection.transportPath != .paired {
+            await Task.yield()
+        }
 
         #expect(connection.transportPath == .paired)
         #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "wss://100.64.0.2:7749/workspaces/w1/sessions/s1/stream")
@@ -159,6 +170,12 @@ struct ServerConnectionStreamRecoveryTests {
             token: "sk_test",
             configuration: config
         )
+    }
+
+    private func mockServerInfo() throws -> ServerInfo {
+        let request = URLRequest(url: URL(string: "http://127.0.0.1:7749/server/info")!)
+        let (data, _) = mockServerInfoResponse(for: request)
+        return try JSONDecoder().decode(ServerInfo.self, from: data)
     }
 
     private func mockServerInfoResponse(

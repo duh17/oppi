@@ -56,7 +56,7 @@ struct ServerConnectionLANTransportTests {
         #expect(await connection.apiClient?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
     }
 
-    @Test func removingLANDiscoveryFallsBackToPairedWithoutReplacingWebSocketClient() async {
+    @Test func removingLANDiscoveryRebuildsPairedComposition() async {
         let connection = ServerConnection()
         let credentials = makeCredentials()
         #expect(connection.configure(credentials: credentials) == true)
@@ -76,7 +76,7 @@ struct ServerConnectionLANTransportTests {
         connection.setDiscoveredLANEndpoint(nil)
 
         #expect(connection.transportPath == .paired)
-        #expect(connection.wsClient === activeWebSocketClient)
+        #expect(connection.wsClient !== activeWebSocketClient)
         #expect(await connection.apiClient?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
     }
 

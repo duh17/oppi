@@ -34,12 +34,14 @@ struct InviteBootstrapServiceTests {
             apiFactory: { _, token, _ in
                 factoryTokens.append(token)
                 return apis.removeFirst()
-            }
+            },
+            httpReachabilityProbe: { _, _ in await log.append("httpsProbe") }
         )
 
         let calls = await log.snapshot()
         #expect(calls == [
             "trust:Trust pairing.example.test (sha256:abcdef1234567890)",
+            "httpsProbe",
             "pair:one-time-token",
             "health",
             "me",
@@ -101,10 +103,12 @@ struct InviteBootstrapServiceTests {
             irohProxyFactory: { _, _ in
                 irohPairCalled = true
                 return proxyURL
-            }
+            },
+            httpReachabilityProbe: { _, _ in await log.append("httpsProbe") }
         )
 
         #expect(await log.snapshot() == [
+            "httpsProbe",
             "pair:one-time-token",
             "health",
             "me",
@@ -114,11 +118,14 @@ struct InviteBootstrapServiceTests {
         #expect(result.effectiveCredentials.token == "http-device-token")
     }
 
-    @Test func irohPreferredTunnelPairsAndBootstrapsThroughLoopbackAPI() async throws {
+    @Test func automaticPairingPrefersHTTPSAndDoesNotStartIroh() async throws {
         let log = InviteBootstrapCallLog()
+        let pairingAPI = RecordingInviteBootstrapAPI(log: log, pairDeviceToken: "https-device-token")
+        let authenticatedAPI = RecordingInviteBootstrapAPI(log: log)
+        var apis: [RecordingInviteBootstrapAPI] = [pairingAPI, authenticatedAPI]
         let irohClient = RecordingIrohInvitePairingClient(
             log: log,
-            result: .success(deviceToken: "iroh-device-token")
+            result: .success(deviceToken: "unexpected")
         )
         var factoryURLs: [URL] = []
         var proxyTokens: [String] = []
@@ -131,23 +138,25 @@ struct InviteBootstrapServiceTests {
             irohPairingClient: irohClient,
             apiFactory: { url, _, _ in
                 factoryURLs.append(url)
-                return RecordingInviteBootstrapAPI(log: log, label: "tunnel")
+                return apis.removeFirst()
             },
             irohProxyFactory: { _, token in
                 proxyTokens.append(token)
                 return proxyURL
-            }
+            },
+            httpReachabilityProbe: { _, _ in await log.append("httpsProbe") }
         )
 
         #expect(await log.snapshot() == [
-            "irohPair:one-time-token:node-id-123",
-            "tunnel:health",
-            "tunnel:me",
-            "tunnel:listSessions:3"
+            "httpsProbe",
+            "pair:one-time-token",
+            "health",
+            "me",
+            "listSessions:3"
         ])
-        #expect(factoryURLs.map(\.absoluteString) == ["http://127.0.0.1:41001"])
-        #expect(proxyTokens == ["iroh-device-token"])
-        #expect(result.effectiveCredentials.token == "iroh-device-token")
+        #expect(factoryURLs.map(\.absoluteString) == ["https://pairing.example.test:443", "https://pairing.example.test:443"])
+        #expect(proxyTokens.isEmpty)
+        #expect(result.effectiveCredentials.token == "https-device-token")
         #expect(result.effectiveCredentials.host == host)
     }
 
@@ -170,7 +179,9 @@ struct InviteBootstrapServiceTests {
                 },
                 irohProxyFactory: { _, _ in
                     throw IrohTransportError.unavailable("relay offline")
-                }
+                },
+                httpReachabilityProbe: { _, _ in throw URLError(.cannotConnectToHost) },
+                irohReachabilityProbe: IrohReachabilityProbeStub()
             )
         }
 
@@ -178,12 +189,14 @@ struct InviteBootstrapServiceTests {
         #expect(!apiFactoryCalled)
     }
 
-    @Test func irohPreferredTunnelPairingUnavailableIsFailClosed() async throws {
+    @Test func preDispatchIrohPairingFailureKeepsInviteRetryable() async throws {
         let log = InviteBootstrapCallLog()
         var apiFactoryCalled = false
         let unreachableProxyURL = try #require(URL(string: "http://127.0.0.1:41002"))
 
-        await #expect(throws: InviteBootstrapError.message("Iroh pairing unavailable: relay offline")) {
+        await #expect(throws: InviteBootstrapError.message(
+            "Could not reach the server over Iroh. Check your network and try again."
+        )) {
             _ = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: makeIrohPreferredTunnelCredentials(),
                 existingCredentials: nil,
@@ -199,12 +212,42 @@ struct InviteBootstrapServiceTests {
                 irohProxyFactory: { _, _ in
                     Issue.record("Proxy must not start after pairing failure")
                     return unreachableProxyURL
-                }
+                },
+                httpReachabilityProbe: { _, _ in throw URLError(.cannotConnectToHost) },
+                irohReachabilityProbe: IrohReachabilityProbeStub()
             )
         }
 
         #expect(await log.snapshot() == ["irohPair:one-time-token:node-id-123"])
         #expect(!apiFactoryCalled)
+    }
+
+    @Test func postDispatchIrohPairingFailureMayHaveConsumedInvite() async throws {
+        let log = InviteBootstrapCallLog()
+        let unreachableProxyURL = try #require(URL(string: "http://127.0.0.1:41006"))
+
+        await #expect(throws: InviteBootstrapError.message(
+            "Pairing may have completed, but its response was lost. Open Oppi to check, or request a fresh invite before trying again."
+        )) {
+            _ = try await InviteBootstrapService.validateAndBootstrap(
+                credentials: makeIrohPreferredTunnelCredentials(),
+                existingCredentials: nil,
+                confirmTrust: { _ in true },
+                irohPairingClient: RecordingIrohInvitePairingClient(
+                    log: log,
+                    result: .responseUnavailable
+                ),
+                apiFactory: { _, _, _ in
+                    Issue.record("Bootstrap must not start after a lost pairing response")
+                    return RecordingInviteBootstrapAPI(log: log)
+                },
+                irohProxyFactory: { _, _ in unreachableProxyURL },
+                httpReachabilityProbe: { _, _ in throw URLError(.cannotConnectToHost) },
+                irohReachabilityProbe: IrohReachabilityProbeStub()
+            )
+        }
+
+        #expect(await log.snapshot() == ["irohPair:one-time-token:node-id-123"])
     }
 
     @Test func irohOnlyTunnelPairsAndBootstrapsWithoutHTTP() async throws {
@@ -223,7 +266,8 @@ struct InviteBootstrapServiceTests {
                 #expect(fingerprint == nil)
                 return RecordingInviteBootstrapAPI(log: log, label: "tunnel")
             },
-            irohProxyFactory: { _, _ in proxyURL }
+            irohProxyFactory: { _, _ in proxyURL },
+            irohReachabilityProbe: IrohReachabilityProbeStub()
         )
 
         #expect(await log.snapshot() == [
@@ -257,6 +301,29 @@ struct InviteBootstrapServiceTests {
         #expect(await log.snapshot().isEmpty)
     }
 
+    @Test func irohProbeFailureBeforePairingKeepsInviteRetryable() async throws {
+        let log = InviteBootstrapCallLog()
+
+        await #expect(throws: InviteBootstrapError.message(
+            "Could not reach the server over Iroh. Check your network and try again."
+        )) {
+            _ = try await InviteBootstrapService.validateAndBootstrap(
+                credentials: makeIrohOnlyCredentials(),
+                existingCredentials: nil,
+                confirmTrust: { _ in true },
+                irohPairingClient: RecordingIrohInvitePairingClient(
+                    log: log,
+                    result: .success(deviceToken: "unexpected")
+                ),
+                irohReachabilityProbe: IrohReachabilityProbeStub(
+                    error: .unavailable("Iroh probe could not connect")
+                )
+            )
+        }
+
+        #expect(await log.snapshot().isEmpty)
+    }
+
     @Test func irohPairingRejectionNeverFallsBackToHTTP() async throws {
         let log = InviteBootstrapCallLog()
         var apiFactoryCalled = false
@@ -272,11 +339,111 @@ struct InviteBootstrapServiceTests {
                 apiFactory: { _, _, _ in
                     apiFactoryCalled = true
                     return RecordingInviteBootstrapAPI(log: log)
-                }
+                },
+                httpReachabilityProbe: { _, _ in throw URLError(.cannotConnectToHost) },
+                irohReachabilityProbe: IrohReachabilityProbeStub()
             )
         }
         #expect(await log.snapshot() == ["irohPair:one-time-token:node-id-123"])
         #expect(!apiFactoryCalled)
+    }
+
+    @Test func automaticPairingUsesIrohAfterHTTPSProbeAvailabilityFailure() async throws {
+        let log = InviteBootstrapCallLog()
+        let proxyURL = try #require(URL(string: "http://127.0.0.1:41005"))
+        var proxyTokens: [String] = []
+
+        let result = try await InviteBootstrapService.validateAndBootstrap(
+            credentials: makeIrohPreferredTunnelCredentials(),
+            existingCredentials: nil,
+            confirmTrust: { _ in true },
+            irohPairingClient: RecordingIrohInvitePairingClient(
+                log: log,
+                result: .success(deviceToken: "iroh-device-token")
+            ),
+            apiFactory: { _, _, _ in RecordingInviteBootstrapAPI(log: log, label: "tunnel") },
+            irohProxyFactory: { _, token in
+                proxyTokens.append(token)
+                return proxyURL
+            },
+            httpReachabilityProbe: { _, _ in throw URLError(.cannotConnectToHost) },
+            irohReachabilityProbe: IrohReachabilityProbeStub()
+        )
+
+        #expect(await log.snapshot() == [
+            "irohPair:one-time-token:node-id-123",
+            "tunnel:health",
+            "tunnel:me",
+            "tunnel:listSessions:3"
+        ])
+        #expect(proxyTokens == ["iroh-device-token"])
+        #expect(result.effectiveCredentials.token == "iroh-device-token")
+    }
+
+    @Test func httpsOnlyPairingNeverProbesIroh() async throws {
+        let log = InviteBootstrapCallLog()
+        let pairingAPI = RecordingInviteBootstrapAPI(log: log, pairDeviceToken: "https-device-token")
+        let authenticatedAPI = RecordingInviteBootstrapAPI(log: log)
+        var apis = [pairingAPI, authenticatedAPI]
+
+        let result = try await InviteBootstrapService.validateAndBootstrap(
+            credentials: makeHTTPOnlyCredentials(),
+            existingCredentials: nil,
+            confirmTrust: { _ in true },
+            irohPairingClient: RecordingIrohInvitePairingClient(
+                log: log,
+                result: .success(deviceToken: "unexpected")
+            ),
+            apiFactory: { _, _, _ in apis.removeFirst() },
+            httpReachabilityProbe: { _, _ in await log.append("httpsProbe") },
+            irohReachabilityProbe: IrohReachabilityProbeStub(
+                error: .protocolViolation("Iroh must not be probed")
+            )
+        )
+
+        #expect(await log.snapshot() == [
+            "httpsProbe",
+            "pair:one-time-token",
+            "health",
+            "me",
+            "listSessions:3"
+        ])
+        #expect(result.effectiveCredentials.token == "https-device-token")
+    }
+
+    @Test func postDispatchNetworkFailureDoesNotRetryPairingOnIroh() async throws {
+        let log = InviteBootstrapCallLog()
+        var apiFactoryCalls = 0
+        let lostResponse = FailingInviteBootstrapAPI(
+            log: log,
+            label: "https",
+            error: URLError(.networkConnectionLost)
+        )
+
+        await #expect(throws: InviteBootstrapError.message(
+            "Pairing may have completed, but its response was lost. Open Oppi to check, or request a fresh invite before trying again."
+        )) {
+            _ = try await InviteBootstrapService.validateAndBootstrap(
+                credentials: makeIrohPreferredTunnelCredentials(),
+                existingCredentials: nil,
+                confirmTrust: { _ in true },
+                irohPairingClient: RecordingIrohInvitePairingClient(
+                    log: log,
+                    result: .success(deviceToken: "unexpected")
+                ),
+                apiFactory: { _, _, _ in
+                    apiFactoryCalls += 1
+                    return lostResponse
+                },
+                httpReachabilityProbe: { _, _ in await log.append("httpsProbe") },
+                irohReachabilityProbe: IrohReachabilityProbeStub(
+                    error: .protocolViolation("Iroh must not be probed")
+                )
+            )
+        }
+
+        #expect(await log.snapshot() == ["httpsProbe", "https:pair:one-time-token"])
+        #expect(apiFactoryCalls == 1)
     }
 
     @Test func decodesCredentialsFromInviteURL() throws {
@@ -340,10 +507,30 @@ struct InviteBootstrapServiceTests {
                 iroh: IrohServerTransport(
                     version: 2,
                     nodeId: "node-id-123",
-                    alpns: ["oppi/pair/1"],
+                    alpns: ["oppi/pair/1", IrohTunnelProtocol.alpn],
                     addressMode: .nodeId,
                     ticket: nil
                 ),
+                http: HTTPServerTransport(
+                    host: host,
+                    port: 443,
+                    scheme: .https,
+                    tlsCertFingerprint: nil
+                )
+            )
+        )
+    }
+
+    private func makeHTTPOnlyCredentials() -> ServerCredentials {
+        ServerCredentials(
+            host: host,
+            port: 443,
+            token: "invite-token",
+            name: "Pairing Server",
+            scheme: .https,
+            pairingToken: "one-time-token",
+            transports: ServerTransports(
+                preference: .httpOnly,
                 http: HTTPServerTransport(
                     host: host,
                     port: 443,
@@ -531,6 +718,18 @@ private actor FailingInviteBootstrapAPI: InviteBootstrapAPI {
     func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session] {
         await log.append("\(label):listSessions:\(recentDays)")
         throw error
+    }
+}
+
+private struct IrohReachabilityProbeStub: IrohInvitePairingReachabilityProbing {
+    let error: IrohTransportError?
+
+    init(error: IrohTransportError? = nil) {
+        self.error = error
+    }
+
+    func probe(iroh: IrohServerTransport) async throws {
+        if let error { throw error }
     }
 }
 

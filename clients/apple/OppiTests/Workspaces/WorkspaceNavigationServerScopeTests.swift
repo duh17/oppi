@@ -162,6 +162,9 @@ struct WorkspaceNavigationServerScopeTests {
         coordinator._irohProxyFactoryForTesting = { _, _ in
             (nil, try #require(URL(string: "http://server-b.test:7749")))
         }
+        coordinator._serverInfoBootstrapForTesting = { _, _ in
+            Self.bootstrapServerInfo()
+        }
         coordinator._onConnectionPreparedForTesting = { serverId, connection in
             guard serverId == serverB.id else { return }
             connection.setAPIClientForTesting(Self.makeAPIClient(host: "server-b.test"))
@@ -195,6 +198,38 @@ struct WorkspaceNavigationServerScopeTests {
 
         await coordinator.removeServer(id: serverB.id)
         await coordinator.removeServer(id: serverA.id)
+    }
+
+    private static func bootstrapServerInfo() -> ServerInfo {
+        ServerInfo(
+            name: "Test",
+            version: "1.0.0",
+            uptime: 1,
+            os: "darwin",
+            arch: "arm64",
+            hostname: "test.local",
+            nodeVersion: "22",
+            piVersion: "1",
+            configVersion: 1,
+            identity: nil,
+            runtimeUpdate: nil,
+            uploadProtocol: nil,
+            images: nil,
+            capabilities: .init(
+                sessionStream: .init(version: 1),
+                dictationStream: nil,
+                appEventStream: nil,
+                extensionNativeUI: nil,
+                controlSessions: nil
+            ),
+            stats: .init(
+                workspaceCount: 0,
+                activeSessionCount: 0,
+                totalSessionCount: 0,
+                skillCount: 0,
+                modelCount: 0
+            )
+        )
     }
 
     private static func makeAPIClient(host: String) -> APIClient {

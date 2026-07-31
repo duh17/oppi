@@ -31,7 +31,7 @@ struct IrohLiveInteropTests {
             return
         }
 
-        let manager = await IrohTransportRegistry.shared.manager(for: fixture.iroh)
+        let manager = try await IrohTransportRegistry.shared.manager(for: fixture.iroh)
         let baseURL = try await manager.startProxy(token: token)
         var request = URLRequest(url: baseURL.appendingPathComponent("me"))
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

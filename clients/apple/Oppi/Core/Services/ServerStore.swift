@@ -65,6 +65,13 @@ final class ServerStore {
         save(servers[idx])
     }
 
+    /// Persist the client-only route restriction for one paired server.
+    func setRouteMode(id: String, to mode: PairedServerRouteMode) {
+        guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
+        servers[idx].routeMode = mode
+        save(servers[idx])
+    }
+
     /// Look up a server by fingerprint ID.
     func server(for id: String) -> PairedServer? {
         servers.first { $0.id == id }

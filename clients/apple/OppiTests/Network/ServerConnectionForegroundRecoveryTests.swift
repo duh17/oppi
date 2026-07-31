@@ -19,6 +19,78 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(!conn.foregroundRecoveryInFlight, "Flag should be reset after completion")
     }
 
+    @Test func configuredOfflineConnectionRetriesAtForegroundAndNetworkBoundaries() async throws {
+        let conn = ServerConnection()
+        let credentials = ServerCredentials(
+            host: "recover.example.test",
+            port: 443,
+            token: "sk_recover",
+            name: "Recover",
+            scheme: .https,
+            serverFingerprint: "sha256:recover"
+        )
+        var routeReachable = true
+        var bootstrapAttempts = 0
+        let apiFactory: ServerConnectionAPIClientFactory = { environment, observer in
+            makeForegroundRecoveryFailingAPIClient(environment: environment)
+        }
+        let bootstrap: ServerConnectionInfoBootstrap = { _, _ in
+            bootstrapAttempts += 1
+            guard routeReachable else { throw URLError(.cannotConnectToHost) }
+            return foregroundRecoveryServerInfo()
+        }
+        let proxyFactory: @MainActor (
+            IrohServerTransport,
+            String
+        ) async throws -> (IrohConnectionManager?, URL) = { _, _ in
+            throw IrohTransportError.unavailable("Iroh is not authorized in this fixture")
+        }
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            routeMode: .automatic,
+            apiClientFactory: apiFactory,
+            serverInfoBootstrap: bootstrap,
+            irohProxyFactory: proxyFactory
+        ))
+
+        routeReachable = false
+        #expect(!(await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            routeMode: .automatic,
+            apiClientFactory: apiFactory,
+            serverInfoBootstrap: bootstrap,
+            irohProxyFactory: proxyFactory
+        )))
+        #expect(conn.credentials != nil)
+        #expect(conn.apiClient == nil)
+
+        routeReachable = true
+        let now = Date()
+        conn.sessionStore.markSyncSucceeded(at: now)
+        conn.workspaceStore.isLoaded = true
+        conn.workspaceStore.markSyncSucceeded(at: now)
+        await conn.reconnectIfNeeded()
+        #expect(conn.apiClient != nil)
+
+        routeReachable = false
+        #expect(!(await conn.reconfigureForExplicitRetry(
+            credentials: credentials,
+            routeMode: .automatic,
+            apiClientFactory: apiFactory,
+            serverInfoBootstrap: bootstrap,
+            irohProxyFactory: proxyFactory
+        )))
+        routeReachable = true
+        conn.handleNetworkPathChange()
+        for _ in 0..<100 where conn.apiClient == nil {
+            await Task.yield()
+        }
+
+        #expect(conn.apiClient != nil)
+        #expect(bootstrapAttempts == 5)
+    }
+
     @Test func reconnectInvalidatesCachedIrohConnectionBeforeRefresh() async throws {
         let conn = ServerConnection()
         let credentials = makeTestIrohOnlyCredentials()
@@ -28,10 +100,13 @@ struct ServerConnectionForegroundRecoveryTests {
         let localURL = try #require(URL(string: "http://127.0.0.1:41995"))
         let configured = await conn.configureForUse(
             credentials: credentials,
+            apiClientFactory: { environment, _ in
+                makeForegroundRecoveryFailingAPIClient(environment: environment)
+            },
+            serverInfoBootstrap: { _, _ in foregroundRecoveryServerInfo() },
             irohProxyFactory: { _, _ in (manager, localURL) }
         )
         #expect(configured)
-        conn.setAPIClientForTesting(makeForegroundRecoveryFailingAPIClient())
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true, appEventStream: true)
         var appEventStarts = 0
         conn._startAppEventStreamForTesting = { _ in appEventStarts += 1 }
@@ -51,7 +126,9 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(await provider.suspendCount() == 1)
         #expect(await provider.endpointRecycleCount() == 1)
         #expect(conn.sessionEventContinuations["s1"] != nil)
-        #expect(appEventStarts == 2)
+        // The callback observes start requests but does not mark the real
+        // coordinator running: initial intent + composition commit + recovery check.
+        #expect(appEventStarts == 3)
         _ = sessionEvents
         conn.disconnectStream()
     }
@@ -197,16 +274,52 @@ struct ServerConnectionForegroundRecoveryTests {
 }
 
 
-private func makeForegroundRecoveryFailingAPIClient() -> APIClient {
+private func makeForegroundRecoveryFailingAPIClient(
+    environment: OppiClientEnvironment? = nil
+) -> APIClient {
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [ForegroundRecoveryFailingURLProtocol.self]
     config.timeoutIntervalForRequest = 0.1
     config.timeoutIntervalForResource = 0.1
     config.waitsForConnectivity = false
     return APIClient(
-        baseURL: URL(string: "http://test.local:7749")!,
-        token: "sk_test",
+        environment: environment ?? OppiClientEnvironment(
+            baseURL: URL(string: "http://test.local:7749")!,
+            bearerToken: "sk_test"
+        ),
         configuration: config
+    )
+}
+
+private func foregroundRecoveryServerInfo() -> ServerInfo {
+    ServerInfo(
+        name: "Test",
+        version: "1.0.0",
+        uptime: 1,
+        os: "darwin",
+        arch: "arm64",
+        hostname: "test.local",
+        nodeVersion: "22",
+        piVersion: "1",
+        configVersion: 1,
+        identity: nil,
+        runtimeUpdate: nil,
+        uploadProtocol: nil,
+        images: nil,
+        capabilities: .init(
+            sessionStream: .init(version: 1),
+            dictationStream: nil,
+            appEventStream: .init(version: 1),
+            extensionNativeUI: nil,
+            controlSessions: nil
+        ),
+        stats: .init(
+            workspaceCount: 0,
+            activeSessionCount: 0,
+            totalSessionCount: 0,
+            skillCount: 0,
+            modelCount: 0
+        )
     )
 }
 

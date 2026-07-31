@@ -168,8 +168,22 @@ struct ServerDetailView: View {
                 Text("Badge color reflects connection status: green connected, blue connecting, red disconnected.")
             }
 
-            Section("Connection") {
+            Section {
+                Picker("Connection", selection: routeModeSelection) {
+                    ForEach(availableRouteModes, id: \.self) { mode in
+                        Text(ServerRouteModePresentation.label(for: mode))
+                            .tag(mode)
+                    }
+                }
+                .accessibilityLabel("Connection mode")
+                .accessibilityValue(ServerRouteModePresentation.label(for: pairedServer.effectiveRouteMode))
+                .accessibilityHint("\(ServerRouteModePresentation.description(for: pairedServer.effectiveRouteMode)) Oppi reconnects this server immediately when you change it.")
+
                 LabeledContent("Paired", value: pairedServer.addedAt.formatted(date: .abbreviated, time: .shortened))
+            } header: {
+                Text("Connection")
+            } footer: {
+                Text("\(ServerRouteModePresentation.description(for: pairedServer.effectiveRouteMode)) Oppi reconnects this server immediately when you change it.")
             }
 
             Section {
@@ -236,6 +250,25 @@ struct ServerDetailView: View {
         Binding(
             get: { pairedServer.resolvedBadgeIcon },
             set: { serverStore.setBadgeIcon(id: pairedServer.id, to: $0) }
+        )
+    }
+
+    private var availableRouteModes: [PairedServerRouteMode] {
+        ServerRouteModePresentation.options(
+            for: pairedServer.transports.authorizedTransports,
+            httpScheme: pairedServer.transports.http?.scheme
+        )
+    }
+
+    private var routeModeSelection: Binding<PairedServerRouteMode> {
+        Binding(
+            get: { pairedServer.effectiveRouteMode },
+            set: { mode in
+                serverStore.setRouteMode(id: pairedServer.id, to: mode)
+                Task {
+                    await coordinator.retryServerConnection(pairedServer.id)
+                }
+            }
         )
     }
 

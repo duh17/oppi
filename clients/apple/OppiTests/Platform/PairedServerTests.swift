@@ -172,6 +172,57 @@ struct PairedServerTests {
 
         #expect(decoded.badgeIcon == nil)
         #expect(decoded.resolvedBadgeIcon == .defaultValue)
+        #expect(decoded.routeMode == .automatic)
+    }
+
+    @Test("Re-pair preserves the local mode and falls back when it becomes impossible")
+    func rePairPreservesRouteModeAndFallsBack() {
+        let both = ServerCredentials(
+            host: "studio.example.test",
+            port: 443,
+            token: "dt_both",
+            name: "Studio",
+            serverFingerprint: "sha256:route-mode",
+            transports: ServerTransports(
+                preference: .irohPreferred,
+                iroh: IrohServerTransport(
+                    version: 2,
+                    nodeId: "signed-node",
+                    alpns: [IrohTunnelProtocol.alpn],
+                    addressMode: .nodeId,
+                    ticket: nil
+                ),
+                http: HTTPServerTransport(
+                    host: "studio.example.test",
+                    port: 443,
+                    scheme: .https,
+                    tlsCertFingerprint: nil
+                )
+            )
+        )
+        var server = PairedServer(from: both)!
+        server.routeMode = .irohOnly
+
+        let httpOnly = ServerCredentials(
+            host: "studio.example.test",
+            port: 443,
+            token: "dt_http",
+            name: "Studio",
+            serverFingerprint: "sha256:route-mode",
+            transports: ServerTransports(
+                preference: .httpOnly,
+                http: HTTPServerTransport(
+                    host: "studio.example.test",
+                    port: 443,
+                    scheme: .https,
+                    tlsCertFingerprint: nil
+                )
+            )
+        )
+        server.updateCredentials(from: httpOnly)
+
+        #expect(server.routeMode == .irohOnly)
+        #expect(server.effectiveRouteMode == .httpsOnly)
     }
 
     @Test("Equatable compares all fields, not just ID")

@@ -57,8 +57,90 @@ struct IrohTransportTests {
             addressMode: .ticket
         )
         #expect(throws: IrohTransportError.missingTicket) {
-            _ = try IrohTransportPolicy.select(credentials: invalid)
+            _ = try ServerTransportPlanResolver.candidates(
+                credentials: invalid,
+                mode: .automatic,
+                discoveredLANEndpoint: nil
+            )
         }
+    }
+
+    @Test func signedPreferencesMapToAuthorizedTransportSets() {
+        #expect(credentials(preference: .httpOnly, includeHTTP: true)
+            .transports.authorizedTransports == [.https])
+        #expect(credentials(preference: .irohOnly, includeHTTP: false)
+            .transports.authorizedTransports == [.iroh])
+        #expect(credentials(preference: .irohPreferred, includeHTTP: true)
+            .transports.authorizedTransports == [.https, .iroh])
+    }
+
+    @Test func candidateBuilderOrdersAutomaticAndRestrictsExplicitModes() throws {
+        let credentials = credentials(
+            preference: .irohPreferred,
+            includeHTTP: true,
+            tlsCertFingerprint: "sha256:leaf"
+        )
+        let lan = LANDiscoveredEndpoint(
+            host: "192.0.2.10",
+            port: 443,
+            serverFingerprintPrefix: "server",
+            tlsCertFingerprintPrefix: nil
+        )
+
+        #expect(try ServerTransportPlanResolver.candidates(
+            credentials: credentials,
+            mode: .automatic,
+            discoveredLANEndpoint: lan
+        ).map(\.candidateKind) == [.lan, .paired, .iroh])
+        #expect(try ServerTransportPlanResolver.candidates(
+            credentials: credentials,
+            mode: .httpsOnly,
+            discoveredLANEndpoint: lan
+        ).map(\.candidateKind) == [.lan, .paired])
+        #expect(try ServerTransportPlanResolver.candidates(
+            credentials: credentials,
+            mode: .irohOnly,
+            discoveredLANEndpoint: lan
+        ).map(\.candidateKind) == [.iroh])
+    }
+
+    @Test func HTTPSOnlyRejectsPlaintextHTTPWhileAutomaticKeepsAuthorizedCompatibility() throws {
+        let plaintext = credentials(
+            preference: .httpOnly,
+            includeHTTP: true,
+            httpScheme: .http
+        )
+
+        #expect(try ServerTransportPlanResolver.candidates(
+            credentials: plaintext,
+            mode: .automatic,
+            discoveredLANEndpoint: nil
+        ).map(\.candidateKind) == [.paired])
+        #expect(throws: IrohTransportError.protocolViolation(
+            "HTTPS Only requires a signed HTTPS endpoint"
+        )) {
+            _ = try ServerTransportPlanResolver.candidates(
+                credentials: plaintext,
+                mode: .httpsOnly,
+                discoveredLANEndpoint: nil
+            )
+        }
+    }
+
+    @Test func candidateExclusionsApplyToOneBuildOnly() throws {
+        let credentials = credentials(preference: .irohPreferred, includeHTTP: true)
+
+        #expect(try ServerTransportPlanResolver.candidates(
+            credentials: credentials,
+            mode: .automatic,
+            discoveredLANEndpoint: nil,
+            excluding: [.paired]
+        ).map(\.candidateKind) == [.iroh])
+        #expect(try ServerTransportPlanResolver.candidates(
+            credentials: credentials,
+            mode: .automatic,
+            discoveredLANEndpoint: nil
+        ).map(\.candidateKind) == [.paired, .iroh])
     }
 
     @Test func ticketModeRequiresTicketAndSupportedVersion() {
@@ -77,6 +159,189 @@ struct IrohTransportTests {
         #expect(throws: IrohTransportError.unsupportedMetadataVersion(99)) {
             try IrohPeerValidator.validate(unsupported, requiredALPN: IrohTunnelProtocol.alpn)
         }
+    }
+
+    @Test func relayMetadataCanonicalizesAndTreatsEmptyAsPublicDefault() throws {
+        let decoded = try JSONDecoder().decode(
+            IrohServerTransport.self,
+            from: Data("""
+            {
+              "version": 2,
+              "nodeId": "signed-node",
+              "alpns": ["oppi/http/1"],
+              "addressMode": "node-id",
+              "ticket": null,
+              "relayUrls": [
+                "https://RELAY.example.test/",
+                "https://relay.example.test",
+                "https://relay-two.example.test:8443/"
+              ]
+            }
+            """.utf8)
+        )
+
+        #expect(decoded.relayUrls == [
+            "https://relay-two.example.test:8443",
+            "https://relay.example.test",
+        ])
+
+        let publicDefault = try JSONDecoder().decode(
+            IrohServerTransport.self,
+            from: Data("""
+            {
+              "version": 2,
+              "nodeId": "signed-node",
+              "alpns": ["oppi/http/1"],
+              "addressMode": "node-id",
+              "ticket": null,
+              "relayUrls": []
+            }
+            """.utf8)
+        )
+        #expect(publicDefault.relayUrls == nil)
+    }
+
+    @Test func invalidRelayMetadataFailsClosedDuringDecoding() throws {
+        let invalidRelaySets = [
+            ["http://relay.example.test"],
+            ["https://user:password@relay.example.test"],
+            ["https://relay.example.test/?query=value"],
+            ["https://relay.example.test/#fragment"],
+            ["https://relay.example.test/not-root"],
+            ["https://localhost"],
+            ["https://relay.localhost"],
+            ["https://127.0.0.1"],
+            ["https://10.0.0.1"],
+            ["https://172.16.0.1"],
+            ["https://192.168.0.1"],
+            ["https://169.254.0.1"],
+            ["https://0.0.0.0"],
+            ["https://[::1]"],
+            ["https://[fc00::1]"],
+            ["https://[fe80::1]"],
+            ["https://[::]"],
+            ["https://[::ffff:192.168.0.1]"],
+            Array(repeating: "https://relay.example.test", count: 9),
+        ]
+
+        for relayURLs in invalidRelaySets {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "version": 2,
+                "nodeId": "signed-node",
+                "alpns": ["oppi/http/1"],
+                "addressMode": "node-id",
+                "relayUrls": relayURLs,
+            ])
+            #expect(throws: (any Error).self) {
+                _ = try JSONDecoder().decode(IrohServerTransport.self, from: data)
+            }
+        }
+    }
+
+    @Test func signedRelayValidationAllowsPublicIPLiteralAndSelfHostedDNSNameWithoutResolvingIt() throws {
+        let canonical = try IrohRelayURLs.canonicalize([
+            "https://198.51.100.10",
+            "https://[2001:db8::10]",
+            "https://owner-relay.example.test",
+        ])
+
+        #expect(canonical == [
+            "https://198.51.100.10",
+            "https://[2001:db8::10]",
+            "https://owner-relay.example.test",
+        ])
+    }
+
+    @Test func relayMembershipReinstallsPairedAndInFlightRelaysOnEndpointRebind() throws {
+        let first = IrohServerTransport(
+            version: 2,
+            nodeId: "first",
+            alpns: [IrohTunnelProtocol.alpn],
+            addressMode: .nodeId,
+            ticket: nil,
+            relayUrls: ["https://relay-one.example.test"]
+        )
+        let inFlightInvite = IrohServerTransport(
+            version: 2,
+            nodeId: "second",
+            alpns: [IrohTunnelProtocol.alpn],
+            addressMode: .nodeId,
+            ticket: nil,
+            relayUrls: ["https://relay-two.example.test"]
+        )
+        var membership = IrohRelayMapMembership()
+
+        try membership.register(first)
+        membership.associate(withEndpointGeneration: 1)
+        membership.markInstalled(["https://relay-one.example.test"], onEndpointGeneration: 1)
+        try membership.register(inFlightInvite)
+
+        #expect(membership.urlsNeedingInstallation == ["https://relay-two.example.test"])
+        #expect(membership.desiredURLs == [
+            "https://relay-one.example.test",
+            "https://relay-two.example.test",
+        ])
+
+        // A fake rebind gets a fresh default map, so both accumulated sources
+        // must be installed again rather than trusting generation 1's record.
+        membership.associate(withEndpointGeneration: 2)
+        #expect(membership.urlsNeedingInstallation == membership.desiredURLs)
+    }
+
+    @Test func relayMembershipReconcilesReplacementAndSharedOwnership() throws {
+        let first = IrohServerTransport(
+            version: 2,
+            nodeId: "first",
+            alpns: [IrohTunnelProtocol.alpn],
+            addressMode: .nodeId,
+            ticket: nil,
+            relayUrls: ["https://shared.example.test", "https://old.example.test"]
+        )
+        let second = IrohServerTransport(
+            version: 2,
+            nodeId: "second",
+            alpns: [IrohTunnelProtocol.alpn],
+            addressMode: .nodeId,
+            ticket: nil,
+            relayUrls: ["https://shared.example.test"]
+        )
+        var membership = IrohRelayMapMembership()
+        try membership.register(first)
+        try membership.register(second)
+        membership.associate(withEndpointGeneration: 1)
+        membership.markInstalled(membership.desiredURLs, onEndpointGeneration: 1)
+
+        try membership.register(IrohServerTransport(
+            version: 2,
+            nodeId: "first",
+            alpns: [IrohTunnelProtocol.alpn],
+            addressMode: .nodeId,
+            ticket: nil,
+            relayUrls: ["https://new.example.test"]
+        ))
+
+        #expect(membership.urlsNeedingInstallation == ["https://new.example.test"])
+        #expect(membership.urlsNeedingRemoval == ["https://old.example.test"])
+        #expect(membership.desiredURLs == [
+            "https://new.example.test",
+            "https://shared.example.test",
+        ])
+
+        membership.markRemoved(membership.urlsNeedingRemoval, onEndpointGeneration: 1)
+        membership.markInstalled(membership.urlsNeedingInstallation, onEndpointGeneration: 1)
+        membership.remove(ownerNodeID: "second")
+
+        #expect(membership.urlsNeedingRemoval == ["https://shared.example.test"])
+        #expect(membership.desiredURLs == ["https://new.example.test"])
+    }
+
+    @Test func relayMapErrorIsRedactedBeforePublicLogging() {
+        let redacted = IrohRelayMapFailure.redacted(
+            IrohTransportError.unavailable("https://private-relay.example.test failed")
+        )
+
+        #expect(redacted == .unavailable("Unable to update signed Iroh relays"))
+        #expect(!redacted.localizedDescription.contains("private-relay.example.test"))
     }
 
     @Test func pathEvidenceUsesOnlyUnambiguousPrivacySafeCategories() {
@@ -158,6 +423,31 @@ struct IrohTransportTests {
         let loopbackURL = try #require(URL(string: "http://127.0.0.1:12345"))
         let configured = await connection.configureForUse(
             credentials: credentials(preference: .irohOnly, includeHTTP: false),
+            serverInfoBootstrap: { _, _ in
+                ServerInfo(
+                    name: "Test",
+                    version: "1",
+                    uptime: 1,
+                    os: "darwin",
+                    arch: "arm64",
+                    hostname: "test",
+                    nodeVersion: "22",
+                    piVersion: "1",
+                    configVersion: 1,
+                    identity: nil,
+                    runtimeUpdate: nil,
+                    uploadProtocol: nil,
+                    images: nil,
+                    capabilities: nil,
+                    stats: .init(
+                        workspaceCount: 0,
+                        activeSessionCount: 0,
+                        totalSessionCount: 0,
+                        skillCount: 0,
+                        modelCount: 0
+                    )
+                )
+            },
             irohProxyFactory: { _, _ in (nil, loopbackURL) }
         )
 
@@ -422,15 +712,18 @@ struct IrohTransportTests {
         preference: TransportPreference,
         includeHTTP: Bool,
         alpns: [String] = [IrohTunnelProtocol.alpn],
-        addressMode: IrohAddressMode = .nodeId
+        addressMode: IrohAddressMode = .nodeId,
+        tlsCertFingerprint: String? = nil,
+        httpScheme: ServerScheme = .https
     ) -> ServerCredentials {
         ServerCredentials(
             host: includeHTTP ? "server.example.test" : "",
             port: includeHTTP ? 443 : 0,
             token: "dt_test",
             name: "Iroh",
-            scheme: includeHTTP ? .https : nil,
+            scheme: includeHTTP ? httpScheme : nil,
             serverFingerprint: "sha256:server",
+            tlsCertFingerprint: tlsCertFingerprint,
             transports: ServerTransports(
                 preference: preference,
                 iroh: transport(alpns: alpns, addressMode: addressMode),
@@ -438,8 +731,8 @@ struct IrohTransportTests {
                     ? HTTPServerTransport(
                         host: "server.example.test",
                         port: 443,
-                        scheme: .https,
-                        tlsCertFingerprint: nil
+                        scheme: httpScheme,
+                        tlsCertFingerprint: tlsCertFingerprint
                     )
                     : nil
             )
@@ -461,8 +754,215 @@ struct IrohTransportTests {
     }
 }
 
+@Suite("Short-lived server transport")
+struct ServerTransportAPIClientTests {
+    @Test func automaticUsesPairedHTTPSWithoutStartingIroh() async throws {
+        let events = ShortLivedTransportEvents()
+        let managerCreations = AsyncCounter()
+
+        let result = try await ServerTransportAPIClient.withClient(
+            for: server(mode: .automatic),
+            lanEndpointProvider: { _ in nil },
+            managerFactory: { metadata in
+                managerCreations.increment()
+                return IrohConnectionManager(iroh: metadata)
+            },
+            httpAvailabilityProbe: { client in
+                let host = await client.baseURL.host ?? ""
+                await events.append("httpsProbe:\(host)")
+            },
+            irohAvailabilityProbe: { _ in await events.append("irohProbe") },
+            operation: { client in
+                let host = await client.baseURL.host ?? ""
+                await events.append("operation:\(host)")
+                return host
+            }
+        )
+
+        #expect(result == "server.example.test")
+        #expect(await events.snapshot() == [
+            "httpsProbe:server.example.test",
+            "operation:server.example.test",
+        ])
+        #expect(managerCreations.value() == 0)
+    }
+
+    @Test func automaticAdvancesToIrohOnlyWhenHTTPSAvailabilityFailsBeforeOperation() async throws {
+        let events = ShortLivedTransportEvents()
+        let managerCreations = AsyncCounter()
+
+        let result = try await ServerTransportAPIClient.withClient(
+            for: server(mode: .automatic),
+            lanEndpointProvider: { _ in nil },
+            managerFactory: { metadata in
+                managerCreations.increment()
+                return IrohConnectionManager(iroh: metadata)
+            },
+            irohRelayPreparer: { _ in await events.append("irohRelayPreparation") },
+            httpAvailabilityProbe: { _ in
+                await events.append("httpsProbe")
+                throw URLError(.cannotConnectToHost)
+            },
+            irohAvailabilityProbe: { _ in await events.append("irohProbe") },
+            operation: { client in
+                let host = await client.baseURL.host ?? ""
+                await events.append("operation:\(host)")
+                return host
+            }
+        )
+
+        #expect(result == "127.0.0.1")
+        #expect(await events.snapshot() == [
+            "httpsProbe",
+            "irohRelayPreparation",
+            "irohProbe",
+            "operation:127.0.0.1",
+        ])
+        #expect(managerCreations.value() == 1)
+    }
+
+    @Test func httpsOnlyNeverStartsIroh() async throws {
+        let events = ShortLivedTransportEvents()
+        let managerCreations = AsyncCounter()
+
+        _ = try await ServerTransportAPIClient.withClient(
+            for: server(mode: .httpsOnly),
+            lanEndpointProvider: { _ in nil },
+            managerFactory: { metadata in
+                managerCreations.increment()
+                return IrohConnectionManager(iroh: metadata)
+            },
+            httpAvailabilityProbe: { _ in await events.append("httpsProbe") },
+            irohAvailabilityProbe: { _ in
+                Issue.record("Iroh must not be probed in HTTPS Only mode")
+            },
+            operation: { _ in await events.append("operation") }
+        )
+
+        #expect(await events.snapshot() == ["httpsProbe", "operation"])
+        #expect(managerCreations.value() == 0)
+    }
+
+    @Test func irohOnlyNeverConstructsHTTP() async throws {
+        let events = ShortLivedTransportEvents()
+
+        _ = try await ServerTransportAPIClient.withClient(
+            for: server(mode: .irohOnly),
+            lanEndpointProvider: { _ in
+                Issue.record("LAN discovery must not start in Iroh Only mode")
+                return nil
+            },
+            irohRelayPreparer: { _ in await events.append("irohRelayPreparation") },
+            httpAvailabilityProbe: { _ in
+                Issue.record("HTTP must not be constructed in Iroh Only mode")
+            },
+            irohAvailabilityProbe: { _ in await events.append("irohProbe") },
+            operation: { client in
+                let host = await client.baseURL.host ?? ""
+                await events.append("operation:\(host)")
+            }
+        )
+
+        #expect(await events.snapshot() == [
+            "irohRelayPreparation",
+            "irohProbe",
+            "operation:127.0.0.1",
+        ])
+    }
+
+    @Test func startedOperationIsInvokedOnceAndNeverReplayedAcrossRoutes() async throws {
+        let events = ShortLivedTransportEvents()
+        let managerCreations = AsyncCounter()
+
+        await #expect(throws: URLError(.networkConnectionLost)) {
+            _ = try await ServerTransportAPIClient.withClient(
+                for: server(mode: .automatic),
+                lanEndpointProvider: { _ in nil },
+                managerFactory: { metadata in
+                    managerCreations.increment()
+                    return IrohConnectionManager(iroh: metadata)
+                },
+                httpAvailabilityProbe: { _ in await events.append("httpsProbe") },
+                irohAvailabilityProbe: { _ in await events.append("irohProbe") },
+                operation: { _ in
+                    await events.append("operation")
+                    throw URLError(.networkConnectionLost)
+                }
+            )
+        }
+
+        #expect(await events.snapshot() == ["httpsProbe", "operation"])
+        #expect(managerCreations.value() == 0)
+    }
+
+    private func server(mode: PairedServerRouteMode) -> PairedServer {
+        let credentials = ServerCredentials(
+            host: "server.example.test",
+            port: 443,
+            token: "device-token",
+            name: "Test server",
+            scheme: .https,
+            serverFingerprint: "sha256:server",
+            transports: ServerTransports(
+                preference: .irohPreferred,
+                iroh: IrohServerTransport(
+                    version: 2,
+                    nodeId: "signed-node",
+                    alpns: [IrohTunnelProtocol.alpn],
+                    addressMode: .nodeId,
+                    ticket: nil
+                ),
+                http: HTTPServerTransport(
+                    host: "server.example.test",
+                    port: 443,
+                    scheme: .https,
+                    tlsCertFingerprint: nil
+                )
+            )
+        )
+        guard var server = PairedServer(from: credentials) else {
+            preconditionFailure("Test credentials must produce a paired server")
+        }
+        server.routeMode = mode
+        return server
+    }
+}
+
+private actor ShortLivedTransportEvents {
+    private var events: [String] = []
+
+    func append(_ event: String) {
+        events.append(event)
+    }
+
+    func snapshot() -> [String] {
+        events
+    }
+}
+
 @Suite("Iroh connection manager lifecycle")
 struct IrohConnectionManagerTests {
+    @Test func pairingReachabilityProbeOpensPairingALPNWithoutWritingAFrame() async throws {
+        let provider = RecordingIrohConnectionProvider(responses: [Data()])
+        let manager = IrohConnectionManager(
+            iroh: IrohServerTransport(
+                version: 2,
+                nodeId: "signed-node",
+                alpns: ["oppi/pair/1"],
+                addressMode: .nodeId,
+                ticket: nil
+            ),
+            provider: provider
+        )
+
+        try await manager.probeReachability(alpn: "oppi/pair/1")
+
+        #expect(await provider.openedALPNs() == ["oppi/pair/1"])
+        #expect(await provider.writtenChunks().isEmpty)
+        #expect(await provider.resetCount() == 1)
+        await manager.shutdown()
+    }
+
     @Test func frameExchangesReuseProviderAndShutdownCoherently() async throws {
         let first = try IrohFrameCodec.encode(header: ["kind": "first"])
         let second = try IrohFrameCodec.encode(header: ["kind": "second"])
