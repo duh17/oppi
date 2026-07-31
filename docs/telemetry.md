@@ -62,7 +62,10 @@ Telemetry must not include:
 - tool arguments
 - command output content
 - dictation transcript text
-- raw URLs, LAN IPs, local file paths, tokens, secrets, or credentials
+- relay URLs or relay hosts
+- IP addresses
+- tokens, tickets, node IDs, endpoint IDs, secrets, or credentials
+- other raw URLs or local file paths
 
 Allowed diagnostic data:
 
@@ -75,36 +78,36 @@ Allowed diagnostic data:
 
 ## Upload channels
 
-| Channel | Endpoint | Stored at | Purpose |
-|---|---|---|---|
-| Chat metrics | `POST /telemetry/chat-metrics` | `<OPPI_DATA_DIR>/diagnostics/telemetry/chat-metrics-YYYY-MM-DD.jsonl` | Client UX, rendering, queueing, dictation, and device metrics. |
-| MetricKit | `POST /telemetry/metrickit` | `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl` | Apple crash, hang, CPU, disk, battery, and app-launch diagnostics with bounded correlation context. |
-| Client logs | `POST /telemetry/client-logs` | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl` | Redacted warning/error events plus selected lifecycle, recovery, network, and memory info logs. |
-| Server resource metrics | local JSONL writer | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-metrics-YYYY-MM-DD.jsonl` | Server CPU, memory, event loop, sessions, and WebSocket counts. |
-| Server ops metrics | local JSONL writer | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-ops-metrics-YYYY-MM-DD.jsonl` | Server WebSocket, session, turn, extension UI, dictation, retry, and compaction metrics. |
-| Server log | local JSONL/text log | `<OPPI_DATA_DIR>/server.log` | Structured server events and warnings. |
+| Channel                 | Endpoint                       | Stored at                                                                   | Purpose                                                                                             |
+| ----------------------- | ------------------------------ | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Chat metrics            | `POST /telemetry/chat-metrics` | `<OPPI_DATA_DIR>/diagnostics/telemetry/chat-metrics-YYYY-MM-DD.jsonl`       | Client UX, rendering, queueing, dictation, and device metrics.                                      |
+| MetricKit               | `POST /telemetry/metrickit`    | `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl`          | Apple crash, hang, CPU, disk, battery, and app-launch diagnostics with bounded correlation context. |
+| Client logs             | `POST /telemetry/client-logs`  | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl`        | Redacted warning/error events plus selected lifecycle, recovery, network, and memory info logs.     |
+| Server resource metrics | local JSONL writer             | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-metrics-YYYY-MM-DD.jsonl`     | Server CPU, memory, event loop, sessions, and WebSocket counts.                                     |
+| Server ops metrics      | local JSONL writer             | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-ops-metrics-YYYY-MM-DD.jsonl` | Server WebSocket, session, turn, extension UI, dictation, retry, and compaction metrics.            |
+| Server log              | local JSONL/text log           | `<OPPI_DATA_DIR>/server.log`                                                | Structured server events and warnings.                                                              |
 
 Retention defaults:
 
-| Data | Default retention | Environment override |
-|---|---:|---|
-| MetricKit | 14 days | `OPPI_METRICKIT_RETENTION_DAYS` |
-| Chat metrics | 14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS` |
-| Client logs | 14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS` |
-| Server resource metrics | 30 days | `OPPI_SERVER_METRICS_RETENTION_DAYS` |
-| Server ops metrics | 30 days | `OPPI_SERVER_OPS_METRICS_RETENTION_DAYS` |
+| Data                    | Default retention | Environment override                     |
+| ----------------------- | ----------------: | ---------------------------------------- |
+| MetricKit               |           14 days | `OPPI_METRICKIT_RETENTION_DAYS`          |
+| Chat metrics            |           14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS`       |
+| Client logs             |           14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS`       |
+| Server resource metrics |           30 days | `OPPI_SERVER_METRICS_RETENTION_DAYS`     |
+| Server ops metrics      |           30 days | `OPPI_SERVER_OPS_METRICS_RETENTION_DAYS` |
 
 ## Metric taxonomy
 
 Use this split when reading dashboards or telemetry reviews:
 
-| Category | Meaning | Examples | How to read it |
-|---|---|---|---|
-| UX responsiveness | The user is waiting for the app, stream, or media to become usable. | `chat.ttft_ms`, `chat.session_load_ms`, `chat.ws_wait_for_connected_ms`, `chat.media_playback_start_ms` | High values are user-visible latency. These belong on the front page and can have SLOs. |
-| Reliability counters | A user action, stream, or render path failed or recovered. | `chat.message_queue_stale_drop`, `chat.app_event_stream_reconnect`, `chat.media_playback_error`, client logs | Trend toward zero; drill into logs and tags. |
-| Agent workload and progress | The agent is actively doing work. | `server.turn_duration_ms`, `server.turn_tool_calls`, `server.turn_input_tokens`, `chat.session_files_changed` | Long values are not automatically bad. Correlate with progress, tokens, tools, file changes, errors, and TTFT before calling it a stall. |
-| Resource health | Local client/server pressure that can make UX worse. | `device.memory_mb`, `server.heap_mb`, `server.event_loop_lag_ms` | Diagnose capacity or leaks; do not confuse with agent productivity. |
-| Drill-down internals | Mechanical sub-steps used to explain a front-page metric. | `chat.queue_sync_ms`, `server.session_subscribe_ms`, `chat.render_strategy_ms` | Keep available, but do not let them define product health by themselves. |
+| Category                    | Meaning                                                             | Examples                                                                                                      | How to read it                                                                                                                           |
+| --------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| UX responsiveness           | The user is waiting for the app, stream, or media to become usable. | `chat.ttft_ms`, `chat.session_load_ms`, `chat.ws_wait_for_connected_ms`, `chat.media_playback_start_ms`       | High values are user-visible latency. These belong on the front page and can have SLOs.                                                  |
+| Reliability counters        | A user action, stream, or render path failed or recovered.          | `chat.message_queue_stale_drop`, `chat.app_event_stream_reconnect`, `chat.media_playback_error`, client logs  | Trend toward zero; drill into logs and tags.                                                                                             |
+| Agent workload and progress | The agent is actively doing work.                                   | `server.turn_duration_ms`, `server.turn_tool_calls`, `server.turn_input_tokens`, `chat.session_files_changed` | Long values are not automatically bad. Correlate with progress, tokens, tools, file changes, errors, and TTFT before calling it a stall. |
+| Resource health             | Local client/server pressure that can make UX worse.                | `device.memory_mb`, `server.heap_mb`, `server.event_loop_lag_ms`                                              | Diagnose capacity or leaks; do not confuse with agent productivity.                                                                      |
+| Drill-down internals        | Mechanical sub-steps used to explain a front-page metric.           | `chat.queue_sync_ms`, `server.session_subscribe_ms`, `chat.render_strategy_ms`                                | Keep available, but do not let them define product health by themselves.                                                                 |
 
 `server.turn_duration_ms` is workload telemetry. It measures the full wall-clock duration of an agent turn. A long turn can mean the agent is handling a large task, running tools, editing files, waiting on tests, or processing a large context. Treat it as a problem only when it combines with missing progress signals, high first-token latency, stuck tool calls, errors, blocked asks, or disconnected clients.
 
@@ -114,93 +117,93 @@ The front page should focus on metrics that directly map to user experience. Kee
 
 ### App and session responsiveness
 
-| Metric | Why it matters |
-|---|---|
-| `chat.app_launch_ms` | Time until the app presents useful content. |
-| `chat.workspace_load_ms` | Time until the workspace screen is usable. |
-| `chat.session_load_ms` | Time from selecting a session to chat content visible. |
-| `chat.session_switch_ms` | Session row tap-to-content latency. |
-| `chat.ttft_ms` | User-perceived time to first assistant response token. |
+| Metric                      | Why it matters                                                   |
+| --------------------------- | ---------------------------------------------------------------- |
+| `chat.app_launch_ms`        | Time until the app presents useful content.                      |
+| `chat.workspace_load_ms`    | Time until the workspace screen is usable.                       |
+| `chat.session_load_ms`      | Time from selecting a session to chat content visible.           |
+| `chat.session_switch_ms`    | Session row tap-to-content latency.                              |
+| `chat.ttft_ms`              | User-perceived time to first assistant response token.           |
 | `chat.fresh_content_lag_ms` | Delay between new stream content and visible timeline freshness. |
 
 ### Connection and queue reliability
 
-| Metric or source | Why it matters |
-|---|---|
-| `chat.ws_wait_for_connected_ms` | Client wait before commands can use the focused session stream. |
-| `server.ws_handshake_ms` | Server-side WebSocket upgrade latency. |
-| `server.session_subscribe_ms` | Server session subscribe/catch-up path latency. |
-| `chat.queue_sync_ms` | Time to refresh queued steer/follow-up state. |
-| `chat.message_queue_ack_ms` | Time from queue command send to server acknowledgement. |
-| `chat.message_queue_stale_drop` | User input was dropped because the client had stale session state. |
-| `chat.app_event_stream_connect_ms` | Time until global app updates, attention cards, and session list events are live. |
-| `chat.app_event_stream_reconnect` | Global app-event stream reconnect attempts and exhaustion. |
-| `chat.app_event_stream_decode_error` | Global app-event stream payload/schema failures. |
-| `server.ws_ping_timeout` | Dead connection detection. |
+| Metric or source                                      | Why it matters                                                                                    |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `chat.ws_wait_for_connected_ms`                       | Client wait before commands can use the focused session stream.                                   |
+| `server.ws_handshake_ms`                              | Server-side WebSocket upgrade latency.                                                            |
+| `server.session_subscribe_ms`                         | Server session subscribe/catch-up path latency.                                                   |
+| `chat.queue_sync_ms`                                  | Time to refresh queued steer/follow-up state.                                                     |
+| `chat.message_queue_ack_ms`                           | Time from queue command send to server acknowledgement.                                           |
+| `chat.message_queue_stale_drop`                       | User input was dropped because the client had stale session state.                                |
+| `chat.app_event_stream_connect_ms`                    | Time until global app updates, attention cards, and session list events are live.                 |
+| `chat.app_event_stream_reconnect`                     | Global app-event stream reconnect attempts and exhaustion.                                        |
+| `chat.app_event_stream_decode_error`                  | Global app-event stream payload/schema failures.                                                  |
+| `server.ws_ping_timeout`                              | Dead connection detection.                                                                        |
 | Client logs: `WebSocket`, `AppEventStream`, `Network` | Reconnect storms, HTTP 1011s, POSIX disconnects, endpoint changes, and app-event stream failures. |
 
 ### Iroh transport diagnostics
 
 Iroh emits privacy-safe, informational transport metrics without release SLOs:
 
-| Metric | Why it matters |
-|---|---|
-| `network.iroh_connection_ms` | QUIC connection setup latency and coarse outcome. |
-| `network.iroh_path_rtt_ms` | Selected direct/relay path RTT at connection and stream boundaries. |
-| `network.iroh_path_transition` | Direct, relay, or unknown path changes. |
-| `network.iroh_reconnect` | Reconnect attempts, recoveries, and failures. |
-| `network.iroh_tunnel_duration_ms` | Lifetime of a local HTTP/WebSocket tunnel. |
+| Metric                                                                     | Why it matters                                                                                                                                                  |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `network.iroh_connection_ms`                                               | QUIC connection setup latency and coarse outcome.                                                                                                               |
+| `network.iroh_path_rtt_ms`                                                 | Selected direct/relay path RTT at connection and stream boundaries.                                                                                             |
+| `network.iroh_path_transition`                                             | Direct, relay, or unknown path changes.                                                                                                                         |
+| `network.iroh_reconnect`                                                   | Reconnect attempts, recoveries, and failures.                                                                                                                   |
+| `network.iroh_tunnel_duration_ms`                                          | Lifetime of a local HTTP/WebSocket tunnel.                                                                                                                      |
 | `network.iroh_tunnel_request_bytes` / `network.iroh_tunnel_response_bytes` | Observed per-tunnel byte volume, tagged by completion status, for throughput and relay-volume diagnosis. Failed pumps can undercount the final in-flight chunk. |
-| `network.iroh_tunnel_error` | Coarse setup/pump error counts. |
+| `network.iroh_tunnel_error`                                                | Coarse setup/pump error counts.                                                                                                                                 |
 
-Allowed tags are bounded categories such as `transport=iroh`, `path=direct|relay|unknown`, status, phase, reason, and coarse error kind. Metrics and uploaded client logs must not include endpoint IDs, node-ID prefixes, tickets, relay URLs, IP addresses, hostnames, tokens, or raw transport errors. The normal telemetry review prints these metrics in a separate informational Iroh section so they do not affect release-gate status.
+Allowed tags are bounded categories such as `transport=iroh`, `path=direct|relay|unknown`, status, phase, reason, and coarse error kind. Telemetry and ordinary client logs must not include relay URLs or hosts, IP addresses, tokens, tickets, node IDs, endpoint IDs, or raw transport errors. The normal telemetry review prints these metrics in a separate informational Iroh section so they do not affect release-gate status.
 
 ### Attention and media interactions
 
-| Metric | Why it matters |
-|---|---|
-| `chat.ask_response_ms` | How long the visible ask card blocked the agent before answer or ignore. |
-| `chat.media_playback_start_ms` | Time from media preview/player setup to playable video or audio. |
-| `chat.media_playback_error` | User-visible media preview/player failures by media kind and phase. |
-| Client logs: `MediaPlayback` | Playback/source failures with privacy-safe kind, source, phase, mode, and error class. |
+| Metric                         | Why it matters                                                                         |
+| ------------------------------ | -------------------------------------------------------------------------------------- |
+| `chat.ask_response_ms`         | How long the visible ask card blocked the agent before answer or ignore.               |
+| `chat.media_playback_start_ms` | Time from media preview/player setup to playable video or audio.                       |
+| `chat.media_playback_error`    | User-visible media preview/player failures by media kind and phase.                    |
+| Client logs: `MediaPlayback`   | Playback/source failures with privacy-safe kind, source, phase, mode, and error class. |
 
 ### Timeline rendering and scrolling
 
-| Metric | Why it matters |
-|---|---|
-| `chat.timeline_apply_ms` | Snapshot/reducer apply time during streaming. |
-| `chat.timeline_layout_ms` | UIKit layout cost during streaming. |
-| `chat.cell_configure_ms` | Row rendering cost, especially large tool output rows. |
-| `chat.markdown_streaming_ms` | Markdown streaming parse/build/apply cost. |
-| `chat.jank_pct` | Percentage of render cycles over frame budget. |
-| `chat.timeline_hitch` | Count of detected frame-budget hitches. |
+| Metric                       | Why it matters                                         |
+| ---------------------------- | ------------------------------------------------------ |
+| `chat.timeline_apply_ms`     | Snapshot/reducer apply time during streaming.          |
+| `chat.timeline_layout_ms`    | UIKit layout cost during streaming.                    |
+| `chat.cell_configure_ms`     | Row rendering cost, especially large tool output rows. |
+| `chat.markdown_streaming_ms` | Markdown streaming parse/build/apply cost.             |
+| `chat.jank_pct`              | Percentage of render cycles over frame budget.         |
+| `chat.timeline_hitch`        | Count of detected frame-budget hitches.                |
 
 ### Dictation and voice input
 
-| Metric | Why it matters |
-|---|---|
-| `chat.dictation_setup_ms` | Time from starting dictation to ready state. |
-| `chat.dictation_first_result_ms` | Time until the user sees first transcript feedback. |
-| `chat.dictation_finalize_ms` | Stop-to-final-result latency. |
-| `chat.dictation_preview_final_delta` | How much final text changed from the preview. |
-| `server.dictation_stt_ms` | Backend STT latency. |
-| `server.dictation_stt_audio_ratio` | STT real-time factor. |
-| `chat.dictation_error` and `server.dictation_error` | User-visible dictation failures. |
+| Metric                                              | Why it matters                                      |
+| --------------------------------------------------- | --------------------------------------------------- |
+| `chat.dictation_setup_ms`                           | Time from starting dictation to ready state.        |
+| `chat.dictation_first_result_ms`                    | Time until the user sees first transcript feedback. |
+| `chat.dictation_finalize_ms`                        | Stop-to-final-result latency.                       |
+| `chat.dictation_preview_final_delta`                | How much final text changed from the preview.       |
+| `server.dictation_stt_ms`                           | Backend STT latency.                                |
+| `server.dictation_stt_audio_ratio`                  | STT real-time factor.                               |
+| `chat.dictation_error` and `server.dictation_error` | User-visible dictation failures.                    |
 
 ### Resource health and crash diagnostics
 
-| Metric or source | Why it matters |
-|---|---|
-| `device.cpu_pct` | Client CPU usage during real interaction. |
-| `device.memory_mb` | Client memory footprint. |
-| `device.memory_available_mb` | Headroom before jetsam; low is bad. |
-| `device.thermal_state` | Thermal pressure that can make the app feel slow. |
-| `server.cpu_total` | Server CPU saturation. |
-| `server.event_loop_lag_ms` | Server event-loop delay during sampler intervals. |
-| `server.rss_mb` and `server.heap_mb` | Server memory pressure. |
-| `server.sessions_total` and `server.ws_connections` | Local server concurrency pressure. |
-| MetricKit diagnostics | Crashes, hangs, CPU exceptions, disk-write exceptions, and app-launch diagnostics. |
-| Client logs | Redacted diagnostic context for what happened before failure. |
+| Metric or source                                    | Why it matters                                                                     |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `device.cpu_pct`                                    | Client CPU usage during real interaction.                                          |
+| `device.memory_mb`                                  | Client memory footprint.                                                           |
+| `device.memory_available_mb`                        | Headroom before jetsam; low is bad.                                                |
+| `device.thermal_state`                              | Thermal pressure that can make the app feel slow.                                  |
+| `server.cpu_total`                                  | Server CPU saturation.                                                             |
+| `server.event_loop_lag_ms`                          | Server event-loop delay during sampler intervals.                                  |
+| `server.rss_mb` and `server.heap_mb`                | Server memory pressure.                                                            |
+| `server.sessions_total` and `server.ws_connections` | Local server concurrency pressure.                                                 |
+| MetricKit diagnostics                               | Crashes, hangs, CPU exceptions, disk-write exceptions, and app-launch diagnostics. |
+| Client logs                                         | Redacted diagnostic context for what happened before failure.                      |
 
 ## Lifecycle and hang correlation
 
@@ -232,20 +235,20 @@ Server operational metrics can be aggregated before storage. For sum-aggregated 
 
 Current handling guidance:
 
-| Pattern | Action |
-|---|---|
-| Per-message counters such as `server.ws_message_sent` | Keep for drill-down, but sum-aggregate by path/type/status instead of showing raw sample volume. |
-| Ephemeral UI counters such as `chat.tool_update_count` | Keep only if they explain a UX metric; otherwise sample or summarize by session. |
-| Server HTTP timings such as `server.http_request_ms` | Promote only route groups that affect visible UX; fast successful health/stats/capability/navigation/telemetry-upload routes are threshold-gated. |
-| Server drill-down gauges such as `server.broadcast_fanout` and `server.event_ring_utilization` | Max-aggregate by bounded tags; use peaks for diagnostics instead of raw sample counts. |
-| Server resource snapshots such as active-session peak | Prefer the structured server resource sample over duplicating the same value into server-ops metrics. |
-| Paired metrics such as coalescer events/bytes | Aggregate over a larger window and drop tiny partial drain windows; keep them as drill-down, not front-page rows. |
-| Render drill-down metrics such as `chat.render_strategy_ms` | Keep signposts for every operation, but upload only non-trivial samples. |
-| Routine command metrics such as successful `get_queue` command send/resolve/roundtrip | Keep errors and slow samples; rely on queue UX metrics for the normal success path. |
-| Server token and cost counters such as `server.turn_input_tokens` and `server.turn_cost` | Sum-aggregate before storage; dashboards should use `SUM(value)`. |
-| Client session-size snapshots such as `chat.session_input_tokens` | Emit only stable non-empty snapshots; dashboards should treat them as latest/max capacity diagnostics, not per-update events. |
-| Rare error counters | Prefer a single error metric with a `reason` tag over many near-zero standalone metrics. |
-| Stale or redundant metrics | Stop emitting them and keep import compatibility only for archived dashboards. |
+| Pattern                                                                                        | Action                                                                                                                                            |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Per-message counters such as `server.ws_message_sent`                                          | Keep for drill-down, but sum-aggregate by path/type/status instead of showing raw sample volume.                                                  |
+| Ephemeral UI counters such as `chat.tool_update_count`                                         | Keep only if they explain a UX metric; otherwise sample or summarize by session.                                                                  |
+| Server HTTP timings such as `server.http_request_ms`                                           | Promote only route groups that affect visible UX; fast successful health/stats/capability/navigation/telemetry-upload routes are threshold-gated. |
+| Server drill-down gauges such as `server.broadcast_fanout` and `server.event_ring_utilization` | Max-aggregate by bounded tags; use peaks for diagnostics instead of raw sample counts.                                                            |
+| Server resource snapshots such as active-session peak                                          | Prefer the structured server resource sample over duplicating the same value into server-ops metrics.                                             |
+| Paired metrics such as coalescer events/bytes                                                  | Aggregate over a larger window and drop tiny partial drain windows; keep them as drill-down, not front-page rows.                                 |
+| Render drill-down metrics such as `chat.render_strategy_ms`                                    | Keep signposts for every operation, but upload only non-trivial samples.                                                                          |
+| Routine command metrics such as successful `get_queue` command send/resolve/roundtrip          | Keep errors and slow samples; rely on queue UX metrics for the normal success path.                                                               |
+| Server token and cost counters such as `server.turn_input_tokens` and `server.turn_cost`       | Sum-aggregate before storage; dashboards should use `SUM(value)`.                                                                                 |
+| Client session-size snapshots such as `chat.session_input_tokens`                              | Emit only stable non-empty snapshots; dashboards should treat them as latest/max capacity diagnostics, not per-update events.                     |
+| Rare error counters                                                                            | Prefer a single error metric with a `reason` tag over many near-zero standalone metrics.                                                          |
+| Stale or redundant metrics                                                                     | Stop emitting them and keep import compatibility only for archived dashboards.                                                                    |
 
 ## How Oppi uses Pi observability
 
@@ -283,15 +286,15 @@ See `server/README.md` for the full dashboard runbook.
 
 Use the same tag names across clients, server metrics, logs, and dashboards when possible.
 
-| Tag | Use |
-|---|---|
-| `status` | Bounded mechanical outcome. Common values are `ok`, `error`, `cancelled`, and `timeout`; transport metrics also use `connected`, `failed`, `attempt`, `recovered`, `completed`, and `setup_failed`. |
-| `result` | Domain result, such as catch-up result: `applied`, `no_gap`, `ring_miss`, `fetch_failed`. |
-| `reason` | Why an event happened, such as `capabilityRefreshFailed` or `idle_timeout`. |
-| `transport` | Active transport for metric samples: `http`, `iroh`, `lan`, `paired`, or `unknown`. |
-| `path` | Privacy-safe selected network path: `direct`, `relay`, or `unknown`; never an IP, endpoint ID, or relay URL. |
-| `streamRole` | WebSocket role in client logs, such as `focused_session` or another low-cardinality stream name. |
-| `error_kind` | Coarse error class for metrics: `network`, `timeout`, `decode`, `cancelled`, `not_connected`, or `other`. |
+| Tag          | Use                                                                                                                                                                                                 |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`     | Bounded mechanical outcome. Common values are `ok`, `error`, `cancelled`, and `timeout`; transport metrics also use `connected`, `failed`, `attempt`, `recovered`, `completed`, and `setup_failed`. |
+| `result`     | Domain result, such as catch-up result: `applied`, `no_gap`, `ring_miss`, `fetch_failed`.                                                                                                           |
+| `reason`     | Why an event happened, such as `capabilityRefreshFailed` or `idle_timeout`.                                                                                                                         |
+| `transport`  | Active transport for metric samples: `http`, `iroh`, `lan`, `paired`, or `unknown`.                                                                                                                 |
+| `path`       | Privacy-safe selected network path: `direct`, `relay`, or `unknown`; never an IP, endpoint ID, relay URL, or relay host.                                                                            |
+| `streamRole` | WebSocket role in client logs, such as `focused_session` or another low-cardinality stream name.                                                                                                    |
+| `error_kind` | Coarse error class for metrics: `network`, `timeout`, `decode`, `cancelled`, `not_connected`, or `other`.                                                                                           |
 
 Prefer logs over metrics for raw platform error details such as `NSURLErrorDomain`, HTTP status, or WebSocket close code. Use metrics for bounded counts, durations, and ratios.
 
