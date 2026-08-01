@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { checkTestingPolicy } from "../scripts/check-testing-policy.ts";
+import vitestConfig from "../vitest.config.ts";
 
 function makeFixture(
   options: {
@@ -90,6 +91,10 @@ describe("testing policy gate coherence", () => {
 
     expect(result.errors).toEqual([]);
     expect(result.ok).toBe(true);
+  });
+
+  it("caps server test worker fan-out for nested subprocesses", () => {
+    expect(vitestConfig.test?.maxWorkers).toBe(4);
   });
 
   it("fails when a required testing file is present but untracked", () => {

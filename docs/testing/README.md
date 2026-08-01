@@ -23,6 +23,10 @@ npm run check
 npm test
 ```
 
+The server Vitest configuration caps file workers at four. CLI tests launch
+child processes, so allowing worker count to scale with host cores can starve
+nested subprocesses and contend with the concurrent Apple pre-push lane.
+
 ### One-shot Linux validation on macOS
 
 Use Apple `container` copy-in mode for a clean Linux check without exposing the checkout through a host bind mount. The command streams the working tree into the container, including uncommitted files but excluding local build products.

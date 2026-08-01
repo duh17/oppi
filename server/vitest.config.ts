@@ -3,6 +3,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     testTimeout: 10_000,
+    // CLI tests launch child processes; cap file workers so host-core fan-out does
+    // not starve nested subprocesses or the concurrent Apple pre-push lane.
+    maxWorkers: 4,
     // Build the CLI once in an invocation-local directory so parallel test files or
     // external release builds cannot mutate the executable and docs under test.
     globalSetup: ["./vitest.global-setup.ts"],
