@@ -194,7 +194,7 @@ oppi token rotate            # rotate owner bearer token
 oppi update                  # update the npm-installed server and CLI
 ```
 
-Commands that call the local API use bearer-authenticated HTTP over `$OPPI_DATA_DIR/run/oppi.sock`. They never fall back automatically to a network host or plaintext TCP. Deep custom data-directory paths use a deterministic owner-only socket under the system temporary directory to stay within Unix socket path limits. Local CLI commands continue to work when remote HTTPS/WSS is unavailable. Oppi Mirror and Oppi subagents still require the network WebSocket listener.
+Commands that call the local API use bearer-authenticated HTTP over `$OPPI_DATA_DIR/run/oppi.sock`. They never fall back automatically to a network host or plaintext TCP. Deep custom data-directory paths use a deterministic owner-only socket under the system temporary directory to stay within Unix socket path limits. Local CLI commands continue to work when remote HTTPS/WSS is unavailable. Oppi Mirror still requires the network WebSocket listener.
 
 `oppi session inspect` consolidates session-history reads. Start with its default turn outline, use `--view summary` for counts, and request `--turns <spec> --view messages|tools` only for the smallest relevant turn set.
 
