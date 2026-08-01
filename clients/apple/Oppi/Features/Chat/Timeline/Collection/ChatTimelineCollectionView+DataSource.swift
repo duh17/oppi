@@ -63,6 +63,15 @@ final class SafeSizingCell: UICollectionViewCell {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        // The sizing cache belongs to the current item, not the reusable cell.
+        // Without clearing it here, a short streaming row can constrain a tall
+        // wrapped-table row after UIKit recycles the cell.
+        isStreamingAssistant = false
+        invalidateStreamingHeightCache()
+    }
+
     private func configureNavigationHighlightOverlay() {
         navigationHighlightOverlay.isUserInteractionEnabled = false
         navigationHighlightOverlay.alpha = 0

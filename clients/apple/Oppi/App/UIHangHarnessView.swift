@@ -546,30 +546,16 @@ struct UIHangHarnessView: View {
             return """
             Overlap repro fixture — \(session.title).
 
-            This paragraph stays short at first, then the renderer suddenly has to fit multiple rich blocks in one assistant row.
+            This paragraph stays short at first, then the renderer suddenly has to fit a wrapped table in one streaming assistant row.
 
-            ```swift
-            enum TimelineScrollIntent {
-                case none
-                case initialBottom(id: String)
-                case jumpToBottom(id: String, animated: Bool)
-                case navigateTo(id: String)
-            }
-            ```
+            | Topic | Detail |
+            | --- | --- |
+            | Why | Long values must wrap inside the table instead of painting over the content below. |
+            | Result | The following heading must remain below the complete table card after cell reuse. |
 
-            ```swift
-            if explicitIntent {
-                performExplicitScroll()
-            } else if detached {
-                preserveViewport()
-            } else if isBusy {
-                keepTailVisibleWithinComfortBand()
-            } else {
-                settleToExactBottomIfStillAttached()
-            }
-            ```
+            ## Content after the wrapped table
 
-            The key simplification: streaming is not a scroll animation anymore. Streaming is content appearing, scrolling only nudges.
+            This heading and paragraph must remain visible below the table when a short streaming cell is recycled for this taller assistant item.
             """
         }
     }

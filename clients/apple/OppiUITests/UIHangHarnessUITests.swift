@@ -101,6 +101,21 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         XCTAssertGreaterThan(expandedHeight, baselineHeight)
         XCTAssertLessThanOrEqual(pollDiagnostic("diag.assistantRenderedOverlapPx", timeout: 3), 1)
         XCTAssertLessThanOrEqual(pollDiagnostic("diag.assistantOverflowPx", timeout: 3), 1)
+
+        // Capture the expanded wrapped table itself, not only the diagnostic
+        // values. The row remains the same streaming item while its content
+        // grows, which is the visual form of the reported overlap.
+        dragTimeline(
+            timeline,
+            from: CGVector(dx: 0.5, dy: 0.78),
+            to: CGVector(dx: 0.5, dy: 0.42)
+        )
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        let screenshot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = "assistant-streaming-wrapped-table-after-reflow"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     func testStreamingKeepsBottomPinnedWhenNearBottom() throws {

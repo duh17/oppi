@@ -107,6 +107,97 @@ struct NativeTableWrapToFitTests {
         #expect(tableView.bounds.width <= 320.5)
     }
 
+    @Test func wrappedHeightIsKnownDuringSelfSizingBeforeFirstLayout() {
+        let tableView = NativeTableBlockView()
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 800))
+        container.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            tableView.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+
+        tableView.apply(
+            headers: [[.text("Practical takeaway")], [.text("Detail")]],
+            rows: [
+                [
+                    [.text("A label that must wrap")],
+                    [.text("A long value that must wrap onto multiple lines to fit the phone-width table card.")],
+                ],
+                [
+                    [.text("Another row")],
+                    [.text("More detail that must remain below the first row instead of painting over it.")],
+                ],
+            ],
+            palette: ThemeRuntimeState.currentPalette()
+        )
+
+        let firstPass = tableView.systemLayoutSizeFitting(
+            CGSize(width: 320, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let settled = tableView.systemLayoutSizeFitting(
+            CGSize(width: 320, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+
+        #expect(
+            firstPass.height >= settled.height - 1,
+            "Self-sizing measured the wrapped table too short before layout (first=\(firstPass.height), settled=\(settled.height))"
+        )
+    }
+
+    @Test func wrappedCellsExposeTheirCompleteMultilineHeight() throws {
+        let tableView = NativeTableBlockView()
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        let detail = "Long values must wrap inside the table instead of painting over the content below."
+
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 800))
+        container.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            tableView.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+
+        tableView.apply(
+            headers: [[.text("Topic")], [.text("Detail")]],
+            rows: [
+                [[.text("Why")], [.text(detail)]],
+                [[.text("Result")], [.text("The following heading must remain below the complete table card after cell reuse.")]],
+            ],
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        container.layoutIfNeeded()
+
+        let matchingCells = timelineAllTextViews(in: tableView).filter {
+            !$0.isHidden && timelineRenderedText(of: $0).contains(detail)
+        }
+        let detailCell = try #require(matchingCells.first)
+        detailCell.layoutManager.ensureLayout(for: detailCell.textContainer)
+        var lineCount = 0
+        detailCell.layoutManager.enumerateLineFragments(
+            forGlyphRange: detailCell.layoutManager.glyphRange(for: detailCell.textContainer)
+        ) { _, _, _, _, _ in
+            lineCount += 1
+        }
+        print("wrapped detail bounds=\(detailCell.bounds) contentSize=\(detailCell.contentSize) fit=\(detailCell.sizeThatFits(CGSize(width: detailCell.bounds.width, height: .greatestFiniteMagnitude))) textContainer=\(detailCell.textContainer.size) lineCount=\(lineCount)")
+        #expect(lineCount >= 2, "Long table detail should wrap across multiple lines, got \(lineCount)")
+        #expect(
+            detailCell.contentSize.height <= detailCell.bounds.height + 1,
+            "Wrapped table cell content is clipped: content=\(detailCell.contentSize.height), bounds=\(detailCell.bounds.height)"
+        )
+        #expect(detailCell.bounds.height > 40, "Long table detail should occupy multiple lines")
+    }
+
     @Test func manyColumnTableKeepsHorizontalScrollFallback() {
         let tableView = NativeTableBlockView()
         tableView.translatesAutoresizingMaskIntoConstraints = false

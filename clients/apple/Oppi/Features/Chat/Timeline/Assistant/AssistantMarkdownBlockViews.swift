@@ -910,7 +910,16 @@ final class NativeTableBlockView: UIView {
         }
         textView.attributedText = result
 
-        textView.widthAnchor.constraint(equalToConstant: max(1, width)).isActive = true
+        let resolvedWidth = max(1, width)
+        textView.widthAnchor.constraint(equalToConstant: resolvedWidth).isActive = true
+        // UITextView's intrinsic height can still reflect its pre-width,
+        // single-line measurement while a streaming table is rebuilt. Pin the
+        // cell to the width-aware fitting height so wrapped lines cannot be
+        // clipped or let the following markdown segment paint over them.
+        let fittingHeight = textView.sizeThatFits(
+            CGSize(width: resolvedWidth, height: CGFloat.greatestFiniteMagnitude)
+        ).height
+        textView.heightAnchor.constraint(equalToConstant: max(1, ceil(fittingHeight))).isActive = true
         return textView
     }
 

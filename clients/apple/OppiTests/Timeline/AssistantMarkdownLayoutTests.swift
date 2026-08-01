@@ -901,6 +901,82 @@ struct AssistantMarkdownLayoutTests {
         )
     }
 
+    /// Regression: a recycled cell must not carry an old streaming height into
+    /// the next assistant item. A stale compact estimate can let a wrapped table
+    /// paint over the following heading before the next layout pass.
+    @Test func reusableTimelineCellDropsStreamingHeightBeforeNewItem() {
+        let cell = SafeSizingCell()
+        cell.isStreamingAssistant = true
+        cell.cachedStreamingHeight = 92
+        cell.lastFullSizeComputeNs = DispatchTime.now().uptimeNanoseconds
+
+        cell.prepareForReuse()
+
+        #expect(!cell.isStreamingAssistant)
+        #expect(cell.cachedStreamingHeight == nil)
+        #expect(cell.lastFullSizeComputeNs == 0)
+    }
+
+    /// Regression: wrapped markdown tables remain inside the assistant row and
+    /// below adjacent content after the initial self-sizing pass.
+    @Test func wrappedMarkdownTablesReflowTheAssistantRowBeforeAdjacentContent() async throws {
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "assistant-wrapped-table-reflow",
+            useAnchoredCollectionView: true
+        )
+        let itemID = "assistant-wrapped-table-reflow"
+        let markdown = """
+        ## HN 1 — Kernel optimization
+
+        Practical takeaway: the result is useful when the reader can scan every row.
+
+        | Practical takeaway | The autonomous kernel optimization pattern is real and valuable — measurable speedups from AI-generated low-level code are a useful result. |
+        | --- | --- |
+        | Links | X analysis · OpenAI announcement |
+        | Dive deeper | Compare with a deeper approach to speculative decoding. |
+
+        ## HN 2 — JEP 401 Value Objects
+
+        Why it matters: this is a second section after a wrapped table and must remain below it.
+
+        | Source | Hacker News (top, #6; score 175, 96 comments) |
+        | --- | --- |
+        | Why it matters | Project Valhalla’s value objects are the biggest change to Java’s type model. |
+        | What it says | JEP 401 introduces value objects to Java, objects without identity. |
+        """
+
+        wh.applyItems(
+            [
+                .assistantMessage(
+                    id: itemID,
+                    text: markdown,
+                    timestamp: Date(timeIntervalSince1970: 0)
+                )
+            ],
+            isBusy: false
+        )
+
+        let indexPath = IndexPath(item: 0, section: 0)
+        let cell = try #require(try configuredTimelineCell(in: wh.collectionView, item: 0) as? SafeSizingCell)
+        let row = try #require(timelineFirstView(ofType: AssistantTimelineRowContentView.self, in: cell.contentView))
+        let markdownView = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: row))
+        let tables = timelineAllViews(in: markdownView).compactMap { $0 as? NativeTableBlockView }
+
+        #expect(tables.count == 2)
+        #expect(tables.allSatisfy { $0.bounds.width > 0 })
+        #expect(
+            row.debugMarkdownRenderedOverlapPoints < 1,
+            "Wrapped table segments overlap adjacent markdown content by \(row.debugMarkdownRenderedOverlapPoints)pt"
+        )
+        #expect(
+            row.debugMarkdownOverflowPoints < 1,
+            "Wrapped markdown extends beyond its assistant row by \(row.debugMarkdownOverflowPoints)pt"
+        )
+
+        let rowFrame = try #require(wh.collectionView.layoutAttributesForItem(at: indexPath)?.frame)
+        #expect(rowFrame.height > 200, "Wrapped table fixture should produce a fully sized assistant row")
+    }
+
     /// Regression: UICollectionViewCell defaults to clipsToBounds=false.
     /// When the compositional layout uses estimated(100) heights and self-
     /// sizing hasn't resolved yet (e.g., during streaming when layoutIfNeeded
