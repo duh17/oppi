@@ -32,10 +32,6 @@ struct ScheduleNativeEditView: View {
         24 * 60 * 60_000,
         7 * 24 * 60 * 60_000,
     ]
-    private static let thinkingOptions: [ThinkingLevel] = [
-        .off, .minimal, .low, .medium, .high, .xhigh,
-    ]
-
     init(schedule: AgentSchedule, onSaved: @escaping (AgentSchedule, AgentScheduleSummary) -> Void) {
         self.schedule = schedule
         self.onSaved = onSaved
@@ -191,8 +187,8 @@ struct ScheduleNativeEditView: View {
 
                         Picker("Thinking", selection: $thinkingLevel) {
                             Text("Agent or server default").tag(ThinkingLevel?.none)
-                            ForEach(Self.thinkingOptions, id: \.rawValue) { level in
-                                Text(thinkingTitle(level)).tag(Optional(level))
+                            ForEach(ThinkingLevel.allCases) { level in
+                                Text(level.displayTitle).tag(Optional(level))
                             }
                         }
                         .accessibilityIdentifier("schedule.nativeEdit.thinking")

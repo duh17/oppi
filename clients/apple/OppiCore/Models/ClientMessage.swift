@@ -114,8 +114,34 @@ enum StreamingBehavior: String, Codable, Sendable {
     case followUp
 }
 
-enum ThinkingLevel: String, Codable, Sendable {
-    case off, minimal, low, medium, high, xhigh
+enum ThinkingLevel: String, Codable, Sendable, CaseIterable, Identifiable {
+    case off, minimal, low, medium, high, xhigh, max
+
+    var id: String { rawValue }
+
+    var displayTitle: String {
+        switch self {
+        case .off: "Off"
+        case .minimal: "Minimal"
+        case .low: "Low"
+        case .medium: "Medium"
+        case .high: "High"
+        case .xhigh: "XHigh"
+        case .max: "Max"
+        }
+    }
+
+    var compactTitle: String {
+        switch self {
+        case .off: "off"
+        case .minimal: "min"
+        case .low: "low"
+        case .medium: "med"
+        case .high: "high"
+        case .xhigh: "xhigh"
+        case .max: "max"
+        }
+    }
 
     /// Next level in the standard cycle: off → low → medium → high → off.
     var next: Self {
@@ -126,6 +152,7 @@ enum ThinkingLevel: String, Codable, Sendable {
         case .medium: return .high
         case .high: return .off
         case .xhigh: return .off
+        case .max: return .off
         }
     }
 }

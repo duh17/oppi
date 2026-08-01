@@ -34,32 +34,8 @@ struct SessionToolbar: View {
 
     // A system Menu can reverse its visual order when it expands upward from a
     // keyboard-adjacent composer. The fixed popover stack keeps this order stable.
-    private static let thinkingOptions: [ThinkingLevel] = [.xhigh, .high, .medium, .low, .minimal, .off]
-
     private var thinkingLabel: String {
-        Self.thinkingLabel(for: thinkingLevel)
-    }
-
-    private static func thinkingLabel(for level: ThinkingLevel) -> String {
-        switch level {
-        case .off: return "off"
-        case .minimal: return "min"
-        case .low: return "low"
-        case .medium: return "med"
-        case .high: return "high"
-        case .xhigh: return "max"
-        }
-    }
-
-    private static func thinkingMenuTitle(for level: ThinkingLevel) -> String {
-        switch level {
-        case .off: return "Off"
-        case .minimal: return "Minimal"
-        case .low: return "Low"
-        case .medium: return "Medium"
-        case .high: return "High"
-        case .xhigh: return "Max"
-        }
+        thinkingLevel.compactTitle
     }
 
     var body: some View {
@@ -91,14 +67,14 @@ struct SessionToolbar: View {
         .buttonStyle(.plain)
         .popover(isPresented: $isThinkingPickerPresented, arrowEdge: .bottom) {
             VStack(spacing: 0) {
-                ForEach(Self.thinkingOptions, id: \.rawValue) { level in
+                ForEach(ThinkingLevel.allCases.reversed(), id: \.rawValue) { level in
                     Button {
                         isThinkingPickerPresented = false
                         guard level != thinkingLevel else { return }
                         onThinkingSelect(level)
                     } label: {
                         HStack(spacing: 10) {
-                            Text(Self.thinkingMenuTitle(for: level))
+                            Text(level.displayTitle)
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
                             Image(systemName: "checkmark")
@@ -112,7 +88,7 @@ struct SessionToolbar: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(Self.thinkingMenuTitle(for: level))
+                    .accessibilityLabel(level.displayTitle)
                     .accessibilityValue(level == thinkingLevel ? "Selected" : "")
                     .accessibilityIdentifier("session.toolbar.thinking.option.\(level.rawValue)")
                 }
@@ -123,7 +99,7 @@ struct SessionToolbar: View {
             .presentationBackground(Color.themeSurfaceFill(.popover))
         }
         .accessibilityLabel("Thinking level")
-        .accessibilityValue(Self.thinkingMenuTitle(for: thinkingLevel))
+        .accessibilityValue(thinkingLevel.displayTitle)
         .accessibilityIdentifier("session.toolbar.thinking")
     }
 }

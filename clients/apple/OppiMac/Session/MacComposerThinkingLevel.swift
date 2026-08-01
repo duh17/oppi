@@ -12,6 +12,7 @@ enum MacComposerThinkingLevel: String, CaseIterable, Identifiable, Sendable, Equ
     case medium
     case high
     case xhigh
+    case max
 
     var id: String { rawValue }
 
@@ -32,6 +33,7 @@ enum MacComposerThinkingLevel: String, CaseIterable, Identifiable, Sendable, Equ
         case .medium: .medium
         case .high: .high
         case .xhigh: .xhigh
+        case .max: .max
         }
     }
 
@@ -43,6 +45,7 @@ enum MacComposerThinkingLevel: String, CaseIterable, Identifiable, Sendable, Equ
         case .medium: "Medium"
         case .high: "High"
         case .xhigh: "XHigh"
+        case .max: "Max"
         }
     }
 }

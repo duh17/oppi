@@ -523,7 +523,7 @@ private struct ScheduleDetailView: View {
                 detailRow("Model", SessionFormatting.shortModelName(model) ?? model)
             }
             if let thinkingLevel {
-                detailRow("Thinking", thinkingTitle(thinkingLevel))
+                detailRow("Thinking", thinkingLevel.displayTitle)
             }
             if let name, !name.isEmpty {
                 detailRow("Session title", name)

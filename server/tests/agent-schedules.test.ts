@@ -84,13 +84,13 @@ describe("agent schedule durable core", () => {
         type: "new_session",
         workspaceId: "ws-1",
         prompt: "Run automatically",
-        thinkingLevel: "high",
+        thinkingLevel: "max",
       },
     });
     const run = store.createManualRun(schedule.id, "thinking-snapshot");
 
-    expect(store.getSchedule(schedule.id)?.action).toMatchObject({ thinkingLevel: "high" });
-    expect(store.getRun(run.id)?.actionSnapshot).toMatchObject({ thinkingLevel: "high" });
+    expect(store.getSchedule(schedule.id)?.action).toMatchObject({ thinkingLevel: "max" });
+    expect(store.getRun(run.id)?.actionSnapshot).toMatchObject({ thinkingLevel: "max" });
   });
 
   it("rejects blank explicit models and invalid thinking levels", () => {

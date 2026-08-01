@@ -189,7 +189,7 @@ struct QuickSessionOpenIntentTests {
 struct ThinkingLevelEnumTests {
 
     @Test func allCasesHaveDisplayRepresentations() {
-        let allCases: [ThinkingLevelEnum] = [.off, .minimal, .low, .medium, .high, .xhigh]
+        let allCases: [ThinkingLevelEnum] = [.off, .minimal, .low, .medium, .high, .xhigh, .max]
         for level in allCases {
             let repr = ThinkingLevelEnum.caseDisplayRepresentations[level]
             #expect(repr != nil, "Missing display representation for \(level)")
@@ -197,7 +197,7 @@ struct ThinkingLevelEnumTests {
     }
 
     @Test func caseDisplayRepresentationCount() {
-        #expect(ThinkingLevelEnum.caseDisplayRepresentations.count == 6)
+        #expect(ThinkingLevelEnum.caseDisplayRepresentations.count == 7)
     }
 
     @Test func rawValueRoundTrip() {
@@ -208,6 +208,7 @@ struct ThinkingLevelEnumTests {
             (.medium, "medium"),
             (.high, "high"),
             (.xhigh, "xhigh"),
+            (.max, "max"),
         ]
         for (expected, raw) in cases {
             let parsed = ThinkingLevelEnum(rawValue: raw)
@@ -224,7 +225,7 @@ struct ThinkingLevelEnumTests {
     @Test func rawValuesMatchThinkingLevel() {
         // ThinkingLevelEnum and ThinkingLevel should use the same raw strings
         // so intent parameters map correctly to the protocol enum.
-        let intentCases: [ThinkingLevelEnum] = [.off, .minimal, .low, .medium, .high, .xhigh]
+        let intentCases: [ThinkingLevelEnum] = [.off, .minimal, .low, .medium, .high, .xhigh, .max]
         for intentCase in intentCases {
             let protocolLevel = ThinkingLevel(rawValue: intentCase.rawValue)
             #expect(protocolLevel != nil,

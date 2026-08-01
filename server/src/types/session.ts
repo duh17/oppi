@@ -159,7 +159,7 @@ export interface Session {
   warnings?: string[]; // bootstrap/session warnings surfaced to iOS
 
   // Agent config state (synced from pi get_state)
-  thinkingLevel?: string; // "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
+  thinkingLevel?: string;
 
   // Runtime ownership. New sessions persist this explicitly as "oppi" or "pi-tui".
   runtime?: SessionRuntimeKind;

@@ -82,7 +82,17 @@ final class SessionStreamCoordinator {
         let streamStart = ContinuousClock.now
 
         connection.focusSession(sessionId)
-        connection.chatState.thinkingLevel = .medium
+        // Keep an explicit level from the session/list snapshot while the bound
+        // stream is opening. The medium value remains the fallback for sessions
+        // without a server-reported thinking level, but must not clobber max.
+        if let storedLevel = connection.sessionStore.sessions
+            .first(where: { $0.id == sessionId })?
+            .thinkingLevel,
+           let level = ThinkingLevel(rawValue: storedLevel) {
+            connection.chatState.thinkingLevel = level
+        } else {
+            connection.chatState.thinkingLevel = .medium
+        }
 
         nextContinuationGeneration &+= 1
         let continuationGeneration = nextContinuationGeneration

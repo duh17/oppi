@@ -114,6 +114,15 @@ struct ServerConnectionModelCommandsTests {
         }
     }
 
+    @Test func syncsMaxThinkingLevelFromSessionState() {
+        let connection = makeTestConnection().conn
+        let session = makeTestSession(thinkingLevel: "max")
+
+        connection.syncThinkingLevel(from: session)
+
+        #expect(connection.chatState.thinkingLevel == .max)
+    }
+
     @Test func syncThinkingLevelUpdatesOnlyForValidChangedValues() {
         let (connection, _) = makeTestConnection()
         var session = makeTestSession(thinkingLevel: "high")

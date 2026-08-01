@@ -98,6 +98,7 @@ struct AppTheme: Sendable {
             case .medium: return medium
             case .high: return high
             case .xhigh: return xhigh
+            case .max: return xhigh
             }
         }
     }

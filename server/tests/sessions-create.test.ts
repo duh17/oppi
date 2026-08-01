@@ -776,6 +776,16 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(savedSession.thinkingLevel).toBe("high");
   });
 
+  it("persists max thinking level on session creation", async () => {
+    const mock = createMockContext();
+
+    await dispatchCreate(mock, { prompt: "hello", thinking: "max" });
+
+    expect(mock.errors).toEqual([]);
+    const savedSession = mock.storage.saveSession.mock.calls[0]![0] as Session;
+    expect(savedSession.thinkingLevel).toBe("max");
+  });
+
   it("rejects invalid thinking levels on session creation", async () => {
     const mock = createMockContext();
 

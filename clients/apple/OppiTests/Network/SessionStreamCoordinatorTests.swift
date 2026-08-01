@@ -340,6 +340,29 @@ struct SSCStateMachineTests {
         #expect(coordinator.state == .idle)
     }
 
+    @Test func streamSessionPreservesExplicitThinkingLevelFromSessionSnapshot() async throws {
+        let (connection, _) = makeTestConnection(sessionId: "s1")
+        connection.sessionStore.upsert(makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            thinkingLevel: "max"
+        ))
+        connection.wsClient?._setStatusForTesting(.connected)
+        connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
+        connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        connection._sendMessageForTesting = { _ in }
+
+        _ = try #require(await connection.sessionStreamCoordinator.streamSession(
+            connection: connection,
+            sessionId: "s1",
+            workspaceId: "w1"
+        ))
+
+        #expect(connection.chatState.thinkingLevel == .max)
+        connection.streamConsumptionTask?.cancel()
+        connection.disconnectSession()
+    }
+
     @Test func staleContinuationTerminationCannotRemoveReplacementForSameSession() async throws {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())

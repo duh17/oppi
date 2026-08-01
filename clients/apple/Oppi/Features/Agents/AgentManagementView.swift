@@ -577,8 +577,6 @@ private struct AgentLaunchSheet: View {
     @State private var isLaunching = false
     @State private var error: String?
 
-    private let thinkingOptions: [ThinkingLevel] = [.off, .minimal, .low, .medium, .high, .xhigh]
-
     private var workspaces: [Workspace] { workspaceStore.workspaces }
 
     private var canLaunch: Bool {
@@ -614,8 +612,8 @@ private struct AgentLaunchSheet: View {
                     .autocorrectionDisabled()
                 Picker("Thinking", selection: $thinkingSelection) {
                     Text("Agent default").tag("")
-                    ForEach(thinkingOptions, id: \.rawValue) { level in
-                        Text(level.rawValue).tag(level.rawValue)
+                    ForEach(ThinkingLevel.allCases) { level in
+                        Text(level.displayTitle).tag(level.rawValue)
                     }
                 }
             }

@@ -433,7 +433,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         let defaults = try XCTUnwrap(definition["sessionDefaults"] as? [String: Any])
         XCTAssertEqual(instructions["mode"] as? String, "replace")
         XCTAssertEqual(instructions["text"] as? String, "Use only native instructions.")
-        XCTAssertEqual(defaults["thinkingLevel"] as? String, "xhigh")
+        XCTAssertEqual(defaults["thinkingLevel"] as? String, "max")
     }
 
     func testNativeScheduleEditorSavesThinkingAndPrompt() throws {

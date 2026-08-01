@@ -13,6 +13,7 @@ struct MacComposerThinkingLevelTests {
     @Test func normalizesStoredSessionValues() {
         #expect(MacComposerThinkingLevel(sessionValue: " HIGH ") == .high)
         #expect(MacComposerThinkingLevel(sessionValue: "xhigh") == .xhigh)
+        #expect(MacComposerThinkingLevel(sessionValue: "max") == .max)
         #expect(MacComposerThinkingLevel(sessionValue: "minimal") == .minimal)
     }
 
@@ -23,5 +24,7 @@ struct MacComposerThinkingLevelTests {
         #expect(MacComposerThinkingLevel.medium.protocolLevel == .medium)
         #expect(MacComposerThinkingLevel.high.protocolLevel == .high)
         #expect(MacComposerThinkingLevel.xhigh.protocolLevel == .xhigh)
+        #expect(MacComposerThinkingLevel.max.protocolLevel == .max)
+        #expect(MacComposerThinkingLevel.max.displayTitle == "Max")
     }
 }

@@ -18,10 +18,6 @@ struct AgentNativeEditView: View {
     @State private var isSaving = false
     @State private var error: String?
 
-    private static let thinkingOptions: [ThinkingLevel] = [
-        .off, .minimal, .low, .medium, .high, .xhigh,
-    ]
-
     init(agent: StoredAgentDefinition, onSaved: @escaping (StoredAgentDefinition) -> Void) {
         self.agent = agent
         self.onSaved = onSaved
@@ -101,8 +97,8 @@ struct AgentNativeEditView: View {
 
                     Picker("Thinking", selection: $thinkingLevel) {
                         Text("Default").tag(ThinkingLevel?.none)
-                        ForEach(Self.thinkingOptions, id: \.rawValue) { level in
-                            Text(thinkingTitle(level)).tag(Optional(level))
+                        ForEach(ThinkingLevel.allCases) { level in
+                            Text(level.displayTitle).tag(Optional(level))
                         }
                     }
                     .accessibilityIdentifier("agent.nativeEdit.thinking")
@@ -173,17 +169,6 @@ struct AgentNativeEditView: View {
         } catch {
             self.error = error.localizedDescription
         }
-    }
-}
-
-func thinkingTitle(_ level: ThinkingLevel) -> String {
-    switch level {
-    case .off: "Off"
-    case .minimal: "Minimal"
-    case .low: "Low"
-    case .medium: "Medium"
-    case .high: "High"
-    case .xhigh: "Max"
     }
 }
 

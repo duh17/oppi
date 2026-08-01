@@ -46,7 +46,7 @@ describe("schedule routes", () => {
         icon?: { kind: "symbol"; name: string };
         sessionDefaults?: {
           model?: string;
-          thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+          thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
         };
       };
     }
@@ -280,7 +280,7 @@ describe("schedule routes", () => {
         workspaceId: workspace.id,
         agentId: "agent-1",
         prompt: "Review the branch",
-        thinkingLevel: "high",
+        thinkingLevel: "max",
       },
     });
     const dispatch = createScheduleRoutes(ctx, helpers);
@@ -299,14 +299,14 @@ describe("schedule routes", () => {
     expect(sendPrompt).toHaveBeenCalledWith(expect.any(String), "Review the branch", {});
     expect(sessions[0]).toMatchObject({
       model: "agent-model",
-      thinkingLevel: "high",
+      thinkingLevel: "max",
       launch: {
         source: "schedule",
         agentId: "agent-1",
         agentVersion: 3,
         agentIcon: { kind: "symbol", name: "checkmark.shield" },
         modelPolicy: "required",
-        thinkingLevel: "high",
+        thinkingLevel: "max",
       },
     });
   });

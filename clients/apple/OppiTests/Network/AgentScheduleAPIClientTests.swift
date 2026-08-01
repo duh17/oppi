@@ -142,9 +142,9 @@ struct AgentScheduleAPIClientTests {
             #expect(definition.instructions?.mode == .replace)
             #expect(definition.instructions?.text == "Use only these instructions.")
             #expect(definition.sessionDefaults?.model == "openai/gpt-5.6")
-            #expect(definition.sessionDefaults?.thinkingLevel == .xhigh)
+            #expect(definition.sessionDefaults?.thinkingLevel == .max)
             return mockResponse(json: """
-            {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":3,"definition":{"name":"Reviewer","instructions":{"mode":"replace","text":"Use only these instructions."},"sessionDefaults":{"model":"openai/gpt-5.6","thinkingLevel":"xhigh"}},"createdAt":1000,"updatedAt":3000}}
+            {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":3,"definition":{"name":"Reviewer","instructions":{"mode":"replace","text":"Use only these instructions."},"sessionDefaults":{"model":"openai/gpt-5.6","thinkingLevel":"max"}},"createdAt":1000,"updatedAt":3000}}
             """)
         }
 
@@ -157,11 +157,11 @@ struct AgentScheduleAPIClientTests {
                 text: "Use only these instructions."
             ),
             model: "openai/gpt-5.6",
-            thinkingLevel: .xhigh
+            thinkingLevel: .max
         )
 
         #expect(updated.definition.instructions?.mode == .replace)
-        #expect(updated.definition.sessionDefaults?.thinkingLevel == .xhigh)
+        #expect(updated.definition.sessionDefaults?.thinkingLevel == .max)
     }
 
     @Test func agentIconUpdateSendsOnlyIconForSetAndClear() async throws {
@@ -287,7 +287,7 @@ struct AgentScheduleAPIClientTests {
                 JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
             )
             let action = try #require(json["action"] as? [String: Any])
-            #expect(action["thinkingLevel"] as? String == "xhigh")
+            #expect(action["thinkingLevel"] as? String == "max")
             #expect(action["agentId"] is NSNull)
             #expect(action["model"] is NSNull)
             #expect(action["name"] is NSNull)
@@ -306,7 +306,7 @@ struct AgentScheduleAPIClientTests {
                 prompt: "Run QA",
                 agentId: nil,
                 model: nil,
-                thinkingLevel: .xhigh,
+                thinkingLevel: .max,
                 worktreeId: nil,
                 name: nil
             )

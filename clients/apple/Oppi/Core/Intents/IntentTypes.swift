@@ -10,6 +10,7 @@ enum ThinkingLevelEnum: String, AppEnum {
     case medium
     case high
     case xhigh
+    case max
 
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Thinking Level"
 
@@ -20,6 +21,7 @@ enum ThinkingLevelEnum: String, AppEnum {
         .medium: "Medium",
         .high: "High",
         .xhigh: "Extra High",
+        .max: "Max",
     ]
 
 }

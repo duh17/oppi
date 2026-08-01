@@ -113,7 +113,7 @@ struct SessionRowView: View {
     private func thinkingIndicator(level: String) -> some View {
         let filled = thinkingLevelInt(level)
         HStack(spacing: 1.5) {
-            ForEach(0..<5, id: \.self) { i in
+            ForEach(0..<6, id: \.self) { i in
                 RoundedRectangle(cornerRadius: 1)
                     .fill(i < filled ? Color.purple.opacity(0.75) : Color.secondary.opacity(0.2))
                     .frame(width: 3, height: 7)
@@ -128,6 +128,7 @@ struct SessionRowView: View {
         case "medium":  return 3
         case "high":    return 4
         case "xhigh":   return 5
+        case "max":     return 6
         default:        return 0
         }
     }

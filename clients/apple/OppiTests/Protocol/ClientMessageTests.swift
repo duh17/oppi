@@ -148,6 +148,23 @@ struct ClientMessageTests {
         #expect(json["level"] as? String == "high")
     }
 
+    @Test func encodesMaxThinkingLevel() throws {
+        let msg = ClientMessage.setThinkingLevel(level: .max)
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "set_thinking_level")
+        #expect(json["level"] as? String == "max")
+    }
+
+    @Test func sharedThinkingLevelPresentationKeepsProtocolOrder() {
+        #expect(ThinkingLevel.allCases.map(\.rawValue) == [
+            "off", "minimal", "low", "medium", "high", "xhigh", "max",
+        ])
+        #expect(ThinkingLevel.max.id == "max")
+        #expect(ThinkingLevel.max.displayTitle == "Max")
+        #expect(ThinkingLevel.max.compactTitle == "max")
+        #expect(ThinkingLevel.xhigh.displayTitle == "XHigh")
+    }
+
     @Test func encodesReload() throws {
         let json = try decode(ClientMessage.reload(requestId: "req-reload"))
         #expect(json["type"] as? String == "reload")

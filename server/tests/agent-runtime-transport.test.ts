@@ -128,13 +128,13 @@ describe("runtime command result helpers", () => {
     const thinking = applyForwardedCommandResultToSession({
       session,
       commandType: "set_thinking_level",
-      request: { type: "set_thinking_level", level: "xhigh" },
+      request: { type: "set_thinking_level", level: "max" },
       data: {},
     });
 
     expect(rename).toEqual({ changed: true, shouldBroadcastState: true });
     expect(thinking).toEqual({ changed: true, shouldBroadcastState: true });
     expect(session.name).toBe("After");
-    expect(session.thinkingLevel).toBe("xhigh");
+    expect(session.thinkingLevel).toBe("max");
   });
 });

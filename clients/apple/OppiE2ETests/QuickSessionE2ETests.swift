@@ -143,7 +143,8 @@ final class QuickSessionE2ETests: E2ETestCase {
     @MainActor
     private func assertThinkingMenuRunsFromMaxToOff() {
         let expectedOptions = [
-            (id: "xhigh", label: "Max"),
+            (id: "max", label: "Max"),
+            (id: "xhigh", label: "XHigh"),
             (id: "high", label: "High"),
             (id: "medium", label: "Medium"),
             (id: "low", label: "Low"),

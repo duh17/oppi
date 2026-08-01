@@ -95,6 +95,7 @@ struct AppThemeFactoryTests {
         _ = theme.thinking.medium
         _ = theme.thinking.high
         _ = theme.thinking.xhigh
+        _ = theme.thinking.color(for: .max)
     }
 
     @Test func fromPaletteSetsCodeMetrics() {
@@ -260,8 +261,12 @@ struct ThinkingColorsTests {
         _ = colors.color(for: .xhigh)
     }
 
+    @Test func colorForMaxReturnsHighestColor() {
+        _ = colors.color(for: .max)
+    }
+
     @Test func allLevelsReturnColors() {
-        let levels: [ThinkingLevel] = [.off, .minimal, .low, .medium, .high, .xhigh]
+        let levels: [ThinkingLevel] = [.off, .minimal, .low, .medium, .high, .xhigh, .max]
         for level in levels {
             _ = colors.color(for: level)
         }
@@ -269,7 +274,7 @@ struct ThinkingColorsTests {
 
     @Test func eachBuiltinThemeHasThinkingColors() {
         let themes: [AppTheme] = [.dark, .oled, .light, .night]
-        let levels: [ThinkingLevel] = [.off, .minimal, .low, .medium, .high, .xhigh]
+        let levels: [ThinkingLevel] = [.off, .minimal, .low, .medium, .high, .xhigh, .max]
         for theme in themes {
             for level in levels {
                 _ = theme.thinking.color(for: level)

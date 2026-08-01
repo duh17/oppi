@@ -1192,7 +1192,7 @@ describe("SdkBackend saved Agent definitions", () => {
 
 describe("SdkBackend session state seeding", () => {
   it("normalizes stored Oppi thinking levels before SDK session creation", () => {
-    for (const level of ["off", "minimal", "low", "medium", "high", "xhigh"] as const) {
+    for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const) {
       expect(normalizeThinkingLevel(level)).toBe(level);
     }
     expect(normalizeThinkingLevel(undefined)).toBeUndefined();

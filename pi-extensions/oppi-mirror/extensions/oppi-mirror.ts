@@ -4747,20 +4747,12 @@ async function createTuiMirrorRuntime(
         return { level: pi.getThinkingLevel() };
 
       case "cycle_thinking_level": {
-        const levels = [
-          "off",
-          "minimal",
-          "low",
-          "medium",
-          "high",
-          "xhigh",
-        ] as const;
+        const levels = pi.getAvailableThinkingLevels();
         const current = pi.getThinkingLevel();
-        const next =
-          levels[
-            (levels.indexOf(current as (typeof levels)[number]) + 1) %
-              levels.length
-          ];
+        if (levels.length === 0) return { level: current };
+        const currentIndex = levels.indexOf(current);
+        const next = levels[(currentIndex + 1) % levels.length];
+        if (next === undefined) return { level: current };
         pi.setThinkingLevel(next);
         return { level: pi.getThinkingLevel() };
       }

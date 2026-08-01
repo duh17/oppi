@@ -106,18 +106,18 @@ Code blocks map tree-sitter tokens to these colors.
 | `syntaxOperator`    | Operators (`+`, `=`, `->`, etc.)           |
 | `syntaxPunctuation` | Punctuation (brackets, commas, semicolons) |
 
-### Thinking level indicators (6)
+### Thinking level indicators (7 levels, 6 color tokens)
 
-The thinking-budget indicator changes color with how much thinking the model is doing.
+The thinking-budget indicator changes color with how much thinking the model is doing. `max` shares the highest-level `thinkingXhigh` color token so existing themes remain compatible.
 
-| Key               | Purpose           |
-| ----------------- | ----------------- |
-| `thinkingOff`     | Thinking disabled |
-| `thinkingMinimal` | Minimal thinking  |
-| `thinkingLow`     | Low thinking      |
-| `thinkingMedium`  | Medium thinking   |
-| `thinkingHigh`    | High thinking     |
-| `thinkingXhigh`   | Maximum thinking  |
+| Key               | Purpose                              |
+| ----------------- | ------------------------------------ |
+| `thinkingOff`     | Thinking disabled                    |
+| `thinkingMinimal` | Minimal thinking                     |
+| `thinkingLow`     | Low thinking                         |
+| `thinkingMedium`  | Medium thinking                      |
+| `thinkingHigh`    | High thinking                        |
+| `thinkingXhigh`   | Extra-high (`xhigh`) and `max` thinking |
 
 ## Creating a theme
 
