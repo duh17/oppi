@@ -1,10 +1,24 @@
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { checkTestingPolicy } from "../scripts/check-testing-policy.ts";
 import vitestConfig from "../vitest.config.ts";
+
+function explicitVitestFileExclusions(source: string): string[] {
+  return [...source.matchAll(/(?:^|\s)--exclude\s+([A-Za-z0-9_./-]+)/g)].map(
+    (match) => match[1]!,
+  );
+}
 
 function makeFixture(
   options: {
@@ -95,6 +109,20 @@ describe("testing policy gate coherence", () => {
 
   it("caps server test worker fan-out for nested subprocesses", () => {
     expect(vitestConfig.test?.maxWorkers).toBe(4);
+  });
+
+  it("keeps explicit Vitest exclusions pointed at existing test files", () => {
+    const serverRoot = process.cwd();
+    const repoRoot = path.resolve(serverRoot, "..");
+    const configuredSources = [
+      readFileSync(path.join(serverRoot, "package.json"), "utf8"),
+      readFileSync(path.join(repoRoot, ".githooks", "pre-push"), "utf8"),
+    ];
+    const missing = configuredSources
+      .flatMap(explicitVitestFileExclusions)
+      .filter((relativePath) => !existsSync(path.join(serverRoot, relativePath)));
+
+    expect(missing).toEqual([]);
   });
 
   it("fails when a required testing file is present but untracked", () => {
