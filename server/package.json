@@ -52,7 +52,7 @@
     "prepack": "npm run check:pi-release-versions",
     "check:pi-release-versions": "node scripts/check-pi-release-versions.mjs",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage --exclude tests/policy-fuzz-perf.test.ts",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "bench": "npm run bench:correctness && npm run bench:perf:gate",
     "bench:perf": "npm run bench:hotpath",

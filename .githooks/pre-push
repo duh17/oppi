@@ -263,11 +263,10 @@ run_server_gate() {
 
   set +e
   if [[ "$SERVER_MODE" == "full" ]]; then
-    (cd "$REPO_ROOT/server" && npm test -- --reporter=dot --silent=passed-only \
-      --exclude tests/policy-fuzz-perf.test.ts) >"$test_log" 2>&1
+    (cd "$REPO_ROOT/server" && npm test -- --reporter=dot --silent=passed-only) >"$test_log" 2>&1
   else
     (cd "$REPO_ROOT/server" && npm exec --offline -- vitest run --changed "$BASE_SHA" --passWithNoTests \
-      --reporter=dot --silent=passed-only --exclude tests/policy-fuzz-perf.test.ts) >"$test_log" 2>&1
+      --reporter=dot --silent=passed-only) >"$test_log" 2>&1
   fi
   local status=$?
   set -e
