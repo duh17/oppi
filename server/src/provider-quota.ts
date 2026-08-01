@@ -7,7 +7,11 @@ const CODEX_PROVIDER_ID = "openai-codex";
 const XAI_PROVIDER_ID = "xai";
 
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
-const XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+// xAI flips ?format=credits between a creditUsagePercent shape and a metadata-only
+// shape (both observed on 2026-07-31). Fetch credits + plain /v1/billing and prefer
+// the credits percent window, falling back to plain monthly used/limit.
+const XAI_BILLING_CREDITS_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+const XAI_BILLING_PLAIN_URL = "https://cli-chat-proxy.grok.com/v1/billing";
 const XAI_SETTINGS_URL = "https://cli-chat-proxy.grok.com/v1/settings";
 
 const FIVE_HOUR_SECONDS = 5 * 60 * 60;
@@ -465,7 +469,7 @@ function normalizeXaiWindows(config: Record<string, unknown>): ProviderQuotaWind
     return windows;
   }
 
-  // Legacy monthly cents shape.
+  // Monthly cents shape (plain /v1/billing, and older credits payloads).
   const monthlyLimit = readCentValue(config.monthlyLimit);
   const used = readCentValue(config.used);
   if (monthlyLimit !== null && monthlyLimit > 0 && used !== null) {
@@ -487,6 +491,73 @@ function normalizeXaiWindows(config: Record<string, unknown>): ProviderQuotaWind
   }
 
   return windows;
+}
+
+type XaiBillingFetchResult =
+  | { kind: "network"; error: unknown }
+  | { kind: "http"; status: number; payload: unknown; text: string }
+  | { kind: "invalid" }
+  | { kind: "ok"; config: Record<string, unknown> };
+
+async function fetchXaiBillingConfig(
+  fetchImpl: FetchLike,
+  url: string,
+  headers: Headers,
+): Promise<XaiBillingFetchResult> {
+  try {
+    const response = await fetchImpl(url, {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    const text = await readResponseText(response);
+    const payload = parseMaybeJson(text);
+    if (!response.ok) {
+      return { kind: "http", status: response.status, payload, text };
+    }
+    const billing = asRecord(payload);
+    const config = asRecord(billing?.config);
+    if (!billing || !config) return { kind: "invalid" };
+    return { kind: "ok", config };
+  } catch (error) {
+    return { kind: "network", error };
+  }
+}
+
+function xaiBillingFailureQuota(
+  fetchedAt: number,
+  displayName: string,
+  results: XaiBillingFetchResult[],
+): ProviderQuota {
+  const network = results.find((result) => result.kind === "network");
+  if (network && network.kind === "network") {
+    return emptyProvider(
+      XAI_PROVIDER_ID,
+      displayName,
+      fetchedAt,
+      true,
+      `xAI quota fetch failed: ${safeErrorMessage(network.error)}`,
+    );
+  }
+
+  const http = results.find((result) => result.kind === "http");
+  if (http && http.kind === "http") {
+    return emptyProvider(
+      XAI_PROVIDER_ID,
+      displayName,
+      fetchedAt,
+      true,
+      parseErrorMessage(displayName, http.status, http.payload, http.text),
+    );
+  }
+
+  return emptyProvider(
+    XAI_PROVIDER_ID,
+    displayName,
+    fetchedAt,
+    true,
+    "xAI quota fetch failed: invalid response payload.",
+  );
 }
 
 export async function fetchXaiProviderQuota(
@@ -526,53 +597,28 @@ export async function fetchXaiProviderQuota(
   });
 
   try {
-    // Billing is required; settings only enriches planType. Fetch independently so a
-    // settings timeout/network failure cannot erase a successful billing snapshot.
-    const billingResult = await fetchImpl(XAI_BILLING_URL, {
-      method: "GET",
-      headers,
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    })
-      .then(async (response) => ({ response, text: await readResponseText(response) }))
-      .catch((error: unknown) => ({ error }));
+    // Billing is required; settings only enriches planType. Fetch credits + plain
+    // billing in parallel: credits carries the weekly percent when present, plain
+    // carries monthly used/limit. A settings failure never erases a billing snapshot.
+    const [creditsBilling, plainBilling] = await Promise.all([
+      fetchXaiBillingConfig(fetchImpl, XAI_BILLING_CREDITS_URL, headers),
+      fetchXaiBillingConfig(fetchImpl, XAI_BILLING_PLAIN_URL, headers),
+    ]);
 
-    if ("error" in billingResult) {
-      return emptyProvider(
-        XAI_PROVIDER_ID,
-        displayName,
-        fetchedAt,
-        true,
-        `xAI quota fetch failed: ${safeErrorMessage(billingResult.error)}`,
-      );
+    const creditsConfig = creditsBilling.kind === "ok" ? creditsBilling.config : null;
+    const plainConfig = plainBilling.kind === "ok" ? plainBilling.config : null;
+    if (!creditsConfig && !plainConfig) {
+      return xaiBillingFailureQuota(fetchedAt, displayName, [creditsBilling, plainBilling]);
     }
 
-    const billingPayload = parseMaybeJson(billingResult.text);
-    if (!billingResult.response.ok) {
-      return emptyProvider(
-        XAI_PROVIDER_ID,
-        displayName,
-        fetchedAt,
-        true,
-        parseErrorMessage(
-          displayName,
-          billingResult.response.status,
-          billingPayload,
-          billingResult.text,
-        ),
-      );
-    }
-
-    const billing = asRecord(billingPayload);
-    const config = asRecord(billing?.config);
-    if (!billing || !config) {
-      return emptyProvider(
-        XAI_PROVIDER_ID,
-        displayName,
-        fetchedAt,
-        true,
-        "xAI quota fetch failed: invalid response payload.",
-      );
-    }
+    const windowsFromCredits = creditsConfig ? normalizeXaiWindows(creditsConfig) : [];
+    const windowsFromPlain = plainConfig ? normalizeXaiWindows(plainConfig) : [];
+    // Prefer the credits percent window when present; otherwise use monthly cents.
+    const windows = windowsFromCredits.length > 0 ? windowsFromCredits : windowsFromPlain;
+    const prepaidBalanceCents =
+      readCentValue(creditsConfig?.prepaidBalance) ??
+      readCentValue(plainConfig?.prepaidBalance) ??
+      null;
 
     let planType: string | null = null;
     try {
@@ -598,9 +644,9 @@ export async function fetchXaiProviderQuota(
       displayName,
       authenticated: true,
       planType,
-      windows: normalizeXaiWindows(config),
+      windows,
       credits: null,
-      prepaidBalanceCents: readCentValue(config.prepaidBalance),
+      prepaidBalanceCents,
       fetchedAt,
     };
   } catch (error) {

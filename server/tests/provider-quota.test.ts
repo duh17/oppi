@@ -183,23 +183,45 @@ describe("fetchXaiProviderQuota", () => {
 
   it("maps weekly creditUsagePercent and SuperGrok plan from settings", async () => {
     const fetchImpl = vi.fn(async (url: string) => {
-      if (String(url).includes("/billing")) {
+      const href = String(url);
+      if (href.includes("format=credits")) {
         return new Response(
           JSON.stringify({
             config: {
               currentPeriod: {
                 type: "USAGE_PERIOD_TYPE_WEEKLY",
-                start: "2026-07-23T23:07:26.243780+00:00",
-                end: "2026-07-30T23:07:26.243780+00:00",
+                start: "2026-07-30T23:07:26.243780+00:00",
+                end: "2026-08-06T23:07:26.243780+00:00",
               },
-              creditUsagePercent: 24,
-              prepaidBalance: { val: 150 },
+              creditUsagePercent: 30,
+              onDemandCap: { val: 0 },
+              onDemandUsed: { val: 0 },
+              productUsage: [{ product: "GrokBuild", usagePercent: 30 }],
+              isUnifiedBillingUser: true,
+              prepaidBalance: { val: 0 },
+              topUpMethod: "TOP_UP_METHOD_SAVED_PAYMENT_METHOD",
+              billingPeriodStart: "2026-07-30T23:07:26.243780+00:00",
+              billingPeriodEnd: "2026-08-06T23:07:26.243780+00:00",
             },
           }),
           { status: 200 },
         );
       }
-      if (String(url).includes("/settings")) {
+      if (href.includes("/billing")) {
+        return new Response(
+          JSON.stringify({
+            config: {
+              monthlyLimit: { val: 15000 },
+              used: { val: 7277 },
+              onDemandCap: { val: 0 },
+              billingPeriodStart: "2026-07-01T00:00:00+00:00",
+              billingPeriodEnd: "2026-08-01T00:00:00+00:00",
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (href.includes("/settings")) {
         return new Response(
           JSON.stringify({
             subscription_tier_display: "SuperGrok",
@@ -232,20 +254,126 @@ describe("fetchXaiProviderQuota", () => {
       displayName: "xAI",
       authenticated: true,
       planType: "SuperGrok",
-      prepaidBalanceCents: 150,
+      prepaidBalanceCents: 0,
       fetchedAt: 222,
     });
+    expect(result.error).toBeUndefined();
     expect(result.windows).toHaveLength(1);
     expect(result.windows[0]).toMatchObject({
       key: "weekly",
       shortLabel: "7d",
       title: "Weekly",
-      usedPercent: 24,
-      remainingPercent: 76,
+      usedPercent: 30,
+      remainingPercent: 70,
       includeWeekdayInReset: true,
     });
     expect(result.windows[0]?.resetAt).toBe(
-      Math.floor(Date.parse("2026-07-30T23:07:26.243780+00:00") / 1000),
+      Math.floor(Date.parse("2026-08-06T23:07:26.243780+00:00") / 1000),
+    );
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://cli-chat-proxy.grok.com/v1/billing",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("falls back to plain monthly billing when credits omits creditUsagePercent", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      const href = String(url);
+      if (href.includes("format=credits")) {
+        return new Response(
+          JSON.stringify({
+            config: {
+              currentPeriod: {
+                type: "USAGE_PERIOD_TYPE_WEEKLY",
+                start: "2026-07-30T23:07:26.243780+00:00",
+                end: "2026-08-06T23:07:26.243780+00:00",
+              },
+              onDemandCap: { val: 0 },
+              onDemandUsed: { val: 0 },
+              isUnifiedBillingUser: true,
+              prepaidBalance: { val: 0 },
+              topUpMethod: "TOP_UP_METHOD_SAVED_PAYMENT_METHOD",
+              billingPeriodStart: "2026-07-30T23:07:26.243780+00:00",
+              billingPeriodEnd: "2026-08-06T23:07:26.243780+00:00",
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (href.includes("/billing")) {
+        return new Response(
+          JSON.stringify({
+            config: {
+              monthlyLimit: { val: 15000 },
+              used: { val: 5846 },
+              onDemandCap: { val: 0 },
+              billingPeriodStart: "2026-07-01T00:00:00+00:00",
+              billingPeriodEnd: "2026-08-01T00:00:00+00:00",
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (href.includes("/settings")) {
+        return new Response(
+          JSON.stringify({
+            subscription_tier_display: "SuperGrok",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as never;
+
+    const result = await fetchXaiProviderQuota({
+      modelRuntime: {
+        getAuth: vi.fn(async () => ({ auth: { apiKey: "oauth_token" }, source: "OAuth" })),
+      },
+      readCredential: vi.fn(
+        () =>
+          ({
+            type: "oauth",
+            access: "oauth_token",
+            refresh: "refresh",
+            expires: 1_800_000_000_000,
+          }) as const,
+      ),
+      fetchImpl,
+      now: () => 555,
+    });
+
+    expect(result).toMatchObject({
+      providerId: "xai",
+      displayName: "xAI",
+      authenticated: true,
+      planType: "SuperGrok",
+      prepaidBalanceCents: 0,
+      fetchedAt: 555,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.windows).toHaveLength(1);
+    expect(result.windows[0]).toMatchObject({
+      key: "monthly",
+      shortLabel: "30d",
+      title: "Monthly",
+      usedPercent: expect.closeTo((5846 / 15000) * 100, 5),
+      remainingPercent: expect.closeTo(100 - (5846 / 15000) * 100, 5),
+      includeWeekdayInReset: false,
+    });
+    expect(result.windows[0]?.resetAt).toBe(
+      Math.floor(Date.parse("2026-08-01T00:00:00+00:00") / 1000),
+    );
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://cli-chat-proxy.grok.com/v1/billing",
+      expect.objectContaining({ method: "GET" }),
     );
   });
 
@@ -255,12 +383,10 @@ describe("fetchXaiProviderQuota", () => {
         return new Response(
           JSON.stringify({
             config: {
-              creditUsagePercent: 10,
-              currentPeriod: {
-                type: "USAGE_PERIOD_TYPE_WEEKLY",
-                start: "2026-07-23T00:00:00Z",
-                end: "2026-07-30T00:00:00Z",
-              },
+              monthlyLimit: { val: 10000 },
+              used: { val: 1000 },
+              billingPeriodStart: "2026-07-01T00:00:00Z",
+              billingPeriodEnd: "2026-08-01T00:00:00Z",
             },
           }),
           { status: 200 },
@@ -294,51 +420,7 @@ describe("fetchXaiProviderQuota", () => {
     expect(result.error).toBeUndefined();
     expect(result.windows[0]).toMatchObject({
       remainingPercent: 90,
-      shortLabel: "7d",
-    });
-  });
-
-  it("falls back to legacy monthly cents when percent is absent", async () => {
-    const fetchImpl = vi.fn(async (url: string) => {
-      if (String(url).includes("/billing")) {
-        return new Response(
-          JSON.stringify({
-            config: {
-              monthlyLimit: { val: 15000 },
-              used: { val: 7500 },
-              billingPeriodStart: "2026-07-01T00:00:00+00:00",
-              billingPeriodEnd: "2026-08-01T00:00:00+00:00",
-            },
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response("{}", { status: 200 });
-    }) as never;
-
-    const result = await fetchXaiProviderQuota({
-      modelRuntime: {
-        getAuth: vi.fn(async () => ({ auth: { apiKey: "oauth_token" }, source: "OAuth" })),
-      },
-      readCredential: vi.fn(
-        () =>
-          ({
-            type: "oauth",
-            access: "oauth_token",
-            refresh: "refresh",
-            expires: 1_800_000_000_000,
-          }) as const,
-      ),
-      fetchImpl,
-      now: () => 333,
-    });
-
-    expect(result.windows[0]).toMatchObject({
-      key: "monthly",
       shortLabel: "30d",
-      title: "Monthly",
-      usedPercent: 50,
-      remainingPercent: 50,
     });
   });
 });
@@ -387,16 +469,30 @@ describe("fetchProviderQuotas", () => {
           { status: 200 },
         );
       }
-      if (String(url).includes("/billing")) {
+      if (String(url).includes("format=credits")) {
         return new Response(
           JSON.stringify({
             config: {
-              creditUsagePercent: 40,
               currentPeriod: {
                 type: "USAGE_PERIOD_TYPE_WEEKLY",
                 start: "2026-07-23T00:00:00Z",
                 end: "2026-07-30T00:00:00Z",
               },
+              creditUsagePercent: 40,
+              prepaidBalance: { val: 0 },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (String(url).includes("/billing")) {
+        return new Response(
+          JSON.stringify({
+            config: {
+              monthlyLimit: { val: 10000 },
+              used: { val: 4000 },
+              billingPeriodStart: "2026-07-01T00:00:00Z",
+              billingPeriodEnd: "2026-08-01T00:00:00Z",
             },
           }),
           { status: 200 },
