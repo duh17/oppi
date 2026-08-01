@@ -1,6 +1,7 @@
 import type { GitStatus } from "./git.js";
 import type { Session, SessionSummary } from "./session.js";
 import type { StyledSegment } from "./shared.js";
+import type { ThinkingLevel } from "../thinking-levels.js";
 
 // ─── WebSocket Messages ───
 
@@ -110,7 +111,7 @@ export type ClientMessage = // ── Prompting ──
     // ── Thinking ──
     | {
         type: "set_thinking_level";
-        level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+        level: ThinkingLevel;
         requestId?: string;
       }
     | { type: "cycle_thinking_level"; requestId?: string }

@@ -47,6 +47,7 @@ import {
   resolveModelRequest,
   stripModelThinkingLevel,
 } from "./model-resolution.js";
+import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import { createDefaultAgentExtensionFactory } from "./default-agent-tool.js";
 import { applyPendingProviderRegistrations } from "./extension-model-discovery.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
@@ -73,7 +74,6 @@ import {
   type SessionRuntimeTransactionPermit,
 } from "./session-runtime-transaction.js";
 
-type PiThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
 type AttachmentToolExecute = ToolDefinition["execute"] & {
   __oppiAttachmentHelperWrapped?: true;
 };
@@ -109,18 +109,9 @@ export function enforceLaunchModelPolicy(
   throw new RequiredModelUnavailableError(session.model);
 }
 
-export function normalizeThinkingLevel(level: string | undefined): PiThinkingLevel | undefined {
-  switch (level) {
-    case "off":
-    case "minimal":
-    case "low":
-    case "medium":
-    case "high":
-    case "xhigh":
-      return level;
-    default:
-      return undefined;
-  }
+export function normalizeThinkingLevel(level: string | undefined): ThinkingLevel | undefined {
+  if (level === undefined) return undefined;
+  return isThinkingLevel(level) ? level : undefined;
 }
 
 function resolveRegistryModel(

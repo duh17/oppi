@@ -1,8 +1,8 @@
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 
 export type ModelAuthKind = "subscription" | "local" | "apiKey";
-export type ModelThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 // The optional suffix recognizes schedule failures persisted before the typed error existed.
 const REQUIRED_MODEL_UNAVAILABLE_PATTERN =
@@ -48,7 +48,7 @@ export interface ModelResolutionCandidate<TModel = unknown> {
 
 export interface ModelResolutionResult<TModel = unknown> {
   candidate: ModelResolutionCandidate<TModel>;
-  thinkingLevel?: ModelThinkingLevel;
+  thinkingLevel?: ThinkingLevel;
   alternatives: Array<ModelResolutionCandidate<TModel>>;
 }
 
@@ -58,15 +58,6 @@ type RegistryForResolution = Pick<ModelRegistry, "getAvailable" | "getAll"> & {
   isUsingOAuth?: (model: Model<Api>) => boolean;
 };
 
-const THINKING_LEVELS = new Set<ModelThinkingLevel>([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-]);
-
 function splitCanonicalModelId(id: string): { provider: string; modelId: string } | undefined {
   const slash = id.indexOf("/");
   if (slash <= 0 || slash === id.length - 1) return undefined;
@@ -75,14 +66,14 @@ function splitCanonicalModelId(id: string): { provider: string; modelId: string 
 
 export function stripModelThinkingLevel(raw: string): {
   model: string;
-  thinkingLevel?: ModelThinkingLevel;
+  thinkingLevel?: ThinkingLevel;
 } {
   const trimmed = raw.trim();
   const colonIndex = trimmed.lastIndexOf(":");
   if (colonIndex === -1) return { model: trimmed };
 
-  const suffix = trimmed.substring(colonIndex + 1) as ModelThinkingLevel;
-  if (!THINKING_LEVELS.has(suffix)) return { model: trimmed };
+  const suffix = trimmed.substring(colonIndex + 1);
+  if (!isThinkingLevel(suffix)) return { model: trimmed };
   return { model: trimmed.substring(0, colonIndex), thinkingLevel: suffix };
 }
 

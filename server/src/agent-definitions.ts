@@ -4,7 +4,8 @@ import { join, resolve } from "node:path";
 import { generateId } from "./id.js";
 import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "./icon-choice.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
-import type { AgentDefinition, ThinkingLevel } from "./agent-launch-service.js";
+import { isThinkingLevel } from "./thinking-levels.js";
+import type { AgentDefinition } from "./agent-launch-service.js";
 import {
   DEFAULT_AGENT_DEFAULT_NAME,
   DEFAULT_AGENT_ID,
@@ -65,15 +66,6 @@ interface AgentVersionRow {
   definition_json: string;
   created_at: number;
 }
-
-const THINKING_LEVELS = new Set<ThinkingLevel>([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-]);
 
 const INSTRUCTION_MODES = new Set(["append", "replace"]);
 const NO_TOOLS_VALUES = new Set(["all", "builtin"]);
@@ -607,7 +599,7 @@ function validateSessionDefaults(value: unknown): AgentDefinition["sessionDefaul
   if (!isRecord(value)) throw new Error("sessionDefaults must be an object");
   assertAllowedKeys(value, SESSION_DEFAULT_KEYS, "sessionDefaults");
   const thinkingLevel = validateString(value.thinkingLevel, "sessionDefaults.thinkingLevel");
-  if (thinkingLevel !== undefined && !THINKING_LEVELS.has(thinkingLevel as ThinkingLevel)) {
+  if (thinkingLevel !== undefined && !isThinkingLevel(thinkingLevel)) {
     throw new Error("sessionDefaults.thinkingLevel is invalid");
   }
   const noTools = validateString(value.noTools, "sessionDefaults.noTools");
@@ -618,7 +610,7 @@ function validateSessionDefaults(value: unknown): AgentDefinition["sessionDefaul
     ...(value.model !== undefined
       ? { model: requireString(value.model, "sessionDefaults.model") }
       : {}),
-    ...(thinkingLevel !== undefined ? { thinkingLevel: thinkingLevel as ThinkingLevel } : {}),
+    ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
     ...(value.tools !== undefined
       ? { tools: validateStringArray(value.tools, "sessionDefaults.tools") }
       : {}),

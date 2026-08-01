@@ -1,4 +1,5 @@
 import * as c from "../ansi.js";
+import { THINKING_LEVELS } from "../thinking-levels.js";
 
 export type CliHelpPath = readonly string[];
 
@@ -1599,7 +1600,11 @@ const HELP_TOPICS: HelpTopic[] = [
         value: "<model>",
         summary: "model override; fuzzy-matched against enabled Pi models",
       },
-      { name: "--thinking", value: "<level>", summary: "thinking level override" },
+      {
+        name: "--thinking",
+        value: "<level>",
+        summary: `thinking level override: ${THINKING_LEVELS.join(", ")}`,
+      },
       { name: "--worktree", value: "<id>", summary: "workspace worktree id" },
       {
         name: "--agent",

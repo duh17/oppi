@@ -5,9 +5,10 @@ import {
 } from "./model-resolution.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
+import type { ThinkingLevel } from "./thinking-levels.js";
 import type { ChatAttachmentRef, IconChoice, Session, Workspace } from "./types.js";
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type { ThinkingLevel } from "./thinking-levels.js";
 
 export interface AgentDefinition {
   name: string;

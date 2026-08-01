@@ -25,6 +25,7 @@ import { extensionNameForAllowlist } from "./extension-loader.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import type { Session, ServerMessage } from "./types.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
+import type { ThinkingLevel } from "./thinking-levels.js";
 
 const log = createLogger({ base: { component: "session_commands" } });
 
@@ -404,9 +405,7 @@ export class SessionCommandCoordinator {
     [
       "set_thinking_level",
       (backend, cmd) => {
-        backend.session.setThinkingLevel(
-          cmd.level as Parameters<AgentSession["setThinkingLevel"]>[0],
-        );
+        backend.session.setThinkingLevel(cmd.level as ThinkingLevel);
         return { level: cmd.level };
       },
     ],

@@ -5,6 +5,7 @@ import { validateCronExpression, validateScheduleTimeZone } from "./agent-schedu
 import type { ThinkingLevel } from "./agent-launch-service.js";
 import { generateId } from "./id.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
+import { isThinkingLevel } from "./thinking-levels.js";
 
 export type AgentScheduleStatus = "active" | "paused" | "archived";
 export type AgentScheduleRunStatus = "pending" | "claimed" | "running" | "completed" | "failed";
@@ -121,15 +122,6 @@ export interface CreateAgentScheduleRequest {
   trigger: AgentScheduleTrigger;
   action: AgentScheduleAction;
 }
-
-const THINKING_LEVELS = new Set<ThinkingLevel>([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-]);
 
 export interface AgentScheduleClaimOptions {
   now: number;
@@ -745,10 +737,7 @@ function validateAction(action: AgentScheduleAction): AgentScheduleAction {
     if (cleanAction.model !== undefined && !model) {
       throw new Error("Schedule action model cannot be empty");
     }
-    if (
-      cleanAction.thinkingLevel !== undefined &&
-      !THINKING_LEVELS.has(cleanAction.thinkingLevel)
-    ) {
+    if (cleanAction.thinkingLevel !== undefined && !isThinkingLevel(cleanAction.thinkingLevel)) {
       throw new Error("Schedule action thinkingLevel is invalid");
     }
     const next: AgentScheduleAction = { ...cleanAction, workspaceId };
@@ -838,7 +827,7 @@ function validateActionPatch(input: unknown): AgentScheduleActionPatch {
   if (
     input.thinkingLevel !== undefined &&
     input.thinkingLevel !== null &&
-    !THINKING_LEVELS.has(input.thinkingLevel as ThinkingLevel)
+    !isThinkingLevel(input.thinkingLevel as string)
   ) {
     throw new Error("Schedule action thinkingLevel is invalid");
   }
@@ -896,10 +885,7 @@ function validateActionShape(input: unknown): AgentScheduleAction {
     for (const key of ["agentId", "model", "worktreeId", "name"] as const) {
       validateOptionalString(input[key], `Schedule action ${key}`);
     }
-    if (
-      input.thinkingLevel !== undefined &&
-      !THINKING_LEVELS.has(input.thinkingLevel as ThinkingLevel)
-    ) {
+    if (input.thinkingLevel !== undefined && !isThinkingLevel(input.thinkingLevel as string)) {
       throw new Error("Schedule action thinkingLevel is invalid");
     }
     return validateAction(input as unknown as AgentScheduleAction);

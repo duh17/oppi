@@ -16,18 +16,10 @@ import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
 import { isDeclaredControlSession } from "../control-session.js";
+import { isThinkingLevel } from "../thinking-levels.js";
 
 const CONTROL_SESSION_DOMAINS = new Set(["agents", "schedules", "skills", "workspaces"] as const);
 const CONTROL_SESSION_INTENTS = new Set(["create", "revise"] as const);
-
-const CREATE_SESSION_THINKING_LEVELS = new Set([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-]);
 
 const log = createLogger({ base: { component: "route_sessions" } });
 
@@ -169,7 +161,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       );
       return;
     }
-    if (body.thinking !== undefined && !CREATE_SESSION_THINKING_LEVELS.has(body.thinking)) {
+    if (body.thinking !== undefined && !isThinkingLevel(body.thinking)) {
       helpers.error(res, 400, "Invalid thinking level");
       return;
     }
@@ -290,8 +282,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       (body.name !== undefined && typeof body.name !== "string") ||
       (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim())) ||
       (body.thinking !== undefined &&
-        (typeof body.thinking !== "string" ||
-          !CREATE_SESSION_THINKING_LEVELS.has(body.thinking))) ||
+        (typeof body.thinking !== "string" || !isThinkingLevel(body.thinking))) ||
       (body.prompt !== undefined && typeof body.prompt !== "string")
     ) {
       helpers.error(res, 400, "Invalid control session metadata");
