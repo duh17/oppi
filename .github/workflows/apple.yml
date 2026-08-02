@@ -54,12 +54,27 @@ jobs:
           bun-version: 1.3.11
 
       - name: Verify Apple build tools
+        id: apple-tools
         run: |
           brew install ripgrep swiftlint xcodegen
           rg --version
           swiftlint version
           xcodegen --version
-          xcodebuild -version
+          XCODE_VERSION="$(xcodebuild -version)"
+          echo "$XCODE_VERSION"
+          XCODE_BUILD="$(awk '/Build version/ { print $3 }' <<<"$XCODE_VERSION")"
+          [[ -n "$XCODE_BUILD" ]]
+          echo "xcode_build=$XCODE_BUILD" >> "$GITHUB_OUTPUT"
+
+      - name: Restore bounded Swift package cache
+        id: swiftpm-cache
+        continue-on-error: true
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            ${{ runner.temp }}/oppi-swiftpm/cache/repositories
+            ${{ runner.temp }}/oppi-swiftpm/cache/artifacts
+          key: apple-swiftpm-v1-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.apple-tools.outputs.xcode_build }}-${{ hashFiles('clients/apple/Oppi.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: Generate the ephemeral Xcode project
         working-directory: clients/apple
@@ -67,6 +82,9 @@ jobs:
 
       - name: Run full iOS unit coverage
         working-directory: clients/apple
+        env:
+          OPPI_SWIFT_PACKAGE_CACHE_ROOT: ${{ runner.temp }}/oppi-swiftpm
+          OPPI_SWIFT_PACKAGE_CACHE_HIT: ${{ steps.swiftpm-cache.outputs.cache-hit }}
         run: ./scripts/check-coverage.sh
 
       - name: Upload Apple test artifacts

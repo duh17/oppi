@@ -5,6 +5,76 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${OPPI_ROOT:-${PIOS_ROOT:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)}}"
 IOS_DIR="$REPO_ROOT/clients/apple"
 
+PACKAGE_CACHE_ROOT="${OPPI_SWIFT_PACKAGE_CACHE_ROOT:-}"
+
+canonical_path() {
+  python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+try:
+    print(Path(sys.argv[1]).resolve(strict=False))
+except OSError:
+    sys.exit(1)
+PY
+}
+
+package_cache_is_safe_to_reset() {
+  [[ -n "$PACKAGE_CACHE_ROOT" ]] || return 1
+
+  local candidate ios_build runner_temp
+  candidate="$(canonical_path "$PACKAGE_CACHE_ROOT")" || return 1
+  ios_build="$(canonical_path "$IOS_DIR/.build")" || return 1
+  if [[ "$candidate" == "$ios_build/"* ]]; then
+    return 0
+  fi
+
+  [[ -n "${RUNNER_TEMP:-}" ]] || return 1
+  runner_temp="$(canonical_path "$RUNNER_TEMP")" || return 1
+  [[ "$candidate" == "$runner_temp/"* ]]
+}
+
+run_self_test() {
+  if ! (PACKAGE_CACHE_ROOT="$IOS_DIR/.build/swiftpm-cache"; RUNNER_TEMP=""; package_cache_is_safe_to_reset); then
+    echo "self-test: rejected a cache below the Apple .build directory" >&2
+    return 1
+  fi
+  if (PACKAGE_CACHE_ROOT="$IOS_DIR/.build"; RUNNER_TEMP=""; package_cache_is_safe_to_reset); then
+    echo "self-test: accepted the Apple .build directory itself" >&2
+    return 1
+  fi
+  if (PACKAGE_CACHE_ROOT="$IOS_DIR/.build/../Oppi"; RUNNER_TEMP=""; package_cache_is_safe_to_reset); then
+    echo "self-test: accepted traversal outside the Apple .build directory" >&2
+    return 1
+  fi
+
+  local runner_root="/tmp/oppi-check-coverage-self-test-root"
+  if ! (PACKAGE_CACHE_ROOT="$runner_root/swiftpm-cache"; RUNNER_TEMP="$runner_root"; package_cache_is_safe_to_reset); then
+    echo "self-test: rejected a cache below RUNNER_TEMP" >&2
+    return 1
+  fi
+  if (PACKAGE_CACHE_ROOT="$runner_root/../oppi-check-coverage-outside"; RUNNER_TEMP="$runner_root"; package_cache_is_safe_to_reset); then
+    echo "self-test: accepted traversal outside RUNNER_TEMP" >&2
+    return 1
+  fi
+
+  echo "check-coverage self-test passed."
+}
+
+case "${1:-}" in
+  self-test)
+    [[ $# -eq 1 ]] || { echo "usage: check-coverage.sh [self-test]" >&2; exit 1; }
+    run_self_test
+    exit 0
+    ;;
+  "")
+    ;;
+  *)
+    echo "usage: check-coverage.sh [self-test]" >&2
+    exit 1
+    ;;
+esac
+
 RESULT_DIR="$IOS_DIR/build/coverage"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 REPORT_JSON="$(mktemp -t oppi-coverage-report.XXXXXX.json)"
@@ -12,6 +82,16 @@ REPORT_JSON="$(mktemp -t oppi-coverage-report.XXXXXX.json)"
 mkdir -p "$RESULT_DIR"
 RUN_DIR="$(mktemp -d "$RESULT_DIR/OppiTests-$TIMESTAMP-XXXXXX")"
 RESULT_BUNDLE="$RUN_DIR/OppiTests.xcresult"
+COVERAGE_START_SECONDS=$SECONDS
+PACKAGE_FLAGS=()
+
+if [[ -n "$PACKAGE_CACHE_ROOT" ]]; then
+  PACKAGE_FLAGS=(
+    -packageCachePath "$PACKAGE_CACHE_ROOT/cache"
+    -clonedSourcePackagesDirPath "$PACKAGE_CACHE_ROOT/source-packages"
+    -onlyUsePackageVersionsFromResolvedFile
+  )
+fi
 
 cleanup() {
   rm -f "$REPORT_JSON"
@@ -30,17 +110,54 @@ if bundles:
 PY
 }
 
-echo "Running Oppi unit tests with code coverage enabled..."
+resolve_swift_packages() {
+  xcodebuild -resolvePackageDependencies \
+    -project Oppi.xcodeproj \
+    -scheme OppiUnitTests \
+    "${PACKAGE_FLAGS[@]}"
+}
+
 cd "$IOS_DIR"
+if [[ -n "$PACKAGE_CACHE_ROOT" ]]; then
+  mkdir -p "$PACKAGE_CACHE_ROOT/cache" "$PACKAGE_CACHE_ROOT/source-packages"
+  echo "Validating the bounded Swift package cache (restored=${OPPI_SWIFT_PACKAGE_CACHE_HIT:-unknown})..."
+  PACKAGE_START_SECONDS=$SECONDS
+  set +e
+  resolve_swift_packages
+  PACKAGE_STATUS=$?
+  set -e
+
+  if [[ "$PACKAGE_STATUS" -ne 0 ]]; then
+    if ! package_cache_is_safe_to_reset; then
+      echo "Swift package cache validation failed, and refusing to reset unsafe path: $PACKAGE_CACHE_ROOT" >&2
+      exit 7
+    fi
+    echo "Swift package cache validation failed; retrying from an empty package cache." >&2
+    rm -rf "$PACKAGE_CACHE_ROOT"
+    mkdir -p "$PACKAGE_CACHE_ROOT/cache" "$PACKAGE_CACHE_ROOT/source-packages"
+    if ! resolve_swift_packages; then
+      echo "Swift package resolution failed after a clean retry." >&2
+      exit 7
+    fi
+  fi
+  echo "Swift package resolution elapsed: $((SECONDS - PACKAGE_START_SECONDS))s"
+fi
+
+echo "Running Oppi unit tests with code coverage enabled..."
+TEST_START_SECONDS=$SECONDS
 set +e
 bash "$SCRIPT_DIR/sim-pool.sh" run -- xcodebuild test \
   -project Oppi.xcodeproj \
   -scheme OppiUnitTests \
   -only-testing:OppiTests \
   -enableCodeCoverage YES \
-  -resultBundlePath "$RESULT_BUNDLE"
+  -showBuildTimingSummary \
+  -resultBundlePath "$RESULT_BUNDLE" \
+  "${PACKAGE_FLAGS[@]}"
 TEST_STATUS=$?
 set -e
+TEST_ELAPSED_SECONDS=$((SECONDS - TEST_START_SECONDS))
+echo "Coverage build and test elapsed: ${TEST_ELAPSED_SECONDS}s"
 
 if [[ "$TEST_STATUS" -ne 0 ]]; then
   echo "iOS coverage collection failed: the simulator test command exited with status $TEST_STATUS." >&2
@@ -56,12 +173,15 @@ if [[ -z "$XCRESULT_BUNDLE" ]]; then
 fi
 
 echo "Using xcresult bundle: $XCRESULT_BUNDLE"
+REPORT_START_SECONDS=$SECONDS
 if ! xcrun xccov view --report --json "$XCRESULT_BUNDLE" > "$REPORT_JSON"; then
   echo "iOS coverage collection failed: xccov could not read $XCRESULT_BUNDLE." >&2
   echo "No coverage threshold comparison was performed." >&2
   exit 5
 fi
+echo "Coverage report extraction elapsed: $((SECONDS - REPORT_START_SECONDS))s"
 
+ANALYSIS_START_SECONDS=$SECONDS
 set +e
 node --input-type=module - "$REPORT_JSON" <<'NODE'
 import { readFileSync } from "node:fs";
@@ -200,6 +320,8 @@ console.log("Coverage gate passed.");
 NODE
 ANALYSIS_STATUS=$?
 set -e
+echo "Coverage analysis elapsed: $((SECONDS - ANALYSIS_START_SECONDS))s"
+echo "Coverage lane script elapsed: $((SECONDS - COVERAGE_START_SECONDS))s"
 
 case "$ANALYSIS_STATUS" in
   0)

@@ -157,6 +157,20 @@ result_bundle_path_for_attempt() {
   fi
 }
 
+extract_compiler_linker_errors() {
+  local log_file="$1"
+  grep -E '^([^:]+):[0-9]+:[0-9]+: (fatal )?error:|^[[:space:]]*(error:|clang: error:|swiftc: error:|ld: )' "$log_file" 2>/dev/null | sort -u || true
+}
+
+extract_build_timing_summary() {
+  local log_file="$1"
+  awk '
+    /^Build Timing Summary$/ { capturing = 1; print; next }
+    capturing && NF > 0 { print; saw_row = 1; next }
+    capturing && saw_row { exit }
+  ' "$log_file" 2>/dev/null || true
+}
+
 ATTEMPT_COMMAND=()
 build_attempt_command() {
   local attempt_index="$1"
@@ -205,7 +219,49 @@ run_self_test() {
   build_attempt_command 2 xcodebuild test "-resultBundlePath=$expected"
   [[ "${ATTEMPT_COMMAND[2]}" == "-resultBundlePath=/tmp/OppiTests-retry2.xcresult" ]]
 
-  echo "sim-pool retry result-bundle self-test passed."
+  local fixture errors diagnostic build_timing
+  fixture="$(mktemp -t oppi-sim-pool-errors.XXXXXX.log)"
+  cat > "$fixture" <<'EOF'
+--- xcodebuild: WARNING: Using the first of multiple matching destinations:
+2026-08-01 10:19:05.934244+0000 Oppi[46329:117234] [LoadSession] full rebuild: 2 events → 2 items
+/Users/runner/work/oppi/Foo.swift:12:7: error: cannot find 'missing' in scope
+Sources/parser.c:8:2: error: expected expression
+error: emit-module command failed with exit code 1
+clang: error: linker command failed with exit code 1
+ld: symbol(s) not found for architecture arm64
+swiftc: error: unexpected input file
+
+Build Timing Summary
+
+SwiftCompile (33 tasks) | 1084.000 seconds
+Ld (8 tasks) | 12.000 seconds
+
+Test Suite 'All tests' started.
+EOF
+  errors="$(extract_compiler_linker_errors "$fixture")"
+  build_timing="$(extract_build_timing_summary "$fixture")"
+  rm -f "$fixture"
+
+  [[ "$build_timing" == *"SwiftCompile (33 tasks) | 1084.000 seconds"* ]] \
+    || die "self-test: Xcode build timing summary was not extracted"
+  [[ "$build_timing" != *"Test Suite"* ]] \
+    || die "self-test: build timing extraction included test output"
+  [[ "$errors" != *"xcodebuild:"* ]] \
+    || die "self-test: xcodebuild application text was classified as a linker error"
+  [[ "$errors" != *"rebuild:"* ]] \
+    || die "self-test: rebuild application log was classified as a linker error"
+  for diagnostic in \
+    "/Users/runner/work/oppi/Foo.swift:12:7: error: cannot find 'missing' in scope" \
+    "Sources/parser.c:8:2: error: expected expression" \
+    "error: emit-module command failed with exit code 1" \
+    "clang: error: linker command failed with exit code 1" \
+    "ld: symbol(s) not found for architecture arm64" \
+    "swiftc: error: unexpected input file"; do
+    grep -Fqx "$diagnostic" <<<"$errors" \
+      || die "self-test: real compiler/linker diagnostic was not classified: $diagnostic"
+  done
+
+  echo "sim-pool self-test passed."
 }
 
 has_only_testing_target() {
@@ -477,6 +533,13 @@ print_summary() {
   echo "Log size: ${log_size} bytes"
   echo "Last log update age: ${last_log_update_age}s"
 
+  local build_timing_summary
+  build_timing_summary=$(extract_build_timing_summary "$log_file")
+  if [[ -n "$build_timing_summary" ]]; then
+    echo ""
+    echo "$build_timing_summary"
+  fi
+
   if [[ "$hang_detected" == "1" ]]; then
     echo "Hang detection: triggered (no log growth for ${SILENCE_TIMEOUT}s)"
   fi
@@ -504,7 +567,7 @@ print_summary() {
 
     # Compiler/linker errors (deduped)
     local errors
-    errors=$(grep -E '^\S+:\d+:\d+: error:|^error:|ld: |clang: error:' "$log_file" 2>/dev/null | sort -u || true)
+    errors=$(extract_compiler_linker_errors "$log_file")
     if [[ -n "$errors" ]]; then
       local count
       count=$(echo "$errors" | wc -l | tr -d ' ')

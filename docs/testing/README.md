@@ -138,10 +138,14 @@ xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test \
 
 ### iOS coverage gate
 
-The repository owns the simulator and coverage scripts used by Apple CI. First run the focused harness self-test. It verifies path classification, retry result-bundle handling, and failure classification without launching a simulator:
+The repository owns the simulator and coverage scripts used by Apple CI. First run the focused harness self-tests. They verify path classification, retry result-bundle handling, failure classification, and safe package-cache reset boundaries without launching a simulator. In particular, ordinary `rebuild:` application logs must not appear as linker failures, while Swift, clang, and `ld` diagnostics must remain visible.
 
 ```bash
 ./.githooks/pre-push --self-test
+
+# Run the focused script checks while editing the coverage lane.
+./clients/apple/scripts/sim-pool.sh self-test
+./clients/apple/scripts/check-coverage.sh self-test
 ```
 
 Then run the same full unit-test coverage gate used by CI:
@@ -151,7 +155,9 @@ cd clients/apple
 ./scripts/check-coverage.sh
 ```
 
-`check-coverage.sh` returns `2` only when collected coverage is below an enforced logic-layer threshold. Test, simulator, result-bundle, `xccov`, and report-analysis failures use other nonzero statuses. A failed collection is not a coverage shortfall.
+`check-coverage.sh` returns `2` only when collected coverage is below an enforced logic-layer threshold. Test, simulator, result-bundle, `xccov`, and report-analysis failures use other nonzero statuses. Swift package resolution returns `7` after both the restored-cache attempt and an empty-cache retry fail. A failed collection is not a coverage shortfall. The script prints package-resolution, build/test, report, and analysis wall times; Apple CI also enables Xcode's build timing summary.
+
+Apple CI caches only SwiftPM's downloaded repositories and binary artifacts. The exact cache key includes the runner OS and architecture, Xcode build, and `Package.resolved`; there are no partial restore keys. The current dependency set is about 200 MB before cache compression. The cache excludes package checkouts, manifests, DerivedData, build products, and test artifacts. This keeps entries well below GitHub's 10 GB per-repository cache limit and avoids caching compiler output. A cache miss or cache-service failure performs a normal package fetch. If Xcode rejects a restored cache, `check-coverage.sh` deletes only its disposable runner-temp cache root and retries package resolution from empty state before compiling.
 
 The tracked pre-push hook is `.githooks/pre-push`. It does not collect coverage; it runs the faster local checks described above. Install it into a clone's configured hook directory after reviewing any existing local hook:
 
