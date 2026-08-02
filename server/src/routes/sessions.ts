@@ -267,6 +267,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       model?: unknown;
       thinking?: unknown;
       prompt?: unknown;
+      launchIdempotencyKey?: unknown;
     }>(req);
     if (
       typeof body.domain !== "string" ||
@@ -283,7 +284,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim())) ||
       (body.thinking !== undefined &&
         (typeof body.thinking !== "string" || !isThinkingLevel(body.thinking))) ||
-      (body.prompt !== undefined && typeof body.prompt !== "string")
+      (body.prompt !== undefined && typeof body.prompt !== "string") ||
+      (body.launchIdempotencyKey !== undefined &&
+        (typeof body.launchIdempotencyKey !== "string" || !body.launchIdempotencyKey.trim()))
     ) {
       helpers.error(res, 400, "Invalid control session metadata");
       return;
@@ -303,14 +306,22 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         model: typeof body.model === "string" ? body.model.trim() : undefined,
         thinking: typeof body.thinking === "string" ? body.thinking : undefined,
         prompt: body.prompt,
+        idempotencyKey:
+          typeof body.launchIdempotencyKey === "string"
+            ? body.launchIdempotencyKey.trim()
+            : undefined,
       });
       const requiredModelFailure = requiredModelLaunchFailureMessage(result.session);
       if (requiredModelFailure) {
-        ctx.appEvents?.emitSessionCreated(result.session);
+        if (result.launchKind !== "existing") {
+          ctx.appEvents?.emitSessionCreated(result.session);
+        }
         helpers.json(res, { error: requiredModelFailure, sessionId: result.session.id }, 409);
         return;
       }
-      ctx.appEvents?.emitSessionCreated(result.createdSession);
+      if (result.launchKind !== "existing") {
+        ctx.appEvents?.emitSessionCreated(result.createdSession);
+      }
       if (result.summarySession) {
         ctx.appEvents?.emitSessionSummary(result.summarySession);
       }
@@ -319,10 +330,19 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         {
           session: result.session,
           ...(result.prompted !== undefined ? { prompted: result.prompted } : {}),
+          ...(result.launchKind === "existing" ? { launch: { existing: true } } : {}),
         },
-        201,
+        result.launchKind === "existing" ? 200 : 201,
       );
     } catch (error: unknown) {
+      if (error instanceof SessionLifecycleError) {
+        if (error.message === "launch_in_progress") {
+          helpers.json(res, { error: "launch_in_progress", retryable: true }, error.statusCode);
+          return;
+        }
+        helpers.error(res, error.statusCode, error.message);
+        return;
+      }
       helpers.error(res, 500, safeErrorMessage(error));
     }
   }

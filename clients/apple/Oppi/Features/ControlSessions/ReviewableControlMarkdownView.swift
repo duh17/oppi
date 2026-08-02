@@ -13,6 +13,97 @@ enum ReviewableControlMarkdownDraftKey {
 }
 
 @MainActor
+enum ControlRevisionCommentTransfer {
+    @discardableResult
+    static func moveStagedComments(
+        serverId: String?,
+        fallbackServerId: String?,
+        domain: ControlSessionDomain,
+        targetId: String?,
+        toSessionId: String,
+        comments: ChatReviewCommentsController = ChatReviewCommentsController()
+    ) throws -> Int {
+        guard let targetId else { return 0 }
+        let draftSessionId = ReviewableControlMarkdownDraftKey.make(
+            serverId: serverId,
+            fallbackServerId: fallbackServerId,
+            domain: domain,
+            targetId: targetId
+        )
+        return try comments.moveStagedComments(
+            fromLocalScopeId: ReviewCommentLocalScope.controlDraft,
+            fromSessionId: draftSessionId,
+            toLocalScopeId: SessionRouteScope.control.composerDraftScopeID,
+            toSessionId: toSessionId
+        )
+    }
+}
+
+enum ControlRevisionCommentNavigationError: Error, Equatable {
+    case serverUnavailable
+}
+
+extension ControlRevisionCommentNavigationError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .serverUnavailable:
+            return "Could not open the new Oppi session"
+        }
+    }
+}
+
+@MainActor
+enum ControlRevisionCommentNavigation {
+    struct Handoff {
+        let serverId: String
+        let movedCount: Int
+    }
+
+    static func moveStagedComments(
+        serverId: String?,
+        fallbackServerId: String?,
+        domain: ControlSessionDomain,
+        targetId: String?,
+        toSessionId: String,
+        comments: ChatReviewCommentsController = ChatReviewCommentsController()
+    ) throws -> Handoff {
+        guard let resolvedServerId = serverId ?? fallbackServerId else {
+            throw ControlRevisionCommentNavigationError.serverUnavailable
+        }
+        let movedCount = try ControlRevisionCommentTransfer.moveStagedComments(
+            serverId: serverId,
+            fallbackServerId: fallbackServerId,
+            domain: domain,
+            targetId: targetId,
+            toSessionId: toSessionId,
+            comments: comments
+        )
+        return Handoff(serverId: resolvedServerId, movedCount: movedCount)
+    }
+}
+
+struct ControlRevisionSessionRetryState {
+    var createdSession: Session?
+    var starterPromptDelivered = false
+    var requestId: String
+
+    init(requestId: String = UUID().uuidString) {
+        self.requestId = requestId
+    }
+
+    mutating func recordCreatedSession(_ session: Session, promptDelivered: Bool) {
+        createdSession = session
+        starterPromptDelivered = promptDelivered
+    }
+
+    mutating func resetForNextLaunch(requestId: String = UUID().uuidString) {
+        createdSession = nil
+        starterPromptDelivered = false
+        self.requestId = requestId
+    }
+}
+
+@MainActor
 enum ControlRevisionSessionLaunchCoordinator {
     struct PreparedSession {
         let session: Session
@@ -25,6 +116,7 @@ enum ControlRevisionSessionLaunchCoordinator {
         requestId: String,
         create: () async throws -> (session: Session, prompted: Bool),
         onSessionCreated: (Session, Bool) -> Void,
+        activateSession: (Session) async throws -> Void,
         sendStarterPrompt: (Session, String) async throws -> Void
     ) async throws -> PreparedSession {
         let session: Session
@@ -39,6 +131,7 @@ enum ControlRevisionSessionLaunchCoordinator {
         }
 
         if !delivered {
+            try await activateSession(session)
             try await sendStarterPrompt(session, requestId)
             delivered = true
         }
@@ -273,13 +366,15 @@ struct ReviewableControlMarkdownView: View {
                 starterPromptDelivered: starterPromptDelivered,
                 requestId: starterPromptRequestId,
                 create: {
+                    // Persist the session first; prompt delivery then has its own
+                    // stable request ID and observable command result.
                     let response = try await apiClient.createControlSession(.init(
                         domain: domain,
                         intent: .revise,
                         targetId: targetId,
                         targetName: targetName,
                         name: "Revise \(targetName)",
-                        prompt: starterPrompt
+                        launchIdempotencyKey: starterPromptRequestId
                     ))
                     return (response.session, response.prompted == true)
                 },
@@ -287,6 +382,9 @@ struct ReviewableControlMarkdownView: View {
                     createdSession = session
                     starterPromptDelivered = delivered
                     sessionStore.cacheSessionForNavigation(session)
+                },
+                activateSession: { session in
+                    _ = try await apiClient.resumeSession(scope: .control, sessionId: session.id)
                 },
                 sendStarterPrompt: { session, requestId in
                     try await apiClient.sendSessionCommand(
@@ -303,22 +401,20 @@ struct ReviewableControlMarkdownView: View {
             let session = prepared.session
             starterPromptDelivered = prepared.starterPromptDelivered
 
-            try comments.moveStagedComments(
-                fromLocalScopeId: ReviewCommentLocalScope.controlDraft,
-                fromSessionId: draftSessionId,
-                toLocalScopeId: SessionRouteScope.control.composerDraftScopeID,
-                toSessionId: session.id
+            let handoff = try ControlRevisionCommentNavigation.moveStagedComments(
+                serverId: connection.currentServerId,
+                fallbackServerId: sessionStore.activeServerId,
+                domain: domain,
+                targetId: targetId,
+                toSessionId: session.id,
+                comments: comments
             )
-            guard let serverId = connection.currentServerId ?? sessionStore.activeServerId else {
-                error = "Could not open the new Oppi session"
-                return
-            }
 
             error = nil
             dismiss()
             await Task.yield()
             navigation.openWorkspaceSession(.init(
-                serverId: serverId,
+                serverId: handoff.serverId,
                 sessionId: session.id,
                 routeScope: .control
             ))

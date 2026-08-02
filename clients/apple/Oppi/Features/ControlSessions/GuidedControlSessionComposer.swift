@@ -35,6 +35,7 @@ struct GuidedControlSessionComposer: View {
     @State private var showModelPicker = false
     @State private var isInitialized = false
     @State private var isCreating = false
+    @State private var revisionLaunchState = ControlRevisionSessionRetryState()
     @State private var error: String?
 
     private var effectiveModelId: String? {
@@ -243,45 +244,77 @@ struct GuidedControlSessionComposer: View {
         defer { isCreating = false }
 
         do {
-            let response = try await apiClient.createControlSession(.init(
+            let starterPrompt = ControlSessionStarterPrompt.make(
                 domain: domain,
                 intent: intent,
                 targetId: targetId,
                 targetName: targetName,
-                name: sessionName(request: cleanRequest),
-                model: effectiveModelId,
-                thinking: thinkingLevel,
-                prompt: ControlSessionStarterPrompt.make(
-                    domain: domain,
-                    intent: intent,
-                    targetId: targetId,
-                    targetName: targetName,
-                    workspaceId: selectedWorkspace.id,
-                    workspaceName: selectedWorkspace.name,
-                    userRequest: cleanRequest
-                )
-            ))
-            guard response.prompted == true else {
-                error = "Default Agent could not start. Your request is still here so you can try again."
-                return
-            }
-            sessionStore.cacheSessionForNavigation(response.session)
-            guard let serverId = connection.currentServerId ?? sessionStore.activeServerId else {
-                error = "Could not open the new Oppi session"
-                return
-            }
+                workspaceId: selectedWorkspace.id,
+                workspaceName: selectedWorkspace.name,
+                userRequest: cleanRequest
+            )
+            let prepared = try await ControlRevisionSessionLaunchCoordinator.prepare(
+                existingSession: revisionLaunchState.createdSession,
+                starterPromptDelivered: revisionLaunchState.starterPromptDelivered,
+                requestId: revisionLaunchState.requestId,
+                create: {
+                    // Persist the session first; prompt delivery then has its own
+                    // stable request ID and observable command result.
+                    let response = try await apiClient.createControlSession(.init(
+                        domain: domain,
+                        intent: intent,
+                        targetId: targetId,
+                        targetName: targetName,
+                        name: sessionName(request: cleanRequest),
+                        model: effectiveModelId,
+                        thinking: thinkingLevel,
+                        launchIdempotencyKey: revisionLaunchState.requestId
+                    ))
+                    return (response.session, response.prompted == true)
+                },
+                onSessionCreated: { session, delivered in
+                    revisionLaunchState.recordCreatedSession(session, promptDelivered: delivered)
+                    sessionStore.cacheSessionForNavigation(session)
+                },
+                activateSession: { session in
+                    _ = try await apiClient.resumeSession(scope: .control, sessionId: session.id)
+                },
+                sendStarterPrompt: { session, requestId in
+                    try await apiClient.sendSessionCommand(
+                        scope: .control,
+                        sessionId: session.id,
+                        message: .prompt(
+                            message: starterPrompt,
+                            requestId: requestId,
+                            clientTurnId: requestId
+                        )
+                    )
+                }
+            )
+            revisionLaunchState.starterPromptDelivered = prepared.starterPromptDelivered
+            let handoff = try ControlRevisionCommentNavigation.moveStagedComments(
+                serverId: connection.currentServerId,
+                fallbackServerId: sessionStore.activeServerId,
+                domain: domain,
+                targetId: targetId,
+                toSessionId: prepared.session.id
+            )
+            sessionStore.cacheSessionForNavigation(prepared.session)
 
             request = ""
+            revisionLaunchState.resetForNextLaunch()
             error = nil
             onWillNavigate?()
             await Task.yield()
             navigation.openWorkspaceSession(.init(
-                serverId: serverId,
-                sessionId: response.session.id,
+                serverId: handoff.serverId,
+                sessionId: prepared.session.id,
                 routeScope: .control
             ))
         } catch {
-            self.error = error.localizedDescription
+            self.error = targetId == nil
+                ? error.localizedDescription
+                : "\(error.localizedDescription) Your staged comments are still saved."
         }
     }
 

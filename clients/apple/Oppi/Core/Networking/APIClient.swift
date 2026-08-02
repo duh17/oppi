@@ -31,6 +31,14 @@ enum APIClientAvailabilityFailure: Sendable, Equatable {
 
 typealias APIClientAvailabilityObserver = @Sendable (APIClientAvailabilityFailure) async -> Void
 
+private struct SessionCommandRejectedError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? {
+        UserFacingErrorText.normalize(message)
+    }
+}
+
 /// REST client for oppi server.
 ///
 /// Handles session CRUD, health checks, and authentication.
@@ -509,10 +517,18 @@ actor APIClient: ClientLogUploading {
         sessionId: String,
         message: ClientMessage
     ) async throws {
-        _ = try await post(
+        struct Response: Decodable {
+            let messages: [ServerMessage]
+        }
+
+        let data = try await post(
             "\(focusedSessionPath(scope: scope, sessionId: sessionId))/command",
             body: message
         )
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        for case .commandResult(_, _, false, _, let error) in response.messages {
+            throw SessionCommandRejectedError(message: error ?? "Session command failed")
+        }
     }
 
     /// Respond to an extension UI request in another session without focusing its stream.
@@ -1287,7 +1303,8 @@ actor APIClient: ClientLogUploading {
         let name: String?
         let model: String?
         let thinking: ThinkingLevel?
-        let prompt: String
+        let prompt: String?
+        let launchIdempotencyKey: String?
 
         init(
             domain: ControlSessionDomain,
@@ -1297,7 +1314,8 @@ actor APIClient: ClientLogUploading {
             name: String?,
             model: String? = nil,
             thinking: ThinkingLevel? = nil,
-            prompt: String
+            prompt: String? = nil,
+            launchIdempotencyKey: String? = nil
         ) {
             self.domain = domain
             self.intent = intent
@@ -1307,6 +1325,7 @@ actor APIClient: ClientLogUploading {
             self.model = model
             self.thinking = thinking
             self.prompt = prompt
+            self.launchIdempotencyKey = launchIdempotencyKey
         }
     }
 

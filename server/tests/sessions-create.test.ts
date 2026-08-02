@@ -371,6 +371,86 @@ describe("POST /control-sessions", () => {
     }
   });
 
+  it("reuses a control session when creation is retried with the same idempotency key", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-session-idempotency-"));
+
+    try {
+      const mock = createMockContext();
+      const persistentStorage = new Storage(dataDir);
+      mock.ctx.storage = persistentStorage;
+      const body = {
+        domain: "agents",
+        intent: "revise",
+        targetId: "agent-1",
+        targetName: "Reviewer",
+        prompt: "Inspect and revise the Agent.",
+        launchIdempotencyKey: "ios-control-revision-1",
+      };
+
+      await dispatchCreate(mock, body);
+      await dispatchCreate(mock, body);
+
+      const first = mock.responses[0]?.data as { session?: Session } | undefined;
+      const second = mock.responses[1]?.data as { session?: Session } | undefined;
+      expect(first?.session?.id).toBeTypeOf("string");
+      expect(second?.session?.id).toBe(first?.session?.id);
+      expect(mock.responses.map((response) => response.status)).toEqual([201, 200]);
+      expect(mock.sessions.startSession).toHaveBeenCalledOnce();
+      expect(mock.sessions.sendPrompt).toHaveBeenCalledOnce();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers an expired idempotent control-session launch lease", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-session-recovery-"));
+
+    try {
+      const mock = createMockContext();
+      const persistentStorage = new Storage(dataDir);
+      mock.ctx.storage = persistentStorage;
+      const body = {
+        domain: "agents",
+        intent: "revise",
+        targetId: "agent-1",
+        launchIdempotencyKey: "ios-control-recovery-1",
+      };
+
+      await dispatchCreate(mock, body);
+      const created = mock.responses[0]?.data as { session?: Session } | undefined;
+      const session = persistentStorage.getSession(created?.session?.id ?? "");
+      expect(session).toBeDefined();
+      session!.launch = {
+        ...session!.launch,
+        status: "launching",
+        completedAt: undefined,
+        lease: {
+          owner: "abandoned-control-launch",
+          acquiredAt: 1,
+          expiresAt: 2,
+        },
+      };
+      persistentStorage.saveSession(session!);
+      mock.responses.splice(0);
+
+      await dispatchCreate(mock, body);
+
+      expect(mock.responses).toHaveLength(1);
+      expect(mock.responses[0]).toMatchObject({
+        status: 200,
+        data: {
+          session: {
+            id: session!.id,
+            launch: { status: "accepted", promptDispatch: "not_sent" },
+          },
+          launch: { existing: true },
+        },
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("accepts Skill revision control sessions", async () => {
     const mock = createMockContext();
 
@@ -415,6 +495,8 @@ describe("POST /control-sessions", () => {
     { domain: "agents", intent: "create", prompt: false },
     { domain: "agents", intent: "create", model: 42 },
     { domain: "agents", intent: "create", thinking: "maximum" },
+    { domain: "agents", intent: "create", launchIdempotencyKey: 42 },
+    { domain: "agents", intent: "create", launchIdempotencyKey: "   " },
   ])("rejects malformed control-session fields", async (body) => {
     const mock = createMockContext();
 

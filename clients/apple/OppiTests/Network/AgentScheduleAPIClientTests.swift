@@ -438,7 +438,8 @@ struct AgentScheduleAPIClientTests {
             #expect(body.targetName == "Reviewer")
             #expect(body.model == "anthropic/claude-opus-4-8")
             #expect(body.thinking == .high)
-            #expect(body.prompt.contains("--definition-json"))
+            #expect(body.prompt?.contains("--definition-json") == true)
+            #expect(body.launchIdempotencyKey == "control-revision-request-1")
             return mockResponse(status: 201, json: """
             {"session":{"id":"control-1","name":"Oppi Control","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"revise","targetId":"agent-1","targetName":"Reviewer"}},"prompted":true}
             """)
@@ -457,12 +458,41 @@ struct AgentScheduleAPIClientTests {
                 intent: .revise,
                 targetId: "agent-1",
                 targetName: "Reviewer"
-            )
+            ),
+            launchIdempotencyKey: "control-revision-request-1"
         ))
 
         #expect(response.session.control?.domain == .agents)
         #expect(response.session.workspaceId == nil)
         #expect(response.prompted == true)
+    }
+
+    @Test func controlSessionCreateCanPersistBeforeStarterPromptDelivery() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            let json = try #require(
+                JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
+            )
+            #expect(json["prompt"] == nil)
+            #expect(json["launchIdempotencyKey"] as? String == "control-create-request-1")
+            return mockResponse(status: 201, json: """
+            {"session":{"id":"control-1","name":"Oppi Control","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"revise","targetId":"agent-1"}}}
+            """)
+        }
+
+        let response = try await client.createControlSession(.init(
+            domain: .agents,
+            intent: .revise,
+            targetId: "agent-1",
+            targetName: "Reviewer",
+            name: "Revise Reviewer",
+            launchIdempotencyKey: "control-create-request-1"
+        ))
+
+        #expect(response.session.id == "control-1")
+        #expect(response.prompted == nil)
     }
 
     @Test func focusedControlOperationsUseControlRouteFamily() async throws {
@@ -485,7 +515,9 @@ struct AgentScheduleAPIClientTests {
         TestURLProtocol.handler = { request in
             #expect(request.httpMethod == "POST")
             #expect(request.url?.path == "/control-sessions/control-1/command")
-            return mockResponse(json: "{}")
+            return mockResponse(json: """
+            {"messages":[{"type":"command_result","command":"stop","success":true}]}
+            """)
         }
         try await client.sendSessionCommand(
             scope: .control,
@@ -499,6 +531,29 @@ struct AgentScheduleAPIClientTests {
             return mockResponse(json: "{}")
         }
         try await client.deleteSession(scope: .control, sessionId: "control-1")
+    }
+
+    @Test func failedHTTPControlCommandThrowsInsteadOfClaimingPromptDelivery() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.url?.path == "/control-sessions/control-1/command")
+            return mockResponse(json: """
+            {"messages":[{"type":"command_result","command":"prompt","requestId":"request-1","success":false,"error":"Starter prompt was rejected"}]}
+            """)
+        }
+
+        do {
+            try await client.sendSessionCommand(
+                scope: .control,
+                sessionId: "control-1",
+                message: .prompt(message: "Start", requestId: "request-1")
+            )
+            Issue.record("A failed command_result must throw")
+        } catch {
+            #expect(error.localizedDescription == "Starter prompt was rejected")
+        }
     }
 
     @Test func agentResourceCatalogStateDistinguishesUnloadedFailureEmptyAndContent() {

@@ -13,6 +13,7 @@ import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
 import { DEFAULT_AGENT_ID, DEFAULT_AGENT_TOOL_NAMES } from "./default-agent.js";
 import { isDeclaredControlSession } from "./control-session.js";
 import { isPathWithinRoot } from "./git-utils.js";
+import { generateId } from "./id.js";
 import {
   canResumeStoppedMirrorAsOppi,
   promoteStoppedMirrorToOppi,
@@ -36,6 +37,8 @@ import type { ChatAttachmentRef, ControlSessionMetadata, Session, Workspace } fr
 import { resolveWorkspaceWorktree, WorkspaceWorktreeError } from "./worktrees.js";
 
 const LOCAL_SESSION_META_READ_BYTES = 16_384;
+const CONTROL_LAUNCH_LEASE_OWNER = "control-session-create";
+const CONTROL_LAUNCH_LEASE_TTL_MS = 2 * 60_000;
 
 const log = createLogger({ base: { component: "session_lifecycle" } });
 
@@ -108,7 +111,11 @@ export interface SessionLifecycleServiceDeps {
     sendPrompt(
       sessionId: string,
       message: string,
-      opts?: { attachments?: ChatAttachmentRef[] },
+      opts?: {
+        attachments?: ChatAttachmentRef[];
+        clientTurnId?: string;
+        requestId?: string;
+      },
     ): Promise<void>;
     runCommand(sessionId: string, command: Record<string, unknown>): Promise<unknown>;
     stopSession(sessionId: string): Promise<void>;
@@ -204,18 +211,35 @@ export class SessionLifecycleService {
     model?: string;
     thinking?: string;
     prompt?: string;
+    idempotencyKey?: string;
   }): Promise<CreateWorkspaceSessionResult> {
     const now = Date.now();
     const requestedModel = params.model?.trim() || undefined;
+    const idempotencyKey = params.idempotencyKey?.trim() || undefined;
+    if (idempotencyKey) {
+      const existing = this.deps.storage.findSessionByLaunchIdempotencyKey(idempotencyKey);
+      if (existing) return this.existingControlLaunch(existing, params.prompt);
+    }
     const defaultAgent = this.deps.storage.getAgentDefinitionStore().getAgent(DEFAULT_AGENT_ID);
     if (!defaultAgent) {
       throw new SessionLifecycleError("Default Agent is unavailable", 500);
     }
     const defaultAgentIcon = defaultAgent.definition.icon;
-    const session = this.deps.storage.createSession(
-      params.name?.trim() || "Oppi Control",
-      requestedModel,
-    );
+    const sessionName = params.name?.trim() || "Oppi Control";
+    const session: Session = idempotencyKey
+      ? {
+          id: generateId(8),
+          name: sessionName,
+          status: "ready",
+          createdAt: now,
+          lastActivity: now,
+          ...(requestedModel ? { model: requestedModel } : {}),
+          messageCount: 0,
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          cost: 0,
+          runtime: "oppi",
+        }
+      : this.deps.storage.createSession(sessionName, requestedModel);
     session.workspaceId = undefined;
     session.workspaceName = undefined;
     session.worktreeId = undefined;
@@ -232,35 +256,104 @@ export class SessionLifecycleService {
       ...(requestedModel ? { model: requestedModel, modelPolicy: "required" } : {}),
       status: "launching",
       requestedAt: now,
+      ...(idempotencyKey
+        ? {
+            idempotencyKey,
+            lease: {
+              owner: CONTROL_LAUNCH_LEASE_OWNER,
+              acquiredAt: now,
+              expiresAt: now + CONTROL_LAUNCH_LEASE_TTL_MS,
+            },
+          }
+        : {}),
     };
-    this.deps.storage.saveSession(session);
+    try {
+      this.deps.storage.saveSession(session);
+    } catch (error) {
+      const existing = idempotencyKey
+        ? this.deps.storage.findSessionByLaunchIdempotencyKey(idempotencyKey)
+        : undefined;
+      if (existing) return this.existingControlLaunch(existing, params.prompt);
+      throw error;
+    }
     const createdSession = this.deps.ensureSessionContextWindow({ ...session });
+    return this.finishControlLaunch(session, params.prompt, createdSession, "created");
+  }
 
-    const prompt = params.prompt?.trim();
+  private async existingControlLaunch(
+    existing: Session,
+    requestedPrompt: string | undefined,
+  ): Promise<CreateWorkspaceSessionResult> {
+    if (!isDeclaredControlSession(existing)) {
+      throw new SessionLifecycleError(
+        "Control-session idempotency key belongs to a different session scope",
+        409,
+      );
+    }
+    if (existing.launch?.status === "launching") {
+      const now = Date.now();
+      if (existing.launch.lease && existing.launch.lease.expiresAt > now) {
+        throw new SessionLifecycleError("launch_in_progress", 409);
+      }
+      const recovered = this.deps.storage.claimSessionLaunchRecovery(
+        existing,
+        CONTROL_LAUNCH_LEASE_OWNER,
+        now,
+        CONTROL_LAUNCH_LEASE_TTL_MS,
+      );
+      if (!recovered) throw new SessionLifecycleError("launch_in_progress", 409);
+      const createdSession = this.deps.ensureSessionContextWindow(recovered);
+      return this.finishControlLaunch(recovered, requestedPrompt, createdSession, "existing");
+    }
+    const session = this.deps.ensureSessionContextWindow(existing);
+    return {
+      session,
+      createdSession: session,
+      ...(requestedPrompt?.trim()
+        ? { prompted: existing.launch?.promptDispatch === "delivered" }
+        : {}),
+      launchKind: "existing",
+    };
+  }
+
+  private async finishControlLaunch(
+    session: Session,
+    requestedPrompt: string | undefined,
+    createdSession: Session,
+    launchKind: "created" | "existing",
+  ): Promise<CreateWorkspaceSessionResult> {
+    const launch = session.launch;
+    if (!launch) throw new SessionLifecycleError("Control session launch metadata is unavailable");
+    const prompt = requestedPrompt?.trim();
     if (!prompt) {
       session.launch = {
-        ...session.launch,
+        ...launch,
         status: "accepted",
         promptDispatch: "not_sent",
         completedAt: Date.now(),
+        lease: undefined,
       };
       this.deps.storage.saveSession(session);
       return {
         session: this.deps.ensureSessionContextWindow(session),
         createdSession,
-        launchKind: "created",
+        launchKind,
       };
     }
 
+    const turnId = launch.idempotencyKey ? `control-launch:${launch.idempotencyKey}` : undefined;
     try {
       await this.deps.sessions.startSession(session.id, undefined);
-      await this.deps.sessions.sendPrompt(session.id, prompt, {});
+      await this.deps.sessions.sendPrompt(session.id, prompt, {
+        ...(turnId ? { clientTurnId: turnId, requestId: turnId } : {}),
+      });
       session.firstMessage = prompt.slice(0, 200);
       session.launch = {
-        ...session.launch,
+        ...launch,
         status: "accepted",
         promptDispatch: "delivered",
         completedAt: Date.now(),
+        lease: undefined,
       };
       this.deps.storage.saveSession(session);
       const summarySession = this.deps.ensureSessionContextWindow(session);
@@ -269,23 +362,24 @@ export class SessionLifecycleService {
         createdSession,
         summarySession,
         prompted: true,
-        launchKind: "created",
+        launchKind,
       };
     } catch (error: unknown) {
       if (isRequiredModelUnavailableError(error)) session.status = "error";
       session.launch = {
-        ...session.launch,
+        ...launch,
         status: "failed",
         promptDispatch: "not_sent",
         promptError: error instanceof Error ? error.message : String(error),
         completedAt: Date.now(),
+        lease: undefined,
       };
       this.deps.storage.saveSession(session);
       return {
         session: this.deps.ensureSessionContextWindow(session),
         createdSession,
         prompted: false,
-        launchKind: "created",
+        launchKind,
       };
     }
   }
