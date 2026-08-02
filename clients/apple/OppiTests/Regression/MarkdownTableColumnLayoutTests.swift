@@ -182,20 +182,19 @@ struct NativeTableWrapToFitTests {
             !$0.isHidden && timelineRenderedText(of: $0).contains(detail)
         }
         let detailCell = try #require(matchingCells.first)
-        detailCell.layoutManager.ensureLayout(for: detailCell.textContainer)
-        var lineCount = 0
-        detailCell.layoutManager.enumerateLineFragments(
-            forGlyphRange: detailCell.layoutManager.glyphRange(for: detailCell.textContainer)
-        ) { _, _, _, _, _ in
-            lineCount += 1
-        }
-        print("wrapped detail bounds=\(detailCell.bounds) contentSize=\(detailCell.contentSize) fit=\(detailCell.sizeThatFits(CGSize(width: detailCell.bounds.width, height: .greatestFiniteMagnitude))) textContainer=\(detailCell.textContainer.size) lineCount=\(lineCount)")
-        #expect(lineCount >= 2, "Long table detail should wrap across multiple lines, got \(lineCount)")
-        #expect(
-            detailCell.contentSize.height <= detailCell.bounds.height + 1,
-            "Wrapped table cell content is clipped: content=\(detailCell.contentSize.height), bounds=\(detailCell.bounds.height)"
+        let widthAwareHeight = ceil(
+            detailCell.sizeThatFits(
+                CGSize(width: detailCell.bounds.width, height: .greatestFiniteMagnitude)
+            ).height
         )
-        #expect(detailCell.bounds.height > 40, "Long table detail should occupy multiple lines")
+        #expect(
+            widthAwareHeight > 40,
+            "Long table detail should require multiple rendered lines (fit=\(widthAwareHeight))"
+        )
+        #expect(
+            detailCell.bounds.height + 1 >= widthAwareHeight,
+            "Wrapped table cell is clipped: rendered=\(detailCell.bounds.height), required=\(widthAwareHeight)"
+        )
     }
 
     @Test func manyColumnTableKeepsHorizontalScrollFallback() {

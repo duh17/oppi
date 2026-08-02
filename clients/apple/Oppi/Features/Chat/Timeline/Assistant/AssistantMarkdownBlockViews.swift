@@ -783,6 +783,7 @@ final class NativeTableBlockView: UIView {
             zebra: false
         )
         wrapStack.addArrangedSubview(headerRow)
+        var wrapRows = [headerRow]
 
         let separator = UIView()
         separator.translatesAutoresizingMaskIntoConstraints = false
@@ -801,7 +802,9 @@ final class NativeTableBlockView: UIView {
                 zebra: rowIndex % 2 == 1
             )
             wrapStack.addArrangedSubview(body)
+            wrapRows.append(body)
         }
+        pinWrapCellHeights(in: wrapRows)
 
         renderedContentSignature = signature
         renderedWrapColumnWidths = columnWidths
@@ -835,7 +838,7 @@ final class NativeTableBlockView: UIView {
     ) -> UIView {
         let row = UIStackView()
         row.axis = .horizontal
-        row.alignment = .fill
+        row.alignment = .top
         row.distribution = .fill
         row.spacing = MarkdownTableColumnLayout.columnSpacing
         row.translatesAutoresizingMaskIntoConstraints = false
@@ -912,15 +915,25 @@ final class NativeTableBlockView: UIView {
 
         let resolvedWidth = max(1, width)
         textView.widthAnchor.constraint(equalToConstant: resolvedWidth).isActive = true
-        // UITextView's intrinsic height can still reflect its pre-width,
-        // single-line measurement while a streaming table is rebuilt. Pin the
-        // cell to the width-aware fitting height so wrapped lines cannot be
-        // clipped or let the following markdown segment paint over them.
-        let fittingHeight = textView.sizeThatFits(
-            CGSize(width: resolvedWidth, height: CGFloat.greatestFiniteMagnitude)
-        ).height
-        textView.heightAnchor.constraint(equalToConstant: max(1, ceil(fittingHeight))).isActive = true
         return textView
+    }
+
+    /// Width is resolved only after cells enter the attached wrap stack. Layout
+    /// the complete grid once, then pin each TextKit view to its width-aware height.
+    private func pinWrapCellHeights(in rows: [UIView]) {
+        wrapStack.layoutIfNeeded()
+
+        for row in rows {
+            guard let stack = row as? UIStackView else { continue }
+            for cell in stack.arrangedSubviews {
+                guard let textView = cell as? UITextView else { continue }
+                let width = max(1, textView.bounds.width)
+                let fittingHeight = textView.sizeThatFits(
+                    CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+                ).height
+                textView.heightAnchor.constraint(equalToConstant: max(1, ceil(fittingHeight))).isActive = true
+            }
+        }
     }
 
     private func applySelectionStateToWrapCells(selectionEnabled: Bool) {
