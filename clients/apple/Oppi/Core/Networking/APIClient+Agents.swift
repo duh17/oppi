@@ -78,7 +78,9 @@ extension APIClient {
         description: String?,
         instructions: AgentInstructions?,
         model: String?,
-        thinkingLevel: ThinkingLevel?
+        thinkingLevel: ThinkingLevel?,
+        skillPaths: [String]?,
+        extensionIds: [String]?
     ) async throws -> StoredAgentDefinition {
         let encodedAgentId = try percentEncodePathSegment(agentId)
         let data = try await patch(
@@ -87,6 +89,11 @@ extension APIClient {
                 name: name,
                 description: description,
                 instructions: instructions,
+                // The server-owned Default Agent accepts only identity,
+                // instructions, and session-default customization fields.
+                resources: agentId == "oppi-default-agent"
+                    ? nil
+                    : .init(skillPaths: skillPaths, extensionIds: extensionIds),
                 sessionDefaults: .init(model: model, thinkingLevel: thinkingLevel)
             )
         )
@@ -275,6 +282,23 @@ private extension APIClient {
 }
 
 private struct NativeAgentUpdateBody: Encodable {
+    struct Resources: Encodable {
+        let skillPaths: [String]?
+        let extensionIds: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case skillPaths, promptTemplateIds, extensionIds
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeNullable(skillPaths, forKey: .skillPaths)
+            // Clear assignments written by older app/server versions.
+            try container.encodeNil(forKey: .promptTemplateIds)
+            try container.encodeNullable(extensionIds, forKey: .extensionIds)
+        }
+    }
+
     struct SessionDefaults: Encodable {
         let model: String?
         let thinkingLevel: ThinkingLevel?
@@ -291,15 +315,19 @@ private struct NativeAgentUpdateBody: Encodable {
     let name: String
     let description: String?
     let instructions: AgentInstructions?
+    let resources: Resources?
     let sessionDefaults: SessionDefaults
 
-    enum CodingKeys: String, CodingKey { case name, description, instructions, sessionDefaults }
+    enum CodingKeys: String, CodingKey {
+        case name, description, instructions, resources, sessionDefaults
+    }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(name, forKey: .name)
         try container.encodeNullable(description, forKey: .description)
         try container.encodeNullable(instructions, forKey: .instructions)
+        try container.encodeIfPresent(resources, forKey: .resources)
         try container.encode(sessionDefaults, forKey: .sessionDefaults)
     }
 }

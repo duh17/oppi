@@ -8,7 +8,7 @@
 import { safeErrorMessage } from "./log-utils.js";
 import { isDeclaredControlSession } from "./control-session.js";
 import { createLogger } from "./logger.js";
-import { chmodSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
 
@@ -29,6 +29,7 @@ import {
   type Skill,
   type ToolDefinition,
   SessionManager as PiSessionManager,
+  DefaultPackageManager,
   DefaultResourceLoader,
   ModelRuntime,
   ModelRegistry,
@@ -61,6 +62,7 @@ import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
+import { serverResourceId } from "./server-resource-id.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
@@ -225,6 +227,90 @@ type SkillLoadResult = {
   skills: Skill[];
   diagnostics: ResourceDiagnostic[];
 };
+
+type ExtensionLoadResult = ReturnType<DefaultResourceLoader["getExtensions"]>;
+
+async function resolveSelectedAgentExtensionPaths(
+  extensionIds: string[] | undefined,
+  cwd: string,
+  agentDir: string,
+  settingsManager: SettingsManager,
+): Promise<string[] | undefined> {
+  if (extensionIds === undefined) return undefined;
+  if (extensionIds.length === 0) return [];
+
+  const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
+  const resolved = await packageManager.resolve(async () => "skip");
+  const pathsById = new Map(
+    resolved.extensions
+      .filter((resource) => resource.metadata.scope === "user")
+      .map((resource) => [serverResourceId("extension", resource.path), resource.path]),
+  );
+  const selectedPaths: string[] = [];
+  for (const extensionId of new Set(extensionIds)) {
+    if (extensionId === "oppi") {
+      throw new Error("The built-in Oppi extension is managed by server policy, not an Agent");
+    }
+    const path = pathsById.get(extensionId);
+    if (!path) {
+      throw new Error(`Selected Agent Extension is unavailable: ${extensionId}`);
+    }
+    selectedPaths.push(path);
+  }
+  return selectedPaths;
+}
+
+function assertSelectedAgentResourcesAvailable(
+  selectedSkillPaths: string[] | undefined,
+  selectedExtensionPaths: string[] | undefined,
+): void {
+  for (const selectedPath of selectedSkillPaths ?? []) {
+    if (!existsSync(selectedPath)) {
+      throw new Error(`Selected Agent Skill is unavailable: ${selectedPath}`);
+    }
+  }
+  for (const selectedPath of selectedExtensionPaths ?? []) {
+    if (!existsSync(selectedPath)) {
+      throw new Error(`Selected Agent Extension is unavailable: ${selectedPath}`);
+    }
+  }
+}
+
+function assertSelectedAgentSkillsLoaded(
+  selectedPaths: string[] | undefined,
+  result: SkillLoadResult,
+): void {
+  if (selectedPaths === undefined) return;
+  for (const selectedPath of selectedPaths) {
+    const loaded = result.skills.some(
+      (skill) =>
+        isPathWithin(selectedPath, skill.filePath) ||
+        isPathWithin(selectedPath, skill.baseDir) ||
+        isPathWithin(skill.baseDir, selectedPath),
+    );
+    if (!loaded) {
+      throw new Error(`Selected Agent Skill is unavailable: ${selectedPath}`);
+    }
+  }
+}
+
+function assertSelectedAgentExtensionsLoaded(
+  selectedPaths: string[] | undefined,
+  result: ExtensionLoadResult,
+): void {
+  if (selectedPaths === undefined) return;
+  for (const selectedPath of selectedPaths) {
+    const loaded = result.extensions.some(
+      (extension) =>
+        !extension.path.startsWith("<inline:") &&
+        (isPathWithin(selectedPath, extension.resolvedPath) ||
+          isPathWithin(extension.resolvedPath, selectedPath)),
+    );
+    if (!loaded) {
+      throw new Error(`Selected Agent Extension could not be loaded: ${selectedPath}`);
+    }
+  }
+}
 
 function isPathWithin(parent: string, child: string): boolean {
   const resolvedParent = resolvePath(parent);
@@ -479,6 +565,9 @@ export class SdkBackend {
   private readonly dataDir?: string;
   private readonly oppiSettingsHolder?: OppiExtensionSettingsHolder;
   private readonly getOppiExtensionSettings?: () => OppiExtensionSettingsSnapshot;
+  private readonly assertSelectedResourcesAvailableBeforeReload?: () => void;
+  private readonly consumeSelectedResourceReloadError?: () => Error | undefined;
+  private selectedResourceInvariantError?: string;
   private runtimeTransaction = new SessionRuntimeTransaction();
   private requestedExclusiveOperations: Array<{ name: string }> = [];
   private queueReconciliationRequired = false;
@@ -496,6 +585,8 @@ export class SdkBackend {
       holder: OppiExtensionSettingsHolder;
       get: () => OppiExtensionSettingsSnapshot;
     },
+    assertSelectedResourcesAvailableBeforeReload?: () => void,
+    consumeSelectedResourceReloadError?: () => Error | undefined,
   ) {
     this.runtime = runtime;
     this.emitEvent = emitEvent;
@@ -503,6 +594,9 @@ export class SdkBackend {
     this.dataDir = dataDir;
     this.oppiSettingsHolder = oppiRuntimeSettings?.holder;
     this.getOppiExtensionSettings = oppiRuntimeSettings?.get;
+    this.assertSelectedResourcesAvailableBeforeReload =
+      assertSelectedResourcesAvailableBeforeReload;
+    this.consumeSelectedResourceReloadError = consumeSelectedResourceReloadError;
     this.sessionCwdExistsOverride = cwdOverrides?.existsCwd;
     this.sessionManagerDisplayCwd = cwdOverrides?.displayCwd;
     this.uiBridge = new SdkUiBridge(emitEvent, () => this.disposed);
@@ -608,6 +702,8 @@ export class SdkBackend {
           },
         }
       : undefined;
+    let assertSelectedResourcesAvailableBeforeReload: (() => void) | undefined;
+    let consumeSelectedResourceReloadError: (() => Error | undefined) | undefined;
     const createRuntimeFactory: CreateAgentSessionRuntimeFactory = async ({
       cwd,
       agentDir: runtimeAgentDir,
@@ -627,13 +723,21 @@ export class SdkBackend {
         agentDefinition,
         sandboxMode ? sessionCwd : undefined,
       );
-      const savedAgentSkillPaths = agentDefinition?.resources?.skillPaths ?? [];
-      const additionalSkillPaths = [...(config.skillPaths ?? []), ...savedAgentSkillPaths];
+      const selectedAgentSkillPaths = agentDefinition?.resources?.skillPaths;
+      const selectedAgentExtensionIds = agentDefinition?.resources?.extensionIds;
       const modelRuntime = await ModelRuntime.create({
         authPath: join(runtimeAgentDir, "auth.json"),
         modelsPath: join(runtimeAgentDir, "models.json"),
       });
       const settingsManager = SettingsManager.create(hostCwd, runtimeAgentDir);
+      const selectedAgentExtensionPaths = isolatedControlRuntime
+        ? undefined
+        : await resolveSelectedAgentExtensionPaths(
+            selectedAgentExtensionIds,
+            hostCwd,
+            runtimeAgentDir,
+            settingsManager,
+          );
 
       // Resource loader: follow Pi's normal cwd/settings/package discovery.
       // Oppi no longer applies a workspace-level skills/extensions policy for
@@ -643,6 +747,31 @@ export class SdkBackend {
         includeOppiDocsHint: isOppiOwnedHostSession && isOppiDocsPromptEnabled(config.serverConfig),
         includeOppiCliHint: isOppiOwnedHostSession && isOppiCliPromptEnabled(config.serverConfig),
       });
+      const normalizedSelectedAgentSkillPaths = selectedAgentSkillPaths?.map((path) =>
+        isAbsolute(path) ? path : resolvePath(hostCwd, path),
+      );
+      assertSelectedResourcesAvailableBeforeReload = () =>
+        assertSelectedAgentResourcesAvailable(
+          normalizedSelectedAgentSkillPaths,
+          selectedAgentExtensionPaths,
+        );
+      // Resource selection is a startup and reload-preflight invariant. The
+      // SdkBackend preflight rejects known missing paths before Pi shutdown.
+      // During a live Pi reload, validation runs after Pi has emitted
+      // session_shutdown. Let Pi finish rebuilding a coherent runtime, then
+      // reject the reload and block model turns until an exact selection is
+      // restored and a later reload satisfies the invariant.
+      let isInitialResourceLoad = true;
+      let selectedResourceReloadError: Error | undefined;
+      const recordSelectedResourceReloadError = (error: unknown): void => {
+        selectedResourceReloadError ??=
+          error instanceof Error ? error : new Error(safeErrorMessage(error));
+      };
+      consumeSelectedResourceReloadError = () => {
+        const error = selectedResourceReloadError;
+        selectedResourceReloadError = undefined;
+        return error;
+      };
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
@@ -680,7 +809,19 @@ export class SdkBackend {
               noSkills: true,
               noPromptTemplates: true,
             }
-          : { additionalSkillPaths }),
+          : {
+              ...(selectedAgentSkillPaths !== undefined
+                ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
+                : config.skillPaths
+                  ? { additionalSkillPaths: config.skillPaths }
+                  : {}),
+              ...(selectedAgentExtensionPaths !== undefined
+                ? {
+                    noExtensions: true,
+                    additionalExtensionPaths: selectedAgentExtensionPaths,
+                  }
+                : {}),
+            }),
         ...(isolatedControlRuntime || agentDefinition?.resources?.noContextFiles
           ? { noContextFiles: true }
           : {}),
@@ -713,26 +854,37 @@ export class SdkBackend {
                   ...savedAgentFiles,
                 ],
               }),
-              skillsOverride: (base: SkillLoadResult): SkillLoadResult => ({
-                skills: base.skills.map((skill) => {
-                  const guestBaseDir = posix.join(
-                    guestCwd,
-                    ".pi",
-                    "skills",
-                    safeGuestSegment(skill.name),
-                  );
-                  sandboxReadonlyMounts.set(guestBaseDir, {
-                    hostPath: skill.baseDir,
-                    guestPath: guestBaseDir,
-                  });
-                  return {
-                    ...skill,
-                    baseDir: guestBaseDir,
-                    filePath: posix.join(guestBaseDir, basename(skill.filePath)),
-                  };
-                }),
-                diagnostics: base.diagnostics,
-              }),
+              skillsOverride: (base: SkillLoadResult): SkillLoadResult => {
+                // The sandbox loader rewrites resource paths to guest paths
+                // below. Validate the saved Agent selection against the host
+                // paths before that presentation-only rewrite on every load.
+                try {
+                  assertSelectedAgentSkillsLoaded(normalizedSelectedAgentSkillPaths, base);
+                } catch (error) {
+                  if (isInitialResourceLoad) throw error;
+                  recordSelectedResourceReloadError(error);
+                }
+                return {
+                  skills: base.skills.map((skill) => {
+                    const guestBaseDir = posix.join(
+                      guestCwd,
+                      ".pi",
+                      "skills",
+                      safeGuestSegment(skill.name),
+                    );
+                    sandboxReadonlyMounts.set(guestBaseDir, {
+                      hostPath: skill.baseDir,
+                      guestPath: guestBaseDir,
+                    });
+                    return {
+                      ...skill,
+                      baseDir: guestBaseDir,
+                      filePath: posix.join(guestBaseDir, basename(skill.filePath)),
+                    };
+                  }),
+                  diagnostics: base.diagnostics,
+                };
+              },
             }
           : {
               agentsFilesOverride: (base: { agentsFiles: AgentContextFile[] }) => ({
@@ -740,10 +892,27 @@ export class SdkBackend {
               }),
             }),
       });
-      if (!sandboxMode) {
-        const reload = loader.reload.bind(loader);
-        loader.reload = async (options) => {
-          await reload(options);
+      const reload = loader.reload.bind(loader);
+      loader.reload = async (options) => {
+        selectedResourceReloadError = undefined;
+        await reload(options);
+        try {
+          if (!sandboxMode) {
+            assertSelectedAgentSkillsLoaded(normalizedSelectedAgentSkillPaths, loader.getSkills());
+          }
+          assertSelectedAgentExtensionsLoaded(selectedAgentExtensionPaths, loader.getExtensions());
+        } catch (error) {
+          if (isInitialResourceLoad) throw error;
+          recordSelectedResourceReloadError(error);
+        }
+        if (selectedResourceReloadError) {
+          log.warn("sdk.selected_agent_resource_reload_failed", {
+            sessionId: session.id,
+            error: safeErrorMessage(selectedResourceReloadError),
+          });
+        }
+        isInitialResourceLoad = false;
+        if (!sandboxMode) {
           const configuredShellCommandPrefix = settingsManager.getShellCommandPrefix();
           settingsManager.applyOverrides({
             shellCommandPrefix: [
@@ -753,8 +922,8 @@ export class SdkBackend {
               .filter((prefix): prefix is string => Boolean(prefix))
               .join("\n"),
           });
-        };
-      }
+        }
+      };
       await loader.reload();
 
       // Apply providers that extensions registered during reload() before
@@ -938,6 +1107,8 @@ export class SdkBackend {
             get: getOppiExtensionSettings,
           }
         : undefined,
+      () => assertSelectedResourcesAvailableBeforeReload?.(),
+      () => consumeSelectedResourceReloadError?.(),
     );
 
     const preBindMs = Date.now() - createStartMs;
@@ -1104,6 +1275,12 @@ export class SdkBackend {
   async reloadResources(reloadRuntimeConfig?: () => void): Promise<{ success: true }> {
     return this.withExclusiveRuntimeOperation("reload", async () => {
       this.assertRuntimeIdle("reload");
+      try {
+        this.assertSelectedResourcesAvailableBeforeReload?.();
+      } catch (error) {
+        this.selectedResourceInvariantError = safeErrorMessage(error);
+        throw error;
+      }
       reloadRuntimeConfig?.();
 
       const holder = this.oppiSettingsHolder;
@@ -1122,6 +1299,12 @@ export class SdkBackend {
         throw error;
       }
 
+      const selectedResourceError = this.consumeSelectedResourceReloadError?.();
+      if (selectedResourceError) {
+        this.selectedResourceInvariantError = safeErrorMessage(selectedResourceError);
+        throw selectedResourceError;
+      }
+      this.selectedResourceInvariantError = undefined;
       SdkBackend.applyDefaultQueueModes(this.piSession);
       this.installSessionAttachmentToolHelpers();
       return { success: true };
@@ -1197,6 +1380,7 @@ export class SdkBackend {
     commandType: string,
     operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
   ): Promise<T> {
+    this.assertSelectedResourceInvariant();
     if (this.isQueueReconciliationRequired) {
       throw new Error(QUEUE_RECONCILIATION_REQUIRED_ERROR);
     }
@@ -1256,6 +1440,14 @@ export class SdkBackend {
     if (this.disposed) throw new Error("Session backend is disposed");
   }
 
+  private assertSelectedResourceInvariant(): void {
+    if (this.selectedResourceInvariantError) {
+      throw new Error(
+        `${this.selectedResourceInvariantError}; restore the resource and reload before sending another prompt`,
+      );
+    }
+  }
+
   private assertRuntimeIdle(operation: string): void {
     if (this.piSession.isStreaming || this.piSession.isCompacting) {
       throw new Error(`${operation} requires an idle session`);
@@ -1283,6 +1475,7 @@ export class SdkBackend {
     if (permit) {
       this.getRuntimeTransaction().assertPermit(permit, "shared");
       this.assertNotDisposed();
+      this.assertSelectedResourceInvariant();
       await this.promptWithoutTransaction(message, opts);
       return;
     }
@@ -1325,6 +1518,7 @@ export class SdkBackend {
 
     this.getRuntimeTransaction().assertPermit(permit, "exclusive");
     this.assertNotDisposed();
+    if (batch.prompt) this.assertSelectedResourceInvariant();
     const previous = rollback ?? this.sdkQueueSnapshot();
     try {
       const replayAuthority = authority

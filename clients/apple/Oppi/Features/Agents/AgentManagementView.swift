@@ -193,6 +193,7 @@ private struct AgentDetailView: View {
     @State private var isShowingLaunch = false
     @State private var isShowingSchedule = false
     @State private var isArchiving = false
+    @State private var isLoadingResources = false
 
     var body: some View {
         List {
@@ -262,12 +263,29 @@ private struct AgentDetailView: View {
                 }
 
                 Section("Resources") {
-                    resourceRow("Skill paths", values: agent.definition.resources?.skillPaths)
-                    resourceRow("Prompt templates", values: agent.definition.resources?.promptTemplateIds)
-                    resourceRow("Extensions", values: agent.definition.resources?.extensionIds)
+                    resourceRow(
+                        "Skills",
+                        values: agent.definition.resources?.skillPaths,
+                        displayValues: skillDisplayNames(agent.definition.resources?.skillPaths)
+                    )
+                    resourceRow(
+                        "Extensions",
+                        values: agent.definition.resources?.extensionIds,
+                        displayValues: extensionDisplayNames(agent.definition.resources?.extensionIds)
+                    )
                     if agent.definition.resources?.noContextFiles == true {
                         Label("Context files disabled", systemImage: "doc.badge.gearshape")
                             .font(.subheadline)
+                    }
+                    if let message = skillCatalogState.statusMessage(for: "Skills") {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.themeOrange)
+                    }
+                    if let message = extensionCatalogState.statusMessage(for: "Extensions") {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.themeOrange)
                     }
                 }
 
@@ -332,8 +350,14 @@ private struct AgentDetailView: View {
                 }
             }
         }
-        .task(id: agentId) { await loadAgent() }
-        .refreshable { await loadAgent() }
+        .task(id: agentId) {
+            await loadAgent()
+            await loadResources()
+        }
+        .refreshable {
+            await loadAgent()
+            await loadResources()
+        }
         .fullScreenCover(isPresented: $isShowingNativeEdit) {
             if let agent {
                 AgentNativeEditView(agent: agent) { updated in
@@ -469,9 +493,8 @@ private struct AgentDetailView: View {
             "",
             "## Resources",
             "",
-            "- **Skill paths:** \(resourceSummary(resources?.skillPaths))",
-            "- **Prompt templates:** \(resourceSummary(resources?.promptTemplateIds))",
-            "- **Extensions:** \(resourceSummary(resources?.extensionIds))",
+            "- **Skills:** \(resourceSummary(resources?.skillPaths, displayValues: skillDisplayNames(resources?.skillPaths)))",
+            "- **Extensions:** \(resourceSummary(resources?.extensionIds, displayValues: extensionDisplayNames(resources?.extensionIds)))",
             "- **Context files:** \(resources?.noContextFiles == true ? "Disabled" : "Default discovery")",
         ]
         return lines.joined(separator: "\n")
@@ -486,9 +509,50 @@ private struct AgentDetailView: View {
         return "Default"
     }
 
-    private func resourceSummary(_ values: [String]?) -> String {
-        guard let values, !values.isEmpty else { return "Default discovery" }
-        return values.joined(separator: ", ")
+    private func resourceSummary(_ values: [String]?, displayValues: [String]? = nil) -> String {
+        guard let values else { return "Default discovery" }
+        guard !values.isEmpty else { return "None" }
+        return (displayValues ?? values).joined(separator: ", ")
+    }
+
+    private func skillDisplayNames(_ paths: [String]?) -> [String]? {
+        guard let paths, let serverId = connection.currentServerId else { return nil }
+        let catalog = connection.serverResourceStore.skills(forServer: serverId)
+        return paths.map { path in
+            catalog.first(where: { $0.path == path })?.name ?? path
+        }
+    }
+
+    private func extensionDisplayNames(_ ids: [String]?) -> [String]? {
+        guard let ids, let serverId = connection.currentServerId else { return nil }
+        let catalog = connection.serverResourceStore.extensions(forServer: serverId)
+        return ids.map { id in
+            catalog.first(where: { $0.id == id })?.name ?? id
+        }
+    }
+
+    private var skillCatalogState: AgentResourceCatalogState {
+        guard let serverId = connection.currentServerId else { return .unavailable }
+        let sync = connection.serverResourceStore.syncState(for: .skills, serverId: serverId)
+        return AgentResourceCatalogState.resolve(
+            hasLoaded: connection.serverResourceStore.hasLoadedSkills(forServer: serverId),
+            isSyncing: isLoadingResources || sync.isSyncing,
+            lastSyncFailed: sync.lastSyncFailed,
+            hasRows: !connection.serverResourceStore.skills(forServer: serverId).isEmpty
+        )
+    }
+
+    private var extensionCatalogState: AgentResourceCatalogState {
+        guard let serverId = connection.currentServerId else { return .unavailable }
+        let sync = connection.serverResourceStore.syncState(for: .extensions, serverId: serverId)
+        return AgentResourceCatalogState.resolve(
+            hasLoaded: connection.serverResourceStore.hasLoadedExtensions(forServer: serverId),
+            isSyncing: isLoadingResources || sync.isSyncing,
+            lastSyncFailed: sync.lastSyncFailed,
+            hasRows: !connection.serverResourceStore.extensions(forServer: serverId).filter {
+                !$0.isBuiltInOppi
+            }.isEmpty
+        )
     }
 
     @ViewBuilder
@@ -511,15 +575,23 @@ private struct AgentDetailView: View {
     }
 
     @ViewBuilder
-    private func resourceRow(_ title: String, values: [String]?) -> some View {
-        if let values, !values.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.subheadline.weight(.medium))
-                Text(values.joined(separator: ", "))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.themeComment)
-                    .textSelection(.enabled)
+    private func resourceRow(
+        _ title: String,
+        values: [String]?,
+        displayValues: [String]? = nil
+    ) -> some View {
+        if let values {
+            if values.isEmpty {
+                detailRow(title, "None")
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.subheadline.weight(.medium))
+                    Text((displayValues ?? values).joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                        .textSelection(.enabled)
+                }
             }
         } else {
             detailRow(title, "Default discovery")
@@ -542,6 +614,14 @@ private struct AgentDetailView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    @MainActor
+    private func loadResources() async {
+        guard let apiClient, let serverId = connection.currentServerId else { return }
+        isLoadingResources = true
+        defer { isLoadingResources = false }
+        await connection.serverResourceStore.load(serverId: serverId, api: apiClient)
     }
 
     @MainActor

@@ -87,13 +87,7 @@ const AGENT_DEFINITION_KEYS = new Set([
   "sessionDefaults",
 ]);
 const INSTRUCTION_KEYS = new Set(["mode", "text"]);
-const RESOURCE_KEYS = new Set([
-  "agentsFiles",
-  "noContextFiles",
-  "skillPaths",
-  "promptTemplateIds",
-  "extensionIds",
-]);
+const RESOURCE_KEYS = new Set(["agentsFiles", "noContextFiles", "skillPaths", "extensionIds"]);
 const AGENTS_FILE_KEYS = new Set(["path", "content"]);
 const SESSION_DEFAULT_KEYS = new Set([
   "model",
@@ -564,14 +558,6 @@ function validateResources(value: unknown): AgentDefinition["resources"] | undef
     ...(value.skillPaths !== undefined
       ? { skillPaths: validateStringArray(value.skillPaths, "resources.skillPaths") }
       : {}),
-    ...(value.promptTemplateIds !== undefined
-      ? {
-          promptTemplateIds: validateStringArray(
-            value.promptTemplateIds,
-            "resources.promptTemplateIds",
-          ),
-        }
-      : {}),
     ...(value.extensionIds !== undefined
       ? { extensionIds: validateStringArray(value.extensionIds, "resources.extensionIds") }
       : {}),
@@ -634,7 +620,14 @@ function migrateStoredDefinitionJson(rawJson: string): string {
     return rawJson;
   }
   if (!isRecord(parsed)) return rawJson;
-  const migrated = { ...parsed, icon: migrateIconChoice(parsed.icon) };
+  const migrated: Record<string, unknown> = {
+    ...parsed,
+    icon: migrateIconChoice(parsed.icon),
+  };
+  if (isRecord(migrated.resources) && "promptTemplateIds" in migrated.resources) {
+    const { promptTemplateIds: _removed, ...resources } = migrated.resources;
+    migrated.resources = resources;
+  }
   return JSON.stringify(migrated);
 }
 

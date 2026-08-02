@@ -477,6 +477,49 @@ describe("agent routes", () => {
     }
   });
 
+  it("accepts the native Default Agent edit body without resources on its canonical route", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-native-route-"));
+    const store = new AgentDefinitionStore(dataDir);
+    try {
+      const dispatch = createAgentRoutes(
+        { storage: { getAgentDefinitionStore: () => store } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const res = makeResponse();
+
+      await dispatch({
+        method: "PATCH",
+        path: `/agents/${DEFAULT_AGENT_ID}`,
+        url: new URL(`http://localhost/agents/${DEFAULT_AGENT_ID}`),
+        req: makeRequest({
+          name: "Home Agent",
+          description: null,
+          instructions: null,
+          sessionDefaults: { model: "openai/gpt-5.6", thinkingLevel: "high" },
+        }) as never,
+        res: res as never,
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).agent).toMatchObject({
+        id: DEFAULT_AGENT_ID,
+        definition: {
+          name: "Home Agent",
+          resources: { noContextFiles: true },
+          sessionDefaults: {
+            model: "openai/gpt-5.6",
+            thinkingLevel: "high",
+            noTools: "builtin",
+            tools: ["oppi", "ask"],
+          },
+        },
+      });
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not archive the reserved default Agent identity", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-archive-routes-"));
     try {

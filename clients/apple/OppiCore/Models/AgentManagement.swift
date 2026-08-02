@@ -46,30 +46,28 @@ struct AgentResourceFile: Codable, Sendable, Equatable, Identifiable {
 struct AgentResources: Codable, Sendable, Equatable {
     var agentsFiles: [AgentResourceFile]?
     var noContextFiles: Bool?
+    /// Omitted inherits Pi discovery; an array is the Agent's exact Skill selection.
     var skillPaths: [String]?
-    var promptTemplateIds: [String]?
+    /// Omitted inherits Pi discovery; an array is the Agent's exact Extension selection.
     var extensionIds: [String]?
 
     init(
         agentsFiles: [AgentResourceFile]? = nil,
         noContextFiles: Bool? = nil,
         skillPaths: [String]? = nil,
-        promptTemplateIds: [String]? = nil,
         extensionIds: [String]? = nil
     ) {
         self.agentsFiles = agentsFiles
         self.noContextFiles = noContextFiles
         self.skillPaths = skillPaths
-        self.promptTemplateIds = promptTemplateIds
         self.extensionIds = extensionIds
     }
 
     var isEmpty: Bool {
         (agentsFiles?.isEmpty ?? true)
             && noContextFiles != true
-            && (skillPaths?.isEmpty ?? true)
-            && (promptTemplateIds?.isEmpty ?? true)
-            && (extensionIds?.isEmpty ?? true)
+            && skillPaths == nil
+            && extensionIds == nil
     }
 }
 

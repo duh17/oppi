@@ -21,8 +21,9 @@ export interface AgentDefinition {
   resources?: {
     agentsFiles?: Array<{ path: string; content: string }>;
     noContextFiles?: boolean;
+    /** Omitted inherits Pi discovery; an array is the Agent's exact Skill selection. */
     skillPaths?: string[];
-    promptTemplateIds?: string[];
+    /** Omitted inherits Pi discovery; an array is the Agent's exact Extension selection. */
     extensionIds?: string[];
   };
   sessionDefaults?: {

@@ -366,6 +366,89 @@ describe("SdkBackend sandbox", () => {
     }
   });
 
+  it("loads an exact selected Skill in a sandbox after guest path rewriting", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-selected-agent-skill-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-selected-agent-dir-"));
+    const selectedSkill = join(agentDir, "skills", "selected-sandbox-skill");
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    mkdirSync(selectedSkill, { recursive: true });
+    writeFileSync(
+      join(selectedSkill, "SKILL.md"),
+      [
+        "---",
+        "name: selected-sandbox-skill",
+        "description: Selected sandbox Skill.",
+        "---",
+        "Selected sandbox instructions.",
+      ].join("\n"),
+    );
+    writeFileSync(join(agentDir, "auth.json"), "{}");
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+    const execResult = {
+      exitCode: 0,
+      stdout: "",
+      stdoutBuffer: Buffer.alloc(0),
+      ok: true,
+    };
+    const vm = {
+      fs: {
+        access: vi.fn(async () => undefined),
+        mkdir: vi.fn(async () => undefined),
+        readFile: vi.fn(async () => Buffer.alloc(0)),
+        writeFile: vi.fn(async () => undefined),
+      },
+      exec: vi.fn(() =>
+        Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
+      ),
+    };
+    const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+    const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+    const previousManager = sdkBackendType._gondolinManager;
+    sdkBackendType._gondolinManager = manager;
+    let backend: SdkBackend | undefined;
+
+    try {
+      backend = await SdkBackend.create({
+        session: makeSession({ ephemeral: true }),
+        workspace: {
+          id: "w1",
+          name: "Sandbox Selected Agent Skill",
+          runtime: "sandbox",
+          hostMount: cwd,
+          extensions: [],
+        } as Workspace,
+        agentDefinition: {
+          name: "Sandbox Selected Skill",
+          resources: { skillPaths: [selectedSkill], extensionIds: [] },
+        },
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(backend.session.resourceLoader.getSkills().skills.map((skill) => skill.name)).toEqual([
+        "selected-sandbox-skill",
+      ]);
+      expect(manager.ensureWorkspaceVm).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        expect.anything(),
+        expect.arrayContaining([expect.objectContaining({ hostPath: selectedSkill })]),
+        undefined,
+        expect.any(String),
+      );
+    } finally {
+      await backend?.dispose();
+      sdkBackendType._gondolinManager = previousManager;
+      qemuSpy.mockRestore();
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { name: "default tools", tools: undefined },
     { name: "explicit allowlist", tools: { allowed: ["read"] } },

@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -19,6 +18,10 @@ import {
   type OppiExtensionSettingsReader,
   type OppiExtensionSettingsSnapshot,
 } from "./oppi-extension-settings.js";
+import {
+  canonicalServerResourcePath as canonicalPath,
+  serverResourceId as resourceId,
+} from "./server-resource-id.js";
 import {
   listSkillFiles,
   readSkillFile as readContainedSkillFile,
@@ -620,19 +623,6 @@ function boundMessage(value: string): string {
 
 function boundedWarnings(values: string[]): string[] {
   return values.slice(0, MAX_WARNINGS).map(boundMessage);
-}
-
-function canonicalPath(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolve(path);
-  }
-}
-
-function resourceId(kind: "skill" | "extension", path: string): string {
-  const digest = createHash("sha256").update(`${kind}\0${path}`).digest("hex");
-  return `${kind}_${digest}`;
 }
 
 function pathsMatch(left: string, right: string): boolean {

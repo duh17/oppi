@@ -137,7 +137,7 @@ struct AgentScheduleAPIClientTests {
             #expect(request.url?.path == "/agents/agent-1")
             let data = requestBodyData(request)
             let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            #expect(Set(json.keys) == ["name", "description", "instructions", "sessionDefaults"])
+            #expect(Set(json.keys) == ["name", "description", "instructions", "resources", "sessionDefaults"])
             let definition = try JSONDecoder().decode(AgentDefinition.self, from: data)
             #expect(definition.instructions?.mode == .replace)
             #expect(definition.instructions?.text == "Use only these instructions.")
@@ -157,11 +157,83 @@ struct AgentScheduleAPIClientTests {
                 text: "Use only these instructions."
             ),
             model: "openai/gpt-5.6",
-            thinkingLevel: .max
+            thinkingLevel: .max,
+            skillPaths: nil,
+            extensionIds: nil
         )
 
         #expect(updated.definition.instructions?.mode == .replace)
         #expect(updated.definition.sessionDefaults?.thinkingLevel == .max)
+    }
+
+    @Test func nativeAgentUpdatePreservesInheritVersusExactEmptyResources() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "PATCH")
+            #expect(request.url?.path == "/agents/agent-1")
+            let json = try #require(
+                JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
+            )
+            let resources = try #require(json["resources"] as? [String: Any])
+            #expect(resources["skillPaths"] is NSNull)
+            #expect(resources["extensionIds"] as? [String] == [])
+            #expect(resources["promptTemplateIds"] is NSNull)
+            return mockResponse(json: """
+            {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":4,"definition":{"name":"Reviewer","resources":{"extensionIds":[]}},"createdAt":1000,"updatedAt":4000}}
+            """)
+        }
+
+        let updated = try await client.updateAgentNative(
+            agentId: "agent-1",
+            name: "Reviewer",
+            description: nil,
+            instructions: nil,
+            model: nil,
+            thinkingLevel: nil,
+            skillPaths: nil,
+            extensionIds: []
+        )
+
+        #expect(updated.definition.resources?.skillPaths == nil)
+        #expect(updated.definition.resources?.extensionIds?.isEmpty == true)
+        #expect(updated.definition.resources?.isEmpty == false)
+    }
+
+    @Test func nativeDefaultAgentUpdateOmitsForbiddenResourcesOnCanonicalRoute() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "PATCH")
+            #expect(request.url?.path == "/agents/oppi-default-agent")
+            let json = try #require(
+                JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
+            )
+            #expect(json["resources"] == nil)
+            #expect(json["name"] as? String == "Home Agent")
+            #expect(json["description"] is NSNull)
+            #expect(json["instructions"] is NSNull)
+            #expect(json["sessionDefaults"] is [String: Any])
+            return mockResponse(json: """
+            {"agent":{"id":"oppi-default-agent","name":"Home Agent","status":"active","version":2,"definition":{"name":"Home Agent","resources":{"noContextFiles":true}},"createdAt":1000,"updatedAt":2000}}
+            """)
+        }
+
+        let updated = try await client.updateAgentNative(
+            agentId: "oppi-default-agent",
+            name: "Home Agent",
+            description: nil,
+            instructions: nil,
+            model: "openai/gpt-5.6",
+            thinkingLevel: .high,
+            skillPaths: nil,
+            extensionIds: nil
+        )
+
+        #expect(updated.id == "oppi-default-agent")
+        #expect(updated.definition.resources?.noContextFiles == true)
     }
 
     @Test func agentIconUpdateSendsOnlyIconForSetAndClear() async throws {
@@ -427,6 +499,51 @@ struct AgentScheduleAPIClientTests {
             return mockResponse(json: "{}")
         }
         try await client.deleteSession(scope: .control, sessionId: "control-1")
+    }
+
+    @Test func agentResourceCatalogStateDistinguishesUnloadedFailureEmptyAndContent() {
+        #expect(AgentResourceCatalogState.resolve(
+            hasLoaded: false,
+            isSyncing: true,
+            lastSyncFailed: false,
+            hasRows: false
+        ) == .loading)
+        #expect(AgentResourceCatalogState.resolve(
+            hasLoaded: false,
+            isSyncing: false,
+            lastSyncFailed: false,
+            hasRows: false
+        ) == .neverLoaded)
+        #expect(AgentResourceCatalogState.resolve(
+            hasLoaded: false,
+            isSyncing: false,
+            lastSyncFailed: true,
+            hasRows: false
+        ) == .failed)
+        #expect(AgentResourceCatalogState.resolve(
+            hasLoaded: true,
+            isSyncing: false,
+            lastSyncFailed: false,
+            hasRows: false
+        ) == .empty)
+        #expect(AgentResourceCatalogState.resolve(
+            hasLoaded: true,
+            isSyncing: false,
+            lastSyncFailed: false,
+            hasRows: true
+        ) == .content)
+        #expect(AgentResourceCatalogState.isExactSelectionSaveAllowed(
+            initialSelectionWasInherited: true,
+            catalogState: .failed
+        ) == false)
+        #expect(AgentResourceCatalogState.isExactSelectionSaveAllowed(
+            initialSelectionWasInherited: true,
+            catalogState: .empty
+        ))
+        #expect(AgentResourceCatalogState.isExactSelectionSaveAllowed(
+            initialSelectionWasInherited: false,
+            catalogState: .failed
+        ))
     }
 }
 
