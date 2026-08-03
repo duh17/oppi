@@ -91,6 +91,7 @@ const piAgentMock = vi.hoisted(() => {
     }
 
     bindExtensions(): void {}
+    _emit(_event: unknown): void {}
     _emitQueueUpdate(): void {}
     getSteeringMessages(): readonly string[] {
       return this._steeringMessages;
@@ -216,33 +217,11 @@ function createMockPi(): MockPi {
     },
     appendEntry: vi.fn(),
     getThinkingLevel: vi.fn(() => "medium"),
-    sendUserMessage: vi.fn(
-      (content: unknown, options?: { deliverAs?: "steer" | "followUp" }) => {
-        const session = piAgentMock.FakeAgentSession.latest;
-        if (!session) throw new Error("Expected attached fake AgentSession");
-        const text =
-          typeof content === "string"
-            ? content
-            : Array.isArray(content)
-              ? content
-                  .flatMap((item) =>
-                    item &&
-                    typeof item === "object" &&
-                    (item as { type?: unknown }).type === "text"
-                      ? [String((item as { text?: unknown }).text ?? "")]
-                      : [],
-                  )
-                  .join("\n")
-              : "";
-        void session
-          .prompt(text, { streamingBehavior: options?.deliverAs })
-          .catch(() => {});
-      },
-    ),
+    sendUserMessage: vi.fn(),
   };
 }
 
-function createMockContext(): MockExtensionContext {
+function createMockContext(sessionId = "pi-session-1"): MockExtensionContext {
   const ui = {
     theme: { fg: vi.fn((_color: string, text: string) => text) },
     setWidget: vi.fn((_key: string, content: unknown) => {
@@ -267,7 +246,7 @@ function createMockContext(): MockExtensionContext {
     model: undefined,
     sessionManager: {
       getSessionFile: vi.fn(() => "/tmp/session.jsonl"),
-      getSessionId: vi.fn(() => "pi-session-1"),
+      getSessionId: vi.fn(() => sessionId),
       getSessionName: vi.fn(() => "Session"),
       getLeafId: vi.fn(() => "leaf-1"),
       getEntries: vi.fn(() => []),
@@ -376,29 +355,142 @@ afterEach(() => {
 });
 
 describe("oppi mirror input preflight", () => {
-  it.each([
-    ["malformed", { type: "hello_ack", sessionId: "s1", workspaceId: "w1" }],
-    [
-      "old",
-      { type: "hello_ack", protocolVersion: 1, sessionId: "s1", workspaceId: "w1" },
-    ],
-  ] as const)("fails closed for a %s hello acknowledgement", async (_name, helloAck) => {
+  it("bootstraps input when the AgentSession bound extensions before session_start", async () => {
     await withInteractiveTerminal(async () => {
       vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
       vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
       vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const agentSession = new piAgentMock.FakeAgentSession();
+      agentSession.sessionId = "pi-session-bootstrap";
+      agentSession.bindExtensions();
       const pi = createMockPi();
       await oppiPiMirror(pi as never);
-      const ctx = createMockContext();
+      const ctx = createMockContext(agentSession.sessionId);
       await startSession(pi, ctx);
-      const agentSession = new piAgentMock.FakeAgentSession();
-      agentSession.bindExtensions();
-      const socket = await startMirror(pi, ctx, helloAck);
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
 
-      expect(socket.readyState).toBe(wsMock.FakeWebSocket.CLOSED);
-      expect(agentSession.promptCalls).toHaveLength(0);
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "bootstrap-prompt",
+          command: {
+            type: "prompt",
+            message: "first phone prompt",
+            clientTurnId: "turn-bootstrap",
+          },
+        }),
+      );
+      await drainMicrotasks();
+
+      expect(pi.sendUserMessage).toHaveBeenCalledWith("first phone prompt", {});
+      expect(sentCommandResults(socket, "bootstrap-prompt")).toEqual([
+        expect.objectContaining({
+          success: true,
+          data: expect.objectContaining({ dispatched: true }),
+        }),
+      ]);
+
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "pending-bootstrap-prompt",
+          command: {
+            type: "prompt",
+            message: "must wait for attachment",
+            clientTurnId: "turn-pending-bootstrap",
+          },
+        }),
+      );
+      await drainMicrotasks();
+      expect(sentCommandResults(socket, "pending-bootstrap-prompt")).toEqual([
+        expect.objectContaining({
+          success: false,
+          error:
+            "Terminal Pi runtime session control is attaching after bootstrap input",
+        }),
+      ]);
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+
+      const unrelatedSession = new piAgentMock.FakeAgentSession();
+      unrelatedSession.sessionId = "pi-session-unrelated";
+      unrelatedSession._emit({ type: "agent_start" });
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "unrelated-session-prompt",
+          command: {
+            type: "prompt",
+            message: "must not use unrelated control",
+            clientTurnId: "turn-unrelated-session",
+          },
+        }),
+      );
+      await drainMicrotasks();
+      expect(sentCommandResults(socket, "unrelated-session-prompt")).toEqual([
+        expect.objectContaining({
+          success: false,
+          error:
+            "Terminal Pi runtime session control is attaching after bootstrap input",
+        }),
+      ]);
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+
+      agentSession._emit({ type: "agent_start" });
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "attached-prompt",
+          command: {
+            type: "prompt",
+            message: "second phone prompt",
+            clientTurnId: "turn-attached",
+          },
+        }),
+      );
+      await drainMicrotasks();
+
+      expect(agentSession.promptCalls).toHaveLength(1);
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+      agentSession.acceptNext();
+      await drainMicrotasks();
+      expect(sentCommandResults(socket, "attached-prompt")).toEqual([
+        expect.objectContaining({ success: true }),
+      ]);
     });
   });
+
+  it.each([
+    ["malformed", { type: "hello_ack", sessionId: "s1", workspaceId: "w1" }],
+    [
+      "old",
+      {
+        type: "hello_ack",
+        protocolVersion: 1,
+        sessionId: "s1",
+        workspaceId: "w1",
+      },
+    ],
+  ] as const)(
+    "fails closed for a %s hello acknowledgement",
+    async (_name, helloAck) => {
+      await withInteractiveTerminal(async () => {
+        vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+        vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+        vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+        const pi = createMockPi();
+        await oppiPiMirror(pi as never);
+        const ctx = createMockContext();
+        await startSession(pi, ctx);
+        const agentSession = new piAgentMock.FakeAgentSession();
+        agentSession.bindExtensions();
+        const socket = await startMirror(pi, ctx, helloAck);
+
+        expect(socket.readyState).toBe(wsMock.FakeWebSocket.CLOSED);
+        expect(agentSession.promptCalls).toHaveLength(0);
+      });
+    },
+  );
 
   it("advertises input preflight for Pi 0.81.1", async () => {
     await withInteractiveTerminal(async () => {

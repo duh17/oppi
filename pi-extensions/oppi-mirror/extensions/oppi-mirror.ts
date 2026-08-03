@@ -1843,9 +1843,10 @@ function installQueueUpdateBridge(prototype: AgentSessionPrototype) {
         event: unknown,
         ...args: unknown[]
       ) {
+        const session = this as EditableAgentSession;
+        rememberAgentSession(bridge, session);
         const result = originalEmit.apply(this, [event, ...args]);
         if (isInternalAgentSessionEvent(event)) {
-          rememberAgentSession(bridge, this as EditableAgentSession);
           for (const listener of bridge.internalEventListeners) {
             try {
               listener(event);
@@ -1882,12 +1883,18 @@ function textFromUserMessage(message: unknown): string | undefined {
     .trim();
 }
 
+function exactEditableAgentSessionForContext(
+  ctx: ExtensionContext,
+): EditableAgentSession | undefined {
+  return getQueueUpdateBridge().sessions.get(ctx.sessionManager.getSessionId());
+}
+
 function editableAgentSessionForContext(
   ctx: ExtensionContext,
 ): EditableAgentSession | undefined {
-  const bridge = getQueueUpdateBridge();
   return (
-    bridge.sessions.get(ctx.sessionManager.getSessionId()) ?? bridge.lastSession
+    exactEditableAgentSessionForContext(ctx) ??
+    getQueueUpdateBridge().lastSession
   );
 }
 
@@ -1981,6 +1988,21 @@ function imagesFromCommand(value: unknown): QueueImageContent[] {
         ]
       : [];
   });
+}
+
+function contentForMessage(message: string, images: QueueImageContent[]) {
+  if (!images.length) return message;
+  return [
+    {
+      type: "text" as const,
+      text: message || "(see attached image)",
+    },
+    ...images.map((image) => ({
+      type: "image" as const,
+      data: image.data,
+      mimeType: image.mimeType,
+    })),
+  ];
 }
 
 type MirrorIndicatorMode =
@@ -2737,6 +2759,7 @@ async function createTuiMirrorRuntime(
   let settings = loadSettings();
   let serverSupportsAuthoritativeInputAcceptance = false;
   let queueReplacementInProgress = false;
+  let pendingInputBootstrapSessionId: string | null = null;
 
   const queueUpdateBridge = await (async () => {
     try {
@@ -3770,15 +3793,9 @@ async function createTuiMirrorRuntime(
     streamingBehavior?: "steer" | "followUp",
   ): Promise<unknown> {
     return coalesceMirrorInputPreflight(type, command, () => {
-      const session = requireEditableAgentSession(ctx);
       // At exhaustion, Pi input could consume or enqueue intent without a new
-      // representable CAS version. Reject before invoking Pi preflight.
+      // representable CAS version. Reject before invoking either input path.
       nextOppiMirrorQueueVersion(queueProjection.snapshot().version);
-      if (!session.prompt) {
-        return Promise.reject(
-          new Error("Terminal Pi runtime prompt preflight is not attached yet"),
-        );
-      }
 
       const message = String(command.message ?? "");
       const images = imagesFromCommand(command.images);
@@ -3790,6 +3807,63 @@ async function createTuiMirrorRuntime(
               queueKind === "steer" ? "steering" : "followUp"
             ].filter((item) => item.message === message).length
         : 0;
+      const piSessionId = ctx.sessionManager.getSessionId();
+      const session = exactEditableAgentSessionForContext(ctx);
+
+      if (!session) {
+        if (pendingInputBootstrapSessionId === piSessionId) {
+          return Promise.reject(
+            new Error(
+              "Terminal Pi runtime session control is attaching after bootstrap input",
+            ),
+          );
+        }
+
+        // Pi loads this extension from AgentSession.bindExtensions(), so the
+        // current session already exists before our prototype hook is installed.
+        // Bootstrap once through the documented API; the resulting AgentSession
+        // event is intercepted by patchedEmit and attaches authoritative control.
+        pendingInputBootstrapSessionId = piSessionId;
+        try {
+          pi.sendUserMessage(contentForMessage(message, images), {
+            ...(streamingBehavior ? { deliverAs: streamingBehavior } : {}),
+          });
+        } catch (error) {
+          if (pendingInputBootstrapSessionId === piSessionId) {
+            pendingInputBootstrapSessionId = null;
+          }
+          throw error;
+        }
+        if (exactEditableAgentSessionForContext(ctx)) {
+          pendingInputBootstrapSessionId = null;
+        }
+        if (queueKind) {
+          enqueueShadow(queueKind, message, images, { previousMatchingCount });
+        }
+        writeMirrorLog("info", "input_bootstrap_public_dispatch", {
+          runtime: "pi-tui",
+          bridgeId,
+          sessionId: connectedSessionId,
+          workspaceId: connectedWorkspaceId,
+          piSessionId,
+          commandType: type,
+          streamingBehavior,
+        });
+        return Promise.resolve({
+          dispatched: true,
+          queue: queueProjection.snapshot(),
+        });
+      }
+
+      if (pendingInputBootstrapSessionId === piSessionId) {
+        pendingInputBootstrapSessionId = null;
+      }
+
+      if (!session.prompt) {
+        return Promise.reject(
+          new Error("Terminal Pi runtime prompt preflight is not attached yet"),
+        );
+      }
 
       return new Promise<unknown>((resolve, reject) => {
         let settled = false;
