@@ -147,6 +147,45 @@ enum ContextBarCrossSessionEdits {
     }
 }
 
+/// Review item owned by the context bar's stable outer presenter.
+/// Keeping this state outside the conditional content branch lets an open
+/// review survive a transient context/status refresh.
+enum WorkspaceContextBarReviewItem: Identifiable, Equatable, Sendable {
+    case file(GitFileStatus)
+    case commit(GitCommitSummary)
+
+    var id: String {
+        switch self {
+        case .file(let file): return "file:\(file.id)"
+        case .commit(let commit): return "commit:\(commit.id)"
+        }
+    }
+}
+
+/// Stable presentation state for the context bar's review sheet.
+/// The navigation snapshot belongs here so transient Git scope loss cannot
+/// replace an open file review's adjacent-file list with an empty projection.
+@MainActor @Observable
+final class WorkspaceContextBarReviewPresentation {
+    var selectedReviewItem: WorkspaceContextBarReviewItem?
+    var navigationFiles: [WorkspaceReviewFile] = []
+
+    func presentFile(_ file: GitFileStatus, navigationFiles: [WorkspaceReviewFile]) {
+        self.navigationFiles = navigationFiles
+        selectedReviewItem = .file(file)
+    }
+
+    func presentCommit(_ commit: GitCommitSummary) {
+        navigationFiles = []
+        selectedReviewItem = .commit(commit)
+    }
+
+    func dismiss() {
+        selectedReviewItem = nil
+        navigationFiles = []
+    }
+}
+
 /// Expandable bar showing workspace git status.
 ///
 /// Pinned at the top of the chat view. Collapsed shows branch + dirty count + repo-wide +/-.
@@ -175,8 +214,7 @@ struct WorkspaceContextBar: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var isExpanded = false
-    @State private var selectedFile: GitFileStatus?
-    @State private var selectedCommit: GitCommitSummary?
+    @State private var reviewPresentation: WorkspaceContextBarReviewPresentation
     @State private var isSelecting = false
     @State private var selectedPaths: Set<String> = []
     @State private var launchActionInFlightTitle: String?
@@ -206,6 +244,7 @@ struct WorkspaceContextBar: View {
         initialExpanded: Bool = false,
         onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)? = nil,
         fileDetailReviewCommentScope: ReviewCommentSelectionScope? = nil,
+        reviewPresentation: WorkspaceContextBarReviewPresentation? = nil,
         collapseToken: Int = 0,
         onExpandedChanged: ((Bool) -> Void)? = nil
     ) {
@@ -219,6 +258,7 @@ struct WorkspaceContextBar: View {
         _isExpanded = State(initialValue: initialExpanded)
         self.onReviewInCurrentSession = onReviewInCurrentSession
         self.fileDetailReviewCommentScope = fileDetailReviewCommentScope
+        _reviewPresentation = State(initialValue: reviewPresentation ?? WorkspaceContextBarReviewPresentation())
         self.collapseToken = collapseToken
         self.onExpandedChanged = onExpandedChanged
     }
@@ -336,7 +376,9 @@ struct WorkspaceContextBar: View {
     // MARK: - Body
 
     var body: some View {
-        Group {
+        @Bindable var reviewPresentation = reviewPresentation
+
+        ZStack(alignment: .topLeading) {
             if isLoading && gitStatus == nil {
                 EmptyView()
             } else if hasContent {
@@ -355,67 +397,49 @@ struct WorkspaceContextBar: View {
                 .padding(.horizontal, appliesOuterHorizontalPadding ? 16 : 0)
                 .padding(.top, 4)
                 .padding(.bottom, 2)
-                .sheet(item: $selectedFile) { file in
-                    fileDetailSheet(file: file)
-                }
-                .sheet(item: $selectedCommit) { commit in
-                    NavigationStack {
-                        CommitDetailView(workspaceId: workspaceId ?? "", commit: commit)
-                            .environment(\.reviewCommentSelectionScope, Self.makeFileDetailReviewCommentScope(
-                                parentScope: fileDetailReviewCommentScope,
-                                fallbackScope: nil,
-                                dismissFileDetail: { selectedCommit = nil }
-                            ))
-                            .toolbar {
-                                ToolbarItem(placement: .cancellationAction) {
-                                    Button {
-                                        selectedCommit = nil
-                                    } label: {
-                                        Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
-                                    }
-                                    .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
-                                }
-                            }
-                    }
-                }
-                .alert(
-                    "Unable to start action",
-                    isPresented: Binding(
-                        get: { launchError != nil },
-                        set: { if !$0 { launchError = nil } }
-                    )
-                ) {
-                    Button("OK", role: .cancel) { launchError = nil }
-                } message: {
-                    Text(launchError ?? "")
-                }
-                .onChange(of: collapseToken) {
-                    guard isExpanded else { return }
-                    collapseBar()
-                }
-                .onChange(of: isExpanded) { _, expanded in
-                    onExpandedChanged?(expanded)
-                }
-                .onChange(of: isSelecting) { _, selecting in
-                    guard selecting else { return }
-                    Task { await loadQuickActionsIfNeeded() }
-                }
-                .onChange(of: workspaceId) { _, _ in
-                    resetQuickActionCache()
-                    guard isSelecting else { return }
-                    Task { await loadQuickActionsIfNeeded() }
-                }
-                .onChange(of: sessionId) { _, _ in
-                    resetQuickActionCache()
-                    guard isSelecting else { return }
-                    Task { await loadQuickActionsIfNeeded() }
-                }
-                .onChange(of: worktreeId) { _, _ in
-                    resetQuickActionCache()
-                    guard isSelecting else { return }
-                    Task { await loadQuickActionsIfNeeded() }
-                }
             }
+        }
+        // Keep review presenters on the stable outer view. A transient loss of
+        // session-scoped Git content must not unmount an active sheet.
+        .sheet(item: $reviewPresentation.selectedReviewItem) { item in
+            reviewSheet(item: item)
+        }
+        .alert(
+            "Unable to start action",
+            isPresented: Binding(
+                get: { launchError != nil },
+                set: { if !$0 { launchError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { launchError = nil }
+        } message: {
+            Text(launchError ?? "")
+        }
+        .onChange(of: collapseToken) {
+            guard isExpanded else { return }
+            collapseBar()
+        }
+        .onChange(of: isExpanded) { _, expanded in
+            onExpandedChanged?(expanded)
+        }
+        .onChange(of: isSelecting) { _, selecting in
+            guard selecting else { return }
+            Task { await loadQuickActionsIfNeeded() }
+        }
+        .onChange(of: workspaceId) { _, _ in
+            resetQuickActionCache()
+            guard isSelecting else { return }
+            Task { await loadQuickActionsIfNeeded() }
+        }
+        .onChange(of: sessionId) { _, _ in
+            resetQuickActionCache()
+            guard isSelecting else { return }
+            Task { await loadQuickActionsIfNeeded() }
+        }
+        .onChange(of: worktreeId) { _, _ in
+            resetQuickActionCache()
+            guard isSelecting else { return }
+            Task { await loadQuickActionsIfNeeded() }
         }
         .navigationDestination(item: $navigateToQuickAction) { dest in
             ChatView(
@@ -426,6 +450,33 @@ struct WorkspaceContextBar: View {
                     PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile, displayPrefix: dest.fileDisplayPrefix)
                 }
             )
+        }
+    }
+
+    @ViewBuilder
+    private func reviewSheet(item: WorkspaceContextBarReviewItem) -> some View {
+        switch item {
+        case .file(let file):
+            fileDetailSheet(file: file, navigationFiles: reviewPresentation.navigationFiles)
+        case .commit(let commit):
+            NavigationStack {
+                CommitDetailView(workspaceId: workspaceId ?? "", commit: commit)
+                    .environment(\.reviewCommentSelectionScope, Self.makeFileDetailReviewCommentScope(
+                        parentScope: fileDetailReviewCommentScope,
+                        fallbackScope: nil,
+                        dismissFileDetail: { reviewPresentation.dismiss() }
+                    ))
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button {
+                                reviewPresentation.dismiss()
+                            } label: {
+                                Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
+                            }
+                            .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
+                        }
+                    }
+            }
         }
     }
 
@@ -673,7 +724,7 @@ struct WorkspaceContextBar: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(allCommits) { commit in
                         Button {
-                            selectedCommit = commit
+                            reviewPresentation.presentCommit(commit)
                         } label: {
                             HStack(spacing: 8) {
                                 Text(commit.sha)
@@ -758,7 +809,10 @@ struct WorkspaceContextBar: View {
             if isSelecting {
                 toggleSelection(for: file)
             } else if canTap {
-                selectedFile = file
+                reviewPresentation.presentFile(
+                    file,
+                    navigationFiles: displayFiles.map { $0.toReviewFile() }
+                )
             }
         } label: {
             HStack(spacing: 6) {
@@ -864,7 +918,10 @@ struct WorkspaceContextBar: View {
     // MARK: - File Detail Sheet
 
     @ViewBuilder
-    private func fileDetailSheet(file: GitFileStatus) -> some View {
+    private func fileDetailSheet(
+        file: GitFileStatus,
+        navigationFiles: [WorkspaceReviewFile]
+    ) -> some View {
         if let workspaceId {
             NavigationStack {
                 WorkspaceReviewFileDetailView(
@@ -875,15 +932,15 @@ struct WorkspaceContextBar: View {
                     reviewCommentSelectionScopeOverride: Self.makeFileDetailReviewCommentScope(
                         parentScope: fileDetailReviewCommentScope,
                         fallbackScope: nil,
-                        dismissFileDetail: { selectedFile = nil }
+                        dismissFileDetail: { reviewPresentation.dismiss() }
                     ),
-                    navigationFiles: displayFiles.map { $0.toReviewFile() },
+                    navigationFiles: navigationFiles,
                     allowsHorizontalBackSwipe: false
                 )
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button {
-                            selectedFile = nil
+                            reviewPresentation.dismiss()
                         } label: {
                             Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
                         }

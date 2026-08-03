@@ -386,6 +386,315 @@ struct SessionStorePartitioningTests {
         #expect(store.session(id: "s1")?.contextTokens == 99)
     }
 
+    @Test func lossyLifecycleSummariesPreserveFocusedChangedFilesAndContextScope() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let workspaceRoot = "/Users/test/workspace/oppi"
+        let absoluteSourcePath = "\(workspaceRoot)/server/src/session-events.ts"
+        let absoluteReadmePath = "\(workspaceRoot)/README.md"
+
+        var fullState = makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            status: .busy,
+            lastActivity: Date(timeIntervalSince1970: 100)
+        )
+        fullState.changeStats = SessionChangeStats(
+            mutatingToolCalls: 1,
+            filesChanged: 1,
+            changedFiles: [absoluteSourcePath],
+            changedFilesOverflow: nil,
+            addedLines: 8,
+            removedLines: 2
+        )
+        store.upsert(fullState)
+
+        var filteredSummary = SessionSummary(from: makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            status: .ready,
+            lastActivity: Date(timeIntervalSince1970: 200)
+        ))
+        filteredSummary.changeStats = SessionChangeStats(
+            mutatingToolCalls: 1,
+            filesChanged: 1,
+            changedFiles: [],
+            changedFilesOverflow: 1,
+            addedLines: 8,
+            removedLines: 2
+        )
+
+        #expect(store.applySummary(filteredSummary))
+        #expect(store.session(id: "s1")?.changeStats?.changedFiles == [absoluteSourcePath])
+        #expect(store.session(id: "s1")?.changeStats?.filesChanged == 1)
+        #expect(store.session(id: "s1")?.changeStats?.changedFilesOverflow == nil)
+
+        var usefulSummary = filteredSummary
+        usefulSummary.status = .busy
+        usefulSummary.lastActivity = Date(timeIntervalSince1970: 300)
+        usefulSummary.changeStats = SessionChangeStats(
+            mutatingToolCalls: 2,
+            filesChanged: 2,
+            changedFiles: ["server/src/session-events.ts", "README.md"],
+            changedFilesOverflow: nil,
+            addedLines: 12,
+            removedLines: 3
+        )
+        #expect(store.applySummary(usefulSummary))
+        #expect(store.session(id: "s1")?.changeStats?.changedFiles == ["server/src/session-events.ts", "README.md"])
+        #expect(store.session(id: "s1")?.changeStats?.filesChanged == 2)
+        #expect(store.session(id: "s1")?.changeStats?.changedFilesOverflow == nil)
+
+        var repeatedLifecycleSummary = filteredSummary
+        repeatedLifecycleSummary.status = .ready
+        repeatedLifecycleSummary.lastActivity = Date(timeIntervalSince1970: 400)
+        #expect(store.applySummary(repeatedLifecycleSummary))
+        #expect(store.session(id: "s1")?.changeStats?.changedFiles == ["server/src/session-events.ts", "README.md"])
+        #expect(store.session(id: "s1")?.changeStats?.filesChanged == 2)
+
+        var fullStateUpdate = makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            status: .busy,
+            lastActivity: Date(timeIntervalSince1970: 500)
+        )
+        fullStateUpdate.changeStats = SessionChangeStats(
+            mutatingToolCalls: 3,
+            filesChanged: 2,
+            changedFiles: [absoluteSourcePath, absoluteReadmePath],
+            changedFilesOverflow: nil,
+            addedLines: 14,
+            removedLines: 4
+        )
+        #expect(store.upsert(fullStateUpdate))
+
+        let gitStatus = GitStatus(
+            isGitRepo: true,
+            branch: "main",
+            headSha: "abc1234",
+            ahead: 0,
+            behind: 0,
+            dirtyCount: 2,
+            untrackedCount: 0,
+            stagedCount: 0,
+            files: [
+                GitFileStatus(status: " M", path: "server/src/session-events.ts", addedLines: 10, removedLines: 4),
+                GitFileStatus(status: " M", path: "README.md", addedLines: 4, removedLines: 0),
+            ],
+            totalFiles: 2,
+            addedLines: 14,
+            removedLines: 4,
+            stashCount: 0,
+            lastCommitMessage: "test",
+            lastCommitDate: nil,
+            recentCommits: []
+        )
+        let changedFiles = store.session(id: "s1")?.changeStats?.changedFiles ?? []
+        let scope = SessionScopedGitStatus.filter(
+            gitStatus: gitStatus,
+            sessionChangedFiles: changedFiles
+        )
+
+        #expect(scope.sessionFiles.map(\.path) == ["server/src/session-events.ts", "README.md"])
+        #expect(ContextBarScoping.hasContent(
+            gitStatus: gitStatus,
+            sessionId: "s1",
+            sessionScope: scope
+        ))
+    }
+
+    @Test func staleSummaryPreservesExistingLineStatistics() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        var fullState = makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            status: .busy,
+            lastActivity: Date(timeIntervalSince1970: 100)
+        )
+        fullState.changeStats = SessionChangeStats(
+            mutatingToolCalls: 3,
+            filesChanged: 1,
+            changedFiles: ["src/App.swift"],
+            changedFilesOverflow: nil,
+            addedLines: 30,
+            removedLines: 12
+        )
+        store.upsert(fullState)
+
+        var staleSummary = SessionSummary(from: makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            status: .ready,
+            lastActivity: Date(timeIntervalSince1970: 200)
+        ))
+        staleSummary.changeStats = SessionChangeStats(
+            mutatingToolCalls: 2,
+            filesChanged: 1,
+            changedFiles: ["src/App.swift"],
+            changedFilesOverflow: nil,
+            addedLines: 1,
+            removedLines: 99
+        )
+
+        #expect(store.applySummary(staleSummary))
+        #expect(store.session(id: "s1")?.changeStats?.mutatingToolCalls == 3)
+        #expect(store.session(id: "s1")?.changeStats?.addedLines == 30)
+        #expect(store.session(id: "s1")?.changeStats?.removedLines == 12)
+    }
+
+    @Test func lossySummaryPreservesDistinctFullStatePaths() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let distinctPaths = ["/outside/src/App.swift", "src/App.swift"]
+
+        var fullState = makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            status: .busy,
+            lastActivity: Date(timeIntervalSince1970: 100)
+        )
+        fullState.changeStats = SessionChangeStats(
+            mutatingToolCalls: 2,
+            filesChanged: distinctPaths.count,
+            changedFiles: distinctPaths,
+            changedFilesOverflow: nil,
+            addedLines: 4,
+            removedLines: 1
+        )
+        store.upsert(fullState)
+
+        var lossySummary = SessionSummary(from: makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            status: .ready,
+            lastActivity: Date(timeIntervalSince1970: 200)
+        ))
+        lossySummary.changeStats = SessionChangeStats(
+            mutatingToolCalls: 2,
+            filesChanged: distinctPaths.count,
+            changedFiles: [],
+            changedFilesOverflow: distinctPaths.count,
+            addedLines: 4,
+            removedLines: 1
+        )
+
+        #expect(store.applySummary(lossySummary))
+        #expect(store.session(id: "s1")?.changeStats?.changedFiles == distinctPaths)
+        #expect(store.session(id: "s1")?.changeStats?.filesChanged == distinctPaths.count)
+        #expect(store.session(id: "s1")?.changeStats?.changedFilesOverflow == nil)
+    }
+
+    @Test func completeSummaryUsesItsNewerPathProjectionAndLineStatistics() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        var fullState = makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            status: .busy,
+            lastActivity: Date(timeIntervalSince1970: 100)
+        )
+        fullState.changeStats = SessionChangeStats(
+            mutatingToolCalls: 1,
+            filesChanged: 1,
+            changedFiles: ["/outside/src/App.swift"],
+            changedFilesOverflow: nil,
+            addedLines: 4,
+            removedLines: 1
+        )
+        store.upsert(fullState)
+
+        var completeSummary = SessionSummary(from: makeTestSession(
+            id: "s1",
+            workspaceId: "w1",
+            status: .busy,
+            lastActivity: Date(timeIntervalSince1970: 200)
+        ))
+        completeSummary.changeStats = SessionChangeStats(
+            mutatingToolCalls: 2,
+            filesChanged: 2,
+            changedFiles: ["src/App.swift", "README.md"],
+            changedFilesOverflow: nil,
+            addedLines: 12,
+            removedLines: 3
+        )
+
+        #expect(store.applySummary(completeSummary))
+        #expect(store.session(id: "s1")?.changeStats?.changedFiles == ["src/App.swift", "README.md"])
+        #expect(store.session(id: "s1")?.changeStats?.filesChanged == 2)
+        #expect(store.session(id: "s1")?.changeStats?.changedFilesOverflow == nil)
+        #expect(store.session(id: "s1")?.changeStats?.addedLines == 12)
+        #expect(store.session(id: "s1")?.changeStats?.removedLines == 3)
+    }
+
+    @Test func summaryIngestionLanesShareLossyChangeStatsMerge() {
+        let lanes = [
+            "applySummary",
+            "upsertManySummaries",
+            "applyWorkspaceRecentSnapshot",
+            "applyRecentWorkspaceSummaries",
+            "applyRecentWorkspaceSummaryProjection",
+        ]
+
+        for lane in lanes {
+            let store = SessionStore()
+            store.switchServer(to: "srv1")
+            var fullState = makeTestSession(
+                id: "s1",
+                workspaceId: "w1",
+                status: .busy,
+                lastActivity: Date(timeIntervalSince1970: 100)
+            )
+            fullState.changeStats = SessionChangeStats(
+                mutatingToolCalls: 2,
+                filesChanged: 2,
+                changedFiles: ["/outside/src/App.swift", "src/App.swift"],
+                changedFilesOverflow: nil,
+                addedLines: 20,
+                removedLines: 8
+            )
+            store.upsert(fullState)
+
+            var lossySummary = SessionSummary(from: makeTestSession(
+                id: "s1",
+                workspaceId: "w1",
+                status: .ready,
+                lastActivity: Date(timeIntervalSince1970: 200)
+            ))
+            lossySummary.changeStats = SessionChangeStats(
+                mutatingToolCalls: 2,
+                filesChanged: 2,
+                changedFiles: [],
+                changedFilesOverflow: 2,
+                addedLines: 20,
+                removedLines: 8
+            )
+
+            switch lane {
+            case "applySummary":
+                _ = store.applySummary(lossySummary)
+            case "upsertManySummaries":
+                _ = store.upsertManySummaries([lossySummary])
+            case "applyWorkspaceRecentSnapshot":
+                _ = store.applyWorkspaceRecentSnapshot(workspaceId: "w1", summaries: [lossySummary])
+            case "applyRecentWorkspaceSummaries":
+                _ = store.applyRecentWorkspaceSummaries(workspaceIds: Set(["w1"]), summaries: [lossySummary])
+            case "applyRecentWorkspaceSummaryProjection":
+                _ = store.applyRecentWorkspaceSummaryProjection(workspaceIds: Set(["w1"]), summaries: [lossySummary])
+            default:
+                Issue.record("Unhandled summary lane: \(lane)")
+            }
+
+            let stats = store.session(id: "s1")?.changeStats
+            #expect(stats?.changedFiles == ["/outside/src/App.swift", "src/App.swift"], "lane: \(lane)")
+            #expect(stats?.addedLines == 20, "lane: \(lane)")
+            #expect(stats?.removedLines == 8, "lane: \(lane)")
+            #expect(stats?.changedFilesOverflow == nil, "lane: \(lane)")
+        }
+    }
+
     @Test func staleSummaryDoesNotRegressReadySessionToBusy() {
         let store = SessionStore()
         store.switchServer(to: "srv1")

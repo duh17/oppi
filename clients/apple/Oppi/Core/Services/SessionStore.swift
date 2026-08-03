@@ -298,7 +298,11 @@ final class SessionStore {
     /// from summaries, not timeline-frequency live events.
     @discardableResult
     func applySummary(_ summary: SessionSummary) -> Bool {
-        let didMutateSession = upsertMerged(summary.session, preserveNewerLifecycle: true)
+        let didMutateSession = upsertMerged(
+            summary.session,
+            preserveNewerLifecycle: true,
+            preserveRicherChangeStats: true
+        )
         let didMutateAttention = applyListAttentionCounts(from: [summary])
         return didMutateSession || didMutateAttention
     }
@@ -312,7 +316,8 @@ final class SessionStore {
             didMutateSessions = merge(
                 summary.session,
                 into: &list,
-                preserveNewerLifecycle: true
+                preserveNewerLifecycle: true,
+                preserveRicherChangeStats: true
             ) || didMutateSessions
         }
         if didMutateSessions {
@@ -418,7 +423,8 @@ final class SessionStore {
             didMutateBacking = merge(
                 session,
                 into: &backing,
-                preserveNewerLifecycle: true
+                preserveNewerLifecycle: true,
+                preserveRicherChangeStats: true
             ) || didMutateBacking
         }
         if didMutateBacking {
@@ -435,7 +441,12 @@ final class SessionStore {
             keepUntargetedRows: false
         )
         for session in incomingControlSessions {
-            _ = merge(session, into: &nextProjection, preserveNewerLifecycle: true)
+            _ = merge(
+                session,
+                into: &nextProjection,
+                preserveNewerLifecycle: true,
+                preserveRicherChangeStats: true
+            )
         }
         nextProjection.sort {
             if $0.lastActivity != $1.lastActivity { return $0.lastActivity > $1.lastActivity }
@@ -520,7 +531,7 @@ final class SessionStore {
         for incomingId in incomingOrder {
             guard let incomingSession = incomingById[incomingId] else { continue }
             if let existing = currentById[incomingSession.id] {
-                var merged = mergePreservingContext(
+                var merged = mergeSummaryPreservingContext(
                     existing: existing,
                     incoming: incomingSession
                 )
@@ -586,9 +597,18 @@ final class SessionStore {
         return true
     }
 
-    private func upsertMerged(_ session: Session, preserveNewerLifecycle: Bool = false) -> Bool {
+    private func upsertMerged(
+        _ session: Session,
+        preserveNewerLifecycle: Bool = false,
+        preserveRicherChangeStats: Bool = false
+    ) -> Bool {
         var list = sessions
-        guard merge(session, into: &list, preserveNewerLifecycle: preserveNewerLifecycle) else { return false }
+        guard merge(
+            session,
+            into: &list,
+            preserveNewerLifecycle: preserveNewerLifecycle,
+            preserveRicherChangeStats: preserveRicherChangeStats
+        ) else { return false }
         setActiveSessionsPreservingListProjection(list)
         return true
     }
@@ -596,12 +616,15 @@ final class SessionStore {
     private func merge(
         _ session: Session,
         into list: inout [Session],
-        preserveNewerLifecycle: Bool = false
+        preserveNewerLifecycle: Bool = false,
+        preserveRicherChangeStats: Bool = false
     ) -> Bool {
         guard !isDeletedSessionTombstoned(session.id) else { return false }
 
         if let idx = list.firstIndex(where: { $0.id == session.id }) {
-            var merged = mergePreservingContext(existing: list[idx], incoming: session)
+            var merged = preserveRicherChangeStats
+                ? mergeSummaryPreservingContext(existing: list[idx], incoming: session)
+                : mergePreservingContext(existing: list[idx], incoming: session)
             if preserveNewerLifecycle, list[idx].lastActivity > session.lastActivity {
                 merged.status = list[idx].status
                 merged.currentTurnStartedAt = list[idx].currentTurnStartedAt
@@ -758,6 +781,56 @@ final class SessionStore {
         }
 
         return merged
+    }
+
+    /// A summary is intentionally lower fidelity than focused-session state.
+    /// Keep complete newer projections, but never invent identity between path
+    /// spellings when a summary omits part of the changed-file sample.
+    private func mergeSummaryPreservingContext(existing: Session, incoming: Session) -> Session {
+        var merged = mergePreservingContext(existing: existing, incoming: incoming)
+        merged.changeStats = mergeSummaryChangeStats(
+            existing: existing.changeStats,
+            incoming: incoming.changeStats
+        )
+        return merged
+    }
+
+    private func mergeSummaryChangeStats(
+        existing: SessionChangeStats?,
+        incoming: SessionChangeStats?
+    ) -> SessionChangeStats? {
+        guard let incoming else { return existing }
+        guard let existing else { return incoming }
+
+        // Mutation-derived line stats are snapshots. A lower mutation count is
+        // stale, so retaining the whole existing snapshot avoids regressing
+        // lines, paths, counts, or overflow together.
+        guard incoming.mutatingToolCalls >= existing.mutatingToolCalls else {
+            return existing
+        }
+
+        let incomingPathsAreComplete =
+            incoming.changedFilesOverflow == nil &&
+            incoming.changedFiles.count >= incoming.filesChanged
+        let changedFiles = incomingPathsAreComplete
+            ? incoming.changedFiles
+            : existing.changedFiles
+        let filesChanged = incomingPathsAreComplete
+            ? max(incoming.filesChanged, changedFiles.count)
+            : max(existing.filesChanged, incoming.filesChanged, changedFiles.count)
+        let compactionCount = max(existing.compactionCount ?? 0, incoming.compactionCount ?? 0)
+
+        return SessionChangeStats(
+            mutatingToolCalls: incoming.mutatingToolCalls,
+            compactionCount: compactionCount > 0 ? compactionCount : nil,
+            filesChanged: filesChanged,
+            changedFiles: changedFiles,
+            changedFilesOverflow: filesChanged > changedFiles.count
+                ? filesChanged - changedFiles.count
+                : nil,
+            addedLines: incoming.addedLines,
+            removedLines: incoming.removedLines
+        )
     }
 
     private func isWorkingStatus(_ status: SessionStatus) -> Bool {
