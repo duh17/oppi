@@ -166,6 +166,22 @@ final class AssistantMarkdownContentView: UIView {
 
     private var currentConfig: Configuration?
 
+    /// Width at which Auto Layout last captured `intrinsicContentSize`.
+    /// The intrinsic height is width-dependent (320pt fallback while bounds is
+    /// zero), and the AL engine caches it until invalidated. Without width-
+    /// change invalidation, the first self-sizing pass (bounds.width == 0)
+    /// freezes the 320pt measurement and long markdown keeps a blank tail once
+    /// the real width arrives.
+    private var intrinsicCapturedWidth: CGFloat = -1
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard abs(intrinsicCapturedWidth - bounds.width) > 0.5 else { return }
+        intrinsicCapturedWidth = bounds.width
+        invalidateIntrinsicContentSize()
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+    }
+
     /// Leading hang used by assistant timeline rows: first text lines clear the
     /// avatar, then content uses the full markdown width under that column.
     /// Zero means no hang (full-screen readers, exports, non-chat surfaces).
