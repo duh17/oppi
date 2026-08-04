@@ -1,5 +1,5 @@
-/* eslint-disable no-console */
 import type { LocalApiRequestOptions } from "../local-api-client.js";
+import { writeHumanLine } from "../output.js";
 
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
 
@@ -22,7 +22,7 @@ export function resolveSendStreamingKind(
 
 // Compact, single-line session output. Agents parse --json; humans get the fact without framing.
 export function printSessionNotice(message: string): void {
-  console.log(message);
+  writeHumanLine(message);
 }
 
 export async function sendSessionInput(

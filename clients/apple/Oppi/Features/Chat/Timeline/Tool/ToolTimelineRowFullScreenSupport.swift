@@ -31,7 +31,15 @@ enum ToolTimelineRowFullScreenSupport {
                     stream: terminalStream
                 )
 
-            case .code, .diff, .markdown, .text:
+            case .text(let text, _):
+                guard !text.isEmpty else { return nil }
+                return .terminal(
+                    content: text,
+                    command: configuration.copyCommandText,
+                    stream: terminalStream
+                )
+
+            case .code, .diff, .markdown:
                 guard let snapshot = liveSourceSnapshot(
                     configuration: configuration,
                     outputCopyText: outputCopyText
@@ -119,12 +127,16 @@ enum ToolTimelineRowFullScreenSupport {
             )
 
         case .text(let text, _):
-            let terminalOutput = outputCopyText ?? text
-            guard !terminalOutput.isEmpty else { return nil }
+            // `text` is the display payload and may contain ANSI styling; the
+            // separate copy value is intentionally stripped for the clipboard.
+            guard !text.isEmpty else { return nil }
             return .terminal(
-                content: terminalOutput,
+                content: text,
                 command: configuration.copyCommandText,
-                stream: terminalStream
+                // Completed text is already the final ANSI display payload. The
+                // stream snapshot is the clipboard-safe representation and may
+                // intentionally be stripped.
+                stream: nil
             )
 
         case .readMedia, .audioMessage, .status:
@@ -174,10 +186,11 @@ enum ToolTimelineRowFullScreenSupport {
             )
 
         case .text(let text, _):
-            let sourceText = outputCopyText ?? text
-            guard !sourceText.isEmpty else { return nil }
+            // Keep terminal styling in the full-screen display while copyOutputText
+            // remains the ANSI-stripped clipboard representation.
+            guard !text.isEmpty else { return nil }
             return SourceTraceStream.Snapshot(
-                text: sourceText,
+                text: text,
                 filePath: nil,
                 isDone: configuration.isDone,
                 finalContent: nil

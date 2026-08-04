@@ -2,20 +2,7 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { createOppiToolExtensionFactory } from "./oppi-tool-extension.js";
-
-export {
-  buildOppiToolResultDetails,
-  classifyOppiToolCommand,
-  formatOppiToolExpandedText,
-  listAllowlistedOppiToolCommands,
-  runOppiToolCommand,
-} from "./oppi-tool-extension.js";
-export type {
-  OppiToolApprovalDetails,
-  OppiToolCommandClassification,
-  OppiToolCommandKind,
-  OppiToolCommandResult,
-} from "./oppi-tool-extension.js";
+import type { OppiApprovalPolicy } from "./oppi-extension-settings.js";
 
 const DefaultAgentAskOptionSchema = Type.Object({
   value: Type.String({ description: "Return value when selected" }),
@@ -56,16 +43,15 @@ type DefaultAgentAskResult = {
 export function createDefaultAgentExtensionFactory(options: {
   dataDir?: string;
   callerSessionId: string;
+  policySnapshot: Readonly<{ approvalPolicy: OppiApprovalPolicy }>;
 }): ExtensionFactory {
-  const oppiFactory = createOppiToolExtensionFactory({
-    ...(options.dataDir !== undefined ? { dataDir: options.dataDir } : {}),
-    identity: "control",
-    policySnapshot: { approvalPolicy: "confirmAllChanges" },
-    callerSessionId: options.callerSessionId,
-  });
-
   return (pi) => {
-    oppiFactory(pi);
+    createOppiToolExtensionFactory({
+      ...(options.dataDir !== undefined ? { dataDir: options.dataDir } : {}),
+      identity: "control",
+      policySnapshot: options.policySnapshot,
+      callerSessionId: options.callerSessionId,
+    })(pi);
 
     let askedThisTurn = false;
     pi.on("turn_start", async () => {

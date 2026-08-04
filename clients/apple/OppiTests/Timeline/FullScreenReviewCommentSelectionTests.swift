@@ -1136,6 +1136,23 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(actions.dropFirst().contains { $0.image == UIImage(systemName: "doc.on.doc") })
     }
 
+    @Test func fullScreenTerminalCopyStripsANSI() throws {
+        let formatted = "\u{001B}[1m$\u{001B}[0m oppi status\n\u{001B}[32mPaired\u{001B}[0m"
+        let previousPasteboardValue = UIPasteboard.general.string
+        defer { UIPasteboard.general.string = previousPasteboardValue }
+
+        let controller = FullScreenCodeViewController(
+            content: .terminal(content: formatted, command: nil)
+        )
+        controller.loadViewIfNeeded()
+        let navigationController = try #require(controller.children.first as? UINavigationController)
+        let contentController = try #require(navigationController.topViewController)
+        _ = try #require(contentController.navigationItem.rightBarButtonItems?.last)
+        _ = controller.perform(Selector("copyTapped"))
+
+        #expect(UIPasteboard.general.string == ANSIParser.strip(formatted))
+    }
+
     @Test func fullScreenViewerUpdatesResourceActionState() throws {
         let controller = FullScreenCodeViewController(
             content: .markdown(content: "# Prompt", filePath: "Schedule.md"),

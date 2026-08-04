@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { captureCliOutput, setCapturedCliExitCode, writeJsonEnvelope } from "../src/cli/output.js";
+import {
+  captureCliOutput,
+  captureHumanCliOutput,
+  printDetails,
+  setCapturedCliExitCode,
+  writeJsonEnvelope,
+} from "../src/cli/output.js";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve = () => {};
@@ -11,6 +17,18 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe("captured CLI output status", () => {
+  it("captures ANSI human output for mobile terminal presentation", async () => {
+    const captured = await captureCliOutput(
+      async () => {
+        captureHumanCliOutput(() => printDetails("✓ Done", [["Status", "ready"]]));
+      },
+      { includeHuman: true },
+    );
+
+    expect(captured.humanStdout).toContain("\x1b[");
+    expect(captured.humanStdout).toContain("Done");
+    expect(captured.humanStdout).toContain("ready");
+  });
   it("keeps overlapping JSON statuses AsyncLocalStorage-local", async () => {
     const previousExitCode = process.exitCode;
     process.exitCode = 23;

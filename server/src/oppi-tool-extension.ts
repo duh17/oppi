@@ -1,109 +1,36 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { isHelpFlag, parseCliArgs, type ParsedCliArgs } from "./cli/args.js";
-import { cmdAgent } from "./cli/commands/agent.js";
-import { cmdSchedule } from "./cli/commands/schedule.js";
-import { cmdSession } from "./cli/commands/session.js";
+import { parseCliArgs } from "./cli/args.js";
 import {
-  dialogOptionDetails,
-  dialogPromptText,
-  resolveDialogTarget,
-  type DialogSnapshot,
-} from "./cli/commands/session-interactions.js";
-import { cmdSkill } from "./cli/commands/skill.js";
-import { cmdWorkspace } from "./cli/commands/workspace.js";
-import { cmdWorktree } from "./cli/commands/worktree.js";
-import { createCliConnectionConfig } from "./cli/connection-config.js";
-import { assertInlineDefinitionSize } from "./cli/definition-input.js";
-import { helpTopicToJson, resolveHelpTopic } from "./cli/help.js";
-import { localApiRequest, type LocalApiConnection } from "./cli/local-api-client.js";
-import { captureCliOutput, type CliJsonEnvelope } from "./cli/output.js";
+  classifyCliAgentCommand,
+  unreviewableMutationBodyReason,
+  type CliAgentAccess,
+} from "./cli/command-policy.js";
+import { runCli, type CliRunResult } from "./cli/runner.js";
+import { redactCredentialString } from "./credential-redaction.js";
 import { createLogger } from "./logger.js";
-import { MAX_SKILL_FILE_BYTES } from "./skill-files.js";
 import type { OppiApprovalPolicy } from "./oppi-extension-settings.js";
 import { assertNotSelfTargetingSession } from "./session-caller-identity.js";
-import { tlsSchemeForConfig } from "./tls.js";
 
 export type { OppiApprovalPolicy } from "./oppi-extension-settings.js";
 export type OppiToolIdentity = "ordinary" | "control";
-export type OppiToolCommandCategory =
-  | "read"
-  | "nonDestructiveWrite"
-  | "destructiveWrite"
-  | "denied";
 
-type AllowedOppiToolCommandCategory = Exclude<OppiToolCommandCategory, "denied">;
-
-type FlagDescriptor = Readonly<{
-  kind: "boolean" | "value";
-  bodyLabel?: string;
-  bodyEncoding?: "jsonString";
-  indirectBody?: boolean;
-}>;
-
-type ApprovalTargetDescriptor = Readonly<{
-  label: string;
-  positionalIndex?: number;
-  flag?: string;
-  fallbackFlag?: string;
-}>;
-
-type CommandDescriptor = Readonly<{
+export type PreparedOppiCommand = Readonly<{
+  access: Exclude<CliAgentAccess, "denied">;
+  args: readonly string[];
+  path: readonly string[];
   command: string;
   action?: string;
-  category: AllowedOppiToolCommandCategory;
-  minPositionals: number;
-  maxPositionals: number;
-  flags: Readonly<Record<string, FlagDescriptor>>;
-  requiredFlags?: readonly string[];
-  atLeastOneFlags?: readonly (readonly string[])[];
-  exactlyOneFlags?: readonly (readonly string[])[];
-  atMostOneFlags?: readonly (readonly string[])[];
-  target?: ApprovalTargetDescriptor;
-  contextFlag?: Readonly<{ flag: string; label: string }>;
-  alwaysRequiresApproval?: boolean;
+  isHelp: boolean;
+  callerSessionId?: string;
 }>;
-
-export interface OppiToolApprovalDetails {
-  readonly action: string;
-  readonly category: AllowedOppiToolCommandCategory;
-  readonly target?: Readonly<{ label: string; value: string }>;
-  readonly context?: Readonly<{ label: string; value: string }>;
-  readonly arguments: readonly string[];
-  readonly bodies: readonly Readonly<{ label: string; value: string }>[];
-}
-
-export interface PreparedOppiCommand {
-  readonly category: AllowedOppiToolCommandCategory;
-  readonly callerSessionId?: string;
-  readonly command: string;
-  readonly action?: string;
-  readonly normalizedArgs: readonly string[];
-  readonly parsed: Readonly<{
-    command: string;
-    positional: readonly string[];
-    flags: Readonly<Record<string, string>>;
-  }>;
-  readonly displayCommand: string;
-  readonly summary: string;
-  readonly approvalDetails?: OppiToolApprovalDetails;
-  readonly approvalMessage?: string;
-  readonly alwaysRequiresApproval?: boolean;
-  readonly helpPath?: readonly string[];
-}
 
 export type PrepareOppiCommandResult =
   | { readonly ok: true; readonly command: PreparedOppiCommand }
   | { readonly ok: false; readonly reason: string };
 
-export interface OppiToolCommandResult {
-  ok: boolean;
-  exitCode: number;
-  stdout: string;
-  data?: unknown;
-  error?: { message: string; status?: number };
-}
+export type OppiToolCommandResult = CliRunResult;
 
 export type OppiToolPolicyResult =
   | { readonly kind: "executed"; readonly result: OppiToolCommandResult }
@@ -116,970 +43,55 @@ export const OPPI_EXTENSION_APPROVAL_REQUIRED_ERROR =
 export const OPPI_EXTENSION_APPROVAL_FAILED_ERROR =
   "OPPI_EXTENSION_APPROVAL_FAILED: approval could not be completed";
 
-const MAX_TOOL_OUTPUT_CHARS = 50_000;
+const MAX_OPPI_TOOL_ARGUMENTS = 256;
+const MAX_OPPI_TOOL_ARGUMENT_CHARS = 300_000;
+const MAX_MODEL_OUTPUT_CHARS = 50_000;
 const MAX_AUDIT_DURATION_MS = 86_400_000;
 const log = createLogger();
 const authenticPreparedCommands = new WeakSet<object>();
-
-const BOOLEAN_FLAG: FlagDescriptor = Object.freeze({ kind: "boolean" });
-const VALUE_FLAG: FlagDescriptor = Object.freeze({ kind: "value" });
-const PROMPT_FLAG: FlagDescriptor = Object.freeze({ kind: "value", bodyLabel: "Prompt" });
-const TEXT_FLAG: FlagDescriptor = Object.freeze({ kind: "value", bodyLabel: "Message" });
-const SYSTEM_PROMPT_FLAG: FlagDescriptor = Object.freeze({
-  kind: "value",
-  bodyLabel: "System prompt",
-});
-const DEFINITION_JSON_FLAG: FlagDescriptor = Object.freeze({
-  kind: "value",
-  bodyLabel: "Definition",
-});
-const DEFINITION_FILE_FLAG: FlagDescriptor = Object.freeze({
-  kind: "value",
-  indirectBody: true,
-});
-const FILE_CONTENT_JSON_FLAG: FlagDescriptor = Object.freeze({
-  kind: "value",
-  bodyLabel: "File content",
-  bodyEncoding: "jsonString",
-});
-const ANSWERS_FLAG: FlagDescriptor = Object.freeze({ kind: "value", bodyLabel: "Answers" });
-const RESPONSE_TEXT_FLAG: FlagDescriptor = Object.freeze({
-  kind: "value",
-  bodyLabel: "Response",
-});
-
-function commandFlags(
-  flags: Record<string, FlagDescriptor> = {},
-): Readonly<Record<string, FlagDescriptor>> {
-  return Object.freeze({ json: BOOLEAN_FLAG, help: BOOLEAN_FLAG, h: BOOLEAN_FLAG, ...flags });
-}
-
-// This is the single authority for allowed actions, categories, positional bounds,
-// flags, inline bodies, and approval presentation. Anything absent is denied.
-const COMMAND_DESCRIPTORS: readonly CommandDescriptor[] = Object.freeze([
-  {
-    command: "status",
-    category: "read",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags(),
-  },
-  {
-    command: "workspace",
-    action: "list",
-    category: "read",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags(),
-  },
-  {
-    command: "workspace",
-    action: "get",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags(),
-    target: { label: "Workspace", positionalIndex: 0 },
-  },
-  {
-    command: "workspace",
-    action: "create",
-    category: "nonDestructiveWrite",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags({
-      name: VALUE_FLAG,
-      "host-mount": VALUE_FLAG,
-      description: VALUE_FLAG,
-      icon: VALUE_FLAG,
-      "system-prompt": SYSTEM_PROMPT_FLAG,
-      "default-model": VALUE_FLAG,
-      runtime: VALUE_FLAG,
-      definition: DEFINITION_FILE_FLAG,
-    }),
-    requiredFlags: ["name"],
-    target: { label: "Workspace", flag: "name" },
-  },
-  {
-    command: "workspace",
-    action: "update",
-    category: "nonDestructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({
-      name: VALUE_FLAG,
-      "host-mount": VALUE_FLAG,
-      description: VALUE_FLAG,
-      icon: VALUE_FLAG,
-      "system-prompt": SYSTEM_PROMPT_FLAG,
-      "default-model": VALUE_FLAG,
-      runtime: VALUE_FLAG,
-      definition: DEFINITION_FILE_FLAG,
-    }),
-    atLeastOneFlags: [
-      [
-        "name",
-        "host-mount",
-        "description",
-        "icon",
-        "system-prompt",
-        "default-model",
-        "runtime",
-        "definition",
-      ],
-    ],
-    target: { label: "Workspace", positionalIndex: 0 },
-  },
-  ...["delete", "remove"].map(
-    (action): CommandDescriptor => ({
-      command: "workspace",
-      action,
-      category: "destructiveWrite",
-      minPositionals: 1,
-      maxPositionals: 1,
-      flags: commandFlags(),
-      target: { label: "Workspace", positionalIndex: 0 },
-    }),
-  ),
-  {
-    command: "worktree",
-    action: "list",
-    category: "read",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags({ workspace: VALUE_FLAG }),
-    requiredFlags: ["workspace"],
-    target: { label: "Workspace", flag: "workspace" },
-  },
-  ...["get", "status"].map(
-    (action): CommandDescriptor => ({
-      command: "worktree",
-      action,
-      category: "read",
-      minPositionals: 1,
-      maxPositionals: 1,
-      flags: commandFlags({ workspace: VALUE_FLAG }),
-      requiredFlags: ["workspace"],
-      target: { label: "Worktree", positionalIndex: 0 },
-      contextFlag: { flag: "workspace", label: "Workspace" },
-    }),
-  ),
-  {
-    command: "worktree",
-    action: "preview",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ workspace: VALUE_FLAG, into: VALUE_FLAG, mode: VALUE_FLAG }),
-    requiredFlags: ["workspace", "into"],
-    target: { label: "Worktree", positionalIndex: 0 },
-    contextFlag: { flag: "workspace", label: "Workspace" },
-  },
-  {
-    command: "worktree",
-    action: "create",
-    category: "nonDestructiveWrite",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags({
-      workspace: VALUE_FLAG,
-      branch: VALUE_FLAG,
-      base: VALUE_FLAG,
-      path: VALUE_FLAG,
-    }),
-    requiredFlags: ["workspace", "branch"],
-    target: { label: "Workspace", flag: "workspace" },
-  },
-  {
-    command: "worktree",
-    action: "open",
-    category: "nonDestructiveWrite",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags({ workspace: VALUE_FLAG, branch: VALUE_FLAG, path: VALUE_FLAG }),
-    requiredFlags: ["workspace"],
-    exactlyOneFlags: [["branch", "path"]],
-    target: { label: "Workspace", flag: "workspace" },
-  },
-  {
-    command: "worktree",
-    action: "remove",
-    category: "destructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ workspace: VALUE_FLAG, force: BOOLEAN_FLAG }),
-    requiredFlags: ["workspace"],
-    target: { label: "Worktree", positionalIndex: 0 },
-    contextFlag: { flag: "workspace", label: "Workspace" },
-  },
-  {
-    command: "agent",
-    action: "list",
-    category: "read",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags(),
-  },
-  {
-    command: "agent",
-    action: "get",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags(),
-    target: { label: "Agent", positionalIndex: 0 },
-  },
-  {
-    command: "agent",
-    action: "create",
-    category: "nonDestructiveWrite",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags({
-      name: VALUE_FLAG,
-      definition: DEFINITION_FILE_FLAG,
-      "definition-json": DEFINITION_JSON_FLAG,
-    }),
-    atLeastOneFlags: [["name", "definition", "definition-json"]],
-    exactlyOneFlags: [["definition", "definition-json"]],
-    target: { label: "Agent", flag: "name" },
-  },
-  {
-    command: "agent",
-    action: "update",
-    category: "nonDestructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({
-      definition: DEFINITION_FILE_FLAG,
-      "definition-json": DEFINITION_JSON_FLAG,
-    }),
-    exactlyOneFlags: [["definition", "definition-json"]],
-    target: { label: "Agent", positionalIndex: 0 },
-  },
-  {
-    command: "agent",
-    action: "archive",
-    category: "destructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags(),
-    target: { label: "Agent", positionalIndex: 0 },
-  },
-  {
-    command: "skill",
-    action: "list",
-    category: "read",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags(),
-  },
-  {
-    command: "skill",
-    action: "get",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags(),
-    target: { label: "Skill", positionalIndex: 0 },
-  },
-  {
-    command: "skill",
-    action: "file",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ path: VALUE_FLAG }),
-    requiredFlags: ["path"],
-    target: { label: "Skill", positionalIndex: 0 },
-    contextFlag: { flag: "path", label: "Path" },
-  },
-  {
-    command: "skill",
-    action: "update-file",
-    category: "nonDestructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({
-      path: VALUE_FLAG,
-      "base-revision": VALUE_FLAG,
-      "content-json": FILE_CONTENT_JSON_FLAG,
-    }),
-    requiredFlags: ["path", "base-revision", "content-json"],
-    target: { label: "Skill", positionalIndex: 0 },
-    contextFlag: { flag: "path", label: "Path" },
-  },
-  {
-    command: "session",
-    action: "list",
-    category: "read",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags({
-      agent: VALUE_FLAG,
-      limit: VALUE_FLAG,
-      status: VALUE_FLAG,
-      workspace: VALUE_FLAG,
-      worktree: VALUE_FLAG,
-    }),
-  },
-  ...["get", "changes", "trace-outline"].map(
-    (action): CommandDescriptor => ({
-      command: "session",
-      action,
-      category: "read",
-      minPositionals: 1,
-      maxPositionals: 1,
-      flags: commandFlags(),
-      target: { label: "Session", positionalIndex: 0 },
-    }),
-  ),
-  {
-    command: "session",
-    action: "read",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ tail: VALUE_FLAG }),
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "events",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ since: VALUE_FLAG }),
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "trace",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ include: VALUE_FLAG }),
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "search",
-    category: "read",
-    minPositionals: 0,
-    maxPositionals: Number.POSITIVE_INFINITY,
-    flags: commandFlags({
-      all: BOOLEAN_FLAG,
-      limit: VALUE_FLAG,
-      query: VALUE_FLAG,
-      since: VALUE_FLAG,
-      until: VALUE_FLAG,
-      workspace: VALUE_FLAG,
-    }),
-  },
-  {
-    command: "session",
-    action: "inspect",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ turns: VALUE_FLAG, view: VALUE_FLAG }),
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "diff",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 2,
-    flags: commandFlags({ path: VALUE_FLAG }),
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "tool-output",
-    category: "read",
-    minPositionals: 2,
-    maxPositionals: 2,
-    flags: commandFlags(),
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "trace-page",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({
-      "around-entry": VALUE_FLAG,
-      cursor: VALUE_FLAG,
-      "preview-bytes": VALUE_FLAG,
-      "target-events": VALUE_FLAG,
-    }),
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "wait",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ for: VALUE_FLAG, poll: VALUE_FLAG, timeout: VALUE_FLAG }),
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "create",
-    category: "nonDestructiveWrite",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags({
-      agent: VALUE_FLAG,
-      "allow-nested-delegation": BOOLEAN_FLAG,
-      "idempotency-key": VALUE_FLAG,
-      model: VALUE_FLAG,
-      name: VALUE_FLAG,
-      prompt: PROMPT_FLAG,
-      thinking: VALUE_FLAG,
-      workspace: VALUE_FLAG,
-      worktree: VALUE_FLAG,
-    }),
-    requiredFlags: ["workspace", "prompt"],
-    target: { label: "Workspace", flag: "workspace" },
-  },
-  {
-    command: "session",
-    action: "send",
-    category: "nonDestructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ "follow-up": BOOLEAN_FLAG, steer: BOOLEAN_FLAG, text: TEXT_FLAG }),
-    requiredFlags: ["text"],
-    atMostOneFlags: [["follow-up", "steer"]],
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "abort",
-    category: "nonDestructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags(),
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "dialogs",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags(),
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "respond",
-    category: "nonDestructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({
-      answers: ANSWERS_FLAG,
-      cancel: BOOLEAN_FLAG,
-      confirm: BOOLEAN_FLAG,
-      decline: BOOLEAN_FLAG,
-      dialog: VALUE_FLAG,
-      option: VALUE_FLAG,
-      text: RESPONSE_TEXT_FLAG,
-    }),
-    requiredFlags: ["dialog"],
-    atLeastOneFlags: [["answers", "cancel", "confirm", "decline", "option", "text"]],
-    atMostOneFlags: [["answers", "cancel", "confirm", "decline", "option", "text"]],
-    alwaysRequiresApproval: true,
-    target: { label: "Session", positionalIndex: 0 },
-    contextFlag: { flag: "dialog", label: "Dialog" },
-  },
-  ...["stop", "resume"].map(
-    (action): CommandDescriptor => ({
-      command: "session",
-      action,
-      category: "nonDestructiveWrite",
-      minPositionals: 1,
-      maxPositionals: 1,
-      flags: commandFlags(),
-      target: { label: "Session", positionalIndex: 0 },
-    }),
-  ),
-  {
-    command: "session",
-    action: "fork",
-    category: "nonDestructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ entry: VALUE_FLAG, name: VALUE_FLAG }),
-    requiredFlags: ["entry"],
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "session",
-    action: "delete",
-    category: "destructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags(),
-    target: { label: "Session", positionalIndex: 0 },
-  },
-  {
-    command: "schedule",
-    action: "list",
-    category: "read",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags({ agent: VALUE_FLAG, session: VALUE_FLAG, workspace: VALUE_FLAG }),
-  },
-  {
-    command: "schedule",
-    action: "get",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags(),
-    target: { label: "Schedule", positionalIndex: 0 },
-  },
-  {
-    command: "schedule",
-    action: "runs",
-    category: "read",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ limit: VALUE_FLAG }),
-    target: { label: "Schedule", positionalIndex: 0 },
-  },
-  {
-    command: "schedule",
-    action: "create",
-    category: "nonDestructiveWrite",
-    minPositionals: 0,
-    maxPositionals: 0,
-    flags: commandFlags({
-      agent: VALUE_FLAG,
-      at: VALUE_FLAG,
-      cron: VALUE_FLAG,
-      every: VALUE_FLAG,
-      model: VALUE_FLAG,
-      name: VALUE_FLAG,
-      prompt: PROMPT_FLAG,
-      session: VALUE_FLAG,
-      tz: VALUE_FLAG,
-      workspace: VALUE_FLAG,
-      worktree: VALUE_FLAG,
-    }),
-    requiredFlags: ["prompt"],
-    exactlyOneFlags: [
-      ["workspace", "session"],
-      ["at", "every", "cron"],
-    ],
-    target: { label: "Workspace", flag: "workspace", fallbackFlag: "session" },
-  },
-  {
-    command: "schedule",
-    action: "update",
-    category: "nonDestructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({
-      definition: DEFINITION_FILE_FLAG,
-      "definition-json": DEFINITION_JSON_FLAG,
-      model: VALUE_FLAG,
-      "clear-model": BOOLEAN_FLAG,
-    }),
-    atLeastOneFlags: [["definition", "definition-json", "model", "clear-model"]],
-    atMostOneFlags: [
-      ["definition", "definition-json"],
-      ["model", "clear-model"],
-    ],
-    target: { label: "Schedule", positionalIndex: 0 },
-  },
-  {
-    command: "schedule",
-    action: "run",
-    category: "nonDestructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags({ "request-id": VALUE_FLAG }),
-    target: { label: "Schedule", positionalIndex: 0 },
-  },
-  ...["pause", "resume"].map(
-    (action): CommandDescriptor => ({
-      command: "schedule",
-      action,
-      category: "nonDestructiveWrite",
-      minPositionals: 1,
-      maxPositionals: 1,
-      flags: commandFlags(),
-      target: { label: "Schedule", positionalIndex: 0 },
-    }),
-  ),
-  {
-    command: "schedule",
-    action: "archive",
-    category: "destructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags(),
-    target: { label: "Schedule", positionalIndex: 0 },
-  },
-  {
-    command: "schedule",
-    action: "restore",
-    category: "nonDestructiveWrite",
-    minPositionals: 1,
-    maxPositionals: 1,
-    flags: commandFlags(),
-    target: { label: "Schedule", positionalIndex: 0 },
-  },
-]);
-
-const DESCRIPTORS_BY_KEY = new Map(
-  COMMAND_DESCRIPTORS.map((descriptor) => [
-    descriptorKey(descriptor.command, descriptor.action),
-    descriptor,
-  ]),
-);
-
-const REJECTED_BODY_FLAGS = new Set(
-  COMMAND_DESCRIPTORS.flatMap((descriptor) =>
-    Object.entries(descriptor.flags).flatMap(([flag, flagDescriptor]) =>
-      flagDescriptor.bodyLabel ? [flag] : [],
-    ),
-  ),
-);
-
-export function listAllowlistedOppiToolCommands(): readonly Readonly<{
-  command: string;
-  action?: string;
-  category: AllowedOppiToolCommandCategory;
-}>[] {
-  return COMMAND_DESCRIPTORS.map((descriptor) => ({
-    command: descriptor.command,
-    ...(descriptor.action ? { action: descriptor.action } : {}),
-    category: descriptor.category,
-  }));
-}
-
-function descriptorKey(command: string, action: string | undefined): string {
-  return action === undefined ? command : `${command}\u0000${action}`;
-}
 
 export function prepareOppiCommand(
   rawArgs: readonly string[],
   context: Readonly<{ callerSessionId?: string }> = {},
 ): PrepareOppiCommandResult {
-  const normalizedArgs = [...rawArgs];
-  if (normalizedArgs[0] === "oppi") normalizedArgs.shift();
-  if (normalizedArgs.length === 0) return denied("oppi command args are required");
-  if (normalizedArgs.some((arg) => arg.length === 0)) {
+  const args = rawArgs[0] === "oppi" ? rawArgs.slice(1) : [...rawArgs];
+  if (args.length === 0) return denied("oppi command args are required");
+  if (args.some((arg) => typeof arg !== "string" || arg.length === 0)) {
     return denied("oppi command arguments must not be empty");
   }
-  const aliasError = normalizeOppiToolCommandAliases(normalizedArgs);
-  if (aliasError) return denied(aliasError);
-  const assignment = normalizedArgs.find((arg) => arg.startsWith("--") && arg.includes("="));
-  if (assignment) {
-    const separator = assignment.indexOf("=");
-    const flag = assignment.slice(2, separator);
-    const inputName = REJECTED_BODY_FLAGS.has(flag)
-      ? `--${boundedInputName(flag)}=[${assignment.length - separator - 1} chars]`
-      : boundedInputName(assignment);
-    return denied(`Assignment-style flags are not supported: ${inputName}`);
+  if (args.some((arg) => arg.includes("\0"))) {
+    return denied("oppi command arguments must not contain NUL characters");
+  }
+  if (args.length > MAX_OPPI_TOOL_ARGUMENTS) {
+    return denied(`oppi command accepts at most ${MAX_OPPI_TOOL_ARGUMENTS} arguments`);
+  }
+  const argumentChars = args.reduce((total, arg) => total + arg.length, 0);
+  if (argumentChars > MAX_OPPI_TOOL_ARGUMENT_CHARS) {
+    return denied(
+      `oppi command arguments exceed the ${MAX_OPPI_TOOL_ARGUMENT_CHARS}-character limit`,
+    );
   }
 
-  let mutableParsed: ParsedCliArgs;
-  try {
-    mutableParsed = parseCliArgs(normalizedArgs);
-  } catch (error) {
-    return denied(errorMessage(error));
-  }
-
-  const helpPath = helpPathFor(mutableParsed);
-  if (helpPath) {
-    const topicPath = helpTopicPath(helpPath);
-    const topic = resolveHelpTopic(topicPath);
-    const helpDescriptor = descriptorForPath(helpPath);
-    if (!topic || !isAllowlistedHelpPath(helpPath)) {
-      return denied(`No allowlisted help topic for ${boundedHelpPath(helpPath)}`);
-    }
-    const flagError = validateHelpFlags(mutableParsed, helpDescriptor);
-    if (flagError) return denied(flagError);
-    return preparedResult({
-      category: "read",
-      command: helpPath[0] ?? mutableParsed.command,
-      ...(helpPath[1] !== undefined ? { action: helpPath[1] } : {}),
-      normalizedArgs,
-      parsed: mutableParsed,
-      displayCommand: formatCommandForDisplay(normalizedArgs, helpDescriptor),
-      summary: "Read Oppi command help.",
-      helpPath: topicPath,
-      callerSessionId: context.callerSessionId,
-    });
-  }
-
-  const descriptor = descriptorForParsed(mutableParsed);
-  if (!descriptor) {
-    return denied("This Oppi command or subcommand is not allowlisted");
-  }
-  const validationError = validateParsedCommand(mutableParsed, descriptor);
-  if (validationError) return denied(validationError);
-
-  const approvalDetails =
-    descriptor.category === "read"
+  const classified = classifyCliAgentCommand(args);
+  if (!classified.ok) return denied(classified.reason);
+  const bodyReason =
+    classified.invocation.access === "read"
       ? undefined
-      : buildOppiToolApprovalDetails(mutableParsed, descriptor);
-  const summary = commandSummary(descriptor);
-  return preparedResult({
-    category: descriptor.category,
-    command: descriptor.command,
-    action: descriptor.action,
-    normalizedArgs,
-    parsed: mutableParsed,
-    displayCommand: formatCommandForDisplay(normalizedArgs, descriptor),
-    summary,
-    ...(descriptor.alwaysRequiresApproval ? { alwaysRequiresApproval: true } : {}),
-    ...(approvalDetails
-      ? {
-          approvalDetails,
-          approvalMessage: formatOppiToolApprovalMessage(summary, approvalDetails),
-        }
-      : {}),
-    callerSessionId: context.callerSessionId,
-  });
-}
+      : unreviewableMutationBodyReason(args, classified.invocation.isHelp);
+  if (bodyReason) return denied(bodyReason);
 
-function normalizeOppiToolCommandAliases(args: string[]): string | undefined {
-  const directWatch = args[0] === "session" && args[1] === "watch";
-  const helpWatch =
-    (args[0] === "help" && args[1] === "session" && args[2] === "watch") ||
-    (args[0] === "session" && args[1] === "help" && args[2] === "watch");
-  if (!directWatch && !helpWatch) return undefined;
-
-  const actionIndex = directWatch ? 1 : 2;
-  args[actionIndex] = "wait";
-  if (!directWatch) return undefined;
-
-  for (const [alias, canonical] of [
-    ["--until", "--for"],
-    ["--interval", "--poll"],
-  ] as const) {
-    if (!args.includes(alias)) continue;
-    if (args.includes(canonical)) return `Conflicting flags: ${alias} and ${canonical}`;
-    const index = args.indexOf(alias);
-    args[index] = canonical;
-  }
-
-  const conditionIndex = args.indexOf("--for");
-  if (conditionIndex >= 0 && args[conditionIndex + 1]?.trim().toLowerCase() === "any-change") {
-    return "oppi session watch aliases bounded session wait; any-change streaming is not allowed";
-  }
-  return undefined;
-}
-
-function descriptorForParsed(parsed: ParsedCliArgs): CommandDescriptor | undefined {
-  if (parsed.command === "status")
-    return DESCRIPTORS_BY_KEY.get(descriptorKey("status", undefined));
-  return DESCRIPTORS_BY_KEY.get(descriptorKey(parsed.command, parsed.positional[0]));
-}
-
-function descriptorForPath(path: readonly string[]): CommandDescriptor | undefined {
-  return DESCRIPTORS_BY_KEY.get(descriptorKey(path[0] ?? "", path[1]));
-}
-
-function helpTopicPath(path: readonly string[]): readonly string[] {
-  return path[0] === "workspace" && path[1] === "remove" ? ["workspace", "delete"] : path;
-}
-
-function isAllowlistedHelpPath(path: readonly string[]): boolean {
-  if (path.length === 0) return false;
-  if (path.length === 1) {
-    return COMMAND_DESCRIPTORS.some((descriptor) => descriptor.command === path[0]);
-  }
-  return descriptorForPath(path) !== undefined;
-}
-
-function validateHelpFlags(
-  parsed: ParsedCliArgs,
-  descriptor: CommandDescriptor | undefined,
-): string | undefined {
-  const rootFlags = commandFlags();
-  for (const [flag, value] of Object.entries(parsed.flags)) {
-    const flagDescriptor = descriptor?.flags[flag] ?? rootFlags[flag];
-    if (!flagDescriptor) return `Unsupported flag for help: --${boundedInputName(flag)}`;
-    const error = validateFlagValue(flag, value, flagDescriptor);
-    if (error) return error;
-  }
-  return undefined;
-}
-
-function validateParsedCommand(
-  parsed: ParsedCliArgs,
-  descriptor: CommandDescriptor,
-): string | undefined {
-  const positional = descriptor.action ? parsed.positional.slice(1) : parsed.positional;
-  if (
-    positional.length < descriptor.minPositionals ||
-    positional.length > descriptor.maxPositionals
-  ) {
-    return `Invalid positional argument count for oppi ${descriptor.command}${descriptor.action ? ` ${descriptor.action}` : ""}`;
-  }
-  if (positional.some((value) => value.trim().length === 0)) {
-    return "Positional arguments must not be empty";
-  }
-
-  for (const [flag, value] of Object.entries(parsed.flags)) {
-    const flagDescriptor = descriptor.flags[flag];
-    if (!flagDescriptor) {
-      return `Unsupported flag for oppi ${descriptor.command}${descriptor.action ? ` ${descriptor.action}` : ""}: --${boundedInputName(flag)}`;
-    }
-    const error = validateFlagValue(flag, value, flagDescriptor);
-    if (error) return error;
-    if (flagDescriptor.indirectBody) {
-      return `--${flag} is not allowed because approval requires the complete body inline`;
-    }
-    if (flagDescriptor.bodyLabel && value === "@-") {
-      return `--${flag} @- is not allowed because approval requires the complete body inline`;
-    }
-  }
-
-  for (const flag of descriptor.requiredFlags ?? []) {
-    if (!Object.hasOwn(parsed.flags, flag)) return `--${flag} is required`;
-  }
-  for (const group of descriptor.atLeastOneFlags ?? []) {
-    if (!group.some((flag) => Object.hasOwn(parsed.flags, flag))) {
-      return `At least one of ${group.map((flag) => `--${flag}`).join(", ")} is required`;
-    }
-  }
-  for (const group of descriptor.exactlyOneFlags ?? []) {
-    const present = group.filter((flag) => Object.hasOwn(parsed.flags, flag));
-    // Agent create may omit both definition inputs when --name is present; all
-    // other exactly-one groups are required by the command contract.
-    const optionalDefinitionGroup =
-      descriptor.command === "agent" &&
-      descriptor.action === "create" &&
-      group.includes("definition");
-    if (present.length !== 1 && !(optionalDefinitionGroup && present.length === 0)) {
-      return `Exactly one of ${group.map((flag) => `--${flag}`).join(", ")} is required`;
-    }
-  }
-  for (const group of descriptor.atMostOneFlags ?? []) {
-    const present = group.filter((flag) => Object.hasOwn(parsed.flags, flag));
-    if (present.length > 1) {
-      return `At most one of ${group.map((flag) => `--${flag}`).join(", ")} is allowed`;
-    }
-  }
-
-  const fileContentJson = parsed.flags["content-json"];
-  if (descriptor.command === "skill" && descriptor.action === "update-file") {
-    if (!/^[a-f0-9]{64}$/.test(parsed.flags["base-revision"] ?? "")) {
-      return "--base-revision must be a 64-character lowercase SHA-256 revision";
-    }
-    try {
-      const fileContent = JSON.parse(fileContentJson ?? "") as unknown;
-      if (typeof fileContent !== "string") return "--content-json must be a JSON string";
-      if (Buffer.byteLength(fileContent, "utf8") > MAX_SKILL_FILE_BYTES) {
-        return `--content-json exceeds the ${MAX_SKILL_FILE_BYTES}-byte Skill file limit`;
-      }
-    } catch {
-      return "--content-json must be a valid JSON string";
-    }
-  }
-
-  const inlineDefinition = parsed.flags["definition-json"];
-  if (inlineDefinition !== undefined) {
-    try {
-      assertInlineDefinitionSize(inlineDefinition);
-      const value = JSON.parse(inlineDefinition) as unknown;
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        return "--definition-json must be a JSON object";
-      }
-      if (
-        (descriptor.command === "agent" || descriptor.command === "schedule") &&
-        descriptor.action === "update" &&
-        Object.keys(value).length === 0
-      ) {
-        return "--definition-json update must not be empty";
-      }
-    } catch (error) {
-      const message = errorMessage(error);
-      return message.startsWith("--definition-json")
-        ? message
-        : "--definition-json must be valid JSON";
-    }
-  }
-  return undefined;
-}
-
-function validateFlagValue(
-  flag: string,
-  value: string,
-  descriptor: FlagDescriptor,
-): string | undefined {
-  if (descriptor.kind === "boolean") {
-    return value === "true" ? undefined : `--${flag} does not accept a value`;
-  }
-  return value === "true" || value.trim().length === 0 ? `--${flag} requires a value` : undefined;
-}
-
-function preparedResult(input: {
-  category: AllowedOppiToolCommandCategory;
-  command: string;
-  action?: string;
-  normalizedArgs: string[];
-  parsed: ParsedCliArgs;
-  displayCommand: string;
-  summary: string;
-  approvalDetails?: OppiToolApprovalDetails;
-  approvalMessage?: string;
-  alwaysRequiresApproval?: boolean;
-  helpPath?: readonly string[];
-  callerSessionId?: string;
-}): PrepareOppiCommandResult {
-  const flags = Object.freeze(
-    Object.assign(Object.create(null) as Record<string, string>, input.parsed.flags),
-  );
-  const parsed = Object.freeze({
-    command: input.parsed.command,
-    positional: Object.freeze([...input.parsed.positional]),
-    flags,
-  });
+  const path = Object.freeze([...classified.invocation.path]);
   const command = Object.freeze({
-    category: input.category,
-    ...(input.callerSessionId ? { callerSessionId: input.callerSessionId } : {}),
-    command: input.command,
-    ...(input.action !== undefined ? { action: input.action } : {}),
-    normalizedArgs: Object.freeze([...input.normalizedArgs]),
-    parsed,
-    displayCommand: input.displayCommand,
-    summary: input.summary,
-    ...(input.approvalDetails
-      ? { approvalDetails: freezeApprovalDetails(input.approvalDetails) }
-      : {}),
-    ...(input.approvalMessage ? { approvalMessage: input.approvalMessage } : {}),
-    ...(input.alwaysRequiresApproval ? { alwaysRequiresApproval: true } : {}),
-    ...(input.helpPath ? { helpPath: Object.freeze([...input.helpPath]) } : {}),
+    access: classified.invocation.access,
+    args: Object.freeze([...classified.invocation.args]),
+    path,
+    command: path[0] ?? "",
+    ...(path[1] !== undefined ? { action: path[1] } : {}),
+    isHelp: classified.invocation.isHelp,
+    ...(context.callerSessionId ? { callerSessionId: context.callerSessionId } : {}),
   }) satisfies PreparedOppiCommand;
   authenticPreparedCommands.add(command);
   return Object.freeze({ ok: true, command });
-}
-
-function freezeApprovalDetails(details: OppiToolApprovalDetails): OppiToolApprovalDetails {
-  return Object.freeze({
-    action: details.action,
-    category: details.category,
-    ...(details.target ? { target: Object.freeze({ ...details.target }) } : {}),
-    ...(details.context ? { context: Object.freeze({ ...details.context }) } : {}),
-    arguments: Object.freeze([...details.arguments]),
-    bodies: Object.freeze(details.bodies.map((body) => Object.freeze({ ...body }))),
-  });
-}
-
-function denied(reason: string): PrepareOppiCommandResult {
-  return Object.freeze({ ok: false, reason });
 }
 
 export async function executePreparedOppiCommand(options: {
@@ -1088,76 +100,19 @@ export async function executePreparedOppiCommand(options: {
   cwd?: string;
 }): Promise<OppiToolCommandResult> {
   if (!authenticPreparedCommands.has(options.prepared)) {
-    return failureResult("Unrecognized prepared Oppi command", 1);
+    throw new Error("Unrecognized prepared Oppi command");
   }
-  const prepared = options.prepared;
-  assertNotSelfTargetingSession(preparedSessionTargets(prepared), prepared.callerSessionId);
-  const connection = createCliConnectionConfig(options.dataDir);
+  assertNotSelfTargetingSession(sessionTargets(options.prepared), options.prepared.callerSessionId);
 
-  if (prepared.helpPath) return successResult(buildHelpEnvelope(prepared.helpPath));
-  if (prepared.command === "status") return successResult(buildStatusEnvelope(connection));
-
-  const parsed = prepared.parsed;
-  const output = await captureCliOutput(async () => {
-    await dispatchJsonCliCommand(
-      connection,
-      prepared.command,
-      prepared.action,
-      [...parsed.positional.slice(prepared.action ? 1 : 0)],
-      { ...parsed.flags, json: "true" },
-      options.cwd,
-      prepared.callerSessionId,
-    );
-  });
-  const parsedOutput = parseCliJsonOutput(output.stdout, output.exitCode);
-  return { ...parsedOutput, stdout: output.stdout, exitCode: output.exitCode };
-}
-
-export async function runOppiToolCommand(options: {
-  dataDir?: string;
-  args: readonly string[];
-  cwd?: string;
-}): Promise<OppiToolCommandResult> {
-  const result = prepareOppiCommand(options.args);
-  if (!result.ok) return failureResult(result.reason, 1);
-  return executePreparedOppiCommand({
-    prepared: result.command,
+  return runCli(options.prepared.args, {
     ...(options.dataDir !== undefined ? { dataDir: options.dataDir } : {}),
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+    ...(options.prepared.callerSessionId
+      ? { callerSessionId: options.prepared.callerSessionId }
+      : {}),
+    captureHuman: true,
+    forceJson: true,
   });
-}
-
-async function dispatchJsonCliCommand(
-  storage: LocalApiConnection,
-  command: string,
-  action: string | undefined,
-  positional: string[],
-  flags: Record<string, string>,
-  cwd?: string,
-  callerSessionId?: string,
-): Promise<void> {
-  switch (command) {
-    case "workspace":
-      await cmdWorkspace(storage, action, positional, flags);
-      return;
-    case "worktree":
-      await cmdWorktree(storage, action, positional, flags);
-      return;
-    case "agent":
-      await cmdAgent(storage, action, positional, flags);
-      return;
-    case "session":
-      await cmdSession(storage, action, positional, flags, cwd, { callerSessionId });
-      return;
-    case "skill":
-      await cmdSkill(storage, action, positional, flags);
-      return;
-    case "schedule":
-      await cmdSchedule(storage, action, positional, flags);
-      return;
-    default:
-      throw new Error("Unsupported prepared Oppi command");
-  }
 }
 
 export async function applyOppiToolPolicy(options: {
@@ -1170,17 +125,9 @@ export async function applyOppiToolPolicy(options: {
   execute?: (prepared: PreparedOppiCommand) => Promise<OppiToolCommandResult>;
 }): Promise<OppiToolPolicyResult> {
   const startedAt = Date.now();
-  const prepared = options.prepared;
+  const { prepared } = options;
   if (!authenticPreparedCommands.has(prepared)) {
-    audit(
-      options.identity,
-      "denied",
-      options.policy,
-      "denied",
-      "not-required",
-      "denied",
-      startedAt,
-    );
+    audit(options.identity, "denied", options.policy, "denied", "denied", "denied", startedAt);
     throw new Error("Unrecognized prepared Oppi command");
   }
 
@@ -1188,26 +135,23 @@ export async function applyOppiToolPolicy(options: {
     auditPrepared(options, "aborted", "denied", startedAt);
     return { kind: "cancelled", reason: "aborted" };
   }
-  if (options.policy === "readOnly" && prepared.category !== "read") {
+  if (options.policy === "readOnly" && prepared.access !== "read") {
     auditPrepared(options, "not-required", "read-only", startedAt);
     throw new Error(OPPI_EXTENSION_READ_ONLY_ERROR);
   }
 
-  const approvalRequired =
-    prepared.category !== "read" &&
-    (prepared.alwaysRequiresApproval === true ||
-      options.policy === "confirmAllChanges" ||
-      prepared.category === "destructiveWrite");
+  const approvalRequired = commandRequiresApproval(prepared, options.policy);
   let approvalOutcome = "not-required";
   if (approvalRequired) {
     if (!options.approve) {
       auditPrepared(options, "missing-ui", "denied", startedAt);
       throw new Error(OPPI_EXTENSION_APPROVAL_REQUIRED_ERROR);
     }
+
     let approved: boolean;
     try {
       approved = await options.approve(
-        options.approvalMessage ?? prepared.approvalMessage ?? prepared.summary,
+        options.approvalMessage ?? "Run the requested Oppi CLI command?",
       );
     } catch {
       auditPrepared(options, "approval-error", "denied", startedAt);
@@ -1236,78 +180,6 @@ export async function applyOppiToolPolicy(options: {
   }
 }
 
-function auditPrepared(
-  options: {
-    prepared: PreparedOppiCommand;
-    policy: OppiApprovalPolicy;
-    identity: OppiToolIdentity;
-  },
-  outcome: string,
-  result: string,
-  startedAt: number,
-): void {
-  audit(
-    options.identity,
-    options.prepared.category,
-    options.policy,
-    normalizedAction(options.prepared),
-    outcome,
-    result,
-    startedAt,
-  );
-}
-
-function audit(
-  identity: OppiToolIdentity,
-  category: OppiToolCommandCategory,
-  policy: OppiApprovalPolicy,
-  action: string,
-  outcome: string,
-  result: string,
-  startedAt: number,
-): void {
-  log.info("oppi_tool.audit", {
-    identity,
-    category,
-    policy,
-    action,
-    outcome,
-    result,
-    duration: Math.min(MAX_AUDIT_DURATION_MS, Math.max(0, Date.now() - startedAt)),
-  });
-}
-
-async function approvalMessageForPreparedCommand(
-  prepared: PreparedOppiCommand,
-  dataDir: string | undefined,
-): Promise<string | undefined> {
-  if (prepared.command !== "session" || prepared.action !== "respond") return undefined;
-  const sessionId = prepared.parsed.positional[1]?.trim();
-  const dialogId = prepared.parsed.flags.dialog?.trim();
-  if (!sessionId || !dialogId) throw new Error("session respond requires a session and --dialog");
-
-  const connection = createCliConnectionConfig(dataDir);
-  const snapshot = await localApiRequest<{ dialogs?: DialogSnapshot[] }>(
-    connection,
-    `/sessions/${encodeURIComponent(sessionId)}/dialogs`,
-  );
-  const dialog = resolveDialogTarget(snapshot.dialogs ?? [], dialogId);
-  const pendingDialog = {
-    method: dialog.method ?? "dialog",
-    prompt: dialogPromptText(dialog),
-    ...(dialog.title ? { title: dialog.title } : {}),
-    ...(dialog.message ? { message: dialog.message } : {}),
-    ...(dialog.questions ? { questions: dialog.questions } : {}),
-    ...(dialog.options ? { options: dialog.options } : {}),
-    details: dialogOptionDetails(dialog),
-  };
-  return [
-    prepared.approvalMessage ?? prepared.summary,
-    "## Pending dialog",
-    formatHumanValue(pendingDialog),
-  ].join("\n\n");
-}
-
 export function createOppiToolExtensionFactory(options: {
   dataDir?: string;
   policySnapshot: Readonly<{ approvalPolicy: OppiApprovalPolicy }>;
@@ -1315,50 +187,18 @@ export function createOppiToolExtensionFactory(options: {
   callerSessionId: string;
 }): ExtensionFactory {
   const policy = options.policySnapshot.approvalPolicy;
-  const identity = options.identity;
   const dataDir = options.dataDir;
+  const identity = options.identity;
   const callerSessionId = options.callerSessionId;
-  return (pi) => {
-    pi.on("tool_result", async (event) => {
-      if (event.toolName !== "oppi" || !event.isError) return;
-      const inputArgs: unknown = event.input.args;
-      const hasStringArgs = isStringArray(inputArgs);
-      const rawArgs: readonly string[] = hasStringArgs ? inputArgs : [];
-      const errorText = event.content
-        .flatMap((block) => (block.type === "text" ? [block.text] : []))
-        .join("\n")
-        .trim();
-      const prepared = prepareOppiCommand(rawArgs, { callerSessionId });
-      if (hasStringArgs && prepared.ok) {
-        return {
-          details: buildOppiToolResultDetails(
-            prepared.command,
-            { message: errorText || "Oppi command failed." },
-            { outcome: "error" },
-          ),
-          isError: true,
-        };
-      }
-      const validationError = prepared.ok
-        ? "oppi args must be an array of strings"
-        : prepared.reason;
-      return {
-        details: buildRejectedOppiToolResultDetails(
-          rawArgs,
-          errorText || validationError,
-          validationError,
-        ),
-        isError: true,
-      };
-    });
 
+  return (pi) => {
     pi.registerTool({
       name: "oppi",
       label: "Oppi",
       description:
-        "Run an allowlisted Oppi CLI command as JSON under the configured server approval policy.",
+        "Run one exposed Oppi CLI command as JSON under the configured server approval policy.",
       promptSnippet:
-        "Run allowlisted Oppi CLI commands as JSON for workspaces, worktrees, Agents, Skills, sessions, schedules, and status.",
+        "Run exposed Oppi CLI commands as JSON for workspaces, worktrees, Agents, Skills, sessions, schedules, and status.",
       promptGuidelines: [
         "Use oppi for Oppi app state instead of shell or filesystem tools.",
         "Use oppi read commands before asking the user about discoverable workspace, Agent, Skill, session, schedule, or worktree state.",
@@ -1370,69 +210,56 @@ export function createOppiToolExtensionFactory(options: {
       ],
       parameters: Type.Object({
         args: Type.Array(Type.String(), {
+          maxItems: MAX_OPPI_TOOL_ARGUMENTS,
           description:
-            "Command arguments without the leading 'oppi', for example ['workspace','list'] or ['session','create','--workspace','oppi','--prompt','Review this']. Output is always JSON.",
+            "Command arguments without the leading 'oppi'. Output is the canonical CLI JSON envelope.",
         }),
       }),
-      // Pi calls this before schema validation. Coercing malformed shapes to an empty command
-      // preserves provider guidance while ensuring execute/tool_result can persist a safe error.
-      prepareArguments: (raw) => {
-        if (
+      prepareArguments: (raw) => ({
+        args:
           typeof raw === "object" &&
           raw !== null &&
           "args" in raw &&
           Array.isArray(raw.args) &&
           raw.args.every((value): value is string => typeof value === "string")
-        ) {
-          return { args: raw.args };
-        }
-        return { args: [] };
-      },
+            ? raw.args
+            : [],
+      }),
       executionMode: "sequential",
-      async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      async execute(_toolCallId, params, signal, _onUpdate, ctx) {
         if (
           !Array.isArray(params.args) ||
           !params.args.every((value): value is string => typeof value === "string")
         ) {
           throw new Error("oppi args must be an array of strings");
         }
-        const preparedResultValue = prepareOppiCommand(params.args, { callerSessionId });
-        if (!preparedResultValue.ok) {
-          const startedAt = Date.now();
-          audit(identity, "denied", policy, "denied", "not-required", "denied", startedAt);
-          throw new Error(preparedResultValue.reason);
+
+        const classified = prepareOppiCommand(params.args, { callerSessionId });
+        if (!classified.ok) {
+          audit(identity, "denied", policy, "denied", "denied", "denied", Date.now());
+          throw new Error(redactCredentialString(classified.reason));
         }
-        const prepared = preparedResultValue.command;
-        const hasConfirm =
-          ctx.hasUI && typeof (ctx.ui as { confirm?: unknown }).confirm === "function";
-        const approvalMessage =
-          hasConfirm && policy !== "readOnly"
-            ? await approvalMessageForPreparedCommand(prepared, dataDir)
+
+        const prepared = classified.command;
+        assertNotSelfTargetingSession(sessionTargets(prepared), callerSessionId);
+        const approvalRequired = commandRequiresApproval(prepared, policy);
+        const confirm =
+          ctx.hasUI && typeof ctx.ui.confirm === "function"
+            ? (message: string) => ctx.ui.confirm("Approve Oppi command", message)
             : undefined;
         const policyResult = await applyOppiToolPolicy({
           prepared,
           policy,
-          ...(approvalMessage ? { approvalMessage } : {}),
           identity,
           ...(signal ? { signal } : {}),
-          ...(hasConfirm
-            ? {
-                approve: (message: string) => ctx.ui.confirm("Approve Oppi command", message),
-              }
-            : {}),
-          execute: async (approvedCommand) => {
-            onUpdate?.({
-              content: [
-                { type: "text" as const, text: `Running ${approvedCommand.displayCommand}` },
-              ],
-              details: { category: approvedCommand.category },
-            });
-            return executePreparedOppiCommand({
+          ...(approvalRequired ? { approvalMessage: approvalMessage(prepared) } : {}),
+          ...(confirm ? { approve: confirm } : {}),
+          execute: async (approvedCommand) =>
+            executePreparedOppiCommand({
               prepared: approvedCommand,
               ...(dataDir !== undefined ? { dataDir } : {}),
               ...(typeof ctx.cwd === "string" ? { cwd: ctx.cwd } : {}),
-            });
-          },
+            }),
         });
 
         if (policyResult.kind === "cancelled") {
@@ -1447,672 +274,196 @@ export function createOppiToolExtensionFactory(options: {
               },
             ],
             details: {
-              ...buildOppiToolResultDetails(
-                prepared,
-                { reason: policyResult.reason },
-                { outcome: "cancelled" },
-              ),
+              args: [...prepared.args],
+              outcome: "cancelled" as const,
               cancelled: true,
               reason: policyResult.reason,
             },
           };
         }
-        if (!policyResult.result.ok) {
-          throw new Error(
-            policyResult.result.error?.message ??
-              `oppi command failed with exit ${policyResult.result.exitCode}`,
-          );
-        }
-        return {
-          content: [
-            { type: "text" as const, text: truncateToolOutput(policyResult.result.stdout) },
-          ],
-          details: buildOppiToolResultDetails(prepared, policyResult.result.data),
+
+        const result = policyResult.result;
+        const mapped = {
+          content: [{ type: "text" as const, text: boundModelOutput(result.stdout) }],
+          details: {
+            args: [...prepared.args],
+            outcome: result.ok ? ("result" as const) : ("error" as const),
+            ...(result.json?.ok ? { data: result.json.data } : {}),
+            expandedText: terminalTranscript(prepared.args, result.humanOutput),
+            presentationFormat: "terminal" as const,
+            exitCode: result.exitCode,
+          },
         };
+        return result.ok ? mapped : { ...mapped, isError: true };
       },
     });
   };
 }
 
-function buildRejectedOppiToolResultDetails(
-  rawArgs: readonly string[],
-  errorText: string,
-  validationError: string,
-): Record<string, unknown> {
-  const normalizedArgs = rawArgs[0] === "oppi" ? rawArgs.slice(1) : [...rawArgs];
-  const visibleParts = rejectedCommandPath(normalizedArgs);
-  const titleParts = ["Oppi", ...visibleParts].map(escapeMarkdownInline);
-  const expandedText = [
-    `# ${titleParts.join(" ") || "Oppi command"}`,
-    "## Command",
-    fencedText(formatRejectedCommandForDisplay(normalizedArgs)),
-    "## Error",
-    formatHumanValue({
-      message: redactRejectedBodyValues(errorText, normalizedArgs),
-      validation: redactRejectedBodyValues(validationError, normalizedArgs),
-    }),
-  ].join("\n\n");
-  return {
-    args: [...normalizedArgs],
-    kind: "rejected",
-    category: "denied",
-    outcome: "error",
-    expandedText: truncateToolOutput(expandedText),
-    presentationFormat: "markdown",
-  };
+function commandRequiresApproval(
+  prepared: PreparedOppiCommand,
+  policy: OppiApprovalPolicy,
+): boolean {
+  return (
+    policy !== "readOnly" &&
+    prepared.access !== "read" &&
+    (prepared.access === "alwaysApprove" ||
+      policy === "confirmAllChanges" ||
+      prepared.access === "destructive")
+  );
 }
 
-function rejectedCommandPath(args: readonly string[]): string[] {
-  const parts: string[] = [];
-  for (const value of args) {
-    if (value.startsWith("--")) break;
-    parts.push(firstLineBounded(value, 40));
-    if (parts.length === 2) break;
-  }
-  return parts.filter(Boolean);
+function approvalMessage(prepared: PreparedOppiCommand): string {
+  return redactCredentialString(`Run Oppi command: ${prepared.path.join(" ")}`);
 }
 
-function redactRejectedBodyValues(text: string, args: readonly string[]): string {
-  let redacted = text;
-  for (let index = 0; index < args.length; index += 1) {
-    const value = args[index] ?? "";
-    if (!value.startsWith("--")) continue;
-    if (!value.includes("=")) {
-      const flag = value.slice(2);
-      if (!REJECTED_BODY_FLAGS.has(flag)) continue;
-      const body = args[index + 1];
-      if (body !== undefined && body.length >= 8) {
-        redacted = redacted.replaceAll(body, `[${body.length} chars]`);
-      }
-      index += 1;
-      continue;
-    }
-    const separator = value.indexOf("=");
-    const flag = value.slice(2, separator);
-    if (!REJECTED_BODY_FLAGS.has(flag)) continue;
-    const bodyLength = value.length - separator - 1;
-    redacted = redacted.replace(
-      new RegExp(`--${escapeRegExp(flag)}=[^\\r\\n]*`, "g"),
-      `--${flag}=[${bodyLength} chars]`,
+function terminalTranscript(args: readonly string[], humanOutput: string): string {
+  const command = ["oppi", ...args].map(shellQuote).join(" ");
+  return humanOutput ? `$ ${command}\n\n${humanOutput}` : `$ ${command}\n`;
+}
+
+function shellQuote(value: string): string {
+  if (value.length === 0) return "''";
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  if (containsTerminalControl(value)) return `$'${bashAnsiCString(value)}'`;
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function containsTerminalControl(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return (
+      codePoint < 0x20 ||
+      (codePoint >= 0x7f && codePoint <= 0x9f) ||
+      codePoint === 0x061c ||
+      codePoint === 0x200e ||
+      codePoint === 0x200f ||
+      (codePoint >= 0x2028 && codePoint <= 0x202e) ||
+      (codePoint >= 0x2066 && codePoint <= 0x2069)
     );
-  }
-  return redacted;
-}
-
-function formatRejectedCommandForDisplay(args: readonly string[]): string {
-  const displayed: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const value = args[index] ?? "";
-    if (value.startsWith("--") && value.includes("=")) {
-      const separator = value.indexOf("=");
-      const flag = value.slice(2, separator);
-      const assignedValue = value.slice(separator + 1);
-      displayed.push(
-        REJECTED_BODY_FLAGS.has(flag) ? `--${flag}=[${assignedValue.length} chars]` : value,
-      );
-      continue;
-    }
-    displayed.push(value.length > 160 ? `[${value.length} chars]` : value);
-    const flag = value.startsWith("--") ? value.slice(2) : "";
-    if (!REJECTED_BODY_FLAGS.has(flag)) continue;
-    const body = args[index + 1];
-    if (body === undefined) continue;
-    displayed.push(`[${body.length} chars]`);
-    index += 1;
-  }
-  return `oppi ${displayed.join(" ")}`.trimEnd();
-}
-
-export type OppiToolCommandKind = "read" | "approved-write";
-export type OppiToolCommandClassification =
-  | ({
-      readonly ok: true;
-      readonly kind: OppiToolCommandKind;
-      readonly args: readonly string[];
-    } & PreparedOppiCommand)
-  | { readonly ok: false; readonly reason: string };
-
-export function classifyOppiToolCommand(rawArgs: readonly string[]): OppiToolCommandClassification {
-  const result = prepareOppiCommand(rawArgs);
-  if (!result.ok) return result;
-  return Object.freeze({
-    ok: true,
-    ...result.command,
-    kind: result.command.category === "read" ? "read" : "approved-write",
-    args: result.command.normalizedArgs,
   });
 }
 
-type OppiToolPresentationOutcome = "result" | "error" | "cancelled";
-
-export function buildOppiToolResultDetails(
-  command: PreparedOppiCommand | Extract<OppiToolCommandClassification, { ok: true }>,
-  data: unknown,
-  options: Readonly<{ outcome?: OppiToolPresentationOutcome }> = {},
-): Record<string, unknown> {
-  const outcome = options.outcome ?? "result";
-  return {
-    args: [...command.normalizedArgs],
-    kind:
-      outcome === "error"
-        ? "error"
-        : outcome === "cancelled"
-          ? "cancelled"
-          : command.category === "read"
-            ? "read"
-            : "approved-write",
-    category: command.category,
-    outcome,
-    data,
-    expandedText: truncateToolOutput(formatOppiToolExpandedText(command, data, { outcome })),
-    presentationFormat: "markdown",
-  };
-}
-
-export function formatOppiToolExpandedText(
-  command: PreparedOppiCommand | Extract<OppiToolCommandClassification, { ok: true }>,
-  data: unknown,
-  options: Readonly<{ outcome?: OppiToolPresentationOutcome }> = {},
-): string {
-  const titleParts = ["Oppi", command.command, command.action].filter(Boolean);
-  const sections = [
-    `# ${titleParts.map((part) => escapeMarkdownInline(part ?? "")).join(" ")}`,
-    "## Command",
-    markdownInlineCode(command.displayCommand),
-  ];
-  const descriptor = DESCRIPTORS_BY_KEY.get(descriptorKey(command.command, command.action));
-  if (descriptor && !command.helpPath) {
-    const request = buildOppiToolApprovalDetails(command.parsed, descriptor);
-    const requestRows: string[] = [];
-    if (request.target) {
-      requestRows.push(
-        `- **${escapeMarkdownInline(request.target.label)}:** ${markdownRequestValue(request.target.value)}`,
-      );
-    }
-    if (request.context) {
-      requestRows.push(
-        `- **${escapeMarkdownInline(request.context.label)}:** ${markdownRequestValue(request.context.value)}`,
-      );
-    }
-    if (request.arguments.length > 0) {
-      requestRows.push(`- **Arguments:** ${markdownRequestValue(request.arguments.join(" "))}`);
-    }
-    if (requestRows.length > 0) sections.push("## Request", requestRows.join("\n"));
-    for (const body of request.bodies) {
-      sections.push(`## ${escapeMarkdownInline(body.label)}`, formatOppiToolBody(body));
-    }
-  }
-  const outcome = options.outcome ?? "result";
-  if (outcome === "error") {
-    sections.push("## Error", formatHumanValue(data));
-  } else if (outcome === "cancelled") {
-    sections.push("## Cancelled", formatHumanValue(data));
-  } else if (command.command === "session" && command.action === "search") {
-    sections.push(formatSessionSearchResult(data));
-  } else if (command.command === "session" && command.action === "send") {
-    const delivery = formatSessionSendResult(data);
-    if (delivery) sections.push(delivery);
-    else sections.push("## Result", formatHumanValue(data));
-  } else {
-    sections.push("## Result", formatHumanValue(data));
-  }
-  return sections.join("\n\n");
-}
-
-function formatOppiToolBody(body: Readonly<{ label: string; value: string }>): string {
-  const value = sanitizeDisplayText(body.value);
-  if (body.label !== "Definition") {
-    return value
-      .split("\n")
-      .map((line) => `> ${line}`)
-      .join("\n");
-  }
-  try {
-    return `\`\`\`json\n${JSON.stringify(JSON.parse(value) as unknown, null, 2)}\n\`\`\``;
-  } catch {
-    return fencedText(value);
-  }
-}
-
-function markdownRequestValue(value: string): string {
-  const oneLine = singleLineDisplayString(value);
-  return oneLine.includes("`") ? escapeMarkdownInline(oneLine) : markdownInlineCode(oneLine);
-}
-
-function commandSummary(descriptor: CommandDescriptor): string {
-  const action = normalizedDescriptorAction(descriptor);
-  switch (descriptor.category) {
-    case "read":
-      return `Read Oppi state with ${action}.`;
-    case "nonDestructiveWrite":
-      return `Create or modify Oppi state with ${action}.`;
-    case "destructiveWrite":
-      return `Run destructive Oppi command ${action}.`;
-  }
-}
-
-function buildOppiToolApprovalDetails(
-  parsed: Readonly<{
-    command: string;
-    positional: readonly string[];
-    flags: Readonly<Record<string, string>>;
-  }>,
-  descriptor: CommandDescriptor,
-): OppiToolApprovalDetails {
-  const action = normalizedDescriptorAction(descriptor);
-  const targetValue = resolveTargetValue(parsed, descriptor.target);
-  const target =
-    descriptor.target && targetValue !== undefined
-      ? { label: targetLabelForValue(descriptor.target, parsed), value: targetValue }
-      : undefined;
-  const contextValue = descriptor.contextFlag
-    ? parsed.flags[descriptor.contextFlag.flag]
-    : undefined;
-  const context =
-    descriptor.contextFlag && contextValue !== undefined
-      ? { label: descriptor.contextFlag.label, value: contextValue }
-      : undefined;
-  const bodies = Object.entries(descriptor.flags).flatMap(([flag, flagDescriptor]) => {
-    if (!flagDescriptor.bodyLabel || !Object.hasOwn(parsed.flags, flag)) return [];
-    const rawValue = parsed.flags[flag] ?? "";
-    const value =
-      flagDescriptor.bodyEncoding === "jsonString" ? decodeJsonStringBody(rawValue) : rawValue;
-    return [{ label: flagDescriptor.bodyLabel, value }];
-  });
-
-  const consumedPositional = new Set<number>();
-  if (descriptor.target?.positionalIndex !== undefined) {
-    consumedPositional.add(descriptor.target.positionalIndex);
-  }
-  const actionOffset = descriptor.action ? 1 : 0;
-  const remainingArguments = parsed.positional
-    .slice(actionOffset)
-    .flatMap((value, index) =>
-      consumedPositional.has(index) ? [] : [shellQuoteForDisplay(value)],
-    );
-  const excludedFlags = new Set([
-    "json",
-    "help",
-    "h",
-    ...(descriptor.target?.flag ? [descriptor.target.flag] : []),
-    ...(descriptor.target?.fallbackFlag ? [descriptor.target.fallbackFlag] : []),
-    ...(descriptor.contextFlag ? [descriptor.contextFlag.flag] : []),
-    ...Object.entries(descriptor.flags).flatMap(([flag, value]) => (value.bodyLabel ? [flag] : [])),
-  ]);
-  for (const [flag, value] of Object.entries(parsed.flags)) {
-    if (excludedFlags.has(flag)) continue;
-    remainingArguments.push(`--${flag}`);
-    if (value !== "true") remainingArguments.push(shellQuoteForDisplay(value));
-  }
-  return {
-    action,
-    category: descriptor.category,
-    target,
-    context,
-    arguments: remainingArguments,
-    bodies,
-  };
-}
-
-function resolveTargetValue(
-  parsed: Readonly<{
-    command: string;
-    positional: readonly string[];
-    flags: Readonly<Record<string, string>>;
-  }>,
-  target: ApprovalTargetDescriptor | undefined,
-): string | undefined {
-  if (!target) return undefined;
-  if (target.positionalIndex !== undefined) {
-    return parsed.positional[(parsed.command === "status" ? 0 : 1) + target.positionalIndex];
-  }
-  if (target.flag && parsed.flags[target.flag] !== undefined) return parsed.flags[target.flag];
-  return target.fallbackFlag ? parsed.flags[target.fallbackFlag] : undefined;
-}
-
-function targetLabelForValue(
-  target: ApprovalTargetDescriptor,
-  parsed: Readonly<{ flags: Readonly<Record<string, string>> }>,
-): string {
-  return target.fallbackFlag && parsed.flags[target.flag ?? ""] === undefined
-    ? target.fallbackFlag === "session"
-      ? "Session"
-      : target.label
-    : target.label;
-}
-
-function formatOppiToolApprovalMessage(summary: string, details: OppiToolApprovalDetails): string {
-  const sections = [
-    summary,
-    "## Category",
-    categoryLabel(details.category),
-    "## Command",
-    fencedText(details.action),
-  ];
-  if (details.target) sections.push(`## ${details.target.label}`, fencedText(details.target.value));
-  if (details.context) {
-    sections.push(`## ${details.context.label}`, fencedText(details.context.value));
-  }
-  if (details.arguments.length > 0) {
-    sections.push("## Arguments", fencedText(details.arguments.join(" ")));
-  }
-  for (const body of details.bodies) sections.push(`## ${body.label}`, fencedText(body.value));
-  return sections.join("\n\n");
-}
-
-function categoryLabel(category: AllowedOppiToolCommandCategory): string {
-  switch (category) {
-    case "read":
-      return "Read";
-    case "nonDestructiveWrite":
-      return "Non-destructive write";
-    case "destructiveWrite":
-      return "Destructive write";
-  }
-}
-
-function helpPathFor(parsed: ParsedCliArgs): string[] | undefined {
-  if (parsed.command === "help") return parsed.positional.filter((part) => part !== "help");
-  if (parsed.positional[0] === "help") return [parsed.command, ...parsed.positional.slice(1)];
-  if (isHelpFlag(parsed.flags)) return [parsed.command, ...parsed.positional];
-  return undefined;
-}
-
-function buildHelpEnvelope(path: readonly string[]): CliJsonEnvelope {
-  const topic = resolveHelpTopic(path);
-  if (!topic) throw new Error("Prepared help topic is unavailable");
-  return { ok: true, data: { help: helpTopicToJson(topic) } };
-}
-
-function buildStatusEnvelope(storage: LocalApiConnection): CliJsonEnvelope {
-  const config = storage.getConfig();
-  return {
-    ok: true,
-    data: {
-      status: {
-        paired: !!storage.getToken(),
-        dataDir: storage.getDataDir(),
-        server: {
-          host: config.host,
-          port: config.port,
-          transport: tlsSchemeForConfig(config),
-          tlsMode: config.tls?.mode ?? "disabled",
-        },
-      },
-    },
-  };
-}
-
-function parseCliJsonOutput(stdout: string, exitCode: number): OppiToolCommandResult {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout || "{}");
-  } catch {
-    return failureResult("Invalid JSON output from Oppi CLI command", exitCode || 1, stdout);
-  }
-  if (isCliEnvelope(parsed)) {
-    if (parsed.ok) return { ok: true, exitCode, stdout, data: parsed.data };
-    return { ok: false, exitCode: exitCode || 1, stdout, error: parsed.error };
-  }
-  return { ok: exitCode === 0, exitCode, stdout, data: parsed };
-}
-
-function successResult(envelope: CliJsonEnvelope): OppiToolCommandResult {
-  return {
-    ok: true,
-    exitCode: 0,
-    stdout: `${JSON.stringify(envelope, null, 2)}\n`,
-    data: envelope.ok ? envelope.data : undefined,
-  };
-}
-
-function failureResult(message: string, exitCode: number, stdout = ""): OppiToolCommandResult {
-  return { ok: false, exitCode, stdout, error: { message } };
-}
-
-function preparedSessionTargets(prepared: PreparedOppiCommand): string[] {
-  const guardedActions = new Set([
-    "get",
-    "send",
-    "abort",
-    "dialogs",
-    "respond",
-    "wait",
-    "read",
-    "events",
-    "trace",
-    "inspect",
-    "stop",
-    "delete",
-    "resume",
-    "fork",
-    "changes",
-    "diff",
-    "tool-output",
-    "trace-page",
-    "trace-outline",
-  ]);
-  if (
-    prepared.command !== "session" ||
-    prepared.action === undefined ||
-    !guardedActions.has(prepared.action)
-  ) {
-    return [];
-  }
-  const target = prepared.parsed.positional[1]?.trim();
-  if (!target) return [];
-  return [target];
-}
-
-function normalizedDescriptorAction(descriptor: CommandDescriptor): string {
-  return `oppi ${descriptor.command}${descriptor.action ? ` ${descriptor.action}` : ""}`;
-}
-
-function normalizedAction(prepared: PreparedOppiCommand): string {
-  return `oppi ${prepared.command}${prepared.action ? ` ${prepared.action}` : ""}`;
-}
-
-function formatCommandForDisplay(
-  args: readonly string[],
-  descriptor: CommandDescriptor | undefined,
-): string {
-  const displayed: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index] ?? "";
-    displayed.push(arg.length > 160 ? `[${arg.length} chars]` : arg);
-    const flag = arg.startsWith("--") ? arg.slice(2) : "";
-    if (!descriptor?.flags[flag]?.bodyLabel) continue;
-    const body = args[index + 1];
-    if (body === undefined) continue;
-    displayed.push(`[${body.length} chars]`);
-    index += 1;
-  }
-  return `oppi ${displayed.join(" ")}`;
-}
-
-function formatSessionSendResult(data: unknown): string | undefined {
-  const payload = asDisplayRecord(data);
-  const sessionId = displayString(payload?.session_id);
-  const command = displayString(payload?.command);
-  if (!/^[A-Za-z0-9_-]+$/.test(sessionId) || !["prompt", "steer", "follow_up"].includes(command)) {
-    return undefined;
-  }
-
-  const status = command === "follow_up" ? "Queued" : "Sent";
-  const handling =
-    command === "follow_up"
-      ? "After the current turn"
-      : command === "steer"
-        ? "Redirects the active turn"
-        : "Starts an idle session or redirects the active turn";
-  const sessionLink = `oppi://session/${encodeURIComponent(sessionId)}`;
-  return [
-    "## Delivery",
-    `- **Status:** ${status}`,
-    `- **Handling:** ${handling}`,
-    `- **Session:** [Open ${markdownInlineCode(sessionId)}](${sessionLink})`,
-  ].join("\n");
-}
-
-function formatSessionSearchResult(data: unknown): string {
-  const payload = asDisplayRecord(data);
-  const rows = Array.isArray(payload?.results) ? payload.results : [];
-  const total = typeof payload?.total_results === "number" ? payload.total_results : rows.length;
-  if (rows.length === 0) return `## Search results (${total})\n\nNo matching sessions.`;
-  const renderedRows = rows.map((value, index) => {
-    const row = asDisplayRecord(value) ?? {};
-    const title = singleLineDisplayString(row.title) || `Result ${index + 1}`;
-    const snippet = displayString(row.snippet);
-    const metadata: string[] = [];
-    const sessionId = displayString(row.session_id);
-    const workspaceId = displayString(row.workspace_id);
-    const rank = typeof row.rank === "number" ? row.rank : undefined;
-    if (sessionId) metadata.push(markdownInlineCode(sessionId));
-    if (workspaceId) metadata.push(`workspace ${markdownInlineCode(workspaceId)}`);
-    if (rank !== undefined) metadata.push(`rank ${rank.toFixed(2)}`);
-    return [
-      `### ${escapeMarkdownInline(title)}`,
-      snippet ? escapeMarkdownText(snippet) : undefined,
-      metadata.length > 0 ? metadata.join(" · ") : undefined,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-  });
-  return [`## Search results (${total})`, ...renderedRows].join("\n\n");
-}
-
-function formatHumanValue(value: unknown, depth = 0): string {
-  if (value === undefined || value === null) return "No result data.";
-  if (typeof value === "string") return escapeMarkdownText(value);
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    return String(value);
-  }
-  if (Array.isArray(value)) {
-    if (value.length === 0) return "No rows.";
-    return value
-      .map((item) => `- ${formatHumanValue(item, depth + 1).replaceAll("\n", "\n  ")}`)
-      .join("\n");
-  }
-  const record = asDisplayRecord(value);
-  if (!record) return escapeMarkdownText(String(value));
-  const entries = Object.entries(record);
-  if (entries.length === 0) return "No details returned.";
-  if (depth >= 3) return markdownInlineCode(JSON.stringify(record));
-  return entries
-    .map(([key, item]) => {
-      const label = escapeMarkdownInline(humanizeDisplayKey(key));
-      const rendered = formatHumanValue(item, depth + 1);
-      return `- **${label}:** ${rendered.replaceAll("\n", "\n  ")}`;
-    })
-    .join("\n");
-}
-
-function asDisplayRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function displayString(value: unknown): string {
-  return typeof value === "string" ? sanitizeDisplayText(value).trim() : "";
-}
-
-function singleLineDisplayString(value: unknown): string {
-  return displayString(value).replace(/\s+/g, " ");
-}
-
-function humanizeDisplayKey(key: string): string {
-  const words = singleLineDisplayString(key)
-    .replaceAll("_", " ")
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2");
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-function escapeMarkdownText(value: string): string {
-  return escapeMarkdownInline(value)
-    .split("\n")
-    .map((line) => (line.length > 0 ? `\u2060${line}` : line))
-    .join("\n");
-}
-
-function escapeMarkdownInline(value: string): string {
-  return sanitizeDisplayText(value).replace(/([\\`*_{}[\]<>|])/g, "\\$1");
-}
-
-function sanitizeDisplayText(value: string): string {
-  return Array.from(value.replaceAll("\r\n", "\n").replaceAll("\r", "\n"))
-    .filter((character) => {
+function bashAnsiCString(value: string): string {
+  return Array.from(value)
+    .map((character) => {
       const codePoint = character.codePointAt(0) ?? 0;
-      return character === "\n" || character === "\t" || codePoint >= 0x20;
+      switch (character) {
+        case "\\":
+          return "\\\\";
+        case "'":
+          return "\\'";
+        case "\n":
+          return "\\n";
+        case "\r":
+          return "\\r";
+        case "\t":
+          return "\\t";
+        case "\b":
+          return "\\b";
+        case "\f":
+          return "\\f";
+        case "\v":
+          return "\\v";
+        case "\0":
+          return "\\x00";
+        default:
+          if (codePoint < 0x20 || codePoint === 0x7f) {
+            return `\\x${codePoint.toString(16).padStart(2, "0")}`;
+          }
+          if (
+            (codePoint >= 0x80 && codePoint <= 0x9f) ||
+            codePoint === 0x061c ||
+            codePoint === 0x200e ||
+            codePoint === 0x200f ||
+            (codePoint >= 0x2028 && codePoint <= 0x202e) ||
+            (codePoint >= 0x2066 && codePoint <= 0x2069)
+          ) {
+            return Array.from(
+              Buffer.from(character, "utf8"),
+              (byte) => `\\x${byte.toString(16).padStart(2, "0")}`,
+            ).join("");
+          }
+          return character;
+      }
     })
     .join("");
 }
 
-function markdownInlineCode(value: string): string {
-  return value.includes("`") ? fencedText(value) : `\`${value}\``;
+function boundModelOutput(output: string): string {
+  if (output.length <= MAX_MODEL_OUTPUT_CHARS) return output;
+  const omitted = output.length - MAX_MODEL_OUTPUT_CHARS;
+  return `${output.slice(0, MAX_MODEL_OUTPUT_CHARS)}\n\n[Output truncated: omitted ${omitted} characters]`;
 }
 
-function fencedText(value: string): string {
-  const longestBacktickRun = longestCharacterRun(value, "`");
-  if (longestBacktickRun < 3) return `\`\`\`text\n${value}\n\`\`\``;
-  const longestTildeRun = longestCharacterRun(value, "~");
-  if (longestTildeRun < 3) return `~~~text\n${value}\n~~~`;
-  return value
-    .split("\n")
-    .map((line) => `    ${line}`)
-    .join("\n");
-}
-
-function longestCharacterRun(value: string, character: "`" | "~"): number {
-  const pattern = character === "`" ? /`+/g : /~+/g;
-  return Math.max(0, ...Array.from(value.matchAll(pattern), (match) => match[0].length));
-}
-
-function shellQuoteForDisplay(value: string): string {
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
-}
-
-function truncateToolOutput(output: string): string {
-  if (output.length <= MAX_TOOL_OUTPUT_CHARS) return output;
-  const omitted = output.length - MAX_TOOL_OUTPUT_CHARS;
-  return `${output.slice(0, MAX_TOOL_OUTPUT_CHARS)}\n\n[Output truncated: omitted ${omitted} characters]`;
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-function firstLineBounded(value: string, maxLength: number): string {
-  return singleLineDisplayString(value).slice(0, maxLength);
-}
-
-function decodeJsonStringBody(rawValue: string): string {
-  try {
-    const parsed = JSON.parse(rawValue) as unknown;
-    return typeof parsed === "string" ? parsed : rawValue;
-  } catch {
-    return rawValue;
+function sessionTargets(prepared: PreparedOppiCommand): string[] {
+  if (prepared.path[0] !== "session" || !prepared.action) return [];
+  if (
+    ![
+      "get",
+      "send",
+      "abort",
+      "dialogs",
+      "respond",
+      "wait",
+      "read",
+      "events",
+      "trace",
+      "inspect",
+      "stop",
+      "delete",
+      "resume",
+      "fork",
+      "changes",
+      "diff",
+      "tool-output",
+      "trace-page",
+      "trace-outline",
+    ].includes(prepared.action)
+  ) {
+    return [];
   }
+  const target = parseCliArgs([...prepared.args]).positional[1]?.trim();
+  return target ? [target] : [];
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function auditPrepared(
+  options: Pick<Parameters<typeof applyOppiToolPolicy>[0], "prepared" | "policy" | "identity">,
+  outcome: string,
+  result: string,
+  startedAt: number,
+): void {
+  audit(
+    options.identity,
+    options.prepared.access,
+    options.policy,
+    options.prepared.path.join(" "),
+    outcome,
+    result,
+    startedAt,
+  );
 }
 
-function boundedInputName(value: string): string {
-  return firstLineBounded(value, 80);
+function audit(
+  identity: OppiToolIdentity,
+  access: CliAgentAccess,
+  policy: OppiApprovalPolicy,
+  action: string,
+  outcome: string,
+  result: string,
+  startedAt: number,
+): void {
+  log.info("oppi_tool.audit", {
+    identity,
+    access,
+    policy,
+    action,
+    outcome,
+    result,
+    duration: Math.min(MAX_AUDIT_DURATION_MS, Math.max(0, Date.now() - startedAt)),
+  });
 }
 
-function boundedHelpPath(path: readonly string[]): string {
-  return path.map(boundedInputName).join(" ").slice(0, 160) || "help";
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function isCliEnvelope(value: unknown): value is CliJsonEnvelope {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const envelope = value as { ok?: unknown };
-  return envelope.ok === true || envelope.ok === false;
+function denied(reason: string): PrepareOppiCommandResult {
+  return Object.freeze({ ok: false, reason: redactCredentialString(reason) });
 }

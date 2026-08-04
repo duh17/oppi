@@ -1,5 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { stripAnsiEscapes, terminalLineToTextSpans, terminalLineVisibleText } from "../src/ansi.js";
+import {
+  green,
+  stripAllAnsiEscapes,
+  stripAnsiEscapes,
+  terminalLineToTextSpans,
+  terminalLineVisibleText,
+  withAnsiCapture,
+} from "../src/ansi.js";
+
+describe("ANSI capture", () => {
+  it("enables ANSI styling inside non-TTY capture scopes", () => {
+    const previous = process.env.NO_COLOR;
+    delete process.env.NO_COLOR;
+    try {
+      const styled = withAnsiCapture(() => green("ready"));
+      expect(styled).toBe("\x1b[32mready\x1b[0m");
+    } finally {
+      if (previous === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = previous;
+    }
+  });
+
+  it("honors NO_COLOR inside non-TTY capture scopes", () => {
+    const previous = process.env.NO_COLOR;
+    process.env.NO_COLOR = "1";
+    try {
+      expect(withAnsiCapture(() => green("ready"))).toBe("ready");
+    } finally {
+      if (previous === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = previous;
+    }
+  });
+
+  it("strips all ANSI styling from dynamic terminal values", () => {
+    expect(stripAllAnsiEscapes("\x1b[31mred\x1b[0m text")).toBe("red text");
+  });
+});
 
 describe("stripAnsiEscapes", () => {
   it("returns plain text unchanged", () => {

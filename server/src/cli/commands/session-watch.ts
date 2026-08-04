@@ -17,6 +17,10 @@ type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) =>
 
 type SessionWatchCondition = "idle" | "attention" | "either" | "any-change";
 type SessionWatchReason = "idle" | "attention" | "change";
+type WatchOutputDeltaKind = "delta" | "latest";
+
+const MAX_WATCH_OUTPUT_DELTA_CHARS = 50_000;
+const WATCH_OUTPUT_OMISSION_MARKER = "[… earlier output omitted …]\n\n";
 
 interface WatchSessionState {
   sinceSeq: number;
@@ -25,6 +29,9 @@ interface WatchSessionState {
   pendingDialogs?: number;
   toolsThisTurn: number;
   last?: string;
+  lastOutputKey?: string;
+  assistantEventObserved: boolean;
+  outputDelta: string;
   seenBaseline: boolean;
   met: boolean;
 }
@@ -49,6 +56,8 @@ export type WatchOutcome =
       reason: SessionWatchReason;
       status?: string;
       pendingDialogs?: number;
+      outputDelta?: string;
+      outputDeltaKind?: WatchOutputDeltaKind;
     }
   | {
       kind: "all";
@@ -122,11 +131,14 @@ async function observeSession(
       else if (type === "tool_start") state.toolsThisTurn += 1;
       else if (type === "message_end" && event.role === "assistant") {
         const content = event.content;
-        if (typeof content === "string" && content.trim()) state.last = content.trim();
+        if (typeof content === "string") {
+          state.assistantEventObserved = true;
+          recordAssistantOutput(state, content, false);
+        }
       }
     }
-    if (!state.last && typeof events.session?.lastMessage === "string") {
-      state.last = events.session.lastMessage;
+    if (!state.assistantEventObserved && typeof events.session?.lastMessage === "string") {
+      recordAssistantOutput(state, events.session.lastMessage);
     }
   } catch (err) {
     if (apiStatus(err) === 404) {
@@ -137,8 +149,8 @@ async function observeSession(
       if (typeof snapshot.session?.messageCount === "number") {
         state.messageCount = snapshot.session.messageCount;
       }
-      if (!state.last && typeof snapshot.session?.lastMessage === "string") {
-        state.last = snapshot.session.lastMessage;
+      if (typeof snapshot.session?.lastMessage === "string") {
+        recordAssistantOutput(state, snapshot.session.lastMessage);
       }
     } else {
       throw err;
@@ -161,6 +173,43 @@ async function observeSession(
       state.toolsThisTurn !== prevTools ||
       state.last !== prevLast,
   };
+}
+
+function recordAssistantOutput(state: WatchSessionState, content: string, dedupe = true): void {
+  const normalized = content.trim();
+  if (!normalized) return;
+  const outputKey = watchOutputKey(normalized);
+  if (dedupe && outputKey === state.lastOutputKey) return;
+
+  state.lastOutputKey = outputKey;
+  state.last = boundWatchOutput(normalized);
+  const next = state.outputDelta ? `${state.outputDelta}\n\n${normalized}` : normalized;
+  state.outputDelta = boundWatchOutput(next);
+}
+
+function boundWatchOutput(text: string): string {
+  if (text.length <= MAX_WATCH_OUTPUT_DELTA_CHARS) return text;
+  return `${WATCH_OUTPUT_OMISSION_MARKER}${text.slice(
+    -(MAX_WATCH_OUTPUT_DELTA_CHARS - WATCH_OUTPUT_OMISSION_MARKER.length),
+  )}`;
+}
+
+function watchOutputKey(text: string): string {
+  // Keep snapshot de-duplication bounded even when an assistant message is very large.
+  let hash = 2_166_136_261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return `${text.length}:${hash >>> 0}`;
+}
+
+function resolvedOutputDelta(
+  state: WatchSessionState,
+): { text: string; kind: WatchOutputDeltaKind } | undefined {
+  if (state.outputDelta) return { text: state.outputDelta, kind: "delta" };
+  if (state.last) return { text: state.last, kind: "latest" };
+  return undefined;
 }
 
 function evaluateWatchCondition(
@@ -215,6 +264,8 @@ export async function runSessionWatch(
     states.set(id, {
       sinceSeq: 0,
       toolsThisTurn: 0,
+      assistantEventObserved: false,
+      outputDelta: "",
       seenBaseline: false,
       met: false,
     });
@@ -228,6 +279,7 @@ export async function runSessionWatch(
       const prevStatus = state.status;
       const { activityChanged, stateChanged } = await observeSession(id, state, needDialogs, call);
       const isBaseline = !state.seenBaseline;
+      if (isBaseline) state.outputDelta = "";
       state.seenBaseline = true;
       const reason = evaluateWatchCondition(options.condition, state, isBaseline, activityChanged);
       state.met =
@@ -236,12 +288,16 @@ export async function runSessionWatch(
           : reason !== undefined;
       if (reason && !options.requireAll) {
         emit(buildWatchTransition(id, state, "resolved", prevStatus, reason));
+        const outputDelta = resolvedOutputDelta(state);
         return {
           kind: "session",
           sessionId: id,
           reason,
           ...(state.status !== undefined ? { status: state.status } : {}),
           ...(state.pendingDialogs !== undefined ? { pendingDialogs: state.pendingDialogs } : {}),
+          ...(outputDelta
+            ? { outputDelta: outputDelta.text, outputDeltaKind: outputDelta.kind }
+            : {}),
         };
       }
       if (

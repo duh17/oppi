@@ -184,6 +184,62 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe("SdkBackend control sessions", () => {
+  it("reloads the saved policy for a control runtime without enablement gating", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-policy-reload-"));
+    const session = makeSession({
+      workspaceId: undefined,
+      control: { domain: "agents", intent: "revise" },
+    });
+    let snapshot: OppiExtensionSettingsSnapshot = {
+      enabled: false,
+      approvalPolicy: "readOnly",
+      revision: 1,
+    };
+    const getOppiExtensionSettings = vi.fn(() => snapshot);
+    let backend: SdkBackend | undefined;
+
+    try {
+      backend = await SdkBackend.create({
+        session,
+        dataDir,
+        agentDefinition: DEFAULT_AGENT_DEFINITION,
+        getOppiExtensionSettings,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+      const firstTool = backend.session.getToolDefinition("oppi");
+      expect(firstTool).toBeDefined();
+      await expect(
+        firstTool!.execute(
+          "control-read-only",
+          { args: ["workspace", "delete", "ws-1"] },
+          undefined,
+          undefined,
+          { hasUI: true, ui: { confirm: vi.fn(async () => true) } } as never,
+        ),
+      ).rejects.toThrow(OPPI_EXTENSION_READ_ONLY_ERROR);
+
+      snapshot = { enabled: false, approvalPolicy: "confirmAllChanges", revision: 2 };
+      await backend.reloadResources();
+      const confirm = vi.fn(async () => false);
+      const secondTool = backend.session.getToolDefinition("oppi");
+      await expect(
+        secondTool!.execute(
+          "control-confirm-all",
+          { args: ["workspace", "delete", "ws-1"] },
+          undefined,
+          undefined,
+          { hasUI: true, ui: { confirm } } as never,
+        ),
+      ).resolves.toMatchObject({ details: { cancelled: true, reason: "declined" } });
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(getOppiExtensionSettings).toHaveBeenCalled();
+    } finally {
+      await backend?.dispose();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("reopens a Default Agent control session through its private cwd", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-reopen-"));
     const session = makeSession({
@@ -192,9 +248,11 @@ describe("SdkBackend control sessions", () => {
     });
     let first: SdkBackend | undefined;
     let reopened: SdkBackend | undefined;
-    const getOppiExtensionSettings = vi.fn(() => {
-      throw new Error("ordinary persisted settings must not be read by control sessions");
-    });
+    const getOppiExtensionSettings = vi.fn(() => ({
+      enabled: false,
+      approvalPolicy: "readOnly" as const,
+      revision: 1,
+    }));
 
     try {
       const controlCwd = join(dataDir, "control-sessions", "cwd");
@@ -233,7 +291,7 @@ describe("SdkBackend control sessions", () => {
       });
 
       expect(reopened.session.sessionManager.getCwd()).toBe(controlCwd);
-      expect(getOppiExtensionSettings).not.toHaveBeenCalled();
+      expect(getOppiExtensionSettings).toHaveBeenCalledTimes(2);
     } finally {
       await reopened?.dispose();
       await first?.dispose();
@@ -1189,7 +1247,7 @@ describe("SdkBackend saved Agent definitions", () => {
       ).toBe(true);
       expect(extensions.some((ext) => ext.tools.has("extra_tool"))).toBe(false);
       expect(backend.session.getActiveToolNames()).toEqual(["oppi", "ask"]);
-      expect(getOppiExtensionSettings).not.toHaveBeenCalled();
+      expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
 
       const confirm = vi.fn(async () => false);
       const oppi = backend.session.getToolDefinition("oppi");
@@ -1201,8 +1259,8 @@ describe("SdkBackend saved Agent definitions", () => {
           undefined,
           { hasUI: true, ui: { confirm }, cwd } as never,
         ),
-      ).resolves.toMatchObject({ details: { cancelled: true, reason: "declined" } });
-      expect(confirm).toHaveBeenCalledOnce();
+      ).rejects.toThrow(OPPI_EXTENSION_READ_ONLY_ERROR);
+      expect(confirm).not.toHaveBeenCalled();
     } finally {
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });

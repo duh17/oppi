@@ -189,6 +189,12 @@ extension ToolPresentationBuilder {
             .text(text: textOutput + "\n\n[render note: \($0)]", language: nil)
         }
 
+        // Terminal output is already semantically formatted by the producer. Do not
+        // reinterpret command/result text as JSON, Markdown, or a unified diff.
+        if format == "terminal" {
+            return (.text(text: textOutput, language: nil), ANSIParser.strip(textOutput))
+        }
+
         if format == "json" || (format != "markdown" && textOutput.utf8.count <= extensionStructuredParseBudgetBytes) {
             if textOutput.utf8.count > extensionStructuredParseBudgetBytes {
                 let first = textOutput.first(where: { !$0.isWhitespace && !$0.isNewline })

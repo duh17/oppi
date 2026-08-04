@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 import * as c from "../../ansi.js";
 import { localApiRequest, type LocalApiConnection } from "../local-api-client.js";
-import { codeValue, printDetails, writeJsonEnvelope } from "../output.js";
+import { codeValue, printDetails, setCapturedCliExitCode, writeJsonEnvelope } from "../output.js";
 import { apiStatus } from "../resources.js";
 import { assertNotSelfTargetingSession } from "../../session-caller-identity.js";
 
@@ -62,7 +62,7 @@ export async function cmdWait(
     const status = apiStatus(error);
     if (jsonOutput) {
       writeJsonEnvelope({ ok: false, error: { message, ...(status ? { status } : {}) } });
-      process.exitCode = 1;
+      setCapturedCliExitCode(1);
       return;
     }
     console.log(c.red(`  Error: ${message}`));

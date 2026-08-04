@@ -1149,7 +1149,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .thinking(let text, let stream):
             return stream?.snapshot.text ?? text
         case .terminal(let text, _, let stream):
-            return stream?.snapshot.output ?? text
+            return ANSIParser.strip(stream?.snapshot.output ?? text)
         case .liveSource(let snapshot, _):
             return copyText(for: semanticContent(for: snapshot))
         case .latex(let text, _), .orgMode(let text, _),

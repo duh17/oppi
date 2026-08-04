@@ -1611,6 +1611,60 @@ struct ToolPresentationBuilderTests {
         #expect(language == nil)
     }
 
+    @Test("extension terminal output uses the CLI human formatter and keeps ANSI for native interpretation")
+    func extensionTerminalExpandedText() {
+        let formatted = "\u{001B}[1mAgent\u{001B}[0m\n  Name  Reviewer"
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-terminal-expanded", tool: "oppi",
+            argsSummary: "agent get agent-1",
+            outputPreview: "{\"ok\":true}",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object([
+                    "expandedText": .string(formatted),
+                    "presentationFormat": .string("terminal"),
+                    "data": .object(["agent": .object(["name": .string("Reviewer")])]),
+                ]),
+                expanded: ["t-terminal-expanded"],
+                fullOutput: "{\"ok\":true}"
+            )
+        )
+
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected terminal-formatted .text content")
+            return
+        }
+        #expect(text == formatted)
+        #expect(language == nil)
+        #expect(config.copyOutputText == ANSIParser.strip(formatted))
+    }
+
+    @Test("terminal presentation stays plain text even when output resembles markdown")
+    func extensionTerminalFormatSkipsContentHeuristics() {
+        let formatted = "\u{001B}[1m$\u{001B}[0m oppi session get sess-1\n\n## Result\n- **Status:** ready\n--- a/file\n+++ b/file"
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-terminal-heuristics", tool: "oppi",
+            argsSummary: "session get sess-1",
+            outputPreview: "{\"ok\":true}",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object([
+                    "expandedText": .string(formatted),
+                    "presentationFormat": .string("terminal"),
+                ]),
+                expanded: ["t-terminal-heuristics"],
+                fullOutput: "{\"ok\":true}"
+            )
+        )
+
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected terminal-formatted .text content")
+            return
+        }
+        #expect(text == formatted)
+        #expect(language == nil)
+    }
+
     @Test("extension expanded falls back to raw output when no expandedText")
     func extensionExpandedTextFallback() {
         let config = ToolPresentationBuilder.build(

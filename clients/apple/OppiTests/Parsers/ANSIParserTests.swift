@@ -38,6 +38,30 @@ struct ANSIParserTests {
         #expect(ANSIParser.strip(input) == "helloworld")
     }
 
+    @Test("strips OSC and C1 control sequences from display text")
+    func stripStringControls() {
+        let osc = "before\u{1B}]8;;https://example.com\u{07}link\u{1B}]8;;\u{07}after"
+        let c1 = "left\u{009B}31mred\u{009D}8;;https://example.com\u{009C}right"
+        let st = "a\u{1B}]0;window title\u{1B}\\b"
+        let escStringControls = "a\u{1B}Pdcs\u{1B}\\b\u{1B}Xsos\u{1B}\\c\u{1B}^pm\u{1B}\\d\u{1B}_apc\u{1B}\\e"
+        let c1StringControls = "a\u{0090}dcs\u{009C}b\u{0098}sos\u{009C}c\u{009E}pm\u{009C}d\u{009F}apc\u{009C}e"
+        let escDCSWithBEL = "a\u{1B}Pdcs\u{07}leaked\u{1B}\\b"
+        let c1DCSWithBEL = "a\u{0090}dcs\u{07}leaked\u{009C}b"
+
+        #expect(ANSIParser.strip(osc) == "beforelinkafter")
+        #expect(ANSIParser.strip(c1) == "leftredright")
+        #expect(ANSIParser.strip(st) == "ab")
+        #expect(ANSIParser.strip(escStringControls) == "abcde")
+        #expect(ANSIParser.strip(c1StringControls) == "abcde")
+        #expect(ANSIParser.strip(escDCSWithBEL) == "ab")
+        #expect(ANSIParser.strip(c1DCSWithBEL) == "ab")
+        #expect(ANSIParser.strip("😀 Привет") == "😀 Привет")
+        #expect(ANSIParser.stripPrefix("😀 Привет", maxInputBytes: 100) == "😀 Привет")
+        #expect(ANSIParser.attributedString(from: osc).string == "beforelinkafter")
+        #expect(ANSIParser.attributedString(from: c1).string == "leftredright")
+        #expect(ANSIParser.attributedString(from: c1StringControls).string == "abcde")
+    }
+
     // MARK: - Attributed String
 
     @Test("attributedString preserves plain text")
@@ -131,11 +155,22 @@ struct ANSIParserTests {
         #expect(stripped == "Orange")
     }
 
+    @Test("ignores oversized SGR numbers without crashing")
+    func oversizedSGRNumber() {
+        let input = "\u{1B}[38;5;999999999999999999999mRed\u{1B}[0m plain"
+        let result = ANSIParser.attributedString(from: input)
+        #expect(result.string == "Red plain")
+    }
+
     @Test("handles dim text")
     func dimText() {
         let input = "\u{1B}[2m02-07\u{1B}[0m"
         let stripped = ANSIParser.strip(input)
         #expect(stripped == "02-07")
+
+        let attributed = ANSIParser.attributedString(from: input)
+        let dimColor = attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
+        #expect(dimColor == UIColor(Color.themeFgDim))
     }
 
     @Test("handles consecutive codes without text between")
@@ -338,6 +373,35 @@ struct ANSIParserTests {
         let full = "text\u{1B}[32mcolored"
         let d2 = stripper.delta(full)
         #expect(d2 == "colored")
+    }
+
+    @Test("incremental stripper handles string controls across chunk boundaries")
+    func incrementalStringControlBoundary() {
+        let chunks = [
+            "start\u{1B}Pdcs payload",
+            "start\u{1B}Pdcs payload\u{1B}\\middle\u{0090}c1 payload",
+            "start\u{1B}Pdcs payload\u{1B}\\middle\u{0090}c1 payload\u{009C}end",
+        ]
+        var stripper = ANSIParser.IncrementalStripper()
+        var accumulated = ""
+        for chunk in chunks {
+            if let delta = stripper.delta(chunk) {
+                accumulated += delta
+            }
+        }
+
+        #expect(accumulated == "startmiddleend")
+        #expect(accumulated == ANSIParser.strip(chunks.last!))
+
+        let unicodeChunks = ["😀", "😀 Пр", "😀 Привет"]
+        var unicodeStripper = ANSIParser.IncrementalStripper()
+        var unicodeAccumulated = ""
+        for chunk in unicodeChunks {
+            if let delta = unicodeStripper.delta(chunk) {
+                unicodeAccumulated += delta
+            }
+        }
+        #expect(unicodeAccumulated == "😀 Привет")
     }
 
     @Test("incremental stripper tracks UTF-16 length")

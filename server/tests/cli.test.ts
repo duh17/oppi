@@ -700,6 +700,90 @@ describe("oppi config", () => {
     expect(stdout).toContain("port");
   });
 
+  it("config show redacts authentication, device, and runtime secrets", () => {
+    const secrets = {
+      owner: "sk_owner-config-display-secret",
+      pairing: "pt_pairing-config-display-secret",
+      authDevice: "dt_auth-config-display-secret",
+      irohDevice: "dt_iroh-config-display-secret",
+      irohClient: "node-config-display-secret",
+      push: "apns-config-display-secret",
+      liveActivity: "live-config-display-secret",
+      runtime: "runtime-config-display-secret",
+    };
+    const storage = new Storage(dataDir);
+    storage.updateConfig({
+      token: secrets.owner,
+      pairingToken: secrets.pairing,
+      authDeviceTokens: [secrets.authDevice],
+      irohDeviceTokenBindings: [
+        {
+          token: secrets.irohDevice,
+          clientNodeId: secrets.irohClient,
+          allowedTransports: ["http", "iroh"],
+          createdAt: 1,
+        },
+      ],
+      pushDeviceTokens: [secrets.push],
+      liveActivityToken: secrets.liveActivity,
+      runtimeEnv: { OPENAI_API_KEY: secrets.runtime },
+    });
+
+    const { stdout, exitCode } = run(["config", "show"]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('"token": "[REDACTED]"');
+    expect(stdout).toContain('"pairingToken": "[REDACTED]"');
+    expect(stdout).toContain('"authDeviceTokens": "[REDACTED 1 token]"');
+    expect(stdout).toContain('"irohDeviceTokenBindings": {');
+    expect(stdout).toContain('"count": 1');
+    expect(stdout).toContain('"transports": [');
+    expect(stdout).toContain('"pushDeviceTokens": "[REDACTED 1 token]"');
+    expect(stdout).toContain('"liveActivityToken": "[REDACTED]"');
+    expect(stdout).toContain('"OPENAI_API_KEY": "[REDACTED]"');
+    for (const secret of Object.values(secrets)) expect(stdout).not.toContain(secret);
+  });
+
+  it("config get redacts secret scalars, collections, bindings, and runtime env", () => {
+    const keys = [
+      "token",
+      "pairingToken",
+      "authDeviceTokens",
+      "irohDeviceTokenBindings",
+      "pushDeviceTokens",
+      "liveActivityToken",
+      "runtimeEnv.OPENAI_API_KEY",
+      "runtimeEnv",
+    ];
+
+    for (const key of keys) {
+      const { stdout, exitCode } = run(["config", "get", key]);
+      expect(exitCode, key).toBe(0);
+      if (key === "irohDeviceTokenBindings") {
+        expect(stdout).toContain('"count": 1');
+        expect(stdout).toContain('"transports": [');
+      } else {
+        expect(stdout, key).toContain("[REDACTED");
+      }
+      expect(stdout, key).not.toContain("config-display-secret");
+    }
+  });
+
+  it("config set output and errors never echo runtime secrets", () => {
+    const secret = "runtime-set-output-secret";
+    const success = run(["config", "set", "runtimeEnv.OPENAI_API_KEY", secret]);
+    const invalid = run(["config", "set", "runtimeEnv", `{not-json:${secret}}`]);
+    const listing = run(["config", "set"]);
+
+    expect(success.exitCode).toBe(0);
+    expect(success.stdout).toContain("[REDACTED]");
+    expect(success.stdout).not.toContain(secret);
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.stdout).not.toContain(secret);
+    expect(listing.exitCode).toBe(1);
+    expect(listing.stdout).not.toContain(secret);
+  });
+
   it("config set/get roundtrips a value", () => {
     run(["config", "set", "port", "9999"]);
     const { stdout } = run(["config", "get", "port"]);
@@ -2220,7 +2304,7 @@ describe("local orchestration prerequisites", () => {
       expect(JSON.parse(stdout)).toEqual({
         ok: false,
         error: {
-          message: "No owner bearer token configured. Run 'oppi init' or 'oppi pair' first.",
+          message: "No owner Bearer [REDACTED] configured. Run 'oppi init' or 'oppi pair' first.",
         },
       });
     } finally {
@@ -2276,31 +2360,31 @@ describe("oppi token", () => {
   it("token rotate generates a new token after pairing", () => {
     // Pair first to create owner token
     run(["pair"]);
-    const { stdout: before } = run(["config", "get", "token"]);
+    const before = new Storage(dataDir).getToken();
     const { stdout, exitCode } = run(["token", "rotate"]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("rotated");
-    const { stdout: after } = run(["config", "get", "token"]);
-    expect(after.trim()).not.toBe(before.trim());
+    const after = new Storage(dataDir).getToken();
+    expect(after).not.toBe(before);
   });
 
   it("token rotate remains valid across consecutive rotations", () => {
     run(["pair"]);
 
-    const { stdout: firstBefore } = run(["config", "get", "token"]);
+    const firstBefore = new Storage(dataDir).getToken();
     const rotate1 = run(["token", "rotate"]);
-    const { stdout: firstAfter } = run(["config", "get", "token"]);
+    const firstAfter = new Storage(dataDir).getToken();
 
     expect(rotate1.exitCode).toBe(0);
-    expect(firstAfter.trim()).not.toBe(firstBefore.trim());
-    expect(firstAfter.trim()).toMatch(/^sk_/);
+    expect(firstAfter).not.toBe(firstBefore);
+    expect(firstAfter).toMatch(/^sk_/);
 
     const rotate2 = run(["token", "rotate"]);
-    const { stdout: secondAfter } = run(["config", "get", "token"]);
+    const secondAfter = new Storage(dataDir).getToken();
 
     expect(rotate2.exitCode).toBe(0);
-    expect(secondAfter.trim()).not.toBe(firstAfter.trim());
-    expect(secondAfter.trim()).toMatch(/^sk_/);
+    expect(secondAfter).not.toBe(firstAfter);
+    expect(secondAfter).toMatch(/^sk_/);
   });
 });
 

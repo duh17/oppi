@@ -1,15 +1,31 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import type { ExtensionUITextSpan } from "./types.js";
 
 /**
  * Minimal terminal colors. Replaces chalk — zero deps.
- * Each function wraps text in ANSI escape codes with reset when stdout is a TTY.
+ *
+ * Normal CLI output follows stdout's TTY/NO_COLOR policy. Captured human output
+ * for the mobile terminal renderer opts into ANSI explicitly because it is not
+ * written to a TTY, while NO_COLOR still wins in every context.
  */
-const ANSI_ENABLED = Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
+const ansiCapture = new AsyncLocalStorage<boolean>();
+
+export function withAnsiCapture<T>(fn: () => T): T {
+  return ansiCapture.run(true, fn);
+}
+
+function ansiEnabled(): boolean {
+  return (
+    process.env.NO_COLOR === undefined &&
+    (Boolean(process.stdout.isTTY) || ansiCapture.getStore() === true)
+  );
+}
 
 const esc =
   (code: string): ((s: string) => string) =>
   (s: string): string =>
-    ANSI_ENABLED ? `\x1b[${code}m${s}\x1b[0m` : s;
+    ansiEnabled() ? `\x1b[${code}m${s}\x1b[0m` : s;
 
 export const bold = esc("1");
 export const dim = esc("2");
@@ -55,6 +71,12 @@ export function stripAnsiEscapes(text: string): string {
   if (text.indexOf("\x1b") === -1 && text.indexOf("\x9b") === -1) return text;
 
   return text.replace(NON_SGR_ESCAPE_RE, "");
+}
+
+/** Strip every ANSI sequence, including SGR styling, from untrusted values. */
+export function stripAllAnsiEscapes(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return stripAnsiEscapes(text).replace(/\x1b\[[\d;]*m/g, "");
 }
 
 interface TerminalSpanStyle {

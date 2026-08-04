@@ -10,7 +10,7 @@ import {
   modelResolutionErrorEnvelope,
   printModelResolutionError,
 } from "./model-resolution.js";
-import { setCapturedCliExitCode, writeJsonEnvelope } from "./output.js";
+import { captureHumanCliOutput, setCapturedCliExitCode, writeJsonEnvelope } from "./output.js";
 import { apiStatus } from "./resources.js";
 
 export function createLocalApiCommandContext(
@@ -24,8 +24,10 @@ export function createLocalApiCommandContext(
     call: <T>(path: string, options?: LocalApiRequestOptions) =>
       localApiRequest<T>(storage, path, options),
     output: (data, human) => {
-      if (jsonOutput) writeJsonEnvelope({ ok: true, data });
-      else human();
+      if (jsonOutput) {
+        writeJsonEnvelope({ ok: true, data });
+        captureHumanCliOutput(human);
+      } else human();
     },
   };
 }

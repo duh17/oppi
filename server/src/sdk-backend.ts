@@ -682,10 +682,16 @@ export class SdkBackend {
     const controlToolRuntime = isolatedControlRuntime && !sandboxMode;
     const ordinaryManagedRuntime =
       !sandboxMode && !isolatedControlRuntime && (session.runtime ?? "oppi") !== "pi-tui";
+    const settingsManagedRuntime = ordinaryManagedRuntime || controlToolRuntime;
     const getOppiExtensionSettings =
       config.getOppiExtensionSettings ?? (() => DEFAULT_OPPI_EXTENSION_SETTINGS);
     const oppiSettingsHolder: OppiExtensionSettingsHolder = {
       snapshot: DEFAULT_OPPI_EXTENSION_SETTINGS,
+    };
+    const controlPolicySnapshot = {
+      get approvalPolicy() {
+        return oppiSettingsHolder.snapshot.approvalPolicy;
+      },
     };
     const ordinaryOppiExtension: InlineExtension | undefined = ordinaryManagedRuntime
       ? {
@@ -710,7 +716,7 @@ export class SdkBackend {
       sessionManager,
       sessionStartEvent,
     }) => {
-      if (ordinaryManagedRuntime) {
+      if (settingsManagedRuntime) {
         oppiSettingsHolder.snapshot = freezeOppiExtensionSettingsSnapshot(
           getOppiExtensionSettings(),
         );
@@ -784,6 +790,7 @@ export class SdkBackend {
                 createDefaultAgentExtensionFactory({
                   dataDir: config.dataDir,
                   callerSessionId: session.id,
+                  policySnapshot: controlPolicySnapshot,
                 }),
               ]
             : ordinaryOppiExtension
@@ -1101,7 +1108,7 @@ export class SdkBackend {
         : isDeclaredControlSession(session)
           ? { existsCwd: initialHostCwd }
           : undefined,
-      ordinaryManagedRuntime
+      settingsManagedRuntime
         ? {
             holder: oppiSettingsHolder,
             get: getOppiExtensionSettings,

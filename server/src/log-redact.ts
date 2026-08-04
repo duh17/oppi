@@ -13,6 +13,17 @@ const DEPTH_LIMIT = "[DEPTH_LIMIT]";
 const SENSITIVE_KEY =
   /(?:^|[_-])(authorization|auth|cookie|token|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|refresh[_-]?token|client[_-]?secret)(?:$|[_-])/i;
 
+const SENSITIVE_EXACT_NORMALIZED_KEYS = new Set([
+  "authdevicetokens",
+  "clientnodeid",
+  "deviceid",
+  "endpointid",
+  "irohdevicetokenbindings",
+  "irohnodeid",
+  "nodeid",
+  "pushdevicetokens",
+]);
+
 const SENSITIVE_NORMALIZED_KEY_TERMS = [
   "authorization",
   "cookie",
@@ -38,7 +49,11 @@ export function isSensitiveLogKey(key: string): boolean {
     return false;
   }
 
-  if (normalized === "auth" || normalized === "token") {
+  if (
+    normalized === "auth" ||
+    normalized === "token" ||
+    SENSITIVE_EXACT_NORMALIZED_KEYS.has(normalized)
+  ) {
     return true;
   }
 
@@ -53,6 +68,10 @@ const SECRET_VALUE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   {
     pattern: /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
     replacement: "Bearer [REDACTED]",
+  },
+  {
+    pattern: /\b(?:sk|pt|dt)_[A-Za-z0-9_-]{8,}\b/g,
+    replacement: REDACTED,
   },
   {
     pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,

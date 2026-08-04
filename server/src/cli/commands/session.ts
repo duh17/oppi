@@ -12,7 +12,9 @@ import {
   nonEmptyDetails,
   printDetails,
   printList,
+  printTextBlock,
   setCapturedCliExitCode,
+  writeHumanLine,
   writeJsonEnvelope,
 } from "../output.js";
 import { inferWorkspaceIdFromCwdForCli, resolveWorkspaceIdForCli } from "../resources.js";
@@ -51,6 +53,7 @@ import {
 import { parseWatchCondition, runSessionWatch, watchSessions } from "./session-watch.js";
 
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
+type SessionCliOutput = (data: Record<string, unknown>, human: () => void) => void;
 
 export interface SessionCliCallerContext {
   /** Immutable for one in-process command; shell callers continue using the environment fallback. */
@@ -124,7 +127,7 @@ export async function cmdSession(
     }
 
     if (mode === "create") {
-      await createSession(storage, flags, jsonOutput, callerSessionId);
+      await createSession(storage, flags, jsonOutput, output, callerSessionId);
       return;
     }
 
@@ -227,17 +230,32 @@ export async function cmdSession(
       const status = outcome.kind === "session" ? (outcome.status ?? null) : null;
       const reason = outcome.kind === "session" ? outcome.reason : condition;
       const pendingDialogs = outcome.kind === "session" ? outcome.pendingDialogs : undefined;
+      const outputDelta = outcome.kind === "session" ? outcome.outputDelta : undefined;
+      const outputDeltaKind = outcome.kind === "session" ? outcome.outputDeltaKind : undefined;
       output(
         {
           session_id: id,
           reason,
           status,
           ...(pendingDialogs !== undefined ? { pending_dialogs: pendingDialogs } : {}),
+          ...(outputDelta !== undefined ? { output_delta: outputDelta } : {}),
+          ...(outputDeltaKind !== undefined ? { output_delta_kind: outputDeltaKind } : {}),
         },
-        () =>
-          printSessionNotice(
-            `${id} ${reason} · status=${status ?? "unknown"}${pendingDialogs !== undefined ? ` · dialogs=${pendingDialogs}` : ""}`,
-          ),
+        () => {
+          const waitDetails: [string, unknown][] = [
+            ["Session", codeValue(id)],
+            ["Reason", reason],
+            ["Status", status ?? "unknown"],
+          ];
+          if (pendingDialogs !== undefined) waitDetails.push(["Dialogs", pendingDialogs]);
+          printDetails("✓ Wait condition met", waitDetails);
+          if (outputDelta) {
+            printTextBlock(
+              outputDeltaKind === "delta" ? "Output delta" : "Latest output",
+              outputDelta,
+            );
+          }
+        },
       );
       return;
     }
@@ -358,7 +376,7 @@ export async function cmdSession(
       const id = requirePositional(positional, "session id is required");
       const result = await inspectSession(id, positional.slice(1), flags, call);
       output(inspectJsonResult(result), () => {
-        console.log(result.text || "(empty)");
+        writeHumanLine(result.text || "(empty)");
       });
       return;
     }
@@ -509,6 +527,7 @@ async function createSession(
   storage: LocalApiConnection,
   flags: Record<string, string>,
   jsonOutput: boolean,
+  output: SessionCliOutput,
   parentSessionId?: string,
 ): Promise<void> {
   const workspaceRef = flags.workspace?.trim();
@@ -574,12 +593,9 @@ async function createSession(
           },
         },
       );
-  if (jsonOutput) {
-    writeJsonEnvelope({ ok: true, data: { session_id: result.session.id } });
-    return;
-  }
-
-  printSessionNotice(`session ${result.session.id} created in ${workspaceId}`);
+  output({ session_id: result.session.id }, () =>
+    printSessionNotice(`session ${result.session.id} created in ${workspaceId}`),
+  );
 }
 
 function resolvePromptInput(value: string | undefined, flag: "--prompt" | "--text"): string {

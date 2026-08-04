@@ -1218,8 +1218,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
         bashToolRowView.applyTheme(palette)
 
+        let terminalStreamOutput: String
+        if case .text(let text, _) = configuration.expandedContent {
+            // The stream drives full-screen display; keep its ANSI payload and
+            // strip only when the controller builds clipboard text.
+            terminalStreamOutput = text
+        } else {
+            terminalStreamOutput = configuration.copyOutputText ?? ""
+        }
         fullScreenTerminalStream.update(
-            output: configuration.copyOutputText ?? "",
+            output: terminalStreamOutput,
             command: configuration.copyCommandText,
             isDone: configuration.isDone
         )

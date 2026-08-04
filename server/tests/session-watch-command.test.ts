@@ -53,7 +53,14 @@ describe("session watch command contract", () => {
       emit,
     );
 
-    expect(outcome).toEqual({ kind: "session", sessionId: "s/1", reason: "idle", status: "ready" });
+    expect(outcome).toEqual({
+      kind: "session",
+      sessionId: "s/1",
+      reason: "idle",
+      status: "ready",
+      outputDelta: "finished",
+      outputDeltaKind: "latest",
+    });
     expect(emit).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "resolved",
@@ -64,6 +71,128 @@ describe("session watch command contract", () => {
         last: "finished",
       }),
     );
+  });
+
+  it("returns newly observed assistant output as the wait delta", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    let polls = 0;
+    const promise = runSessionWatch(
+      ["s"],
+      { condition: "idle", requireAll: false, intervalMs: 20, timeoutMs: 100 },
+      async <T>(): Promise<T> => {
+        polls += 1;
+        return (
+          polls === 1
+            ? { session: { status: "busy" }, events: [], currentSeq: 1 }
+            : {
+                session: { status: "ready", messageCount: 4 },
+                events: [
+                  { type: "message_end", role: "assistant", content: "  final answer  " },
+                ],
+                currentSeq: 2,
+              }
+        ) as T;
+      },
+      vi.fn(),
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(promise).resolves.toMatchObject({
+      kind: "session",
+      reason: "idle",
+      outputDelta: "final answer",
+      outputDeltaKind: "delta",
+    });
+  });
+
+  it("does not append a truncated session snapshot after a full assistant event", async () => {
+    vi.useFakeTimers();
+    let polls = 0;
+    const fullOutput = "full assistant response ".repeat(12).trim();
+    const promise = runSessionWatch(
+      ["s"],
+      { condition: "idle", requireAll: false, intervalMs: 20, timeoutMs: 100 },
+      async <T>(): Promise<T> => {
+        polls += 1;
+        if (polls === 1) {
+          return { session: { status: "busy" }, events: [], currentSeq: 1 } as T;
+        }
+        if (polls === 2) {
+          return {
+            session: { status: "busy", lastMessage: fullOutput.slice(0, 100) },
+            events: [{ type: "message_end", role: "assistant", content: fullOutput }],
+            currentSeq: 2,
+          } as T;
+        }
+        return {
+          session: { status: "ready", lastMessage: fullOutput.slice(0, 100) },
+          events: [],
+          currentSeq: 2,
+        } as T;
+      },
+      vi.fn(),
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(promise).resolves.toMatchObject({
+      kind: "session",
+      outputDelta: fullOutput,
+      outputDeltaKind: "delta",
+    });
+  });
+
+  it("preserves repeated assistant messages as separate output delta entries", async () => {
+    vi.useFakeTimers();
+    let polls = 0;
+    const promise = runSessionWatch(
+      ["s"],
+      { condition: "idle", requireAll: false, intervalMs: 20, timeoutMs: 100 },
+      async <T>(): Promise<T> => {
+        polls += 1;
+        return (
+          polls === 1
+            ? { session: { status: "busy" }, events: [], currentSeq: 1 }
+            : {
+                session: { status: "ready", lastMessage: "same" },
+                events: [
+                  { type: "message_end", role: "assistant", content: "same" },
+                  { type: "message_end", role: "assistant", content: "same" },
+                ],
+                currentSeq: 3,
+              }
+        ) as T;
+      },
+      vi.fn(),
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(promise).resolves.toMatchObject({
+      kind: "session",
+      outputDelta: "same\n\nsame",
+      outputDeltaKind: "delta",
+    });
+  });
+
+  it("bounds oversized latest output used as the wait fallback", async () => {
+    const output = "x".repeat(60_000);
+    const outcome = await runSessionWatch(
+      ["s"],
+      { condition: "idle", requireAll: false, intervalMs: 10, timeoutMs: 100 },
+      async <T>(): Promise<T> =>
+        ({ session: { status: "ready", lastMessage: output }, events: [], currentSeq: 1 }) as T,
+      vi.fn(),
+    );
+
+    expect(outcome.kind).toBe("session");
+    if (outcome.kind !== "session") return;
+    expect(outcome.outputDeltaKind).toBe("latest");
+    expect(outcome.outputDelta).toHaveLength(50_000);
+    expect(outcome.outputDelta).toContain("earlier output omitted");
   });
 
   it("resolves any-change only after baseline event activity", async () => {

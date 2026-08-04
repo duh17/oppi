@@ -18,7 +18,7 @@ Pi owns ordinary skills and extensions. Normal Oppi-managed sessions resolve the
 
 Oppi has one explicit server-owned exception: the built-in **Oppi** extension. It is pathless, off by default, and is not a Pi package or a row in Pi's filesystem resource settings. When enabled, it adds only the allowlisted `oppi` tool to ordinary non-sandbox Oppi-managed sessions. Sandbox sessions never receive or reserve this built-in tool. It never adds structured `ask`.
 
-The shipped Default Agent is separate. Its isolated control identity always has server-managed `oppi` and structured `ask`, with confirm-all approval, while disabling user/project extensions, skills, prompt templates, context files, and Pi's filesystem/shell built-ins.
+The shipped Default Agent is separate. Its isolated control identity always has server-managed `oppi` and structured `ask`, using the saved Oppi approval policy while disabling user/project extensions, skills, prompt templates, context files, and Pi's filesystem/shell built-ins.
 
 ## Server Skills and Extensions
 
@@ -38,13 +38,13 @@ The command allowlist is an application capability boundary, not a copy of every
 
 Unknown commands, unsupported subcommands, and file- or stdin-backed mutation bodies are denied. Inline prompt, system-prompt, message, definition, file-content, answer, and response bodies are redacted from rejected command summaries. The approval boundary uses normalized immutable input, so the approved command is the command executed.
 
-Allowlisted Oppi calls use semantic timeline presentation: the collapsed row shows `oppi <resource> <action>`, while the expanded row contains the normalized command, target/context, options, complete inline bodies, and result, error, or cancellation details. These presentation segments are reconstructed for Apple timeline replay without being added to agent-facing CLI trace JSON.
+The CLI produces both outputs for an allowlisted Oppi call: its redacted JSON envelope is model-facing content, and its complete ANSI human output is the expanded terminal result. The tool wrapper places the complete shell-quoted invocation before that result, so the expanded row reads like a normal terminal transcript without shortening inline prompts or other arguments.
 
 ### When a change takes effect
 
 New ordinary Oppi-managed sessions use the latest saved Oppi configuration. An active managed session keeps its existing extension runtime until `/reload` rebuilds it through Pi's full `AgentSession.reload()` lifecycle; reload applies the current enablement and policy before the next turn. A disabled configuration registers no `oppi` tool.
 
-The built-in setting does not modify standalone Pi or terminal-owned mirrored sessions. A stopped disconnected mirror session evaluates the current setting only if it is explicitly promoted to Oppi-managed ownership. The dedicated Oppi control identity remains separate and always uses confirm-all, regardless of this setting.
+The built-in setting does not modify standalone Pi or terminal-owned mirrored sessions. A stopped disconnected mirror session evaluates the current setting only if it is explicitly promoted to Oppi-managed ownership. The dedicated Oppi control identity remains separate, always receives the tool, and uses the saved approval policy regardless of the ordinary-session enablement setting.
 
 For ordinary Pi extensions, disabled rows are still visible in the server catalog. Pi does not execute disabled extension factories merely to manufacture diagnostics or contributed capabilities, so disabled rows can honestly show discovery state without a speculative load error. Enabled extensions can report Pi loader diagnostics and contributed tools or commands when Pi provides them.
 

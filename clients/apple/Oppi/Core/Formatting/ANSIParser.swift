@@ -16,6 +16,114 @@ import UIKit
 /// Builds `NSMutableAttributedString` directly, consistent with `SyntaxHighlighter`.
 enum ANSIParser {
 
+    // MARK: - Control Sequence Boundaries
+
+    /// Return the byte after a CSI sequence, or `nil` when the sequence is
+    /// incomplete in the current buffer.
+    private static func csiEnd<Buffer: RandomAccessCollection>(
+        in buffer: Buffer,
+        from start: Buffer.Index
+    ) -> Buffer.Index? where Buffer.Element == UInt8 {
+        var index = start
+        while index != buffer.endIndex {
+            let byte = buffer[index]
+            if byte >= 0x40 && byte <= 0x7E {
+                return buffer.index(after: index)
+            }
+            index = buffer.index(after: index)
+        }
+        return nil
+    }
+
+    /// Return the byte after an OSC/string control sequence. OSC terminates
+    /// with BEL, ST (`ESC\\`), or either raw/UTF-8 encoded C1 ST.
+    private static func isEscStringControl(_ byte: UInt8) -> Bool {
+        byte == 0x5D || byte == 0x50 || byte == 0x58 || byte == 0x5E || byte == 0x5F
+    }
+
+    private static func isC1StringControl(_ byte: UInt8) -> Bool {
+        byte == 0x90 || byte == 0x98 || byte == 0x9D || byte == 0x9E || byte == 0x9F
+    }
+
+    private static func hasStringControl(_ input: String) -> Bool {
+        input.contains("\u{001B}]")
+            || input.contains("\u{001B}P")
+            || input.contains("\u{001B}X")
+            || input.contains("\u{001B}^")
+            || input.contains("\u{001B}_")
+            || input.unicodeScalars.contains { scalar in
+                scalar.value <= 0xFF && isC1StringControl(UInt8(scalar.value))
+            }
+    }
+
+    /// Remove OSC/DCS/SOS/PM/APC payloads while preserving SGR/CSI for the
+    /// renderer below. This keeps string-control payloads out of both display
+    /// and clipboard text without making every SGR scan understand them.
+    private static func stripStringControls(_ input: String) -> String {
+        guard hasStringControl(input) else { return input }
+
+        let buf = Array(input.utf8)
+        let count = buf.count
+        var result = [UInt8]()
+        result.reserveCapacity(count)
+        var i = 0
+
+        while i < count {
+            if buf[i] == 0x1B,
+               i + 1 < count,
+               isEscStringControl(buf[i + 1]) {
+                i = oscEnd(
+                    in: buf,
+                    from: i + 2,
+                    allowsBEL: buf[i + 1] == 0x5D
+                ) ?? count
+                continue
+            }
+            if buf[i] == 0xC2,
+               i + 1 < count,
+               isC1StringControl(buf[i + 1]) {
+                i = oscEnd(
+                    in: buf,
+                    from: i + 2,
+                    allowsBEL: buf[i + 1] == 0x9D
+                ) ?? count
+                continue
+            }
+            result.append(buf[i])
+            i += 1
+        }
+
+        return String(decoding: result, as: UTF8.self)
+    }
+
+    private static func oscEnd<Buffer: RandomAccessCollection>(
+        in buffer: Buffer,
+        from start: Buffer.Index,
+        allowsBEL: Bool = true
+    ) -> Buffer.Index? where Buffer.Element == UInt8 {
+        var index = start
+        while index != buffer.endIndex {
+            let byte = buffer[index]
+            if allowsBEL, byte == 0x07 { // BEL terminates OSC only
+                return buffer.index(after: index)
+            }
+            if byte == 0x1B {
+                let next = buffer.index(after: index)
+                if next != buffer.endIndex, buffer[next] == 0x5C { // ESC \\
+                    return buffer.index(after: next)
+                }
+            }
+            if byte == 0xC2 {
+                let next = buffer.index(after: index)
+                if next != buffer.endIndex, buffer[next] == 0x9C { // UTF-8 C1 ST
+                    return buffer.index(after: next)
+                }
+            }
+            index = buffer.index(after: index)
+        }
+        return nil
+    }
+
     // MARK: - Incremental Stripper
 
     /// Tracks state for incremental ANSI stripping of monotonically growing content.
@@ -99,28 +207,23 @@ enum ANSIParser {
                         break
                     }
 
-                    if buf[i + 1] == 0x5B {
-                        // Start of CSI sequence.
-                        let escStart = i
-                        var j = i + 2
-                        var foundTerminator = false
-                        while j < count {
-                            let b = buf[j]
-                            if b >= 0x40 && b <= 0x7E {
-                                j += 1
-                                foundTerminator = true
-                                break
-                            }
-                            j += 1
+                    if buf[i + 1] == 0x5B || ANSIParser.isEscStringControl(buf[i + 1]) {
+                        let sequenceStart = i + 2
+                        let end = buf[i + 1] == 0x5B
+                            ? ANSIParser.csiEnd(in: buf, from: sequenceStart)
+                            : ANSIParser.oscEnd(
+                                in: buf,
+                                from: sequenceStart,
+                                allowsBEL: buf[i + 1] == 0x5D
+                            )
+                        if let end {
+                            i = end
+                            continue
                         }
-                        if !foundTerminator {
-                            // Incomplete escape — save position for re-scan.
-                            pendingEscapeStart = escStart
-                            processedInputBytes = escStart
-                            break
-                        }
-                        i = j
-                        continue
+                        // Incomplete escape — save position for re-scan.
+                        pendingEscapeStart = i
+                        processedInputBytes = i
+                        break
                     }
 
                     // Unsupported / standalone ESC byte. Drop it and keep scanning.
@@ -128,9 +231,39 @@ enum ANSIParser {
                     continue
                 }
 
-                // Scan forward through non-ESC bytes.
+                if buf[i] == 0xC2 {
+                    guard i + 1 < count else {
+                        pendingEscapeStart = i
+                        processedInputBytes = i
+                        break
+                    }
+                    if buf[i + 1] == 0x9B || ANSIParser.isC1StringControl(buf[i + 1]) {
+                        let sequenceStart = i + 2
+                        let end = buf[i + 1] == 0x9B
+                            ? ANSIParser.csiEnd(in: buf, from: sequenceStart)
+                            : ANSIParser.oscEnd(
+                                in: buf,
+                                from: sequenceStart,
+                                allowsBEL: buf[i + 1] == 0x9D
+                            )
+                        if let end {
+                            i = end
+                            continue
+                        }
+                        pendingEscapeStart = i
+                        processedInputBytes = i
+                        break
+                    }
+                }
+
+                // Scan forward through non-ESC/control bytes.
                 let start = i
                 while i < count && buf[i] != 0x1B {
+                    if buf[i] == 0xC2,
+                       i + 1 < count,
+                       buf[i + 1] == 0x9B || ANSIParser.isC1StringControl(buf[i + 1]) {
+                        break
+                    }
                     i += 1
                 }
                 // Only emit bytes past the boundary.
@@ -166,11 +299,15 @@ enum ANSIParser {
         mutableInput.withUTF8 { buffer in
             let limit = min(buffer.count, maxInputBytes)
             guard limit > 0 else { return }
-            // Fast path: no ESC in the prefix region.
+            // Fast path: no ANSI introducer in the prefix region.
             var hasEsc = false
-            for idx in 0..<limit where buffer[idx] == 0x1B {
-                hasEsc = true
-                break
+            for idx in 0..<limit {
+                if buffer[idx] == 0x1B
+                    || (buffer[idx] == 0xC2 && idx + 1 < limit
+                        && (buffer[idx + 1] == 0x9B || Self.isC1StringControl(buffer[idx + 1]))) {
+                    hasEsc = true
+                    break
+                }
             }
             guard hasEsc else {
                 result = String(decoding: buffer[..<limit], as: UTF8.self)
@@ -181,17 +318,16 @@ enum ANSIParser {
             var i = 0
             while i < limit {
                 if buffer[i] == 0x1B {
-                    if i + 1 < limit, buffer[i + 1] == 0x5B {
-                        var j = i + 2
-                        while j < limit {
-                            let b = buffer[j]
-                            if b >= 0x40 && b <= 0x7E {
-                                j += 1
-                                break
-                            }
-                            j += 1
-                        }
-                        i = j
+                    if i + 1 < limit, buffer[i + 1] == 0x5B || Self.isEscStringControl(buffer[i + 1]) {
+                        let sequenceStart = i + 2
+                        let end = buffer[i + 1] == 0x5B
+                            ? Self.csiEnd(in: buffer, from: sequenceStart)
+                            : Self.oscEnd(
+                                in: buffer,
+                                from: sequenceStart,
+                                allowsBEL: buffer[i + 1] == 0x5D
+                            )
+                        i = end ?? limit
                     } else {
                         // Drop unsupported / standalone ESC byte.
                         i += 1
@@ -199,8 +335,33 @@ enum ANSIParser {
                     continue
                 }
 
+                if buffer[i] == 0xC2,
+                   i + 1 < limit,
+                   buffer[i + 1] == 0x9B || Self.isC1StringControl(buffer[i + 1]) {
+                    let sequenceStart = i + 2
+                    let end = buffer[i + 1] == 0x9B
+                        ? Self.csiEnd(in: buffer, from: sequenceStart)
+                        : Self.oscEnd(
+                            in: buffer,
+                            from: sequenceStart,
+                            allowsBEL: buffer[i + 1] == 0x9D
+                        )
+                    i = end ?? limit
+                    continue
+                }
+
                 let start = i
-                while i < limit && buffer[i] != 0x1B { i += 1 }
+                while i < limit {
+                    if buffer[i] == 0x1B {
+                        break
+                    }
+                    if buffer[i] == 0xC2,
+                       i + 1 < limit,
+                       buffer[i + 1] == 0x9B || Self.isC1StringControl(buffer[i + 1]) {
+                        break
+                    }
+                    i += 1
+                }
                 for idx in start..<i {
                     out.append(buffer[idx])
                 }
@@ -212,10 +373,14 @@ enum ANSIParser {
 
     /// Strip all ANSI escape sequences, returning plain text.
     static func strip(_ input: String) -> String {
-        // Fast path: no ESC byte means no ANSI codes.
-        guard input.utf8.contains(0x1B) else { return input }
+        let sanitizedInput = Self.stripStringControls(input)
+        // Fast path: no ESC/OSC/CSI introducer means no ANSI codes.
+        guard sanitizedInput.utf8.contains(0x1B)
+            || sanitizedInput.unicodeScalars.contains(where: { scalar in
+                scalar.value == 0x9B || scalar.value == 0x9D
+            }) else { return sanitizedInput }
 
-        let buf = Array(input.utf8)
+        let buf = Array(sanitizedInput.utf8)
         let count = buf.count
         var result = [UInt8]()
         result.reserveCapacity(count)
@@ -223,17 +388,12 @@ enum ANSIParser {
         var i = 0
         while i < count {
             if buf[i] == 0x1B {
-                if i + 1 < count, buf[i + 1] == 0x5B {
-                    var j = i + 2
-                    while j < count {
-                        let b = buf[j]
-                        if b >= 0x40 && b <= 0x7E {
-                            j += 1
-                            break
-                        }
-                        j += 1
-                    }
-                    i = j
+                if i + 1 < count, buf[i + 1] == 0x5B || buf[i + 1] == 0x5D {
+                    let sequenceStart = i + 2
+                    let end = buf[i + 1] == 0x5B
+                        ? Self.csiEnd(in: buf, from: sequenceStart)
+                        : Self.oscEnd(in: buf, from: sequenceStart)
+                    i = end ?? count
                 } else {
                     // Drop unsupported / standalone ESC byte.
                     i += 1
@@ -241,9 +401,28 @@ enum ANSIParser {
                 continue
             }
 
-            // Scan forward through non-ESC bytes in bulk.
+            if buf[i] == 0xC2,
+               i + 1 < count,
+               buf[i + 1] == 0x9B || buf[i + 1] == 0x9D {
+                let sequenceStart = i + 2
+                let end = buf[i + 1] == 0x9B
+                    ? Self.csiEnd(in: buf, from: sequenceStart)
+                    : Self.oscEnd(in: buf, from: sequenceStart)
+                i = end ?? count
+                continue
+            }
+
+            // Scan forward through non-ESC/control bytes in bulk.
             let start = i
-            while i < count && buf[i] != 0x1B {
+            while i < count {
+                if buf[i] == 0x1B {
+                    break
+                }
+                if buf[i] == 0xC2,
+                   i + 1 < count,
+                   buf[i + 1] == 0x9B || buf[i + 1] == 0x9D {
+                    break
+                }
                 i += 1
             }
             result.append(contentsOf: buf[start..<i])
@@ -262,11 +441,15 @@ enum ANSIParser {
     ) -> NSAttributedString {
         let baseFg = UIColor(baseForeground)
         let baseFont = AppFont.mono
+        let sanitizedInput = Self.stripStringControls(input)
 
-        // Fast path: no ESC byte means no ANSI codes.
-        guard input.utf8.contains(0x1B) else {
+        // Fast path: no ESC/OSC/CSI introducer means no ANSI codes.
+        guard sanitizedInput.utf8.contains(0x1B)
+            || sanitizedInput.unicodeScalars.contains(where: { scalar in
+                scalar.value == 0x9B || scalar.value == 0x9D
+            }) else {
             return NSAttributedString(
-                string: input,
+                string: sanitizedInput,
                 attributes: [.font: baseFont, .foregroundColor: baseFg]
             )
         }
@@ -293,43 +476,78 @@ enum ANSIParser {
         var runStart16 = 0
         var hasSGR = false
 
-        let buf = Array(input.utf8)
+        let buf = Array(sanitizedInput.utf8)
         let count = buf.count
         plainBytes.reserveCapacity(count)
         var i = 0
 
         while i < count {
             if buf[i] == 0x1B {
-                if i + 1 < count, buf[i + 1] == 0x5B {
-                    var j = i + 2
-                    while j < count {
-                        let b = buf[j]
-                        if b >= 0x40 && b <= 0x7E { break }
-                        j += 1
-                    }
+                if i + 1 < count, buf[i + 1] == 0x5B || buf[i + 1] == 0x5D {
+                    let sequenceStart = i + 2
+                    if buf[i + 1] == 0x5B {
+                        if let end = Self.csiEnd(in: buf, from: sequenceStart) {
+                            let finalIndex = end - 1
+                            if buf[finalIndex] == 0x6D { // 'm' -> SGR
+                                let runLen16 = utf16Pos - runStart16
+                                if hasSGR && runLen16 > 0 {
+                                    runs.append(AttrRun(
+                                        utf16Start: runStart16,
+                                        utf16Length: runLen16,
+                                        font: fontCache.font(bold: state.bold, italic: state.italic),
+                                        fg: state.effectiveForegroundUIColor,
+                                        bg: state.backgroundUIColor,
+                                        underline: state.underline
+                                    ))
+                                }
 
-                    if j < count && buf[j] == 0x6D { // 'm' -> SGR
-                        let runLen16 = utf16Pos - runStart16
-                        if hasSGR && runLen16 > 0 {
-                            runs.append(AttrRun(
-                                utf16Start: runStart16,
-                                utf16Length: runLen16,
-                                font: fontCache.font(bold: state.bold, italic: state.italic),
-                                fg: state.foregroundUIColor,
-                                bg: state.backgroundUIColor,
-                                underline: state.underline
-                            ))
+                                state.applyFromBuffer(buf, from: sequenceStart, to: finalIndex)
+                                hasSGR = true
+                                runStart16 = utf16Pos
+                            }
+                            i = end
+                        } else {
+                            i = count
                         }
-
-                        state.applyFromBuffer(buf, from: i + 2, to: j)
-                        hasSGR = true
-                        runStart16 = utf16Pos
+                    } else {
+                        i = Self.oscEnd(in: buf, from: sequenceStart) ?? count
                     }
-
-                    i = j + 1
                 } else {
                     // Drop unsupported / standalone ESC byte.
                     i += 1
+                }
+                continue
+            }
+
+            if buf[i] == 0xC2,
+               i + 1 < count,
+               buf[i + 1] == 0x9B || buf[i + 1] == 0x9D {
+                let sequenceStart = i + 2
+                if buf[i + 1] == 0x9B {
+                    if let end = Self.csiEnd(in: buf, from: sequenceStart) {
+                        let finalIndex = end - 1
+                        if buf[finalIndex] == 0x6D {
+                            let runLen16 = utf16Pos - runStart16
+                            if hasSGR && runLen16 > 0 {
+                                runs.append(AttrRun(
+                                    utf16Start: runStart16,
+                                    utf16Length: runLen16,
+                                    font: fontCache.font(bold: state.bold, italic: state.italic),
+                                    fg: state.effectiveForegroundUIColor,
+                                    bg: state.backgroundUIColor,
+                                    underline: state.underline
+                                ))
+                            }
+                            state.applyFromBuffer(buf, from: sequenceStart, to: finalIndex)
+                            hasSGR = true
+                            runStart16 = utf16Pos
+                        }
+                        i = end
+                    } else {
+                        i = count
+                    }
+                } else {
+                    i = Self.oscEnd(in: buf, from: sequenceStart) ?? count
                 }
                 continue
             }
@@ -341,6 +559,11 @@ enum ANSIParser {
             while i < count {
                 let b = buf[i]
                 if b == 0x1B || b >= 0x80 { break }
+                if b == 0xC2,
+                   i + 1 < count,
+                   buf[i + 1] == 0x9B || buf[i + 1] == 0x9D {
+                    break
+                }
                 i += 1
             }
 
@@ -349,6 +572,14 @@ enum ANSIParser {
                 let asciiLen = i - textStart
                 plainBytes.append(contentsOf: buf[textStart..<i])
                 utf16Pos += asciiLen // ASCII: 1 byte = 1 UTF-16 unit
+            }
+
+            // Let the next iteration consume C1 sequences before the generic
+            // UTF-8 path treats their introducer as ordinary text.
+            if i < count,
+               buf[i] == 0xC2 && i + 1 < count
+               && (buf[i + 1] == 0x9B || buf[i + 1] == 0x9D) {
+                continue
             }
 
             // Handle non-ASCII byte (if that's what stopped us).
@@ -380,7 +611,7 @@ enum ANSIParser {
                     utf16Start: runStart16,
                     utf16Length: runLen16,
                     font: fontCache.font(bold: state.bold, italic: state.italic),
-                    fg: state.foregroundUIColor,
+                    fg: state.effectiveForegroundUIColor,
                     bg: state.backgroundUIColor,
                     underline: state.underline
                 ))
@@ -630,6 +861,19 @@ private struct SGRState {
     var foregroundUIColor: UIColor?
     var backgroundUIColor: UIColor?
 
+    /// Dim is a useful semantic style even when the producer did not choose a
+    /// specific foreground color. Preserve explicit colors, otherwise use the
+    /// theme's dim foreground for terminal metadata and secondary labels.
+    var effectiveForegroundUIColor: UIColor? {
+        foregroundUIColor ?? (dim ? colors.fgDim : nil)
+    }
+
+    private func appendDecimalDigit(_ digit: Int, to value: inout Int) -> Bool {
+        guard value <= (Int.max - digit) / 10 else { return false }
+        value = value * 10 + digit
+        return true
+    }
+
     /// Apply SGR codes parsed directly from a UTF-8 byte array.
     /// Parses semicolon-separated integers inline -- no array allocation.
     mutating func applyFromBuffer(
@@ -655,16 +899,20 @@ private struct SGRState {
         var hasSemicolon = false
         var singleValue = 0
         var digitCount = 0
+        var numericOverflow = false
         for i in start..<end {
             let b = buf[i]
             if b == 0x3B { hasSemicolon = true; break }
             if b >= 0x30 && b <= 0x39 {
-                singleValue = singleValue &* 10 &+ Int(b &- 0x30)
+                if !appendDecimalDigit(Int(b &- 0x30), to: &singleValue) {
+                    numericOverflow = true
+                }
                 digitCount += 1
             }
         }
 
         if !hasSemicolon {
+            guard !numericOverflow else { return }
             applySingleCode(digitCount > 0 ? singleValue : 0)
             return
         }
@@ -678,6 +926,7 @@ private struct SGRState {
         var rgb0 = 0
         var rgb1 = 0
         var rgbComponent = 0
+        numericOverflow = false
 
         func applyPendingColor(_ color: UIColor) {
             if pendingColorTarget == 38 {
@@ -735,15 +984,22 @@ private struct SGRState {
         for i in start..<end {
             let b = buf[i]
             if b >= 0x30 && b <= 0x39 {
-                current = current &* 10 &+ Int(b &- 0x30)
+                if !appendDecimalDigit(Int(b &- 0x30), to: &current) {
+                    numericOverflow = true
+                }
                 hasDigit = true
             } else if b == 0x3B {
-                applyCode(hasDigit ? current : 0)
+                if !numericOverflow {
+                    applyCode(hasDigit ? current : 0)
+                }
                 current = 0
                 hasDigit = false
+                numericOverflow = false
             }
         }
-        applyCode(hasDigit ? current : 0)
+        if !numericOverflow {
+            applyCode(hasDigit ? current : 0)
+        }
     }
 
     // MARK: - Fast Paths
@@ -833,7 +1089,7 @@ private struct SGRState {
         for i in start..<end {
             let b = buf[i]
             guard b >= 0x30 && b <= 0x39 else { return nil }
-            value = value * 10 + Int(b - 0x30)
+            guard appendDecimalDigit(Int(b - 0x30), to: &value) else { return nil }
         }
         return value
     }
@@ -851,7 +1107,7 @@ private struct SGRState {
         for i in start..<end {
             let b = buf[i]
             if b >= 0x30 && b <= 0x39 {
-                current = current * 10 + Int(b - 0x30)
+                guard appendDecimalDigit(Int(b - 0x30), to: &current) else { return nil }
                 hasDigit = true
             } else if b == 0x3B {
                 guard hasDigit, component < 2 else { return nil }

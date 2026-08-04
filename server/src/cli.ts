@@ -7,6 +7,7 @@
  */
 
 import * as c from "./ansi.js";
+import { redactCredentialString, redactCredentialValue } from "./credential-redaction.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { renderTerminal as renderQR } from "./qr.js";
 import { readFileSync, existsSync, statSync, realpathSync } from "node:fs";
@@ -14,7 +15,13 @@ import { execSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hostname as osHostname, networkInterfaces } from "node:os";
+import { runCli } from "./cli/runner.js";
+import {
+  getLocalHostname,
+  getLocalIp,
+  getTailscaleHostname,
+  getTailscaleIp,
+} from "./cli/status.js";
 import { Storage } from "./storage.js";
 import { ConfigStore } from "./storage/config-store.js";
 import { Server } from "./server.js";
@@ -30,7 +37,6 @@ import {
   readCertificateExpiryMs,
   readCertificateFingerprint,
   resolveTlsConfig,
-  tlsSchemeForConfig,
   validateTailscaleMaterial,
 } from "./tls.js";
 import type { ServerConfig } from "./types.js";
@@ -54,21 +60,19 @@ import {
   stopService,
   uninstallService,
 } from "./launchd.js";
-import { isHelpFlag, parseCliArgs } from "./cli/args.js";
-import { cmdAgent } from "./cli/commands/agent.js";
-import { cmdSchedule } from "./cli/commands/schedule.js";
-import { cmdSession } from "./cli/commands/session.js";
-import { cmdSkill } from "./cli/commands/skill.js";
-import { cmdWait } from "./cli/commands/wait.js";
-import { cmdWorkspace } from "./cli/commands/workspace.js";
-import { cmdWorktree } from "./cli/commands/worktree.js";
+import { parseCliArgs } from "./cli/args.js";
 import {
   createCliConfigStorage,
   createCliConnectionConfig,
   type CliConfigStorage,
   type CliConnectionConfig,
 } from "./cli/connection-config.js";
-import { helpTopicToJson, renderHelpTopic, resolveHelpTopic } from "./cli/help.js";
+import {
+  helpPathFor,
+  isNestedHelpRequest,
+  resolveHelpTopic,
+  writeCliHelpOutput,
+} from "./cli/help.js";
 import { isNpmVersionNewer } from "./cli/npm-version.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
@@ -89,67 +93,6 @@ function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
     console.log(c.yellow(`  ⚠️  apns.json parse error: ${message}`));
     return undefined;
   }
-}
-
-function getTailscaleHostname(): string | null {
-  try {
-    const result = execSync("tailscale status --json", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const status = JSON.parse(result);
-    if (status.Self?.DNSName) {
-      return status.Self.DNSName.replace(/\.$/, "");
-    }
-  } catch {}
-  return null;
-}
-
-function getTailscaleIp(): string | null {
-  try {
-    return execSync("tailscale ip -4", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] })
-      .trim()
-      .split("\n")[0];
-  } catch {}
-  return null;
-}
-
-function getLocalHostname(): string | null {
-  try {
-    const localHostName = execSync("scutil --get LocalHostName", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-    if (localHostName) {
-      return `${localHostName}.local`;
-    }
-  } catch {}
-
-  try {
-    const host = osHostname().trim();
-    if (!host) return null;
-    if (host.endsWith(".local")) return host;
-    return `${host.split(".")[0]}.local`;
-  } catch {}
-
-  return null;
-}
-
-function getLocalIp(): string | null {
-  const nets = networkInterfaces();
-
-  for (const iface of Object.values(nets)) {
-    if (!iface) continue;
-
-    for (const addr of iface) {
-      if (addr.family !== "IPv4") continue;
-      if (addr.internal) continue;
-      if (addr.address.startsWith("169.254.")) continue; // Link-local fallback
-      return addr.address;
-    }
-  }
-
-  return null;
 }
 
 function resolveInviteHost(config: ServerConfig, hostOverride?: string): string | null {
@@ -457,55 +400,6 @@ async function cmdPair(
   if (!showPairingQR(storage, requestedName, hostOverride, showToken)) {
     process.exit(1);
   }
-}
-
-function cmdStatus(storage: CliConnectionConfig): void {
-  const config = storage.getConfig();
-  const hostname = getTailscaleHostname();
-  const ip = getTailscaleIp();
-  const localHostname = getLocalHostname();
-  const localIp = getLocalIp();
-
-  console.log("  " + c.bold("Server Configuration"));
-  console.log("");
-  const tlsMode = config.tls?.mode ?? "disabled";
-  const transportScheme = tlsSchemeForConfig(config);
-
-  console.log(`  Port:       ${config.port}`);
-  console.log(`  Transport:  ${transportScheme.toUpperCase()} (${tlsMode})`);
-  console.log(`  Data:       ${c.dim(storage.getDataDir())}`);
-  console.log("");
-
-  console.log("  " + c.bold("Local Network"));
-  console.log("");
-  if (localHostname || localIp) {
-    console.log(`  Hostname:  ${localHostname || c.dim("unknown")}`);
-    console.log(`  IP:        ${localIp || c.dim("unknown")}`);
-  } else {
-    console.log(`  Status:    ${c.yellow("No active LAN interface detected")}`);
-  }
-  console.log("");
-
-  console.log("  " + c.bold("Tailscale"));
-  console.log("");
-  if (hostname) {
-    console.log(`  Hostname:  ${c.green(hostname)}`);
-    console.log(`  IP:        ${ip || c.dim("unknown")}`);
-  } else {
-    console.log(`  Status:    ${c.dim("Not connected")}`);
-  }
-  console.log("");
-
-  console.log("  " + c.bold("Pairing"));
-  console.log("");
-
-  if (!storage.isPaired()) {
-    console.log(c.dim("  Not paired"));
-    console.log(c.dim("  Run 'oppi pair'"));
-  } else {
-    console.log(`  Status:   ${c.green("Paired")}`);
-  }
-  console.log("");
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -1016,14 +910,14 @@ function coerceValue(raw: string, type: ConfigValueType): unknown {
   switch (type) {
     case "number": {
       const n = Number(raw);
-      if (isNaN(n)) throw new Error(`"${raw}" is not a valid number`);
+      if (isNaN(n)) throw new Error("Value is not a valid number");
       return n;
     }
     case "boolean": {
       const lower = raw.toLowerCase();
       if (["true", "1", "yes", "on"].includes(lower)) return true;
       if (["false", "0", "no", "off"].includes(lower)) return false;
-      throw new Error(`"${raw}" is not a valid boolean`);
+      throw new Error("Value is not a valid boolean");
     }
     case "string":
       return raw;
@@ -1031,7 +925,7 @@ function coerceValue(raw: string, type: ConfigValueType): unknown {
       try {
         return JSON.parse(raw);
       } catch {
-        throw new Error(`"${raw}" is not valid JSON`);
+        throw new Error("Value is not valid JSON");
       }
     }
   }
@@ -1077,14 +971,25 @@ function setConfigPath(config: ServerConfig, path: string, value: unknown): Serv
   return next as unknown as ServerConfig;
 }
 
-function formatConfigValue(value: unknown): string {
-  if (typeof value === "object") return JSON.stringify(value, null, 2);
-  return String(value);
+function configPathLeaf(path: string): string {
+  return splitConfigPath(path).at(-1) ?? path;
 }
 
-function formatInlineConfigValue(value: unknown): string {
-  const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+function formatConfigValue(value: unknown, path?: string): string {
+  const displayValue = redactCredentialValue(value, path ? configPathLeaf(path) : undefined);
+  if (typeof displayValue === "object") return JSON.stringify(displayValue, null, 2);
+  return String(displayValue);
+}
+
+function formatInlineConfigValue(value: unknown, path?: string): string {
+  const displayValue = redactCredentialValue(value, path ? configPathLeaf(path) : undefined);
+  const text =
+    typeof displayValue === "object" ? JSON.stringify(displayValue) : String(displayValue);
   return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
+function redactConfigForDisplay(config: ServerConfig): Record<string, unknown> {
+  return redactCredentialValue(cloneConfig(config)) as Record<string, unknown>;
 }
 
 function cmdConfig(
@@ -1111,7 +1016,7 @@ function cmdConfig(
       process.exit(1);
     }
 
-    console.log(formatConfigValue(value));
+    console.log(formatConfigValue(value, key));
     return;
   }
 
@@ -1120,10 +1025,11 @@ function cmdConfig(
     const config = showDefault
       ? ConfigStore.getDefaultConfig(storage.getDataDir())
       : storage.getConfig();
+    const displayConfig = redactConfigForDisplay(config);
 
     console.log(`  ${c.bold(showDefault ? "Default config" : "Current config")}`);
     console.log("");
-    const pretty = JSON.stringify(config, null, 2)
+    const pretty = JSON.stringify(displayConfig, null, 2)
       .split("\n")
       .map((line) => `  ${line}`)
       .join("\n");
@@ -1140,7 +1046,7 @@ function cmdConfig(
       console.log(c.red(`  ✗ Config validation failed: ${target}`));
       console.log("");
       for (const err of result.errors) {
-        console.log(c.red(`  - ${err}`));
+        console.log(c.red(`  - ${redactCredentialString(err)}`));
       }
       console.log("");
       process.exit(1);
@@ -1172,7 +1078,7 @@ function cmdConfig(
         console.log(`    ${c.cyan(k.padEnd(48))} ${c.dim(meta.desc)}`);
         if (current !== undefined) {
           console.log(
-            `    ${"".padEnd(48)} ${c.dim("current:")} ${formatInlineConfigValue(current)}`,
+            `    ${"".padEnd(48)} ${c.dim("current:")} ${formatInlineConfigValue(current, k)}`,
           );
         }
       }
@@ -1194,12 +1100,12 @@ function cmdConfig(
       const coerced = coerceValue(value, meta.type);
       const nextConfig = setConfigPath(storage.getConfig(), key, coerced);
       storage.updateConfig(nextConfig);
-      console.log(c.green(`  ✓ ${key} = ${formatConfigValue(coerced)}`));
+      console.log(c.green(`  ✓ ${key} = ${formatConfigValue(coerced, key)}`));
       console.log(c.dim(`    Saved to ${storage.getConfigPath()}`));
       console.log("");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      console.log(c.red(`  ✗ ${message}`));
+      console.log(c.red(`  ✗ ${redactCredentialString(message)}`));
       console.log("");
       process.exit(1);
     }
@@ -1438,32 +1344,7 @@ function cmdHelp(path: string[] = [], jsonOutput = false): void {
     process.exit(1);
   }
 
-  if (jsonOutput) {
-    process.stdout.write(
-      JSON.stringify({ ok: true, data: { help: helpTopicToJson(topic) } }, null, 2) + "\n",
-    );
-    return;
-  }
-
-  console.log(renderHelpTopic(topic));
-}
-
-function isNestedHelpRequest(
-  command: string,
-  positional: string[],
-  flags: Record<string, string>,
-): boolean {
-  if (command === "help" || command === "--help" || command === "-h") return true;
-  return isHelpFlag(flags) || positional[0] === "help";
-}
-
-function helpPathFor(command: string, positional: string[]): string[] {
-  if (command === "help" || command === "--help" || command === "-h") {
-    return positional.filter((part) => part !== "help");
-  }
-
-  if (positional[0] === "help") return [command, ...positional.slice(1)];
-  return [command, ...positional.filter((part) => part !== "help")];
+  writeCliHelpOutput(topic, jsonOutput);
 }
 
 // ─── Main ───
@@ -1514,7 +1395,14 @@ async function main(): Promise<void> {
       break;
 
     case "status":
-      cmdStatus(connection);
+    case "agent":
+    case "workspace":
+    case "worktree":
+    case "session":
+    case "schedule":
+    case "skill":
+    case "wait":
+      await runCli(process.argv.slice(2));
       break;
 
     case "doctor":
@@ -1527,34 +1415,6 @@ async function main(): Promise<void> {
 
     case "config":
       cmdConfig(createCliConfigStorage(dataDir), positional[0], positional.slice(1), flags);
-      break;
-
-    case "agent":
-      await cmdAgent(connection, positional[0], positional.slice(1), flags);
-      break;
-
-    case "workspace":
-      await cmdWorkspace(connection, positional[0], positional.slice(1), flags);
-      break;
-
-    case "worktree":
-      await cmdWorktree(connection, positional[0], positional.slice(1), flags);
-      break;
-
-    case "session":
-      await cmdSession(connection, positional[0], positional.slice(1), flags);
-      break;
-
-    case "schedule":
-      await cmdSchedule(connection, positional[0], positional.slice(1), flags);
-      break;
-
-    case "skill":
-      await cmdSkill(connection, positional[0], positional.slice(1), flags);
-      break;
-
-    case "wait":
-      await cmdWait(connection, positional[0], positional.slice(1), flags);
       break;
 
     default:

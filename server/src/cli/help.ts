@@ -1,4 +1,6 @@
 import * as c from "../ansi.js";
+import { isHelpFlag } from "./args.js";
+import { captureHumanCliOutput, writeHumanLine, writeJsonEnvelope } from "./output.js";
 import { THINKING_LEVELS } from "../thinking-levels.js";
 
 export type CliHelpPath = readonly string[];
@@ -1650,6 +1652,39 @@ export function resolveHelpTopic(path: CliHelpPath): HelpTopic | undefined {
 
 export function helpTopicToJson(topic: HelpTopic): HelpJsonTopic {
   return JSON.parse(JSON.stringify(topic)) as HelpJsonTopic;
+}
+
+export function isNestedHelpRequest(
+  command: string,
+  positional: readonly string[],
+  flags: Record<string, string>,
+): boolean {
+  if (command === "help" || command === "--help" || command === "-h") return true;
+  return isHelpFlag(flags) || positional[0] === "help";
+}
+
+export function helpPathFor(command: string, positional: readonly string[]): string[] {
+  let path: string[];
+  if (command === "help" || command === "--help" || command === "-h") {
+    path = positional.filter((part) => part !== "help");
+  } else if (positional[0] === "help") {
+    path = [command, ...positional.slice(1)];
+  } else {
+    path = [command, ...positional.filter((part) => part !== "help")];
+  }
+
+  if (path[0] === "workspace" && path[1] === "remove") path[1] = "delete";
+  if (path[0] === "session" && path[1] === "watch") path[1] = "wait";
+  return path;
+}
+
+export function writeCliHelpOutput(topic: HelpTopic, jsonOutput: boolean): void {
+  if (jsonOutput) {
+    writeJsonEnvelope({ ok: true, data: { help: helpTopicToJson(topic) } });
+    captureHumanCliOutput(() => writeHumanLine(renderHelpTopic(topic)));
+    return;
+  }
+  writeHumanLine(renderHelpTopic(topic));
 }
 
 export function renderHelpTopic(topic: HelpTopic): string {

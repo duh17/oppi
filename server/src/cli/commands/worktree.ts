@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import * as c from "../../ansi.js";
 import type { LocalApiConnection } from "../local-api-client.js";
+import { createLocalApiCommandContext } from "../command-support.js";
 import {
   codeValue,
   nonEmptyDetails,
@@ -29,10 +30,7 @@ export async function cmdWorktree(
   const mode = action || "list";
   const jsonOutput = flags.json === "true";
 
-  function output(data: Record<string, unknown>, human: () => void): void {
-    if (jsonOutput) writeJsonEnvelope({ ok: true, data });
-    else human();
-  }
+  const { output } = createLocalApiCommandContext(storage, jsonOutput);
 
   try {
     if (!["list", "get", "create", "open", "status", "preview", "remove"].includes(mode)) {

@@ -1,7 +1,8 @@
-/* eslint-disable no-console, local/structured-log-format */
+/* eslint-disable no-console */
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import * as c from "../ansi.js";
+import { redactCredentialString, redactCredentialValue } from "../credential-redaction.js";
 
 export type CliJsonEnvelope =
   | { ok: true; data: Record<string, unknown> }
@@ -17,16 +18,38 @@ export type TerminalListItem = {
   details?: unknown[];
 };
 
-type CliOutputCapture = { chunks: string[]; exitCode: number };
+type CliOutputCapture = {
+  chunks: string[];
+  humanChunks: string[];
+  includeHuman: boolean;
+  exitCode: number;
+};
 
 const cliOutputCapture = new AsyncLocalStorage<CliOutputCapture>();
 
 export async function captureCliOutput<T>(
   fn: () => Promise<T>,
-): Promise<{ stdout: string; result: T; exitCode: number }> {
-  const capture: CliOutputCapture = { chunks: [], exitCode: 0 };
-  const result = await cliOutputCapture.run(capture, fn);
-  return { stdout: capture.chunks.join(""), result, exitCode: capture.exitCode };
+  options: Readonly<{ includeHuman?: boolean }> = {},
+): Promise<{ stdout: string; humanStdout: string; result: T; exitCode: number }> {
+  const capture: CliOutputCapture = {
+    chunks: [],
+    humanChunks: [],
+    includeHuman: options.includeHuman === true,
+    exitCode: 0,
+  };
+  const result = await cliOutputCapture.run(capture, () =>
+    options.includeHuman ? c.withAnsiCapture(fn) : fn(),
+  );
+  return {
+    stdout: capture.chunks.join(""),
+    humanStdout: capture.humanChunks.join(""),
+    result,
+    exitCode: capture.exitCode,
+  };
+}
+
+export function captureHumanCliOutput(render: () => void): void {
+  if (cliOutputCapture.getStore()?.includeHuman) render();
 }
 
 export function setCapturedCliExitCode(exitCode: number): void {
@@ -39,7 +62,8 @@ export function setCapturedCliExitCode(exitCode: number): void {
 }
 
 export function writeJsonEnvelope(envelope: CliJsonEnvelope): void {
-  const output = JSON.stringify(envelope, null, 2) + "\n";
+  const safeEnvelope = redactCredentialValue(envelope) as CliJsonEnvelope;
+  const output = JSON.stringify(safeEnvelope, null, 2) + "\n";
   const capture = cliOutputCapture.getStore();
   if (capture) {
     capture.chunks.push(output);
@@ -65,16 +89,25 @@ export function nonEmptyDetails(entries: TerminalDetailEntry[]): TerminalDetailE
 export function printDetails(title: string, entries: TerminalDetailEntry[]): void {
   printTitle(title);
   if (entries.length === 0) {
-    console.log(`  ${c.dim("No details returned.")}`);
-    console.log("");
+    writeHumanLine(`  ${c.dim("No details returned.")}`);
+    writeHumanLine("");
     return;
   }
 
   const width = Math.max(...entries.map(([label]) => label.length));
   for (const [label, value] of entries) {
-    console.log(`  ${c.dim(label.padEnd(width))}  ${terminalValue(value)}`);
+    const renderedValue =
+      label.trim().toLowerCase() === "status" ? formatStatus(value) : terminalValue(value);
+    writeHumanLine(`  ${c.dim(label.padEnd(width))}  ${renderedValue}`);
   }
-  console.log("");
+  writeHumanLine("");
+}
+
+export function printTextBlock(title: string, text: string): void {
+  printTitle(title);
+  const lines = text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
+  for (const line of lines) writeHumanLine(`  ${line}`);
+  writeHumanLine("");
 }
 
 export function printList(
@@ -84,8 +117,8 @@ export function printList(
 ): void {
   printTitle(title);
   if (items.length === 0) {
-    console.log(`  ${c.dim(options.empty ?? "No rows.")}`);
-    console.log("");
+    writeHumanLine(`  ${c.dim(options.empty ?? "No rows.")}`);
+    writeHumanLine("");
     return;
   }
 
@@ -100,21 +133,21 @@ export function printList(
       .filter(Boolean)
       .join("  ");
     const metaText = meta.length > 0 ? `  ${c.dim(meta.join(" · "))}` : "";
-    console.log(`  ${prefix ? `${prefix}  ` : ""}${c.bold(titleText)}${metaText}`);
+    writeHumanLine(`  ${prefix ? `${prefix}  ` : ""}${c.bold(titleText)}${metaText}`);
     for (const detail of details) {
-      console.log(`    ${c.dim(detail)}`);
+      writeHumanLine(`    ${c.dim(detail)}`);
     }
   }
-  console.log("");
+  writeHumanLine("");
 }
 
 export function printNextCommands(commands: string[]): void {
   if (commands.length === 0) return;
   printTitle("Next commands");
   for (const command of commands) {
-    console.log(`  ${c.dim("$")} ${command}`);
+    writeHumanLine(`  ${c.dim("$")} ${command}`);
   }
-  console.log("");
+  writeHumanLine("");
 }
 
 export function formatStatus(status: unknown): string {
@@ -136,9 +169,19 @@ export function formatStatus(status: unknown): string {
 }
 
 function printTitle(title: string): void {
-  const styledTitle = title.startsWith("✓") ? c.green(title) : c.bold(title);
-  console.log(styledTitle);
-  console.log(c.dim("─".repeat(Math.max(12, visibleLength(title)))));
+  const styledTitle = title.startsWith("✓") ? c.bold(c.green(title)) : c.bold(title);
+  writeHumanLine(styledTitle);
+  writeHumanLine(c.dim("─".repeat(Math.max(12, visibleLength(title)))));
+}
+
+export function writeHumanLine(value: string): void {
+  const safeValue = redactCredentialString(value);
+  const capture = cliOutputCapture.getStore();
+  if (capture?.includeHuman) {
+    capture.humanChunks.push(`${safeValue}\n`);
+    return;
+  }
+  console.log(safeValue);
 }
 
 function scalarText(value: unknown): string {

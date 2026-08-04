@@ -1,3 +1,5 @@
+import { redactCredentialString } from "./credential-redaction.js";
+
 /** Compact HH:MM:SS.mmm timestamp for log lines. */
 export function ts(): string {
   const d = new Date();
@@ -15,7 +17,7 @@ export function ts(): string {
  */
 export function safeErrorMessage(err: unknown): string {
   if (err instanceof Error) {
-    return err.message;
+    return redactCredentialString(err.message);
   }
-  return String(err);
+  return redactCredentialString(String(err));
 }

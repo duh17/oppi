@@ -223,6 +223,76 @@ struct ToolTimelineRowFullScreenActivationTests {
         harness.window.isHidden = true
     }
 
+    @Test("ANSI text keeps display styling in full screen while copy stays plain")
+    func ansiTextFullScreenPreservesDisplayPayload() throws {
+        let formatted = "\u{001B}[1m$\u{001B}[0m oppi status\n\u{001B}[32mPaired\u{001B}[0m"
+        let configuration = makeTimelineToolConfiguration(
+            expandedContent: .text(text: formatted, language: nil),
+            copyOutputText: ANSIParser.strip(formatted),
+            toolNamePrefix: "oppi",
+            isExpanded: true
+        )
+
+        let terminalStream = TerminalTraceStream(
+            output: ANSIParser.strip(formatted),
+            command: nil,
+            isDone: true
+        )
+        let fullScreenContent = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
+            configuration: configuration,
+            outputCopyText: configuration.copyOutputText,
+            terminalStream: terminalStream
+        )
+
+        guard let fullScreenContent else {
+            Issue.record("Expected ANSI text full-screen content")
+            return
+        }
+        guard case .terminal(let rendered, _, let stream) = fullScreenContent else {
+            Issue.record("Expected terminal full-screen content")
+            return
+        }
+        #expect(rendered == formatted)
+        #expect(stream == nil)
+        #expect(configuration.copyOutputText == ANSIParser.strip(formatted))
+    }
+
+    @Test("streaming ANSI text stays terminal-formatted with its display stream")
+    func streamingANSITextPreservesTerminalDisplay() throws {
+        let formatted = "\u{001B}[1m$\u{001B}[0m oppi status\n\u{001B}[32mPaired\u{001B}[0m"
+        let configuration = makeTimelineToolConfiguration(
+            expandedContent: .text(text: formatted, language: nil),
+            copyOutputText: ANSIParser.strip(formatted),
+            toolNamePrefix: "oppi",
+            isExpanded: true,
+            isDone: false
+        )
+        let interactionPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .text(text: formatted, language: nil),
+            isDone: false
+        )
+        let terminalStream = TerminalTraceStream(
+            output: formatted,
+            command: nil,
+            isDone: false
+        )
+
+        let fullScreenContent = ToolTimelineRowFullScreenSupport.fullScreenContent(
+            configuration: configuration,
+            outputCopyText: configuration.copyOutputText,
+            interactionPolicy: interactionPolicy,
+            terminalStream: terminalStream,
+            sourceStream: nil
+        )
+
+        guard case .terminal(let rendered, _, let stream) = fullScreenContent else {
+            Issue.record("Expected streaming ANSI text to use terminal full-screen content")
+            return
+        }
+        #expect(rendered == formatted)
+        #expect(stream?.snapshot.output == formatted)
+    }
+
     @Test("streaming file-like tools use live source full screen content")
     func streamingFileLikeToolsUseLiveSourceFullScreenContent() throws {
         let configuration = makeTimelineToolConfiguration(

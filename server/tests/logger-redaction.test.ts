@@ -98,9 +98,13 @@ describe("log-redact", () => {
     expect(redacted.self).toBe("[CIRCULAR]");
   });
 
-  it("detects camelCase sensitive keys without hiding token counters", () => {
+  it("detects credential and stable device identifier keys without hiding token counters", () => {
     expect(isSensitiveLogKey("accessToken")).toBe(true);
     expect(isSensitiveLogKey("openaiApiKey")).toBe(true);
+    expect(isSensitiveLogKey("authDeviceTokens")).toBe(true);
+    expect(isSensitiveLogKey("irohDeviceTokenBindings")).toBe(true);
+    expect(isSensitiveLogKey("clientNodeId")).toBe(true);
+    expect(isSensitiveLogKey("endpointId")).toBe(true);
     expect(isSensitiveLogKey("tokenCount")).toBe(false);
     expect(isSensitiveLogKey("authPresent")).toBe(false);
   });
@@ -113,5 +117,16 @@ describe("log-redact", () => {
     expect(redacted).toContain("Bearer [REDACTED]");
     expect(redacted).toContain("[REDACTED_PRIVATE_KEY]");
     expect(redacted).not.toContain("sk_live_abc123");
+  });
+
+  it("redacts Oppi owner, pairing, and device bearer prefixes in free-form logs", () => {
+    const input = [
+      "sk_owner-log-fixture-secret",
+      "pt_pairing-log-fixture-secret",
+      "dt_device-log-fixture-secret",
+    ].join(" ");
+
+    const redacted = redactLogString(input, 4_096);
+    expect(redacted).toBe("[REDACTED] [REDACTED] [REDACTED]");
   });
 });
