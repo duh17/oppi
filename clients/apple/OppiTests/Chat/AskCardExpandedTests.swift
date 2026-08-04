@@ -90,7 +90,7 @@ struct AskCardExpandedTests {
 
     // MARK: - Pinned Confirmation Actions
 
-    @Test("Extension confirmations pin Confirm, Cancel, and Ignore outside long scrolling content")
+    @Test("Extension confirmations pin Confirm, Cancel, and Close Details outside long scrolling content")
     func extensionConfirmUsesPinnedActions() {
         let request = AskRequest(
             id: "approval-1",
@@ -112,6 +112,7 @@ struct AskCardExpandedTests {
         )
 
         #expect(AskCardExpanded.usesPinnedConfirmationActions(request))
+        #expect(AskCardExpanded.confirmationDismissTitle == "Close Details")
     }
 
     @Test("Ordinary single-select asks keep options with their question")

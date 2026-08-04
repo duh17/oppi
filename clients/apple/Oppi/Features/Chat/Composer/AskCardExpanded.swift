@@ -77,6 +77,7 @@ struct AskCardExpanded: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .accessibilityIdentifier("ask.approval.scroll")
                 .id(currentPage)
                 .transition(ThemeMotion.directionalPage(forward: navigatingForward, reduceMotion: reduceMotion))
             }
@@ -447,7 +448,7 @@ struct AskCardExpanded: View {
     }
 
     private var ignoreConfirmationButton: some View {
-        Button("Ignore") {
+        Button(Self.confirmationDismissTitle) {
             isExpanded = false
         }
         .buttonStyle(.plain)
@@ -455,7 +456,7 @@ struct AskCardExpanded: View {
         .foregroundStyle(.themeComment)
         .frame(minWidth: 44, minHeight: 44)
         .accessibilityHint("Closes details without responding")
-        .accessibilityIdentifier("ask.confirmation.ignore")
+        .accessibilityIdentifier("ask.confirmation.closeDetails")
     }
 
     private var cancelConfirmationButton: some View {
@@ -761,6 +762,8 @@ struct AskCardExpanded: View {
 }
 
 extension AskCardExpanded {
+    static let confirmationDismissTitle = "Close Details"
+
     static func usesPinnedConfirmationActions(_ request: AskRequest) -> Bool {
         guard request.responseEncoding == .extensionConfirm,
               request.questions.count == 1,

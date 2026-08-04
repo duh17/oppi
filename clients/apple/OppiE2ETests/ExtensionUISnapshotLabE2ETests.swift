@@ -346,6 +346,95 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         try assertEditorResponse(sessionId: sessionId)
     }
 
+    func testSemanticApprovalRenderedControlsRespondOnceAndKeepActionsPinned() throws {
+        createAndEnterSession()
+        _ = waitForWebSocketConnected(timeout: 20)
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        try clearHarnessResponses(sessionId: sessionId)
+
+        let confirmRequestId = "semantic-approval-confirm"
+        let diff = (0..<80)
+            .map { $0.isMultiple(of: 2) ? "-old-line-\($0)" : "+new-line-\($0)" }
+            .joined(separator: "\n")
+        try sendScrollableConfirmation(
+            sessionId: sessionId,
+            requestId: confirmRequestId,
+            summary: "Update Skill file SKILL.md",
+            diff: diff
+        )
+
+        let expand = app.descendants(matching: .any)["ask.expand"]
+        XCTAssertTrue(expand.waitForExistence(timeout: 10))
+        expand.tap()
+        let confirm = app.buttons["ask.confirmation.confirm"]
+        let cancel = app.buttons["ask.confirmation.cancel"]
+        let closeDetails = app.buttons["ask.confirmation.closeDetails"]
+        for button in [confirm, cancel, closeDetails] {
+            XCTAssertTrue(button.waitForExistence(timeout: 5))
+            XCTAssertTrue(button.isHittable)
+        }
+
+        closeDetails.tap()
+        XCTAssertTrue(expand.waitForExistence(timeout: 5))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertTrue(
+            try harnessResponses(sessionId: sessionId)
+                .filter { $0["id"] as? String == confirmRequestId }
+                .isEmpty,
+            "Close Details must not send an extension UI response"
+        )
+
+        expand.tap()
+        let scrollView = app.scrollViews["ask.approval.scroll"]
+        XCTAssertTrue(scrollView.waitForExistence(timeout: 5))
+        let pinnedFrames = [confirm.frame, cancel.frame, closeDetails.frame]
+        let firstDiffLine = waitForText("-old-line-0", timeout: 5)
+        let firstLineFrame = firstDiffLine.frame
+        scrollView.swipeUp()
+        scrollView.swipeUp()
+        XCTAssertTrue(
+            !firstDiffLine.isHittable || firstDiffLine.frame.minY < firstLineFrame.minY - 20,
+            "Large diff content did not move after scrolling"
+        )
+        for (button, frame) in zip([confirm, cancel, closeDetails], pinnedFrames) {
+            XCTAssertTrue(button.isHittable)
+            XCTAssertEqual(button.frame.minY, frame.minY, accuracy: 2)
+        }
+
+        confirm.tap()
+        let confirmed = try waitForHarnessResponse(
+            sessionId: sessionId,
+            requestId: confirmRequestId
+        )
+        XCTAssertEqual(confirmed["confirmed"] as? Bool, true)
+        XCTAssertNil(confirmed["value"])
+        XCTAssertNil(confirmed["cancelled"])
+        try assertExactlyOneHarnessResponse(sessionId: sessionId, requestId: confirmRequestId)
+
+        let cancelRequestId = "semantic-approval-cancel"
+        try sendScrollableConfirmation(
+            sessionId: sessionId,
+            requestId: cancelRequestId,
+            summary: "Update Agent Reviewer",
+            diff: "-Old\n+New"
+        )
+        let cancelExpand = app.descendants(matching: .any)["ask.expand"]
+        XCTAssertTrue(cancelExpand.waitForExistence(timeout: 10))
+        cancelExpand.tap()
+        let renderedCancel = app.buttons["ask.confirmation.cancel"]
+        XCTAssertTrue(renderedCancel.waitForExistence(timeout: 5))
+        renderedCancel.tap()
+
+        let cancelled = try waitForHarnessResponse(
+            sessionId: sessionId,
+            requestId: cancelRequestId
+        )
+        XCTAssertEqual(cancelled["cancelled"] as? Bool, true)
+        XCTAssertNil(cancelled["value"])
+        XCTAssertNil(cancelled["confirmed"])
+        try assertExactlyOneHarnessResponse(sessionId: sessionId, requestId: cancelRequestId)
+    }
+
     func testMarkdownCodeBlockWrapChromeUsesIconAndCompactHeader() throws {
         createAndEnterSession()
         _ = waitForWebSocketConnected(timeout: 20)
@@ -922,6 +1011,45 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
             belowElement: belowElement,
             chatInput: chatInput,
             timeout: 5
+        )
+    }
+
+    private func sendScrollableConfirmation(
+        sessionId: String,
+        requestId: String,
+        summary: String,
+        diff: String
+    ) throws {
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_request",
+            "id": requestId,
+            "method": "confirm",
+            "title": "Approve Oppi command",
+            "message": """
+            \(summary)
+
+            ```diff
+            \(diff)
+            ```
+            """,
+        ])
+    }
+
+    private func assertExactlyOneHarnessResponse(
+        sessionId: String,
+        requestId: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let matching = try harnessResponses(sessionId: sessionId)
+            .filter { $0["id"] as? String == requestId }
+        XCTAssertEqual(
+            matching.count,
+            1,
+            "Rendered action must submit exactly one response for \(requestId)",
+            file: file,
+            line: line
         )
     }
 

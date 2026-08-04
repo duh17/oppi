@@ -621,10 +621,10 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(fullPrompt.waitForExistence(timeout: 5), "Complete Oppi prompt not visible in expanded approval")
         let confirm = app.buttons["ask.confirmation.confirm"]
         let cancel = app.buttons["ask.confirmation.cancel"]
-        let ignore = app.buttons["ask.confirmation.ignore"]
+        let closeDetails = app.buttons["ask.confirmation.closeDetails"]
         XCTAssertTrue(confirm.isHittable, "Confirm should stay pinned for long content")
         XCTAssertTrue(cancel.isHittable, "Cancel should stay pinned for long content")
-        XCTAssertTrue(ignore.isHittable, "Ignore should stay pinned for long content")
+        XCTAssertTrue(closeDetails.isHittable, "Close Details should stay pinned for long content")
 
         let promptTail = app.staticTexts.containing(
             NSPredicate(format: "label CONTAINS %@", "END OF COMPLETE PROMPT")
@@ -635,7 +635,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(promptTail.isHittable, "Long approval content should scroll to its final line")
         XCTAssertTrue(confirm.isHittable, "Confirm should remain pinned after scrolling")
         XCTAssertTrue(cancel.isHittable, "Cancel should remain pinned after scrolling")
-        XCTAssertTrue(ignore.isHittable, "Ignore should remain pinned after scrolling")
+        XCTAssertTrue(closeDetails.isHittable, "Close Details should remain pinned after scrolling")
 
         saveScreenshot(name: "ask-card-expanded-sheet")
     }
@@ -661,7 +661,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["ask.confirmation.confirm"].isHittable)
         XCTAssertTrue(app.buttons["ask.confirmation.cancel"].isHittable)
-        XCTAssertTrue(app.buttons["ask.confirmation.ignore"].isHittable)
+        XCTAssertTrue(app.buttons["ask.confirmation.closeDetails"].isHittable)
         saveScreenshot(name: "oppi-command-approval-accessibility-size")
     }
 
