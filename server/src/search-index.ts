@@ -37,12 +37,68 @@ export interface SearchFilters {
   untilMs?: number;
 }
 
+export interface SearchIndexSyncResult {
+  reindexed: number;
+  added: number;
+  removed: number;
+  skipped: number;
+  transcriptsRead: number;
+  transcriptBytesRead: number;
+  reusedIndexedTranscript: number;
+  transcriptsReindexed: number;
+}
+
+export interface SearchIndexBackgroundSyncOptions {
+  /** Maximum session count in one transaction. Primarily useful for deterministic tests. */
+  batchSize?: number;
+  /** Target amount of synchronous work per event-loop turn. A single session may exceed it. */
+  budgetMs?: number;
+  /** Override the Node event-loop yield in deterministic tests. */
+  yieldToEventLoop?: () => Promise<void>;
+}
+
+export interface SearchIndexBackgroundSyncResult extends SearchIndexSyncResult {
+  cancelled: boolean;
+  sessionsChecked: number;
+  maxBatchMs: number;
+}
+
 // ---------------------------------------------------------------------------
 // Content extraction
 // ---------------------------------------------------------------------------
 
 const USER_MESSAGE_CAP = 50_000;
 const ASSISTANT_MESSAGE_CAP = 100_000;
+const DEFAULT_BACKGROUND_SYNC_BUDGET_MS = 8;
+const DEFAULT_BACKGROUND_SYNC_BATCH_SIZE = Number.MAX_SAFE_INTEGER;
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+function emptySyncResult(): SearchIndexSyncResult {
+  return {
+    reindexed: 0,
+    added: 0,
+    removed: 0,
+    skipped: 0,
+    transcriptsRead: 0,
+    transcriptBytesRead: 0,
+    reusedIndexedTranscript: 0,
+    transcriptsReindexed: 0,
+  };
+}
+
+function mergeSyncResults(target: SearchIndexSyncResult, source: SearchIndexSyncResult): void {
+  target.reindexed += source.reindexed;
+  target.added += source.added;
+  target.removed += source.removed;
+  target.skipped += source.skipped;
+  target.transcriptsRead += source.transcriptsRead;
+  target.transcriptBytesRead += source.transcriptBytesRead;
+  target.reusedIndexedTranscript += source.reusedIndexedTranscript;
+  target.transcriptsReindexed += source.transcriptsReindexed;
+}
 
 const log = createLogger({ base: { component: "search_index" } });
 
@@ -213,9 +269,11 @@ export class SearchIndex {
   private stmtDeleteMeta!: SqliteStatement;
   private stmtGetMeta!: SqliteStatement;
   private stmtGetIndexedRow!: SqliteStatement;
+  private stmtGetIndexedIds!: SqliteStatement;
 
   private getSession: (id: string) => Session | undefined;
   private closed = false;
+  private backgroundSyncPromise: Promise<SearchIndexBackgroundSyncResult> | null = null;
 
   constructor(dataDir: string, getSession: (id: string) => Session | undefined) {
     this.getSession = getSession;
@@ -314,6 +372,7 @@ export class SearchIndex {
     this.stmtGetIndexedRow = this.db.prepare(
       "SELECT workspace_id, title, user_messages, assistant_messages, tool_names FROM session_fts WHERE session_id = ?",
     );
+    this.stmtGetIndexedIds = this.db.prepare("SELECT session_id FROM fts_meta");
 
     // Query search. Column weights: title=10, user_messages=5, assistant_messages=1,
     // tool_names=2. Add a small age penalty so newer sessions rank higher when
@@ -516,175 +575,453 @@ export class SearchIndex {
   // Startup sync
   // -------------------------------------------------------------------------
 
-  /**
-   * Synchronize the index with current session data.
-   * - Re-indexes sessions whose JSONL path/mtime/size changed
-   * - Re-indexes sessions whose indexed metadata (title/workspace) changed
-   * - Indexes new sessions not yet in the index
-   * - Removes orphaned index entries for deleted sessions
-   */
-  sync(sessions: Session[]): {
-    reindexed: number;
-    added: number;
-    removed: number;
-    skipped: number;
-    transcriptsRead: number;
-    transcriptBytesRead: number;
-    reusedIndexedTranscript: number;
-  } {
-    const start = performance.now();
-    const indexableSessions = sessions.filter((s) => !s.ephemeral);
-    const sessionIds = new Set(indexableSessions.map((s) => s.id));
-    let reindexed = 0;
-    let added = 0;
-    let skipped = 0;
-    let transcriptsRead = 0;
-    let transcriptBytesRead = 0;
-    let reusedIndexedTranscript = 0;
+  private syncSession(session: Session): SearchIndexSyncResult {
+    const result = emptySyncResult();
+    // Resolve the startup snapshot ID against live storage immediately before
+    // reading indexed fields. Lifecycle can replace or delete this session while
+    // cooperative warming is between event-loop turns.
+    const liveSession = this.getSession(session.id);
+    if (!liveSession || liveSession.ephemeral) {
+      const wasIndexed =
+        this.stmtGetMeta.get(session.id) !== undefined ||
+        this.stmtGetIndexedRow.get(session.id) !== undefined;
+      this.stmtDelete.run(session.id);
+      this.stmtDeleteMeta.run(session.id);
+      if (wasIndexed) result.removed = 1;
+      return result;
+    }
 
+    const sessionId = liveSession.id;
+    const jsonlPath = liveSession.piSessionFile;
+
+    let fileStat: { mtimeMs: number; size: number } | null = null;
+    if (jsonlPath) {
+      try {
+        const st = statSync(jsonlPath);
+        fileStat = { mtimeMs: st.mtimeMs, size: st.size };
+      } catch {
+        fileStat = null;
+      }
+    }
+
+    // Check if already indexed with same transcript state.
+    const meta = this.stmtGetMeta.get(sessionId) as
+      | {
+          jsonl_path: string | null;
+          jsonl_mtime_ms: number;
+          jsonl_size: number;
+        }
+      | undefined;
+
+    const indexedRow = this.stmtGetIndexedRow.get(sessionId) as
+      | {
+          workspace_id: string;
+          title: string;
+          user_messages: string;
+          assistant_messages: string;
+          tool_names: string;
+        }
+      | undefined;
+
+    const jsonlMtimeMs = fileStat ? Math.floor(fileStat.mtimeMs) : 0;
+    const jsonlSize = fileStat?.size ?? 0;
+    const expectedJsonlPath = fileStat ? (jsonlPath ?? null) : null;
+    const workspaceId = liveSession.workspaceId ?? "";
+
+    const sameTranscriptState =
+      !!meta &&
+      meta.jsonl_mtime_ms === jsonlMtimeMs &&
+      meta.jsonl_size === jsonlSize &&
+      meta.jsonl_path === expectedJsonlPath;
+
+    const title = extractSessionTitle(liveSession);
+    const sameIndexedMetadata =
+      !!indexedRow && indexedRow.workspace_id === workspaceId && indexedRow.title === title;
+
+    if (sameTranscriptState && sameIndexedMetadata) {
+      result.skipped = 1;
+      return result;
+    }
+
+    if (sameTranscriptState && indexedRow) {
+      this.upsertRow(
+        sessionId,
+        workspaceId,
+        title,
+        indexedRow.user_messages,
+        indexedRow.assistant_messages,
+        indexedRow.tool_names,
+      );
+      this.stmtUpsertMeta.run(
+        sessionId,
+        fileStat ? (jsonlPath ?? null) : null,
+        jsonlMtimeMs,
+        jsonlSize,
+        Date.now(),
+      );
+      result.reindexed = 1;
+      result.reusedIndexedTranscript = 1;
+      return result;
+    }
+
+    const content = extractIndexedContent(liveSession, fileStat ? jsonlPath : undefined);
+    if (content.transcriptRead) {
+      result.transcriptsRead = 1;
+      result.transcriptsReindexed = 1;
+      result.transcriptBytesRead = content.transcriptBytesRead;
+    }
+
+    this.upsertRow(
+      sessionId,
+      workspaceId,
+      content.title,
+      content.userMessages,
+      content.assistantMessages,
+      content.toolNames,
+    );
+    this.stmtUpsertMeta.run(
+      sessionId,
+      fileStat ? (jsonlPath ?? null) : null,
+      jsonlMtimeMs,
+      jsonlSize,
+      Date.now(),
+    );
+
+    if (meta) {
+      result.reindexed = 1;
+    } else {
+      result.added = 1;
+    }
+
+    return result;
+  }
+
+  private syncAllSessions(
+    indexableSessions: Session[],
+    sessionIds: ReadonlySet<string>,
+  ): SearchIndexSyncResult {
     const txn = this.db.transaction(() => {
+      const result = emptySyncResult();
       for (const session of indexableSessions) {
-        const jsonlPath = (session as unknown as Record<string, unknown>).piSessionFile as
-          | string
-          | undefined;
-
-        let fileStat: { mtimeMs: number; size: number } | null = null;
-        if (jsonlPath) {
-          try {
-            const st = statSync(jsonlPath);
-            fileStat = { mtimeMs: st.mtimeMs, size: st.size };
-          } catch {
-            fileStat = null;
-          }
-        }
-
-        // Check if already indexed with same transcript state.
-        const meta = this.stmtGetMeta.get(session.id) as
-          | {
-              jsonl_path: string | null;
-              jsonl_mtime_ms: number;
-              jsonl_size: number;
-            }
-          | undefined;
-
-        const indexedRow = this.stmtGetIndexedRow.get(session.id) as
-          | {
-              workspace_id: string;
-              title: string;
-              user_messages: string;
-              assistant_messages: string;
-              tool_names: string;
-            }
-          | undefined;
-
-        const jsonlMtimeMs = fileStat ? Math.floor(fileStat.mtimeMs) : 0;
-        const jsonlSize = fileStat?.size ?? 0;
-        const expectedJsonlPath = fileStat ? (jsonlPath ?? null) : null;
-        const workspaceId = session.workspaceId ?? "";
-
-        const sameTranscriptState =
-          !!meta &&
-          meta.jsonl_mtime_ms === jsonlMtimeMs &&
-          meta.jsonl_size === jsonlSize &&
-          meta.jsonl_path === expectedJsonlPath;
-
-        const title = extractSessionTitle(session);
-        const sameIndexedMetadata =
-          !!indexedRow && indexedRow.workspace_id === workspaceId && indexedRow.title === title;
-
-        if (sameTranscriptState && sameIndexedMetadata) {
-          skipped++;
-          continue;
-        }
-
-        if (sameTranscriptState && indexedRow) {
-          this.upsertRow(
-            session.id,
-            workspaceId,
-            title,
-            indexedRow.user_messages,
-            indexedRow.assistant_messages,
-            indexedRow.tool_names,
-          );
-          this.stmtUpsertMeta.run(
-            session.id,
-            fileStat ? (jsonlPath ?? null) : null,
-            jsonlMtimeMs,
-            jsonlSize,
-            Date.now(),
-          );
-          reindexed++;
-          reusedIndexedTranscript++;
-          continue;
-        }
-
-        const content = extractIndexedContent(session, fileStat ? jsonlPath : undefined);
-        if (content.transcriptRead) {
-          transcriptsRead++;
-          transcriptBytesRead += content.transcriptBytesRead;
-        }
-
-        this.upsertRow(
-          session.id,
-          workspaceId,
-          content.title,
-          content.userMessages,
-          content.assistantMessages,
-          content.toolNames,
-        );
-        this.stmtUpsertMeta.run(
-          session.id,
-          fileStat ? (jsonlPath ?? null) : null,
-          jsonlMtimeMs,
-          jsonlSize,
-          Date.now(),
-        );
-
-        if (meta) {
-          reindexed++;
-        } else {
-          added++;
-        }
+        mergeSyncResults(result, this.syncSession(session));
       }
 
-      // Remove orphaned entries
-      const allIndexed = this.db.prepare("SELECT session_id FROM fts_meta").all() as {
-        session_id: string;
-      }[];
-
-      let removed = 0;
+      // Keep blocking sync's full rebuild atomic. Background sync deletes these
+      // rows in separate bounded transactions instead.
+      const allIndexed = this.stmtGetIndexedIds.all() as { session_id: string }[];
       for (const row of allIndexed) {
         if (!sessionIds.has(row.session_id)) {
           this.stmtDelete.run(row.session_id);
           this.stmtDeleteMeta.run(row.session_id);
-          removed++;
+          result.removed++;
         }
       }
+      return result;
+    });
 
-      return {
-        reindexed,
-        added,
-        removed,
-        skipped,
-        transcriptsRead,
-        transcriptBytesRead,
-        reusedIndexedTranscript,
-      };
+    return txn();
+  }
+
+  private findOrphanedSessionIds(sessionIds: ReadonlySet<string>): string[] {
+    const allIndexed = this.stmtGetIndexedIds.all() as { session_id: string }[];
+    // Snapshot-only orphan detection is wrong under cooperative warming: a session
+    // created after listSessions() can be indexed live (agent_end → indexSession)
+    // and must not be swept. Still drop rows that are gone from storage or ephemeral.
+    return allIndexed
+      .filter((row) => {
+        if (sessionIds.has(row.session_id)) return false;
+        const live = this.getSession(row.session_id);
+        return !live || live.ephemeral;
+      })
+      .map((row) => row.session_id);
+  }
+
+  private syncSessionBatchWithinBudget(
+    sessions: Session[],
+    startIndex: number,
+    budgetMs: number,
+    batchSize: number,
+  ): { nextIndex: number; result: SearchIndexSyncResult; elapsedMs: number } {
+    const batchStart = performance.now();
+    let nextIndex = startIndex;
+    const txn = this.db.transaction(() => {
+      const result = emptySyncResult();
+      while (
+        nextIndex < sessions.length &&
+        nextIndex - startIndex < batchSize &&
+        (nextIndex === startIndex || performance.now() - batchStart < budgetMs)
+      ) {
+        mergeSyncResults(result, this.syncSession(sessions[nextIndex]));
+        nextIndex++;
+      }
+      return result;
     });
 
     const result = txn();
-    const elapsed = performance.now() - start;
-    log.info("search_index.sync_complete", {
-      elapsedMs: Math.round(elapsed),
+    return { nextIndex, result, elapsedMs: performance.now() - batchStart };
+  }
+
+  private deleteOrphanBatchWithinBudget(
+    orphanIds: string[],
+    startIndex: number,
+    budgetMs: number,
+    batchSize: number,
+  ): { nextIndex: number; result: SearchIndexSyncResult; elapsedMs: number } {
+    const batchStart = performance.now();
+    let nextIndex = startIndex;
+    const txn = this.db.transaction(() => {
+      const result = emptySyncResult();
+      while (
+        nextIndex < orphanIds.length &&
+        nextIndex - startIndex < batchSize &&
+        (nextIndex === startIndex || performance.now() - batchStart < budgetMs)
+      ) {
+        const sessionId = orphanIds[nextIndex];
+        const liveSession = this.getSession(sessionId);
+        if (!liveSession || liveSession.ephemeral) {
+          this.stmtDelete.run(sessionId);
+          this.stmtDeleteMeta.run(sessionId);
+          result.removed++;
+        }
+        nextIndex++;
+      }
+      return result;
+    });
+
+    const result = txn();
+    return { nextIndex, result, elapsedMs: performance.now() - batchStart };
+  }
+
+  private logBackgroundBatch(
+    batch: number,
+    phase: "sessions" | "orphan_cleanup",
+    batchElapsedMs: number,
+    batchSessionsChecked: number,
+    sessionsChecked: number,
+    maxBatchMs: number,
+    result: SearchIndexSyncResult,
+  ): void {
+    log.info("search_index.sync_batch", {
+      mode: "background",
+      phase,
+      batch,
+      batchElapsedMs: Math.round(batchElapsedMs),
+      batchSessionsChecked,
+      sessionsChecked,
+      maxBatchMs: Math.round(maxBatchMs),
       added: result.added,
       reindexed: result.reindexed,
       removed: result.removed,
       skipped: result.skipped,
       transcriptsRead: result.transcriptsRead,
+      transcriptsReindexed: result.transcriptsReindexed,
+      transcriptBytesRead: result.transcriptBytesRead,
+    });
+  }
+
+  private completeBackgroundSync(
+    startedAt: number,
+    result: SearchIndexSyncResult,
+    sessionsChecked: number,
+    maxBatchMs: number,
+    cancelled: boolean,
+  ): SearchIndexBackgroundSyncResult {
+    const completed: SearchIndexBackgroundSyncResult = {
+      ...result,
+      cancelled,
+      sessionsChecked,
+      maxBatchMs: Math.round(maxBatchMs),
+    };
+    log.info("search_index.sync_complete", {
+      mode: "background",
+      elapsedMs: Math.round(performance.now() - startedAt),
+      sessionsChecked: completed.sessionsChecked,
+      maxBatchMs: completed.maxBatchMs,
+      cancelled: completed.cancelled,
+      added: completed.added,
+      reindexed: completed.reindexed,
+      removed: completed.removed,
+      skipped: completed.skipped,
+      transcriptsRead: completed.transcriptsRead,
+      transcriptsReindexed: completed.transcriptsReindexed,
+      transcriptBytesRead: completed.transcriptBytesRead,
+      reusedIndexedTranscript: completed.reusedIndexedTranscript,
+    });
+    return completed;
+  }
+
+  private async runBackgroundSync(
+    sessions: Session[],
+    options: SearchIndexBackgroundSyncOptions,
+  ): Promise<SearchIndexBackgroundSyncResult> {
+    const budgetMs = options.budgetMs ?? DEFAULT_BACKGROUND_SYNC_BUDGET_MS;
+    const batchSize = options.batchSize ?? DEFAULT_BACKGROUND_SYNC_BATCH_SIZE;
+    if (!Number.isFinite(budgetMs) || budgetMs < 0) {
+      throw new RangeError("Search index background sync budgetMs must be finite and non-negative");
+    }
+    if (!Number.isSafeInteger(batchSize) || batchSize < 1) {
+      throw new RangeError("Search index background sync batchSize must be a positive integer");
+    }
+
+    const startedAt = performance.now();
+    const indexableSessions = sessions.filter((s) => !s.ephemeral);
+    const sessionIds = new Set(indexableSessions.map((s) => s.id));
+    const yieldBetweenBatches = options.yieldToEventLoop ?? yieldToEventLoop;
+    const result = emptySyncResult();
+    let sessionsChecked = 0;
+    let maxBatchMs = 0;
+    let batch = 0;
+
+    log.info("search_index.sync_started", {
+      mode: "background",
+      sessionsTotal: indexableSessions.length,
+      budgetMs,
+      batchSize,
+    });
+
+    let sessionIndex = 0;
+    while (sessionIndex < indexableSessions.length) {
+      if (this.closed) {
+        return this.completeBackgroundSync(startedAt, result, sessionsChecked, maxBatchMs, true);
+      }
+
+      const batchStartIndex = sessionIndex;
+      const batchResult = this.syncSessionBatchWithinBudget(
+        indexableSessions,
+        sessionIndex,
+        budgetMs,
+        batchSize,
+      );
+      sessionIndex = batchResult.nextIndex;
+      const batchSessionsChecked = sessionIndex - batchStartIndex;
+      sessionsChecked += batchSessionsChecked;
+      maxBatchMs = Math.max(maxBatchMs, batchResult.elapsedMs);
+      mergeSyncResults(result, batchResult.result);
+      batch++;
+      this.logBackgroundBatch(
+        batch,
+        "sessions",
+        batchResult.elapsedMs,
+        batchSessionsChecked,
+        sessionsChecked,
+        maxBatchMs,
+        batchResult.result,
+      );
+
+      if (sessionIndex < indexableSessions.length) {
+        await yieldBetweenBatches();
+      }
+    }
+
+    if (this.closed) {
+      return this.completeBackgroundSync(startedAt, result, sessionsChecked, maxBatchMs, true);
+    }
+
+    const orphanDiscoveryStartedAt = performance.now();
+    const orphanIds = this.findOrphanedSessionIds(sessionIds);
+    maxBatchMs = Math.max(maxBatchMs, performance.now() - orphanDiscoveryStartedAt);
+    // Keep orphan deletion on a later event-loop turn. Its bounded deletion
+    // transaction is included in maxBatchMs below, rather than being appended to
+    // the final session-indexing turn.
+    if (orphanIds.length > 0) {
+      await yieldBetweenBatches();
+    }
+    let orphanIndex = 0;
+    while (orphanIndex < orphanIds.length) {
+      if (this.closed) {
+        return this.completeBackgroundSync(startedAt, result, sessionsChecked, maxBatchMs, true);
+      }
+
+      const batchResult = this.deleteOrphanBatchWithinBudget(
+        orphanIds,
+        orphanIndex,
+        budgetMs,
+        batchSize,
+      );
+      orphanIndex = batchResult.nextIndex;
+      maxBatchMs = Math.max(maxBatchMs, batchResult.elapsedMs);
+      mergeSyncResults(result, batchResult.result);
+      batch++;
+      this.logBackgroundBatch(
+        batch,
+        "orphan_cleanup",
+        batchResult.elapsedMs,
+        0,
+        sessionsChecked,
+        maxBatchMs,
+        batchResult.result,
+      );
+
+      if (orphanIndex < orphanIds.length) {
+        await yieldBetweenBatches();
+      }
+    }
+
+    return this.completeBackgroundSync(startedAt, result, sessionsChecked, maxBatchMs, false);
+  }
+
+  /**
+   * Synchronize the index with current session data in one atomic transaction.
+   * - Re-indexes sessions whose JSONL path/mtime/size changed
+   * - Re-indexes sessions whose indexed metadata (title/workspace) changed
+   * - Indexes new sessions not yet in the index
+   * - Removes orphaned index entries for deleted sessions
+   */
+  sync(sessions: Session[]): SearchIndexSyncResult {
+    const start = performance.now();
+    const indexableSessions = sessions.filter((s) => !s.ephemeral);
+    const sessionIds = new Set(indexableSessions.map((s) => s.id));
+    const result = this.syncAllSessions(indexableSessions, sessionIds);
+    const elapsed = performance.now() - start;
+    log.info("search_index.sync_complete", {
+      mode: "blocking",
+      elapsedMs: Math.round(elapsed),
+      sessionsChecked: indexableSessions.length,
+      maxBatchMs: Math.round(elapsed),
+      added: result.added,
+      reindexed: result.reindexed,
+      removed: result.removed,
+      skipped: result.skipped,
+      transcriptsRead: result.transcriptsRead,
+      transcriptsReindexed: result.transcriptsReindexed,
       transcriptBytesRead: result.transcriptBytesRead,
       reusedIndexedTranscript: result.reusedIndexedTranscript,
     });
     return result;
+  }
+
+  /** Start a bounded, cooperative startup sync without blocking later event-loop turns. */
+  startBackgroundSync(
+    sessions: Session[],
+    options: SearchIndexBackgroundSyncOptions = {},
+  ): Promise<SearchIndexBackgroundSyncResult> {
+    if (this.closed) {
+      return Promise.resolve({
+        ...emptySyncResult(),
+        cancelled: true,
+        sessionsChecked: 0,
+        maxBatchMs: 0,
+      });
+    }
+    if (this.backgroundSyncPromise) {
+      log.warn("search_index.sync_already_running", {
+        mode: "background",
+        requestedSessions: sessions.length,
+      });
+      return this.backgroundSyncPromise;
+    }
+
+    const promise = this.runBackgroundSync(sessions, options);
+    this.backgroundSyncPromise = promise;
+    void promise.then(
+      () => {
+        if (this.backgroundSyncPromise === promise) this.backgroundSyncPromise = null;
+      },
+      () => {
+        if (this.backgroundSyncPromise === promise) this.backgroundSyncPromise = null;
+      },
+    );
+    return promise;
   }
 
   // -------------------------------------------------------------------------

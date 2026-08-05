@@ -833,19 +833,23 @@ export class Server {
       this.startUploadGcLoop();
       this.scheduleRunner.start();
 
-      // Background: sync search index after all required transports are ready.
+      // Background: warm the search index without monopolizing the event loop.
       if (this.searchIndex) {
         const idx = this.searchIndex;
-        const sessions = this.storage.listSessions();
-        setTimeout(() => {
+        setImmediate(() => {
           try {
-            idx.sync(sessions);
-          } catch (err) {
+            const sessions = this.storage.listSessions();
+            void idx.startBackgroundSync(sessions).catch((err: unknown) => {
+              log.error("server.search_index_sync.failed", {
+                error: safeErrorMessage(err),
+              });
+            });
+          } catch (err: unknown) {
             log.error("server.search_index_sync.failed", {
               error: safeErrorMessage(err),
             });
           }
-        }, 0);
+        });
       }
     };
 

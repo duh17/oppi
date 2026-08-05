@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { rmSync, utimesSync, writeFileSync, mkdtempSync } from "node:fs";
+import { rmSync, unlinkSync, utimesSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -57,6 +57,22 @@ function writeSummary(baseDir: string, piSessionId: string, body: Record<string,
   const path = join(baseDir, `${piSessionId}.summary.json`);
   writeFileSync(path, JSON.stringify(body, null, 2) + "\n");
   return path;
+}
+
+function makeFileSession(
+  dataDir: string,
+  id: string,
+  userText: string,
+  assistantText: string,
+  overrides: Partial<Session> = {},
+): Session {
+  const jsonlPath = join(dataDir, `${id}.jsonl`);
+  writeJsonl(jsonlPath, userText, assistantText);
+  return makeSession({ id, piSessionFile: jsonlPath, ...overrides });
+}
+
+function cloneSession(session: Session): Session {
+  return { ...session, tokens: { ...session.tokens } };
 }
 
 const cleanupPaths = new Set<string>();
@@ -648,6 +664,611 @@ describe("SearchIndex indexes transcript content only", () => {
         "sess-arch",
         "sess-bug",
       ]);
+    } finally {
+      index.close();
+    }
+  });
+});
+
+describe("SearchIndex background sync", () => {
+  it("uses the live session when storage replaces a snapshot during warming", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-live-replacement-"));
+    cleanupPaths.add(dataDir);
+
+    const snapshotFirst = makeFileSession(
+      dataDir,
+      "live-replacement-first",
+      "first warming token",
+      "first answer",
+    );
+    const snapshotPath = join(dataDir, "live-replacement-snapshot.jsonl");
+    const livePath = join(dataDir, "live-replacement-live.jsonl");
+    writeJsonl(snapshotPath, "snapshot old content token", "snapshot old answer");
+    writeJsonl(livePath, "live updated content token", "live updated answer");
+    const snapshotTarget = makeSession({
+      id: "live-replacement-target",
+      workspaceId: "ws-snapshot",
+      name: "snapshot title token",
+      firstMessage: "snapshot first message",
+      piSessionFile: snapshotPath,
+    });
+    const liveTargetBeforeReplacement = cloneSession(snapshotTarget);
+    const liveSessions = new Map<string, Session>([
+      [snapshotFirst.id, cloneSession(snapshotFirst)],
+      [snapshotTarget.id, liveTargetBeforeReplacement],
+    ]);
+    expect(liveSessions.get(snapshotTarget.id)).not.toBe(snapshotTarget);
+
+    const index = new SearchIndex(dataDir, (id) => liveSessions.get(id));
+    let releaseYield: (() => void) | undefined;
+    let notifyYield!: () => void;
+    const yieldStarted = new Promise<void>((resolve) => {
+      notifyYield = resolve;
+    });
+    const yieldGate = new Promise<void>((resolve) => {
+      releaseYield = resolve;
+    });
+
+    try {
+      const syncPromise = index.startBackgroundSync([snapshotFirst, snapshotTarget], {
+        batchSize: 1,
+        yieldToEventLoop: async () => {
+          notifyYield();
+          await yieldGate;
+        },
+      });
+
+      await yieldStarted;
+      liveSessions.set(snapshotTarget.id, {
+        ...liveTargetBeforeReplacement,
+        workspaceId: "ws-live",
+        name: "live title token",
+        firstMessage: "live first message",
+        piSessionFile: livePath,
+      });
+      releaseYield?.();
+
+      const result = await syncPromise;
+      expect(result).toMatchObject({ added: 2, sessionsChecked: 2, cancelled: false });
+
+      expect(index.search("live updated content token", "ws-live", 10)).toMatchObject([
+        {
+          sessionId: snapshotTarget.id,
+          workspaceId: "ws-live",
+          title: "live title token live first message",
+        },
+      ]);
+      expect(index.search("snapshot old content token", "ws-snapshot", 10)).toEqual([]);
+
+      const db = openDatabase(join(dataDir, "session-search.db"));
+      try {
+        const metadata = db
+          .prepare("SELECT jsonl_path FROM fts_meta WHERE session_id = ?")
+          .get(snapshotTarget.id) as { jsonl_path: string } | undefined;
+        expect(metadata?.jsonl_path).toBe(livePath);
+      } finally {
+        db.close();
+      }
+    } finally {
+      releaseYield?.();
+      index.close();
+    }
+  });
+
+  it("yields between bounded batches", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-yield-"));
+    cleanupPaths.add(dataDir);
+
+    const sessions = [
+      makeFileSession(dataDir, "background-yield-1", "yieldone", "answerone"),
+      makeFileSession(dataDir, "background-yield-2", "yieldtwo", "answertwo"),
+      makeFileSession(dataDir, "background-yield-3", "yieldthree", "answerthree"),
+    ];
+    const sessionMap = new Map(sessions.map((session) => [session.id, session]));
+    const index = new SearchIndex(dataDir, (id) => sessionMap.get(id));
+
+    try {
+      let yieldCount = 0;
+      const result = await index.startBackgroundSync(sessions, {
+        batchSize: 1,
+        yieldToEventLoop: async () => {
+          yieldCount++;
+        },
+      });
+
+      expect(yieldCount).toBe(2);
+      expect(result).toMatchObject({
+        added: 3,
+        sessionsChecked: 3,
+        cancelled: false,
+      });
+      expect(result.maxBatchMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("lets other event-loop work run before background sync completes", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-event-loop-"));
+    cleanupPaths.add(dataDir);
+
+    const sessions = [
+      makeFileSession(dataDir, "event-loop-1", "eventloopone", "answerone"),
+      makeFileSession(dataDir, "event-loop-2", "eventlooptwo", "answertwo"),
+      makeFileSession(dataDir, "event-loop-3", "eventloopthree", "answerthree"),
+    ];
+    const sessionMap = new Map(sessions.map((session) => [session.id, session]));
+    const index = new SearchIndex(dataDir, (id) => sessionMap.get(id));
+
+    try {
+      let syncComplete = false;
+      const otherWork = new Promise<boolean>((resolve) => {
+        setImmediate(() => resolve(!syncComplete));
+      });
+
+      const syncPromise = index.startBackgroundSync(sessions, { batchSize: 1 });
+      expect(await otherWork).toBe(true);
+      await syncPromise;
+      syncComplete = true;
+    } finally {
+      index.close();
+    }
+  });
+
+  it("matches blocking sync for added, updated, and deleted sessions", async () => {
+    const blockingDir = mkdtempSync(join(tmpdir(), "search-index-background-blocking-"));
+    const backgroundDir = mkdtempSync(join(tmpdir(), "search-index-background-equivalent-"));
+    cleanupPaths.add(blockingDir);
+    cleanupPaths.add(backgroundDir);
+
+    const buildFixture = (dataDir: string) => {
+      const updatedSeed = makeFileSession(
+        dataDir,
+        "equivalent-updated",
+        "oldcontenttoken",
+        "oldassistanttoken",
+        { name: "oldtitletoken" },
+      );
+      const unchangedSeed = makeFileSession(
+        dataDir,
+        "equivalent-unchanged",
+        "unchangedcontenttoken",
+        "unchangedassistanttoken",
+      );
+      const deletedSeed = makeFileSession(
+        dataDir,
+        "equivalent-deleted",
+        "deletedcontenttoken",
+        "deletedassistanttoken",
+      );
+      const addedSeed = makeFileSession(
+        dataDir,
+        "equivalent-added",
+        "addedcontenttoken",
+        "addedassistanttoken",
+        { name: "newtitletoken" },
+      );
+      const updated = cloneSession(updatedSeed);
+      const unchanged = cloneSession(unchangedSeed);
+      const deleted = cloneSession(deletedSeed);
+      const added = cloneSession(addedSeed);
+      return {
+        updated,
+        deleted,
+        initial: [
+          cloneSession(updatedSeed),
+          cloneSession(unchangedSeed),
+          cloneSession(deletedSeed),
+        ],
+        current: [cloneSession(updatedSeed), cloneSession(unchangedSeed), cloneSession(addedSeed)],
+        liveSessions: new Map(
+          [updated, unchanged, deleted, added].map((session) => [session.id, session]),
+        ),
+      };
+    };
+
+    const blockingFixture = buildFixture(blockingDir);
+    const backgroundFixture = buildFixture(backgroundDir);
+    expect(blockingFixture.initial[0]).not.toBe(blockingFixture.current[0]);
+    expect(blockingFixture.current[0]).not.toBe(blockingFixture.updated);
+    const blockingMap = blockingFixture.liveSessions;
+    const backgroundMap = backgroundFixture.liveSessions;
+    const blocking = new SearchIndex(blockingDir, (id) => blockingMap.get(id));
+    const background = new SearchIndex(backgroundDir, (id) => backgroundMap.get(id));
+
+    try {
+      blocking.sync(blockingFixture.initial);
+      background.sync(backgroundFixture.initial);
+
+      blockingFixture.updated.name = "newupdatedtitletoken";
+      backgroundFixture.updated.name = "newupdatedtitletoken";
+      writeJsonl(blockingFixture.updated.piSessionFile!, "newcontenttoken", "newassistanttoken");
+      writeJsonl(backgroundFixture.updated.piSessionFile!, "newcontenttoken", "newassistanttoken");
+      const future = new Date(Date.now() + 5_000);
+      utimesSync(blockingFixture.updated.piSessionFile!, future, future);
+      utimesSync(backgroundFixture.updated.piSessionFile!, future, future);
+
+      // Real deletes remove the session from storage before the next sync snapshot.
+      // Keep the mock maps honest so background orphan checks match production.
+      blockingMap.delete(blockingFixture.deleted.id);
+      backgroundMap.delete(backgroundFixture.deleted.id);
+
+      const blockingResult = blocking.sync(blockingFixture.current);
+      const backgroundResult = await background.startBackgroundSync(backgroundFixture.current, {
+        batchSize: 1,
+      });
+
+      expect(backgroundResult).toMatchObject({
+        added: blockingResult.added,
+        reindexed: blockingResult.reindexed,
+        removed: blockingResult.removed,
+        skipped: blockingResult.skipped,
+        transcriptsRead: blockingResult.transcriptsRead,
+        transcriptBytesRead: blockingResult.transcriptBytesRead,
+        reusedIndexedTranscript: blockingResult.reusedIndexedTranscript,
+        transcriptsReindexed: blockingResult.transcriptsReindexed,
+        sessionsChecked: 3,
+        cancelled: false,
+      });
+
+      for (const query of [
+        "newcontenttoken",
+        "newupdatedtitletoken",
+        "addedcontenttoken",
+        "deletedcontenttoken",
+      ]) {
+        const blockingResults = blocking
+          .search(query, "ws-1", 10)
+          .map(({ sessionId, workspaceId, title }) => ({ sessionId, workspaceId, title }));
+        const backgroundResults = background
+          .search(query, "ws-1", 10)
+          .map(({ sessionId, workspaceId, title }) => ({ sessionId, workspaceId, title }));
+        expect(backgroundResults).toEqual(blockingResults);
+      }
+      expect(background.search("deletedcontenttoken", "ws-1", 10)).toEqual([]);
+    } finally {
+      blocking.close();
+      background.close();
+    }
+  });
+
+  it("cancels after close without continuing later batches or throwing", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-cancel-"));
+    cleanupPaths.add(dataDir);
+
+    const sessions = [
+      makeFileSession(dataDir, "cancel-first", "cancelfirsttoken", "firstanswer"),
+      makeFileSession(dataDir, "cancel-second", "cancelsecondtoken", "secondanswer"),
+      makeFileSession(dataDir, "cancel-third", "cancelthirdtoken", "thirdanswer"),
+    ];
+    const sessionMap = new Map(sessions.map((session) => [session.id, session]));
+    const index = new SearchIndex(dataDir, (id) => sessionMap.get(id));
+
+    let releaseYield!: () => void;
+    let notifyYield!: () => void;
+    const yieldStarted = new Promise<void>((resolve) => {
+      notifyYield = resolve;
+    });
+    const yieldGate = new Promise<void>((resolve) => {
+      releaseYield = resolve;
+    });
+
+    const syncPromise = index.startBackgroundSync(sessions, {
+      batchSize: 1,
+      yieldToEventLoop: async () => {
+        notifyYield();
+        await yieldGate;
+      },
+    });
+
+    await yieldStarted;
+    index.close();
+    releaseYield();
+
+    const result = await syncPromise;
+    expect(result).toMatchObject({
+      cancelled: true,
+      sessionsChecked: 1,
+    });
+
+    const reopened = new SearchIndex(dataDir, (id) => sessionMap.get(id));
+    try {
+      expect(reopened.search("cancelfirsttoken", "ws-1", 10)).toHaveLength(1);
+      expect(reopened.search("cancelsecondtoken", "ws-1", 10)).toEqual([]);
+      expect(reopened.search("cancelthirdtoken", "ws-1", 10)).toEqual([]);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it("keeps sessions indexed live during warming out of the orphan sweep", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-live-orphan-"));
+    cleanupPaths.add(dataDir);
+
+    const snapshotSessions = [
+      makeFileSession(dataDir, "live-orphan-a", "liveorphana", "answera"),
+      makeFileSession(dataDir, "live-orphan-b", "liveorphanb", "answerb"),
+    ];
+    // Seed a true orphan so the sweep still has something real to remove.
+    const staleOrphan = makeFileSession(
+      dataDir,
+      "live-orphan-stale",
+      "liveorphanstale",
+      "answerstale",
+    );
+    const sessionMap = new Map(
+      [...snapshotSessions, staleOrphan].map((session) => [session.id, session]),
+    );
+    const index = new SearchIndex(dataDir, (id) => sessionMap.get(id));
+
+    let releaseYield!: () => void;
+    let notifyYield!: () => void;
+    const yieldStarted = new Promise<void>((resolve) => {
+      notifyYield = resolve;
+    });
+    const yieldGate = new Promise<void>((resolve) => {
+      releaseYield = resolve;
+    });
+
+    try {
+      index.sync([...snapshotSessions, staleOrphan]);
+      sessionMap.delete(staleOrphan.id);
+      if (staleOrphan.piSessionFile) unlinkSync(staleOrphan.piSessionFile);
+
+      const syncPromise = index.startBackgroundSync(snapshotSessions, {
+        batchSize: 1,
+        yieldToEventLoop: async () => {
+          notifyYield();
+          await yieldGate;
+        },
+      });
+
+      await yieldStarted;
+
+      // Simulate agent_end for a session created after the startup snapshot.
+      const liveCreated = makeFileSession(
+        dataDir,
+        "live-orphan-new",
+        "liveorphannewtoken",
+        "answernew",
+        { name: "live new session title" },
+      );
+      sessionMap.set(liveCreated.id, liveCreated);
+      index.indexSession(liveCreated.id);
+
+      expect(index.search("liveorphannewtoken", "ws-1", 10)).toHaveLength(1);
+
+      releaseYield();
+      const result = await syncPromise;
+
+      expect(result.cancelled).toBe(false);
+      expect(result.removed).toBe(1);
+      expect(index.search("liveorphannewtoken", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("liveorphanstale", "ws-1", 10)).toEqual([]);
+      expect(index.search("liveorphana", "ws-1", 10)).toHaveLength(1);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("does not delete a session recreated after orphan discovery", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-recreated-orphan-"));
+    cleanupPaths.add(dataDir);
+
+    const orphan = makeFileSession(
+      dataDir,
+      "recreated-orphan",
+      "orphan content token",
+      "orphan answer",
+      { name: "orphan title token" },
+    );
+    const liveSessions = new Map([[orphan.id, orphan]]);
+    const index = new SearchIndex(dataDir, (id) => liveSessions.get(id));
+
+    try {
+      index.sync([orphan]);
+      liveSessions.delete(orphan.id);
+      const recreated = makeFileSession(
+        dataDir,
+        orphan.id,
+        "recreated content token",
+        "recreated answer",
+        { name: "recreated title token" },
+      );
+
+      const result = await index.startBackgroundSync([], {
+        yieldToEventLoop: async () => {
+          liveSessions.set(recreated.id, recreated);
+          index.indexSession(recreated.id);
+        },
+      });
+
+      expect(result).toMatchObject({ removed: 0, sessionsChecked: 0, cancelled: false });
+      expect(index.search("recreated content token", "ws-1", 10)).toMatchObject([
+        { sessionId: recreated.id, title: "recreated title token" },
+      ]);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("does not resurrect a session deleted while background sync is yielding", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-delete-ghost-"));
+    cleanupPaths.add(dataDir);
+
+    const keep = makeFileSession(dataDir, "ghost-keep", "ghostkeeptoken", "keepanswer", {
+      name: "keep title token",
+    });
+    const doomed = makeFileSession(dataDir, "ghost-doomed", "ghostdoomedtoken", "doomedanswer", {
+      name: "doomed title token",
+    });
+    const sessionMap = new Map([keep, doomed].map((session) => [session.id, session]));
+    const index = new SearchIndex(dataDir, (id) => sessionMap.get(id));
+
+    let releaseYield!: () => void;
+    let notifyYield!: () => void;
+    const yieldStarted = new Promise<void>((resolve) => {
+      notifyYield = resolve;
+    });
+    const yieldGate = new Promise<void>((resolve) => {
+      releaseYield = resolve;
+    });
+
+    try {
+      index.sync([keep, doomed]);
+      expect(index.search("doomed title token", "ws-1", 10)).toHaveLength(1);
+
+      const syncPromise = index.startBackgroundSync([keep, doomed], {
+        batchSize: 1,
+        yieldToEventLoop: async () => {
+          notifyYield();
+          await yieldGate;
+        },
+      });
+
+      await yieldStarted;
+
+      // Lifecycle delete: remove file + storage + index row while warming still holds doomed.
+      if (doomed.piSessionFile) unlinkSync(doomed.piSessionFile);
+      sessionMap.delete(doomed.id);
+      index.deleteSession(doomed.id);
+      expect(index.search("doomed title token", "ws-1", 10)).toEqual([]);
+      expect(index.search("ghostdoomedtoken", "ws-1", 10)).toEqual([]);
+
+      releaseYield();
+      const result = await syncPromise;
+
+      expect(result.cancelled).toBe(false);
+      expect(index.search("doomed title token", "ws-1", 10)).toEqual([]);
+      expect(index.search("ghostdoomedtoken", "ws-1", 10)).toEqual([]);
+      expect(index.search("ghostkeeptoken", "ws-1", 10)).toHaveLength(1);
+
+      const db = openDatabase(join(dataDir, "session-search.db"));
+      try {
+        const fts = db
+          .prepare("SELECT session_id FROM session_fts WHERE session_id = ?")
+          .all(doomed.id) as { session_id: string }[];
+        const meta = db
+          .prepare("SELECT session_id FROM fts_meta WHERE session_id = ?")
+          .all(doomed.id) as { session_id: string }[];
+        expect(fts).toEqual([]);
+        expect(meta).toEqual([]);
+      } finally {
+        db.close();
+      }
+    } finally {
+      index.close();
+    }
+  });
+
+  it("returns the in-flight promise when startBackgroundSync is called twice", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-double-start-"));
+    cleanupPaths.add(dataDir);
+
+    const sessions = [
+      makeFileSession(dataDir, "double-a", "doubleatoken", "answera"),
+      makeFileSession(dataDir, "double-b", "doublebtoken", "answerb"),
+    ];
+    const sessionMap = new Map(sessions.map((session) => [session.id, session]));
+    const index = new SearchIndex(dataDir, (id) => sessionMap.get(id));
+
+    let releaseYield!: () => void;
+    let notifyYield!: () => void;
+    let yieldCount = 0;
+    const yieldStarted = new Promise<void>((resolve) => {
+      notifyYield = resolve;
+    });
+    const yieldGate = new Promise<void>((resolve) => {
+      releaseYield = resolve;
+    });
+
+    try {
+      const first = index.startBackgroundSync(sessions, {
+        batchSize: 1,
+        yieldToEventLoop: async () => {
+          yieldCount++;
+          notifyYield();
+          await yieldGate;
+        },
+      });
+      const second = index.startBackgroundSync(
+        [makeFileSession(dataDir, "double-ignored", "ignoredtoken", "ignored")],
+        { batchSize: 1 },
+      );
+
+      expect(second).toBe(first);
+
+      await yieldStarted;
+      releaseYield();
+      const result = await first;
+
+      expect(result).toMatchObject({
+        added: 2,
+        sessionsChecked: 2,
+        cancelled: false,
+      });
+      expect(yieldCount).toBe(1);
+      expect(index.search("doubleatoken", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("ignoredtoken", "ws-1", 10)).toEqual([]);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("resolves cancelled when startBackgroundSync is called after close", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-after-close-"));
+    cleanupPaths.add(dataDir);
+
+    const session = makeFileSession(dataDir, "after-close", "afterclosetoken", "answer");
+    const sessionMap = new Map([[session.id, session]]);
+    const index = new SearchIndex(dataDir, (id) => sessionMap.get(id));
+    index.close();
+
+    const result = await index.startBackgroundSync([session], { batchSize: 1 });
+    expect(result).toEqual({
+      reindexed: 0,
+      added: 0,
+      removed: 0,
+      skipped: 0,
+      transcriptsRead: 0,
+      transcriptBytesRead: 0,
+      reusedIndexedTranscript: 0,
+      transcriptsReindexed: 0,
+      cancelled: true,
+      sessionsChecked: 0,
+      maxBatchMs: 0,
+    });
+  });
+
+  it("still processes one session per batch when budgetMs is 0", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-budget-zero-"));
+    cleanupPaths.add(dataDir);
+
+    const sessions = [
+      makeFileSession(dataDir, "budget-zero-1", "budgetzeroone", "answerone"),
+      makeFileSession(dataDir, "budget-zero-2", "budgetzerotwo", "answertwo"),
+    ];
+    const sessionMap = new Map(sessions.map((session) => [session.id, session]));
+    const index = new SearchIndex(dataDir, (id) => sessionMap.get(id));
+
+    try {
+      let yieldCount = 0;
+      const result = await index.startBackgroundSync(sessions, {
+        batchSize: 10,
+        budgetMs: 0,
+        yieldToEventLoop: async () => {
+          yieldCount++;
+        },
+      });
+
+      expect(yieldCount).toBe(1);
+      expect(result).toMatchObject({
+        added: 2,
+        sessionsChecked: 2,
+        cancelled: false,
+      });
+      expect(index.search("budgetzeroone", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("budgetzerotwo", "ws-1", 10)).toHaveLength(1);
     } finally {
       index.close();
     }
