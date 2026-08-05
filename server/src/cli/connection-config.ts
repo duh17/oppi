@@ -2,7 +2,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { AuthStore } from "../storage/auth-store.js";
-import { ConfigStore, DEFAULT_DATA_DIR } from "../storage/config-store.js";
+import {
+  ConfigStore,
+  DEFAULT_DATA_DIR,
+  type ConfigValidationResult,
+} from "../storage/config-store.js";
 import type { AuthTransport, ServerConfig } from "../types.js";
 import type { LocalApiConnection } from "./local-api-client.js";
 
@@ -16,6 +20,18 @@ export interface CliConfigStorage extends CliConnectionConfig {
   ensurePaired(): string;
   rotateToken(): string;
   issuePairingToken(ttlMs?: number, options?: { allowedTransports?: AuthTransport[] }): string;
+}
+
+/**
+ * Config-capable storage for `oppi config` commands. Kept off the base
+ * interface so full app `Storage` keeps matching `CliConfigStorage` in
+ * serve/pair flows; only the config command needs the extra surface.
+ */
+export interface CliConfigCommandStorage extends CliConfigStorage {
+  /** Default config for the current data dir, without reading or validating a file. */
+  getDefaultConfig(): ServerConfig;
+  /** Validate a config file at an explicit path, defaulting to the storage config path. */
+  validateConfigFile(target?: string): ConfigValidationResult;
 }
 
 export class FileCliConnectionConfig implements CliConnectionConfig {
@@ -64,7 +80,7 @@ export class FileCliConnectionConfig implements CliConnectionConfig {
   }
 }
 
-export class FileCliConfigStorage implements CliConfigStorage {
+export class FileCliConfigStorage implements CliConfigCommandStorage {
   private readonly configStore: ConfigStore;
   private readonly authStore: AuthStore;
 
@@ -108,12 +124,20 @@ export class FileCliConfigStorage implements CliConfigStorage {
   issuePairingToken(ttlMs?: number, options?: { allowedTransports?: AuthTransport[] }): string {
     return this.authStore.issuePairingToken(ttlMs, options);
   }
+
+  getDefaultConfig(): ServerConfig {
+    return ConfigStore.getDefaultConfig(this.getDataDir());
+  }
+
+  validateConfigFile(target?: string): ConfigValidationResult {
+    return ConfigStore.validateConfigFile(target ?? this.getConfigPath());
+  }
 }
 
 export function createCliConnectionConfig(dataDir?: string): CliConnectionConfig {
   return new FileCliConnectionConfig(dataDir ?? process.env.OPPI_DATA_DIR ?? DEFAULT_DATA_DIR);
 }
 
-export function createCliConfigStorage(dataDir?: string): CliConfigStorage {
+export function createCliConfigStorage(dataDir?: string): CliConfigCommandStorage {
   return new FileCliConfigStorage(dataDir ?? process.env.OPPI_DATA_DIR ?? DEFAULT_DATA_DIR);
 }

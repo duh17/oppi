@@ -6,6 +6,7 @@ const REQUIRED_OPPI_DOCS = [
   "extensions.md",
   "extension-native-ui.md",
   "attachment-rendering.md",
+  "server-configuration.md",
 ] as const;
 const OPPI_DOCS_HINT_PREFIX =
   "Oppi documentation (read only when asked about Oppi mobile/runtime behavior):";
@@ -41,6 +42,7 @@ export function buildOppiSystemPromptAppend(docsPath = getOppiDocsPath()): strin
   return [
     OPPI_DOCS_HINT_PREFIX,
     `- Docs directory: ${docsPath}`,
+    `- Server configuration (ASR, TTS, config CLI): ${join(docsPath, "server-configuration.md")}`,
     `- Extensions: ${join(docsPath, "extensions.md")}`,
     `- Native extension UI: ${join(docsPath, "extension-native-ui.md")}`,
     `- Attachment rendering: ${join(docsPath, "attachment-rendering.md")}`,

@@ -23,6 +23,10 @@ describe("CLI agent access policy", () => {
     ["schedule runs", "read"],
     ["schedule pause", "mutation"],
     ["schedule archive", "destructive"],
+    ["config show", "read"],
+    ["config get", "read"],
+    ["config validate", "read"],
+    ["config set", "mutation"],
   ])("classifies %s as %s", (command, access) => {
     const args = command.split(" ");
     const result = classifyCliAgentCommand(args);
@@ -33,9 +37,20 @@ describe("CLI agent access policy", () => {
     });
   });
 
+  it("denies agent config validate against an explicit --config-file", () => {
+    expect(
+      classifyCliAgentCommand(["config", "validate", "--config-file", "/etc/hosts"]),
+    ).toMatchObject({
+      ok: false,
+      access: "denied",
+    });
+    expect(classifyCliAgentCommand(["config", "validate"])).toMatchObject({
+      ok: true,
+      invocation: { access: "read", path: ["config", "validate"] },
+    });
+  });
+
   it.each([
-    ["config", "show"],
-    ["config", "set", "token", "secret"],
     ["pair"],
     ["token", "rotate"],
     ["server", "restart"],
@@ -116,8 +131,8 @@ describe("CLI agent access policy", () => {
       invocation: { access: "read", path: ["workspace"] },
     });
     expect(classifyCliAgentCommand(["help", "config"])).toMatchObject({
-      ok: false,
-      access: "denied",
+      ok: true,
+      invocation: { access: "read", path: ["config"] },
     });
     expect(classifyCliAgentCommand(["help"])).toMatchObject({ ok: false, access: "denied" });
   });

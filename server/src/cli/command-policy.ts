@@ -89,13 +89,18 @@ const COMMAND_POLICIES: readonly CliCommandPolicy[] = [
   { path: ["schedule", "restore"], access: "mutation" },
   { path: ["schedule", "archive"], access: "destructive" },
 
+  { path: ["config"], access: "read" },
+  { path: ["config", "show"], access: "read" },
+  { path: ["config", "get"], access: "read" },
+  { path: ["config", "validate"], access: "read" },
+  { path: ["config", "set"], access: "mutation" },
+
   { path: ["init"], access: "denied" },
   { path: ["serve"], access: "denied" },
   { path: ["start"], access: "denied" },
   { path: ["pair"], access: "denied" },
   { path: ["doctor"], access: "denied" },
   { path: ["server"], access: "denied" },
-  { path: ["config"], access: "denied" },
   { path: ["token"], access: "denied" },
   { path: ["update"], access: "denied" },
   { path: ["version"], access: "denied" },
@@ -133,6 +138,14 @@ export function classifyCliAgentCommand(rawArgs: readonly string[]): CliAgentCla
   const path = isHelp
     ? canonicalPath(helpPathFor(parsed.command, parsed.positional))
     : canonicalPath(commandPath(parsed));
+  if (!isHelp && path[0] === "config" && path[1] === "validate") {
+    if (Object.hasOwn(parsed.flags, "config-file")) {
+      return denied(
+        "Agent config validate cannot target an explicit --config-file; validate the active config instead",
+        path,
+      );
+    }
+  }
   const policy = policyFor(path, isHelp);
   if (!policy || policy.access === "denied") {
     return denied("This Oppi command is not exposed to agents", path);

@@ -8,7 +8,7 @@ import {
   type CliAgentAccess,
 } from "./cli/command-policy.js";
 import { runCli, type CliRunResult } from "./cli/runner.js";
-import { redactCredentialString } from "./credential-redaction.js";
+import { redactCredentialString, redactCredentialValue } from "./credential-redaction.js";
 import { createLogger } from "./logger.js";
 import type { OppiApprovalPolicy } from "./oppi-extension-settings.js";
 import { assertNotSelfTargetingSession } from "./session-caller-identity.js";
@@ -262,6 +262,7 @@ export function createOppiToolExtensionFactory(options: {
             }),
         });
 
+        const displayArgs = displayArgsForOppiCommand(prepared);
         if (policyResult.kind === "cancelled") {
           return {
             content: [
@@ -274,7 +275,7 @@ export function createOppiToolExtensionFactory(options: {
               },
             ],
             details: {
-              args: [...prepared.args],
+              args: displayArgs,
               outcome: "cancelled" as const,
               cancelled: true,
               reason: policyResult.reason,
@@ -286,10 +287,10 @@ export function createOppiToolExtensionFactory(options: {
         const mapped = {
           content: [{ type: "text" as const, text: boundModelOutput(result.stdout) }],
           details: {
-            args: [...prepared.args],
+            args: displayArgs,
             outcome: result.ok ? ("result" as const) : ("error" as const),
             ...(result.json?.ok ? { data: result.json.data } : {}),
-            expandedText: terminalTranscript(prepared.args, result.humanOutput),
+            expandedText: terminalTranscript(displayArgs, result.humanOutput),
             presentationFormat: "terminal" as const,
             exitCode: result.exitCode,
           },
@@ -298,6 +299,77 @@ export function createOppiToolExtensionFactory(options: {
       },
     });
   };
+}
+
+/** Display-only args for tool details/transcripts. Never mutate execution args. */
+export function displayArgsForOppiCommand(prepared: PreparedOppiCommand): string[] {
+  const args = [...prepared.args];
+  if (prepared.path[0] !== "config" || prepared.path[1] !== "set" || prepared.isHelp) {
+    return args;
+  }
+  const positions = configSetKeyValuePositions(args);
+  const key = positions ? args[positions.keyIndex] : undefined;
+  if (positions && key !== undefined && args[positions.valueIndex] !== undefined) {
+    args[positions.valueIndex] = redactConfigSetDisplayValue(
+      key,
+      args[positions.valueIndex] as string,
+    );
+  }
+  return args;
+}
+
+/**
+ * Raw-array positions of the config key and value for a `config set` command,
+ * mirroring parseCliArgs so accepted flags anywhere in the array cannot shift
+ * the positional value out from under redaction.
+ */
+function configSetKeyValuePositions(
+  args: readonly string[],
+): { keyIndex: number; valueIndex: number } | undefined {
+  let parseFlags = true;
+  const positionalIndices: number[] = [];
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg) continue;
+    if (parseFlags && arg === "--") {
+      parseFlags = false;
+      continue;
+    }
+    if (parseFlags && (arg === "-h" || arg.startsWith("--"))) {
+      if (arg === "-h") continue;
+      const separator = arg.indexOf("=");
+      if (separator === -1) {
+        const next = args[i + 1];
+        if (next && next !== "--" && !next.startsWith("--")) i += 1; // skip flag value
+      }
+      continue;
+    }
+    positionalIndices.push(i);
+  }
+  // positional[0] is the action ("set"), positional[1] the key, positional[2] the value.
+  if (positionalIndices.length < 3) return undefined;
+  return { keyIndex: positionalIndices[1], valueIndex: positionalIndices[2] };
+}
+
+function redactConfigSetDisplayValue(key: string, value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.stringify(redactCredentialValue(JSON.parse(trimmed) as unknown));
+    } catch {
+      // Fall through to key-aware scalar redaction.
+    }
+  }
+  const leaf =
+    key
+      .split(".")
+      .filter((part) => part.length > 0)
+      .at(-1) ?? key;
+  const redacted = redactCredentialValue(value, leaf);
+  return typeof redacted === "string" ? redacted : JSON.stringify(redacted);
 }
 
 function commandRequiresApproval(

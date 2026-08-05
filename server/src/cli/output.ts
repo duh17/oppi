@@ -192,6 +192,20 @@ export function writeHumanLine(value: string): void {
   console.log(safeValue);
 }
 
+/**
+ * Write human output verbatim. Use only for content that is already
+ * structurally redacted (for example pretty-printed redacted config), where
+ * the line-oriented redaction in writeHumanLine would corrupt formatting.
+ */
+export function writeHumanLineRaw(value: string): void {
+  const capture = cliOutputCapture.getStore();
+  if (capture?.includeHuman) {
+    capture.humanChunks.push(`${value}\n`);
+    return;
+  }
+  console.log(value);
+}
+
 function scalarText(value: unknown): string {
   if (value === undefined || value === null) return "";
   if (value instanceof Date) return value.toISOString();

@@ -112,17 +112,34 @@ describe("canonical Oppi command preparation", () => {
     });
   });
 
-  it("denies setup, credential, and unrestricted host commands", () => {
+  it("denies setup, credential mutation, and unrestricted host commands", () => {
     for (const args of [
-      ["config", "get", "token"],
       ["pair"],
       ["server", "restart"],
       ["update"],
+      ["token", "rotate"],
       ["credentials", "list"],
       ["shell", "exec"],
     ]) {
       expect(prepareOppiCommand(args), args.join(" ")).toMatchObject({ ok: false });
     }
+  });
+
+  it("allows redacted config reads and classifies config set as mutation", () => {
+    expect(prepareOppiCommand(["config", "get", "token"])).toMatchObject({
+      ok: true,
+      command: { path: ["config", "get"], access: "read" },
+    });
+    expect(prepareOppiCommand(["config", "show"])).toMatchObject({
+      ok: true,
+      command: { path: ["config", "show"], access: "read" },
+    });
+    expect(
+      prepareOppiCommand(["config", "set", "asr.sttEndpoint", "http://127.0.0.1:7936"]),
+    ).toMatchObject({
+      ok: true,
+      command: { path: ["config", "set"], access: "mutation" },
+    });
   });
 
   it("canonicalizes one-session watch to bounded wait", () => {
@@ -255,14 +272,7 @@ describe("thin Oppi extension", () => {
     const result = (await tool.execute(
       "call-1",
       {
-        args: [
-          "session",
-          "create",
-          "--workspace",
-          "oppi",
-          "--prompt",
-          prompt,
-        ],
+        args: ["session", "create", "--workspace", "oppi", "--prompt", prompt],
       },
       undefined,
       undefined,
@@ -436,5 +446,63 @@ describe("thin Oppi extension", () => {
     );
 
     expect(canonicalRun).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Oppi tool display arg redaction", () => {
+  it("redacts config set secrets in details and transcripts without changing execution args", async () => {
+    const { displayArgsForOppiCommand } = await import("../src/oppi-tool-extension.js");
+    const command = prepared([
+      "config",
+      "set",
+      "runtimeEnv.OPENAI_API_KEY",
+      "sk-secret-should-not-leak",
+    ]);
+    expect(command.args[3]).toBe("sk-secret-should-not-leak");
+    expect(displayArgsForOppiCommand(command)[3]).toBe("[REDACTED]");
+
+    const jsonCommand = prepared([
+      "config",
+      "set",
+      "runtimeEnv",
+      JSON.stringify({ OPENAI_API_KEY: "sk-json-secret", TTS_BASE_URL: "http://127.0.0.1:7937" }),
+    ]);
+    const display = displayArgsForOppiCommand(jsonCommand)[3] ?? "";
+    expect(display).toContain("[REDACTED]");
+    expect(display).toContain("http://127.0.0.1:7937");
+    expect(display).not.toContain("sk-json-secret");
+    expect(jsonCommand.args[3]).toContain("sk-json-secret");
+  });
+
+  it("redacts config set values even when flags are interleaved around positionals", async () => {
+    const { displayArgsForOppiCommand } = await import("../src/oppi-tool-extension.js");
+    for (const args of [
+      ["config", "--ignored", "x", "set", "runtimeEnv.OPENAI_API_KEY", "plain-secret-value"],
+      ["config", "set", "--ignored", "x", "runtimeEnv.OPENAI_API_KEY", "plain-secret-value"],
+      ["config", "set", "runtimeEnv.OPENAI_API_KEY", "--ignored", "x", "plain-secret-value"],
+      [
+        "config",
+        "set",
+        "runtimeEnv",
+        "--ignored",
+        "x",
+        JSON.stringify({ OPENAI_API_KEY: "json-secret-value" }),
+      ],
+    ]) {
+      const command = prepared([...args]);
+      const display = displayArgsForOppiCommand(command);
+      // Execution args stay intact; the value position is redacted in display.
+      expect(command.args).toEqual(args);
+      expect(display.join(" ")).toContain("[REDACTED]");
+      expect(display.join(" ")).not.toContain("secret-value");
+    }
+  });
+
+  it("leaves non-config commands and help untouched", async () => {
+    const { displayArgsForOppiCommand } = await import("../src/oppi-tool-extension.js");
+    const command = prepared(["config", "set", "--help"]);
+    expect(displayArgsForOppiCommand(command)).toEqual([...command.args]);
+    const session = prepared(["session", "send", "s1", "--text", "hello"]);
+    expect(displayArgsForOppiCommand(session)).toEqual([...session.args]);
   });
 });

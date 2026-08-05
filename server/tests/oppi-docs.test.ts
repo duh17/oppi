@@ -45,6 +45,7 @@ describe("Oppi documentation prompt hint", () => {
       [
         "Oppi documentation (read only when asked about Oppi mobile/runtime behavior):",
         `- Docs directory: ${docsPath}`,
+        `- Server configuration (ASR, TTS, config CLI): ${join(docsPath!, "server-configuration.md")}`,
         `- Extensions: ${join(docsPath!, "extensions.md")}`,
         `- Native extension UI: ${join(docsPath!, "extension-native-ui.md")}`,
         `- Attachment rendering: ${join(docsPath!, "attachment-rendering.md")}`,

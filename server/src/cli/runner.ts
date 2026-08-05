@@ -2,13 +2,14 @@ import * as c from "../ansi.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { parseCliArgs } from "./args.js";
 import { cmdAgent } from "./commands/agent.js";
+import { cmdConfig } from "./commands/config.js";
 import { cmdSchedule } from "./commands/schedule.js";
 import { cmdSession } from "./commands/session.js";
 import { cmdSkill } from "./commands/skill.js";
 import { cmdWait } from "./commands/wait.js";
 import { cmdWorkspace } from "./commands/workspace.js";
 import { cmdWorktree } from "./commands/worktree.js";
-import { createCliConnectionConfig } from "./connection-config.js";
+import { createCliConfigStorage, createCliConnectionConfig } from "./connection-config.js";
 import { helpPathFor, isNestedHelpRequest, resolveHelpTopic, writeCliHelpOutput } from "./help.js";
 import {
   captureCliOutput,
@@ -134,6 +135,9 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
       return;
     case "wait":
       await cmdWait(connection, positional[0], positional.slice(1), flags);
+      return;
+    case "config":
+      cmdConfig(createCliConfigStorage(dataDir), positional[0], positional.slice(1), flags);
       return;
     default:
       writeJsonEnvelope({ ok: false, error: { message: `Unknown command: ${command}` } });
