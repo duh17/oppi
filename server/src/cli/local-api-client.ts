@@ -8,6 +8,13 @@ export type LocalApiRequestOptions = {
   body?: Record<string, unknown>;
 };
 
+export interface LocalApiError extends Error {
+  status?: number;
+  code?: string;
+  expectedVersion?: number;
+  currentVersion?: number;
+}
+
 export interface LocalApiConnection {
   getConfig(): ServerConfig;
   getToken(): string | undefined;
@@ -71,8 +78,9 @@ export async function localApiRequest<T>(
       isRecord(payload) && typeof payload.error === "string"
         ? payload.error
         : `HTTP ${response.statusCode}`;
-    const error = new Error(message) as Error & { status?: number };
+    const error = new Error(message) as LocalApiError;
     error.status = response.statusCode;
+    Object.assign(error, validatedApiErrorFields(payload));
     throw error;
   }
   return payload as T;
@@ -85,6 +93,29 @@ function parseJsonPayload(raw: string): unknown {
   } catch {
     throw new Error("Invalid JSON response from local API");
   }
+}
+
+function validatedApiErrorFields(value: unknown): {
+  code?: string;
+  expectedVersion?: number;
+  currentVersion?: number;
+} {
+  if (!isRecord(value)) return {};
+  const code =
+    typeof value.code === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value.code)
+      ? value.code
+      : undefined;
+  const expectedVersion = positiveVersion(value.expectedVersion);
+  const currentVersion = positiveVersion(value.currentVersion);
+  return {
+    ...(code ? { code } : {}),
+    ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+    ...(currentVersion !== undefined ? { currentVersion } : {}),
+  };
+}
+
+function positiveVersion(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

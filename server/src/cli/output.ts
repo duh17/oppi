@@ -4,9 +4,17 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import * as c from "../ansi.js";
 import { redactCredentialString, redactCredentialValue } from "../credential-redaction.js";
 
+export type CliJsonError = {
+  message: string;
+  status?: number;
+  code?: string;
+  expectedVersion?: number;
+  currentVersion?: number;
+};
+
 export type CliJsonEnvelope =
   | { ok: true; data: Record<string, unknown> }
-  | { ok: false; error: { message: string; status?: number } };
+  | { ok: false; error: CliJsonError };
 
 export type TerminalDetailEntry = [string, unknown];
 

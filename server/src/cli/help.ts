@@ -1453,7 +1453,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Update saved Agent",
     summary: "Patch a saved Agent from a JSON definition file or inline JSON object.",
     usage:
-      "oppi agent update <agent> (--definition <file> | --definition-json <json-object>) [--json]",
+      "oppi agent update <agent> (--definition <file> | --definition-json <json-object>) [--expected-version <version>] [--json]",
     arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
     flags: [
       {
@@ -1466,13 +1466,22 @@ const HELP_TOPICS: HelpTopic[] = [
         value: "<json-object>",
         summary: "inline JSON AgentDefinition fields to patch; maximum 65536 bytes",
       },
+      {
+        name: "--expected-version",
+        value: "<version>",
+        summary: "reject with conflict unless the Agent still has this version",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    notes: ["Choose exactly one of --definition or --definition-json."],
+    notes: [
+      "Choose exactly one of --definition or --definition-json.",
+      "Use --expected-version with the version from a previously reviewed Agent snapshot; a stale version returns a conflict instead of overwriting newer changes.",
+      "Omit --expected-version for a compatible unconditional PATCH.",
+    ],
     examples: [
       { command: "oppi agent update Reviewer --definition ./agent-update.json --json" },
       {
-        command: `oppi agent update Reviewer --definition-json '{"description":"Reviews risky diffs"}' --json`,
+        command: `oppi agent update Reviewer --definition-json '{"description":"Reviews risky diffs"}' --expected-version 3 --json`,
       },
     ],
   },

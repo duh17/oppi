@@ -85,11 +85,19 @@ describe("local API Unix socket client", () => {
     );
   });
 
-  it("preserves HTTP status and API error messages", async () => {
+  it("preserves validated structured API error fields", async () => {
     const dataDir = makeDataDir();
     const server = createHttpServer((_req, res) => {
       res.writeHead(409, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "conflict" }));
+      res.end(
+        JSON.stringify({
+          error: "conflict",
+          code: "AGENT_VERSION_CONFLICT",
+          expectedVersion: 3,
+          currentVersion: 4,
+          ignored: "not copied",
+        }),
+      );
     });
     servers.push(server);
     await listenOnLocalApiFixture(server, dataDir);
@@ -100,6 +108,37 @@ describe("local API Unix socket client", () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe("conflict");
     expect((error as Error & { status?: number }).status).toBe(409);
+    expect((error as Error & { code?: string }).code).toBe("AGENT_VERSION_CONFLICT");
+    expect((error as Error & { expectedVersion?: number }).expectedVersion).toBe(3);
+    expect((error as Error & { currentVersion?: number }).currentVersion).toBe(4);
+    expect(error).not.toHaveProperty("ignored");
+  });
+
+  it("drops malformed structured API error fields", async () => {
+    const dataDir = makeDataDir();
+    const server = createHttpServer((_req, res) => {
+      res.writeHead(409, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: "conflict",
+          code: 409,
+          expectedVersion: "3",
+          currentVersion: Number.POSITIVE_INFINITY,
+          extra: { secret: "not copied" },
+        }),
+      );
+    });
+    servers.push(server);
+    await listenOnLocalApiFixture(server, dataDir);
+
+    const error = await localApiRequest(makeConnection(dataDir), "/resource").catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toHaveProperty("code");
+    expect(error).not.toHaveProperty("expectedVersion");
+    expect(error).not.toHaveProperty("currentVersion");
+    expect(error).not.toHaveProperty("extra");
   });
 
   it("rejects invalid JSON from a successful response", async () => {

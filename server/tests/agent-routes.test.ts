@@ -1,5 +1,6 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { ServerResponse } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -27,6 +28,271 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     runtime: "oppi",
     ...overrides,
   };
+}
+
+type AgentUpdateWorkerMessage = {
+  kind: "ready" | "read" | "result";
+  ok?: boolean;
+  name?: string;
+  message?: string;
+  code?: string;
+  version?: number;
+  description?: string;
+  expectedVersion?: number;
+  currentVersion?: number;
+};
+
+type AgentUpdateWorkerHandle = {
+  child: ChildProcessWithoutNullStreams;
+  ready: Promise<void>;
+  read: Promise<void>;
+  result: Promise<AgentUpdateWorkerMessage>;
+};
+
+const AGENT_RACE_PHASE_TIMEOUT_MS = 3_000;
+const AGENT_RACE_TERM_TIMEOUT_MS = 500;
+const AGENT_RACE_KILL_TIMEOUT_MS = 1_000;
+
+function agentUpdateChildSource(): string {
+  const agentDefinitionsUrl = new URL("../src/agent-definitions.ts", import.meta.url).href;
+  return `
+import { existsSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { AgentDefinitionStore } from ${JSON.stringify(agentDefinitionsUrl)};
+
+const [dataDir, dbPath, agentId, description, releasePath, expectedVersionText] =
+  process.argv.slice(1);
+const expectedVersion = expectedVersionText ? Number(expectedVersionText) : undefined;
+const store = new AgentDefinitionStore(dataDir, dbPath);
+const originalGetAgent = store.getAgent.bind(store);
+let lookupHeld = false;
+store.getAgent = (id) => {
+  const agent = originalGetAgent(id);
+  if (!lookupHeld && id === agentId) {
+    lookupHeld = true;
+    process.stdout.write(JSON.stringify({ kind: "read" }) + "\\n");
+    const gateSignal = new Int32Array(new SharedArrayBuffer(4));
+    const gateDeadline = Date.now() + 3_000;
+    while (!existsSync(releasePath) && Date.now() < gateDeadline) {
+      Atomics.wait(gateSignal, 0, 0, 10);
+    }
+    if (!existsSync(releasePath)) throw new Error("Agent race gate timed out");
+  }
+  return agent;
+};
+const input = createInterface({ input: process.stdin });
+process.stdout.write("ready\\n");
+input.once("line", () => {
+  try {
+    const updated = store.updateAgent(agentId, { description }, Date.now(), expectedVersion);
+    process.stdout.write(JSON.stringify({
+      kind: "result",
+      ok: true,
+      version: updated?.version,
+      description: updated?.definition.description,
+    }) + "\\n");
+  } catch (error) {
+    const record = error && typeof error === "object" ? error : {};
+    process.stdout.write(JSON.stringify({
+      kind: "result",
+      ok: false,
+      name: error instanceof Error ? error.name : "UnknownError",
+      message: error instanceof Error ? error.message : String(error),
+      code: record.code,
+      expectedVersion: record.expectedVersion,
+      currentVersion: record.currentVersion,
+    }) + "\\n");
+  } finally {
+    store.close();
+    input.close();
+  }
+});
+`;
+}
+
+function spawnAgentUpdateWorker(
+  dataDir: string,
+  dbPath: string,
+  agentId: string,
+  description: string,
+  releasePath: string,
+  expectedVersion: number | undefined,
+): AgentUpdateWorkerHandle {
+  const child = spawn(
+    process.execPath,
+    [
+      "--import",
+      "tsx/esm",
+      "--input-type=module",
+      "--eval",
+      agentUpdateChildSource(),
+      dataDir,
+      dbPath,
+      agentId,
+      description,
+      releasePath,
+      expectedVersion === undefined ? "" : String(expectedVersion),
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] },
+  );
+
+  let readyResolved = false;
+  let readResolved = false;
+  let resultResolved = false;
+  let resolveReady: () => void = () => {};
+  let rejectReady: (error: unknown) => void = () => {};
+  let resolveRead: () => void = () => {};
+  let rejectRead: (error: unknown) => void = () => {};
+  let resolveResult: (message: AgentUpdateWorkerMessage) => void = () => {};
+  let rejectResult: (error: unknown) => void = () => {};
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = () => {
+      readyResolved = true;
+      resolve();
+    };
+    rejectReady = reject;
+  });
+  const read = new Promise<void>((resolve, reject) => {
+    resolveRead = () => {
+      readResolved = true;
+      resolve();
+    };
+    rejectRead = reject;
+  });
+  const result = new Promise<AgentUpdateWorkerMessage>((resolve, reject) => {
+    resolveResult = (message) => {
+      resultResolved = true;
+      resolve(message);
+    };
+    rejectResult = reject;
+  });
+  const rejectBoth = (error: unknown): void => {
+    if (!readyResolved) rejectReady(error);
+    if (!readResolved) rejectRead(error);
+    if (!resultResolved) rejectResult(error);
+  };
+  let output = "";
+  let errorOutput = "";
+  const handleLine = (line: string): void => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (trimmed === "ready") {
+      resolveReady();
+      return;
+    }
+    if (trimmed === '{"kind":"read"}') {
+      resolveRead();
+      return;
+    }
+    try {
+      const message = JSON.parse(trimmed) as AgentUpdateWorkerMessage;
+      if (message.kind === "result") resolveResult(message);
+      else rejectBoth(new Error(`Unexpected agent update child message: ${trimmed}`));
+    } catch (error: unknown) {
+      rejectBoth(error);
+    }
+  };
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    output += chunk;
+    const lines = output.split("\n");
+    output = lines.pop() ?? "";
+    for (const line of lines) handleLine(line);
+  });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    errorOutput += chunk;
+  });
+  child.on("error", rejectBoth);
+  child.on("exit", (code) => {
+    if (code !== 0) {
+      rejectBoth(new Error(`Agent update child exited with code ${code}: ${errorOutput.trim()}`));
+    }
+  });
+  void ready.catch(() => undefined);
+  void read.catch(() => undefined);
+  void result.catch(() => undefined);
+
+  return { child, ready, read, result };
+}
+
+async function runConcurrentAgentUpdates(
+  dataDir: string,
+  dbPath: string,
+  agentId: string,
+  expectedVersion: number | undefined,
+): Promise<AgentUpdateWorkerMessage[]> {
+  const releasePath = join(dataDir, "agent-cas-release");
+  const handles: AgentUpdateWorkerHandle[] = [];
+  try {
+    for (const description of ["Writer A", "Writer B"]) {
+      const handle = spawnAgentUpdateWorker(
+        dataDir,
+        dbPath,
+        agentId,
+        description,
+        releasePath,
+        expectedVersion,
+      );
+      handles.push(handle);
+      await waitForAgentRace(handle.ready, "child readiness");
+    }
+
+    for (const handle of handles) handle.child.stdin.write("start\n");
+    await waitForAgentRace(Promise.all(handles.map((handle) => handle.read)), "read gate");
+    writeFileSync(releasePath, "release");
+    return await waitForAgentRace(
+      Promise.all(handles.map((handle) => handle.result)),
+      "child results",
+    );
+  } finally {
+    writeFileSync(releasePath, "release");
+    await Promise.all(handles.map((handle) => stopAgentUpdateChild(handle.child)));
+  }
+}
+
+async function waitForAgentRace<T>(promise: Promise<T>, phase: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Agent race ${phase} timed out`)),
+          AGENT_RACE_PHASE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function stopAgentUpdateChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (await waitForAgentChildExit(child, AGENT_RACE_TERM_TIMEOUT_MS)) return;
+  child.kill("SIGKILL");
+  await waitForAgentChildExit(child, AGENT_RACE_KILL_TIMEOUT_MS);
+}
+
+function waitForAgentChildExit(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (exited: boolean): void => {
+      if (timer) clearTimeout(timer);
+      child.off("exit", onExit);
+      child.off("error", onError);
+      resolve(exited);
+    };
+    const onExit = (): void => finish(true);
+    const onError = (): void => {};
+    child.once("exit", onExit);
+    child.once("error", onError);
+    timer = setTimeout(() => finish(false), timeoutMs);
+  });
 }
 
 describe("agent routes", () => {
@@ -203,6 +469,203 @@ describe("agent routes", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("rejects stale expected-version updates atomically with HTTP 409", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-cas-routes-"));
+    const store = new AgentDefinitionStore(dataDir);
+    try {
+      const agent = store.createAgent({ name: "Reviewer", description: "Reviewed baseline" });
+      const dispatch = createAgentRoutes(
+        { storage: { getAgentDefinitionStore: () => store } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+
+      const concurrent = store.updateAgent(agent.id, { description: "Concurrent update" });
+      expect(concurrent?.version).toBe(2);
+
+      const staleRes = makeResponse();
+      await dispatch({
+        method: "PATCH",
+        path: `/agents/${agent.id}`,
+        url: new URL(`http://localhost/agents/${agent.id}?expectedVersion=1`),
+        req: makeRequest({ description: "Approved update" }) as never,
+        res: staleRes as never,
+      });
+
+      expect(staleRes.statusCode).toBe(409);
+      expect(JSON.parse(staleRes.body)).toEqual({
+        error: "Agent version conflict: expected 1, current 2",
+        code: "AGENT_VERSION_CONFLICT",
+        expectedVersion: 1,
+        currentVersion: 2,
+      });
+      expect(store.getAgent(agent.id)).toMatchObject({
+        version: 2,
+        definition: { description: "Concurrent update" },
+      });
+      expect(store.getAgentVersion(agent.id, 3)).toBeUndefined();
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps PATCH compatibility when expectedVersion is absent", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-compatible-routes-"));
+    const store = new AgentDefinitionStore(dataDir);
+    try {
+      const agent = store.createAgent({ name: "Reviewer" });
+      const dispatch = createAgentRoutes(
+        { storage: { getAgentDefinitionStore: () => store } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const res = makeResponse();
+
+      await dispatch({
+        method: "PATCH",
+        path: `/agents/${agent.id}`,
+        url: new URL(`http://localhost/agents/${agent.id}`),
+        req: makeRequest({ description: "Compatible update" }) as never,
+        res: res as never,
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).agent).toMatchObject({
+        version: 2,
+        definition: { description: "Compatible update" },
+      });
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns undefined instead of a conflict when a CAS miss finds an archived Agent", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-cas-archived-"));
+    const dbPath = join(dataDir, "session-state.db");
+    const store = new AgentDefinitionStore(dataDir, dbPath);
+    const concurrentStore = new AgentDefinitionStore(dataDir, dbPath);
+    try {
+      const agent = store.createAgent({ name: "Reviewer" });
+      const originalGetAgent = store.getAgent.bind(store);
+      let firstLookup = true;
+      store.getAgent = (agentId) => {
+        const current = originalGetAgent(agentId);
+        if (firstLookup && agentId === agent.id) {
+          firstLookup = false;
+          expect(concurrentStore.archiveAgent(agent.id)).toMatchObject({ status: "archived" });
+        }
+        return current;
+      };
+
+      expect(store.updateAgent(agent.id, { description: "Should not apply" }, Date.now(), 1)).toBe(
+        undefined,
+      );
+      expect(concurrentStore.getAgent(agent.id)).toMatchObject({ status: "archived" });
+    } finally {
+      concurrentStore.close();
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["unexpected=1", "Unknown Agent update query parameter: unexpected"],
+    ["expectedversion=1", "Unknown Agent update query parameter: expectedversion"],
+    ["expectedVersion=1&expectedVersion=2", "expectedVersion must be specified exactly once"],
+    ["expectedVersion=", "expectedVersion must be a positive integer"],
+    ["expectedVersion=9007199254740992", "expectedVersion must be a positive safe integer"],
+  ])("rejects malformed Agent update query %s", async (query, error) => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-query-routes-"));
+    const store = new AgentDefinitionStore(dataDir);
+    try {
+      const agent = store.createAgent({ name: "Reviewer" });
+      const dispatch = createAgentRoutes(
+        { storage: { getAgentDefinitionStore: () => store } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const res = makeResponse();
+
+      await dispatch({
+        method: "PATCH",
+        path: `/agents/${agent.id}`,
+        url: new URL(`http://localhost/agents/${agent.id}?${query}`),
+        req: makeRequest({ description: "Updated" }) as never,
+        res: res as never,
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error });
+      expect(store.getAgent(agent.id)).toMatchObject({ version: 1 });
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["with expectedVersion", 1],
+    ["without expectedVersion", undefined],
+  ] as const)(
+    "resolves a true two-connection Agent update race (%s) as one success and one conflict",
+    async (_label, expectedVersion) => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-cas-connections-"));
+      const dbPath = join(dataDir, "session-state.db");
+      const store = new AgentDefinitionStore(dataDir, dbPath);
+      const agent = store.createAgent({ name: "Reviewer", description: "Reviewed baseline" });
+      store.close();
+
+      try {
+        const results = await runConcurrentAgentUpdates(dataDir, dbPath, agent.id, expectedVersion);
+        const successes = results.filter((result) => result.ok);
+        const conflicts = results.filter((result) => !result.ok);
+
+        if (expectedVersion !== undefined) {
+          expect(successes).toHaveLength(1);
+          expect(successes[0]).toMatchObject({ kind: "result", ok: true, version: 2 });
+          expect(conflicts).toEqual([
+            expect.objectContaining({
+              kind: "result",
+              ok: false,
+              name: "AgentVersionConflictError",
+              code: "AGENT_VERSION_CONFLICT",
+              expectedVersion: 1,
+              currentVersion: 2,
+            }),
+          ]);
+        } else {
+          expect(successes).toHaveLength(2);
+          expect(conflicts).toHaveLength(0);
+          expect(successes.map((result) => result.version).sort()).toEqual([2, 3]);
+        }
+
+        const finalStore = new AgentDefinitionStore(dataDir, dbPath);
+        try {
+          const final = finalStore.getAgent(agent.id);
+          const finalVersion = expectedVersion === undefined ? 3 : 2;
+          const finalSuccess = successes.find((result) => result.version === finalVersion);
+          expect(final).toMatchObject({
+            version: finalVersion,
+            definition: { description: finalSuccess?.description },
+          });
+          expect(finalStore.getAgentVersion(agent.id, finalVersion)).toMatchObject({
+            definition: { description: finalSuccess?.description },
+          });
+          if (expectedVersion === undefined) {
+            const firstSuccess = successes.find((result) => result.version === 2);
+            expect(finalStore.getAgentVersion(agent.id, 2)).toMatchObject({
+              definition: { description: firstSuccess?.description },
+            });
+          }
+          expect(finalStore.getAgentVersion(agent.id, 4)).toBeUndefined();
+        } finally {
+          finalStore.close();
+        }
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("migrates a historical malformed icon to Default before unrelated updates", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-historical-icon-"));

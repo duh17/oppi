@@ -49,6 +49,24 @@ export interface StoredAgentDefinitionVersion {
   createdAt: number;
 }
 
+export const AGENT_VERSION_CONFLICT_CODE = "AGENT_VERSION_CONFLICT";
+
+export class AgentVersionConflictError extends Error {
+  readonly code = AGENT_VERSION_CONFLICT_CODE;
+
+  constructor(
+    readonly expectedVersion: number | undefined,
+    readonly currentVersion: number,
+  ) {
+    super(
+      expectedVersion === undefined
+        ? `Agent update conflicted with current version ${currentVersion}`
+        : `Agent version conflict: expected ${expectedVersion}, current ${currentVersion}`,
+    );
+    this.name = "AgentVersionConflictError";
+  }
+}
+
 interface AgentRow {
   id: string;
   name: string;
@@ -96,6 +114,7 @@ const SESSION_DEFAULT_KEYS = new Set([
   "excludeTools",
   "noTools",
 ]);
+const MAX_UNVERSIONED_AGENT_UPDATE_ATTEMPTS = 3;
 export class AgentDefinitionStore {
   private readonly db: SqliteDatabase;
 
@@ -161,36 +180,70 @@ export class AgentDefinitionStore {
     agentId: string,
     patch: unknown,
     now = Date.now(),
+    expectedVersion?: number,
   ): StoredAgentDefinition | undefined {
-    const current = this.getAgent(agentId);
-    if (!current || current.status === "archived") return undefined;
     if (!isRecord(patch)) throw new Error("Agent update must be an object");
     if (Object.keys(patch).length === 0) {
       throw new Error("Agent update must include at least one field");
     }
-    if (!isDefaultAgentId(current.id) && wouldUseDefaultAgentReservedName(patch)) {
-      throw new Error(`${DEFAULT_AGENT_DEFAULT_NAME} is reserved for the default Agent identity`);
+
+    let current = this.getAgent(agentId);
+    if (!current || current.status === "archived") return undefined;
+    const maxAttempts = expectedVersion === undefined ? MAX_UNVERSIONED_AGENT_UPDATE_ATTEMPTS : 1;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const currentAgent = current;
+      if (expectedVersion !== undefined && currentAgent.version !== expectedVersion) {
+        throw new AgentVersionConflictError(expectedVersion, currentAgent.version);
+      }
+      if (!isDefaultAgentId(currentAgent.id) && wouldUseDefaultAgentReservedName(patch)) {
+        throw new Error(`${DEFAULT_AGENT_DEFAULT_NAME} is reserved for the default Agent identity`);
+      }
+      if (isDefaultAgentId(currentAgent.id)) {
+        assertDefaultAgentCustomizationPatch(patch);
+      }
+      const mergedDefinition = validateAgentDefinitionUpdate(currentAgent.definition, patch);
+      const nextDefinition = isDefaultAgentId(currentAgent.id)
+        ? applyDefaultAgentSafetyDefaults(mergedDefinition)
+        : mergedDefinition;
+      this.assertIconAssetExists(nextDefinition);
+      const nextVersion = currentAgent.version + 1;
+      let updated: StoredAgentDefinition | undefined;
+      this.db.transaction(() => {
+        // Keep the transaction's first database statement as the CAS write. A read
+        // transaction that later upgrades to a write can deadlock against another
+        // connection holding the same version snapshot.
+        const result = this.db
+          .prepare(
+            `UPDATE agent_definitions
+             SET name = ?, version = ?, definition_json = ?, updated_at = ?
+             WHERE id = ? AND status <> 'archived' AND version = ?`,
+          )
+          .run(
+            nextDefinition.name,
+            nextVersion,
+            JSON.stringify(nextDefinition),
+            now,
+            currentAgent.id,
+            currentAgent.version,
+          ) as { changes?: number };
+        if (result.changes !== 1) return;
+        this.insertAgentVersion(currentAgent.id, nextVersion, nextDefinition, now);
+        updated = this.getAgent(currentAgent.id);
+      })();
+      if (updated) return updated;
+
+      const latest = this.getAgent(currentAgent.id);
+      if (!latest || latest.status === "archived") return undefined;
+      if (expectedVersion !== undefined) {
+        throw new AgentVersionConflictError(expectedVersion, latest.version);
+      }
+      current = latest;
     }
-    if (isDefaultAgentId(current.id)) {
-      assertDefaultAgentCustomizationPatch(patch);
-    }
-    const mergedDefinition = validateAgentDefinitionUpdate(current.definition, patch);
-    const nextDefinition = isDefaultAgentId(current.id)
-      ? applyDefaultAgentSafetyDefaults(mergedDefinition)
-      : mergedDefinition;
-    this.assertIconAssetExists(nextDefinition);
-    const nextVersion = current.version + 1;
-    this.db.transaction(() => {
-      this.db
-        .prepare(
-          `UPDATE agent_definitions
-           SET name = ?, version = ?, definition_json = ?, updated_at = ?
-           WHERE id = ? AND status <> 'archived'`,
-        )
-        .run(nextDefinition.name, nextVersion, JSON.stringify(nextDefinition), now, current.id);
-      this.insertAgentVersion(current.id, nextVersion, nextDefinition, now);
-    })();
-    return this.getAgent(current.id);
+
+    const latest = this.getAgent(agentId);
+    if (!latest || latest.status === "archived") return undefined;
+    throw new AgentVersionConflictError(undefined, latest.version);
   }
 
   archiveAgent(agentId: string, now = Date.now()): StoredAgentDefinition | undefined {

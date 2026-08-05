@@ -15,6 +15,8 @@ import {
 } from "../output.js";
 import { apiStatus } from "../resources.js";
 
+const AGENT_VERSION_CONFLICT_CODE = "AGENT_VERSION_CONFLICT";
+
 type AgentRow = {
   id?: string;
   name?: string;
@@ -99,9 +101,14 @@ export async function cmdAgent(
     if (mode === "update") {
       const reference = positional[0]?.trim();
       if (!reference) throw new Error("agent id or name is required");
+      const expectedVersion = parseExpectedAgentVersionFlag(flags);
       const definition = readDefinitionInput(flags, { required: true, update: true });
+      const query =
+        expectedVersion === undefined
+          ? ""
+          : `?expectedVersion=${encodeURIComponent(expectedVersion)}`;
       const result = await call<Record<string, unknown>>(
-        `/agents/${encodeURIComponent(reference)}`,
+        `/agents/${encodeURIComponent(reference)}${query}`,
         {
           method: "PATCH",
           body: definition,
@@ -138,11 +145,60 @@ export async function cmdAgent(
     const message = error instanceof Error ? error.message : String(error);
     const status = apiStatus(error);
     if (jsonOutput) {
-      writeJsonEnvelope({ ok: false, error: { message, ...(status ? { status } : {}) } });
+      writeJsonEnvelope({
+        ok: false,
+        error: {
+          message,
+          ...(status ? { status } : {}),
+          ...agentErrorDetails(error),
+        },
+      });
       setCapturedCliExitCode(1);
       return;
     }
     console.log(c.red(`  Error: ${message}`));
     process.exit(1);
   }
+}
+
+type AgentErrorDetails = {
+  code?: string;
+  expectedVersion?: number;
+  currentVersion?: number;
+};
+
+function parseExpectedAgentVersionFlag(flags: Record<string, string>): number | undefined {
+  if (Object.keys(flags).some((key) => key.startsWith("expected-version="))) {
+    throw new Error("Use --expected-version <version>; equals form is not supported");
+  }
+  const value = flags["expected-version"];
+  if (value === undefined) return undefined;
+  if (!/^[1-9]\d*$/.test(value)) {
+    throw new Error("--expected-version must be a positive safe integer");
+  }
+  const version = Number(value);
+  if (!Number.isSafeInteger(version)) {
+    throw new Error("--expected-version must be a positive safe integer");
+  }
+  return version;
+}
+
+function agentErrorDetails(error: unknown): AgentErrorDetails {
+  const record = isRecord(error) ? error : undefined;
+  if (record?.code !== AGENT_VERSION_CONFLICT_CODE) return {};
+  const expectedVersion = positiveVersion(record.expectedVersion);
+  const currentVersion = positiveVersion(record.currentVersion);
+  return {
+    code: AGENT_VERSION_CONFLICT_CODE,
+    ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+    ...(currentVersion !== undefined ? { currentVersion } : {}),
+  };
+}
+
+function positiveVersion(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }

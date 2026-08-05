@@ -7,6 +7,8 @@ import {
   type AgentDefinition,
 } from "../agent-launch-service.js";
 import {
+  AGENT_VERSION_CONFLICT_CODE,
+  AgentVersionConflictError,
   agentSummary,
   validateAgentDefinition,
   type AgentDefinitionStore,
@@ -53,6 +55,7 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
   async function handleAgentMember(
     reference: string,
     method: string,
+    url: URL,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<boolean> {
@@ -65,11 +68,12 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
 
     if (method === "PATCH") {
       try {
+        const expectedVersion = parseExpectedAgentVersion(url);
         const agent = resolveAgent(reference, res);
         if (!agent) return true;
         const previousAssetId = iconAssetId(agent.definition.icon);
         const body = await helpers.parseBody<unknown>(req);
-        const updated = agentStore().updateAgent(agent.id, body);
+        const updated = agentStore().updateAgent(agent.id, body, Date.now(), expectedVersion);
         if (!updated) {
           helpers.error(res, 404, "Agent not found");
           return true;
@@ -79,7 +83,22 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         }
         helpers.json(res, { agent: serializeAgent(updated) });
       } catch (error) {
-        helpers.error(res, 400, safeErrorMessage(error));
+        if (error instanceof AgentVersionConflictError) {
+          helpers.json(
+            res,
+            {
+              error: error.message,
+              code: AGENT_VERSION_CONFLICT_CODE,
+              ...(error.expectedVersion !== undefined
+                ? { expectedVersion: error.expectedVersion }
+                : {}),
+              currentVersion: error.currentVersion,
+            },
+            409,
+          );
+        } else {
+          helpers.error(res, 400, safeErrorMessage(error));
+        }
       }
       return true;
     }
@@ -302,7 +321,7 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
 
     const memberMatch = path.match(/^\/agents\/([^/]+)$/);
     if (memberMatch?.[1]) {
-      return handleAgentMember(decodeURIComponent(memberMatch[1]), method, req, res);
+      return handleAgentMember(decodeURIComponent(memberMatch[1]), method, url, req, res);
     }
 
     return false;
@@ -316,6 +335,28 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     }
     return agent;
   }
+}
+
+function parseExpectedAgentVersion(url: URL): number | undefined {
+  for (const key of url.searchParams.keys()) {
+    if (key !== "expectedVersion") {
+      throw new Error(`Unknown Agent update query parameter: ${key}`);
+    }
+  }
+  const values = url.searchParams.getAll("expectedVersion");
+  if (values.length === 0) return undefined;
+  if (values.length !== 1) {
+    throw new Error("expectedVersion must be specified exactly once");
+  }
+  const value = values[0] ?? "";
+  if (!/^[1-9]\d*$/.test(value)) {
+    throw new Error("expectedVersion must be a positive integer");
+  }
+  const version = Number(value);
+  if (!Number.isSafeInteger(version)) {
+    throw new Error("expectedVersion must be a positive safe integer");
+  }
+  return version;
 }
 
 interface CreateAgentSessionRequest {
