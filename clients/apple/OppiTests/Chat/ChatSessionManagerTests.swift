@@ -1717,6 +1717,380 @@ struct ChatSessionManagerTests {
         #expect(saveCalls == 0)
     }
 
+    // MARK: - Presentation pause gating
+
+    @Test func pausedDirectMutationsMarkReloadAndDoNotMutateReducer() async {
+        let sessionId = "pause-gate-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .busy))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .busy)))
+        let reachedStreaming = await waitForMainActorCondition {
+            manager.entryState == .streaming
+        }
+        #expect(reachedStreaming)
+
+        // Seed one visible item while presentation is active.
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: "before-pause"))
+        #expect(await waitForMainActorCondition {
+            manager.reducer.items.contains { item in
+                if case .userMessage(_, let text, _, _) = item { return text == "before-pause" }
+                return false
+            }
+        })
+        let itemCountBeforePause = manager.reducer.items.count
+
+        manager.coalescer.pause()
+
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: "while-paused"))
+        streams.yield(index: 0, message: .queueItemStarted(
+            kind: .followUp,
+            item: MessageQueueItem(id: "q1", message: "queued-while-paused", createdAt: 1),
+            queueVersion: 1
+        ))
+        streams.yield(index: 0, message: .stopRequested(source: .user, reason: "Stopping…"))
+        streams.yield(index: 0, message: .stopConfirmed(source: .user, reason: "Stop confirmed"))
+        streams.yield(index: 0, message: .stopFailed(source: .user, reason: "nope"))
+        streams.yield(
+            index: 0,
+            message: .state(session: makeTestSession(id: sessionId, status: .ready))
+        )
+
+        try? await Task.sleep(for: .milliseconds(80))
+
+        #expect(manager.reducer.items.count == itemCountBeforePause)
+        #expect(!manager.reducer.items.contains { item in
+            if case .userMessage(_, let text, _, _) = item {
+                return text == "while-paused" || text.contains("queued-while-paused")
+            }
+            if case .systemEvent(_, let message) = item {
+                return message.contains("Stopping")
+                    || message.contains("Stop confirmed")
+                    || message.contains("Stop failed")
+            }
+            if case .error(_, let message) = item {
+                return message.contains("Stop failed")
+            }
+            return false
+        })
+        #expect(
+            manager.coalescer.needsPresentationTraceReload,
+            "Paused direct mutations must arm authoritative reload"
+        )
+        #expect(manager.coalescer.resume())
+
+        streams.finish(index: 0)
+        await connectTask.value
+        manager.cleanup()
+    }
+
+    @Test func connectWhilePresentationPausedAppliesCacheAndHistoryWithoutLivePublication() async {
+        let sessionId = "paused-connect-\(UUID().uuidString)"
+        let workspaceId = "paused-workspace"
+        let cachedText = "CACHED_TIMELINE"
+        let historyText = "AUTHORITATIVE_TIMELINE"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        manager.coalescer.pause()
+        let streams = ScriptedStreamFactory()
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._fetchSessionTraceForTesting = { _, _ in
+            try await Task.sleep(for: .milliseconds(60))
+            return (
+                makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy),
+                [
+                    makeTraceEvent(id: "history-user", type: .user, text: "history prompt"),
+                    makeTraceEvent(id: "history-assistant", text: historyText),
+                ]
+            )
+        }
+
+        await TimelineCache.shared.saveTrace(sessionId, events: [
+            makeTraceEvent(id: "cached-assistant", text: cachedText),
+        ])
+        defer {
+            Task { await TimelineCache.shared.removeTrace(sessionId) }
+        }
+
+        let connection = ServerConnection()
+        connection.setAPIClientForTesting(makeURLProtocolAPIClient())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        #expect(await waitForMainActorCondition {
+            manager.reducer.items.contains { item in
+                if case .assistantMessage(_, let text, _) = item { return text == cachedText }
+                return false
+            }
+        }, "Paused connect should still apply cached timeline state")
+
+        streams.yield(index: 0, message: .connected(
+            session: makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy)
+        ))
+        #expect(await waitForMainActorCondition {
+            manager.reducer.items.contains { item in
+                if case .assistantMessage(_, let text, _) = item { return text == historyText }
+                return false
+            }
+        }, "Paused connect should still apply authoritative history")
+
+        streams.yield(index: 0, message: .textDelta(delta: "LIVE_WHILE_PAUSED"))
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(!manager.reducer.items.contains { item in
+            if case .assistantMessage(_, let text, _) = item {
+                return text.contains("LIVE_WHILE_PAUSED")
+            }
+            return false
+        }, "Live deltas must remain unpublished while paused")
+        #expect(!manager.coalescer.needsPresentationTraceReload)
+
+        #expect(!manager.coalescer.resume())
+        #expect(await waitForMainActorCondition {
+            manager.reducer.items.contains { item in
+                if case .assistantMessage(_, let text, _) = item {
+                    return text.contains("LIVE_WHILE_PAUSED")
+                }
+                return false
+            }
+        })
+
+        streams.finish(index: 0)
+        await connectTask.value
+        manager.cleanup()
+    }
+
+    @Test func tracePageAroundDeepLinkAppliesReducerWhilePresentationPaused() async {
+        defer { TestURLProtocol.handler = nil }
+
+        let sessionId = "paused-trace-page-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let session = makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready)
+        let currentTrace = [makeTraceEvent(id: "current", text: "current page")]
+        let olderTrace = [makeTraceEvent(id: "older", type: .user, text: "older page")]
+        let initialPage = TracePageMetadata(
+            hasOlder: true,
+            olderCursor: "older-cursor",
+            traceVersion: "v1",
+            previewBytes: 4_096,
+            staleCursor: false
+        )
+        let aroundPage = TracePageMetadata(
+            hasOlder: false,
+            olderCursor: nil,
+            traceVersion: "v1",
+            previewBytes: 4_096,
+            staleCursor: false
+        )
+        let metrics = TracePageMetrics(
+            rawEntryCount: 1,
+            traceEventCount: 1,
+            selectedRawEntryCount: 1,
+            jsonlBytes: 1,
+            scannedBytes: 1,
+            readMs: 0,
+            parseMs: 0,
+            selectMs: 0,
+            formatMs: 0,
+            previewMs: 0,
+            jsonBytes: nil,
+            gzipBytes: nil,
+            stringifyMs: nil,
+            gzipMs: nil
+        )
+        struct TracePagePayload: Encodable {
+            let session: Session
+            let trace: [TraceEvent]
+            let page: TracePageMetadata
+            let metrics: TracePageMetrics
+        }
+        let encodedInitial = try! JSONEncoder().encode(
+            TracePagePayload(session: session, trace: currentTrace, page: initialPage, metrics: metrics)
+        )
+        let encodedAround = try! JSONEncoder().encode(
+            TracePagePayload(session: session, trace: olderTrace, page: aroundPage, metrics: metrics)
+        )
+        let initialResponse = HTTPURLResponse(
+            url: URL(string: "http://localhost:7749")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        TestURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/\(workspaceId)/sessions/\(sessionId)/trace-page")
+            if request.url?.query?.contains("aroundEntryId=older") == true {
+                return (encodedAround, initialResponse)
+            }
+            return (encodedInitial, initialResponse)
+        }
+
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let connection = ServerConnection()
+        connection.setAPIClientForTesting(makeURLProtocolAPIClient())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(session)
+
+        #expect(await manager.forceHistoryReload(connection: connection, sessionStore: sessionStore))
+        manager.coalescer.pause()
+
+        let loaded = await manager.loadTracePageAround(
+            entryId: "older",
+            connection: connection,
+            sessionStore: sessionStore
+        )
+
+        #expect(loaded)
+        #expect(manager.coalescer.isPresentationPaused)
+        #expect(!manager.coalescer.needsPresentationTraceReload)
+        #expect(manager.reducer.items.contains { $0.id == "older" })
+    }
+
+    @Test func resumeAfterOverflowAutomaticallyRetriesFailedHistoryReload() async {
+        let sessionId = "overflow-retry-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        manager._presentationReloadRetryDelayForTesting = .milliseconds(20)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+
+        let tracker = HistoryReloadTracker()
+        manager._loadHistoryForTesting = { cachedCount, cachedLastId in
+            let call = await tracker.recordCall(
+                cachedEventCount: cachedCount,
+                cachedLastEventId: cachedLastId
+            )
+            if call == 2 {
+                await tracker.recordCancellation()
+                return nil
+            }
+            await tracker.recordCompletion()
+            return (eventCount: 3, lastEventId: "evt-3")
+        }
+
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .busy))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .busy)))
+        #expect(await waitForMainActorCondition { manager.entryState == .streaming })
+        #expect(await tracker.waitForCalls(1))
+
+        manager.coalescer.pause()
+        // Exceed the paused event-count bound so resume requires full reload.
+        for _ in 0...512 {
+            manager.coalescer.receive(.textDelta(sessionId: sessionId, delta: "x"))
+        }
+        #expect(manager.coalescer.needsPresentationTraceReload)
+
+        #expect(manager.coalescer.resume())
+        manager.reloadTimelineAfterPresentationOverflow(
+            connection: connection,
+            sessionStore: sessionStore
+        )
+
+        #expect(await tracker.waitForCalls(2))
+        #expect(
+            manager.coalescer.needsPresentationTraceReload,
+            "Failed overflow reload must keep the pending reload armed"
+        )
+        #expect(manager.lastSyncFailed)
+
+        // The production overflow path retries without another scene callback.
+        #expect(await tracker.waitForCalls(3))
+        let completed = await waitForMainActorCondition {
+            !manager.coalescer.needsPresentationTraceReload && manager.lastSyncFailed == false
+        }
+        #expect(completed, "Successful overflow reload must clear the pending reload arm")
+        #expect(!manager.coalescer.resume())
+
+        streams.finish(index: 0)
+        await connectTask.value
+        manager.cleanup()
+    }
+
+    @Test func overflowHistoryRetryStopsAtBoundAndCancelsWithLifecycle() async {
+        let manager = ChatSessionManager(sessionId: "overflow-retry-bound-\(UUID().uuidString)")
+        manager._presentationReloadRetryDelayForTesting = .milliseconds(20)
+        let tracker = HistoryReloadTracker()
+        manager._loadHistoryForTesting = { cachedCount, cachedLastId in
+            _ = await tracker.recordCall(
+                cachedEventCount: cachedCount,
+                cachedLastEventId: cachedLastId
+            )
+            return nil
+        }
+
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+        manager.coalescer.pause()
+        manager.coalescer.markPresentationNeedsTraceReload()
+        #expect(manager.coalescer.resume())
+        manager.reloadTimelineAfterPresentationOverflow(
+            connection: connection,
+            sessionStore: sessionStore
+        )
+
+        #expect(await tracker.waitForCalls(3, timeoutMs: 1_000))
+        try? await Task.sleep(for: .milliseconds(80))
+        let boundedSnapshot = await tracker.snapshot()
+        #expect(boundedSnapshot.calls.count == 3, "Overflow repair must use a bounded retry policy")
+
+        manager._presentationReloadRetryDelayForTesting = .milliseconds(200)
+        manager.coalescer.pause()
+        manager.coalescer.markPresentationNeedsTraceReload()
+        #expect(manager.coalescer.resume())
+        manager.reloadTimelineAfterPresentationOverflow(
+            connection: connection,
+            sessionStore: sessionStore
+        )
+        #expect(await tracker.waitForCalls(4, timeoutMs: 500))
+        manager.cleanup()
+        try? await Task.sleep(for: .milliseconds(80))
+        let canceledSnapshot = await tracker.snapshot()
+        #expect(canceledSnapshot.calls.count == 4, "Cleanup must cancel a pending overflow retry")
+    }
+
+    @Test func pausedToolStartUpdateResumeSetsToolStartTimeWithoutReload() {
+        let manager = ChatSessionManager(sessionId: "pause-tool-start-\(UUID().uuidString)")
+
+        manager.coalescer.pause()
+        manager.coalescer.receive(.toolStart(
+            sessionId: manager.sessionId,
+            toolEventId: "tool-1",
+            tool: "bash",
+            args: ["command": "echo hi"]
+        ))
+        manager.coalescer.receive(.toolUpdate(
+            sessionId: manager.sessionId,
+            toolEventId: "tool-1",
+            tool: "bash",
+            args: ["command": "echo hello"]
+        ))
+
+        #expect(!manager.coalescer.resume())
+        #expect(manager.reducer.toolStartTime(for: "tool-1") != nil)
+    }
+
     // MARK: - Helpers
 
     private func makeTraceEvent(

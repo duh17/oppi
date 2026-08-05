@@ -11,14 +11,15 @@ struct ToolRowMarkdownRenderStrategy {
         previousAutoFollow: Bool,
         wasExpandedVisible: Bool,
         isUsingMarkdownViewportLayout: Bool,
+        isThemeChanged: Bool = false,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         textSelectionEnabled: Bool,
         viewportPolicy: ToolRowViewportPolicy
     ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.markdownSignature(text, isStreaming: isStreaming)
-        let shouldRerender = signature != previousSignature
-            || !isUsingMarkdownViewportLayout
+        let contentChanged = signature != previousSignature
+        let shouldRerender = contentChanged || !isUsingMarkdownViewportLayout
 
         let autoFollow = ToolTimelineRowUIHelpers.computeAutoFollow(
             isStreaming: isStreaming,
@@ -52,7 +53,13 @@ struct ToolRowMarkdownRenderStrategy {
             lineBreakMode: .byCharWrapping,
             horizontalScroll: false,
             deferredHighlight: nil,
-            invalidateLayout: shouldRerender || !isUsingMarkdownViewportLayout,
+            // The inline Markdown body has a fixed-height streaming viewport.
+            // Content changes update only the nested renderer. Completed rows
+            // invalidate only when their signature changes; installation and
+            // theme/geometry transitions remain real outer changes.
+            invalidateLayout: !isUsingMarkdownViewportLayout
+                || (contentChanged && !isStreaming)
+                || isThemeChanged,
             installAction: .markdownViewport(
                 text: text,
                 isStreaming: isStreaming,

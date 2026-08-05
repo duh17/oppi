@@ -2,6 +2,12 @@ import UIKit
 
 @MainActor
 enum ToolTimelineRowPresentationHelpers {
+#if DEBUG
+    // periphery:ignore - test seam for distinguishing content updates from
+    // outer timeline geometry invalidations.
+    static var enclosingLayoutInvalidationHookForTesting: (() -> Void)?
+#endif
+
     static func animateInPlaceReveal(_ view: UIView, shouldAnimate: Bool) {
         guard shouldAnimate else {
             resetRevealAppearance(view)
@@ -151,6 +157,9 @@ enum ToolTimelineRowPresentationHelpers {
     /// blocks (e.g. from `installExpandedEmbeddedView` and the end-of-`apply`
     /// expanding-transition path) land in the same dispatch drain.
     static func invalidateEnclosingCollectionViewLayout(startingAt sourceView: UIView) {
+#if DEBUG
+        Self.enclosingLayoutInvalidationHookForTesting?()
+#endif
         invalidateEnclosingStreamingHeightCache(startingAt: sourceView)
 
         var view: UIView? = sourceView.superview

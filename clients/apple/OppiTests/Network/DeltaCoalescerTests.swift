@@ -397,7 +397,324 @@ struct DeltaCoalescerTests {
         #expect(outputs.joined() == oversized)
     }
 
+    // MARK: - Paused presentation
+
+    @Test func pauseBlocksImmediateEventsUntilResume() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.pause()
+        coalescer.receive(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "bash", args: ["command": "ls"]
+        ))
+        coalescer.receive(.toolEnd(sessionId: "s1", toolEventId: "t1"))
+
+        #expect(flushed.isEmpty)
+
+        let requiresReload = coalescer.resume()
+
+        #expect(!requiresReload)
+        #expect(flushed.count == 1)
+        #expect(flushed[0].map(\.typeLabel) == ["toolStart", "toolEnd"])
+    }
+
+    @Test func pauseBlocksBufferCapFlushUntilResume() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.pause()
+        for _ in 0..<512 {
+            coalescer.receive(.textDelta(sessionId: "s1", delta: "x"))
+        }
+
+        #expect(flushed.isEmpty)
+
+        let requiresReload = coalescer.resume()
+
+        #expect(!requiresReload)
+        #expect(flushed.count == 1)
+        #expect(flushed[0].count == 512)
+    }
+
+    @Test func pausedBufferOverflowRequestsTraceReloadWithoutPublishing() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.pause()
+        for _ in 0...512 {
+            coalescer.receive(.textDelta(sessionId: "s1", delta: "x"))
+        }
+
+        #expect(flushed.isEmpty)
+        #expect(coalescer.resume())
+        #expect(flushed.isEmpty)
+    }
+
+    @Test func resumeDeliversPausedStateOnce() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.pause()
+        coalescer.receive(.textDelta(sessionId: "s1", delta: "a"))
+        coalescer.receive(.textDelta(sessionId: "s1", delta: "b"))
+        coalescer.receive(.textDelta(sessionId: "s1", delta: "c"))
+
+        #expect(flushed.isEmpty)
+        #expect(!coalescer.resume())
+        #expect(flushed.count == 1)
+        #expect(flushed[0].count == 3)
+
+        #expect(!coalescer.resume())
+        #expect(flushed.count == 1)
+    }
+
+    @Test func pausedToolStartIsNotReplacedByToolUpdate() {
+        let coalescer = DeltaCoalescer()
+        let reducer = TimelineReducer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { events in
+            flushed.append(events)
+            reducer.processBatch(events)
+        }
+
+        coalescer.pause()
+        coalescer.receive(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "bash", args: ["command": .string("ls")]
+        ))
+        coalescer.receive(.toolUpdate(
+            sessionId: "s1", toolEventId: "t1", tool: "bash", args: ["command": .string("ls -la")]
+        ))
+
+        #expect(flushed.isEmpty)
+        #expect(!coalescer.resume())
+        #expect(flushed.count == 1)
+        #expect(flushed[0].map(\.typeLabel) == ["toolStart", "toolUpdate"])
+        #expect(
+            reducer.toolStartTime(for: "t1") != nil,
+            "Resume must deliver toolStart so the reducer records elapsed start time"
+        )
+    }
+
+    @Test func pausedToolUpdateStillCoalescesAfterRetainedToolStart() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.pause()
+        coalescer.receive(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": .string("a")]
+        ))
+        coalescer.receive(.toolUpdate(
+            sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": .string("ab")]
+        ))
+        coalescer.receive(.toolUpdate(
+            sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": .string("abc")]
+        ))
+
+        #expect(!coalescer.resume())
+        #expect(flushed.count == 1)
+        #expect(flushed[0].map(\.typeLabel) == ["toolStart", "toolUpdate"])
+        guard case .toolUpdate(_, _, _, let args, _) = flushed[0][1] else {
+            Issue.record("Expected coalesced toolUpdate after retained toolStart")
+            return
+        }
+        #expect(args["content"]?.stringValue == "abc")
+    }
+
+    @Test func pausedPreviewAndExecutionToolUpdatesPreserveLifecycleOrdering() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.pause()
+        coalescer.receive(.toolUpdate(
+            sessionId: "s1", toolEventId: "t1", tool: "write",
+            args: ["content": .string("preview")]
+        ))
+        coalescer.receive(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "write",
+            args: ["content": .string("started")]
+        ))
+        coalescer.receive(.toolUpdate(
+            sessionId: "s1", toolEventId: "t1", tool: "write",
+            args: ["content": .string("after-start-1")]
+        ))
+        coalescer.receive(.toolUpdate(
+            sessionId: "s1", toolEventId: "t1", tool: "write",
+            args: ["content": .string("after-start-2")]
+        ))
+
+        #expect(!coalescer.resume())
+        #expect(flushed.count == 1)
+        #expect(flushed[0].map(\.typeLabel) == ["toolUpdate", "toolStart", "toolUpdate"])
+
+        guard case .toolUpdate(_, _, _, let previewArgs, _) = flushed[0][0],
+              case .toolStart = flushed[0][1],
+              case .toolUpdate(_, _, _, let finalArgs, _) = flushed[0][2] else {
+            Issue.record("Expected preview, toolStart, and post-start toolUpdate ordering")
+            return
+        }
+        #expect(previewArgs["content"]?.stringValue == "preview")
+        #expect(finalArgs["content"]?.stringValue == "after-start-2")
+    }
+
+    @Test func pausedTerminalPayloadsCountTowardByteBoundary() {
+        let factories: [(name: String, make: (String) -> AgentEvent)] = [
+            ("messageEnd", { payload in
+                .messageEnd(sessionId: "s1", content: payload)
+            }),
+            ("toolEnd.details", { payload in
+                .toolEnd(
+                    sessionId: "s1",
+                    toolEventId: "t1",
+                    details: .object(["payload": .string(payload)])
+                )
+            }),
+            ("toolEnd.resultSegments", { payload in
+                .toolEnd(
+                    sessionId: "s1",
+                    toolEventId: "t1",
+                    resultSegments: [StyledSegment(text: payload, style: .error)]
+                )
+            }),
+            ("commandResult.data", { payload in
+                .commandResult(
+                    sessionId: "s1",
+                    command: "get_stats",
+                    requestId: "r1",
+                    success: true,
+                    data: .object(["payload": .string(payload)]),
+                    error: nil
+                )
+            }),
+            ("commandResult.error", { payload in
+                .commandResult(
+                    sessionId: "s1",
+                    command: "get_stats",
+                    requestId: "r1",
+                    success: false,
+                    data: nil,
+                    error: payload
+                )
+            }),
+            ("error", { payload in
+                .error(sessionId: "s1", message: payload)
+            }),
+        ]
+
+        let underLimitPayloadBytes = DeltaCoalescer.maxBufferedBytesForTesting - 1_024
+        for testCase in factories {
+            let underLimit = DeltaCoalescer()
+            underLimit.pause()
+            underLimit.receive(testCase.make(String(repeating: "u", count: underLimitPayloadBytes)))
+            #expect(
+                !underLimit.needsPresentationTraceReload,
+                "\(testCase.name) should fit below the paused byte cap"
+            )
+
+            let overLimit = DeltaCoalescer()
+            overLimit.pause()
+            overLimit.receive(testCase.make(String(repeating: "o", count: DeltaCoalescer.maxBufferedBytesForTesting + 1)))
+            #expect(
+                overLimit.needsPresentationTraceReload,
+                "\(testCase.name) must arm reload above the paused byte cap"
+            )
+        }
+    }
+
+    @Test func pausedByteCapOverflowRequestsTraceReloadWithoutPublishing() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.pause()
+        let oversized = String(repeating: "z", count: DeltaCoalescer.maxBufferedBytesForTesting + 1)
+        coalescer.receive(.textDelta(sessionId: "s1", delta: oversized))
+
+        #expect(flushed.isEmpty)
+        #expect(coalescer.needsPresentationTraceReload)
+        #expect(coalescer.resume())
+        #expect(flushed.isEmpty)
+        #expect(
+            coalescer.needsPresentationTraceReload,
+            "Overflow reload stays armed until an authoritative history apply acknowledges it"
+        )
+    }
+
+    @Test func eventsAfterPausedOverflowAreDroppedUntilResumeAcknowledged() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.pause()
+        for _ in 0...512 {
+            coalescer.receive(.textDelta(sessionId: "s1", delta: "x"))
+        }
+        coalescer.receive(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "bash", args: ["command": .string("ls")]
+        ))
+        coalescer.receive(.textDelta(sessionId: "s1", delta: "after-overflow"))
+
+        #expect(flushed.isEmpty)
+        #expect(coalescer.resume())
+        #expect(flushed.isEmpty)
+
+        // Still armed: further resume attempts keep requesting reload.
+        #expect(coalescer.resume())
+        coalescer.acknowledgePresentationTraceReload()
+        #expect(!coalescer.needsPresentationTraceReload)
+        #expect(!coalescer.resume())
+    }
+
+    @Test func markPresentationNeedsTraceReloadWhilePausedSurvivesFailedResumeUntilAck() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.pause()
+        coalescer.receive(.textDelta(sessionId: "s1", delta: "buffered"))
+        coalescer.markPresentationNeedsTraceReload()
+
+        #expect(coalescer.resume())
+        #expect(flushed.isEmpty)
+        #expect(coalescer.needsPresentationTraceReload)
+
+        coalescer.acknowledgePresentationTraceReload()
+        #expect(!coalescer.resume())
+        #expect(flushed.isEmpty)
+    }
+
+    @Test func staleHistoryAcknowledgementDoesNotClearNewerPausedMutation() {
+        let coalescer = DeltaCoalescer()
+        coalescer.pause()
+        let fetchMarker = coalescer.presentationTraceReloadMarker
+
+        coalescer.markPresentationNeedsTraceReload()
+        coalescer.acknowledgePresentationTraceReload(ifMarker: fetchMarker)
+
+        #expect(coalescer.needsPresentationTraceReload)
+    }
+
     // MARK: - Timer-based flush
+
+    @Test func pauseBlocksTimerFlushUntilResume() async {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.receive(.textDelta(sessionId: "s1", delta: "delayed"))
+        coalescer.pause()
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(flushed.isEmpty)
+
+        #expect(!coalescer.resume())
+        #expect(flushed.count == 1)
+    }
 
     @Test func bufferedDeltasFlushAfterInterval() async {
         let coalescer = DeltaCoalescer()

@@ -636,6 +636,12 @@ struct ChatView: View {
                     workspaceIdHint: workspaceIdHint,
                     routeScope: focusedRouteScope
                 )
+                // Session switches can happen while the scene is already
+                // inactive/background (deep link, iPad multitasking). The new
+                // coalescer starts unpaused — re-apply the hard boundary.
+                if Self.shouldPauseTimelinePresentation(for: scenePhase) {
+                    sessionManager.coalescer.pause()
+                }
                 scrollController = ChatScrollController()
                 reviewComments = ChatReviewCommentsController()
                 activeReviewCommentRequest = nil
@@ -1326,6 +1332,15 @@ struct ChatView: View {
         )
 
         sessionManager.markAppeared()
+        if Self.shouldPauseTimelinePresentation(for: scenePhase) {
+            sessionManager.coalescer.pause()
+        } else if scenePhase == .active,
+                  sessionManager.coalescer.resume() {
+            sessionManager.reloadTimelineAfterPresentationOverflow(
+                connection: connection,
+                sessionStore: sessionStore
+            )
+        }
         voiceInputManager.loadPreferences()
         attachComposerDraftIfPossible()
         // Load initial git status for the workspace
@@ -1344,15 +1359,26 @@ struct ChatView: View {
         }
     }
 
+    static func shouldPauseTimelinePresentation(for phase: ScenePhase) -> Bool {
+        phase == .inactive || phase == .background
+    }
+
     @MainActor
     private func handleScenePhaseChange(_ phase: ScenePhase) {
-        switch phase {
-        case .background:
+        if Self.shouldPauseTimelinePresentation(for: phase) {
+            // The timeline stays mounted while the scene cannot present a
+            // frame. Keep transport and shared session status alive, but make
+            // timeline publication a hard presentation boundary.
             sessionManager.coalescer.pause()
-        case .active:
-            sessionManager.coalescer.resume()
-        default:
-            break
+            return
+        }
+
+        guard phase == .active else { return }
+        if sessionManager.coalescer.resume() {
+            sessionManager.reloadTimelineAfterPresentationOverflow(
+                connection: connection,
+                sessionStore: sessionStore
+            )
         }
     }
 

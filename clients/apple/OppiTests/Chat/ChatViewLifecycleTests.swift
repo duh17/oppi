@@ -6,6 +6,12 @@ import UIKit
 @Suite("ChatView Lifecycle")
 @MainActor
 struct ChatViewLifecycleTests {
+    @Test func inactiveAndBackgroundPauseTimelinePresentation() {
+        #expect(ChatView.shouldPauseTimelinePresentation(for: .inactive))
+        #expect(ChatView.shouldPauseTimelinePresentation(for: .background))
+        #expect(!ChatView.shouldPauseTimelinePresentation(for: .active))
+    }
+
     @Test func onAppearPreparesSessionReentryBeforeAsyncConnectLoop() async {
         let parentId = "parent-\(UUID().uuidString)"
         let childId = "child-\(UUID().uuidString)"

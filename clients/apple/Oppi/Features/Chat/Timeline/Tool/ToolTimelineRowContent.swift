@@ -198,6 +198,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     /// renderers, NativeFullScreenMarkdownBody owns palette-colored UIKit
     /// subviews and must be recreated when the active theme changes.
     private var expandedMarkdownViewportThemeID: ThemeID?
+    private var expandedMarkdownLastContainerWidth: CGFloat?
+    private var expandedMarkdownLastViewportHeight: CGFloat?
     private var activeExpandedViewportPolicy: ToolRowViewportPolicy?
     private var expandedReadMediaViewportHeightConstraint: NSLayoutConstraint?
     private var expandedMarkdownViewportDoubleTapGesture: UITapGestureRecognizer?
@@ -456,20 +458,42 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         isStreaming: Bool,
         geometry: ToolRowViewportCalculator.GeometryContext
     ) {
+        let setHeight: (CGFloat) -> Void = { [weak self] height in
+            guard let self else {
+                constraint.constant = height
+                return
+            }
+            let previousHeight = self.expandedMarkdownLastViewportHeight
+            constraint.constant = height
+            guard self.activeExpandedViewportPolicy?.surface == .markdownViewport,
+                  self.expandedReadMediaContentView is NativeFullScreenMarkdownBody else {
+                self.expandedMarkdownLastViewportHeight = nil
+                return
+            }
+            if let previousHeight,
+               abs(previousHeight - height) > 0.5 {
+                // The fixed streaming height can still change when the
+                // available geometry changes. Treat that as a real outer
+                // geometry transition, not as Markdown content churn.
+                ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+            }
+            self.expandedMarkdownLastViewportHeight = height
+        }
+
         switch policy.heightBehavior {
         case .voiceReadMedia(let minHeight, let maxHeight):
-            constraint.constant = measuredHostedReadMediaHeight(minHeight: minHeight, maxHeight: maxHeight)
+            setHeight(measuredHostedReadMediaHeight(minHeight: minHeight, maxHeight: maxHeight))
 
         case .compactMeasured:
-            constraint.constant = compactExpandedViewportHeight(for: policy)
+            setHeight(compactExpandedViewportHeight(for: policy))
 
         case .markdownViewport(let maxHeight):
             let mode = policy.viewportCalculatorMode
             if isStreaming {
-                constraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
+                setHeight(ToolRowViewportCalculator.streamingConstrainedHeight(
                     for: mode,
                     geometry: geometry
-                )
+                ))
             } else {
                 let availableHeight = ToolRowViewportCalculator.availableViewportHeight(
                     for: mode,
@@ -477,27 +501,27 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 )
                 let hasSettledWidth = bounds.width > 10 && expandedContainer.bounds.width > 10
                 let targetHeight = hasSettledWidth ? maxHeight : Self.streamingViewportHeight
-                constraint.constant = min(availableHeight, max(mode.minHeight, targetHeight))
+                setHeight(min(availableHeight, max(mode.minHeight, targetHeight)))
             }
 
         case .naturalReadMedia(let minHeight, let maxHeight):
             if isStreaming {
-                constraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
+                setHeight(ToolRowViewportCalculator.streamingConstrainedHeight(
                     for: policy.viewportCalculatorMode,
                     geometry: geometry
-                )
+                ))
             } else {
-                constraint.constant = measuredHostedReadMediaHeight(minHeight: minHeight, maxHeight: maxHeight)
+                setHeight(measuredHostedReadMediaHeight(minHeight: minHeight, maxHeight: maxHeight))
             }
 
         case .cachedMeasured(let mode):
             if isStreaming {
-                constraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
+                setHeight(ToolRowViewportCalculator.streamingConstrainedHeight(
                     for: mode,
                     geometry: geometry
-                )
+                ))
             } else {
-                constraint.constant = cachedExpandedViewportHeight(mode: mode, geometry: geometry)
+                setHeight(cachedExpandedViewportHeight(mode: mode, geometry: geometry))
             }
         }
     }
@@ -606,6 +630,24 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func updateExpandedMarkdownWidthIfNeeded() {
         guard let expandedMarkdownWidthConstraint else { return }
         expandedMarkdownWidthConstraint.constant = -12
+
+        guard activeExpandedViewportPolicy?.surface == .markdownViewport,
+              expandedReadMediaContentView is NativeFullScreenMarkdownBody else {
+            expandedMarkdownLastContainerWidth = nil
+            return
+        }
+
+        let width = expandedReadMediaContainer.bounds.width
+        guard width > 0 else { return }
+
+        if let previousWidth = expandedMarkdownLastContainerWidth,
+           abs(previousWidth - width) > 0.5 {
+            // Markdown content stays inside a fixed-height viewport, but a
+            // width change can alter wrapping and the outer cell's geometry.
+            // Request one outer pass for that geometry change only.
+            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        }
+        expandedMarkdownLastContainerWidth = width
     }
 
     private func updateExpandedReadMediaWidthIfNeeded() {
@@ -750,7 +792,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 allowsVerticalScrolling: false
             )
             expandedMarkdownViewportThemeID = themeID
-            installExpandedEmbeddedView(native)
+            // The render output owns the one-shot outer invalidation for a
+            // first install or theme replacement. The nested body still gets
+            // installed immediately, but its content updates do not remeasure
+            // the fixed-height outer viewport.
+            installExpandedEmbeddedView(native, invalidatesOuterLayout: false)
         }
 
         native.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).markdownViewport"
@@ -774,7 +820,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedReadMediaViewportHeightConstraint = heightConstraint
         native.setNeedsLayout()
         setNeedsLayout()
-        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     private func installExpandedMarkdownViewportGestureIfNeeded(on view: UIView) {
@@ -834,7 +879,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
-    private func installExpandedEmbeddedView(_ view: UIView) {
+    private func installExpandedEmbeddedView(
+        _ view: UIView,
+        invalidatesOuterLayout: Bool = true
+    ) {
         view.translatesAutoresizingMaskIntoConstraints = false
         expandedReadMediaContainer.addSubview(view)
         NSLayoutConstraint.activate([
@@ -850,7 +898,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         // current runloop tick, so all synchronous changes from the enclosing
         // apply() settle before one single layoutIfNeeded fires.
         setNeedsLayout()
-        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        if invalidatesOuterLayout {
+            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        }
     }
 
     // MARK: - Collapsed Image Preview
@@ -921,6 +971,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func clearExpandedReadMediaView() {
         expandedReadMediaViewportHeightConstraint?.isActive = false
         expandedMarkdownViewportThemeID = nil
+        expandedMarkdownLastContainerWidth = nil
+        expandedMarkdownLastViewportHeight = nil
         expandedReadMediaViewportHeightConstraint = nil
         if let gesture = expandedMarkdownViewportDoubleTapGesture {
             gesture.view?.removeGestureRecognizer(gesture)
@@ -1724,6 +1776,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 wasExpandedVisible: wasExpandedVisible,
                 isUsingMarkdownViewportLayout: expandedUsesReadMediaLayout
                     && expandedReadMediaContentView is NativeFullScreenMarkdownBody,
+                isThemeChanged: expandedMarkdownViewportThemeID != ThemeRuntimeState.currentThemeID(),
                 reviewCommentSelectionRouter: markdownSelectionEnabled ? reviewCommentSelectionRouter : nil,
                 reviewCommentSourceContext: markdownSelectionEnabled ? reviewCommentSourceContext : nil,
                 textSelectionEnabled: markdownSelectionEnabled,
@@ -1810,6 +1863,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func applyExpandedRenderOutput(_ output: ExpandedRenderOutput, isExpandingTransition: Bool) {
+        let wasMarkdownViewport = expandedReadMediaContentView is NativeFullScreenMarkdownBody
+
         // Execute view-installation intent before surface switch so the
         // hosted view is in the hierarchy when showExpandedHostedView() runs.
         switch output.installAction {
@@ -1875,7 +1930,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         case .preserve: break
         }
 
-        if output.invalidateLayout {
+        let markdownViewportWasRemoved = wasMarkdownViewport && output.surface != .markdownViewport
+        if output.invalidateLayout || markdownViewportWasRemoved {
             setNeedsLayout()
             ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
         }

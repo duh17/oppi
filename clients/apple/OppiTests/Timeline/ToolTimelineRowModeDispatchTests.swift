@@ -291,6 +291,177 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(hostedMarkdown.debugRenderedSegmentCountForTesting > 0)
     }
 
+    @Test func markdownInvalidationUsesContentSignatureForCompletedRows() {
+        let policy = ToolRowViewportPolicy.markdown(isCustomTool: false)
+
+        func render(
+            text: String,
+            isStreaming: Bool,
+            previous: ExpandedRenderOutput?,
+            isThemeChanged: Bool = false,
+            isUsingMarkdownViewportLayout: Bool = true
+        ) -> ExpandedRenderOutput {
+            ToolRowMarkdownRenderStrategy.render(
+                text: text,
+                isStreaming: isStreaming,
+                expandedScrollView: UIScrollView(),
+                previousSignature: previous?.renderSignature,
+                previousRenderedText: previous?.renderedText,
+                previousAutoFollow: previous?.shouldAutoFollow ?? false,
+                wasExpandedVisible: previous != nil,
+                isUsingMarkdownViewportLayout: isUsingMarkdownViewportLayout,
+                isThemeChanged: isThemeChanged,
+                reviewCommentSelectionRouter: nil,
+                reviewCommentSourceContext: nil,
+                textSelectionEnabled: false,
+                viewportPolicy: policy
+            )
+        }
+
+        let completed = render(
+            text: "# Completed\n\nBody",
+            isStreaming: false,
+            previous: nil,
+            isUsingMarkdownViewportLayout: false
+        )
+        let repeatedCompleted = render(
+            text: "# Completed\n\nBody",
+            isStreaming: false,
+            previous: completed
+        )
+        #expect(!repeatedCompleted.invalidateLayout)
+
+        let changedCompleted = render(
+            text: "# Completed\n\nChanged body",
+            isStreaming: false,
+            previous: completed
+        )
+        #expect(changedCompleted.invalidateLayout)
+
+        let themeChanged = render(
+            text: "# Completed\n\nBody",
+            isStreaming: false,
+            previous: completed,
+            isThemeChanged: true
+        )
+        #expect(themeChanged.invalidateLayout)
+
+        let streaming = render(
+            text: "# Streaming\n\nChunk one",
+            isStreaming: true,
+            previous: nil,
+            isUsingMarkdownViewportLayout: false
+        )
+        let streamingUpdate = render(
+            text: "# Streaming\n\nChunk one and chunk two",
+            isStreaming: true,
+            previous: streaming
+        )
+        #expect(!streamingUpdate.invalidateLayout)
+    }
+
+    @Test func streamingMarkdownOnlyInvalidatesOuterLayoutForGeometryTransitions() throws {
+        var invalidationCount = 0
+        ToolTimelineRowPresentationHelpers.enclosingLayoutInvalidationHookForTesting = {
+            invalidationCount += 1
+        }
+        defer {
+            ToolTimelineRowPresentationHelpers.enclosingLayoutInvalidationHookForTesting = nil
+        }
+
+        let collapsed = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: nil,
+            isExpanded: false,
+            isDone: false
+        )
+        let initialStreamingText = "# Header\n\nInitial streaming text"
+        let view = ToolTimelineRowContentView(configuration: collapsed)
+        view.configuration = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .markdown(text: initialStreamingText),
+            isExpanded: true,
+            isDone: false
+        )
+        _ = fittedSize(for: view, width: 360)
+
+        let installInvalidationCount = invalidationCount
+        #expect(installInvalidationCount > 0, "Installing the viewport must invalidate the outer row")
+
+        let viewportConstraint = try #require(
+            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
+        )
+        #expect(viewportConstraint.constant == ToolTimelineRowContentView.streamingViewportHeight)
+
+        for text in [
+            "# Header\n\nInitial streaming text with one more chunk",
+            "# Header\n\nInitial streaming text with two more chunks",
+            "# Header\n\nInitial streaming text with the final streaming chunk",
+        ] {
+            view.configuration = makeToolConfiguration(
+                toolNamePrefix: "read",
+                expandedContent: .markdown(text: text),
+                isExpanded: true,
+                isDone: false
+            )
+            _ = fittedSize(for: view, width: 360)
+            #expect(viewportConstraint.constant == ToolTimelineRowContentView.streamingViewportHeight)
+        }
+
+        #expect(
+            invalidationCount == installInvalidationCount,
+            "Content-only streaming Markdown updates must not invalidate the outer timeline"
+        )
+
+        view.configuration = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .markdown(text: "# Header\n\nFinal content"),
+            isExpanded: true,
+            isDone: true
+        )
+        _ = fittedSize(for: view, width: 360)
+        drainMainQueue(passes: 3)
+        #expect(invalidationCount > installInvalidationCount, "Stream-to-done must invalidate the outer row")
+
+        let doneInvalidationCount = invalidationCount
+        view.configuration = collapsed
+        _ = fittedSize(for: view, width: 360)
+        #expect(invalidationCount > doneInvalidationCount, "Removing the viewport must invalidate the outer row")
+    }
+
+    @Test func markdownViewportWidthChangeInvalidatesOuterLayout() throws {
+        var invalidationCount = 0
+        ToolTimelineRowPresentationHelpers.enclosingLayoutInvalidationHookForTesting = {
+            invalidationCount += 1
+        }
+        defer {
+            ToolTimelineRowPresentationHelpers.enclosingLayoutInvalidationHookForTesting = nil
+        }
+
+        let view = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .markdown(text: "# Header\n\nStreaming body"),
+            isExpanded: true,
+            isDone: false
+        ))
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 360, height: 2_000))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        container.layoutIfNeeded()
+
+        let beforeWidthChange = invalidationCount
+        container.frame.size.width = 420
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        #expect(invalidationCount > beforeWidthChange)
+    }
+
     @Test func horizontalPanPassthroughRejectsVerticalIntent() {
         #expect(HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: 180, y: 20)))
         #expect(HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: 70, y: 55)))

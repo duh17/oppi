@@ -70,10 +70,13 @@ final class ChatSessionManager {
 
     private var reconcileTask: Task<Void, Never>?
     private var historyReloadTask: Task<Void, Never>?
+    private var presentationReloadRetryTask: Task<Void, Never>?
     private var activeHistoryReplayID: UUID?
     private var stateSyncTask: Task<Void, Never>?
     private var autoReconnectTask: Task<Void, Never>?
     private var latestTraceSignature: TraceSignature?
+
+    private static let presentationReloadMaxAttempts = 3
 
     private var unexpectedStreamExitCount = 0
     private var wantsAutoReconnect = true
@@ -127,6 +130,12 @@ final class ChatSessionManager {
 
     /// Test seam: override trace save destination for lifecycle snapshot flush.
     var _saveTraceSnapshotForTesting: (([TraceEvent]) async -> Void)?
+
+#if DEBUG
+    // periphery:ignore - shortens deterministic retry tests without changing
+    // the bounded production policy.
+    var _presentationReloadRetryDelayForTesting: Duration?
+#endif
 
     init(
         sessionId: String,
@@ -296,6 +305,7 @@ final class ChatSessionManager {
     func markAppeared() {
         wantsAutoReconnect = true
         if hasAppeared {
+            cancelPresentationReloadRetry()
             connectionGeneration &+= 1
         } else {
             hasAppeared = true
@@ -304,7 +314,25 @@ final class ChatSessionManager {
 
     func reconnect() {
         cancelAutoReconnect()
+        cancelPresentationReloadRetry()
         connectionGeneration &+= 1
+    }
+
+    /// Rebuild the timeline after a paused presentation buffer exceeded its
+    /// bound. The trace is authoritative because intermediate delta events were
+    /// intentionally discarded instead of being published in the background.
+    func reloadTimelineAfterPresentationOverflow(
+        connection: ServerConnection,
+        sessionStore: SessionStore
+    ) {
+        cancelPresentationReloadRetry()
+        scheduleHistoryReload(
+            generation: connectionGeneration,
+            connection: connection,
+            sessionStore: sessionStore,
+            cachedSignature: nil,
+            presentationReloadAttempt: 1
+        )
     }
 
     /// Main connection loop — runs until cancelled.
@@ -398,7 +426,9 @@ final class ChatSessionManager {
             let message = resolveRouteScope(from: sessionStore) == nil
                 ? "Missing session route context"
                 : "Session stream unavailable"
-            reducer.process(.error(sessionId: sessionId, message: message))
+            if !suppressTimelineMutationWhilePaused() {
+                reducer.process(.error(sessionId: sessionId, message: message))
+            }
             return
         }
 
@@ -517,6 +547,9 @@ final class ChatSessionManager {
             // detection preserves user messages but drops their corresponding
             // assistant responses — producing a wall of user-only messages at
             // the bottom. The scheduled fresh trace load will reconcile properly.
+            // A cache load is a bounded reducer-only snapshot apply, so it is
+            // still allowed while presentation is paused; live events remain
+            // behind the coalescer gate.
             if reducer.items.isEmpty {
                 let reducerLoadStartMs = ChatSessionTelemetry.nowMs()
                 reducer.loadSession(cached.events)
@@ -773,7 +806,9 @@ final class ChatSessionManager {
                     ]
                 )
             }
-            reducer.appendSystemEvent("Connection dropped — reconnecting…")
+            if !suppressTimelineMutationWhilePaused() {
+                reducer.appendSystemEvent("Connection dropped — reconnecting…")
+            }
             scheduleAutoReconnect(after: reconnectPolicy.duration, generation: generation)
         } else {
             unexpectedStreamExitCount = 0
@@ -882,6 +917,8 @@ final class ChatSessionManager {
         reconcileTask?.cancel()
         reconcileTask = nil
         cancelAutoReconnect()
+        cancelPresentationReloadRetry()
+        cancelHistoryReload()
         coalescer.flushNow()
         transitionTo(.disconnected(reason: .cancelled))
         cancelStateSync()
@@ -941,10 +978,10 @@ final class ChatSessionManager {
             ))
 
         case .messageEnd(let role, let content):
-            if role == "user", !content.isEmpty {
-                if !reducer.hasUserMessage(matching: content) {
-                    reducer.appendUserMessage(content)
-                }
+            if role == "user", !content.isEmpty,
+               !suppressTimelineMutationWhilePaused(),
+               !reducer.hasUserMessage(matching: content) {
+                reducer.appendUserMessage(content)
             }
 
         case .error(_, _, let fatal):
@@ -974,6 +1011,7 @@ final class ChatSessionManager {
             }
 
         case .queueItemStarted(_, let item, _):
+            guard !suppressTimelineMutationWhilePaused() else { break }
             let displayText = UserMessageAttachmentPresentation.makeTimelineText(
                 text: item.message,
                 uploadedAttachments: item.attachments ?? []
@@ -981,9 +1019,11 @@ final class ChatSessionManager {
             reducer.appendUserMessage(displayText, images: item.optimisticImages ?? [])
 
         case .stopRequested(_, let reason):
+            guard !suppressTimelineMutationWhilePaused() else { break }
             reducer.appendSystemEvent(reason ?? "Stopping…")
 
         case .stopConfirmed(_, let reason):
+            guard !suppressTimelineMutationWhilePaused() else { break }
             coalescer.flushNow()
             reducer.finalizeTerminalArtifactsAsInterrupted()
             reducer.appendSystemEvent(reason ?? "Stop confirmed")
@@ -993,11 +1033,13 @@ final class ChatSessionManager {
             // snapshots (state or session_summary) must not flip in-progress tools
             // to Interrupted. Missed agent_settled still recovers on the transition.
             if storeResult.didTransitionOutOfRunning {
+                guard !suppressTimelineMutationWhilePaused() else { break }
                 coalescer.flushNow()
                 reducer.finalizeTerminalArtifactsAsInterrupted()
             }
 
         case .stopFailed(_, let reason):
+            guard !suppressTimelineMutationWhilePaused() else { break }
             reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(reason)"))
 
         default:
@@ -1140,6 +1182,12 @@ final class ChatSessionManager {
         }
     }
 
+    private func suppressTimelineMutationWhilePaused() -> Bool {
+        guard coalescer.isPresentationPaused else { return false }
+        coalescer.markPresentationNeedsTraceReload()
+        return true
+    }
+
     // MARK: - History Loading
 
     private func fetchTraceHistorySnapshot(
@@ -1197,6 +1245,7 @@ final class ChatSessionManager {
             return nil
         }
         let workspaceId = routeScope.workspaceId
+        let presentationReloadMarker = coalescer.presentationTraceReloadMarker
 
         let traceFetchStartedMs = ChatSessionTelemetry.nowMs()
 
@@ -1227,6 +1276,10 @@ final class ChatSessionManager {
 
             guard !Task.isCancelled else { return nil }
             sessionStore.upsert(session)
+            // History is an authoritative reducer-only apply. Unlike live
+            // events, it may run while presentation is paused so a connect or
+            // re-entry cannot leave the visible timeline blank. The coalescer
+            // still prevents high-frequency live publication in that state.
             tracePage = page
             markSyncSucceeded()
 
@@ -1339,6 +1392,8 @@ final class ChatSessionManager {
                 }
             }
 
+            // Overflow/paused-mutation recovery stays armed until this apply.
+            coalescer.acknowledgePresentationTraceReload(ifMarker: presentationReloadMarker)
             return freshSignature
         } catch {
             ChatSessionTelemetry.recordTraceFetch(
@@ -1429,6 +1484,9 @@ final class ChatSessionManager {
         sessionStore: SessionStore
     ) -> Bool {
         guard !Task.isCancelled else { return false }
+        // Paged trace history has the same authoritative, reducer-only safety
+        // as the initial cache/history apply. Keep deep-link outline targets
+        // loadable while the scene is paused without publishing live events.
         if response.page.staleCursor {
             tracePage = nil
             scheduleHistoryReload(
@@ -1465,14 +1523,19 @@ final class ChatSessionManager {
         generation: Int,
         connection: ServerConnection,
         sessionStore: SessionStore,
-        cachedSignature: TraceSignature?
+        cachedSignature: TraceSignature?,
+        presentationReloadAttempt: Int? = nil
     ) {
+        if presentationReloadAttempt == nil {
+            cancelPresentationReloadRetry()
+        }
         cancelHistoryReload()
         markSyncStarted()
 
         let cachedEventCount = cachedSignature?.eventCount
         let cachedLastEventId = cachedSignature?.lastEventId
         let replayID = UUID()
+        let presentationReloadMarker = coalescer.presentationTraceReloadMarker
         activeHistoryReplayID = replayID
         reducer.beginHistoryReplayBuffer(id: replayID)
 
@@ -1480,6 +1543,7 @@ final class ChatSessionManager {
             guard let self else { return }
             guard generation == self.connectionGeneration else { return }
 
+            var didSucceed = false
             if let loadHook = self._loadHistoryForTesting {
                 let signature = await loadHook(cachedEventCount, cachedLastEventId)
                 guard !Task.isCancelled else { return }
@@ -1493,30 +1557,49 @@ final class ChatSessionManager {
                         eventCount: signature.eventCount,
                         lastEventId: signature.lastEventId
                     )
+                    // Overflow/paused-mutation recovery stays armed until a
+                    // successful load. Failed hooks must not clear the flag.
+                    self.coalescer.acknowledgePresentationTraceReload(ifMarker: presentationReloadMarker)
+                    self.markSyncSucceeded()
+                    didSucceed = true
+                } else {
+                    self.markSyncFailed()
                 }
-                return
-            }
-
-            guard let api = connection?.apiClient else {
+            } else if let api = connection?.apiClient {
+                if let freshSignature = await self.loadHistory(
+                    api: api,
+                    sessionStore: sessionStore,
+                    cachedEventCount: cachedEventCount,
+                    cachedLastEventId: cachedLastEventId,
+                    replayID: replayID
+                ) {
+                    guard generation == self.connectionGeneration else { return }
+                    guard self.activeHistoryReplayID == replayID else { return }
+                    self.latestTraceSignature = freshSignature
+                    self.activeHistoryReplayID = nil
+                    didSucceed = true
+                } else if self.activeHistoryReplayID == replayID {
+                    self.activeHistoryReplayID = nil
+                }
+            } else {
                 self.reducer.discardHistoryReplayBuffer(id: replayID)
                 if self.activeHistoryReplayID == replayID {
                     self.activeHistoryReplayID = nil
                 }
-                return
+                self.markSyncFailed()
             }
-            if let freshSignature = await self.loadHistory(
-                api: api,
-                sessionStore: sessionStore,
-                cachedEventCount: cachedEventCount,
-                cachedLastEventId: cachedLastEventId,
-                replayID: replayID
-            ) {
-                guard generation == self.connectionGeneration else { return }
-                guard self.activeHistoryReplayID == replayID else { return }
-                self.latestTraceSignature = freshSignature
-                self.activeHistoryReplayID = nil
-            } else if self.activeHistoryReplayID == replayID {
-                self.activeHistoryReplayID = nil
+
+            guard !Task.isCancelled,
+                  generation == self.connectionGeneration else { return }
+            if !didSucceed,
+               let presentationReloadAttempt,
+               !self.coalescer.isPresentationPaused {
+                self.schedulePresentationReloadRetryIfNeeded(
+                    afterAttempt: presentationReloadAttempt,
+                    generation: generation,
+                    connection: connection,
+                    sessionStore: sessionStore
+                )
             }
         }
     }
@@ -1531,9 +1614,11 @@ final class ChatSessionManager {
         connection: ServerConnection,
         sessionStore: SessionStore
     ) async -> Bool {
+        cancelPresentationReloadRetry()
         cancelHistoryReload()
 
         if let loadHook = _loadHistoryForTesting {
+            let presentationReloadMarker = coalescer.presentationTraceReloadMarker
             markSyncStarted()
             guard let signature = await loadHook(nil, nil) else {
                 markSyncFailed()
@@ -1544,6 +1629,7 @@ final class ChatSessionManager {
                 eventCount: signature.eventCount,
                 lastEventId: signature.lastEventId
             )
+            coalescer.acknowledgePresentationTraceReload(ifMarker: presentationReloadMarker)
             markSyncSucceeded()
             return true
         }
@@ -1597,6 +1683,68 @@ final class ChatSessionManager {
             guard generation == self.connectionGeneration else { return }
             self.reconnect()
         }
+    }
+
+    private func schedulePresentationReloadRetryIfNeeded(
+        afterAttempt attempt: Int,
+        generation: Int,
+        connection: ServerConnection?,
+        sessionStore: SessionStore
+    ) {
+        guard attempt < Self.presentationReloadMaxAttempts,
+              generation == connectionGeneration,
+              coalescer.needsPresentationTraceReload,
+              !coalescer.isPresentationPaused,
+              let connection else {
+            return
+        }
+
+        let nextAttempt = attempt + 1
+        let delay = presentationReloadRetryDelay(for: attempt)
+        cancelPresentationReloadRetry()
+        presentationReloadRetryTask = Task { @MainActor [weak self, weak connection] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled,
+                  let self,
+                  let connection,
+                  generation == self.connectionGeneration,
+                  self.coalescer.needsPresentationTraceReload,
+                  !self.coalescer.isPresentationPaused else {
+                return
+            }
+
+            self.presentationReloadRetryTask = nil
+            self.scheduleHistoryReload(
+                generation: generation,
+                connection: connection,
+                sessionStore: sessionStore,
+                cachedSignature: nil,
+                presentationReloadAttempt: nextAttempt
+            )
+        }
+    }
+
+    private func presentationReloadRetryDelay(for attempt: Int) -> Duration {
+#if DEBUG
+        if let override = _presentationReloadRetryDelayForTesting {
+            return override
+        }
+#endif
+        switch attempt {
+        case 1: return .milliseconds(250)
+        case 2: return .milliseconds(750)
+        default: return .seconds(2)
+        }
+    }
+
+    private func cancelPresentationReloadRetry() {
+        presentationReloadRetryTask?.cancel()
+        presentationReloadRetryTask = nil
     }
 
     private func cancelAutoReconnect() {
