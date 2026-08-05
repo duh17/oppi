@@ -203,6 +203,8 @@ enum ChatSessionTelemetry {
                 return "no_connection"
             case .noWorkspace:
                 return "no_workspace"
+            case .agentLaunchFailed:
+                return "agent_launch_failed"
             }
         }
 

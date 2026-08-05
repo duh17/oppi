@@ -43,15 +43,15 @@ struct QuickSessionOverlayLayout {
     }
 }
 
-/// Compact sheet for starting a new agent session.
+/// Compact sheet for starting a new session.
 ///
 /// Presented from Oppi, the Control widget, App Intents, or saved share intake.
-/// The sheet stays focused on one task: pick a workspace, compose the first
-/// message, then create and navigate to the new session. Session browsing stays
-/// in the Workspaces navigation shell.
+/// The sheet stays focused on one task: pick workspace (and optionally Agent),
+/// compose the first message, then create and navigate to the new session.
 ///
-/// **Flow**: Pick workspace → compose message → send → session created →
-/// navigate to ChatView.
+/// **Flow**: Pick workspace/Agent → compose message → send → session created →
+/// navigate to ChatView. Plain Pi uses workspace session create + optional
+/// auto-send. A selected Agent uses `launchAgentSession` so definition defaults apply.
 struct QuickSessionSheet: View {
     let onDismiss: () -> Void
 
@@ -70,6 +70,13 @@ struct QuickSessionSheet: View {
     @State private var selectedServerId: String?
     @State private var selectedModelId: String? = AppPreferences.QuickSession.lastModelId
     @State private var thinkingLevel: ThinkingLevel = AppPreferences.QuickSession.lastThinkingLevel
+    /// `nil` = plain Pi. Remembered last Agent is restored after agents load.
+    @State private var selectedAgentId: String?
+    @State private var availableAgents: [AgentDefinitionSummary] = []
+    @State private var isLoadingAgents = false
+    /// When an Agent is selected, model/thinking only apply if the user sets them.
+    @State private var agentModelOverride: String?
+    @State private var agentThinkingOverride: ThinkingLevel?
     @State private var showModelPicker = false
     @State private var showExpandedComposer = false
     @State private var isInitialized = false
@@ -79,6 +86,7 @@ struct QuickSessionSheet: View {
     @State private var busyStreamingBehavior: StreamingBehavior = .followUp
     @State private var composerFocusRequestID = 0
     @State private var showWorkspacePicker = false
+    @State private var showAgentPicker = false
     @State private var measuredComposerHeight: CGFloat = 0
     @State private var measuredAccessibilityActionHeight: CGFloat = 0
     @State private var keyboardFrame: CGRect = .null
@@ -105,8 +113,28 @@ struct QuickSessionSheet: View {
     /// Display model: last or current explicit selection wins, then the workspace default.
     /// Session creation sends only the last/current explicit selection; server-side
     /// resolution applies workspace defaults and Pi settings centrally.
+    /// With an Agent selected, only an explicit post-selection override is shown/sent.
     private var effectiveModelId: String? {
-        selectedModelId ?? selectedWorkspace?.defaultModel
+        if selectedAgentId != nil {
+            return agentModelOverride
+        }
+        return selectedModelId ?? selectedWorkspace?.defaultModel
+    }
+
+    private var effectiveThinkingLevel: ThinkingLevel {
+        if selectedAgentId != nil {
+            return agentThinkingOverride ?? .medium
+        }
+        return thinkingLevel
+    }
+
+    private var selectedAgent: AgentDefinitionSummary? {
+        guard let selectedAgentId else { return nil }
+        return availableAgents.first(where: { $0.id == selectedAgentId })
+    }
+
+    private var selectedServerIconAssetCache: IconAssetCache? {
+        selectedServerConnection().iconAssetCache
     }
 
     var body: some View {
@@ -186,13 +214,13 @@ struct QuickSessionSheet: View {
                 onFileSuggestionQuery: nil,
                 session: nil,
                 modelOverride: effectiveModelId,
-                thinkingLevel: thinkingLevel,
+                thinkingLevel: effectiveThinkingLevel,
                 voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
                 onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
                 onSend: handleSend,
                 onModelTap: { showModelPicker = true },
                 onThinkingSelect: selectThinkingLevel,
-                allowsEmptySubmit: true
+                allowsEmptySubmit: selectedAgentId == nil
             )
         }
         .task {
@@ -200,6 +228,7 @@ struct QuickSessionSheet: View {
         }
         .onChange(of: selectedServerId) { _, _ in
             configureVoiceInputForSelectedServer()
+            Task { await loadAgentsForSelectedServer() }
         }
         .onChange(of: text) { _, newValue in
             composerDraftStore?.setQuickSessionDraftText(newValue)
@@ -218,6 +247,11 @@ struct QuickSessionSheet: View {
                     .background(.themeRed.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
+            // Only the Agent picker is detached above the input capsule.
+            // Workspace/model/thinking stay in the composer action row.
+            agentPickerPill
+                .padding(.horizontal, 16)
+
             ChatInputBar(
                 text: $text,
                 textBeforeRecording: $composerTextBeforeRecording,
@@ -226,7 +260,7 @@ struct QuickSessionSheet: View {
                 isBusy: false,
                 busyStreamingBehavior: $busyStreamingBehavior,
                 isSending: isCreating,
-                allowsEmptySubmit: true,
+                allowsEmptySubmit: selectedAgentId == nil,
                 sendProgressText: nil,
                 isStopping: false,
                 voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
@@ -287,7 +321,7 @@ struct QuickSessionSheet: View {
         SessionToolbar(
             session: nil,
             modelOverride: effectiveModelId,
-            thinkingLevel: thinkingLevel,
+            thinkingLevel: effectiveThinkingLevel,
             onModelTap: { showModelPicker = true },
             onThinkingSelect: selectThinkingLevel
         )
@@ -295,14 +329,58 @@ struct QuickSessionSheet: View {
 
     private func selectModel(_ model: ModelInfo) {
         let modelId = ModelSwitchPolicy.fullModelID(for: model)
-        selectedModelId = modelId
-        AppPreferences.QuickSession.saveModelId(modelId)
+        if selectedAgentId != nil {
+            agentModelOverride = modelId
+        } else {
+            selectedModelId = modelId
+            AppPreferences.QuickSession.saveModelId(modelId)
+        }
         AppPreferences.RecentModels.record(modelId)
     }
 
     private func selectThinkingLevel(_ level: ThinkingLevel) {
-        thinkingLevel = level
-        AppPreferences.QuickSession.saveThinkingLevel(level)
+        if selectedAgentId != nil {
+            agentThinkingOverride = level
+        } else {
+            thinkingLevel = level
+            AppPreferences.QuickSession.saveThinkingLevel(level)
+        }
+    }
+
+    // MARK: - Agent Picker
+
+    private var agentPickerPill: some View {
+        Button {
+            showAgentPicker.toggle()
+        } label: {
+            QuickSessionAgentPillLabel(agent: selectedAgent)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showAgentPicker, arrowEdge: .bottom) {
+            QuickSessionAgentPicker(
+                agents: availableAgents,
+                selectedAgentId: selectedAgentId,
+                isLoading: isLoadingAgents,
+                iconAssetCache: selectedServerIconAssetCache,
+                onSelect: selectAgent
+            )
+            .presentationCompactAdaptation(.popover)
+            .presentationBackground(Color.themeSurfaceFill(.popover))
+        }
+        .accessibilityLabel(
+            selectedAgent.map { "Agent picker, current agent \($0.name)" }
+                ?? "Agent picker, Pi with no agent"
+        )
+        .accessibilityIdentifier("quickSession.agentPicker")
+    }
+
+    private func selectAgent(_ agentId: String?) {
+        selectedAgentId = agentId
+        agentModelOverride = nil
+        agentThinkingOverride = nil
+        showAgentPicker = false
+        error = nil
+        AppPreferences.QuickSession.saveAgentId(agentId)
     }
 
     // MARK: - Workspace Picker
@@ -368,6 +446,8 @@ struct QuickSessionSheet: View {
             voiceInputManager = manager
             configureVoiceInputForSelectedServer(manager)
         }
+
+        await loadAgentsForSelectedServer()
 
         if let pendingPayload = QuickSessionTrigger.shared.consumePendingPayload() {
             applyInitialPayload(pendingPayload)
@@ -494,20 +574,72 @@ struct QuickSessionSheet: View {
         }
     }
 
-    private func handleSend() {
-        guard !isCreating else { return }
-        guard let workspace = selectedWorkspace else {
-            error = "Choose a workspace first."
+    private func loadAgentsForSelectedServer() async {
+        isLoadingAgents = true
+        defer { isLoadingAgents = false }
+
+        let connection = selectedServerConnection()
+        guard let api = connection.apiClient else {
+            availableAgents = []
+            selectedAgentId = nil
             return
         }
+
+        do {
+            let agents = try await api.listAgents()
+                .filter { $0.status == .active }
+                .sorted {
+                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                }
+            availableAgents = agents
+            selectedAgentId = QuickSessionLaunchRouting.preferredAgentId(
+                lastAgentId: AppPreferences.QuickSession.lastAgentId,
+                availableAgentIds: agents.map(\.id)
+            )
+            agentModelOverride = nil
+            agentThinkingOverride = nil
+        } catch {
+            logger.warning("Failed to load agents for quick session: \(error.localizedDescription, privacy: .public)")
+            availableAgents = []
+            selectedAgentId = nil
+        }
+    }
+
+    private func handleSend() {
+        guard !isCreating else { return }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let transportText = PendingFileReference.appendReferenceBlock(
             to: trimmed,
             files: pendingRepoPointers
         )
-        let modelId = selectedModelId
+        let launchDecision = QuickSessionLaunchRouting.plan(
+            for: QuickSessionLaunchRequest(
+                workspaceId: selectedWorkspace?.id,
+                agentId: selectedAgentId,
+                prompt: transportText,
+                hasAttachments: !pendingAttachments.isEmpty,
+                hasRepoReferences: !pendingRepoPointers.isEmpty
+            )
+        )
+
+        let plan: QuickSessionLaunchPlan
+        switch launchDecision {
+        case .success(let resolved):
+            plan = resolved
+        case .failure(let validationError):
+            error = validationError.localizedDescription
+            return
+        }
+
+        guard let workspace = selectedWorkspace, workspace.id == plan.workspaceId else {
+            error = QuickSessionLaunchValidationError.missingWorkspace.localizedDescription
+            return
+        }
+
+        let modelId = selectedAgentId == nil ? selectedModelId : agentModelOverride
         let thinking = thinkingLevel
+        let agentThinking = agentThinkingOverride
         let submittedDraftRevision = composerDraftStore?
             .setQuickSessionDraftText(text)?
             .revision
@@ -523,11 +655,13 @@ struct QuickSessionSheet: View {
             "has_attachments": pendingAttachments.isEmpty ? "0" : "1",
             "has_repo_refs": pendingRepoPointers.isEmpty ? "0" : "1",
             "has_model": modelId == nil ? "0" : "1",
+            "has_agent": selectedAgentId == nil ? "0" : "1",
         ]
 
         // Capture references before dismiss invalidates environment
         let nav = navigation
         let serverId = selectedServerId ?? coordinator.activeServerId ?? "default"
+        let attachments = pendingAttachments
 
         Task { @MainActor in
             do {
@@ -537,24 +671,50 @@ struct QuickSessionSheet: View {
                     throw QuickSessionError.noConnection
                 }
 
-                // Create session without prompt — we'll send through WebSocket
-                let response = try await api.createWorkspaceSession(
-                    workspaceId: workspace.id,
-                    model: modelId,
-                    thinking: thinking.rawValue
-                )
-                let session = response.session
+                let session: Session
+                let autoSendMessage: String?
+                let autoSendAttachments: [PendingAttachment]?
+
+                switch plan.mode {
+                case .plainPi:
+                    // Create session without prompt — we'll send through WebSocket
+                    let response = try await api.createWorkspaceSession(
+                        workspaceId: workspace.id,
+                        model: modelId,
+                        thinking: thinking.rawValue
+                    )
+                    session = response.session
+                    autoSendMessage = plan.shouldAutoSend ? transportText : nil
+                    autoSendAttachments = plan.shouldAutoSend ? attachments : nil
+                    AppPreferences.QuickSession.saveModelId(modelId)
+                    AppPreferences.QuickSession.saveThinkingLevel(thinking)
+
+                case .agent(let agentId):
+                    let response = try await api.launchAgentSession(
+                        agentId: agentId,
+                        prompt: plan.prompt,
+                        workspaceId: workspace.id,
+                        model: modelId,
+                        thinkingLevel: agentThinking
+                    )
+                    guard let launched = response.session else {
+                        throw QuickSessionError.agentLaunchFailed(
+                            response.receipt.reason ?? response.receipt.promptError ?? "Launch did not return a session"
+                        )
+                    }
+                    session = launched
+                    // Prompt is delivered by the agent launch path.
+                    autoSendMessage = nil
+                    autoSendAttachments = nil
+                }
+
                 // Upsert into the target server's session store — not the
                 // environment's store (which belongs to the currently active
                 // server and may differ for cross-server quick sessions).
                 targetConnection.sessionStore.upsert(session)
 
-                // Save defaults for next time. Model persists from the last/current
-                // explicit selection; workspace defaults are displayed but not sent
-                // as client overrides.
                 AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
-                AppPreferences.QuickSession.saveModelId(modelId)
-                AppPreferences.QuickSession.saveThinkingLevel(thinking)
+                AppPreferences.QuickSession.saveAgentId(selectedAgentId)
                 ChatSessionTelemetry.recordTimingMetric(
                     .quickSessionCreateMs,
                     durationMs: max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs),
@@ -564,12 +724,11 @@ struct QuickSessionSheet: View {
                 logger.notice("Quick session created: \(session.id, privacy: .public) in workspace \(workspace.name, privacy: .public)")
 
                 // Single atomic write — ContentView.onDismiss unpacks.
-                let shouldAutoSend = !transportText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty
                 nav.pendingQuickSessionNav = QuickSessionNav(
                     target: WorkspaceNavTarget(serverId: serverId, workspace: workspace),
                     sessionId: session.id,
-                    autoSendMessage: shouldAutoSend ? transportText : nil,
-                    autoSendAttachments: shouldAutoSend ? pendingAttachments : nil
+                    autoSendMessage: autoSendMessage,
+                    autoSendAttachments: autoSendAttachments
                 )
 
                 composerDraftStore?.clearQuickSessionDraft(ifRevision: submittedDraftRevision)
@@ -599,6 +758,153 @@ struct QuickSessionSheet: View {
                 logger.error("Quick session creation failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+}
+
+// MARK: - Agent picker (detached above input)
+
+private struct QuickSessionAgentPillLabel: View {
+    let agent: AgentDefinitionSummary?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let agent {
+                AgentIconView(value: agent.icon, size: 12, frameSize: 16)
+            } else {
+                CurrentAssistantAvatarPreview(
+                    sessionId: "quick-session-agent-pill",
+                    size: 16
+                )
+            }
+            Text(agent?.name ?? "Pi")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.themeComment)
+        }
+        .frame(minHeight: 17)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .glassEffect(.regular, in: Capsule())
+        .frame(minHeight: ComposerInputMetrics.controlDiameter)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct QuickSessionAgentPicker: View {
+    let agents: [AgentDefinitionSummary]
+    let selectedAgentId: String?
+    let isLoading: Bool
+    let iconAssetCache: IconAssetCache?
+    let onSelect: (String?) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                agentRow(
+                    id: nil,
+                    title: "Pi",
+                    subtitle: nil,
+                    icon: nil,
+                    usesPiAvatar: true,
+                    isSelected: selectedAgentId == nil
+                )
+
+                if isLoading && agents.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading agents…")
+                            .font(.subheadline)
+                            .foregroundStyle(.themeComment)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                } else if agents.isEmpty {
+                    Text("No saved Agents on this server.")
+                        .font(.subheadline)
+                        .foregroundStyle(.themeComment)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                } else {
+                    ForEach(agents) { agent in
+                        agentRow(
+                            id: agent.id,
+                            title: agent.name,
+                            subtitle: agent.description,
+                            icon: agent.icon,
+                            usesPiAvatar: false,
+                            isSelected: selectedAgentId == agent.id
+                        )
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+        }
+        .frame(minWidth: 260, idealWidth: 280, maxHeight: 320)
+    }
+
+    private func agentRow(
+        id: String?,
+        title: String,
+        subtitle: String?,
+        icon: IconChoice?,
+        usesPiAvatar: Bool,
+        isSelected: Bool
+    ) -> some View {
+        Button {
+            onSelect(id)
+        } label: {
+            HStack(spacing: 10) {
+                if usesPiAvatar {
+                    CurrentAssistantAvatarPreview(
+                        sessionId: "quick-session-agent-picker-pi",
+                        size: 22
+                    )
+                } else if let icon {
+                    AgentIconView(
+                        value: icon,
+                        size: 16,
+                        frameSize: 22,
+                        assetCache: iconAssetCache
+                    )
+                } else {
+                    Image(systemName: "person.crop.circle")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                        .frame(width: 22, height: 22)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                            .lineLimit(2)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.themeBlue)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityIdentifier(id.map { "quickSession.agent.\($0)" } ?? "quickSession.agent.pi")
     }
 }
 
@@ -757,11 +1063,13 @@ private extension UIView {
 enum QuickSessionError: LocalizedError {
     case noConnection
     case noWorkspace
+    case agentLaunchFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .noConnection: return "Server is offline"
         case .noWorkspace: return "Choose a workspace first."
+        case .agentLaunchFailed(let reason): return reason
         }
     }
 }

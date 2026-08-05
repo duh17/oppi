@@ -349,6 +349,7 @@ enum AppPreferences {
         private static let defaultWorkspaceIdKey = "\(prefix).defaultWorkspaceId"
         private static let lastModelIdKey = "\(prefix).lastModelId"
         private static let lastThinkingLevelKey = "\(prefix).lastThinkingLevel"
+        private static let lastAgentIdKey = "\(prefix).lastAgentId"
         private static let pendingDictationCleanupKey = "\(prefix).pendingDictationCleanup"
 
         struct PendingDictationCleanup: Codable, Sendable, Equatable {
@@ -431,6 +432,22 @@ enum AppPreferences {
 
         static func saveThinkingLevel(_ level: ThinkingLevel) {
             UserDefaults.standard.set(level.rawValue, forKey: lastThinkingLevelKey)
+        }
+
+        // MARK: Agent
+
+        /// Last Quick Session Agent pick. `nil` means plain Pi.
+        static var lastAgentId: String? {
+            UserDefaults.standard.string(forKey: lastAgentIdKey)
+        }
+
+        static func saveAgentId(_ id: String?) {
+            let normalized = id?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let normalized, !normalized.isEmpty {
+                UserDefaults.standard.set(normalized, forKey: lastAgentIdKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: lastAgentIdKey)
+            }
         }
 
         // MARK: Pending Dictation Cleanup
