@@ -161,20 +161,51 @@ describe("auth", () => {
     expect(good.status).toBe(200);
   });
 
-  it("invalidates old owner token after rotation", async () => {
-    const oldToken = token;
-    const rotated = storage.rotateToken();
-    token = rotated;
-
-    const oldRes = await fetch(`${baseUrl}/me`, {
-      headers: { Authorization: `Bearer ${oldToken}` },
+  it("invalidates old owner token and derived device credentials after rotation", async () => {
+    // Rotate on an isolated server so the shared auth fixture used by the
+    // token-separation tests keeps its pre-rotation device credentials.
+    const rotationDataDir = mkdtempSync(join(tmpdir(), "oppi-rotation-integration-"));
+    const rotationStorage = new Storage(rotationDataDir);
+    rotationStorage.updateConfig({
+      port: 0,
+      host: "127.0.0.1",
+      tls: { mode: "disabled" },
+      authDeviceTokens: [authDeviceToken],
+      pushDeviceTokens: [pushOnlyToken],
     });
-    expect(oldRes.status).toBe(401);
+    rotationStorage.ensurePaired();
+    const rotationServer = new Server(rotationStorage);
+    await rotationServer.start();
+    const rotationBaseUrl = `http://127.0.0.1:${rotationServer.port}`;
 
-    const newRes = await fetch(`${baseUrl}/me`, {
-      headers: { Authorization: `Bearer ${rotated}` },
-    });
-    expect(newRes.status).toBe(200);
+    try {
+      const oldToken = rotationStorage.getToken();
+      const rotated = rotationStorage.rotateToken();
+
+      const oldRes = await fetch(`${rotationBaseUrl}/me`, {
+        headers: { Authorization: `Bearer ${oldToken}` },
+      });
+      expect(oldRes.status).toBe(401);
+
+      const deviceRes = await fetch(`${rotationBaseUrl}/me`, {
+        headers: { Authorization: `Bearer ${authDeviceToken}` },
+      });
+      expect(deviceRes.status).toBe(401);
+
+      const pushRes = await fetch(`${rotationBaseUrl}/me`, {
+        headers: { Authorization: `Bearer ${pushOnlyToken}` },
+      });
+      expect(pushRes.status).toBe(401);
+
+      const newRes = await fetch(`${rotationBaseUrl}/me`, {
+        headers: { Authorization: `Bearer ${rotated}` },
+      });
+      expect(newRes.status).toBe(200);
+    } finally {
+      await rotationServer.stop().catch(() => {});
+      await waitForServerShutdown(rotationBaseUrl);
+      rmSync(rotationDataDir, { recursive: true, force: true });
+    }
   });
 
   it("accepts requests with correct token", async () => {

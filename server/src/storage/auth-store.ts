@@ -72,10 +72,19 @@ export class AuthStore {
     return next;
   }
 
-  /** Rotate the bearer token. Existing clients will need to re-pair. */
+  /** Rotate owner auth and invalidate every client credential derived from pairing. */
   rotateToken(): string {
     const token = AuthStore.generateOwnerToken();
-    this.configStore.updateConfig({ token });
+    this.configStore.updateConfig({
+      token,
+      pairingToken: undefined,
+      pairingTokenExpiresAt: undefined,
+      pairingTokenAllowedTransports: undefined,
+      authDeviceTokens: [],
+      irohDeviceTokenBindings: [],
+      pushDeviceTokens: [],
+      liveActivityToken: undefined,
+    });
     return token;
   }
 
