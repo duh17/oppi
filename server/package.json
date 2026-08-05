@@ -108,7 +108,14 @@
   },
   "overrides": {
     "fast-xml-builder": "^1.1.9",
-    "protobufjs": "7.6.5"
+    "protobufjs": "7.6.5",
+    "brace-expansion": "5.0.9",
+    "@earendil-works/gondolin": {
+      "undici": "6.28.0"
+    },
+    "@earendil-works/pi-coding-agent": {
+      "undici": "8.9.0"
+    }
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
