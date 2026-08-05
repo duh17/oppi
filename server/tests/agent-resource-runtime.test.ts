@@ -317,6 +317,62 @@ describe.sequential("saved Agent exact resource selection", () => {
     }
   });
 
+  it("fails closed when an explicit Agent tool is not registered by its selected Extensions", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-missing-tool-cwd-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-agent-missing-tool-agent-"));
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const extensionDir = join(agentDir, "extensions");
+    const selectedExtension = join(extensionDir, "selected-command.ts");
+    mkdirSync(extensionDir, { recursive: true });
+    writeFileSync(join(agentDir, "auth.json"), "{}");
+    writeFileSync(
+      selectedExtension,
+      "export default function (pi) { pi.registerTool({ name: 'other_tool', label: 'Other', description: 'Other tool', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }) }); }",
+    );
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    let backend: SdkBackend | undefined;
+    try {
+      const session = makeSession();
+      session.launch = {
+        ...session.launch,
+        status: "launching",
+        requestedAt: session.createdAt,
+        agentId: "agent-1",
+        tools: { allowed: ["hacker_news"], noTools: "builtin" },
+      };
+
+      await expect(async () => {
+        backend = await SdkBackend.create({
+          session,
+          workspace: {
+            id: "workspace-1",
+            name: "Missing Agent Tool Test",
+            runtime: "host",
+            hostMount: cwd,
+          } as Workspace,
+          agentDefinition: {
+            name: "Missing Agent Tool",
+            resources: {
+              skillPaths: [],
+              extensionIds: [serverResourceId("extension", selectedExtension)],
+            },
+          },
+          onEvent: vi.fn(),
+          onEnd: vi.fn(),
+        });
+      }).rejects.toThrow(
+        "Configured Agent tool is unavailable: hacker_news. Update the Agent's selected Extensions or tool allowlist.",
+      );
+    } finally {
+      if (backend) await backend.dispose();
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when a selected Extension ID is no longer discovered", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-missing-extension-"));
     try {

@@ -501,6 +501,24 @@ export class QueuedModelTurnsReconciliationError extends Error {
   }
 }
 
+function assertConfiguredAgentToolsAvailable(
+  configuredAllowed: readonly string[] | undefined,
+  configuredExcluded: readonly string[] | undefined,
+  activeToolNames: readonly string[],
+): void {
+  if (!configuredAllowed) return;
+  const excluded = new Set(configuredExcluded ?? []);
+  const active = new Set(activeToolNames);
+  const missing = [...new Set(configuredAllowed)].filter(
+    (name) => !excluded.has(name) && !active.has(name),
+  );
+  if (missing.length === 0) return;
+  const noun = missing.length === 1 ? "tool is" : "tools are";
+  throw new Error(
+    `Configured Agent ${noun} unavailable: ${missing.join(", ")}. Update the Agent's selected Extensions or tool allowlist.`,
+  );
+}
+
 function reserveOppiToolPolicy(options: {
   allowed?: readonly string[];
   excluded?: readonly string[];
@@ -1075,6 +1093,19 @@ export class SdkBackend {
         ...(effectiveToolPolicy.allowed ? { tools: effectiveToolPolicy.allowed } : {}),
         ...(effectiveToolPolicy.excluded ? { excludeTools: effectiveToolPolicy.excluded } : {}),
       });
+
+      try {
+        if (agentDefinition) {
+          assertConfiguredAgentToolsAvailable(
+            launchToolPolicy?.allowed,
+            launchToolPolicy?.excluded,
+            createResult.session.agent.state.tools.map((tool) => tool.name),
+          );
+        }
+      } catch (error) {
+        createResult.session.dispose();
+        throw error;
+      }
 
       SdkBackend.applyDefaultQueueModes(createResult.session);
 
