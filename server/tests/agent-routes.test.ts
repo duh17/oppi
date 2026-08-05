@@ -321,7 +321,7 @@ describe("agent routes", () => {
         expect.arrayContaining([
           expect.objectContaining({
             id: DEFAULT_AGENT_ID,
-            name: "Default Agent",
+            name: "Oppi",
             status: "active",
           }),
           expect.objectContaining({ id: agent.id, name: "Reviewer", status: "active" }),
@@ -388,7 +388,7 @@ describe("agent routes", () => {
         expect.arrayContaining([
           expect.objectContaining({
             id: DEFAULT_AGENT_ID,
-            name: "Default Agent",
+            name: "Oppi",
             status: "active",
           }),
           expect.objectContaining({ id: created.id, name: "Reviewer", status: "active" }),
@@ -821,6 +821,45 @@ describe("agent routes", () => {
     }
   });
 
+  it("resolves only the oppi alias and id for the shipped identity", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-alias-routes-"));
+    try {
+      const store = new AgentDefinitionStore(dataDir);
+      const ctx = {
+        storage: {
+          getAgentDefinitionStore: () => store,
+        },
+      } as unknown as RouteContext;
+      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
+
+      for (const reference of ["oppi", "oppi-default-agent"]) {
+        const res = makeResponse();
+        await dispatch({
+          method: "GET",
+          path: `/agents/${reference}`,
+          url: new URL(`http://localhost/agents/${reference}`),
+          req: {} as never,
+          res: res as never,
+        });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.body).agent).toMatchObject({ id: DEFAULT_AGENT_ID });
+      }
+
+      // The old `default` alias was removed; it must not resolve to the identity.
+      const defaultRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/agents/default",
+        url: new URL("http://localhost/agents/default"),
+        req: {} as never,
+        res: defaultRes as never,
+      });
+      expect(defaultRes.statusCode).toBe(404);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("seeds an overwriteable default Agent identity and can reset customization", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-routes-"));
     try {
@@ -835,29 +874,29 @@ describe("agent routes", () => {
       const getRes = makeResponse();
       await dispatch({
         method: "GET",
-        path: "/agents/default",
-        url: new URL("http://localhost/agents/default"),
+        path: "/agents/oppi",
+        url: new URL("http://localhost/agents/oppi"),
         req: {} as never,
         res: getRes as never,
       });
       expect(getRes.statusCode).toBe(200);
       expect(JSON.parse(getRes.body).agent).toMatchObject({
         id: DEFAULT_AGENT_ID,
-        name: "Default Agent",
+        name: "Oppi",
         status: "active",
         definition: {
-          name: "Default Agent",
+          name: "Oppi",
           description: expect.stringContaining("Manage Oppi"),
           resources: { noContextFiles: true },
-          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask"] },
+          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask", "read"] },
         },
       });
 
       const updateRes = makeResponse();
       await dispatch({
         method: "PATCH",
-        path: "/agents/default",
-        url: new URL("http://localhost/agents/default"),
+        path: "/agents/oppi",
+        url: new URL("http://localhost/agents/oppi"),
         req: makeRequest({
           name: "Home Agent",
           icon: { kind: "emoji", value: "🏠" },
@@ -871,10 +910,10 @@ describe("agent routes", () => {
       const updated = JSON.parse(updateRes.body).agent;
       expect(updated).toMatchObject({
         id: DEFAULT_AGENT_ID,
-        name: "Home Agent",
+        name: "Oppi",
         version: 2,
         definition: {
-          name: "Home Agent",
+          name: "Oppi",
           icon: { kind: "emoji", value: "🏠" },
           description: "Coordinates Oppi from the app home screen",
           instructions: { mode: "append", text: "Prefer short status summaries." },
@@ -883,7 +922,7 @@ describe("agent routes", () => {
             model: "openai-codex/gpt-5.5",
             thinkingLevel: "high",
             noTools: "builtin",
-            tools: ["oppi", "ask"],
+            tools: ["oppi", "ask", "read"],
           },
         },
       });
@@ -891,8 +930,8 @@ describe("agent routes", () => {
       const rejectRes = makeResponse();
       await dispatch({
         method: "PATCH",
-        path: "/agents/default",
-        url: new URL("http://localhost/agents/default"),
+        path: "/agents/oppi",
+        url: new URL("http://localhost/agents/oppi"),
         req: makeRequest({ sessionDefaults: { tools: ["bash"] } }) as never,
         res: rejectRes as never,
       });
@@ -902,8 +941,8 @@ describe("agent routes", () => {
       const launchOverrideRes = makeResponse();
       await dispatch({
         method: "POST",
-        path: "/agents/default/sessions",
-        url: new URL("http://localhost/agents/default/sessions"),
+        path: "/agents/oppi/sessions",
+        url: new URL("http://localhost/agents/oppi/sessions"),
         req: makeRequest({
           prompt: { text: "Run safely" },
           target: { workspaceId: "ws-1" },
@@ -913,26 +952,26 @@ describe("agent routes", () => {
       });
       expect(launchOverrideRes.statusCode).toBe(400);
       expect(JSON.parse(launchOverrideRes.body).error).toBe(
-        "Default Agent launch overrides cannot change tools",
+        "Oppi launch overrides cannot change tools",
       );
 
       const resetRes = makeResponse();
       await dispatch({
         method: "DELETE",
-        path: "/agents/default/customization",
-        url: new URL("http://localhost/agents/default/customization"),
+        path: "/agents/oppi/customization",
+        url: new URL("http://localhost/agents/oppi/customization"),
         req: {} as never,
         res: resetRes as never,
       });
       expect(resetRes.statusCode).toBe(200);
       expect(JSON.parse(resetRes.body).agent).toMatchObject({
         id: DEFAULT_AGENT_ID,
-        name: "Default Agent",
+        name: "Oppi",
         version: 3,
         definition: {
-          name: "Default Agent",
+          name: "Oppi",
           resources: { noContextFiles: true },
-          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask"] },
+          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask", "read"] },
         },
       });
     } finally {
@@ -940,7 +979,7 @@ describe("agent routes", () => {
     }
   });
 
-  it("accepts the native Default Agent edit body without resources on its canonical route", async () => {
+  it("accepts the native Oppi agent edit body without resources on its canonical route", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-native-route-"));
     const store = new AgentDefinitionStore(dataDir);
     try {
@@ -966,14 +1005,15 @@ describe("agent routes", () => {
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body).agent).toMatchObject({
         id: DEFAULT_AGENT_ID,
+        name: "Oppi",
         definition: {
-          name: "Home Agent",
+          name: "Oppi",
           resources: { noContextFiles: true },
           sessionDefaults: {
             model: "openai/gpt-5.6",
             thinkingLevel: "high",
             noTools: "builtin",
-            tools: ["oppi", "ask"],
+            tools: ["oppi", "ask", "read"],
           },
         },
       });
@@ -997,8 +1037,8 @@ describe("agent routes", () => {
       const res = makeResponse();
       await dispatch({
         method: "DELETE",
-        path: "/agents/default",
-        url: new URL("http://localhost/agents/default"),
+        path: "/agents/oppi",
+        url: new URL("http://localhost/agents/oppi"),
         req: {} as never,
         res: res as never,
       });
@@ -1378,7 +1418,7 @@ describe("agent routes", () => {
         method: "POST",
         path: "/agents",
         url: new URL("http://localhost/agents"),
-        req: makeRequest({ name: "Default Agent" }) as never,
+        req: makeRequest({ name: "Oppi" }) as never,
         res: defaultNameRes as unknown as ServerResponse,
       });
       expect(defaultNameRes.statusCode).toBe(400);
@@ -1389,7 +1429,7 @@ describe("agent routes", () => {
         method: "POST",
         path: "/agents",
         url: new URL("http://localhost/agents"),
-        req: makeRequest({ name: "default" }) as never,
+        req: makeRequest({ name: "oppi" }) as never,
         res: aliasRes as unknown as ServerResponse,
       });
       expect(aliasRes.statusCode).toBe(400);

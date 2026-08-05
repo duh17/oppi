@@ -89,7 +89,7 @@ extension APIClient {
                 name: name,
                 description: description,
                 instructions: instructions,
-                // The server-owned Default Agent accepts only identity,
+                // The server-owned Oppi agent accepts only identity,
                 // instructions, and session-default customization fields.
                 resources: agentId == "oppi-default-agent"
                     ? nil

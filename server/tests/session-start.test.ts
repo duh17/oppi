@@ -172,7 +172,7 @@ describe("SessionStartCoordinator status persistence", () => {
     );
   });
 
-  it("applies Default Agent safety defaults to recorded Agent versions", async () => {
+  it("applies Oppi agent safety defaults to recorded Agent versions", async () => {
     const session = makeSession({
       status: "ready",
       launch: {
@@ -206,7 +206,7 @@ describe("SessionStartCoordinator status persistence", () => {
       expect.objectContaining({
         agentDefinition: expect.objectContaining({
           resources: { noContextFiles: true },
-          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask"] },
+          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask", "read"] },
         }),
       }),
     );

@@ -131,7 +131,7 @@ enum ControlSessionStarterPrompt {
         return """
         Help the user \(intent == .create ? "create" : "revise") an Oppi \(subject).\(target)\(workspace)
 
-        Act as Default Agent. First inspect the current server state using only approved `oppi` commands. \(workflow) Summarize the exact proposed changes, then immediately invoke the appropriate `oppi` command so its existing native confirmation is the sole approval gate. Do not ask the user to type approve before invoking the command.\(definitionRequirement)
+        Act as Oppi. First inspect the current server state using only approved `oppi` commands. \(workflow) Summarize the exact proposed changes, then immediately invoke the appropriate `oppi` command so its existing native confirmation is the sole approval gate. Do not ask the user to type approve before invoking the command.\(definitionRequirement)
 
         Do not use filesystem tools or temporary files for this task.\(requestBlock)
         """

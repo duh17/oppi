@@ -3,7 +3,7 @@ import SwiftUI
 /// Quick Session-style intake for server-scoped Agent and Schedule control sessions.
 ///
 /// The selected workspace is prompt context only. Control sessions intentionally
-/// remain workspace-less so the Default Agent can inspect and mutate server-owned
+/// remain workspace-less so the Oppi agent can inspect and mutate server-owned
 /// definitions through its restricted `oppi` CLI tool.
 struct GuidedControlSessionComposer: View {
     @Environment(\.apiClient) private var apiClient
@@ -344,7 +344,7 @@ struct GuidedControlSessionSheet: View {
             ContentUnavailableView(
                 title,
                 systemImage: domainSystemImage,
-                description: Text("Describe the outcome you want. Default Agent will inspect the current definition and clarify anything ambiguous before changing it.")
+                description: Text("Describe the outcome you want. Oppi will inspect the current definition and clarify anything ambiguous before changing it.")
             )
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)

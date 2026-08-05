@@ -26,7 +26,7 @@ type SkillDetail = {
   files?: string[];
 };
 
-/** Restricted server Skill catalog/file commands used by Default Agent sessions. */
+/** Restricted server Skill catalog/file commands used by Oppi control sessions. */
 export async function cmdSkill(
   storage: LocalApiConnection,
   action: string | undefined,

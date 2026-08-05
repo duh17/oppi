@@ -101,10 +101,10 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
     getAgentDefinitionStore: vi.fn().mockReturnValue({
       getAgent: vi.fn().mockReturnValue({
         id: "oppi-default-agent",
-        name: "Default Agent",
+        name: "Oppi",
         status: "active",
         version: 3,
-        definition: { name: "Default Agent", icon: { kind: "symbol", name: "sparkles" } },
+        definition: { name: "Oppi", icon: { kind: "symbol", name: "sparkles" } },
         createdAt: 1,
         updatedAt: 1,
       }),

@@ -29,7 +29,7 @@ enum AgentIconContent: Equatable {
         case .genmoji(_, let contentDescription):
             return contentDescription
         case .fallback:
-            return "Default Agent icon"
+            return "Agent icon"
         }
     }
 }
@@ -106,7 +106,7 @@ enum IconChoiceRenderPurpose {
 
     var defaultAccessibilityDescription: String {
         switch self {
-        case .agent: return "Default Agent icon"
+        case .agent: return "Agent icon"
         case .workspace: return "Default workspace icon"
         }
     }

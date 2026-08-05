@@ -209,7 +209,7 @@ struct WorkspaceEditView: View {
             if connection.controlSessionsAvailable, apiClient != nil {
                 Section {
                     UseOppiSessionRow(
-                        supportingText: "Work with Default Agent to revise this Workspace.",
+                        supportingText: "Work with Oppi to revise this Workspace.",
                         isLoading: isLaunchingOppi
                     ) {
                         Task { await launchOppiSession() }

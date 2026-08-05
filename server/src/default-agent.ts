@@ -1,16 +1,18 @@
 import type { AgentDefinition } from "./agent-launch-service.js";
 import { DEFAULT_ICON_CHOICE } from "./icon-choice.js";
+import { getOppiDocsPath } from "./oppi-docs.js";
 
 export const DEFAULT_AGENT_ID = "oppi-default-agent";
-export const DEFAULT_AGENT_ALIAS = "default";
-export const DEFAULT_AGENT_DEFAULT_NAME = "Default Agent";
-export const DEFAULT_AGENT_TOOL_NAMES = ["oppi", "ask"] as const;
+export const DEFAULT_AGENT_ALIAS = "oppi";
+export const DEFAULT_AGENT_DEFAULT_NAME = "Oppi";
+/** Control tools: oppi + ask, plus read so the agent can open shipped docs like Pi. */
+export const DEFAULT_AGENT_TOOL_NAMES = ["oppi", "ask", "read"] as const;
 
 export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
   name: DEFAULT_AGENT_DEFAULT_NAME,
   icon: DEFAULT_ICON_CHOICE,
   description:
-    "Manage Oppi workspaces, Agents, Skills, schedules, and sessions with explicit approval before changes.",
+    "Manage Oppi workspaces, Agents, Skills, schedules, and sessions through the built-in oppi tool. Destructive actions need approval.",
   resources: {
     noContextFiles: true,
   },
@@ -21,6 +23,7 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
 };
 
 const DEFAULT_AGENT_CUSTOMIZATION_KEYS = new Set([
+  // Name may appear in edit bodies; safety defaults always force Oppi.
   "name",
   "icon",
   "description",
@@ -52,7 +55,7 @@ export function assertDefaultAgentCustomizationPatch(patch: unknown): void {
 
   for (const key of Object.keys(patch)) {
     if (!DEFAULT_AGENT_CUSTOMIZATION_KEYS.has(key)) {
-      throw new Error(`Default Agent customization cannot include ${key}`);
+      throw new Error(`Oppi agent customization cannot include ${key}`);
     }
   }
 
@@ -62,7 +65,7 @@ export function assertDefaultAgentCustomizationPatch(patch: unknown): void {
     }
     for (const key of Object.keys(patch.sessionDefaults)) {
       if (!DEFAULT_AGENT_SESSION_DEFAULT_KEYS.has(key)) {
-        throw new Error(`Default Agent customization cannot include sessionDefaults.${key}`);
+        throw new Error(`Oppi agent customization cannot include sessionDefaults.${key}`);
       }
     }
   }
@@ -71,7 +74,8 @@ export function assertDefaultAgentCustomizationPatch(patch: unknown): void {
 export function applyDefaultAgentSafetyDefaults(definition: AgentDefinition): AgentDefinition {
   const sessionDefaults = definition.sessionDefaults ?? {};
   return {
-    name: definition.name,
+    // Shipped control identity always presents as Oppi.
+    name: DEFAULT_AGENT_DEFAULT_NAME,
     ...(definition.icon !== undefined ? { icon: definition.icon } : {}),
     ...(definition.description !== undefined ? { description: definition.description } : {}),
     ...(definition.instructions !== undefined ? { instructions: definition.instructions } : {}),
@@ -84,6 +88,48 @@ export function applyDefaultAgentSafetyDefaults(definition: AgentDefinition): Ag
         : {}),
     },
   };
+}
+
+/**
+ * Minimal control prompt modeled on Pi's default system prompt:
+ * short identity, tool list, a few guidelines, and pointers to shipped docs.
+ * CLI details come from `oppi help`, not from a long baked-in manual.
+ */
+export function buildDefaultAgentSystemPrompt(options?: {
+  docsPath?: string;
+  includeDocs?: boolean;
+}): string {
+  const docsPath =
+    options?.includeDocs === false ? undefined : (options?.docsPath ?? getOppiDocsPath());
+  const lines = [
+    "You are Oppi, the control agent for this Oppi server. Help users manage workspaces, Agents, Skills, schedules, and sessions.",
+    "",
+    "Available tools:",
+    "- oppi: Run one exposed Oppi CLI command as JSON under the server approval policy.",
+    "- ask: Ask structured clarifying questions when preferences or tradeoffs are ambiguous.",
+    "- read: Read packaged Oppi docs only (not config, credentials, or arbitrary host files).",
+    "",
+    "Guidelines:",
+    "- Discover CLI usage with oppi help, nested help topics, and --help. Do not guess flags or subcommands.",
+    "- Inspect current state with oppi before asking about discoverable facts or making changes.",
+    "- Destructive actions need approval. Do not invent an extra approve step in chat.",
+    "- Call ask at most once per turn, only for unresolved preferences or tradeoffs.",
+    "- Be concise.",
+  ];
+
+  if (docsPath) {
+    lines.push(
+      "",
+      "Oppi documentation (read when you need operator detail):",
+      `- Docs directory: ${docsPath}`,
+      `- Server configuration (ASR, TTS, config CLI): ${docsPath}/server-configuration.md`,
+      `- Extensions: ${docsPath}/extensions.md`,
+      `- Onboarding and pairing: ${docsPath}/onboarding.md`,
+      "- Prefer these operator docs over architecture internals. Read the relevant doc fully and follow .md cross-references.",
+    );
+  }
+
+  return lines.join("\n");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

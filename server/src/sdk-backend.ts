@@ -40,7 +40,12 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { CacheMissModelPriceSource } from "./cache-miss.js";
-import { DEFAULT_AGENT_TOOL_NAMES, isDefaultAgentId } from "./default-agent.js";
+import {
+  DEFAULT_AGENT_TOOL_NAMES,
+  buildDefaultAgentSystemPrompt,
+  isDefaultAgentId,
+} from "./default-agent.js";
+
 import {
   modelCandidatesFromRegistry,
   modelUnavailableMessage,
@@ -66,7 +71,7 @@ import { serverResourceId } from "./server-resource-id.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
-import { buildOppiSystemPromptAppend } from "./oppi-docs.js";
+import { buildOppiSystemPromptAppend, getOppiDocsPath } from "./oppi-docs.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
@@ -768,7 +773,11 @@ export class SdkBackend {
       // host sessions. Project/user Pi settings remain the source of truth.
       const isOppiOwnedHostSession = !sandboxMode && (session.runtime ?? "oppi") !== "pi-tui";
       const baseAppendSystemPrompt = buildSdkAppendSystemPrompt(workspace, {
-        includeOppiDocsHint: isOppiOwnedHostSession && isOppiDocsPromptEnabled(config.serverConfig),
+        // Control sessions embed the docs pointer in their minimal system prompt.
+        includeOppiDocsHint:
+          isOppiOwnedHostSession &&
+          !controlToolRuntime &&
+          isOppiDocsPromptEnabled(config.serverConfig),
         includeOppiCliHint: isOppiOwnedHostSession && isOppiCliPromptEnabled(config.serverConfig),
       });
       const normalizedSelectedAgentSkillPaths = selectedAgentSkillPaths?.map((path) =>
@@ -849,6 +858,18 @@ export class SdkBackend {
             }),
         ...(isolatedControlRuntime || agentDefinition?.resources?.noContextFiles
           ? { noContextFiles: true }
+          : {}),
+        // Control sessions use a Pi-style minimal prompt. Agent replace/append
+        // instructions still win when present.
+        ...(controlToolRuntime && agentDefinition?.instructions?.mode !== "replace"
+          ? {
+              systemPrompt: buildDefaultAgentSystemPrompt({
+                includeDocs: isOppiDocsPromptEnabled(config.serverConfig),
+                ...(isOppiDocsPromptEnabled(config.serverConfig)
+                  ? { docsPath: getOppiDocsPath() }
+                  : {}),
+              }),
+            }
           : {}),
         ...(agentDefinition?.instructions?.mode === "replace"
           ? { systemPromptOverride: () => agentDefinition.instructions?.text }

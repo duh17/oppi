@@ -52,10 +52,11 @@ afterEach(() => {
   canonicalRun.mockReset();
 });
 
-describe("Default Agent Oppi tool", () => {
+describe("Oppi agent Oppi tool", () => {
   it("always registers oppi and ask and uses the saved read-only policy", async () => {
     const tools = registeredTools("readOnly");
-    expect([...tools.keys()]).toEqual(["oppi", "ask"]);
+    // Control identity registers oppi, docs-only read, and ask (no host builtins).
+    expect([...tools.keys()]).toEqual(["oppi", "read", "ask"]);
 
     const confirm = vi.fn(async () => true);
     const oppi = tools.get("oppi");
@@ -95,7 +96,7 @@ describe("Default Agent Oppi tool", () => {
   });
 });
 
-describe("Default Agent managed ask tool", () => {
+describe("Oppi agent managed ask tool", () => {
   it("uses native structured UI, resets once-per-turn state, and labels fallbacks", async () => {
     const tools = registeredTools();
     let turnStart: (() => Promise<void>) | undefined;

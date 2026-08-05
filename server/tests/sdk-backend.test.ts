@@ -240,7 +240,7 @@ describe("SdkBackend control sessions", () => {
     }
   });
 
-  it("reopens a Default Agent control session through its private cwd", async () => {
+  it("reopens an Oppi agent control session through its private cwd", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-reopen-"));
     const session = makeSession({
       workspaceId: undefined,
@@ -265,7 +265,7 @@ describe("SdkBackend control sessions", () => {
         onEnd: vi.fn(),
       });
       expect(first.session.sessionManager.getCwd()).toBe(controlCwd);
-      expect(first.session.getActiveToolNames()).toEqual(["oppi", "ask"]);
+      expect(first.session.getActiveToolNames()).toEqual(["oppi", "ask", "read"]);
       expect(session.piSessionFile).toBeDefined();
       expect(session.piSessionFile).not.toContain("Oppi Control");
       expect(resolveSdkSessionDisplayCwd(undefined, session, { dataDir })).toBe("Oppi Control");
@@ -921,7 +921,10 @@ describe("SdkBackend host extensions", () => {
     // CI has no Pi credentials; provide a temp agent dir and env key so model
     // resolution finds anthropic and preserves the requested thinking level.
     const agentDir = mkdtempSync(join(tmpdir(), "oppi-bash-agent-dir-"));
-    writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ anthropic: { type: "api_key", key: "ci-test" } }));
+    writeFileSync(
+      join(agentDir, "auth.json"),
+      JSON.stringify({ anthropic: { type: "api_key", key: "ci-test" } }),
+    );
     const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
     const prevApiKey = process.env.ANTHROPIC_API_KEY;
     process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -974,12 +977,9 @@ describe("SdkBackend host extensions", () => {
         .map((part) => part.text)
         .join("");
       expect(text).toBe(
-        [
-          model?.provider,
-          model?.id,
-          "high",
-          backend.session.sessionManager.getSessionId(),
-        ].join("|"),
+        [model?.provider, model?.id, "high", backend.session.sessionManager.getSessionId()].join(
+          "|",
+        ),
       );
     } finally {
       await backend.dispose();
@@ -1198,7 +1198,7 @@ export default function (pi) {
 });
 
 describe("SdkBackend saved Agent definitions", () => {
-  it("registers only the managed Oppi and ask tools for the Default Agent runtime", async () => {
+  it("registers only the managed Oppi, ask, and read tools for the Oppi agent runtime", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-default-agent-runtime-"));
     mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
     writeFileSync(
@@ -1222,7 +1222,7 @@ describe("SdkBackend saved Agent definitions", () => {
       }),
       workspace: {
         id: "w1",
-        name: "Default Agent Runtime Test",
+        name: "Oppi Agent Runtime Test",
         runtime: "host",
         hostMount: cwd,
       } as Workspace,
@@ -1246,7 +1246,7 @@ describe("SdkBackend saved Agent definitions", () => {
         ),
       ).toBe(true);
       expect(extensions.some((ext) => ext.tools.has("extra_tool"))).toBe(false);
-      expect(backend.session.getActiveToolNames()).toEqual(["oppi", "ask"]);
+      expect(backend.session.getActiveToolNames()).toEqual(["oppi", "ask", "read"]);
       expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
 
       const confirm = vi.fn(async () => false);

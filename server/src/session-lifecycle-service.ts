@@ -222,7 +222,7 @@ export class SessionLifecycleService {
     }
     const defaultAgent = this.deps.storage.getAgentDefinitionStore().getAgent(DEFAULT_AGENT_ID);
     if (!defaultAgent) {
-      throw new SessionLifecycleError("Default Agent is unavailable", 500);
+      throw new SessionLifecycleError("Oppi agent is unavailable", 500);
     }
     const defaultAgentIcon = defaultAgent.definition.icon;
     const sessionName = params.name?.trim() || "Oppi Control";

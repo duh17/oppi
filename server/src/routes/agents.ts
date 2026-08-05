@@ -107,11 +107,7 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       const agent = resolveAgent(reference, res);
       if (!agent) return true;
       if (isDefaultAgentId(agent.id)) {
-        helpers.error(
-          res,
-          400,
-          "Default Agent identity cannot be archived; reset customization instead",
-        );
+        helpers.error(res, 400, "Oppi identity cannot be archived; reset customization instead");
         return true;
       }
       const archived = agentStore().archiveAgent(agent.id);
@@ -135,7 +131,7 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     const agent = resolveAgent(reference, res);
     if (!agent) return true;
     if (!isDefaultAgentId(agent.id)) {
-      helpers.error(res, 404, "Default Agent customization not found");
+      helpers.error(res, 404, "Oppi customization not found");
       return true;
     }
     const reset = agentStore().resetDefaultAgent();
@@ -168,7 +164,7 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         return true;
       }
       if (isDefaultAgentId(agent.id) && hasToolPolicyOverride(body.overrides)) {
-        helpers.error(res, 400, "Default Agent launch overrides cannot change tools");
+        helpers.error(res, 400, "Oppi launch overrides cannot change tools");
         return true;
       }
       const prompt = parsePromptText(body.prompt);

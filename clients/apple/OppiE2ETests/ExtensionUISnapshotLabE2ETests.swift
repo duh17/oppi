@@ -257,7 +257,7 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
 
         `sess-alpha` · workspace `oppi` · rank 0.93
 
-        ### Default Agent tools
+        ### Oppi agent tools
 
         Avoid opaque args arrays in timeline rows.
 
@@ -318,7 +318,7 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         for expectedText in [
             "oppi session search workspace search",
             "Search results (2)",
-            "Default Agent tools",
+            "Oppi agent tools",
         ] {
             let predicate = NSPredicate(
                 format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",

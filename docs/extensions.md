@@ -18,7 +18,7 @@ Pi owns ordinary skills and extensions. Normal Oppi-managed sessions resolve the
 
 Oppi has one explicit server-owned exception: the built-in **Oppi** extension. It is pathless, off by default, and is not a Pi package or a row in Pi's filesystem resource settings. When enabled, it adds only the allowlisted `oppi` tool to ordinary non-sandbox Oppi-managed sessions. Sandbox sessions never receive or reserve this built-in tool. It never adds structured `ask`.
 
-The shipped Default Agent is separate. Its isolated control identity always has server-managed `oppi` and structured `ask`, using the saved Oppi approval policy while disabling user/project extensions, skills, prompt templates, context files, and Pi's filesystem/shell built-ins.
+The shipped Oppi agent is separate. Its isolated control identity always has server-managed `oppi`, structured `ask`, and a docs-only `read` (packaged Oppi docs root only; not host config or credentials), using the saved Oppi approval policy while disabling user/project extensions, skills, prompt templates, context files, and Pi's filesystem/shell built-ins. Its system prompt stays minimal: discover CLI detail through `oppi help` and open packaged docs with `read` when needed.
 
 ## Server Skills and Extensions
 
@@ -34,7 +34,7 @@ Extensions list **Oppi** first. Its row has stable id `oppi`, built-in provenanc
 - **Confirm all changes**: reads run directly; every allowlisted mutation requires approval.
 - **Read only**: allowlisted reads run directly; mutations fail with a deterministic read-only error and never open an approval prompt.
 
-The command allowlist is an application capability boundary, not a copy of every CLI command. It covers bounded JSON operations on Oppi-managed application state: `status`, `workspace`, `worktree`, `agent`, `skill`, `session`, and `schedule`. Host lifecycle and credential operations (`init`, `serve`, `start`, `pair`, `server`, `token`, and `update`), local configuration, host diagnostics/version output, root aliases, and the long-running NDJSON `session watch` stream remain excluded. In the built-in agent tool, one-session `session watch` calls alias bounded `session wait`; `--until` and `--interval` normalize to `--for` and `--poll`. Multi-session, `--all`, and `any-change` streaming remain unavailable. Help is available only for allowlisted command families and actions.
+The command allowlist is an application capability boundary, not a copy of every CLI command. It covers bounded JSON operations on Oppi-managed application state: `status`, `workspace`, `worktree`, `agent`, `skill`, `session`, `schedule`, and `config` (`show`/`get`/`validate` read; `set` is a mutation). Host lifecycle and credential operations (`init`, `serve`, `start`, `pair`, `server`, `token`, and `update`), host diagnostics/version output, root aliases, and the long-running NDJSON `session watch` stream remain excluded. Operator-facing config detail lives in [server-configuration.md](server-configuration.md). In the built-in agent tool, one-session `session watch` calls alias bounded `session wait`; `--until` and `--interval` normalize to `--for` and `--poll`. Multi-session, `--all`, and `any-change` streaming remain unavailable. Help is available only for allowlisted command families and actions.
 
 Unknown commands, unsupported subcommands, and file- or stdin-backed mutation bodies are denied. Inline prompt, system-prompt, message, definition, file-content, answer, and response bodies are redacted from rejected command summaries. The approval boundary uses normalized immutable input, so the approved command is the command executed.
 
@@ -280,7 +280,7 @@ Pi resolves the resources for the session cwd. The picker starts with those reso
 
 Enable/disable writes only match Pi-resolved resources. A direct-scan entry that Pi's resolver cannot match can appear in the picker but fail with `Pi resource not found for cwd` if toggled.
 
-Oppi loads Pi-resolved extensions without injecting an extra Ask tool into ordinary workspace sessions. Install or enable a Pi extension named `ask` when a normal workspace Agent needs it. The shipped Default Agent has its own server-managed `ask` registration because its isolated runtime intentionally disables normal extension discovery.
+Oppi loads Pi-resolved extensions without injecting an extra Ask tool into ordinary workspace sessions. Install or enable a Pi extension named `ask` when a normal workspace Agent needs it. The shipped Oppi agent has its own server-managed `ask` registration because its isolated runtime intentionally disables normal extension discovery.
 
 ## Reload behavior
 

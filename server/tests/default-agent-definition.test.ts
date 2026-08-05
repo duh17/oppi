@@ -26,16 +26,29 @@ function makeDataDir(): string {
   return dataDir;
 }
 
-describe("shipped Default Agent definition", () => {
-  it("ships only the managed Oppi and ask tools", () => {
-    expect(DEFAULT_AGENT_TOOL_NAMES).toEqual(["oppi", "ask"]);
-    expect(DEFAULT_AGENT_DEFINITION.sessionDefaults).toEqual({
-      noTools: "builtin",
-      tools: ["oppi", "ask"],
+describe("shipped Oppi agent definition", () => {
+  it("ships the managed Oppi, ask, and read tools with a minimal prompt", async () => {
+    const { buildDefaultAgentSystemPrompt } = await import("../src/default-agent.js");
+    expect(DEFAULT_AGENT_TOOL_NAMES).toEqual(["oppi", "ask", "read"]);
+    expect(DEFAULT_AGENT_DEFINITION).toMatchObject({
+      name: "Oppi",
+      description:
+        "Manage Oppi workspaces, Agents, Skills, schedules, and sessions through the built-in oppi tool. Destructive actions need approval.",
+      sessionDefaults: {
+        noTools: "builtin",
+        tools: ["oppi", "ask", "read"],
+      },
     });
+    const prompt = buildDefaultAgentSystemPrompt({ docsPath: "/tmp/oppi-docs" });
+    expect(prompt).toContain("/tmp/oppi-docs");
+    expect(prompt).toContain("You are Oppi, the control agent");
+    expect(prompt).toContain("oppi help");
+    expect(prompt).toContain("- read:");
+    expect(prompt).not.toContain("OPERATING RULES");
+    expect(prompt.length).toBeLessThan(1500);
   });
 
-  it("reconciles an existing install to the safe tool list without losing customization", () => {
+  it("always presents as Oppi and reconciles the safe tool list without losing other customization", () => {
     const dataDir = makeDataDir();
     let store = new AgentDefinitionStore(dataDir);
     const customized = store.updateAgent(
@@ -49,13 +62,32 @@ describe("shipped Default Agent definition", () => {
       },
       200,
     );
-    expect(customized?.version).toBe(2);
+    // Name is part of the shipped identity and is not customizable.
+    expect(customized).toMatchObject({
+      name: "Oppi",
+      version: 2,
+      definition: {
+        name: "Oppi",
+        icon: { kind: "emoji", value: "🏠" },
+        description: "Customized description",
+        instructions: { mode: "append", text: "Keep replies short." },
+        resources: { noContextFiles: true },
+        sessionDefaults: {
+          model: "openai-codex/gpt-5.5",
+          thinkingLevel: "high",
+          noTools: "builtin",
+          tools: ["oppi", "ask", "read"],
+        },
+      },
+    });
     store.close();
 
     const db = openDatabase(join(dataDir, "session-state.db"));
-    db.prepare("UPDATE agent_definitions SET definition_json = ? WHERE id = ?").run(
+    db.prepare("UPDATE agent_definitions SET name = ?, definition_json = ? WHERE id = ?").run(
+      "oppi-default-agent",
       JSON.stringify({
         ...customized?.definition,
+        name: "oppi-default-agent",
         resources: { noContextFiles: false, extensionIds: ["unsafe-extension"] },
         sessionDefaults: {
           model: "openai-codex/gpt-5.5",
@@ -71,10 +103,10 @@ describe("shipped Default Agent definition", () => {
     store = new AgentDefinitionStore(dataDir);
     try {
       expect(store.getAgent(DEFAULT_AGENT_ID)).toMatchObject({
-        name: "Home Agent",
+        name: "Oppi",
         version: 3,
         definition: {
-          name: "Home Agent",
+          name: "Oppi",
           icon: { kind: "emoji", value: "🏠" },
           description: "Customized description",
           instructions: { mode: "append", text: "Keep replies short." },
@@ -83,13 +115,13 @@ describe("shipped Default Agent definition", () => {
             model: "openai-codex/gpt-5.5",
             thinkingLevel: "high",
             noTools: "builtin",
-            tools: ["oppi", "ask"],
+            tools: ["oppi", "ask", "read"],
           },
         },
       });
       expect(store.getAgentVersion(DEFAULT_AGENT_ID, 3)?.definition.sessionDefaults).toEqual({
         noTools: "builtin",
-        tools: ["oppi", "ask"],
+        tools: ["oppi", "ask", "read"],
         model: "openai-codex/gpt-5.5",
         thinkingLevel: "high",
       });

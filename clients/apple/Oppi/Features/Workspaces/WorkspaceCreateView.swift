@@ -207,7 +207,7 @@ struct WorkspaceCreateView: View {
                connection.apiClient != nil {
                 Section {
                     UseOppiSessionRow(
-                        supportingText: "Work with Default Agent to create a Workspace.",
+                        supportingText: "Work with Oppi to create a Workspace.",
                         isLoading: isLaunchingOppi
                     ) {
                         Task { await launchOppiSession() }
@@ -338,7 +338,7 @@ struct WorkspaceCreateView: View {
                connection.apiClient != nil {
                 Section {
                     UseOppiSessionRow(
-                        supportingText: "Work with Default Agent to create a Workspace.",
+                        supportingText: "Work with Oppi to create a Workspace.",
                         isLoading: isLaunchingOppi
                     ) {
                         Task { await launchOppiSession() }

@@ -122,10 +122,10 @@ function makeService(
         ({
           getAgent: () => ({
             id: DEFAULT_AGENT_ID,
-            name: "Default Agent",
+            name: "Oppi",
             status: "active",
             version: 1,
-            definition: { name: "Default Agent" },
+            definition: { name: "Oppi" },
             createdAt: 1,
             updatedAt: 1,
           }),
@@ -365,7 +365,7 @@ describe("SessionLifecycleService", () => {
   });
 
   describe("createControlSession", () => {
-    it("creates a workspace-less Default Agent session and dispatches its starter prompt", async () => {
+    it("creates a workspace-less Oppi agent session and dispatches its starter prompt", async () => {
       const createdSession = makeSession({ id: "control-1", workspaceId: undefined });
       const { service, createSession, saveSession, startSession, sendPrompt } = makeService({
         forkSession: createdSession,
@@ -398,7 +398,7 @@ describe("SessionLifecycleService", () => {
           agentId: "oppi-default-agent",
           agentVersion: 1,
           target: { server: true, displayCwd: "Oppi Control" },
-          tools: { allowed: ["oppi", "ask"], noTools: "builtin" },
+          tools: { allowed: ["oppi", "ask", "read"], noTools: "builtin" },
         },
       });
       expect(startSession).toHaveBeenCalledWith("control-1", undefined);
@@ -452,7 +452,7 @@ describe("SessionLifecycleService", () => {
       });
     });
 
-    it("snapshots customized Default Agent presentation through lifecycle and summary", async () => {
+    it("snapshots customized Oppi agent presentation through lifecycle and summary", async () => {
       const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-agent-presentation-"));
       const agentDefinitionStore = new AgentDefinitionStore(dataDir);
       try {

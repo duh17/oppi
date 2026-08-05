@@ -54,7 +54,7 @@ struct AgentManagementView: View {
                 ContentUnavailableView(
                     "No Agents",
                     systemImage: "person.crop.circle.badge.plus",
-                    description: Text("Describe the Agent you need below. Default Agent will clarify its behavior before creating it.")
+                    description: Text("Describe the Agent you need below. Oppi will clarify its behavior before creating it.")
                 )
                 .listRowBackground(Color.themeBg)
             } else {

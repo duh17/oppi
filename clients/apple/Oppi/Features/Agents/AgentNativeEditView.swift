@@ -197,7 +197,7 @@ struct AgentNativeEditView: View {
                 Section {
                     if agent.id == "oppi-default-agent" {
                         Label(
-                            "Default Agent resources are controlled by Oppi server policy.",
+                            "Oppi resources are controlled by Oppi server policy.",
                             systemImage: "lock.shield"
                         )
                         .font(.subheadline)
