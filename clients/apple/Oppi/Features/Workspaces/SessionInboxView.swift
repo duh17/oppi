@@ -1276,6 +1276,12 @@ struct WorkspaceSessionInboxStackRootView: View {
     }
 
     private func settleSidebar(open: Bool) {
+        // One light open tap when the drawer lands open — edge swipe and the
+        // toolbar toggle both settle here. A couple notches above toolbarExpansion
+        // so the drawer open is easier to feel without a heavier style.
+        if open && !isSidebarPresented {
+            AppHaptics.impact(style: .light, intensity: 0.65)
+        }
         isSidebarPresented = open
         withAnimation(
             ThemeMotion.animation(
