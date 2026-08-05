@@ -587,19 +587,29 @@ struct TimelineReducerTests {
         #expect(text2 == "Done.")
     }
 
-    @Test func orphanedToolIsClosedOnAgentEnd() {
+    @Test func orphanedToolStaysOpenOnAgentEndUntilSettled() {
         let reducer = TimelineReducer()
 
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "read", args: [:]))
-        // No toolEnd before agentEnd
+        // No toolEnd before agentEnd — retries may still follow while busy.
         reducer.process(.agentEnd(sessionId: "s1"))
 
-        guard case .toolCall(_, _, _, _, _, _, let isDone) = reducer.items[0] else {
+        guard case .toolCall(_, _, _, _, _, _, let isDoneAfterEnd) = reducer.items[0] else {
             Issue.record("Expected toolCall")
             return
         }
-        #expect(isDone, "Orphaned tool should be marked done on agentEnd")
+        #expect(!isDoneAfterEnd, "agent_end alone must not interrupt open tools")
+        #expect(!reducer.isToolInterrupted("t1"))
+
+        reducer.process(.agentSettled(sessionId: "s1"))
+
+        guard case .toolCall(_, _, _, _, _, _, let isDoneAfterSettled) = reducer.items[0] else {
+            Issue.record("Expected toolCall after settled")
+            return
+        }
+        #expect(isDoneAfterSettled, "Orphaned tool should be marked done on agentSettled")
+        #expect(reducer.isToolInterrupted("t1"))
     }
 
     @Test func appendSystemEvent() {

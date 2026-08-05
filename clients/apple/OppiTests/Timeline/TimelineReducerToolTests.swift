@@ -127,24 +127,66 @@ struct TimelineReducerToolTests {
         #expect(text == "Done!")
     }
 
-    @Test func orphanedToolIsClosedAsErrorOnAgentEnd() {
+    @Test func agentEndDoesNotInterruptOpenTools() {
         let reducer = TimelineReducer()
 
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "read", args: [:]))
-        // No toolEnd before agentEnd
+        // agent_end closes one Pi run; retries may follow while session stays busy.
         reducer.process(.agentEnd(sessionId: "s1"))
 
         guard case .toolCall(_, _, _, let preview, _, let isError, let isDone) = reducer.items[0] else {
             Issue.record("Expected toolCall")
             return
         }
-        #expect(isDone, "Orphaned tool should be marked done on agentEnd")
+        #expect(!isDone, "In-progress tools must keep running across agent_end")
+        #expect(!isError)
+        #expect(!reducer.isToolInterrupted("t1"))
+        #expect(preview.isEmpty)
+    }
+
+    @Test func orphanedToolIsClosedOnAgentSettled() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "read", args: [:]))
+        reducer.process(.agentEnd(sessionId: "s1"))
+        reducer.process(.agentSettled(sessionId: "s1"))
+
+        guard case .toolCall(_, _, _, let preview, _, let isError, let isDone) = reducer.items[0] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(isDone, "Orphaned tool should be marked done on agentSettled")
         #expect(!isError, "Interruption is distinct from a canonical tool error")
         #expect(reducer.isToolInterrupted("t1"))
         #expect(preview.isEmpty)
         #expect(reducer.toolOutputStore.fullOutput(for: "t1").isEmpty,
                 "Lifecycle interruption must not be written into canonical tool output")
+    }
+
+    @Test func midFlightParallelToolsStayOpenAcrossAgentEnd() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "uv", tool: "bash", args: [
+            "command": .string("uv cache clean"),
+        ]))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "rm", tool: "bash", args: [
+            "command": .string("rm -rf cache"),
+        ]))
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: "rm"))
+        // Spurious or premature agent_end must not brand the still-running sibling Interrupted.
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        let tools = Dictionary(uniqueKeysWithValues: reducer.items.compactMap { item -> (String, (Bool, Bool))? in
+            guard case .toolCall(let id, _, _, _, _, _, let isDone) = item else { return nil }
+            return (id, (isDone, reducer.isToolInterrupted(id)))
+        })
+        #expect(tools["rm"]?.0 == true)
+        #expect(tools["rm"]?.1 == false)
+        #expect(tools["uv"]?.0 == false, "Running sibling must stay open")
+        #expect(tools["uv"]?.1 == false, "Running sibling must not show Interrupted")
     }
 
     @Test func toolStartStoresArgs() {
@@ -327,7 +369,7 @@ struct TimelineReducerToolTests {
         #expect(reducer.toolElapsed(for: "missing-result") == 2)
     }
 
-    @Test func loadSessionUsesPersistedAgentEndToInterruptOpenTool() {
+    @Test func loadSessionUsesPersistedAgentEndWithoutInterruptingOpenTool() {
         let reducer = TimelineReducer()
         let events = [
             TraceEvent(
@@ -354,11 +396,100 @@ struct TimelineReducerToolTests {
             Issue.record("Expected toolCall")
             return
         }
+        #expect(!isDone, "agent_end lifecycle alone is not evidence the tool stopped")
+        #expect(!isError)
+        #expect(!reducer.isToolInterrupted("missing-result"))
+        #expect(preview.isEmpty)
+    }
+
+    @Test func loadSessionUsesPersistedAgentSettledToInterruptOpenTool() {
+        let reducer = TimelineReducer()
+        let events = [
+            TraceEvent(
+                id: "missing-result", type: .toolCall, timestamp: "2026-01-01T00:00:01Z",
+                tool: "web_search_read",
+                args: ["query": .string("Aristotle practice")],
+                lifecycleAfter: [
+                    TraceLifecycleEvent(
+                        id: "tool-start-missing-result", event: .toolStart,
+                        timestamp: "2026-01-01T00:00:02Z", toolCallId: "missing-result",
+                        toolName: "web_search_read"
+                    ),
+                    TraceLifecycleEvent(
+                        id: "agent-end-1", event: .agentEnd,
+                        timestamp: "2026-01-01T00:00:03Z"
+                    ),
+                    TraceLifecycleEvent(
+                        id: "agent-settled-1", event: .agentSettled,
+                        timestamp: "2026-01-01T00:00:04Z"
+                    ),
+                ]
+            ),
+        ]
+
+        reducer.loadSession(events)
+
+        guard case .toolCall(_, _, _, let preview, _, let isError, let isDone) = reducer.items.first else {
+            Issue.record("Expected toolCall")
+            return
+        }
         #expect(isDone)
         #expect(!isError)
         #expect(reducer.isToolInterrupted("missing-result"))
         #expect(preview.isEmpty)
         #expect(reducer.toolOutputStore.fullOutput(for: "missing-result").isEmpty)
+    }
+
+    @Test func loadSessionKeepsMidFlightParallelSiblingOpen() {
+        let reducer = TimelineReducer()
+        let events = [
+            TraceEvent(
+                id: "continue", type: .user, timestamp: "2026-01-01T00:00:01Z",
+                text: "continue",
+                lifecycleBefore: [
+                    TraceLifecycleEvent(
+                        id: "agent-start-1", event: .agentStart,
+                        timestamp: "2026-01-01T00:00:01Z"
+                    ),
+                ]
+            ),
+            TraceEvent(
+                id: "uv", type: .toolCall, timestamp: "2026-01-01T00:00:02Z",
+                tool: "bash",
+                args: ["command": .string("uv cache clean")]
+            ),
+            TraceEvent(
+                id: "rm", type: .toolCall, timestamp: "2026-01-01T00:00:02Z",
+                tool: "bash",
+                args: ["command": .string("rm -rf cache")],
+                lifecycleAfter: [
+                    TraceLifecycleEvent(
+                        id: "tool-start-uv", event: .toolStart,
+                        timestamp: "2026-01-01T00:00:02Z", toolCallId: "uv", toolName: "bash"
+                    ),
+                    TraceLifecycleEvent(
+                        id: "tool-start-rm", event: .toolStart,
+                        timestamp: "2026-01-01T00:00:02Z", toolCallId: "rm", toolName: "bash"
+                    ),
+                    TraceLifecycleEvent(
+                        id: "tool-end-rm", event: .toolEnd,
+                        timestamp: "2026-01-01T00:00:35Z", toolCallId: "rm", toolName: "bash",
+                        isError: false
+                    ),
+                ]
+            ),
+        ]
+
+        reducer.loadSession(events)
+
+        let tools = Dictionary(uniqueKeysWithValues: reducer.items.compactMap { item -> (String, (Bool, Bool))? in
+            guard case .toolCall(let id, _, _, _, _, _, let isDone) = item else { return nil }
+            return (id, (isDone, reducer.isToolInterrupted(id)))
+        })
+        #expect(tools["rm"]?.0 == true)
+        #expect(tools["rm"]?.1 == false)
+        #expect(tools["uv"]?.0 == false, "Busy mid-flight sibling must stay open on history load")
+        #expect(tools["uv"]?.1 == false)
     }
 
     @Test func duplicateToolEndDoesNotInflateFrozenElapsed() {
@@ -415,7 +546,7 @@ struct TimelineReducerToolTests {
                 args: ["query": .string("Aristotle practice")],
                 lifecycleAfter: [
                     TraceLifecycleEvent(
-                        id: "agent-end-1", event: .agentEnd,
+                        id: "agent-settled-1", event: .agentSettled,
                         timestamp: "2026-01-01T00:00:02Z"
                     ),
                 ]
@@ -428,7 +559,7 @@ struct TimelineReducerToolTests {
                 isError: false,
                 lifecycleAfter: [
                     TraceLifecycleEvent(
-                        id: "agent-end-1", event: .agentEnd,
+                        id: "agent-settled-1", event: .agentSettled,
                         timestamp: "2026-01-01T00:00:03Z"
                     ),
                 ]
@@ -437,6 +568,7 @@ struct TimelineReducerToolTests {
 
         reducer.loadSession(interruptedTrace)
         #expect(reducer.toolOutputStore.fullOutput(for: "missing-result").isEmpty)
+        #expect(reducer.isToolInterrupted("missing-result"))
 
         reducer.loadSession(completedTrace)
 

@@ -41,6 +41,64 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.session(id: "s1")?.currentTurnStartedAt == nil)
     }
 
+    @Test func sessionSummaryTransitionInterruptsOpenTools() {
+        let (conn, pipe) = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
+
+        pipe.handle(.agentStart, sessionId: "s1")
+        pipe.handle(
+            .toolStart(tool: "bash", args: ["command": .string("uv cache clean")], toolCallId: "uv", callSegments: nil),
+            sessionId: "s1"
+        )
+        pipe.flushNow()
+
+        // Missed agent_settled: idle arrives only via session_summary.
+        // lastActivity must be newer than the focused-session busy projection or
+        // SessionStore preserves the newer local lifecycle and keeps status busy.
+        let idleActivity = (conn.sessionStore.session(id: "s1")?.lastActivity ?? Date())
+            .addingTimeInterval(1)
+        pipe.handle(
+            .sessionSummary(SessionSummary(from: makeTestSession(
+                id: "s1",
+                status: .ready,
+                lastActivity: idleActivity
+            ))),
+            sessionId: "s1"
+        )
+        pipe.flushNow()
+
+        guard case .toolCall(let id, _, _, _, _, let isError, let isDone) = pipe.reducer.items.first else {
+            Issue.record("Expected open tool to remain on the timeline")
+            return
+        }
+        #expect(id == "uv")
+        #expect(isDone)
+        #expect(!isError)
+        #expect(pipe.reducer.isToolInterrupted("uv"))
+    }
+
+    @Test func readyStateRebroadcastDoesNotInterruptOpenTools() {
+        let (conn, pipe) = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
+
+        // Seed an open tool while already ready (stale timeline projection).
+        pipe.reducer.process(.toolStart(sessionId: "s1", toolEventId: "uv", tool: "bash", args: [:]))
+        #expect(!pipe.reducer.isToolInterrupted("uv"))
+
+        pipe.handle(
+            .state(session: makeTestSession(id: "s1", status: .ready)),
+            sessionId: "s1"
+        )
+        pipe.flushNow()
+
+        guard case .toolCall(_, _, _, _, _, _, let isDone) = pipe.reducer.items.first else {
+            Issue.record("Expected tool row")
+            return
+        }
+        #expect(!isDone, "Ready rebroadcast without a running→idle transition must not finalize tools")
+        #expect(!pipe.reducer.isToolInterrupted("uv"))
+    }
+
     @Test func inactiveAgentSettledRecordsUnreadCompletion() {
         let (conn, _) = makeTestConnection(sessionId: "focused")
         conn.sessionStore.switchServer(to: "srv1")

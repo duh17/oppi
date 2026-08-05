@@ -39,6 +39,8 @@ enum ServerMessageEffects {
             return [.agentStart(sessionId: sessionId)]
         case .agentEnd:
             return [.agentEnd(sessionId: sessionId)]
+        case .agentSettled:
+            return [.agentSettled(sessionId: sessionId)]
         case .textDelta(let delta):
             return [.textDelta(sessionId: sessionId, delta: delta)]
         case .thinkingDelta(let delta, let contentIndex):

@@ -718,7 +718,7 @@ final class ChatSessionManager {
         }
 
         let storeResult = connection.applySharedStoreUpdate(for: message, sessionId: sessionId)
-        routeToTimeline(message, connection: connection)
+        routeToTimeline(message, connection: connection, storeResult: storeResult)
         if connection.isFocusedSession(sessionId) {
             connection.handleActiveSessionUI(message, sessionId: sessionId, storeResult: storeResult)
         }
@@ -894,13 +894,17 @@ final class ChatSessionManager {
     /// This handles all coalescer/reducer mutations for the active session.
     /// Each ChatSessionManager owns its own coalescer + reducer, so sessions
     /// maintain independent timelines across NavigationStack navigation.
-    private func routeToTimeline(_ message: ServerMessage, connection: ServerConnection) {
+    private func routeToTimeline(
+        _ message: ServerMessage,
+        connection: ServerConnection,
+        storeResult: ServerConnection.StoreUpdateResult = .notHandled
+    ) {
         for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
             coalescer.receive(event)
         }
 
         switch message {
-        case .agentStart, .agentEnd, .textDelta, .thinkingDelta:
+        case .agentStart, .agentEnd, .agentSettled, .textDelta, .thinkingDelta:
             break
 
         case .audioStream(let stream):
@@ -984,9 +988,14 @@ final class ChatSessionManager {
             reducer.finalizeTerminalArtifactsAsInterrupted()
             reducer.appendSystemEvent(reason ?? "Stop confirmed")
 
-        case .state(let session) where !session.status.isRunning:
-            coalescer.flushNow()
-            reducer.finalizeTerminalArtifactsAsInterrupted()
+        case .state, .sessionSummary:
+            // Only finalize when leaving a running state. Re-broadcast ready/idle
+            // snapshots (state or session_summary) must not flip in-progress tools
+            // to Interrupted. Missed agent_settled still recovers on the transition.
+            if storeResult.didTransitionOutOfRunning {
+                coalescer.flushNow()
+                reducer.finalizeTerminalArtifactsAsInterrupted()
+            }
 
         case .stopFailed(_, let reason):
             reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(reason)"))
@@ -1105,7 +1114,7 @@ final class ChatSessionManager {
                 guard accepted else { continue }
 
                 let eventStoreResult = connection.applySharedStoreUpdate(for: event.message, sessionId: sessionId)
-                routeToTimeline(event.message, connection: connection)
+                routeToTimeline(event.message, connection: connection, storeResult: eventStoreResult)
                 if connection.isFocusedSession(sessionId) {
                     connection.handleActiveSessionUI(event.message, sessionId: sessionId, storeResult: eventStoreResult)
                 }

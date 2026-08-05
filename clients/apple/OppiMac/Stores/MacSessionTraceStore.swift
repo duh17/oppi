@@ -881,13 +881,15 @@ final class MacSessionTraceStore {
         case .connected(let session) where session.id == target.sessionId:
             self.session = session
         case .state(let session) where session.id == target.sessionId:
+            let wasRunning = self.session?.status.isRunning ?? false
             self.session = session
-            if !session.status.isRunning {
+            if wasRunning && !session.status.isRunning {
                 reducer.finalizeTerminalArtifactsAsInterrupted()
             }
         case .sessionSummary(let summary) where summary.id == target.sessionId:
+            let wasRunning = self.session?.status.isRunning ?? false
             session = summary.session
-            if !summary.status.isRunning {
+            if wasRunning && !summary.status.isRunning {
                 reducer.finalizeTerminalArtifactsAsInterrupted()
             }
         default:

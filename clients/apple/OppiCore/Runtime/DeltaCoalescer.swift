@@ -143,6 +143,7 @@ final class DeltaCoalescer {
         // Everything else: flush pending deltas first, then deliver immediately
         case .agentStart,
              .agentEnd,
+             .agentSettled,
              .messageEnd,
              .cacheMiss,
              .sessionEnded,
@@ -157,6 +158,9 @@ final class DeltaCoalescer {
                 activeToolStarts.removeAll()
                 previewToolStarts.removeAll()
             } else if case .agentEnd = event {
+                activeToolStarts.removeAll()
+                previewToolStarts.removeAll()
+            } else if case .agentSettled = event {
                 activeToolStarts.removeAll()
                 previewToolStarts.removeAll()
             } else if case .sessionEnded = event {

@@ -698,10 +698,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         dateFormatter: ISO8601DateFormatter
     ) {
         switch lifecycle.event {
-        case .agentStart, .agentEnd:
+        case .agentStart, .agentSettled:
+            // agent_end is not the idle boundary (retries may follow). Interrupt
+            // unresolved tools on start-of-next-run or authoritative settled.
             closeAllOrphanedTools()
 
-        case .agentSettled, .turnStart, .turnEnd:
+        case .agentEnd, .turnStart, .turnEnd:
             break
 
         case .toolStart:
@@ -988,6 +990,18 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return renderMutationCheckpoint() != before
 
         case .agentEnd:
+            // Close one low-level Pi run. Retries may follow, so do not treat
+            // unresolved tools as interrupted until agent_settled (or an explicit
+            // terminal finalize). Otherwise a busy mirrored session can show
+            // in-progress tools as Interrupted.
+            let before = renderMutationCheckpoint()
+            turnInProgress = false
+            lastAssistantIDThisTurn = nil
+            finalizeAssistantMessage()
+            finalizeThinking()
+            return renderMutationCheckpoint() != before
+
+        case .agentSettled:
             let before = renderMutationCheckpoint()
             turnInProgress = false
             lastAssistantIDThisTurn = nil

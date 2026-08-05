@@ -18,6 +18,9 @@ struct ToolOutputEventPayload: Sendable {
 enum AgentEvent: Sendable {
     case agentStart(sessionId: String)
     case agentEnd(sessionId: String)
+    /// Authoritative idle boundary after retries/continuations drain.
+    /// Open tools are interrupted here, not on `agentEnd`.
+    case agentSettled(sessionId: String)
 
     case textDelta(sessionId: String, delta: String)
     case thinkingDelta(sessionId: String, delta: String, contentIndex: Int? = nil)
@@ -72,6 +75,7 @@ enum AgentEvent: Sendable {
         switch self {
         case .agentStart: "agentStart"
         case .agentEnd: "agentEnd"
+        case .agentSettled: "agentSettled"
         case .textDelta: "textDelta"
         case .thinkingDelta: "thinkingDelta"
         case .messageEnd: "messageEnd"

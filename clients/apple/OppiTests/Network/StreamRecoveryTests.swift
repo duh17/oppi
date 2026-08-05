@@ -15,7 +15,7 @@ struct StreamRecoveryTests {
 
     // MARK: - Fix 1: closeAllOrphanedTools
 
-    @Test func agentEndClosesAllOpenToolRows() {
+    @Test func agentSettledClosesAllOpenToolRows() {
         let reducer = TimelineReducer()
 
         reducer.process(.agentStart(sessionId: "s1"))
@@ -24,6 +24,7 @@ struct StreamRecoveryTests {
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t3", tool: "write", args: [:]))
         // No toolEnd events — simulate missed events
         reducer.process(.agentEnd(sessionId: "s1"))
+        reducer.process(.agentSettled(sessionId: "s1"))
 
         let tools = reducer.items.filter {
             if case .toolCall = $0 { return true }
@@ -32,14 +33,14 @@ struct StreamRecoveryTests {
         #expect(tools.count == 3)
         for item in tools {
             guard case .toolCall(let id, _, _, let preview, _, let isError, let isDone) = item else { continue }
-            #expect(isDone, "Tool \(id) should be marked done after agentEnd")
+            #expect(isDone, "Tool \(id) should be marked done after agentSettled")
             #expect(!isError, "Interruption must remain distinct from tool error")
             #expect(reducer.isToolInterrupted(id))
             #expect(preview.isEmpty, "Lifecycle interruption must not become canonical tool output")
         }
     }
 
-    @Test func agentEndClosesToolsWithMixedState() {
+    @Test func agentSettledClosesToolsWithMixedState() {
         let reducer = TimelineReducer()
 
         reducer.process(.agentStart(sessionId: "s1"))
@@ -48,6 +49,7 @@ struct StreamRecoveryTests {
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t2", tool: "read", args: [:]))
         // t2 left open
         reducer.process(.agentEnd(sessionId: "s1"))
+        reducer.process(.agentSettled(sessionId: "s1"))
 
         let tools = reducer.items.compactMap { item -> (String, Bool)? in
             guard case .toolCall(let id, _, _, _, _, _, let isDone) = item else { return nil }
@@ -207,7 +209,7 @@ struct StreamRecoveryTests {
 
     // MARK: - processBatch invariants
 
-    @Test func processBatchClosesOrphanedToolsOnAgentEnd() {
+    @Test func processBatchClosesOrphanedToolsOnAgentSettled() {
         let reducer = TimelineReducer()
 
         let events: [AgentEvent] = [
@@ -215,6 +217,7 @@ struct StreamRecoveryTests {
             .toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]),
             .toolStart(sessionId: "s1", toolEventId: "t2", tool: "read", args: [:]),
             .agentEnd(sessionId: "s1"),
+            .agentSettled(sessionId: "s1"),
         ]
         reducer.processBatch(events)
 

@@ -69,9 +69,10 @@ final class TestEventPipeline {
         case .agentEnd:
             conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
             coalescer.receive(.agentEnd(sessionId: sessionId))
-            conn.silenceWatchdog.stop()
         case .agentSettled:
             conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
+            coalescer.receive(.agentSettled(sessionId: sessionId))
+            conn.silenceWatchdog.stop()
         case .textDelta(let delta):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(.textDelta(sessionId: sessionId, delta: delta))
@@ -150,10 +151,10 @@ final class TestEventPipeline {
                 uploadedAttachments: item.attachments ?? []
             )
             reducer.appendUserMessage(displayText, images: item.optimisticImages ?? [])
-        case .state(let session):
+        case .state, .sessionSummary:
             let result = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
             conn.handleActiveSessionUI(message, sessionId: sessionId, storeResult: result)
-            if !session.status.isRunning {
+            if result.didTransitionOutOfRunning {
                 coalescer.flushNow()
                 reducer.finalizeTerminalArtifactsAsInterrupted()
             }

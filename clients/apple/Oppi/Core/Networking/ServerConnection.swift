@@ -2097,6 +2097,7 @@ final class ServerConnection {
         switch message {
         case .agentStart,
              .agentEnd,
+             .agentSettled,
              .state,
              .sessionSummary,
              .sessionEnded,

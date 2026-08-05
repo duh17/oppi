@@ -51,13 +51,16 @@ struct LiveActivityStateTests {
         #expect(mgr.currentState.primaryPhase == .working)
     }
 
-    @Test("recordEvent agentEnd sets awaitingReply within visibility window")
-    @MainActor func agentEndAwaitingReply() {
+    @Test("recordEvent agentSettled sets awaitingReply within visibility window")
+    @MainActor func agentSettledAwaitingReply() {
         let mgr = LiveActivityManager()
         let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session])
 
         mgr.recordEvent(connectionId: "c1", event: .agentEnd(sessionId: "s1"))
+        #expect(mgr.currentState.primaryPhase != .awaitingReply, "agent_end alone is not idle")
+
+        mgr.recordEvent(connectionId: "c1", event: .agentSettled(sessionId: "s1"))
         #expect(mgr.currentState.primaryPhase == .awaitingReply)
     }
 

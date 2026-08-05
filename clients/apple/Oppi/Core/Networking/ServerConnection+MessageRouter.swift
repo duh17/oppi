@@ -52,6 +52,10 @@ extension ServerConnection {
             silenceWatchdog.start()
 
         case .agentEnd:
+            // Keep monitoring through possible retries until settled.
+            break
+
+        case .agentSettled:
             silenceWatchdog.stop()
 
         case .textDelta, .thinkingDelta, .toolStart, .toolOutput, .toolEnd:

@@ -239,7 +239,11 @@ final class LiveActivityManager {
             entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
-        case .agentEnd(let sessionId):
+        case .agentEnd:
+            // agent_end is not idle — retries may follow. Wait for agent_settled.
+            break
+
+        case .agentSettled(let sessionId):
             var entry = upsertSession(sessionId)
             let now = Date()
             entry.status = .ready

@@ -411,9 +411,9 @@ extension ServerConnection {
         case .agentStart:
             event = .agentStart(sessionId: sessionId)
         case .agentSettled:
-            event = .agentEnd(sessionId: sessionId)
+            event = .agentSettled(sessionId: sessionId)
         case .stopConfirmed:
-            event = .agentEnd(sessionId: sessionId)
+            event = .agentSettled(sessionId: sessionId)
         case .stopFailed:
             event = .agentStart(sessionId: sessionId)
         case .sessionEnded(let reason):
