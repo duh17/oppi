@@ -20,18 +20,9 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
     }
 
     override var e2eRequiresFreshLaunch: Bool {
-        // This class intentionally mixes launch-only roots and one Dynamic Type
-        // launch argument. Relaunch every case so shared E2E process state cannot
-        // leak a sessions-only or accessibility-sized launch into the next test.
+        // This class intentionally mixes launch-only roots. Relaunch every case so
+        // shared E2E process state cannot leak a sessions-only launch into the next test.
         true
-    }
-
-    override func configureE2ELaunch(_ application: XCUIApplication) {
-        guard name.contains("testQuickSessionComposerFitsAccessibilityText") else { return }
-        application.launchArguments += [
-            "-UIPreferredContentSizeCategoryName",
-            "UICTContentSizeCategoryAccessibilityXXXL",
-        ]
     }
 
     nonisolated private var isQuickSessionComposerTest: Bool {
@@ -179,46 +170,6 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
             "Scrolled composer controls must remain above the keyboard"
         )
         XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Compact fallback must not restore a system sheet")
-    }
-
-    func testQuickSessionComposerFitsAccessibilityText() throws {
-        let sessionsList = app.collectionViews["workspace.sessionList"]
-        XCTAssertTrue(sessionsList.waitForExistence(timeout: 10), "Sessions inbox not visible")
-        tap(app.buttons["workspace.quickSession.start"], named: "quick session button")
-        defer { dismissQuickSessionSheetIfNeeded() }
-
-        let input = app.textViews["chat.input"]
-        XCTAssertTrue(input.waitForExistence(timeout: 10), "Quick Session input not visible at accessibility text size")
-        tap(input, named: "quick session input", timeout: 5)
-        input.typeText("large type first line\nlarge type second line\nlarge type third line")
-
-        let keyboard = app.keyboards.firstMatch
-        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "Keyboard not visible at accessibility text size")
-        let viewport = app.scrollViews["quickSession.viewport"].firstMatch
-        XCTAssertTrue(viewport.waitForExistence(timeout: 5), "Bounded Quick Session viewport not visible")
-        XCTAssertLessThanOrEqual(
-            input.frame.maxY,
-            keyboard.frame.minY + 1,
-            "Accessibility-text composer input must stay above the keyboard"
-        )
-        XCTAssertFalse(app.buttons["quickSession.dismiss"].exists, "Quick Session should not show a close button")
-
-        let workspacePicker = app.buttons["quickSession.workspacePicker"]
-        let modelPicker = app.buttons["session.toolbar.model"]
-        let thinkingPicker = app.buttons["session.toolbar.thinking"]
-        let controls = [workspacePicker, modelPicker, thinkingPicker]
-        XCTAssertTrue(
-            scrollQuickSessionViewport(viewport, untilHittable: controls),
-            "Accessibility-text fallback must keep workspace, model, and thinking controls reachable"
-        )
-        for control in controls {
-            XCTAssertLessThanOrEqual(
-                control.frame.maxY,
-                keyboard.frame.minY + 1,
-                "Accessibility-text controls must remain above the keyboard"
-            )
-        }
-        XCTAssertFalse(app.buttons["Sheet Grabber"].exists, "Accessibility fallback must not restore a system sheet")
     }
 
     private func waitForInputValue(

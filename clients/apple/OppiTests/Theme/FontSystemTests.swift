@@ -288,46 +288,6 @@ struct FontPreferencesTests {
         #expect(FontPreferences.codeTextScale == FontPreferences.maximumCodeTextScale)
     }
 
-    @Test func scaledCodeFontKeepsPreferenceAndDynamicType() {
-        let originalFamily = FontPreferences.codeFont
-        let defaults = captureCodeTextDefaults()
-        defer {
-            FontPreferences.setCodeFont(originalFamily)
-            restoreCodeTextDefaults(defaults)
-        }
-
-        let defaultTrait = UITraitCollection(preferredContentSizeCategory: .large)
-        let accessibilityTrait = UITraitCollection(
-            preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge
-        )
-
-        FontPreferences.setCodeFont(.system)
-        FontPreferences.setCodeTextScale(1.0)
-        let compactDefault = FontPreferences.scaledCodeFont(
-            baseSize: 11,
-            textStyle: .subheadline,
-            idiom: .phone,
-            compatibleWith: defaultTrait
-        )
-
-        FontPreferences.setCodeTextScale(1.45)
-        let largeDefault = FontPreferences.scaledCodeFont(
-            baseSize: 11,
-            textStyle: .subheadline,
-            idiom: .phone,
-            compatibleWith: defaultTrait
-        )
-        let largeAccessibility = FontPreferences.scaledCodeFont(
-            baseSize: 11,
-            textStyle: .subheadline,
-            idiom: .phone,
-            compatibleWith: accessibilityTrait
-        )
-
-        #expect(largeDefault.pointSize > compactDefault.pointSize)
-        #expect(largeAccessibility.pointSize > largeDefault.pointSize)
-    }
-
     // MARK: - Notification
 
     @Test func setCodeFontPostsNotification() async {

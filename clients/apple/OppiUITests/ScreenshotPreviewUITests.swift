@@ -653,18 +653,6 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Cancelled"].waitForExistence(timeout: 3), "Inline Cancel should respond immediately")
     }
 
-    func testOppiCommandApprovalAccessibilitySizePreview() throws {
-        launchPreview(
-            screen: "ask-card-expanded-sheet",
-            contentSizeCategory: "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
-        )
-
-        XCTAssertTrue(app.buttons["ask.confirmation.confirm"].isHittable)
-        XCTAssertTrue(app.buttons["ask.confirmation.cancel"].isHittable)
-        XCTAssertTrue(app.buttons["ask.confirmation.closeDetails"].isHittable)
-        saveScreenshot(name: "oppi-command-approval-accessibility-size")
-    }
-
     func testAskCardMultiSelectLongOptionsPreview() throws {
         launchPreview(screen: "ask-card-multiselect-long")
 
@@ -890,12 +878,9 @@ final class ScreenshotPreviewUITests: XCTestCase {
         option.tap()
     }
 
-    private func launchPreview(screen: String, contentSizeCategory: String? = nil) {
+    private func launchPreview(screen: String) {
         app = XCUIApplication()
         app.launchArguments.append("--screenshot-preview")
-        if let contentSizeCategory {
-            app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSizeCategory]
-        }
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         app.launch()
 

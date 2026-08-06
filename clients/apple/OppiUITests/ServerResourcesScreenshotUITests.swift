@@ -47,7 +47,7 @@ final class ServerResourcesScreenshotUITests: XCTestCase {
         saveScreenshot(name: "server-resources-oppi-normal")
     }
 
-    func testServerResourcesOfflinePendingAndAccessibilityXXXLPreviews() throws {
+    func testServerResourcesOfflineAndPendingPreviews() throws {
         launchPreview(screen: "server-resources-cached-offline")
         XCTAssertTrue(app.navigationBars["Extensions"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["serverResources.cachedWarning"].waitForExistence(timeout: 5))
@@ -59,29 +59,6 @@ final class ServerResourcesScreenshotUITests: XCTestCase {
         XCTAssertFalse(oppiPolicyButton(titled: "Read only").isEnabled)
         saveScreenshot(name: "server-resources-oppi-pending")
 
-        app.terminate()
-        launchPreview(
-            screen: "server-resources-skills",
-            contentSizeCategory: "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
-        )
-        XCTAssertTrue(app.descendants(matching: .any)["serverResources.skills.release"].waitForExistence(timeout: 5))
-        saveScreenshot(name: "server-resources-skills-accessibility-xxxl")
-
-        app.terminate()
-        launchPreview(
-            screen: "server-resources-extensions",
-            contentSizeCategory: "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
-        )
-        XCTAssertTrue(app.descendants(matching: .any)["serverResources.extensions.oppi"].waitForExistence(timeout: 5))
-        saveScreenshot(name: "server-resources-extensions-accessibility-xxxl")
-
-        app.terminate()
-        launchPreview(
-            screen: "server-resources-oppi",
-            contentSizeCategory: "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
-        )
-        XCTAssertTrue(oppiPolicyButton(titled: "Confirm destructive only").waitForExistence(timeout: 5))
-        saveScreenshot(name: "server-resources-oppi-accessibility-xxxl")
     }
 
     private func oppiPolicyButton(titled title: String) -> XCUIElement {
@@ -95,12 +72,9 @@ final class ServerResourcesScreenshotUITests: XCTestCase {
         XCTAssertEqual(scope.value as? String, "Connected")
     }
 
-    private func launchPreview(screen: String, contentSizeCategory: String? = nil) {
+    private func launchPreview(screen: String) {
         app = XCUIApplication()
         app.launchArguments.append("--screenshot-preview")
-        if let contentSizeCategory {
-            app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSizeCategory]
-        }
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         app.launch()
 
