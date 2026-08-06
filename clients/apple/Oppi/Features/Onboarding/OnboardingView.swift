@@ -383,7 +383,11 @@ enum InviteBootstrapError: LocalizedError, Equatable {
 }
 
 protocol InviteBootstrapAPI: Sendable {
-    func pairDevice(pairingToken: String, deviceName: String?) async throws -> PairDeviceResponse
+    func pairDevice(
+        pairingToken: String,
+        deviceName: String?,
+        clientNodeId: String?
+    ) async throws -> PairDeviceResponse
     func health() async throws -> Bool
     func me() async throws -> User
     func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session]
@@ -401,7 +405,10 @@ protocol IrohInvitePairingClient: Sendable {
 }
 
 enum IrohInvitePairingResult: Sendable, Equatable {
-    case success(deviceToken: String)
+    case success(
+        deviceToken: String,
+        credentialTransports: [CredentialTransport]? = nil
+    )
     /// Relay preparation or other failure before the pairing exchange begins.
     case transportUnavailable(String)
     /// The pairing exchange began, but the client did not receive a response.
@@ -451,7 +458,10 @@ enum InviteBootstrapService {
         httpReachabilityProbe: @MainActor (EndpointSelection, ServerCredentials) async throws -> Void = { selection, credentials in
             try await InvitePairingHTTPSProbe.probe(selection: selection, credentials: credentials)
         },
-        irohReachabilityProbe: any IrohInvitePairingReachabilityProbing = RealIrohInvitePairingReachabilityProbe()
+        irohReachabilityProbe: any IrohInvitePairingReachabilityProbing = RealIrohInvitePairingReachabilityProbe(),
+        irohClientNodeIDProvider: @MainActor () throws -> String = {
+            try IrohEndpointSecretStore.clientNodeID()
+        }
     ) async throws -> InviteBootstrapResult {
         let sameTarget = isSameServer(existingCredentials, credentials)
         let existingFingerprint = existingCredentials?.normalizedServerFingerprint
@@ -484,35 +494,39 @@ enum InviteBootstrapService {
             irohReachabilityProbe: irohReachabilityProbe
         )
 
-        let effectiveToken: String
+        let credential: (token: String, grant: CredentialTransportGrant?)
         if let pairingToken = credentials.pairingToken, !pairingToken.isEmpty {
-            effectiveToken = try await pairToken(
+            credential = try await pairToken(
                 pairingToken,
                 credentials: credentials,
                 route: route,
                 irohPairingClient: irohPairingClient,
-                apiFactory: apiFactory
+                apiFactory: apiFactory,
+                irohClientNodeIDProvider: irohClientNodeIDProvider
             )
         } else {
-            effectiveToken = credentials.token
+            credential = (credentials.token, credentials.credentialGrant)
         }
 
         let api: any InviteBootstrapAPI
         switch route {
         case .iroh(let iroh):
-            let localURL = try await irohProxyFactory(iroh, effectiveToken)
-            api = apiFactory(localURL, effectiveToken, nil)
+            let localURL = try await irohProxyFactory(iroh, credential.token)
+            api = apiFactory(localURL, credential.token, nil)
         case .http(let selection):
             api = apiFactory(
                 selection.baseURL,
-                effectiveToken,
+                credential.token,
                 credentials.normalizedTLSCertFingerprint
             )
         }
 
         let sessions = try await bootstrapSessions(using: api)
         return InviteBootstrapResult(
-            effectiveCredentials: credentials.withAuthToken(effectiveToken),
+            effectiveCredentials: credentials.withAuthToken(
+                credential.token,
+                credentialGrant: credential.grant
+            ),
             sessions: sessions
         )
     }
@@ -581,8 +595,9 @@ enum InviteBootstrapService {
         credentials: ServerCredentials,
         route: ServerTransportPlan,
         irohPairingClient: any IrohInvitePairingClient,
-        apiFactory: @MainActor (URL, String, String?) -> any InviteBootstrapAPI
-    ) async throws -> String {
+        apiFactory: @MainActor (URL, String, String?) -> any InviteBootstrapAPI,
+        irohClientNodeIDProvider: @MainActor () throws -> String
+    ) async throws -> (token: String, grant: CredentialTransportGrant) {
         switch route {
         case .iroh(let iroh):
             guard iroh.alpns.contains(irohPairingALPN) else {
@@ -593,8 +608,10 @@ enum InviteBootstrapService {
                 iroh: iroh,
                 deviceName: nil
             ) {
-            case .success(let deviceToken):
-                return deviceToken
+            case .success(let deviceToken, let credentialTransports):
+                let grant = credentialTransports.map(CredentialTransportGrant.init)
+                    ?? .inferred(from: credentials.transports.authorizedTransports)
+                return (deviceToken, grant)
             case .transportUnavailable:
                 throw InviteBootstrapError.message(preDispatchIrohFailureMessage())
             case .responseUnavailable:
@@ -617,11 +634,20 @@ enum InviteBootstrapService {
                 credentials.normalizedTLSCertFingerprint
             )
             do {
+                let clientNodeId = credentials.transports.authorizedTransports.contains(.iroh)
+                    ? try irohClientNodeIDProvider()
+                    : nil
                 let pairResult = try await bootstrapAPI.pairDevice(
                     pairingToken: pairingToken,
-                    deviceName: nil
+                    deviceName: nil,
+                    clientNodeId: clientNodeId
                 )
-                return pairResult.deviceToken
+                // Older HTTP servers did not confirm credential scope. Such
+                // credentials were not Iroh-bound, so infer HTTP only.
+                return (
+                    pairResult.deviceToken,
+                    pairResult.credentialGrant ?? .http
+                )
             } catch {
                 throw InviteBootstrapError.message(
                     pairingMutationFailureMessage(for: error, host: displayTarget(credentials))
@@ -651,7 +677,8 @@ enum InviteBootstrapService {
                 return "Invite link expired or was already used. Request a fresh invite."
             case .server(429, _):
                 return "Too many invalid pairing attempts. Wait a moment, request a fresh invite, and try again."
-            case .server(let status, let message):
+            case .server(let status, let message),
+                 .codedServer(let status, let message, _):
                 return "Pairing failed with server error (\(status)): \(message)"
             }
         }

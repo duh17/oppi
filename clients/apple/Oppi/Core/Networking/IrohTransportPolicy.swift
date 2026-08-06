@@ -120,8 +120,8 @@ enum ServerTransportPlanResolver {
         discoveredLANEndpoint: LANDiscoveredEndpoint?,
         excluding: Set<ServerRouteCandidateKind> = []
     ) throws -> [ServerTransportPlan] {
-        let authorization = credentials.transports.authorizedTransports
-        let effectiveMode = mode.effective(for: authorization)
+        let authorization = credentials.effectiveTransportAuthorization
+        let effectiveMode = mode.effective(for: credentials.transports.authorizedTransports)
         var result: [ServerTransportPlan] = []
 
         if effectiveMode.requestedTransports.contains(.https), authorization.contains(.https) {

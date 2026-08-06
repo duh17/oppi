@@ -68,6 +68,8 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
     var transports: ServerTransports
     /// Client-only route restriction. Missing persisted values default to automatic.
     var routeMode: PairedServerRouteMode
+    /// Server-confirmed scope of the stored device token. Nil means unknown.
+    var credentialGrant: CredentialTransportGrant?
 
     // ── Local state (not from server) ──
 
@@ -104,7 +106,8 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
             scheme: transports.http?.scheme ?? scheme,
             serverFingerprint: fingerprint,
             tlsCertFingerprint: tlsCertFingerprint,
-            transports: transports
+            transports: transports,
+            credentialGrant: credentialGrant
         )
     }
 
@@ -124,6 +127,7 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         case fingerprint
         case transports
         case routeMode
+        case credentialGrant = "credentialTransports"
         case addedAt
         case sortOrder
         case badgeIcon
@@ -150,6 +154,7 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         self.fingerprint = fp
         self.transports = credentials.transports
         self.routeMode = .automatic
+        self.credentialGrant = credentials.credentialGrant
         self.addedAt = Date()
         self.sortOrder = sortOrder
         self.badgeIcon = nil
@@ -173,6 +178,10 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
                 tlsCertFingerprint: tlsCertFingerprint
             )
         routeMode = try container.decodeIfPresent(PairedServerRouteMode.self, forKey: .routeMode) ?? .automatic
+        credentialGrant = try container.decodeIfPresent(
+            CredentialTransportGrant.self,
+            forKey: .credentialGrant
+        )
         addedAt = try container.decode(Date.self, forKey: .addedAt)
         sortOrder = try container.decode(Int.self, forKey: .sortOrder)
         badgeIcon = try container.decodeIfPresent(ServerBadgeIcon.self, forKey: .badgeIcon)
@@ -194,6 +203,7 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         try container.encode(fingerprint, forKey: .fingerprint)
         try container.encode(transports, forKey: .transports)
         try container.encode(routeMode, forKey: .routeMode)
+        try container.encodeIfPresent(credentialGrant, forKey: .credentialGrant)
         try container.encode(addedAt, forKey: .addedAt)
         try container.encode(sortOrder, forKey: .sortOrder)
         try container.encodeIfPresent(badgeIcon, forKey: .badgeIcon)
@@ -209,5 +219,6 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         self.token = credentials.token
         self.tlsCertFingerprint = credentials.tlsCertFingerprint
         self.transports = credentials.transports
+        self.credentialGrant = credentials.credentialGrant
     }
 }

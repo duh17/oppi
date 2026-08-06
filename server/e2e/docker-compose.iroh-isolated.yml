@@ -9,7 +9,7 @@ services:
       PI_CODING_AGENT_DIR: /data/pi-agent
       PI_AGENT_SYNC_MODE: skip
       OPPI_IROH_TRANSPORT: "1"
-      OPPI_IROH_INVITE_MODE: irohOnly
+      OPPI_IROH_INVITE_MODE: irohPreferred
       OPPI_BONJOUR: "0"
       OPPI_LOG_LEVEL: debug
     volumes:
@@ -35,7 +35,7 @@ services:
       iroh-server:
         condition: service_healthy
     volumes:
-      - iroh-exchange:/exchange:ro
+      - iroh-exchange:/exchange
     networks:
       iroh-link:
       client-egress:

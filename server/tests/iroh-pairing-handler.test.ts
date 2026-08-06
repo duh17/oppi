@@ -23,14 +23,14 @@ describe("Iroh pairing request handling", () => {
   it("exchanges an existing Oppi pairing token for a real device token", () => {
     const pairingToken = storage.issuePairingToken(60_000);
 
-    const response = handleIrohPairingRequest(storage, { pairingToken });
+    const response = handleIrohPairingRequest(storage, { pairingToken }, { transport: "http" });
 
     expect(response.ok).toBe(true);
     if (!response.ok) return;
     expect(response.deviceToken).toMatch(/^dt_/);
     expect(storage.getAuthDeviceTokens()).toContain(response.deviceToken);
 
-    const replay = handleIrohPairingRequest(storage, { pairingToken });
+    const replay = handleIrohPairingRequest(storage, { pairingToken }, { transport: "http" });
     expect(replay).toEqual({
       ok: false,
       status: 401,
@@ -39,7 +39,9 @@ describe("Iroh pairing request handling", () => {
   });
 
   it("rejects invalid and expired tokens deterministically", () => {
-    expect(handleIrohPairingRequest(storage, { pairingToken: "pt_invalid" })).toEqual({
+    expect(
+      handleIrohPairingRequest(storage, { pairingToken: "pt_invalid" }, { transport: "http" }),
+    ).toEqual({
       ok: false,
       status: 401,
       error: "Invalid or expired pairing token",
@@ -48,17 +50,57 @@ describe("Iroh pairing request handling", () => {
     const expiredToken = storage.issuePairingToken(60_000);
     storage.updateConfig({ pairingTokenExpiresAt: Date.now() - 1 });
 
-    expect(handleIrohPairingRequest(storage, { pairingToken: expiredToken })).toEqual({
+    expect(
+      handleIrohPairingRequest(storage, { pairingToken: expiredToken }, { transport: "http" }),
+    ).toEqual({
       ok: false,
       status: 401,
       error: "Invalid or expired pairing token",
     });
   });
 
+  it("binds an HTTPS-issued dual-transport credential to the supplied Iroh node", () => {
+    const pairingToken = storage.issuePairingToken(60_000, {
+      allowedTransports: ["http", "iroh"],
+    });
+
+    const response = handleIrohPairingRequest(
+      storage,
+      { pairingToken, clientNodeId: "https-paired-node" },
+      { transport: "http" },
+    );
+
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    expect(response.credentialTransports).toEqual(["http", "iroh"]);
+    expect(storage.hasAuthTokenForTransport(response.deviceToken, "http")).toBe(true);
+    expect(storage.validateIrohDeviceToken(response.deviceToken, "https-paired-node")).toEqual({
+      ok: true,
+    });
+  });
+
+  it("does not widen an HTTP-only invite when HTTPS pairing supplies an Iroh node", () => {
+    const pairingToken = storage.issuePairingToken(60_000, { allowedTransports: ["http"] });
+
+    const response = handleIrohPairingRequest(
+      storage,
+      { pairingToken, clientNodeId: "ungranted-node" },
+      { transport: "http" },
+    );
+
+    expect(response).toEqual({
+      ok: false,
+      status: 401,
+      error: "Invalid or expired pairing token",
+    });
+    expect(storage.getConfig().pairingToken).toBe(pairingToken);
+    expect(storage.getAuthDeviceTokens()).toEqual([]);
+  });
+
   it("binds Iroh-issued device tokens to the pairing token transport constraints", () => {
     const pairingToken = storage.issuePairingToken(60_000, { allowedTransports: ["iroh"] });
 
-    const httpFallback = handleIrohPairingRequest(storage, { pairingToken });
+    const httpFallback = handleIrohPairingRequest(storage, { pairingToken }, { transport: "http" });
     expect(httpFallback).toEqual({
       ok: false,
       status: 401,
@@ -70,6 +112,7 @@ describe("Iroh pairing request handling", () => {
       storage,
       { pairingToken },
       {
+        transport: "iroh",
         clientNodeId: "client-node-1",
       },
     );
@@ -87,7 +130,7 @@ describe("Iroh pairing request handling", () => {
       const response = handleIrohPairingRequest(
         storage,
         { pairingToken },
-        { clientNodeId: "client-node" },
+        { transport: "iroh", clientNodeId: "client-node" },
       );
       if (!response.ok) throw new Error("pairing failed");
 
@@ -121,7 +164,9 @@ describe("Iroh pairing request handling", () => {
   it("rejects missing tokens without consuming storage", () => {
     const pairingToken = storage.issuePairingToken(60_000);
 
-    expect(handleIrohPairingRequest(storage, { pairingToken: "   " })).toEqual({
+    expect(
+      handleIrohPairingRequest(storage, { pairingToken: "   " }, { transport: "http" }),
+    ).toEqual({
       ok: false,
       status: 400,
       error: "pairingToken required",

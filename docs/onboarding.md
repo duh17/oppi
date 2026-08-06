@@ -38,11 +38,11 @@ After pairing, each server offers these Apple connection modes:
 | **HTTPS Only** | verified LAN HTTPS → paired HTTPS        |
 | **Iroh Only**  | Iroh                                     |
 
-Automatic is the default. A mode can restrict the signed transport set but cannot enable a route absent from the invite.
+Automatic is the default. A mode can restrict the signed transport set but cannot enable a route absent from the invite or the server-issued credential grant.
 
-Before pairing, the app uses read-only probes to choose one authorized route: `GET /health` for HTTPS or validated Iroh metadata plus selected-path evidence for Iroh. It then sends exactly one `POST /pair`. It never replays that mutation on another route. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
+Before pairing, the app uses read-only probes to choose one authorized route: `GET /health` for HTTPS or validated Iroh metadata plus selected-path evidence for Iroh. It then sends exactly one `POST /pair`. HTTPS pairing includes the stable Apple Iroh node ID when the invite also authorizes Iroh; this records the binding without dialing Iroh. The server returns the issued credential's HTTP/Iroh grant. The app never replays the pairing mutation on another route. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
 
-After pairing, the client keeps the route with current health evidence. When it must select again, availability failures suppress a route only for that pass; authentication, identity, ALPN, framing, and protocol failures fail closed. See [Networking and connection routing](networking.md) for recovery details.
+After pairing, the client keeps the route with current health evidence. When it must select again, availability failures suppress a route only for that pass. An Iroh binding or transport-grant rejection disables Iroh for that credential but does not block LAN or paired HTTPS recovery. Unknown credentials and transport-integrity failures remain fail-closed. See [Networking and connection routing](networking.md) for recovery details.
 
 ## Enable Iroh
 

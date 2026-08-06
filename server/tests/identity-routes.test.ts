@@ -52,6 +52,38 @@ describe("identity module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "pairingToken required" });
   });
 
+  it("binds dual-transport HTTPS pairing to the supplied Iroh node", async () => {
+    const consumePairingToken = vi.fn(() => ({
+      deviceToken: "dt_bound",
+      credentialTransports: ["http", "iroh"],
+    }));
+    const ctx = {
+      storage: { consumePairingToken },
+    } as unknown as RouteContext;
+
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/pair",
+      url: new URL("https://paired.example/pair"),
+      req: makeRequest({ pairingToken: "pt_dual", clientNodeId: "apple-node" }) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(consumePairingToken).toHaveBeenCalledWith("pt_dual", {
+      transport: "http",
+      irohClientNodeId: "apple-node",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      deviceToken: "dt_bound",
+      credentialTransports: ["http", "iroh"],
+    });
+  });
+
   it("includes uploadProtocol in GET /server/info", async () => {
     const ctx = {
       storage: {

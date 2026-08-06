@@ -30,6 +30,22 @@ enum APIClientAvailabilityFailure: Sendable, Equatable {
 }
 
 typealias APIClientAvailabilityObserver = @Sendable (APIClientAvailabilityFailure) async -> Void
+typealias APIClientResponseFailureObserver = @Sendable (APIError) async -> Void
+
+private final class APIClientResponseFailureObserverBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var observer: APIClientResponseFailureObserver?
+
+    func set(_ observer: APIClientResponseFailureObserver?) {
+        lock.withLock { self.observer = observer }
+    }
+
+    func notify(_ error: APIError) {
+        let observer = lock.withLock { self.observer }
+        guard let observer else { return }
+        Task { await observer(error) }
+    }
+}
 
 private struct SessionCommandRejectedError: LocalizedError {
     let message: String
@@ -86,6 +102,7 @@ actor APIClient: ClientLogUploading {
     private let session: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
     private let availabilityObserver: APIClientAvailabilityObserver?
+    nonisolated private let responseFailureObserverBox = APIClientResponseFailureObserverBox()
 
     init(
         environment: OppiClientEnvironment,
@@ -218,8 +235,16 @@ actor APIClient: ClientLogUploading {
     }
 
     /// Exchange a one-time pairing token for a long-lived auth device token.
-    func pairDevice(pairingToken: String, deviceName: String? = nil) async throws -> PairDeviceResponse {
-        let body = PairDeviceRequest(pairingToken: pairingToken, deviceName: deviceName)
+    func pairDevice(
+        pairingToken: String,
+        deviceName: String? = nil,
+        clientNodeId: String? = nil
+    ) async throws -> PairDeviceResponse {
+        let body = PairDeviceRequest(
+            pairingToken: pairingToken,
+            deviceName: deviceName,
+            clientNodeId: clientNodeId
+        )
         let (data, response) = try await requestNoAuth("POST", path: "/pair", body: body)
         try checkStatus(response, data: data)
         return try JSONDecoder().decode(PairDeviceResponse.self, from: data)
@@ -2156,14 +2181,29 @@ actor APIClient: ClientLogUploading {
         return url
     }
 
+    nonisolated func setResponseFailureObserver(
+        _ observer: APIClientResponseFailureObserver?
+    ) {
+        responseFailureObserverBox.set(observer)
+    }
+
     func checkStatus(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
         guard (200 ... 299).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? ""
-            // Try to extract server error message
             if let parsed = try? JSONDecoder().decode(ServerError.self, from: data) {
+                if let rawCode = parsed.code,
+                   let code = TunnelAuthenticationErrorCode(rawValue: rawCode) {
+                    let error = APIError.codedServer(
+                        status: http.statusCode,
+                        message: parsed.error,
+                        code: code
+                    )
+                    responseFailureObserverBox.notify(error)
+                    throw error
+                }
                 throw APIError.server(status: http.statusCode, message: parsed.error)
             }
             throw APIError.server(status: http.statusCode, message: body)
@@ -2191,5 +2231,8 @@ actor APIClient: ClientLogUploading {
     }
 
     private struct EmptyBody: Encodable {}
-    private struct ServerError: Decodable { let error: String }
+    private struct ServerError: Decodable {
+        let error: String
+        let code: String?
+    }
 }

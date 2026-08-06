@@ -28,14 +28,6 @@ enum TransportPreference: String, Codable, Sendable, Equatable, Hashable {
     case httpOnly
 }
 
-/// Transport lanes authorized by signed invite metadata.
-struct SignedTransportAuthorization: OptionSet, Sendable, Equatable, Hashable {
-    let rawValue: UInt8
-
-    static let https = Self(rawValue: 1 << 0)
-    static let iroh = Self(rawValue: 1 << 1)
-}
-
 /// Per-server client preference persisted independently of signed transport authorization.
 enum PairedServerRouteMode: String, Codable, Sendable, Equatable, Hashable {
     case automatic
@@ -333,6 +325,10 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     // Signed transport metadata. v3 credentials synthesize an HTTP-only value.
     let transports: ServerTransports
 
+    // Server-confirmed credential scope. Nil means an older stored record whose
+    // grant is unknown until the server returns a typed authorization result.
+    let credentialGrant: CredentialTransportGrant?
+
     init(
         host: String,
         port: Int,
@@ -342,7 +338,8 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         pairingToken: String? = nil,
         serverFingerprint: String? = nil,
         tlsCertFingerprint: String? = nil,
-        transports: ServerTransports? = nil
+        transports: ServerTransports? = nil,
+        credentialGrant: CredentialTransportGrant? = nil
     ) {
         self.host = host
         self.port = port
@@ -358,6 +355,15 @@ struct ServerCredentials: Codable, Sendable, Equatable {
             scheme: scheme,
             tlsCertFingerprint: tlsCertFingerprint
         )
+        self.credentialGrant = credentialGrant
+    }
+
+    /// Unknown stored grants retain signed candidates until a typed server
+    /// rejection can narrow the credential without guessing.
+    var effectiveTransportAuthorization: SignedTransportAuthorization {
+        let signed = transports.authorizedTransports
+        guard let credentialGrant else { return signed }
+        return signed.intersection(credentialGrant.signedAuthorization)
     }
 
     var resolvedScheme: ServerScheme {
@@ -380,6 +386,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         case serverFingerprint
         case tlsCertFingerprint
         case transports
+        case credentialGrant = "credentialTransports"
     }
 
     init(from decoder: Decoder) throws {
@@ -393,6 +400,10 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         let serverFingerprint = try container.decodeIfPresent(String.self, forKey: .serverFingerprint)
         let tlsCertFingerprint = try container.decodeIfPresent(String.self, forKey: .tlsCertFingerprint)
         let transports = try container.decodeIfPresent(ServerTransports.self, forKey: .transports)
+        let credentialGrant = try container.decodeIfPresent(
+            CredentialTransportGrant.self,
+            forKey: .credentialGrant
+        )
 
         self.init(
             host: host,
@@ -403,7 +414,8 @@ struct ServerCredentials: Codable, Sendable, Equatable {
             pairingToken: pairingToken,
             serverFingerprint: serverFingerprint,
             tlsCertFingerprint: tlsCertFingerprint,
-            transports: transports
+            transports: transports,
+            credentialGrant: credentialGrant
         )
     }
 
@@ -422,6 +434,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         try container.encodeIfPresent(serverFingerprint, forKey: .serverFingerprint)
         try container.encodeIfPresent(tlsCertFingerprint, forKey: .tlsCertFingerprint)
         try container.encode(transports, forKey: .transports)
+        try container.encodeIfPresent(credentialGrant, forKey: .credentialGrant)
     }
 
     /// Decode invite payload JSON.
@@ -577,7 +590,10 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    func withAuthToken(_ newToken: String) -> Self {
+    func withAuthToken(
+        _ newToken: String,
+        credentialGrant: CredentialTransportGrant? = nil
+    ) -> Self {
         Self(
             host: host,
             port: port,
@@ -587,7 +603,23 @@ struct ServerCredentials: Codable, Sendable, Equatable {
             pairingToken: nil,
             serverFingerprint: serverFingerprint,
             tlsCertFingerprint: tlsCertFingerprint,
-            transports: transports
+            transports: transports,
+            credentialGrant: credentialGrant ?? self.credentialGrant
+        )
+    }
+
+    func withCredentialGrant(_ grant: CredentialTransportGrant) -> Self {
+        Self(
+            host: host,
+            port: port,
+            token: token,
+            name: name,
+            scheme: transports.http?.scheme ?? scheme,
+            pairingToken: pairingToken,
+            serverFingerprint: serverFingerprint,
+            tlsCertFingerprint: tlsCertFingerprint,
+            transports: transports,
+            credentialGrant: grant
         )
     }
 

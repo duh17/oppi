@@ -111,7 +111,22 @@ struct RealIrohInvitePairingClient: IrohInvitePairingClient {
         }
 
         if ok, let deviceToken = header["deviceToken"]?.stringValue, !deviceToken.isEmpty {
-            return .success(deviceToken: deviceToken)
+            let credentialTransports: [CredentialTransport]?
+            if let values = header["credentialTransports"]?.arrayValue {
+                let decoded = values.compactMap { value in
+                    value.stringValue.flatMap(CredentialTransport.init(rawValue:))
+                }
+                guard decoded.count == values.count else {
+                    return .pairingRejected(status: 502, message: "Invalid Iroh pairing response")
+                }
+                credentialTransports = decoded
+            } else {
+                credentialTransports = nil
+            }
+            return .success(
+                deviceToken: deviceToken,
+                credentialTransports: credentialTransports
+            )
         }
 
         let status = header["status"]?.numberValue.map(Int.init) ?? 500

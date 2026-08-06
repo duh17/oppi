@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 import { Endpoint, EndpointTicket, type BiStream, type Connection } from "@number0/iroh";
 
@@ -7,7 +7,7 @@ import { decodeIrohFrame, encodeIrohFrame } from "../dist/src/iroh-frame-codec.j
 import { encodeIrohTunnelPreface } from "../dist/src/iroh-pairing-server.js";
 
 type Invite = {
-  pairingToken: string;
+  irohPairingToken: string;
   expectedHttpPort: number;
   workspaceDir: string;
   iroh: { nodeId: string; ticket: string; alpns: string[] };
@@ -61,7 +61,7 @@ function json(response: HttpResponse): Record<string, unknown> {
   return JSON.parse(response.body.toString("utf8")) as Record<string, unknown>;
 }
 
-async function pair(endpoint: Endpoint, invite: Invite): Promise<string> {
+async function pairThroughIroh(endpoint: Endpoint, invite: Invite): Promise<string> {
   const addr = EndpointTicket.fromString(invite.iroh.ticket).endpointAddr();
   assert(addr.id().toString() === invite.iroh.nodeId, "ticket node ID matches invite");
   const connection = await endpoint.connect(addr, Array.from(Buffer.from("oppi/pair/1")));
@@ -72,7 +72,7 @@ async function pair(endpoint: Endpoint, invite: Invite): Promise<string> {
       encodeIrohFrame({
         v: 1,
         kind: "pairRequest",
-        pairingToken: invite.pairingToken,
+        pairingToken: invite.irohPairingToken,
         deviceName: "isolated-iroh-client",
       }),
     ),
@@ -84,8 +84,44 @@ async function pair(endpoint: Endpoint, invite: Invite): Promise<string> {
   });
   connection.close(0n, []);
   assert(frame.header.ok === true, "pairing succeeds over scoped ALPN");
-  assert(typeof frame.header.deviceToken === "string", "pairing returns a device token");
+  assert(typeof frame.header.deviceToken === "string", "Iroh pairing returns a device token");
+  assert(
+    Array.isArray(frame.header.credentialTransports) &&
+      frame.header.credentialTransports.length === 1 &&
+      frame.header.credentialTransports[0] === "iroh",
+    "Iroh pairing returns an explicit Iroh-only grant",
+  );
   return frame.header.deviceToken;
+}
+
+async function exchangeHTTPPairedCredential(endpoint: Endpoint): Promise<string> {
+  const clientNodePath = "/exchange/client-node.json";
+  const clientNodeTemporaryPath = `${clientNodePath}.tmp`;
+  writeFileSync(
+    clientNodeTemporaryPath,
+    JSON.stringify({ clientNodeId: endpoint.id().toString() }),
+  );
+  renameSync(clientNodeTemporaryPath, clientNodePath);
+
+  const credentialPath = "/exchange/credential.json";
+  const deadline = Date.now() + 90_000;
+  while (!existsSync(credentialPath)) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for HTTP-paired credential");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const credential = JSON.parse(readFileSync(credentialPath, "utf8")) as {
+    deviceToken?: unknown;
+    credentialTransports?: unknown;
+  };
+  assert(typeof credential.deviceToken === "string", "HTTP pairing returns a device token");
+  assert(
+    Array.isArray(credential.credentialTransports) &&
+      credential.credentialTransports.length === 2 &&
+      credential.credentialTransports.includes("http") &&
+      credential.credentialTransports.includes("iroh"),
+    "HTTP pairing returns an explicit dual-transport grant",
+  );
+  return credential.deviceToken;
 }
 
 async function httpRequest(
@@ -288,8 +324,11 @@ async function main(): Promise<void> {
 
   const endpoint = await Endpoint.bind();
   try {
-    const token = await pair(endpoint, invite);
-    assert(token.startsWith("dt_"), "Iroh pairing returns device credential");
+    const irohPairingToken = await pairThroughIroh(endpoint, invite);
+    assert(irohPairingToken.startsWith("dt_"), "Iroh pairing returns device credential");
+
+    const token = await exchangeHTTPPairedCredential(endpoint);
+    assert(token.startsWith("dt_"), "HTTP pairing returns device credential");
 
     const addr = EndpointTicket.fromString(invite.iroh.ticket).endpointAddr();
     const connection = await endpoint.connect(addr, Array.from(Buffer.from("oppi/http/1")));

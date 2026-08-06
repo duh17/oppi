@@ -72,6 +72,13 @@ final class ServerStore {
         save(servers[idx])
     }
 
+    /// Persist a server-confirmed credential scope reduction.
+    func setCredentialGrant(id: String, to grant: CredentialTransportGrant) {
+        guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
+        servers[idx].credentialGrant = grant
+        save(servers[idx])
+    }
+
     /// Look up a server by fingerprint ID.
     func server(for id: String) -> PairedServer? {
         servers.first { $0.id == id }

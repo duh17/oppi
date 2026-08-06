@@ -118,6 +118,55 @@ struct InviteBootstrapServiceTests {
         #expect(result.effectiveCredentials.token == "http-device-token")
     }
 
+    @Test func HTTPPairingAgainstOlderServerInfersHTTPOnlyCredentialGrant() async throws {
+        let log = InviteBootstrapCallLog()
+        let pairingAPI = RecordingInviteBootstrapAPI(log: log, pairDeviceToken: "https-device-token")
+        let authenticatedAPI = RecordingInviteBootstrapAPI(log: log)
+        var apis: [RecordingInviteBootstrapAPI] = [pairingAPI, authenticatedAPI]
+
+        let result = try await InviteBootstrapService.validateAndBootstrap(
+            credentials: makeIrohPreferredTunnelCredentials(),
+            existingCredentials: nil,
+            confirmTrust: { _ in true },
+            apiFactory: { _, _, _ in apis.removeFirst() },
+            httpReachabilityProbe: { _, _ in }
+        )
+
+        let candidates = try ServerTransportPlanResolver.candidates(
+            credentials: result.effectiveCredentials,
+            mode: .automatic,
+            discoveredLANEndpoint: nil
+        )
+        #expect(candidates.count == 1)
+        guard case .http = candidates.first else {
+            Issue.record("Older HTTP pairing must infer an HTTP-only credential grant")
+            return
+        }
+    }
+
+    @Test func dualInviteHTTPSPairingSendsStableIrohNodeIDAndPersistsConfirmedGrant() async throws {
+        let log = InviteBootstrapCallLog()
+        let pairingAPI = RecordingInviteBootstrapAPI(
+            log: log,
+            pairDeviceToken: "https-device-token",
+            credentialTransports: [.http, .iroh]
+        )
+        let authenticatedAPI = RecordingInviteBootstrapAPI(log: log)
+        var apis: [RecordingInviteBootstrapAPI] = [pairingAPI, authenticatedAPI]
+
+        let result = try await InviteBootstrapService.validateAndBootstrap(
+            credentials: makeIrohPreferredTunnelCredentials(),
+            existingCredentials: nil,
+            confirmTrust: { _ in true },
+            apiFactory: { _, _, _ in apis.removeFirst() },
+            httpReachabilityProbe: { _, _ in },
+            irohClientNodeIDProvider: { "stable-apple-node" }
+        )
+
+        #expect(await pairingAPI.receivedClientNodeIDs() == ["stable-apple-node"])
+        #expect(result.effectiveCredentials.credentialGrant == [.http, .iroh])
+    }
+
     @Test func automaticPairingPrefersHTTPSAndDoesNotStartIroh() async throws {
         let log = InviteBootstrapCallLog()
         let pairingAPI = RecordingInviteBootstrapAPI(log: log, pairDeviceToken: "https-device-token")
@@ -277,6 +326,7 @@ struct InviteBootstrapServiceTests {
             "tunnel:listSessions:3"
         ])
         #expect(result.effectiveCredentials.token == "iroh-device-token")
+        #expect(result.effectiveCredentials.credentialGrant == [.iroh])
         #expect(result.effectiveCredentials.baseURL == nil)
     }
 
@@ -655,17 +705,37 @@ private actor InviteBootstrapCallLog {
 private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
     private let log: InviteBootstrapCallLog
     private let pairDeviceToken: String
+    private let credentialTransports: [CredentialTransport]?
     private let label: String?
+    private var clientNodeIDs: [String?] = []
 
-    init(log: InviteBootstrapCallLog, pairDeviceToken: String = "device-token", label: String? = nil) {
+    init(
+        log: InviteBootstrapCallLog,
+        pairDeviceToken: String = "device-token",
+        credentialTransports: [CredentialTransport]? = nil,
+        label: String? = nil
+    ) {
         self.log = log
         self.pairDeviceToken = pairDeviceToken
+        self.credentialTransports = credentialTransports
         self.label = label
     }
 
-    func pairDevice(pairingToken: String, deviceName: String?) async throws -> PairDeviceResponse {
+    func pairDevice(
+        pairingToken: String,
+        deviceName: String?,
+        clientNodeId: String?
+    ) async throws -> PairDeviceResponse {
         await log.append(call("pair:\(pairingToken)"))
-        return PairDeviceResponse(deviceToken: pairDeviceToken)
+        clientNodeIDs.append(clientNodeId)
+        return PairDeviceResponse(
+            deviceToken: pairDeviceToken,
+            credentialTransports: credentialTransports
+        )
+    }
+
+    func receivedClientNodeIDs() -> [String?] {
+        clientNodeIDs
     }
 
     func health() async throws -> Bool {
@@ -700,7 +770,11 @@ private actor FailingInviteBootstrapAPI: InviteBootstrapAPI {
         self.error = error
     }
 
-    func pairDevice(pairingToken: String, deviceName: String?) async throws -> PairDeviceResponse {
+    func pairDevice(
+        pairingToken: String,
+        deviceName: String?,
+        clientNodeId: String?
+    ) async throws -> PairDeviceResponse {
         await log.append("\(label):pair:\(pairingToken)")
         throw error
     }

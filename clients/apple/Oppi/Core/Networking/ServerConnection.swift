@@ -12,6 +12,12 @@ typealias ServerConnectionInfoBootstrap = @MainActor (
     APIClient.BootstrapDeadline
 ) async throws -> ServerInfo
 typealias ServerConnectionBootstrapDeadlineFactory = @Sendable () -> APIClient.BootstrapDeadline
+typealias ServerConnectionCredentialGrantObserver = @MainActor (CredentialTransportGrant) -> Void
+
+private enum TransportFailureDisposition {
+    case retryable
+    case failClosed
+}
 
 enum IrohForegroundRecoveryResult: Equatable, Sendable {
     case notActive
@@ -77,8 +83,12 @@ final class ServerConnection {
     private var irohBoundaryReevaluationInFlight = false
     private var pendingBoundaryReevaluation = false
     private var pendingBoundaryExclusions: Set<ServerRouteCandidateKind> = []
-    private var irohTerminalFailureActive = false
-    private(set) var canAutomaticallyRetryInitialTransport = true
+    private var transportFailureDisposition: TransportFailureDisposition?
+    private var configuredCredentialGrantObserver: ServerConnectionCredentialGrantObserver?
+
+    var canAutomaticallyRetryInitialTransport: Bool {
+        transportFailureDisposition != .failClosed
+    }
     private var configuredIrohReachabilityTimeout = ServerConnection.irohReachabilityTimeoutDefault
     private var installedAPIClientIdentity: UUID?
     private var installedAPIClientConfigurationGeneration: UInt64?
@@ -441,7 +451,8 @@ final class ServerConnection {
         irohProxyFactory: @escaping @MainActor (IrohServerTransport, String) async throws -> (IrohConnectionManager?, URL) = { iroh, token in
             let (manager, url) = try await IrohTransportRegistry.shared.startProxy(iroh: iroh, token: token)
             return (manager, url)
-        }
+        },
+        credentialGrantDidChange: ServerConnectionCredentialGrantObserver? = nil
     ) async -> Bool {
         usesSynchronousCompatibilityConfiguration = false
         transportConfigurationGeneration &+= 1
@@ -454,6 +465,9 @@ final class ServerConnection {
         configuredIrohCandidateDeadlineFactory = irohCandidateDeadline
         configuredAPIClientFactory = apiClientFactory
         configuredServerInfoBootstrap = serverInfoBootstrap
+        if let credentialGrantDidChange {
+            configuredCredentialGrantObserver = credentialGrantDidChange
+        }
         sender.advanceTransportGeneration()
 
         while let cleanup = pendingSupersededManagerCleanup {
@@ -504,7 +518,8 @@ final class ServerConnection {
         irohProxyFactory: @escaping @MainActor (IrohServerTransport, String) async throws -> (IrohConnectionManager?, URL) = { iroh, token in
             let (manager, url) = try await IrohTransportRegistry.shared.startProxy(iroh: iroh, token: token)
             return (manager, url)
-        }
+        },
+        credentialGrantDidChange: ServerConnectionCredentialGrantObserver? = nil
     ) async -> Bool {
         automaticIrohRecoveryRetryTask?.cancel()
         automaticIrohRecoveryRetryTask = nil
@@ -535,7 +550,8 @@ final class ServerConnection {
             irohCandidateDeadline: irohCandidateDeadline,
             apiClientFactory: apiClientFactory,
             serverInfoBootstrap: serverInfoBootstrap,
-            irohProxyFactory: irohProxyFactory
+            irohProxyFactory: irohProxyFactory,
+            credentialGrantDidChange: credentialGrantDidChange
         )
         guard configured else { return false }
 
@@ -571,8 +587,6 @@ final class ServerConnection {
                 discoveredLANEndpoint: discoveredLANEndpoint,
                 excluding: excluding
             )
-            var sawAvailabilityFailure = false
-
             for candidate in candidates {
                 guard transportConfigurationGeneration == configurationGeneration else { return false }
 
@@ -602,7 +616,6 @@ final class ServerConnection {
                         )
                         return true
                     } catch where isRouteAvailabilityFailure(error) {
-                        sawAvailabilityFailure = true
                         continue
                     }
 
@@ -673,8 +686,12 @@ final class ServerConnection {
                             "fallback": "none",
                         ])
                         return true
+                    } catch let APIError.codedServer(_, _, code)
+                        where code.removesIrohCredentialGrant {
+                        await shutdownSetupManager(attemptedManager)
+                        narrowIrohCredentialGrant(for: credentials)
+                        return false
                     } catch where isRouteAvailabilityFailure(error) {
-                        sawAvailabilityFailure = true
                         await shutdownSetupManager(attemptedManager)
                         continue
                     } catch {
@@ -684,14 +701,14 @@ final class ServerConnection {
                 }
             }
 
-            canAutomaticallyRetryInitialTransport = sawAvailabilityFailure || candidates.isEmpty
+            transportFailureDisposition = .retryable
             logger.warning("Transport candidate pass exhausted")
             return false
         } catch is CancellationError {
             return false
         } catch {
             guard transportConfigurationGeneration == configurationGeneration else { return false }
-            canAutomaticallyRetryInitialTransport = false
+            transportFailureDisposition = .failClosed
             let activeManager = irohManager
             irohManager = nil
             await shutdownSetupManager(activeManager)
@@ -858,6 +875,15 @@ final class ServerConnection {
             observer
         )
         reference.client = client
+        client.setResponseFailureObserver { [weak self, reference] error in
+            guard let client = reference.client else { return }
+            await self?.handleAPIClientResponseFailure(
+                error,
+                client: client,
+                identity: identity,
+                configurationGeneration: configurationGeneration
+            )
+        }
         return (client, identity)
     }
 
@@ -900,8 +926,7 @@ final class ServerConnection {
     ) {
         persistentStreamGeneration &+= 1
         let clientGeneration = persistentStreamGeneration
-        irohTerminalFailureActive = false
-        canAutomaticallyRetryInitialTransport = true
+        transportFailureDisposition = nil
         resetTransportState(
             credentials: credentials,
             endpointSelection: selection,
@@ -1104,7 +1129,7 @@ final class ServerConnection {
         guard endpoint != discoveredLANEndpoint else { return nil }
         discoveredLANEndpoint = endpoint
         lanCandidateGeneration &+= 1
-        guard !irohTerminalFailureActive else { return nil }
+        guard transportFailureDisposition != .failClosed else { return nil }
         guard let credentials,
               configuredRouteMode.requestedTransports.contains(.https),
               credentials.transports.authorizedTransports.contains(.https) else {
@@ -1181,7 +1206,7 @@ final class ServerConnection {
     func handleNetworkPathChange() {
         let wasOnLAN = transportPath == .lan
 
-        if irohTerminalFailureActive {
+        if transportFailureDisposition == .failClosed {
             discoveredLANEndpoint = nil
             return
         }
@@ -1528,7 +1553,7 @@ final class ServerConnection {
               installedAPIClientIdentity == identity,
               installedAPIClientConfigurationGeneration == configurationGeneration,
               transportConfigurationGeneration == configurationGeneration,
-              !irohTerminalFailureActive else {
+              transportFailureDisposition != .failClosed else {
             return
         }
 
@@ -1539,6 +1564,51 @@ final class ServerConnection {
             expectedGeneration: persistentStreamGeneration,
             failedRoute: routeCandidateKind(for: transportPath)
         )
+    }
+
+    private func handleAPIClientResponseFailure(
+        _ error: APIError,
+        client: APIClient,
+        identity: UUID,
+        configurationGeneration: UInt64
+    ) async {
+        guard apiClient === client,
+              installedAPIClientIdentity == identity,
+              installedAPIClientConfigurationGeneration == configurationGeneration,
+              transportConfigurationGeneration == configurationGeneration else {
+            return
+        }
+        guard case .codedServer(_, _, let code) = error else { return }
+
+        if code.removesIrohCredentialGrant, let credentials {
+            narrowIrohCredentialGrant(for: credentials)
+            await handlePersistentStreamHealthFailure(
+                .reconnectThreshold(attempt: 0),
+                expectedGeneration: persistentStreamGeneration,
+                failedRoute: .iroh
+            )
+            return
+        }
+
+        let activeManager = irohManager
+        irohManager = nil
+        await shutdownSetupManager(activeManager)
+        invalidateTransportAfterTerminalFailure(error)
+    }
+
+    private func narrowIrohCredentialGrant(for credentials: ServerCredentials) {
+        var grant = credentials.credentialGrant
+            ?? .inferred(from: credentials.transports.authorizedTransports)
+        grant.remove(.iroh)
+        if self.credentials?.token == credentials.token {
+            self.credentials = credentials.withCredentialGrant(grant)
+        }
+        configuredCredentialGrantObserver?(grant)
+        transportFailureDisposition = .retryable
+        ClientLog.warning("Iroh", "Credential no longer authorizes Iroh", metadata: [
+            "transport": "iroh",
+            "repair": "pairing_required",
+        ])
     }
 
     func handlePersistentStreamHealthFailure(
@@ -1590,7 +1660,7 @@ final class ServerConnection {
         _ failure: PersistentStreamHealthFailure,
         failedRoute: ServerRouteCandidateKind?
     ) async {
-        guard !irohTerminalFailureActive, credentials != nil else { return }
+        guard transportFailureDisposition != .failClosed, credentials != nil else { return }
         let route = failedRoute ?? routeCandidateKind(for: transportPath)
 
         ClientLog.warning("Network", "Persistent transport reported unavailable", metadata: [
@@ -1791,7 +1861,7 @@ final class ServerConnection {
         wsClient = nil
         endpointSelection = nil
         irohManager = nil
-        irohTerminalFailureActive = true
+        transportFailureDisposition = .failClosed
         ClientLog.error("Network", "Terminal transport failure; fallback disabled", metadata: [
             "transport": transportPath.rawValue,
             "errorKind": IrohTransportTelemetry.errorKind(error),
@@ -1818,7 +1888,7 @@ final class ServerConnection {
                 && self.credentials == expectedCredentials
                 && self.irohManager === expectedManager
                 && self.transportPath == .iroh
-                && !self.irohTerminalFailureActive
+                && self.transportFailureDisposition != .failClosed
         }
 
         if let backgroundPreparation = irohBackgroundPreparationTask {
@@ -2666,7 +2736,7 @@ final class ServerConnection {
     }
 
     func failTransportTerminallyForTesting() {
-        canAutomaticallyRetryInitialTransport = false
+        transportFailureDisposition = .failClosed
         invalidateTransportAfterTerminalFailure(
             IrohTransportError.authentication("test terminal failure")
         )

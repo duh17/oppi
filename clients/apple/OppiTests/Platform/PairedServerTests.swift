@@ -175,6 +175,39 @@ struct PairedServerTests {
         #expect(decoded.routeMode == .automatic)
     }
 
+    @Test("Credential grant round-trips while an older record remains unknown")
+    func credentialGrantCodableCompatibility() throws {
+        let grantedJSON = """
+        {
+          "id": "sha256:grant",
+          "name": "grant-server",
+          "host": "grant.example.test",
+          "port": 443,
+          "scheme": "https",
+          "token": "dt_grant",
+          "fingerprint": "sha256:grant",
+          "transports": {"preference":"httpOnly","http":{"host":"grant.example.test","port":443,"scheme":"https"}},
+          "credentialTransports": ["http"],
+          "addedAt": 0,
+          "sortOrder": 0
+        }
+        """
+        let granted = try JSONDecoder().decode(PairedServer.self, from: Data(grantedJSON.utf8))
+        let reencoded = try JSONEncoder().encode(granted)
+        let reencodedObject = try #require(JSONSerialization.jsonObject(with: reencoded) as? [String: Any])
+        #expect(reencodedObject["credentialTransports"] as? [String] == ["http"])
+
+        var olderObjectValue = try #require(
+            JSONSerialization.jsonObject(with: Data(grantedJSON.utf8)) as? [String: Any]
+        )
+        olderObjectValue.removeValue(forKey: "credentialTransports")
+        let olderData = try JSONSerialization.data(withJSONObject: olderObjectValue)
+        let older = try JSONDecoder().decode(PairedServer.self, from: olderData)
+        let olderReencoded = try JSONEncoder().encode(older)
+        let olderObject = try #require(JSONSerialization.jsonObject(with: olderReencoded) as? [String: Any])
+        #expect(olderObject["credentialTransports"] == nil)
+    }
+
     @Test("Re-pair preserves the local mode and falls back when it becomes impossible")
     func rePairPreservesRouteModeAndFallsBack() {
         let both = ServerCredentials(

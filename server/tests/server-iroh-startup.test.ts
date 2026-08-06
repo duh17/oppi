@@ -177,13 +177,14 @@ describe("server Iroh pairing startup", () => {
       expect(rejected.status).toBe(401);
       expect(storage.getConfig().pairingToken).toBe(pairingToken);
 
-      const irohDeviceToken = storage.consumePairingToken(pairingToken, {
+      const irohCredential = storage.consumePairingToken(pairingToken, {
+        transport: "iroh",
         irohClientNodeId: "client-node-1",
       });
-      expect(irohDeviceToken).toMatch(/^dt_/);
+      expect(irohCredential?.deviceToken).toMatch(/^dt_/);
 
       const httpMe = await fetch(`http://127.0.0.1:${server.port}/me`, {
-        headers: { Authorization: `Bearer ${irohDeviceToken}` },
+        headers: { Authorization: `Bearer ${irohCredential?.deviceToken}` },
       });
       expect(httpMe.status).toBe(401);
     } finally {
@@ -222,26 +223,30 @@ describe("server Iroh pairing startup", () => {
 
   it("rejects Iroh-only device tokens over HTTP while preserving unbound HTTP tokens", async () => {
     const unboundPairingToken = storage.issuePairingToken(60_000);
-    const unboundToken = storage.consumePairingToken(unboundPairingToken);
-    const irohOnlyPairingToken = storage.issuePairingToken(60_000);
-    const irohOnlyToken = storage.consumePairingToken(irohOnlyPairingToken, {
-      irohClientNodeId: "client-node-1",
+    const unboundCredential = storage.consumePairingToken(unboundPairingToken, {
+      transport: "http",
+    });
+    const irohOnlyPairingToken = storage.issuePairingToken(60_000, {
       allowedTransports: ["iroh"],
     });
-    expect(unboundToken).toMatch(/^dt_/);
-    expect(irohOnlyToken).toMatch(/^dt_/);
+    const irohOnlyCredential = storage.consumePairingToken(irohOnlyPairingToken, {
+      transport: "iroh",
+      irohClientNodeId: "client-node-1",
+    });
+    expect(unboundCredential?.deviceToken).toMatch(/^dt_/);
+    expect(irohOnlyCredential?.deviceToken).toMatch(/^dt_/);
 
     const server = new Server(storage);
     try {
       await server.start();
 
       const unbound = await fetch(`http://127.0.0.1:${server.port}/me`, {
-        headers: { Authorization: `Bearer ${unboundToken}` },
+        headers: { Authorization: `Bearer ${unboundCredential?.deviceToken}` },
       });
       expect(unbound.status).toBe(200);
 
       const irohOnly = await fetch(`http://127.0.0.1:${server.port}/me`, {
-        headers: { Authorization: `Bearer ${irohOnlyToken}` },
+        headers: { Authorization: `Bearer ${irohOnlyCredential?.deviceToken}` },
       });
       expect(irohOnly.status).toBe(401);
     } finally {
@@ -251,19 +256,21 @@ describe("server Iroh pairing startup", () => {
   });
 
   it("accepts Iroh-bound device tokens over HTTP when the binding allows HTTP", async () => {
-    const pairingToken = storage.issuePairingToken(60_000);
-    const deviceToken = storage.consumePairingToken(pairingToken, {
-      irohClientNodeId: "client-node-1",
+    const pairingToken = storage.issuePairingToken(60_000, {
       allowedTransports: ["iroh", "http"],
     });
-    expect(deviceToken).toMatch(/^dt_/);
+    const credential = storage.consumePairingToken(pairingToken, {
+      transport: "iroh",
+      irohClientNodeId: "client-node-1",
+    });
+    expect(credential?.deviceToken).toMatch(/^dt_/);
 
     const server = new Server(storage);
     try {
       await server.start();
 
       const response = await fetch(`http://127.0.0.1:${server.port}/me`, {
-        headers: { Authorization: `Bearer ${deviceToken}` },
+        headers: { Authorization: `Bearer ${credential?.deviceToken}` },
       });
       expect(response.status).toBe(200);
     } finally {
@@ -298,10 +305,12 @@ describe("server Iroh pairing startup", () => {
       close: vi.fn(async () => {}),
     });
     const pairingToken = storage.issuePairingToken(60_000, { allowedTransports: ["iroh"] });
-    const deviceToken = storage.consumePairingToken(pairingToken, {
+    const credential = storage.consumePairingToken(pairingToken, {
+      transport: "iroh",
       irohClientNodeId: "client-node",
     });
-    if (!deviceToken) throw new Error("failed to issue Iroh token");
+    if (!credential) throw new Error("failed to issue Iroh token");
+    const deviceToken = credential.deviceToken;
 
     const server = new Server(storage);
     try {
@@ -330,10 +339,12 @@ describe("server Iroh pairing startup", () => {
       close: vi.fn(async () => {}),
     });
     const pairingToken = storage.issuePairingToken(60_000, { allowedTransports: ["iroh"] });
-    const deviceToken = storage.consumePairingToken(pairingToken, {
+    const credential = storage.consumePairingToken(pairingToken, {
+      transport: "iroh",
       irohClientNodeId: "client-node",
     });
-    if (!deviceToken) throw new Error("failed to issue Iroh token");
+    if (!credential) throw new Error("failed to issue Iroh token");
+    const deviceToken = credential.deviceToken;
 
     const server = new Server(storage);
     try {
@@ -391,10 +402,12 @@ describe("server Iroh pairing startup", () => {
       close: vi.fn(async () => {}),
     });
     const pairingToken = storage.issuePairingToken(60_000, { allowedTransports: ["iroh"] });
-    const deviceToken = storage.consumePairingToken(pairingToken, {
+    const credential = storage.consumePairingToken(pairingToken, {
+      transport: "iroh",
       irohClientNodeId: "client-node",
     });
-    if (!deviceToken) throw new Error("failed to issue Iroh token");
+    if (!credential) throw new Error("failed to issue Iroh token");
+    const deviceToken = credential.deviceToken;
     const context = { clientNodeId: "client-node", bearerToken: deviceToken };
 
     const server = new Server(storage);

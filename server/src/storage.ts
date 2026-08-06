@@ -289,8 +289,8 @@ export class Storage {
 
   consumePairingToken(
     candidate: string,
-    options?: { irohClientNodeId?: string; allowedTransports?: AuthTransport[] },
-  ): string | null {
+    options: { transport: AuthTransport; irohClientNodeId?: string },
+  ): ReturnType<AuthStore["consumePairingToken"]> {
     return this.authStore.consumePairingToken(candidate, options);
   }
 

@@ -331,6 +331,27 @@ struct APIClientTests {
         #expect(result == false)
     }
 
+    @Test func pairResponseRetainsConfirmedCredentialGrant() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            let body = try #require(
+                JSONSerialization.jsonObject(with: self.requestBodyData(request)) as? [String: Any]
+            )
+            #expect(body["clientNodeId"] as? String == "stable-apple-node")
+            return self.mockResponse(json: #"{"deviceToken":"dt_bound","credentialTransports":["http","iroh"]}"#)
+        }
+
+        let response = try await client.pairDevice(
+            pairingToken: "pt_dual",
+            deviceName: nil,
+            clientNodeId: "stable-apple-node"
+        )
+
+        #expect(response.credentialGrant == [.http, .iroh])
+    }
+
     // MARK: - me
 
     @Test func meDecodesUser() async throws {
@@ -1699,6 +1720,31 @@ struct APIClientTests {
             }
             #expect(status == 401)
             #expect(msg == "Invalid token")
+        }
+    }
+
+    @Test func serverErrorRetainsMachineReadableTunnelCode() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { _ in
+            self.mockResponse(
+                status: 403,
+                json: #"{"error":"forbidden","code":"binding_missing"}"#
+            )
+        }
+
+        do {
+            _ = try await client.me()
+            Issue.record("Expected error")
+        } catch let error as APIError {
+            guard case .codedServer(let status, let message, let code) = error else {
+                Issue.record("Expected coded server error")
+                return
+            }
+            #expect(status == 403)
+            #expect(message == "forbidden")
+            #expect(code == .bindingMissing)
         }
     }
 
