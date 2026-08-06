@@ -1,6 +1,9 @@
 import { formatSkillsForPrompt, type AgentSession } from "@earendil-works/pi-coding-agent";
 
-import { applyForwardedCommandResultToSession } from "./agent-runtime-transport.js";
+import {
+  applyForwardedCommandResultToSession,
+  runtimeCommandFailure,
+} from "./agent-runtime-transport.js";
 import {
   computeCacheWaste,
   navigationCreatedBranchSummary,
@@ -343,6 +346,11 @@ type SessionCommandHandler = (
   cmd: Record<string, unknown>,
 ) => unknown | Promise<unknown>;
 
+interface QueuedCompactCommand {
+  message: Record<string, unknown>;
+  requestId?: string;
+}
+
 const IDLE_ONLY_COMMANDS = new Set(["compact", "navigate_tree", "reload"]);
 
 function assertIdleForCommand(active: CommandSessionState, commandType: string): void {
@@ -350,13 +358,18 @@ function assertIdleForCommand(active: CommandSessionState, commandType: string):
     return;
   }
 
-  if (active.session.status !== "ready") {
+  if (
+    active.session.status !== "ready" ||
+    active.sdkBackend.isStreaming ||
+    active.sdkBackend.isCompacting
+  ) {
     throw new Error(`${commandType} requires an idle session`);
   }
 }
 
 export class SessionCommandCoordinator {
   private readonly runtimeCommandCoordinator: RuntimeCommandCoordinator;
+  private readonly queuedCompactCommands = new Map<string, QueuedCompactCommand[]>();
 
   constructor(private readonly deps: SessionCommandCoordinatorDeps) {
     this.runtimeCommandCoordinator = new RuntimeCommandCoordinator({
@@ -546,7 +559,87 @@ export class SessionCommandCoordinator {
 
     const type = command.type as string;
     assertIdleForCommand(active, type);
+    return this.executeCommand(active, type, command);
+  }
 
+  resumeQueuedCompactions(key: string): void {
+    const queued = this.queuedCompactCommands.get(key);
+    if (!queued) {
+      return;
+    }
+
+    this.queuedCompactCommands.delete(key);
+    void this.executeQueuedCompactions(key, queued);
+  }
+
+  cancelQueuedCompactions(key: string): void {
+    const queued = this.queuedCompactCommands.get(key);
+    if (!queued) {
+      return;
+    }
+
+    this.queuedCompactCommands.delete(key);
+    for (const pending of queued) {
+      this.deps.broadcast(
+        key,
+        runtimeCommandFailure(
+          "compact",
+          pending.requestId,
+          "Session ended before queued compact could run",
+        ),
+      );
+    }
+  }
+
+  private shouldQueueCompact(active: CommandSessionState, commandType: string): boolean {
+    return (
+      commandType === "compact" &&
+      (active.session.status !== "ready" || active.sdkBackend.isStreaming)
+    );
+  }
+
+  private enqueueCompact(
+    key: string,
+    message: Record<string, unknown>,
+    requestId: string | undefined,
+  ): void {
+    const queued = this.queuedCompactCommands.get(key) ?? [];
+    queued.push({ message: { ...message }, requestId });
+    this.queuedCompactCommands.set(key, queued);
+  }
+
+  private async executeQueuedCompactions(
+    key: string,
+    queued: QueuedCompactCommand[],
+  ): Promise<void> {
+    for (const pending of queued) {
+      const active = this.deps.getActiveSession(key);
+      if (!active || active.session.status !== "ready") {
+        this.deps.broadcast(
+          key,
+          runtimeCommandFailure(
+            "compact",
+            pending.requestId,
+            "Session ended before queued compact could run",
+          ),
+        );
+        continue;
+      }
+
+      await this.runtimeCommandCoordinator.forwardClientCommand(
+        key,
+        pending.message,
+        pending.requestId,
+        (command) => this.sendCommandAsync(key, command),
+      );
+    }
+  }
+
+  private async executeCommand(
+    active: CommandSessionState,
+    type: string,
+    command: Record<string, unknown>,
+  ): Promise<unknown> {
     if (type === "reload") {
       return active.sdkBackend.reloadResources(this.deps.reloadRuntimeConfig);
     }
@@ -581,6 +674,12 @@ export class SessionCommandCoordinator {
     const active = this.deps.getActiveSession(key);
     if (!active) {
       throw new Error(`Session not active: ${key}`);
+    }
+
+    const commandType = typeof message.type === "string" ? message.type : "unknown";
+    if (this.shouldQueueCompact(active, commandType)) {
+      this.enqueueCompact(key, message, requestId);
+      return;
     }
 
     await this.runtimeCommandCoordinator.forwardClientCommand(key, message, requestId, (command) =>

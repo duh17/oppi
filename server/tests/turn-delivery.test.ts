@@ -292,25 +292,150 @@ describe("turn delivery idempotency", () => {
     );
   });
 
-  it("rejects compact and navigate_tree while session is busy", async () => {
+  it("queues compact while busy and runs it after agent_settled", async () => {
+    const { manager, events, sdkBackend, session } = makeManagerHarness("busy");
+
+    await manager.forwardClientCommand(
+      "s1",
+      { type: "compact", customInstructions: "keep the test evidence" },
+      "req-compact-busy",
+    );
+
+    expect(sdkBackend.session.compact).not.toHaveBeenCalled();
+    expect(asRpcResults(events)).toHaveLength(0);
+
+    (
+      manager as unknown as { handlePiEvent: (sessionKey: string, data: unknown) => void }
+    ).handlePiEvent("s1", { type: "agent_settled" });
+
+    expect(session.status).toBe("ready");
+    expect(sdkBackend.session.compact).toHaveBeenCalledOnce();
+    expect(sdkBackend.session.compact).toHaveBeenCalledWith("keep the test evidence");
+    await vi.waitFor(() => {
+      const compactResult = asRpcResults(events).find(
+        (event) => event.requestId === "req-compact-busy",
+      );
+      expect(compactResult?.success).toBe(true);
+    });
+  });
+
+  it("queues compact when SDK streaming state is newer than stored status", async () => {
+    const { manager, events, sdkBackend } = makeManagerHarness("ready");
+    (sdkBackend as { isStreaming: boolean }).isStreaming = true;
+
+    await manager.forwardClientCommand(
+      "s1",
+      { type: "compact" },
+      "req-compact-stale-ready",
+    );
+
+    expect(sdkBackend.session.compact).not.toHaveBeenCalled();
+
+    (sdkBackend as { isStreaming: boolean }).isStreaming = false;
+    (
+      manager as unknown as { handlePiEvent: (sessionKey: string, data: unknown) => void }
+    ).handlePiEvent("s1", { type: "agent_settled" });
+
+    expect(sdkBackend.session.compact).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(
+        asRpcResults(events).find((event) => event.requestId === "req-compact-stale-ready")
+          ?.success,
+      ).toBe(true);
+    });
+  });
+
+  it("queues compact while automatic compaction is part of the active turn", async () => {
+    const { manager, events, sdkBackend } = makeManagerHarness("busy");
+    (sdkBackend as { isStreaming: boolean }).isStreaming = true;
+    (sdkBackend as { isCompacting: boolean }).isCompacting = true;
+
+    await manager.forwardClientCommand("s1", { type: "compact" }, "req-compact-auto");
+    expect(sdkBackend.session.compact).not.toHaveBeenCalled();
+
+    (sdkBackend as { isStreaming: boolean }).isStreaming = false;
+    (sdkBackend as { isCompacting: boolean }).isCompacting = false;
+    (
+      manager as unknown as { handlePiEvent: (sessionKey: string, data: unknown) => void }
+    ).handlePiEvent("s1", { type: "agent_settled" });
+
+    expect(sdkBackend.session.compact).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(
+        asRpcResults(events).find((event) => event.requestId === "req-compact-auto")?.success,
+      ).toBe(true);
+    });
+  });
+
+  it("fails a queued compact if the session ends before settling", async () => {
     const { manager, events, sdkBackend } = makeManagerHarness("busy");
 
-    await manager.forwardClientCommand("s1", { type: "compact" }, "req-compact-busy");
+    await manager.forwardClientCommand(
+      "s1",
+      { type: "compact" },
+      "req-compact-ended",
+    );
+
+    await (
+      manager as unknown as {
+        handleSessionEnd: (key: string, reason: string) => Promise<void>;
+      }
+    ).handleSessionEnd("s1", "test session ended");
+
+    expect(sdkBackend.session.compact).not.toHaveBeenCalled();
+    const result = asRpcResults(events).find((event) => event.requestId === "req-compact-ended");
+    expect(result?.success).toBe(false);
+    expect(result?.error).toContain("Session ended before queued compact could run");
+    expect(manager.isActive("s1")).toBe(false);
+  });
+
+  it("rejects idle-only commands while manual compaction is already running", async () => {
+    const { manager, events, sdkBackend } = makeManagerHarness("ready");
+    (sdkBackend as { isCompacting: boolean }).isCompacting = true;
+
+    await manager.forwardClientCommand("s1", { type: "compact" }, "req-compact-duplicate");
+    await manager.forwardClientCommand(
+      "s1",
+      { type: "navigate_tree", targetId: "entry-1" },
+      "req-tree-compacting",
+    );
+
+    expect(sdkBackend.session.compact).not.toHaveBeenCalled();
+    for (const requestId of ["req-compact-duplicate", "req-tree-compacting"]) {
+      const result = asRpcResults(events).find((event) => event.requestId === requestId);
+      expect(result?.success).toBe(false);
+      expect(result?.error).toContain("requires an idle session");
+    }
+  });
+
+  it("resumes queued compact even if settled-state persistence fails", async () => {
+    const { manager, sdkBackend } = makeManagerHarness("busy");
+
+    await manager.forwardClientCommand("s1", { type: "compact" }, "req-compact-persist-fail");
+    vi.spyOn(
+      manager as unknown as { persistSessionNow: (key: string, session: Session) => void },
+      "persistSessionNow",
+    ).mockImplementation(() => {
+      throw new Error("settled persistence failed");
+    });
+
+    (
+      manager as unknown as { handlePiEvent: (sessionKey: string, data: unknown) => void }
+    ).handlePiEvent("s1", { type: "agent_settled" });
+
+    expect(sdkBackend.session.compact).toHaveBeenCalledOnce();
+  });
+
+  it("still rejects navigate_tree while the session is busy", async () => {
+    const { manager, events } = makeManagerHarness("busy");
+
     await manager.forwardClientCommand(
       "s1",
       { type: "navigate_tree", targetId: "entry-1" },
       "req-tree-busy",
     );
 
-    expect(sdkBackend.session.compact).not.toHaveBeenCalled();
-
-    const compactResult = asRpcResults(events).find(
-      (event) => event.requestId === "req-compact-busy",
-    );
     const treeResult = asRpcResults(events).find((event) => event.requestId === "req-tree-busy");
-
-    expect(compactResult?.success).toBe(false);
-    expect(compactResult?.error).toContain("compact requires an idle session");
     expect(treeResult?.success).toBe(false);
     expect(treeResult?.error).toContain("navigate_tree requires an idle session");
   });

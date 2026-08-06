@@ -57,6 +57,7 @@ export interface SessionAgentEventCoordinatorDeps {
   resetIdleTimer: (key: string) => void;
   markQueuedMessageStarted?: (key: string, message: PiMessage) => void;
   schedulePostCompactionQueueFlush?: (key: string) => void;
+  resumeQueuedCompactions?: (key: string) => void;
   dataDir?: string;
   trustedAttachmentSourceRoots?: string[];
 }
@@ -252,7 +253,15 @@ export class SessionAgentEventCoordinator {
       this.deps.turnCoordinator.markNextTurnStarted(key, active);
     }
 
-    this.deps.eventProcessor.updateSessionFromEvent(key, active, event);
+    try {
+      this.deps.eventProcessor.updateSessionFromEvent(key, active, event);
+    } finally {
+      // Pi settlement is authoritative even if projection persistence fails.
+      // Do not strand a compact that was accepted during the active turn.
+      if (event.type === "agent_settled") {
+        this.deps.resumeQueuedCompactions?.(key);
+      }
+    }
 
     if (event.type === "agent_end") {
       this.deps.stopCoordinator.finishPendingStopOnAgentEnd(key, active);

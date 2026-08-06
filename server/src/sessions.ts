@@ -463,6 +463,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     reason: string,
     stopConfirmationReason?: string,
   ): Promise<void> {
+    this.commandCoordinator.cancelQueuedCompactions(key);
     return this.lifecycleCoordinator.handleSessionEnd(key, reason, stopConfirmationReason);
   }
 

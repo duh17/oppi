@@ -241,6 +241,7 @@ export function createSessionCoordinatorBundle(
       queueCoordinator.markQueuedMessageStarted(key, message),
     schedulePostCompactionQueueFlush: (key) =>
       queueCoordinator.schedulePostCompactionQueueFlush(key),
+    resumeQueuedCompactions: (key) => commandCoordinator.resumeQueuedCompactions(key),
     dataDir: deps.storage.getDataDir(),
     trustedAttachmentSourceRoots: trustedSessionAttachmentSourceRoots(),
   });
