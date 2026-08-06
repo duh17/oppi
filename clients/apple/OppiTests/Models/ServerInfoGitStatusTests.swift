@@ -198,13 +198,14 @@ struct ServerInfoTests {
         )
 
         #expect(quotas.providerBadges(for: "anthropic").isEmpty)
-        #expect(makeProviderQuota(authenticated: false).providerBadges.isEmpty)
-        #expect(quotas.providerBadges(for: "openai-codex") == [
-            .init(label: "5h 62%", tone: .green),
-            .init(label: "7d 18%", tone: .red),
+        #expect(makeProviderQuota(authenticated: false).providerBadges().isEmpty)
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        #expect(quotas.providerBadges(for: "openai-codex", relativeTo: now) == [
+            .init(label: "5h 62% · now", accessibilityLabel: "5h 62%, resets now", tone: .green),
+            .init(label: "7d 18% · now", accessibilityLabel: "7d 18%, resets now", tone: .red),
         ])
-        #expect(quotas.providerBadges(for: "xai") == [
-            .init(label: "7d 76%", tone: .green),
+        #expect(quotas.providerBadges(for: "xai", relativeTo: now) == [
+            .init(label: "7d 76% · now", accessibilityLabel: "7d 76%, resets now", tone: .green),
         ])
     }
 
@@ -212,6 +213,47 @@ struct ServerInfoTests {
         #expect(ProviderQuota.badgeTone(for: 80) == .green)
         #expect(ProviderQuota.badgeTone(for: 50) == .orange)
         #expect(ProviderQuota.badgeTone(for: 20) == .red)
+    }
+
+    @Test func providerQuotaBadgesIncludeCompactResetCountdowns() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let quota = makeProviderQuota(
+            authenticated: true,
+            windows: [
+                makeQuotaWindow(remainingPercent: 62, resetAt: 1_700_008_100),
+                makeQuotaWindow(
+                    key: "weekly",
+                    shortLabel: "7d",
+                    remainingPercent: 18,
+                    resetAt: 1_700_273_600
+                ),
+            ]
+        )
+
+        #expect(quota.providerBadges(relativeTo: now) == [
+            .init(label: "5h 62% · 2h 15m", accessibilityLabel: "5h 62%, resets in 2 hours 15 minutes", tone: .green),
+            .init(label: "7d 18% · 3d 4h", accessibilityLabel: "7d 18%, resets in 3 days 4 hours", tone: .red),
+        ])
+    }
+
+    @Test func providerQuotaResetCountdownHandlesBoundariesAndMissingDates() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let quota = makeProviderQuota(
+            authenticated: true,
+            windows: [
+                makeQuotaWindow(key: "elapsed", shortLabel: "1h", remainingPercent: 90, resetAt: 1_699_999_999),
+                makeQuotaWindow(key: "seconds", shortLabel: "1h", remainingPercent: 80, resetAt: 1_700_000_030),
+                makeQuotaWindow(key: "hour", shortLabel: "5h", remainingPercent: 70, resetAt: 1_700_003_600),
+                makeQuotaWindow(key: "missing", shortLabel: "7d", remainingPercent: 60, resetAt: nil),
+            ]
+        )
+
+        #expect(quota.providerBadges(relativeTo: now).map(\.label) == [
+            "1h 90% · now",
+            "1h 80% · 1m",
+            "5h 70% · 1h",
+            "7d 60%",
+        ])
     }
 
     private func makeServerInfo(uptime: Int = 0, os: String = "darwin", arch: String = "arm64") -> ServerInfo {
@@ -260,7 +302,8 @@ struct ServerInfoTests {
         title: String? = nil,
         limitWindowSeconds: Int? = 5 * 60 * 60,
         remainingPercent: Double,
-        includeWeekdayInReset: Bool = false
+        includeWeekdayInReset: Bool = false,
+        resetAt: Int? = 1_700_000_000
     ) -> ProviderQuota.Window {
         ProviderQuota.Window(
             key: key,
@@ -269,7 +312,7 @@ struct ServerInfoTests {
             usedPercent: 100 - remainingPercent,
             remainingPercent: remainingPercent,
             limitWindowSeconds: limitWindowSeconds,
-            resetAt: 1_700_000_000,
+            resetAt: resetAt,
             includeWeekdayInReset: includeWeekdayInReset
         )
     }

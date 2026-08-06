@@ -95,8 +95,11 @@ struct ProviderQuotasInfo: Codable, Sendable, Equatable {
         }
     }
 
-    func providerBadges(for provider: String) -> [ProviderQuota.ProviderBadge] {
-        quota(forProviderId: provider)?.providerBadges ?? []
+    func providerBadges(
+        for provider: String,
+        relativeTo now: Date = Date()
+    ) -> [ProviderQuota.ProviderBadge] {
+        quota(forProviderId: provider)?.providerBadges(relativeTo: now) ?? []
     }
 }
 
@@ -145,7 +148,14 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
 
     struct ProviderBadge: Sendable, Equatable {
         let label: String
+        let accessibilityLabel: String
         let tone: BadgeTone
+    }
+
+    private struct ResetCountdown {
+        let compact: String
+        let spoken: String
+        let hasElapsed: Bool
     }
 
     var hasAnyUsageWindow: Bool {
@@ -181,14 +191,86 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
         return .green
     }
 
-    var providerBadges: [ProviderBadge] {
+    func providerBadges(relativeTo now: Date = Date()) -> [ProviderBadge] {
         guard authenticated else { return [] }
         return windows.map { window in
-            ProviderBadge(
-                label: "\(window.shortLabel) \(Int(window.remainingPercent.rounded()))%",
+            let usageLabel = "\(window.shortLabel) \(Int(window.remainingPercent.rounded()))%"
+            guard let resetDate = window.resetDate else {
+                return ProviderBadge(
+                    label: usageLabel,
+                    accessibilityLabel: usageLabel,
+                    tone: Self.badgeTone(for: window.remainingPercent)
+                )
+            }
+
+            let countdown = Self.resetCountdown(from: now, to: resetDate)
+            let resetPhrase = countdown.hasElapsed
+                ? "resets now"
+                : "resets in \(countdown.spoken)"
+            return ProviderBadge(
+                label: "\(usageLabel) · \(countdown.compact)",
+                accessibilityLabel: "\(usageLabel), \(resetPhrase)",
                 tone: Self.badgeTone(for: window.remainingPercent)
             )
         }
+    }
+
+    private static func resetCountdown(from now: Date, to resetDate: Date) -> ResetCountdown {
+        let secondsRemaining = resetDate.timeIntervalSince(now)
+        guard secondsRemaining > 0 else {
+            return ResetCountdown(compact: "now", spoken: "now", hasElapsed: true)
+        }
+
+        let totalMinutes = max(1, Int(ceil(secondsRemaining / 60)))
+        let totalHours = totalMinutes / 60
+        let days = totalHours / 24
+        let hours = totalHours % 24
+        let minutes = totalMinutes % 60
+
+        if days > 0 {
+            return ResetCountdown(
+                compact: hours > 0 ? "\(days)d \(hours)h" : "\(days)d",
+                spoken: joinedDuration(
+                    primaryValue: days,
+                    primaryUnit: "day",
+                    secondaryValue: hours,
+                    secondaryUnit: "hour"
+                ),
+                hasElapsed: false
+            )
+        }
+        if totalHours > 0 {
+            return ResetCountdown(
+                compact: minutes > 0 ? "\(totalHours)h \(minutes)m" : "\(totalHours)h",
+                spoken: joinedDuration(
+                    primaryValue: totalHours,
+                    primaryUnit: "hour",
+                    secondaryValue: minutes,
+                    secondaryUnit: "minute"
+                ),
+                hasElapsed: false
+            )
+        }
+        return ResetCountdown(
+            compact: "\(totalMinutes)m",
+            spoken: "\(totalMinutes) \(pluralized("minute", count: totalMinutes))",
+            hasElapsed: false
+        )
+    }
+
+    private static func joinedDuration(
+        primaryValue: Int,
+        primaryUnit: String,
+        secondaryValue: Int,
+        secondaryUnit: String
+    ) -> String {
+        let primary = "\(primaryValue) \(pluralized(primaryUnit, count: primaryValue))"
+        guard secondaryValue > 0 else { return primary }
+        return "\(primary) \(secondaryValue) \(pluralized(secondaryUnit, count: secondaryValue))"
+    }
+
+    private static func pluralized(_ unit: String, count: Int) -> String {
+        count == 1 ? unit : "\(unit)s"
     }
 }
 

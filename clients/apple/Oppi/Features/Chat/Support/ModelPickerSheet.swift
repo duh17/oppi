@@ -16,6 +16,7 @@ struct ModelPickerSheet: View {
     @State private var searchText = ""
     @State private var collapsedProviders: Set<String> = []
     @State private var providerQuotas: ProviderQuotasInfo?
+    @State private var quotaReferenceDate = Date()
     @State private var modelLoadError: String?
     private var recentIds: [String] { AppPreferences.RecentModels.load() }
 
@@ -109,7 +110,7 @@ struct ModelPickerSheet: View {
                 }
             }
             .task {
-                // Background refresh — UI already shows cached data
+                // Refresh once whenever the picker opens; cached models keep the initial UI instant.
                 if let api = apiClient {
                     async let refresh: Void = loadModels(api: api)
                     async let usage: Void = loadProviderQuotas(api: api)
@@ -203,8 +204,8 @@ struct ModelPickerSheet: View {
     ) -> some View {
         let isSearchActive = !searchText.isEmpty
         let name = providerDisplayName(provider)
-        let usageBadges = providerQuotaBadges(for: provider)
-        let quotaSummary = usageBadges.map(\.label).joined(separator: ", ")
+        let usageBadges = providerQuotaBadges(for: provider, relativeTo: quotaReferenceDate)
+        let quotaSummary = usageBadges.map(\.accessibilityLabel).joined(separator: ", ")
 
         return Button {
             guard !isSearchActive && hasVisibleModels else { return }
@@ -212,37 +213,44 @@ struct ModelPickerSheet: View {
                 toggleProviderCollapse(provider)
             }
         } label: {
-            HStack(spacing: 6) {
-                ProviderIcon(provider: provider)
-                Text(name)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    ProviderIcon(provider: provider)
+                    Text(name)
 
-                Spacer(minLength: 8)
-
-                if !usageBadges.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(Array(usageBadges.indices), id: \.self) { index in
-                            let badge = usageBadges[index]
-                            StatusPill(
-                                text: badge.label,
-                                tone: tone(for: badge.tone),
-                                emphasis: .tinted,
-                                size: .small,
-                                monospacedDigit: true
-                            )
-                        }
-                    }
-                    .accessibilityHidden(true)
+                    Spacer(minLength: 8)
+                    quotaPills(usageBadges)
+                    providerHeaderControls(
+                        isSearchActive: isSearchActive,
+                        modelCount: modelCount,
+                        hasVisibleModels: hasVisibleModels,
+                        isCollapsed: isCollapsed
+                    )
                 }
 
-                if !isSearchActive {
-                    Text("\(modelCount)")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.themeComment)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        ProviderIcon(provider: provider)
+                        Text(name)
 
-                    if hasVisibleModels {
-                        Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.themeComment)
+                        Spacer(minLength: 8)
+                        providerHeaderControls(
+                            isSearchActive: isSearchActive,
+                            modelCount: modelCount,
+                            hasVisibleModels: hasVisibleModels,
+                            isCollapsed: isCollapsed
+                        )
+                    }
+                    if !usageBadges.isEmpty {
+                        ViewThatFits(in: .horizontal) {
+                            quotaPills(usageBadges)
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(usageBadges.indices), id: \.self) { index in
+                                    quotaPill(usageBadges[index])
+                                }
+                            }
+                            .accessibilityHidden(true)
+                        }
                     }
                 }
             }
@@ -258,6 +266,45 @@ struct ModelPickerSheet: View {
             isCollapsed: isCollapsed,
             quotaSummary: quotaSummary
         ))
+    }
+
+    private func quotaPills(_ badges: [ProviderQuota.ProviderBadge]) -> some View {
+        HStack(spacing: 4) {
+            ForEach(Array(badges.indices), id: \.self) { index in
+                quotaPill(badges[index])
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func quotaPill(_ badge: ProviderQuota.ProviderBadge) -> some View {
+        StatusPill(
+            text: badge.label,
+            tone: tone(for: badge.tone),
+            emphasis: .tinted,
+            size: .small,
+            monospacedDigit: true
+        )
+    }
+
+    @ViewBuilder
+    private func providerHeaderControls(
+        isSearchActive: Bool,
+        modelCount: Int,
+        hasVisibleModels: Bool,
+        isCollapsed: Bool
+    ) -> some View {
+        if !isSearchActive {
+            Text("\(modelCount)")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.themeComment)
+
+            if hasVisibleModels {
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+            }
+        }
     }
 
     private func providerHeaderAccessibilityLabel(
@@ -292,13 +339,17 @@ struct ModelPickerSheet: View {
     private func loadProviderQuotas(api: APIClient) async {
         do {
             providerQuotas = try await api.fetchProviderQuotas()
+            quotaReferenceDate = Date()
         } catch {
             // Keep picker lightweight; missing quota data should not block model selection.
         }
     }
 
-    private func providerQuotaBadges(for provider: String) -> [ProviderQuota.ProviderBadge] {
-        providerQuotas?.providerBadges(for: provider) ?? []
+    private func providerQuotaBadges(
+        for provider: String,
+        relativeTo now: Date
+    ) -> [ProviderQuota.ProviderBadge] {
+        providerQuotas?.providerBadges(for: provider, relativeTo: now) ?? []
     }
 
     private func tone(for tone: ProviderQuota.BadgeTone) -> StatusPillTone {
