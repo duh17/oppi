@@ -112,6 +112,17 @@ describe("CLI agent access policy", () => {
     });
   });
 
+  it("keeps agent watch help on the bounded wait surface", () => {
+    expect(classifyCliAgentCommand(["session", "watch", "help"])).toMatchObject({
+      ok: true,
+      invocation: { args: ["session", "wait", "help"], path: ["session", "wait"], isHelp: true },
+    });
+    expect(classifyCliAgentCommand(["session", "watch", "--help"])).toMatchObject({
+      ok: true,
+      invocation: { args: ["session", "wait", "--help"], path: ["session", "wait"], isHelp: true },
+    });
+  });
+
   it.each([
     ["session", "watch", "sess-1", "sess-2"],
     ["session", "watch", "sess-1", "--all"],

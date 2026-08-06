@@ -73,6 +73,7 @@ import {
 } from "./cli/help.js";
 import { isNpmVersionNewer } from "./cli/npm-version.js";
 import { cmdConfig } from "./cli/commands/config.js";
+import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   const dataDir = storage.getDataDir();
@@ -1047,16 +1048,14 @@ function cmdHelp(path: string[] = [], jsonOutput = false): void {
   if (!topic) {
     const label = path.length > 0 ? path.join(" ") : "help";
     if (jsonOutput) {
-      process.stdout.write(
-        JSON.stringify({ ok: false, error: { message: `No help topic for ${label}` } }, null, 2) +
-          "\n",
-      );
-      process.exitCode = 1;
+      writeJsonEnvelope({ ok: false, error: { message: `No help topic for ${label}` } });
+      setCapturedCliExitCode(1);
       return;
     }
     console.log(c.red(`No help topic for ${label}`));
     console.log(c.dim("Run 'oppi help' for top-level usage."));
-    process.exit(1);
+    setCapturedCliExitCode(1);
+    return;
   }
 
   writeCliHelpOutput(topic, jsonOutput);
@@ -1064,8 +1063,9 @@ function cmdHelp(path: string[] = [], jsonOutput = false): void {
 
 // ─── Main ───
 
-async function main(): Promise<void> {
-  const { command, flags, positional } = parseCliArgs(process.argv.slice(2));
+export async function runCliMain(args: readonly string[] = process.argv.slice(2)): Promise<void> {
+  const invocationArgs = [...args];
+  const { command, flags, positional } = parseCliArgs(invocationArgs);
 
   if (isNestedHelpRequest(command, positional, flags)) {
     cmdHelp(helpPathFor(command, positional), flags.json === "true");
@@ -1117,7 +1117,7 @@ async function main(): Promise<void> {
     case "schedule":
     case "skill":
     case "wait":
-      await runCli(process.argv.slice(2));
+      await runCli(invocationArgs);
       break;
 
     case "doctor":
@@ -1139,7 +1139,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error(c.red("Fatal error:"), safeErrorMessage(err));
-  process.exit(1);
-});
+if (import.meta.main) {
+  runCliMain().catch((err) => {
+    console.error(c.red("Fatal error:"), safeErrorMessage(err));
+    process.exit(1);
+  });
+}

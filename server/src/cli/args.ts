@@ -15,7 +15,7 @@ export function parseCliArgs(args: string[]): ParsedCliArgs {
     if (!arg) continue;
     if (parseFlags && arg === "--") {
       parseFlags = false;
-    } else if (parseFlags && arg === "-h") {
+    } else if (parseFlags && (arg === "-h" || arg === "--help")) {
       if (Object.hasOwn(flags, "help")) throw new Error("Duplicate flag: --help");
       flags.help = "true";
     } else if (parseFlags && arg.startsWith("--")) {
@@ -35,5 +35,7 @@ export function parseCliArgs(args: string[]): ParsedCliArgs {
 }
 
 export function isHelpFlag(flags: Record<string, string>): boolean {
-  return flags.help === "true" || flags.h === "true";
+  return Object.keys(flags).some(
+    (name) => name === "help" || name === "h" || name.startsWith("help=") || name.startsWith("h="),
+  );
 }

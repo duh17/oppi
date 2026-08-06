@@ -22,6 +22,7 @@ function successfulRun(): CliRunResult {
 }
 
 type RegisteredTool = {
+  promptGuidelines?: string[];
   execute: (
     toolCallId: string,
     params: unknown,
@@ -53,6 +54,22 @@ afterEach(() => {
 });
 
 describe("Oppi agent Oppi tool", () => {
+  it("routes session questions by intent without forcing unnecessary disclosure calls", () => {
+    const oppi = registeredTools().get("oppi");
+    if (!oppi) throw new Error("Oppi tool was not registered");
+
+    const guidance = oppi.promptGuidelines?.join(" ") ?? "";
+    expect(guidance).toContain(
+      "latest response uses session inspect <id> --view response directly",
+    );
+    expect(guidance).toContain("current progress uses session inspect <id> --view summary");
+    expect(guidance).toContain("session inspect <id> --view outline");
+    expect(guidance).toContain("bounded session messages or tools");
+    expect(guidance).toContain("session wait for bounded monitoring");
+    expect(guidance).toContain("session dialogs");
+    expect(guidance).not.toContain("start with session inspect <id> --view summary");
+  });
+
   it("always registers oppi and ask and uses the saved read-only policy", async () => {
     const tools = registeredTools("readOnly");
     // Control identity registers oppi, docs-only read, and ask (no host builtins).

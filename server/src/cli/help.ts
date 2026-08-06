@@ -1654,6 +1654,10 @@ const HELP_TOPICS: HelpTopic[] = [
   },
 ];
 
+export function listCliHelpTopicPaths(): readonly string[][] {
+  return HELP_TOPICS.map((topic) => [...topic.path]);
+}
+
 export function resolveHelpTopic(path: CliHelpPath): HelpTopic | undefined {
   const normalized = [...path].map((part) => part.toLowerCase()).filter(Boolean);
   return HELP_TOPICS.find((topic) => samePath(topic.path, normalized));
@@ -1663,28 +1667,63 @@ export function helpTopicToJson(topic: HelpTopic): HelpJsonTopic {
   return JSON.parse(JSON.stringify(topic)) as HelpJsonTopic;
 }
 
+function helpTokenIndex(positional: readonly string[]): number {
+  return positional.findIndex((part) => part.trim().toLowerCase() === "help");
+}
+
 export function isNestedHelpRequest(
   command: string,
   positional: readonly string[],
   flags: Record<string, string>,
 ): boolean {
-  if (command === "help" || command === "--help" || command === "-h") return true;
-  return isHelpFlag(flags) || positional[0] === "help";
+  const normalizedCommand = command.trim().toLowerCase();
+  if (
+    normalizedCommand === "help" ||
+    normalizedCommand === "--help" ||
+    normalizedCommand === "-h"
+  ) {
+    return true;
+  }
+  // Treat a bare `help` token at any positional depth as discovery. This check must run
+  // before dispatch so ignored arguments can never turn a help request into a mutation.
+  return isHelpFlag(flags) || helpTokenIndex(positional) !== -1;
 }
 
 export function helpPathFor(command: string, positional: readonly string[]): string[] {
+  const normalizedCommand = command.trim().toLowerCase();
   let path: string[];
-  if (command === "help" || command === "--help" || command === "-h") {
-    path = positional.filter((part) => part !== "help");
-  } else if (positional[0] === "help") {
-    path = [command, ...positional.slice(1)];
+  if (
+    normalizedCommand === "help" ||
+    normalizedCommand === "--help" ||
+    normalizedCommand === "-h"
+  ) {
+    path = positional.filter((part) => part.trim().toLowerCase() !== "help");
   } else {
-    path = [command, ...positional.filter((part) => part !== "help")];
+    const tokenIndex = helpTokenIndex(positional);
+    if (tokenIndex === 0) {
+      // Support both `noun help verb` and `noun verb help` spellings.
+      path = [
+        command,
+        ...positional.slice(1).filter((part) => part.trim().toLowerCase() !== "help"),
+      ];
+    } else if (tokenIndex > 0) {
+      path = [command, ...positional.slice(0, tokenIndex)];
+    } else {
+      path = [command, ...positional.filter((part) => part.trim().toLowerCase() !== "help")];
+    }
   }
 
   if (path[0] === "workspace" && path[1] === "remove") path[1] = "delete";
-  if (path[0] === "session" && path[1] === "watch") path[1] = "wait";
-  return path;
+  if (path[0] === "session" && path[1] === "start") path[1] = "create";
+
+  // Ignore trailing positionals once help has been requested, but keep the longest
+  // known topic so `noun verb ignored help` cannot fall into a mutating handler.
+  const originalPath = [...path];
+  const rootTopic = path[0] ? resolveHelpTopic([path[0]]) : undefined;
+  while (path.length > 1 && !resolveHelpTopic(path)) path.pop();
+  const resolved = resolveHelpTopic(path);
+  if (resolved && (path.length >= 2 || !rootTopic?.subcommands?.length)) return path;
+  return originalPath;
 }
 
 export function writeCliHelpOutput(topic: HelpTopic, jsonOutput: boolean): void {

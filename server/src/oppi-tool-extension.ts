@@ -200,13 +200,12 @@ export function createOppiToolExtensionFactory(options: {
       promptSnippet:
         "Run exposed Oppi CLI commands as JSON for workspaces, worktrees, Agents, Skills, sessions, schedules, and status.",
       promptGuidelines: [
-        "Use oppi for Oppi app state instead of shell or filesystem tools.",
-        "Use oppi read commands before asking the user about discoverable workspace, Agent, Skill, session, schedule, or worktree state.",
-        "Use oppi session search and oppi session inspect for past Oppi session history instead of local JSONL-reading tools.",
-        "Inspect session history progressively: start with session inspect <id> --view summary, then use --view outline; stop there when previews answer the question, otherwise request messages or tools for the smallest relevant turn set.",
-        "Use session trace-outline only when exact entry ids are needed, followed by trace-page --around-entry or tool-output for bounded detail.",
-        "Use oppi session inspect <id> --view response when only the latest assistant response is needed.",
-        "Use Oppi mutation commands only after the user asks for them; the configured policy controls approval.",
+        "Use oppi for Oppi app state instead of shell or filesystem tools, and use read commands before asking about discoverable state.",
+        "Route session questions by intent and take the smallest sufficient step: orientation uses session list; current progress uses session inspect <id> --view summary; latest response uses session inspect <id> --view response directly, without summary or outline first.",
+        "For historical investigation, use session search or session inspect <id> --view outline first, then request only bounded session messages or tools; use trace-outline only when exact entry ids are needed, followed by trace-page or tool-output for the smallest range.",
+        "Use session dialogs to read pending user questions and session respond to answer one; session respond always needs approval.",
+        "Use session wait for bounded monitoring. The CLI session watch stream is not exposed to agents; one-session watch requests normalize to wait, while multi-session, --all, and any-change streaming are denied.",
+        "Use Oppi mutation commands only after the user asks for them; read the current state first and let the configured policy control approval.",
       ],
       parameters: Type.Object({
         args: Type.Array(Type.String(), {
