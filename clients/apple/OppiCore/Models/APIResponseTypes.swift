@@ -5,10 +5,21 @@ import Foundation
 struct PairDeviceRequest: Encodable {
     let pairingToken: String
     let deviceName: String?
+    let clientNodeId: String?
 }
 
 struct PairDeviceResponse: Decodable {
     let deviceToken: String
+    let credentialTransports: [CredentialTransport]?
+
+    init(deviceToken: String, credentialTransports: [CredentialTransport]? = nil) {
+        self.deviceToken = deviceToken
+        self.credentialTransports = credentialTransports
+    }
+
+    var credentialGrant: CredentialTransportGrant? {
+        credentialTransports.map(CredentialTransportGrant.init)
+    }
 }
 
 // MARK: - Workspace Request Types
@@ -204,15 +215,35 @@ struct SessionSearchResult: Decodable, Sendable, Identifiable {
 
 // MARK: - Errors
 
-enum APIError: LocalizedError {
+enum TunnelAuthenticationErrorCode: String, Decodable, Sendable, Equatable {
+    case missingBearer = "missing_bearer"
+    case unknownToken = "unknown_token"
+    case forbiddenTransport = "forbidden_transport"
+    case bindingMissing = "binding_missing"
+    case bindingMismatch = "binding_mismatch"
+}
+
+extension TunnelAuthenticationErrorCode {
+    var removesIrohCredentialGrant: Bool {
+        switch self {
+        case .forbiddenTransport, .bindingMissing, .bindingMismatch:
+            true
+        case .missingBearer, .unknownToken:
+            false
+        }
+    }
+}
+
+enum APIError: LocalizedError, Sendable {
     case invalidResponse
     case server(status: Int, message: String)
+    case codedServer(status: Int, message: String, code: TunnelAuthenticationErrorCode)
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
             return "Invalid server response"
-        case .server(_, let message):
+        case .server(_, let message), .codedServer(_, let message, _):
             return UserFacingErrorText.normalize(message)
         }
     }

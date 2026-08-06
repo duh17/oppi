@@ -68,15 +68,23 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return;
     }
 
-    const body = await helpers.parseBody<{ pairingToken?: string }>(req);
+    const body = await helpers.parseBody<{ pairingToken?: string; clientNodeId?: string }>(req);
     const pairingToken = typeof body.pairingToken === "string" ? body.pairingToken.trim() : "";
+    const clientNodeId =
+      typeof body.clientNodeId === "string" && body.clientNodeId.trim().length > 0
+        ? body.clientNodeId.trim()
+        : undefined;
 
     if (!pairingToken) {
       helpers.error(res, 400, "pairingToken required");
       return;
     }
 
-    const pairing = handleIrohPairingRequest(ctx.storage, { pairingToken });
+    const pairing = handleIrohPairingRequest(
+      ctx.storage,
+      { pairingToken, clientNodeId },
+      { transport: "http" },
+    );
     if (!pairing.ok) {
       if (pairing.status === 401) {
         recordPairingFailure(source, now);
@@ -86,7 +94,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
 
     clearPairingFailures(source);
-    helpers.json(res, { deviceToken: pairing.deviceToken });
+    helpers.json(res, {
+      deviceToken: pairing.deviceToken,
+      credentialTransports: pairing.credentialTransports,
+    });
   }
 
   function handleGetMe(res: ServerResponse): void {

@@ -10,6 +10,7 @@ struct IrohInvitePairingClientTests {
             "kind": "pairResponse",
             "ok": true,
             "deviceToken": "dt_iroh",
+            "credentialTransports": [.string("http"), .string("iroh")],
         ])
         let transport = RecordingPairingTransport(response: response)
         let client = RealIrohInvitePairingClient(transport: transport)
@@ -21,7 +22,10 @@ struct IrohInvitePairingClientTests {
         )
         let request = try await transport.decodedRequest()
 
-        #expect(result == .success(deviceToken: "dt_iroh"))
+        #expect(result == .success(
+            deviceToken: "dt_iroh",
+            credentialTransports: [.http, .iroh]
+        ))
         #expect(request.header["kind"] == "pairRequest")
         #expect(request.header["pairingToken"] == "pt_invite")
         #expect(request.header["deviceName"] == "Duh Ifone")

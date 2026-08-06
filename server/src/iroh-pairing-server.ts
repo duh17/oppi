@@ -364,10 +364,17 @@ async function handleIncomingPairing(
     }
 
     const response = handleIrohPairingRequest(storage, request, {
+      transport: "iroh",
       clientNodeId: conn.remoteId().toString(),
     });
     const responsePayload = response.ok
-      ? { v: 1, kind: "pairResponse", ok: true, deviceToken: response.deviceToken }
+      ? {
+          v: 1,
+          kind: "pairResponse",
+          ok: true,
+          deviceToken: response.deviceToken,
+          credentialTransports: response.credentialTransports,
+        }
       : { v: 1, kind: "pairResponse", ok: false, status: response.status, error: response.error };
 
     await stream.send.writeAll(Array.from(encodeIrohPairingFrame(responsePayload)));
@@ -412,6 +419,12 @@ function bearerFromAuthorization(value: string): string | undefined {
 async function writeTunnelHttpError(
   stream: IrohBiStream,
   status: 400 | 401 | 403 | 503,
+  code?:
+    | "missing_bearer"
+    | "unknown_token"
+    | "forbidden_transport"
+    | "binding_missing"
+    | "binding_mismatch",
 ): Promise<void> {
   const reason =
     status === 400
@@ -421,7 +434,12 @@ async function writeTunnelHttpError(
         : status === 403
           ? "Forbidden"
           : "Service Unavailable";
-  const body = Buffer.from(JSON.stringify({ error: reason.toLowerCase().replaceAll(" ", "_") }));
+  const body = Buffer.from(
+    JSON.stringify({
+      error: reason.toLowerCase().replaceAll(" ", "_"),
+      ...(code ? { code } : {}),
+    }),
+  );
   const response = Buffer.from(
     `HTTP/1.1 ${status} ${reason}\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
     "utf8",
@@ -529,13 +547,15 @@ async function handleTunnelStream(
   const bearerToken = bearerFromAuthorization(preface.authorization);
   if (!bearerToken) {
     log.warn("iroh_tunnel.auth_rejected", { clientNodeId, code: "missing_bearer" });
-    await writeTunnelHttpError(stream, 401).catch(() => {});
+    await writeTunnelHttpError(stream, 401, "missing_bearer").catch(() => {});
     return;
   }
   const auth = storage.validateIrohDeviceToken(bearerToken, clientNodeId);
   if (!auth.ok) {
     log.warn("iroh_tunnel.auth_rejected", { clientNodeId, code: auth.code });
-    await writeTunnelHttpError(stream, auth.code === "unknown_token" ? 401 : 403).catch(() => {});
+    await writeTunnelHttpError(stream, auth.code === "unknown_token" ? 401 : 403, auth.code).catch(
+      () => {},
+    );
     return;
   }
 

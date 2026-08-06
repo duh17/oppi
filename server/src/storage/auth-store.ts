@@ -10,8 +10,13 @@ type PairingTokenOptions = {
 };
 
 type ConsumePairingTokenOptions = {
+  transport: AuthTransport;
   irohClientNodeId?: string;
-  allowedTransports?: AuthTransport[];
+};
+
+export type IssuedDeviceCredential = {
+  deviceToken: string;
+  credentialTransports: AuthTransport[];
 };
 
 export type IrohTokenValidationResult =
@@ -132,7 +137,10 @@ export class AuthStore {
   }
 
   /** Consume pairing token atomically and issue a long-lived auth device token. */
-  consumePairingToken(candidate: string, options?: ConsumePairingTokenOptions): string | null {
+  consumePairingToken(
+    candidate: string,
+    options: ConsumePairingTokenOptions,
+  ): IssuedDeviceCredential | null {
     // Reload from disk in case `oppi pair` wrote a token in another process.
     this.reloadPairingFromDisk();
 
@@ -153,11 +161,23 @@ export class AuthStore {
       return null;
     }
 
-    const requestedTransport: AuthTransport = options?.irohClientNodeId ? "iroh" : "http";
     const pairingAllowedTransports = normalizeAuthTransports(config.pairingTokenAllowedTransports);
-    if (pairingAllowedTransports && !pairingAllowedTransports.includes(requestedTransport)) {
+    const authorizedTransports = pairingAllowedTransports ?? [options.transport];
+    if (!authorizedTransports.includes(options.transport)) {
       return null;
     }
+    if (options.irohClientNodeId && !authorizedTransports.includes("iroh")) {
+      return null;
+    }
+    if (options.transport === "iroh" && !options.irohClientNodeId) {
+      return null;
+    }
+
+    // An HTTP-issued credential without a node binding cannot authenticate over
+    // Iroh. Return only grants the issued credential can actually exercise.
+    const credentialTransports = options.irohClientNodeId
+      ? authorizedTransports
+      : authorizedTransports.filter((transport) => transport !== "iroh");
 
     let deviceToken = AuthStore.generateAuthDeviceToken();
     const existing = new Set(config.authDeviceTokens || []);
@@ -172,10 +192,7 @@ export class AuthStore {
       pairingTokenAllowedTransports: undefined,
     };
 
-    if (options?.irohClientNodeId) {
-      const allowedTransports = pairingAllowedTransports ??
-        normalizeAuthTransports(options.allowedTransports) ?? ["iroh", "http"];
-
+    if (options.irohClientNodeId) {
       const existingBindings = config.irohDeviceTokenBindings || [];
       this.configStore.updateConfig({
         ...updates,
@@ -184,7 +201,7 @@ export class AuthStore {
           {
             token: deviceToken,
             clientNodeId: options.irohClientNodeId,
-            allowedTransports,
+            allowedTransports: credentialTransports,
             createdAt: Date.now(),
           },
         ],
@@ -193,7 +210,7 @@ export class AuthStore {
       this.configStore.updateConfig(updates);
     }
 
-    return deviceToken;
+    return { deviceToken, credentialTransports };
   }
 
   hasAuthToken(candidate: string): boolean {

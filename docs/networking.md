@@ -14,7 +14,7 @@ Each paired server has an Apple route mode:
 | **HTTPS Only** | verified LAN HTTPS → paired HTTPS        |
 | **Iroh Only**  | Iroh                                     |
 
-Automatic is the default. The selected mode can narrow the invite's signed transport set, never expand it. A verified LAN candidate must match the paired server identity and use HTTPS. Plaintext LAN HTTP is never selected.
+Automatic is the default. The selected mode can narrow the invite's signed transport set, never expand it. The server-issued device credential also carries an explicit transport grant. Effective candidates are the signed authorization intersected with that credential grant and the selected mode. A verified LAN candidate must match the paired server identity and use HTTPS. Plaintext LAN HTTP is never selected.
 
 ```mermaid
 flowchart LR
@@ -31,7 +31,9 @@ flowchart LR
 
 A working installed route stays in use when it has current health evidence. That evidence is a recent authenticated HTTP success, a focused or app-event stream that has reconnected and passed its heartbeat policy, or successful in-place Iroh foreground recovery with selected-path evidence.
 
-When a route has no current health evidence, the client evaluates its allowed candidates in mode order under a bounded bootstrap deadline. An availability failure excludes that route only for the current selection pass. The next recovery or retry starts a new pass, so the route becomes eligible again. Route selection does not use readiness leases, readiness IDs, or server-readiness routing. Authentication, TLS identity, signed-peer, ALPN, framing, and protocol failures fail closed; they do not select another route.
+When a route has no current health evidence, the client evaluates its effective candidates in mode order under a bounded bootstrap deadline. An availability failure excludes that route only for the current selection pass. The next recovery or retry starts a new pass, so the route becomes eligible again. Route selection does not use readiness leases, readiness IDs, or server-readiness routing.
+
+Failure scope is explicit. A tunnel `binding_missing`, `binding_mismatch`, or `forbidden_transport` result removes Iroh from that credential's grant and requires re-pairing to restore it; LAN and paired HTTPS recovery remain active. An unknown or revoked credential fails closed for every route. TLS identity, signed-peer, ALPN, framing, and protocol failures stop automatic fallback.
 
 The operation that reported a failure is not replayed after a route change. Transport generations fence in-flight mutations so they cannot retry on another lane.
 
@@ -50,7 +52,9 @@ Before the one non-replayed `POST /pair` mutation, onboarding probes authorized 
 - HTTPS uses bounded read-only `GET /health` probes.
 - Iroh validates its signed metadata and obtains selected-path evidence.
 
-The client sends `/pair` once on the selected route. If its response is lost after dispatch, pairing might have completed; obtain a fresh invite rather than replaying the one-time mutation. After pairing, authenticated bootstrap is retained to test and install normal candidates.
+The client sends `/pair` once on the selected route. For HTTPS pairing that also authorizes Iroh, the request includes the stable Apple Iroh node ID without binding or dialing an endpoint. The server verifies that Iroh is authorized, atomically consumes the pairing token, binds the issued credential to that node ID, and returns the credential's transport grant. An HTTP-issued credential without a node binding is HTTP-only.
+
+If the pairing response is lost after dispatch, pairing might have completed; obtain a fresh invite rather than replaying the one-time mutation. After pairing, authenticated bootstrap is retained to test and install normal candidates.
 
 ## Iroh relay configuration
 

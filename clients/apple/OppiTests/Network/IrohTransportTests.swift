@@ -100,6 +100,84 @@ struct IrohTransportTests {
             .transports.authorizedTransports == [.https, .iroh])
     }
 
+    @Test func persistedHTTPOnlyCredentialGrantRemovesIrohCandidate() throws {
+        let serverJSON = """
+        {
+          "id": "sha256:grant-test",
+          "name": "Grant Test",
+          "host": "server.example.test",
+          "port": 443,
+          "scheme": "https",
+          "token": "dt_http_only",
+          "fingerprint": "sha256:grant-test",
+          "transports": {
+            "preference": "irohPreferred",
+            "iroh": {
+              "version": 2,
+              "nodeId": "signed-node",
+              "alpns": ["oppi/http/1"],
+              "addressMode": "node-id"
+            },
+            "http": {
+              "host": "server.example.test",
+              "port": 443,
+              "scheme": "https"
+            }
+          },
+          "credentialTransports": ["http"],
+          "routeMode": "automatic",
+          "addedAt": 0,
+          "sortOrder": 0
+        }
+        """
+        let server = try JSONDecoder().decode(PairedServer.self, from: Data(serverJSON.utf8))
+
+        #expect(try ServerTransportPlanResolver.candidates(
+            credentials: server.credentials,
+            mode: .automatic,
+            discoveredLANEndpoint: nil
+        ).map(Self.routeKind) == [.paired])
+    }
+
+    @Test func irohOnlyDoesNotEscapeToHTTPWhenCredentialGrantLacksIroh() throws {
+        let serverJSON = """
+        {
+          "id": "sha256:iroh-only-grant-test",
+          "name": "Grant Test",
+          "host": "server.example.test",
+          "port": 443,
+          "scheme": "https",
+          "token": "dt_http_only",
+          "fingerprint": "sha256:iroh-only-grant-test",
+          "transports": {
+            "preference": "irohPreferred",
+            "iroh": {
+              "version": 2,
+              "nodeId": "signed-node",
+              "alpns": ["oppi/http/1"],
+              "addressMode": "node-id"
+            },
+            "http": {
+              "host": "server.example.test",
+              "port": 443,
+              "scheme": "https"
+            }
+          },
+          "credentialTransports": ["http"],
+          "routeMode": "irohOnly",
+          "addedAt": 0,
+          "sortOrder": 0
+        }
+        """
+        let server = try JSONDecoder().decode(PairedServer.self, from: Data(serverJSON.utf8))
+
+        #expect(try ServerTransportPlanResolver.candidates(
+            credentials: server.credentials,
+            mode: server.effectiveRouteMode,
+            discoveredLANEndpoint: nil
+        ).isEmpty)
+    }
+
     @Test func candidateBuilderOrdersAutomaticAndRestrictsExplicitModes() throws {
         let credentials = credentials(
             preference: .irohPreferred,

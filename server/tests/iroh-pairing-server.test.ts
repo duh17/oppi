@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { startIrohHttpLoopback, type RunningIrohHttpLoopback } from "../src/iroh-http-loopback.js";
 import { readIrohInviteState } from "../src/iroh-invite-state.js";
+import { handleIrohPairingRequest } from "../src/iroh-pairing.js";
 import {
   decodeIrohPairingFrame,
   decodeIrohTunnelPreface,
@@ -504,7 +505,11 @@ describe("Iroh endpoint runtime", () => {
     await server.close();
 
     const response = decodeIrohPairingFrame(Uint8Array.from(stream.writes[0] ?? []));
-    expect(response).toMatchObject({ ok: true, deviceToken: expect.stringMatching(/^dt_/) });
+    expect(response).toMatchObject({
+      ok: true,
+      deviceToken: expect.stringMatching(/^dt_/),
+      credentialTransports: ["iroh"],
+    });
     expect(storage.getConfig().irohDeviceTokenBindings?.[0]).toMatchObject({
       token: response.deviceToken,
       clientNodeId: "paired-node",
@@ -512,16 +517,22 @@ describe("Iroh endpoint runtime", () => {
     });
   });
 
-  it("authenticates one preface and pumps raw HTTP through the existing loopback stack", async () => {
-    const pairingToken = storage.issuePairingToken(60_000);
-    const token = storage.consumePairingToken(pairingToken, {
-      irohClientNodeId: "client-node-1",
-      allowedTransports: ["iroh"],
+  it("uses one HTTPS-issued dual-transport credential through the Iroh tunnel", async () => {
+    const pairingToken = storage.issuePairingToken(60_000, {
+      allowedTransports: ["http", "iroh"],
     });
-    if (!token) throw new Error("failed to issue token");
+    const pairing = handleIrohPairingRequest(
+      storage,
+      { pairingToken, clientNodeId: "client-node-1" },
+      { transport: "http" },
+    );
+    if (!pairing.ok) throw new Error("failed to issue token");
+    expect(pairing.credentialTransports).toEqual(["http", "iroh"]);
+
+    const credential = pairing;
 
     const input = Buffer.concat([
-      Buffer.from(encodeIrohTunnelPreface(`Bearer ${token}`)),
+      Buffer.from(encodeIrohTunnelPreface(`Bearer ${credential.deviceToken}`)),
       rawHttpRequest("/through-existing-stack"),
     ]);
     const stream = makeStream(input);
@@ -551,12 +562,12 @@ describe("Iroh endpoint runtime", () => {
 
   it("rejects a valid bearer presented by the wrong Iroh node before opening loopback", async () => {
     const pairingToken = storage.issuePairingToken(60_000);
-    const token = storage.consumePairingToken(pairingToken, {
+    const credential = storage.consumePairingToken(pairingToken, {
+      transport: "iroh",
       irohClientNodeId: "bound-node",
-      allowedTransports: ["iroh"],
     });
-    if (!token) throw new Error("failed to issue token");
-    const stream = makeStream(encodeIrohTunnelPreface(`Bearer ${token}`));
+    if (!credential) throw new Error("failed to issue token");
+    const stream = makeStream(encodeIrohTunnelPreface(`Bearer ${credential.deviceToken}`));
     const connection = makeIncoming({
       alpn: HTTP_ALPN_BYTES,
       streams: [stream],
@@ -573,9 +584,9 @@ describe("Iroh endpoint runtime", () => {
     await server.close();
 
     expect(target.open).not.toHaveBeenCalled();
-    expect(Buffer.concat(stream.writes.map(Buffer.from)).toString("utf8")).toContain(
-      "HTTP/1.1 403 Forbidden",
-    );
+    const response = Buffer.concat(stream.writes.map(Buffer.from)).toString("utf8");
+    expect(response).toContain("HTTP/1.1 403 Forbidden");
+    expect(response).toContain('"code":"binding_mismatch"');
   });
 
   it("bounds handshake, ALPN/connect, pairing stream, and pairing frame stalls", async () => {

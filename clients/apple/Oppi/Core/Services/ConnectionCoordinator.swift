@@ -225,7 +225,7 @@ final class ConnectionCoordinator {
         if prepared?.credentials == nil,
            retryAfterBoundary,
            connections[serverId]?.canAutomaticallyRetryInitialTransport == true {
-            return await ensureConnectionReady(for: server)
+            return await ensureConnectionReady(for: serverStore.server(for: serverId) ?? server)
         }
         return prepared ?? disconnectedSentinel
     }
@@ -337,6 +337,10 @@ final class ConnectionCoordinator {
         routeMode: PairedServerRouteMode,
         preservingPersistentStreams: Bool = false
     ) async -> Bool {
+        let grantObserver: ServerConnectionCredentialGrantObserver = { [weak self] grant in
+            guard let serverId = credentials.normalizedServerFingerprint else { return }
+            self?.serverStore.setCredentialGrant(id: serverId, to: grant)
+        }
         #if DEBUG
         if let factory = _irohProxyFactoryForTesting {
             let bootstrap = _serverInfoBootstrapForTesting ?? { client, deadline in
@@ -351,7 +355,8 @@ final class ConnectionCoordinator {
                     routeMode: routeMode,
                     apiClientFactory: apiFactory,
                     serverInfoBootstrap: bootstrap,
-                    irohProxyFactory: factory
+                    irohProxyFactory: factory,
+                    credentialGrantDidChange: grantObserver
                 )
             }
             return await connection.configureForUse(
@@ -359,19 +364,22 @@ final class ConnectionCoordinator {
                 routeMode: routeMode,
                 apiClientFactory: apiFactory,
                 serverInfoBootstrap: bootstrap,
-                irohProxyFactory: factory
+                irohProxyFactory: factory,
+                credentialGrantDidChange: grantObserver
             )
         }
         #endif
         if preservingPersistentStreams {
             return await connection.reconfigureForExplicitRetry(
                 credentials: credentials,
-                routeMode: routeMode
+                routeMode: routeMode,
+                credentialGrantDidChange: grantObserver
             )
         }
         return await connection.configureForUse(
             credentials: credentials,
-            routeMode: routeMode
+            routeMode: routeMode,
+            credentialGrantDidChange: grantObserver
         )
     }
 

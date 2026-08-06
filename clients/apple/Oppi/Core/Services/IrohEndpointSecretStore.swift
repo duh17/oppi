@@ -8,4 +8,10 @@ enum IrohEndpointSecretStore {
             SecretKey.generate().toBytes()
         }
     }
+
+    /// Derive the stable public node ID without binding an endpoint or dialing.
+    static func clientNodeID() throws -> String {
+        let secret = try SecretKey.fromBytes(bytes: loadOrCreateSecretBytes())
+        return secret.public().description
+    }
 }

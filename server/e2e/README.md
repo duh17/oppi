@@ -45,7 +45,7 @@ This non-skippable harness starts separate server and client containers. They sh
 The client verifies:
 
 1. the Oppi HTTP port is unreachable from the client container;
-2. Iroh-only pairing binds the device token to the client node ID;
+2. Iroh-ALPN pairing still issues an Iroh-only credential, while server-local HTTP pairing binds a separate dual-transport credential to the same real client node ID and authenticates it through Iroh;
 3. one `oppi/http/1` connection carries REST reads and mutations across multiple bi-streams;
 4. file downloads, byte ranges, upload records, and binary upload bodies use existing routes;
 5. focused-session and app-event WebSockets use existing upgrade handlers, reconnect, and use the REST catch-up route;
@@ -76,15 +76,15 @@ The runner accepts the SSH target and peer Tailscale IP only through environment
 
 Relevant feature-story dispositions from `.internal/reports/feature-user-story-status.csv`:
 
-| Story                                      | Isolated server evidence                                                | Disposition                         |
-| ------------------------------------------ | ----------------------------------------------------------------------- | ----------------------------------- |
-| `SERVER-001`                               | Creates a workspace session and opens its focused stream                | Automated                           |
-| `SERVER-014`                               | Focused stream, app-event stream, reconnect, and REST catch-up          | Automated                           |
-| `SERVER-020`                               | Iroh-only one-time pairing, node-bound bearer, invalid-bearer rejection | Automated                           |
-| `SERVER-021`                               | No HTTP shortcut; the normal HTTP/TLS suites remain separate            | Automated server evidence           |
-| `SERVER-023`                               | Dictation start, binary PCM, stop, and deterministic final transcript   | Automated                           |
-| `SERVER-029`                               | Existing file route ownership is exercised by full and ranged reads     | Automated transport evidence        |
-| `IOS-007`, `IOS-054`, `IOS-063`, `IOS-065` | Server transport paths are covered here                                 | Apple Iroh interoperability pending |
+| Story                                      | Isolated server evidence                                                                     | Disposition                         |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `SERVER-001`                               | Creates a workspace session and opens its focused stream                                     | Automated                           |
+| `SERVER-014`                               | Focused stream, app-event stream, reconnect, and REST catch-up                               | Automated                           |
+| `SERVER-020`                               | Iroh-only and HTTP-issued dual credentials, node-bound Iroh bearer, invalid-bearer rejection | Automated                           |
+| `SERVER-021`                               | No HTTP shortcut; the normal HTTP/TLS suites remain separate                                 | Automated server evidence           |
+| `SERVER-023`                               | Dictation start, binary PCM, stop, and deterministic final transcript                        | Automated                           |
+| `SERVER-029`                               | Existing file route ownership is exercised by full and ranged reads                          | Automated transport evidence        |
+| `IOS-007`, `IOS-054`, `IOS-063`, `IOS-065` | Server transport paths are covered here                                                      | Apple Iroh interoperability pending |
 
 ## Running
 

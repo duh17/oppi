@@ -1,5 +1,5 @@
 import { createServer as createHttpServer } from "node:http";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { generateInvite } from "../dist/src/invite.js";
@@ -84,9 +84,9 @@ const server = new Server(storage);
 await server.start();
 const iroh = irohInviteTransportFromState(readIrohInviteState(dataDir));
 if (!iroh) throw new Error("Iroh invite state missing after server readiness");
-const invite = generateInvite(
+const irohPairingInvite = generateInvite(
   storage,
-  () => null,
+  () => "127.0.0.1",
   () => "iroh-isolated-server",
   {
     inviteVersion: 4,
@@ -100,7 +100,7 @@ const temporaryPath = `${exchangePath}.tmp`;
 writeFileSync(
   temporaryPath,
   JSON.stringify({
-    pairingToken: invite.pairingToken,
+    irohPairingToken: irohPairingInvite.pairingToken,
     iroh,
     expectedHttpPort: httpPort,
     workspaceDir,
@@ -108,6 +108,58 @@ writeFileSync(
 );
 renameSync(temporaryPath, exchangePath);
 console.log(JSON.stringify({ event: "iroh_isolated.ready", nodeId: iroh.nodeId }));
+
+const clientNodePath = join(exchangeDir, "client-node.json");
+const clientNodeDeadline = Date.now() + 90_000;
+while (!existsSync(clientNodePath)) {
+  if (Date.now() >= clientNodeDeadline)
+    throw new Error("Timed out waiting for Iroh client node ID");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+const clientNode = JSON.parse(readFileSync(clientNodePath, "utf8")) as { clientNodeId?: unknown };
+if (typeof clientNode.clientNodeId !== "string" || clientNode.clientNodeId.length === 0) {
+  throw new Error("Iroh client node exchange is invalid");
+}
+const invite = generateInvite(
+  storage,
+  () => "127.0.0.1",
+  () => "iroh-isolated-server",
+  {
+    inviteVersion: 4,
+    preference: "irohPreferred",
+    transports: { iroh },
+    pairingTokenTtlMs: 10 * 60_000,
+  },
+);
+const pairingResponse = await fetch(`http://127.0.0.1:${httpPort}/pair`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    pairingToken: invite.pairingToken,
+    clientNodeId: clientNode.clientNodeId,
+  }),
+});
+if (!pairingResponse.ok) {
+  throw new Error(`HTTP pairing failed with status ${pairingResponse.status}`);
+}
+const credential = (await pairingResponse.json()) as {
+  deviceToken?: unknown;
+  credentialTransports?: unknown;
+};
+if (
+  typeof credential.deviceToken !== "string" ||
+  !Array.isArray(credential.credentialTransports) ||
+  credential.credentialTransports.length !== 2 ||
+  !credential.credentialTransports.includes("http") ||
+  !credential.credentialTransports.includes("iroh")
+) {
+  throw new Error("HTTP pairing did not issue the expected dual-transport credential");
+}
+const credentialPath = join(exchangeDir, "credential.json");
+const credentialTemporaryPath = `${credentialPath}.tmp`;
+writeFileSync(credentialTemporaryPath, JSON.stringify(credential));
+renameSync(credentialTemporaryPath, credentialPath);
+console.log(JSON.stringify({ event: "iroh_isolated.http_paired" }));
 
 let stopping = false;
 async function stop(): Promise<void> {
