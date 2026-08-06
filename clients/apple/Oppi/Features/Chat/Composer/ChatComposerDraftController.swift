@@ -135,6 +135,11 @@ final class ChatComposerDraftController {
         }
     }
 
+    func updateVisibleText(_ newText: String, for newMode: Mode) {
+        setMode(newMode)
+        text = newText
+    }
+
     func replaceMessage(
         text: String,
         repoPointers: [PendingFileReference]? = nil

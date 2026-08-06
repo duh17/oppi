@@ -346,6 +346,40 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         try assertEditorResponse(sessionId: sessionId)
     }
 
+    func testApprovalPromptRestoresPendingMessageDraft() throws {
+        createAndEnterSession()
+        _ = waitForWebSocketConnected(timeout: 20)
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        try clearHarnessResponses(sessionId: sessionId)
+
+        let draft = "message that must survive approval"
+        let chatInput = app.textViews["chat.input"]
+        tap(chatInput, named: "chat input")
+        chatInput.typeText(draft)
+        XCTAssertTrue(waitForInputValue(chatInput, equals: draft, timeout: 5))
+
+        let requestId = "draft-preservation-confirm"
+        try sendHarnessMessage(sessionId: sessionId, [
+            "type": "extension_ui_request",
+            "id": requestId,
+            "method": "confirm",
+            "title": "Approve command?",
+            "message": "The pending message must return after this approval.",
+        ])
+
+        let confirm = app.buttons["Confirm"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10), "Approval prompt did not appear")
+        XCTAssertTrue(waitForInputValue(chatInput, equals: "", timeout: 5))
+        tap(confirm, named: "confirm option")
+        _ = try waitForHarnessResponse(sessionId: sessionId, requestId: requestId)
+        try settleRequest(sessionId: sessionId, requestId: requestId)
+
+        XCTAssertTrue(
+            waitForInputValue(chatInput, equals: draft, timeout: 10),
+            "Approval settlement did not restore the pending message draft"
+        )
+    }
+
     func testSemanticApprovalRenderedControlsRespondOnceAndKeepActionsPinned() throws {
         createAndEnterSession()
         _ = waitForWebSocketConnected(timeout: 20)
@@ -1546,6 +1580,18 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
 
         XCTFail("No workspace id found for session \(sessionId). Recent sessions: \(lastSessions)")
         return ""
+    }
+
+    private func waitForInputValue(
+        _ input: XCUIElement,
+        equals expectedValue: String,
+        timeout: TimeInterval
+    ) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", expectedValue),
+            object: input
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
     private func settleRequest(sessionId: String, requestId: String) throws {

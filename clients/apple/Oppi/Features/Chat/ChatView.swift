@@ -317,7 +317,13 @@ struct ChatView: View {
     private var composerTextBinding: Binding<String> {
         Binding(
             get: { composerDraftController.text },
-            set: { composerDraftController.text = $0 }
+            set: { newText in
+                let mode = Self.resolvedComposerMode(
+                    hasReviewComment: activeReviewCommentRequest != nil,
+                    hasAskRequest: activeComposerAskRequest != nil
+                )
+                composerDraftController.updateVisibleText(newText, for: mode)
+            }
         )
     }
 

@@ -156,6 +156,31 @@ struct ChatComposerDraftControllerTests {
         #expect(store.record(for: key)?.payload.text == "normal message")
     }
 
+    @Test func incomingAskBindingWriteCannotOverwriteMessageDraft() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController(
+            initialText: "message waiting for approval",
+            initialRepoPointers: [
+                PendingFileReference(path: "Sources/App.swift", isDirectory: false),
+            ]
+        )
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        controller.updateVisibleText("", for: .ask)
+        controller.updateVisibleText("approved", for: .ask)
+
+        #expect(controller.text == "approved")
+        #expect(store.record(for: key)?.payload.text == "message waiting for approval")
+
+        controller.setMode(.message)
+        #expect(controller.text == "message waiting for approval")
+        #expect(controller.repoPointers.map(\.path) == ["Sources/App.swift"])
+    }
+
     @Test func retargetingReviewCommentClearsOnlyTransientInput() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

@@ -1032,8 +1032,9 @@ struct ChatInputBar<ActionRow: View>: View {
         activeQuestionID: String?,
         draftAnswers: [String: AskAnswer],
         keepComposerClearedForSubmittedRequestID: String?
-    ) -> String {
-        guard let request, request.allowCustom else { return "" }
+    ) -> String? {
+        guard let request else { return nil }
+        guard request.allowCustom else { return "" }
         if keepComposerClearedForSubmittedRequestID == request.id {
             return ""
         }
@@ -1092,12 +1093,12 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private func syncComposerTextWithActiveAskQuestion() {
-        let desiredText = Self.composerTextForActiveAskQuestion(
+        guard let desiredText = Self.composerTextForActiveAskQuestion(
             request: askRequest,
             activeQuestionID: activeAskQuestionID,
             draftAnswers: askDraftAnswers,
             keepComposerClearedForSubmittedRequestID: keepComposerClearedForSubmittedAskRequestID
-        )
+        ) else { return }
         guard text != desiredText || textBeforeRecording != nil else { return }
         text = desiredText
         textBeforeRecording = nil

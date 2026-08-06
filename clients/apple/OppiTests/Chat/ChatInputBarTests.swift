@@ -700,6 +700,18 @@ struct ChatInputBarTests {
         #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: nil) == "")
     }
 
+    @Test("Settled ask does not provide replacement composer text")
+    func settledAskDoesNotReplaceRestoredMessageDraft() {
+        let displayedText = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+            request: nil,
+            activeQuestionID: nil,
+            draftAnswers: [:],
+            keepComposerClearedForSubmittedRequestID: nil
+        )
+
+        #expect(displayedText == nil)
+    }
+
     @Test("Submitted custom ask keeps the composer cleared until the request changes")
     func submittedCustomAskKeepsComposerCleared() {
         let request = AskRequest(
