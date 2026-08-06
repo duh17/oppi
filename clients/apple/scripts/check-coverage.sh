@@ -6,6 +6,7 @@ REPO_ROOT="${OPPI_ROOT:-${PIOS_ROOT:-$(git -C "$SCRIPT_DIR" rev-parse --show-top
 IOS_DIR="$REPO_ROOT/clients/apple"
 
 PACKAGE_CACHE_ROOT="${OPPI_SWIFT_PACKAGE_CACHE_ROOT:-}"
+SIMULATOR_RUNNER="${OPPI_SIMULATOR_RUNNER:-local}"
 
 canonical_path() {
   python3 - "$1" <<'PY'
@@ -34,6 +35,27 @@ package_cache_is_safe_to_reset() {
   [[ "$candidate" == "$runner_temp/"* ]]
 }
 
+validate_simulator_runner() {
+  local runner_script
+  case "$SIMULATOR_RUNNER" in
+    local)
+      runner_script="$SCRIPT_DIR/sim-pool.sh"
+      ;;
+    ci)
+      runner_script="$SCRIPT_DIR/ci-simulator.sh"
+      ;;
+    *)
+      echo "Unknown OPPI_SIMULATOR_RUNNER '$SIMULATOR_RUNNER' (expected local or ci)." >&2
+      return 8
+      ;;
+  esac
+
+  if [[ ! -r "$runner_script" ]]; then
+    echo "Simulator runner script is missing or unreadable: $runner_script" >&2
+    return 8
+  fi
+}
+
 run_self_test() {
   if ! (PACKAGE_CACHE_ROOT="$IOS_DIR/.build/swiftpm-cache"; RUNNER_TEMP=""; package_cache_is_safe_to_reset); then
     echo "self-test: rejected a cache below the Apple .build directory" >&2
@@ -57,6 +79,10 @@ run_self_test() {
     echo "self-test: accepted traversal outside RUNNER_TEMP" >&2
     return 1
   fi
+  if (SIMULATOR_RUNNER="invalid"; validate_simulator_runner) >/dev/null 2>&1; then
+    echo "self-test: accepted an unknown simulator runner" >&2
+    return 1
+  fi
 
   echo "check-coverage self-test passed."
 }
@@ -74,6 +100,8 @@ case "${1:-}" in
     exit 1
     ;;
 esac
+
+validate_simulator_runner || exit $?
 
 RESULT_DIR="$IOS_DIR/build/coverage"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
@@ -117,6 +145,24 @@ resolve_swift_packages() {
     "${PACKAGE_FLAGS[@]}"
 }
 
+run_coverage_tests() {
+  local runner_command=()
+  if [[ "$SIMULATOR_RUNNER" == "ci" ]]; then
+    runner_command=(bash "$SCRIPT_DIR/ci-simulator.sh" run --)
+  else
+    runner_command=(bash "$SCRIPT_DIR/sim-pool.sh" run --)
+  fi
+
+  "${runner_command[@]}" xcodebuild test \
+    -project Oppi.xcodeproj \
+    -scheme OppiUnitTests \
+    -only-testing:OppiTests \
+    -enableCodeCoverage YES \
+    -showBuildTimingSummary \
+    -resultBundlePath "$RESULT_BUNDLE" \
+    "${PACKAGE_FLAGS[@]}"
+}
+
 cd "$IOS_DIR"
 if [[ -n "$PACKAGE_CACHE_ROOT" ]]; then
   mkdir -p "$PACKAGE_CACHE_ROOT/cache" "$PACKAGE_CACHE_ROOT/source-packages"
@@ -143,17 +189,10 @@ if [[ -n "$PACKAGE_CACHE_ROOT" ]]; then
   echo "Swift package resolution elapsed: $((SECONDS - PACKAGE_START_SECONDS))s"
 fi
 
-echo "Running Oppi unit tests with code coverage enabled..."
+echo "Running Oppi unit tests with code coverage enabled ($SIMULATOR_RUNNER simulator runner)..."
 TEST_START_SECONDS=$SECONDS
 set +e
-bash "$SCRIPT_DIR/sim-pool.sh" run -- xcodebuild test \
-  -project Oppi.xcodeproj \
-  -scheme OppiUnitTests \
-  -only-testing:OppiTests \
-  -enableCodeCoverage YES \
-  -showBuildTimingSummary \
-  -resultBundlePath "$RESULT_BUNDLE" \
-  "${PACKAGE_FLAGS[@]}"
+run_coverage_tests
 TEST_STATUS=$?
 set -e
 TEST_ELAPSED_SECONDS=$((SECONDS - TEST_START_SECONDS))

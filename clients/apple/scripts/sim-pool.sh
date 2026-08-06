@@ -20,7 +20,8 @@
 #   OPPI_SIM_DEVICE_TYPE             com.apple.CoreSimulator.SimDeviceType identifier (default: iPhone-16-Pro)
 #   OPPI_SIM_RUNTIME                 com.apple.CoreSimulator.SimRuntime identifier (auto-detected)
 #   OPPI_SIM_POOL_WAIT               Max seconds to wait for a free slot (default: 60)
-#   OPPI_SIM_POOL_BOOT_TIMEOUT       Max seconds to wait for simulator boot readiness (default: 120)
+#   OPPI_SIM_POOL_BOOT_TIMEOUT       Seconds per simulator boot-readiness wait (default: 120)
+#   OPPI_SIM_POOL_BOOT_RETRIES       Additional readiness waits before failing (default: 1)
 #   OPPI_SIM_POOL_SILENCE_TIMEOUT    Max seconds with no log growth before declaring a hang (default: 180)
 #   OPPI_SIM_POOL_HEARTBEAT_INTERVAL Seconds between progress heartbeats (default: 60)
 #   OPPI_SIM_POOL_HANG_RETRIES       Retry count after a silent hang with simulator reset (default: 1)
@@ -58,6 +59,7 @@ DEVICE_TYPE="${OPPI_SIM_DEVICE_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhon
 LOCK_DIR="${OPPI_SIM_POOL_LOCK_DIR:-/tmp/oppi-sim-pool}"
 BUILD_BASE="$APPLE_DIR/.build"
 BOOT_TIMEOUT="${OPPI_SIM_POOL_BOOT_TIMEOUT:-120}"
+BOOT_RETRIES="${OPPI_SIM_POOL_BOOT_RETRIES:-1}"
 SILENCE_TIMEOUT="${OPPI_SIM_POOL_SILENCE_TIMEOUT:-180}"
 HEARTBEAT_INTERVAL="${OPPI_SIM_POOL_HEARTBEAT_INTERVAL:-60}"
 HANG_RETRIES="${OPPI_SIM_POOL_HANG_RETRIES:-1}"
@@ -74,6 +76,10 @@ validate_pool_config() {
 
   case "$POOL_SLOT_START" in
     ''|*[!0-9]*) die "invalid OPPI_SIM_POOL_SLOT_START '$POOL_SLOT_START' (expected non-negative integer)" ;;
+  esac
+
+  case "$BOOT_RETRIES" in
+    ''|*[!0-9]*) die "invalid OPPI_SIM_POOL_BOOT_RETRIES '$BOOT_RETRIES' (expected non-negative integer)" ;;
   esac
 }
 
@@ -261,6 +267,34 @@ EOF
       || die "self-test: real compiler/linker diagnostic was not classified: $diagnostic"
   done
 
+  if (BOOT_RETRIES="invalid"; validate_pool_config) >/dev/null 2>&1; then
+    die "self-test: invalid boot retry count was accepted"
+  fi
+
+  (
+    local boot_wait_attempts=0
+    BOOT_RETRIES=1
+    wait_for_boot_ready() {
+      boot_wait_attempts=$((boot_wait_attempts + 1))
+      (( boot_wait_attempts >= 2 ))
+    }
+    wait_for_boot_ready_with_retries "self-test-udid" \
+      || die "self-test: simulator readiness did not recover on the bounded retry"
+    [[ "$boot_wait_attempts" -eq 2 ]] \
+      || die "self-test: simulator readiness retry used $boot_wait_attempts attempts instead of 2"
+
+    boot_wait_attempts=0
+    wait_for_boot_ready() {
+      boot_wait_attempts=$((boot_wait_attempts + 1))
+      return 124
+    }
+    if wait_for_boot_ready_with_retries "self-test-udid"; then
+      die "self-test: exhausted simulator readiness waits reported success"
+    fi
+    [[ "$boot_wait_attempts" -eq 2 ]] \
+      || die "self-test: exhausted simulator readiness used $boot_wait_attempts attempts instead of 2"
+  )
+
   echo "sim-pool self-test passed."
 }
 
@@ -357,6 +391,27 @@ except subprocess.CalledProcessError as exc:
 PY
 }
 
+wait_for_boot_ready_with_retries() {
+  local udid="$1"
+  local attempt=0
+  local status=0
+
+  while :; do
+    if wait_for_boot_ready "$udid"; then
+      return 0
+    else
+      status=$?
+    fi
+
+    if (( attempt >= BOOT_RETRIES )); then
+      return "$status"
+    fi
+
+    attempt=$((attempt + 1))
+    echo "[sim-pool] Simulator is still starting after ${BOOT_TIMEOUT}s; continuing readiness wait $((attempt + 1))/$((BOOT_RETRIES + 1))" >&2
+  done
+}
+
 prepare_simulator() {
   local udid="$1"
   local mode="${2:-normal}"
@@ -371,8 +426,8 @@ prepare_simulator() {
   fi
 
   xcrun simctl boot "$udid" >/dev/null 2>&1 || true
-  if ! wait_for_boot_ready "$udid"; then
-    die "simulator $udid failed to reach boot-ready state within ${BOOT_TIMEOUT}s"
+  if ! wait_for_boot_ready_with_retries "$udid"; then
+    die "simulator $udid failed to reach boot-ready state after $((BOOT_RETRIES + 1)) readiness waits of ${BOOT_TIMEOUT}s"
   fi
 }
 

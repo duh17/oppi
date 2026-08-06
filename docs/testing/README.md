@@ -138,24 +138,38 @@ xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test \
 
 ### iOS coverage gate
 
-The repository owns the simulator and coverage scripts used by Apple CI. First run the focused harness self-tests. They verify path classification, retry result-bundle handling, failure classification, and safe package-cache reset boundaries without launching a simulator. In particular, ordinary `rebuild:` application logs must not appear as linker failures, while Swift, clang, and `ld` diagnostics must remain visible.
+The repository owns separate local and CI simulator runners. `sim-pool.sh` manages persistent local simulators for parallel development. `ci-simulator.sh` selects an existing device from the ephemeral GitHub runner image and never creates or erases one. First run the focused harness self-tests. They verify path classification, retry result-bundle handling, failure classification, simulator selection, bounded simulator-readiness retries, and safe package-cache reset boundaries without launching a simulator. In particular, ordinary `rebuild:` application logs must not appear as linker failures, while Swift, clang, and `ld` diagnostics must remain visible.
 
 ```bash
 ./.githooks/pre-push --self-test
 
 # Run the focused script checks while editing the coverage lane.
 ./clients/apple/scripts/sim-pool.sh self-test
+./clients/apple/scripts/ci-simulator.sh self-test
 ./clients/apple/scripts/check-coverage.sh self-test
 ```
 
-Then run the same full unit-test coverage gate used by CI:
+Run the full unit-test coverage gate locally with the simulator pool:
 
 ```bash
 cd clients/apple
 ./scripts/check-coverage.sh
 ```
 
-`check-coverage.sh` returns `2` only when collected coverage is below an enforced logic-layer threshold. Test, simulator, result-bundle, `xccov`, and report-analysis failures use other nonzero statuses. Swift package resolution returns `7` after both the restored-cache attempt and an empty-cache retry fail. A failed collection is not a coverage shortfall. The script prints package-resolution, build/test, report, and analysis wall times; Apple CI also enables Xcode's build timing summary.
+CI maintainers can validate the GitHub path against an existing simulator whose runtime matches the active Xcode iOS Simulator SDK:
+
+```bash
+cd clients/apple
+OPPI_SIMULATOR_RUNNER=ci ./scripts/check-coverage.sh
+```
+
+Do not run this command concurrently. It deliberately has no local lock and uses one existing device with one CI DerivedData path. Normal local builds and tests must use `sim-pool.sh`.
+
+`check-coverage.sh` returns `2` only when collected coverage is below an enforced logic-layer threshold. Invalid or unavailable simulator-runner configuration returns `8`. Test, simulator, result-bundle, `xccov`, and report-analysis failures use other nonzero statuses. Swift package resolution returns `7` after both the restored-cache attempt and an empty-cache retry fail. A failed collection is not a coverage shortfall. The script prints package-resolution, build/test, report, and analysis wall times; Apple CI also enables Xcode's build timing summary.
+
+The local pool gives a simulator boot two 120-second readiness waits by default. For a new simulator, the second wait continues the same first-boot data migration instead of erasing and restarting it. Set `OPPI_SIM_POOL_BOOT_TIMEOUT` to change each wait or `OPPI_SIM_POOL_BOOT_RETRIES` to change the number of additional waits.
+
+Apple CI selects an existing `iPhone 17 Pro` by default and waits up to 240 seconds for it to boot. Simulator boot and shutdown commands have a separate 30-second limit. Set `OPPI_CI_SIM_DEVICE_NAME`, `OPPI_CI_SIM_RUNTIME`, or `OPPI_CI_SIM_BOOT_TIMEOUT` only when the pinned runner image or Xcode changes. A missing device fails with the available iOS simulator inventory; the CI runner does not create a replacement. If `xcodebuild` stops producing output for 300 seconds in the GitHub workflow, the runner terminates the complete build process group, reboots the same device without erasing it, and retries once with a distinct result-bundle path. It skips the retry when the coverage run has already used 900 seconds, which preserves time for diagnostics before the 30-minute job limit.
 
 Apple CI caches only SwiftPM's downloaded repositories and binary artifacts. The exact cache key includes the runner OS and architecture, Xcode build, and `Package.resolved`; there are no partial restore keys. The current dependency set is about 200 MB before cache compression. The cache excludes package checkouts, manifests, DerivedData, build products, and test artifacts. This keeps entries well below GitHub's 10 GB per-repository cache limit and avoids caching compiler output. A cache miss or cache-service failure performs a normal package fetch. If Xcode rejects a restored cache, `check-coverage.sh` deletes only its disposable runner-temp cache root and retries package resolution from empty state before compiling.
 
