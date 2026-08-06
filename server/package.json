@@ -98,13 +98,13 @@
   },
   "dependencies": {
     "@earendil-works/gondolin": "0.12.0",
-    "@earendil-works/pi-ai": "0.83.0",
-    "@earendil-works/pi-coding-agent": "0.83.0",
-    "@earendil-works/pi-tui": "0.83.0",
-    "@number0/iroh": "1.0.0",
+    "@earendil-works/pi-ai": "0.84.0",
+    "@earendil-works/pi-coding-agent": "0.84.0",
+    "@earendil-works/pi-tui": "0.84.0",
+    "@number0/iroh": "1.1.0",
     "diff-match-patch": "^1.0.5",
     "typebox": "1.1.28",
-    "ws": "8.21.0"
+    "ws": "8.21.2"
   },
   "overrides": {
     "fast-xml-builder": "^1.1.9",
@@ -112,9 +112,6 @@
     "brace-expansion": "5.0.9",
     "@earendil-works/gondolin": {
       "undici": "6.28.0"
-    },
-    "@earendil-works/pi-coding-agent": {
-      "undici": "8.9.0"
     }
   },
   "devDependencies": {
