@@ -156,6 +156,46 @@ struct ComposerAutocompleteTests {
         )
     }
 
+    @Test func recognizedSlashCommandQueuesWhenSteeringIsSelected() {
+        let commands = makeSlashCommands([
+            ("check_agents", "Check agent status", "extension"),
+        ])
+
+        let behavior = ComposerAutocomplete.streamingBehavior(
+            for: "/check_agents now",
+            isBusy: true,
+            selected: .steer,
+            commands: commands
+        )
+
+        #expect(behavior == .followUp)
+    }
+
+    @Test func ordinaryAndUnknownInputsKeepSelectedBusyBehavior() {
+        let commands = makeSlashCommands([
+            ("check_agents", "Check agent status", "extension"),
+        ])
+
+        #expect(ComposerAutocomplete.streamingBehavior(
+            for: "please compact",
+            isBusy: true,
+            selected: .steer,
+            commands: commands
+        ) == .steer)
+        #expect(ComposerAutocomplete.streamingBehavior(
+            for: "/not-a-command",
+            isBusy: true,
+            selected: .steer,
+            commands: commands
+        ) == .steer)
+        #expect(ComposerAutocomplete.streamingBehavior(
+            for: "/check_agents",
+            isBusy: false,
+            selected: .steer,
+            commands: commands
+        ) == .steer)
+    }
+
     @Test @MainActor func fileSuggestionQueryFiresWhenBusy() {
         var receivedQuery: String??
         var callCount = 0

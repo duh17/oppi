@@ -80,6 +80,18 @@ enum ComposerAutocomplete {
         return Array(scored.prefix(max(0, limit)).map(\.command))
     }
 
+    static func streamingBehavior(
+        for text: String,
+        isBusy: Bool,
+        selected: StreamingBehavior,
+        commands: [SlashCommand]
+    ) -> StreamingBehavior {
+        guard isBusy, matchingSlashCommand(in: text, commands: commands) != nil else {
+            return selected
+        }
+        return .followUp
+    }
+
     static func insertSlashCommand(_ command: SlashCommand, into text: String) -> String {
         insertSlashCommand(named: command.name, into: text)
     }
@@ -122,6 +134,21 @@ enum ComposerAutocomplete {
     }
 
     // MARK: - Internals
+
+    private static func matchingSlashCommand(
+        in text: String,
+        commands: [SlashCommand]
+    ) -> SlashCommand? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.first == "/",
+              let token = trimmed.split(whereSeparator: { $0.isWhitespace }).first else {
+            return nil
+        }
+
+        let name = token.dropFirst()
+        guard !name.isEmpty else { return nil }
+        return commands.first { $0.name.caseInsensitiveCompare(String(name)) == .orderedSame }
+    }
 
     private static func activeTokenRange(in text: String) -> Range<String.Index>? {
         guard let last = text.last, !last.isWhitespace else {

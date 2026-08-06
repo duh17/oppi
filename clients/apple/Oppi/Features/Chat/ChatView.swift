@@ -1764,13 +1764,20 @@ struct ChatView: View {
                 attachmentPreparationText = nil
 
                 let optimisticImages = originalPendingAttachments.compactMap(\.imageAttachment)
+                let dispatchIsBusy = isBusy
+                let sendBehavior = ComposerAutocomplete.streamingBehavior(
+                    for: rawTrimmedInput,
+                    isBusy: dispatchIsBusy,
+                    selected: busyStreamingBehavior,
+                    commands: availableSlashCommands
+                )
                 let restored = actionHandler.sendPrompt(
                     text: text,
                     attachments: attachments,
                     optimisticDisplayText: optimisticDisplayText,
                     optimisticImages: optimisticImages,
-                    isBusy: isBusy,
-                    busyStreamingBehavior: busyStreamingBehavior,
+                    isBusy: dispatchIsBusy,
+                    busyStreamingBehavior: sendBehavior,
                     connection: connection,
                     reducer: reducer,
                     sessionId: sessionId,
