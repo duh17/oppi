@@ -58,28 +58,40 @@ struct WhatsNewView: View {
 
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            icon: "point.3.connected.trianglepath.dotted",
-            iconColor: .themeGreen,
-            title: String(localized: "Reliable Iroh Connections"),
-            description: String(localized: "Connect through authenticated direct or relay paths. Cached sessions stay visible while Oppi reconnects.")
-        ),
-        WhatsNewFeature(
-            icon: "slider.horizontal.3",
+            icon: "person.crop.circle.badge.checkmark",
             iconColor: .themePurple,
-            title: String(localized: "Server Tools and Guided Editing"),
-            description: String(localized: "Open Skills and Extensions from the sidebar, then use Oppi sessions to create or revise Agents, schedules, Skills, and workspaces.")
-        ),
-        WhatsNewFeature(
-            icon: "text.document",
-            iconColor: .themeCyan,
-            title: String(localized: "Better Markdown Review"),
-            description: String(localized: "Read wide tables and long Markdown more comfortably, select text in full screen, and send comments as one guided revision.")
+            title: String(localized: "Agents, Schedules, and Quick Sessions"),
+            description: String(localized: "Edit Agents and schedules directly, assign Skills and Extensions to Agents, and start Quick Sessions with a saved Agent.")
         ),
         WhatsNewFeature(
             icon: "cpu",
             iconColor: .themeOrange,
-            title: String(localized: "More Model Visibility"),
-            description: String(localized: "Discover extension-provided models, see Codex and xAI quotas, and get a clear error when a selected model is unavailable.")
+            title: String(localized: "Model Providers and Quotas"),
+            description: String(localized: "Manage providers from the server screen, discover extension models, and see quota bars, reset times, and reset countdowns when the picker opens.")
+        ),
+        WhatsNewFeature(
+            icon: "point.3.connected.trianglepath.dotted",
+            iconColor: .themeGreen,
+            title: String(localized: "Connection Controls"),
+            description: String(localized: "Choose Automatic, HTTPS Only, or Iroh Only for each server. Pairing keeps each client on its authorized transports.")
+        ),
+        WhatsNewFeature(
+            icon: "chart.bar.doc.horizontal",
+            iconColor: .themeBlue,
+            title: String(localized: "Usage and Linked Resources"),
+            description: String(localized: "Review full-history token, cache, and model costs in Context, then open assistant wiki links as workspace or server resources.")
+        ),
+        WhatsNewFeature(
+            icon: "text.document",
+            iconColor: .themeCyan,
+            title: String(localized: "More Reliable Chat and Review"),
+            description: String(localized: "Read long Markdown and tables, keep drafts through extension prompts, and queue /compact until an active turn finishes.")
+        ),
+        WhatsNewFeature(
+            icon: "slider.horizontal.3",
+            iconColor: .themeRed,
+            title: String(localized: "Safer Server Control"),
+            description: String(localized: "Oppi control sessions can manage supported server settings, while explicit model choices fail clearly instead of switching providers.")
         ),
     ]
 
@@ -119,7 +131,7 @@ struct WhatsNewView: View {
                 .font(.largeTitle.bold())
                 .foregroundStyle(.themeFg)
 
-            Text("Builds 43–44")
+            Text("Builds 44–45")
                 .font(.title2)
                 .foregroundStyle(.themeComment)
         }
