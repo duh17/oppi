@@ -49,6 +49,12 @@ struct SlashCommand: Identifiable, Sendable, Equatable {
         "/\(name)"
     }
 
+    init(name: String, description: String? = nil, source: Source) {
+        self.name = name
+        self.description = description
+        self.source = source
+    }
+
     init?(_ value: JSONValue) {
         guard let object = value.objectValue,
               let rawName = object["name"]?.stringValue,

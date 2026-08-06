@@ -51,6 +51,10 @@ struct ExtensionSurfaceSessionLink: Equatable {
 }
 
 struct ChatView: View {
+    enum LocalSlashCommand: Equatable {
+        case compact
+    }
+
     let sessionId: String
     private let workspaceIdHint: String?
     private let routeScope: SessionRouteScope?
@@ -106,9 +110,7 @@ struct ChatView: View {
     @State private var isSharePreflightRunning = false
     @State private var sharePreflightTask: Task<Void, Never>?
 
-    @State private var showCompactConfirmation = false
     @State private var showContextInspector = false
-    @State private var suppressNextContextTap = false
     @State private var isKeyboardVisible = false
     @State private var footerHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
@@ -293,6 +295,25 @@ struct ChatView: View {
         hasReviewComment ? nil : askRequest
     }
 
+    static func localSlashCommand(for text: String) -> LocalSlashCommand? {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.caseInsensitiveCompare("/compact") == .orderedSame ? .compact : nil
+    }
+
+    static func availableSlashCommands(from serverCommands: [SlashCommand]) -> [SlashCommand] {
+        guard !serverCommands.contains(where: {
+            $0.name.caseInsensitiveCompare("compact") == .orderedSame
+        }) else {
+            return serverCommands
+        }
+
+        return serverCommands + [SlashCommand(
+            name: "compact",
+            description: "Compact context",
+            source: .builtin
+        )]
+    }
+
     private var composerTextBinding: Binding<String> {
         Binding(
             get: { composerDraftController.text },
@@ -305,6 +326,10 @@ struct ChatView: View {
             get: { composerDraftController.repoPointers },
             set: { composerDraftController.repoPointers = $0 }
         )
+    }
+
+    private var availableSlashCommands: [SlashCommand] {
+        Self.availableSlashCommands(from: chatState.slashCommands)
     }
 
     private var hasShareSlashCommand: Bool {
@@ -504,14 +529,6 @@ struct ChatView: View {
             ) { reviewCommentStashSheet }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
-            .alert("Compact Context", isPresented: $showCompactConfirmation) {
-                Button("Compact", role: .destructive) {
-                    actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This will summarize the conversation to free up context window space. The summary replaces earlier messages.")
-            }
             .task(id: composerDraftAttachmentKey) {
                 attachComposerDraftIfPossible()
             }
@@ -802,7 +819,7 @@ struct ChatView: View {
                     onAskSubmit: handleComposerAskSubmit,
                     onAskIgnoreAll: handleComposerAskIgnoreAll,
 
-                    slashCommands: chatState.slashCommands,
+                    slashCommands: availableSlashCommands,
                     fileSuggestions: chatState.fileSuggestions,
                     onFileSuggestionQuery: { query in
                         updateFileSuggestions(query: query)
@@ -1006,7 +1023,7 @@ struct ChatView: View {
 
     @ViewBuilder
     private var chatTrailingToolbarItem: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 2) {
             if !reducer.items.isEmpty {
                 Button { showOutline = true } label: {
                     Image(systemName: "list.bullet")
@@ -1020,40 +1037,23 @@ struct ChatView: View {
             }
 
             contextRingButton
-                .padding(.horizontal, 4)
-                .padding(.trailing, 4)
         }
     }
 
     private var contextRingButton: some View {
         Button {
-            if suppressNextContextTap {
-                suppressNextContextTap = false
-                return
-            }
             AppHaptics.toolbarExpansion()
             showContextInspector = true
         } label: {
             ContextUsageRingBadge(
                 usage: contextUsageSnapshot
             )
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat.toolbar.context")
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.4)
-                .onEnded { _ in
-                    suppressNextContextTap = true
-                    AppHaptics.longPressThreshold()
-                    showCompactConfirmation = true
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(0.6))
-                        suppressNextContextTap = false
-                    }
-                }
-        )
         .accessibilityLabel("Open context inspector")
-        .accessibilityHint("Long press to compact context")
     }
 
     private var chatPrincipalTitleMaxWidth: CGFloat {
@@ -1695,6 +1695,15 @@ struct ChatView: View {
 
     private func sendPrompt() {
         let rawTrimmedInput = composerDraftController.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if Self.localSlashCommand(for: rawTrimmedInput) == .compact {
+            composerDraftController.clearMessage()
+            pendingAttachments = []
+            composerTextBeforeRecording = nil
+            actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
+            dismissKeyboard()
+            return
+        }
+
         if rawTrimmedInput.caseInsensitiveCompare("/reload") == .orderedSame {
             composerDraftController.clearMessage()
             actionHandler.reloadResources(
@@ -2165,7 +2174,7 @@ struct ChatView: View {
             pendingRepoPointers: composerRepoPointersBinding,
             isBusy: isBusy,
             busyStreamingBehavior: busyStreamingBehavior,
-            slashCommands: chatState.slashCommands,
+            slashCommands: availableSlashCommands,
             fileSuggestions: chatState.fileSuggestions,
             onFileSuggestionQuery: { query in
                 updateFileSuggestions(query: query)

@@ -12,6 +12,33 @@ struct ChatComposerDraftControllerTests {
         #expect(!ChatView.composerDraftIsMemoryOnly(hasSessionMetadata: true, isEphemeral: nil))
     }
 
+    @Test func localCompactAppearsWhenServerDoesNotReturnIt() {
+        let commands = ChatView.availableSlashCommands(from: [])
+
+        #expect(commands.map(\.name) == ["compact"])
+        #expect(commands.first?.description == "Compact context")
+        #expect(commands.first?.source == .builtin)
+    }
+
+    @Test func serverCompactMetadataIsPreservedWithoutDuplicates() {
+        let serverCompact = SlashCommand(
+            name: "CoMpAcT",
+            description: "Server-provided compact command",
+            source: .extension
+        )
+
+        let commands = ChatView.availableSlashCommands(from: [serverCompact])
+
+        #expect(commands == [serverCompact])
+    }
+
+    @Test func exactCompactSlashCommandUsesTheLocalCompactAction() {
+        #expect(ChatView.localSlashCommand(for: "/compact") == .compact)
+        #expect(ChatView.localSlashCommand(for: "  /COMPACT\n") == .compact)
+        #expect(ChatView.localSlashCommand(for: "/compact keep recent work") == nil)
+        #expect(ChatView.localSlashCommand(for: "please /compact") == nil)
+    }
+
     @Test func endingReviewModeReturnsToPendingAskBeforeMessageMode() {
         let ask = AskRequest(
             id: "ask-1",

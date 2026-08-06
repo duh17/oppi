@@ -124,6 +124,90 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         tap(stopButton, named: "stop button")
     }
 
+    func testContextToolbarControlUsesAFullHitTargetAndOpensContext() throws {
+        createAndEnterSession()
+        sendMessageAndWaitForResponse(localEchoPrompt("CONTEXT_TOOLBAR_LAYOUT_READY"))
+
+        let backButton = app.buttons["chat.toolbar.back"]
+        let filesButton = app.buttons["chat.toolbar.files"]
+        let outlineButton = app.buttons["chat.toolbar.outline"]
+        let contextButton = app.buttons["chat.toolbar.context"]
+        for button in [backButton, filesButton, outlineButton, contextButton] {
+            XCTAssertTrue(button.waitForExistence(timeout: 10), "Expected chat toolbar control did not appear")
+        }
+
+        XCTAssertGreaterThanOrEqual(
+            contextButton.frame.width,
+            44,
+            "Context toolbar control must expose a 44-point-wide hit target"
+        )
+        XCTAssertGreaterThanOrEqual(
+            contextButton.frame.height,
+            44,
+            "Context toolbar control must expose a 44-point-tall hit target"
+        )
+
+        let leadingControlWidth = backButton.frame.union(filesButton.frame).width
+        let trailingControlWidth = outlineButton.frame.union(contextButton.frame).width
+        XCTAssertEqual(
+            trailingControlWidth,
+            leadingControlWidth,
+            accuracy: 2,
+            "The leading and trailing toolbar pills must keep matching visual widths"
+        )
+
+        contextButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85)).tap()
+        let contextNavigationBar = app.navigationBars["Context"]
+        XCTAssertTrue(
+            contextNavigationBar.waitForExistence(timeout: 10),
+            "A tap near the lower edge of the Context hit target did not open Context"
+        )
+        tap(contextNavigationBar.buttons["Done"], named: "Context done button")
+
+        let chatInput = app.textViews["chat.input"]
+        tap(chatInput, named: "chat input")
+        chatInput.typeText("/compact")
+
+        let compactSuggestion = app.buttons
+            .matching(NSPredicate(format: "label CONTAINS[c] %@", "/compact"))
+            .firstMatch
+        XCTAssertTrue(
+            compactSuggestion.waitForExistence(timeout: 5) && compactSuggestion.isHittable,
+            "Local /compact was not visibly available in inline composer autocomplete"
+        )
+
+        chatInput.typeText("\none\ntwo\nthree\nfour")
+        let expandButton = app.buttons["chat.expand"]
+        XCTAssertTrue(expandButton.waitForExistence(timeout: 5), "Expanded composer button did not appear")
+        tap(expandButton, named: "expanded composer button", timeout: 3)
+
+        let expandedEditor = app.textViews["expanded.composer.editor"]
+        XCTAssertTrue(expandedEditor.waitForExistence(timeout: 5), "Expanded composer editor did not appear")
+        tap(expandedEditor, named: "expanded composer editor")
+        expandedEditor.typeKey("a", modifierFlags: .command)
+        expandedEditor.typeText("/compact")
+
+        let expandedCompactSuggestion = app.buttons
+            .matching(NSPredicate(format: "label CONTAINS[c] %@", "/compact"))
+            .firstMatch
+        XCTAssertTrue(
+            expandedCompactSuggestion.waitForExistence(timeout: 5) && expandedCompactSuggestion.isHittable,
+            "Local /compact was not visibly available in expanded composer autocomplete"
+        )
+        tap(expandedCompactSuggestion, named: "expanded compact suggestion")
+        tap(app.buttons["expanded.composer.submit"], named: "expanded compact submit", timeout: 3)
+
+        XCTAssertTrue(
+            waitForTimelineTextContaining("Compacting context", timeout: 5)
+                || waitForTimelineTextContaining("Context compacted", timeout: 5),
+            "Exact /compact did not invoke the local compaction action"
+        )
+        XCTAssertFalse(
+            waitForTimelineTextContaining("/compact", timeout: 2),
+            "Exact /compact was appended as a normal user prompt"
+        )
+    }
+
     func testMultiTurnConversation() throws {
         createAndEnterSession()
 
