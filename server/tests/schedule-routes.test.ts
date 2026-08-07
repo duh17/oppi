@@ -461,7 +461,32 @@ describe("schedule routes", () => {
     expect(store.getSchedule(schedule.id)?.archivedAt).toBeUndefined();
   });
 
-  it("rejects malformed run history limits", async () => {
+  it("returns newest run history first when descending order is requested", async () => {
+    const schedule = store.createSchedule({
+      name: "Morning check",
+      trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+      action: { type: "new_session", workspaceId: workspace.id, prompt: "Run the checks" },
+    });
+    store.createManualRun(schedule.id, "history-oldest", 1);
+    const middle = store.createManualRun(schedule.id, "history-middle", 2);
+    const newest = store.createManualRun(schedule.id, "history-newest", 3);
+    const dispatch = createScheduleRoutes(ctx, helpers);
+    const path = `/schedules/${schedule.id}/runs`;
+
+    await dispatch({
+      method: "GET",
+      path,
+      url: new URL(`https://localhost${path}?limit=2&order=desc`),
+      req: requestBody({}),
+      res: {} as ServerResponse,
+    });
+
+    expect(errors).toEqual([]);
+    const runs = (responses[0]?.data as { runs: Array<{ id: string }> }).runs;
+    expect(runs.map((run) => run.id)).toEqual([newest.id, middle.id]);
+  });
+
+  it("rejects malformed run history queries", async () => {
     const schedule = store.createSchedule({
       name: "Morning check",
       trigger: { type: "at", at: 1_000, timeZone: "UTC" },
@@ -474,11 +499,11 @@ describe("schedule routes", () => {
     const dispatch = createScheduleRoutes(ctx, helpers);
     const path = `/schedules/${schedule.id}/runs`;
 
-    for (const limit of ["2x", "1.5"] as const) {
+    for (const query of ["limit=2x", "limit=1.5", "order=sideways"] as const) {
       await dispatch({
         method: "GET",
         path,
-        url: new URL(`https://localhost${path}?limit=${limit}`),
+        url: new URL(`https://localhost${path}?${query}`),
         req: requestBody({}),
         res: {} as ServerResponse,
       });
@@ -488,6 +513,7 @@ describe("schedule routes", () => {
     expect(errors).toEqual([
       { status: 400, message: "limit must be a positive integer" },
       { status: 400, message: "limit must be a positive integer" },
+      { status: 400, message: "order must be asc or desc" },
     ]);
   });
 

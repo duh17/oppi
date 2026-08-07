@@ -286,8 +286,12 @@ extension APIClient {
 
     func listAgentScheduleRuns(scheduleId: String, limit: Int = 20) async throws -> [AgentScheduleRunSummary] {
         let encodedScheduleId = try percentEncodePathSegment(scheduleId)
-        let data = try await get("/schedules/\(encodedScheduleId)/runs?limit=\(limit)")
-        return try JSONDecoder().decode(AgentScheduleRunsResponse.self, from: data).runs
+        let data = try await get("/schedules/\(encodedScheduleId)/runs?limit=\(limit)&order=desc")
+        let runs = try JSONDecoder().decode(AgentScheduleRunsResponse.self, from: data).runs
+        return runs.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.id > $1.id
+        }
     }
 
     private func scheduleStateMutation(scheduleId: String, action: String) async throws -> AgentScheduleSummary {

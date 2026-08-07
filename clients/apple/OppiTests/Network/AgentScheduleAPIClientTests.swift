@@ -490,6 +490,29 @@ struct AgentScheduleAPIClientTests {
         #expect(schedule.archivedAt == nil)
     }
 
+    @Test func scheduleRunHistoryIsNewestFirstEvenWhenServerOrderIsOldestFirst() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/schedules/sch-1/runs")
+            #expect(request.url?.query == "limit=20&order=desc")
+            return mockResponse(json: """
+            {"runs":[
+              {"id":"run-old","scheduleId":"sch-1","kind":"due","slotKey":"old","idempotencyKey":"old","status":"completed","action":{"type":"new_session","workspaceId":"ws-1","promptChars":6},"createdAt":1000,"updatedAt":1000},
+              {"id":"run-new","scheduleId":"sch-1","kind":"manual","slotKey":"new","idempotencyKey":"new","status":"completed","action":{"type":"new_session","workspaceId":"ws-1","promptChars":6},"createdAt":3000,"updatedAt":3000},
+              {"id":"run-middle","scheduleId":"sch-1","kind":"due","slotKey":"middle","idempotencyKey":"middle","status":"failed","action":{"type":"new_session","workspaceId":"ws-1","promptChars":6},"createdAt":2000,"updatedAt":2000}
+            ]}
+            """)
+        }
+
+        let runs = try await client.listAgentScheduleRuns(scheduleId: "sch-1")
+
+        #expect(runs.map(\.id) == ["run-new", "run-middle", "run-old"])
+    }
+
+
     @Test func scheduleRunNowPostsRequestIdAndDecodesRun() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -1225,6 +1248,47 @@ struct NativeScheduleEditingTests {
 
         draft.cadence = .daily
         #expect(draft.makeTrigger()?.scheduleScreenCadence == "DAILY")
+    }
+
+    @Test func manualRunInsertionKeepsOnlyTheNewestTwentyRows() {
+        let existing = (0..<20).map { index in
+            makeRun(id: "run-\(index)", timestamp: TimeInterval(20 - index))
+        }
+        let newest = makeRun(id: "run-new", timestamp: 100)
+
+        let updated = scheduleRunsByInsertingNewest(newest, into: existing, limit: 20)
+
+        #expect(updated.count == 20)
+        #expect(updated.first?.id == newest.id)
+        #expect(!updated.contains(where: { $0.id == "run-19" }))
+    }
+
+    private func makeRun(id: String, timestamp: TimeInterval) -> AgentScheduleRunSummary {
+        AgentScheduleRunSummary(
+            id: id,
+            scheduleId: "schedule-1",
+            kind: .manual,
+            slotKey: id,
+            idempotencyKey: id,
+            status: .completed,
+            action: AgentScheduleActionSummary(
+                type: .newSession,
+                workspaceId: "workspace-1",
+                sessionId: nil,
+                agentId: nil,
+                promptChars: 0
+            ),
+            createdAt: Date(timeIntervalSince1970: timestamp),
+            updatedAt: Date(timeIntervalSince1970: timestamp),
+            claimedAt: nil,
+            leaseOwner: nil,
+            leaseExpiresAt: nil,
+            startedAt: nil,
+            completedAt: Date(timeIntervalSince1970: timestamp),
+            sessionId: nil,
+            promptDispatch: nil,
+            error: nil
+        )
     }
 }
 

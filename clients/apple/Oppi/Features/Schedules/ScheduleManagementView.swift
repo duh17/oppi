@@ -351,15 +351,28 @@ private struct ScheduleDetailView: View {
                     }
                 }
 
-                Section("Recent Runs") {
+                Section {
                     if runs.isEmpty {
-                        Text("No runs yet")
-                            .foregroundStyle(.themeComment)
+                        ContentUnavailableView(
+                            "No Runs Yet",
+                            systemImage: "clock.arrow.circlepath",
+                            description: Text("Scheduled and manual runs will appear here.")
+                        )
                     } else {
                         ForEach(runs) { run in
                             ScheduleRunRow(run: run) {
                                 openRunSession(run)
                             }
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Text("Run History")
+                        Spacer()
+                        if !runs.isEmpty {
+                            Text("\(runs.count) recent")
+                                .textCase(nil)
+                                .foregroundStyle(.themeComment)
                         }
                     }
                 }
@@ -616,7 +629,7 @@ private struct ScheduleDetailView: View {
 
         do {
             let run = try await apiClient.runAgentSchedule(scheduleId)
-            runs = [run] + runs.filter { $0.id != run.id }
+            runs = scheduleRunsByInsertingNewest(run, into: runs, limit: 20)
             if let sessionId = run.sessionId {
                 openRunSession(run.withSessionId(sessionId))
             }
@@ -693,39 +706,68 @@ private struct ScheduleRunRow: View {
     let openSession: () -> Void
 
     var body: some View {
-        Button(action: openSession) {
-            HStack(spacing: 10) {
-                Image(systemName: iconName)
-                    .foregroundStyle(tone.color)
-                    .frame(width: 24)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(run.status.rawValue.capitalized)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.themeFg)
-                    Text("\(run.createdAt.relativeString()) · \(runSourceLabel)")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                    if let error = run.error {
-                        Text(error)
-                            .font(.caption2)
-                            .foregroundStyle(.themeOrange)
-                            .lineLimit(2)
-                    }
+        Group {
+            if run.sessionId != nil {
+                Button(action: openSession) {
+                    rowContent
                 }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the run session")
+            } else {
+                rowContent
+            }
+        }
+        .accessibilityIdentifier("schedule.run.\(run.id)")
+    }
 
-                Spacer(minLength: 8)
+    private var rowContent: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: iconName)
+                .font(.title3)
+                .foregroundStyle(tone.color)
+                .frame(width: 24, height: 28)
+                .accessibilityHidden(true)
 
-                if run.sessionId != nil {
-                    Image(systemName: "chevron.forward")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.themeComment)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(run.status.rawValue.capitalized)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+
+                Text("\(run.createdAt.formatted(date: .abbreviated, time: .shortened)) · \(runSourceLabel)")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+
+                if let errorSummary {
+                    Text(errorSummary)
+                        .font(.caption)
+                        .foregroundStyle(.themeRed)
+                        .lineLimit(3)
                 }
             }
-            .contentShape(Rectangle())
+
+            Spacer(minLength: 8)
+
+            if run.sessionId != nil {
+                Image(systemName: "chevron.forward")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+                    .padding(.top, 5)
+                    .accessibilityHidden(true)
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(run.sessionId == nil)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+
+    private var errorSummary: String? {
+        guard let error = run.error, !error.isEmpty else { return nil }
+        if error.contains("approval_required_noninteractive") {
+            return "Approval required — this action can’t run unattended."
+        }
+        return error
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: ":", with: ": ")
     }
 
     private var runSourceLabel: String {
@@ -760,6 +802,19 @@ private struct ScheduleRunRow: View {
             return "exclamationmark.triangle.fill"
         }
     }
+}
+
+func scheduleRunsByInsertingNewest(
+    _ run: AgentScheduleRunSummary,
+    into runs: [AgentScheduleRunSummary],
+    limit: Int
+) -> [AgentScheduleRunSummary] {
+    guard limit > 0 else { return [] }
+    let updated = [run] + runs.filter { $0.id != run.id }
+    return Array(updated.sorted {
+        if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+        return $0.id > $1.id
+    }.prefix(limit))
 }
 
 private extension AgentScheduleRunSummary {

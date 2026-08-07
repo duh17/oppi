@@ -340,16 +340,19 @@ describe("agent schedule durable core", () => {
     ]);
   });
 
-  it("limits run summaries in the store query", () => {
+  it("limits run summaries in the requested order", () => {
     const schedule = createSchedule();
     const first = store.createManualRun(schedule.id, "history-1", 1);
     const second = store.createManualRun(schedule.id, "history-2", 2);
-    store.createManualRun(schedule.id, "history-3", 3);
+    const third = store.createManualRun(schedule.id, "history-3", 3);
 
     expect(store.listRunSummaries(schedule.id, { limit: 2 }).map((run) => run.id)).toEqual([
       first.id,
       second.id,
     ]);
+    expect(
+      store.listRunSummaries(schedule.id, { limit: 2, order: "desc" }).map((run) => run.id),
+    ).toEqual([third.id, second.id]);
   });
 
   it("dispatches claimed runs through new-session and existing-session integration hooks", async () => {

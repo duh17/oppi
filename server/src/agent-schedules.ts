@@ -134,6 +134,7 @@ export interface AgentScheduleClaimOptions {
 
 export interface AgentScheduleListRunOptions {
   limit?: number;
+  order?: "asc" | "desc";
 }
 
 export interface NewSessionDispatchInput {
@@ -348,7 +349,9 @@ export class AgentScheduleStore {
 
   listRuns(scheduleId: string, options: AgentScheduleListRunOptions = {}): AgentScheduleRun[] {
     const limit = validateListLimit(options.limit);
-    const sql = "SELECT * FROM agent_schedule_runs WHERE schedule_id = ? ORDER BY created_at, id";
+    const direction = options.order === "desc" ? "DESC" : "ASC";
+    const sql = `SELECT * FROM agent_schedule_runs
+      WHERE schedule_id = ? ORDER BY created_at ${direction}, id ${direction}`;
     const rows = (
       limit === undefined
         ? this.db.prepare(sql).all(scheduleId)

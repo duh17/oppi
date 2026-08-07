@@ -211,8 +211,13 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       const schedules = getSchedules();
       const limit = parsePositiveIntegerQueryParam(url.searchParams.get("limit"), res);
       if (limit === null) return true;
+      const order = parseRunOrderQueryParam(url.searchParams.get("order"), res);
+      if (order === null) return true;
       helpers.json(res, {
-        runs: schedules.listRunSummaries(schedule.id, limit === undefined ? undefined : { limit }),
+        runs: schedules.listRunSummaries(schedule.id, {
+          ...(limit === undefined ? {} : { limit }),
+          ...(order === undefined ? {} : { order }),
+        }),
       });
       return true;
     }
@@ -293,6 +298,17 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return null;
     }
     return parsed;
+  }
+
+  function parseRunOrderQueryParam(
+    raw: string | null,
+    res: ServerResponse,
+  ): "asc" | "desc" | undefined | null {
+    if (raw === null || !raw.trim()) return undefined;
+    const value = raw.trim();
+    if (value === "asc" || value === "desc") return value;
+    helpers.error(res, 400, "order must be asc or desc");
+    return null;
   }
 
   function normalizeScheduleRequestTargets(
