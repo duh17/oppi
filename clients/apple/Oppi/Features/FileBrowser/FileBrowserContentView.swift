@@ -39,6 +39,13 @@ enum FileBrowserContentRenderingPolicy {
 /// Large text files (>1MB) show a size warning before loading.
 /// On cellular networks, an additional data warning is displayed.
 struct FileBrowserContentView: View {
+    static func shouldInstallHorizontalBackSwipe(
+        allowsHorizontalBackSwipe: Bool,
+        parentOwnsBackSwipe: Bool
+    ) -> Bool {
+        allowsHorizontalBackSwipe && parentOwnsBackSwipe
+    }
+
     let workspaceId: String
     var worktreeId: String? = nil
     let filePath: String
@@ -46,6 +53,7 @@ struct FileBrowserContentView: View {
     /// Known file size from directory listing. Nil when opened from search results.
     var fileSize: Int?
     var chromeMode: FileBrowserContentChromeMode = .pushed
+    var allowsHorizontalBackSwipe = true
     var navigationContext: FileBrowserNavigationContext?
     var onNavigationSelectionChange: ((FileBrowserSelection) -> Void)?
     var onBackNavigation: (() -> Void)?
@@ -117,7 +125,13 @@ struct FileBrowserContentView: View {
         fileContent
             .filePushTransition(id: currentFilePath, direction: fileTransitionDirection)
             .background(Color.themeBg)
-            .horizontalBackSwipeGesture(isEnabled: parentOwnsBackSwipe, navigateBackToFileList)
+            .horizontalBackSwipeGesture(
+                isEnabled: Self.shouldInstallHorizontalBackSwipe(
+                    allowsHorizontalBackSwipe: allowsHorizontalBackSwipe,
+                    parentOwnsBackSwipe: parentOwnsBackSwipe
+                ),
+                navigateBackToFileList
+            )
             .overlay(alignment: .bottom) {
                 fileNavigatorControls
                     .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
@@ -174,7 +188,11 @@ struct FileBrowserContentView: View {
         case .audio(let source):
             audioView(source)
         case .pdf(let data):
-            PDFBrowserView(data: data, onBackSwipe: navigateBackToFileList)
+            PDFBrowserView(
+                data: data,
+                allowsHorizontalBackSwipe: allowsHorizontalBackSwipe,
+                onBackSwipe: navigateBackToFileList
+            )
         case .binary:
             ContentUnavailableView(
                 "Binary File",
@@ -554,19 +572,24 @@ struct AdjacentFileNavigatorControls: View {
 /// Wraps `PDFKit.PDFView` for inline PDF rendering with scroll, zoom, and text selection.
 private struct PDFBrowserView: View {
     let data: Data
+    let allowsHorizontalBackSwipe: Bool
     let onBackSwipe: @MainActor @Sendable () -> Void
 
     var body: some View {
         if PDFDocument(data: data) != nil {
-            PDFKitView(data: data, onBackSwipe: onBackSwipe)
-                .ignoresSafeArea(edges: .bottom)
+            PDFKitView(
+                data: data,
+                allowsHorizontalBackSwipe: allowsHorizontalBackSwipe,
+                onBackSwipe: onBackSwipe
+            )
+            .ignoresSafeArea(edges: .bottom)
         } else {
             ContentUnavailableView(
                 "Invalid PDF",
                 systemImage: "doc.badge.exclamationmark",
                 description: Text("Could not decode PDF data.")
             )
-            .horizontalBackSwipeGesture(onBackSwipe)
+            .horizontalBackSwipeGesture(isEnabled: allowsHorizontalBackSwipe, onBackSwipe)
         }
     }
 }
@@ -574,6 +597,7 @@ private struct PDFBrowserView: View {
 /// UIKit wrapper for `PDFKit.PDFView`.
 private struct PDFKitView: UIViewRepresentable {
     let data: Data
+    let allowsHorizontalBackSwipe: Bool
     let onBackSwipe: @MainActor @Sendable () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -587,12 +611,16 @@ private struct PDFKitView: UIViewRepresentable {
         view.displayDirection = .vertical
         view.backgroundColor = .clear
         view.document = PDFDocument(data: data)
-        context.coordinator.installBackSwipe(action: onBackSwipe, on: view)
+        if allowsHorizontalBackSwipe {
+            context.coordinator.installBackSwipe(action: onBackSwipe, on: view)
+        }
         return view
     }
 
     func updateUIView(_ view: PDFView, context: Context) {
-        context.coordinator.installBackSwipe(action: onBackSwipe, on: view)
+        if allowsHorizontalBackSwipe {
+            context.coordinator.installBackSwipe(action: onBackSwipe, on: view)
+        }
     }
 
     @MainActor

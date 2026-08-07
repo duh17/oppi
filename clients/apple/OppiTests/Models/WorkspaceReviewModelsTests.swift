@@ -125,6 +125,30 @@ struct WorkspaceReviewModelsTests {
         #expect("./Sources\\App.swift".localizedTreePathCompare(to: "Sources/App.swift/") == .orderedSame)
     }
 
+    @Test func fileDetailRoutesMixedAdjacentFilesBetweenReviewAndWorkspacePreview() {
+        let paths = [
+            "Sources/App.swift",
+            "result.svg",
+            "photo.jpg",
+            "report.pdf",
+            "voice.wav",
+            "demo.mp4",
+            "archive.zip",
+            "README.md",
+        ]
+
+        #expect(paths.map { WorkspaceReviewFileRenderingPolicy.renderer(for: $0) } == [
+            .review,
+            .workspaceFile,
+            .workspaceFile,
+            .workspaceFile,
+            .workspaceFile,
+            .workspaceFile,
+            .workspaceFile,
+            .review,
+        ])
+        #expect(WorkspaceReviewFileRenderingPolicy.renderer(for: "deleted.png", status: "D") == .review)
+    }
 
     @Test func fileDetailPhaseTreatsInitialNilStateAsLoading() {
         #expect(WorkspaceReviewFileDetailPhase.resolve(diff: nil, error: nil) == .loading)

@@ -1,6 +1,20 @@
 import SwiftUI
 import UIKit
 
+enum WorkspaceReviewFileRenderer: Equatable {
+    case review
+    case workspaceFile
+}
+
+enum WorkspaceReviewFileRenderingPolicy {
+    static func renderer(for path: String, status: String? = nil) -> WorkspaceReviewFileRenderer {
+        if status?.trimmingCharacters(in: .whitespacesAndNewlines) == "D" {
+            return .review
+        }
+        return FileType.detect(from: path).previewCategory == .text ? .review : .workspaceFile
+    }
+}
+
 enum WorkspaceReviewFileDetailPhase: Equatable {
     case loading
     case unavailable(String)
@@ -115,20 +129,24 @@ struct WorkspaceReviewFileDetailView: View {
 
     var body: some View {
         Group {
-            switch WorkspaceReviewFileDetailPhase.resolve(diff: diff, error: error) {
-            case .loading:
-                ProgressView("Loading file review…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if currentRenderer == .workspaceFile {
+                workspaceFileContent
+            } else {
+                switch WorkspaceReviewFileDetailPhase.resolve(diff: diff, error: error) {
+                case .loading:
+                    ProgressView("Loading file review…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.themeBgDark)
+                case .unavailable(let error):
+                    ContentUnavailableView(
+                        "Review Unavailable",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(error)
+                    )
                     .background(Color.themeBgDark)
-            case .unavailable(let error):
-                ContentUnavailableView(
-                    "Review Unavailable",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(error)
-                )
-                .background(Color.themeBgDark)
-            case .loaded(let diff):
-                content(diff: diff)
+                case .loaded(let diff):
+                    content(diff: diff)
+                }
             }
         }
         .environment(\.horizontalBackSwipeAction, horizontalBackSwipeAction)
@@ -201,7 +219,7 @@ struct WorkspaceReviewFileDetailView: View {
     }
 
     private var toolbarShareableContent: FileShareService.ShareableContent? {
-        guard let diff else { return nil }
+        guard currentRenderer == .review, let diff else { return nil }
         return shareableContentForReview(diff: diff)
     }
 
@@ -254,7 +272,12 @@ struct WorkspaceReviewFileDetailView: View {
         return { dismiss() }
     }
 
+    private var currentRenderer: WorkspaceReviewFileRenderer {
+        WorkspaceReviewFileRenderingPolicy.renderer(for: currentFile.path, status: currentFile.status)
+    }
+
     private var parentOwnsBackSwipe: Bool {
+        guard currentRenderer == .review else { return false }
         guard let diff else { return true }
         if isDeletedFile { return diff.hunks.isEmpty }
         if isNewFile { return !currentContentInstallsUIKitBackSwipe(diff.currentText) }
@@ -304,6 +327,30 @@ struct WorkspaceReviewFileDetailView: View {
 
         guard !diff.currentText.isEmpty else { return nil }
         return .fromText(diff.currentText, filePath: currentFile.path)
+    }
+
+    private var workspaceFileContent: some View {
+        VStack(spacing: 0) {
+            ReviewFileSummaryBar(
+                path: currentFile.path,
+                status: currentFile.status,
+                statusLabel: currentFile.statusLabel,
+                addedLines: currentFile.addedLines,
+                removedLines: currentFile.removedLines
+            )
+
+            Divider().overlay(Color.themeComment.opacity(0.2))
+
+            FileBrowserContentView(
+                workspaceId: workspaceId,
+                worktreeId: worktreeId,
+                filePath: currentFile.path,
+                fileName: currentFile.path.lastPathComponentForDisplay,
+                chromeMode: .treePane,
+                allowsHorizontalBackSwipe: allowsHorizontalBackSwipe
+            )
+        }
+        .background(Color.themeBgDark)
     }
 
     private func content(diff: WorkspaceReviewDiffResponse) -> some View {
@@ -500,13 +547,17 @@ struct WorkspaceReviewFileDetailView: View {
     }
 
     private func loadDiff(for requestedFile: WorkspaceReviewFile) async {
+        diff = nil
+        error = nil
+        guard WorkspaceReviewFileRenderingPolicy.renderer(
+            for: requestedFile.path,
+            status: requestedFile.status
+        ) == .review else { return }
         guard let api = apiClient else {
             error = "Server is offline."
             return
         }
 
-        diff = nil
-        error = nil
         isLoading = true
         defer {
             if currentFile.path == requestedFile.path {

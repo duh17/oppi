@@ -300,6 +300,21 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .pushed) == true)
     }
 
+    @Test func fileBrowserBackSwipePolicyYieldsOwnershipToModalHost() {
+        #expect(
+            FileBrowserContentView.shouldInstallHorizontalBackSwipe(
+                allowsHorizontalBackSwipe: false,
+                parentOwnsBackSwipe: true
+            ) == false
+        )
+        #expect(
+            FileBrowserContentView.shouldInstallHorizontalBackSwipe(
+                allowsHorizontalBackSwipe: true,
+                parentOwnsBackSwipe: true
+            ) == true
+        )
+    }
+
     @Test func fileBrowserFileTargetUsesLinkedFileDestinationForHistoryBack() {
         let target = WorkspaceLinkedFileNavTarget.workspaceFile(
             serverId: "server-1",
