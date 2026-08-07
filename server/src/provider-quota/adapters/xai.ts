@@ -206,13 +206,17 @@ export async function fetchXaiProviderQuota(
   const credential = readCredential(XAI_PROVIDER_ID);
 
   if (!credential) {
-    return finalizeProviderQuota(emptyProviderQuota(XAI_PROVIDER_ID, displayName, fetchedAt, false));
+    return finalizeProviderQuota(
+      emptyProviderQuota(XAI_PROVIDER_ID, displayName, fetchedAt, false),
+    );
   }
 
   // Consumer credit quota is OAuth-backed (Grok Build / SuperGrok). API keys use a
   // different rate-limit surface and should not present empty consumer windows.
   if (credentialType(credential) === "api_key") {
-    return finalizeProviderQuota(emptyProviderQuota(XAI_PROVIDER_ID, displayName, fetchedAt, false));
+    return finalizeProviderQuota(
+      emptyProviderQuota(XAI_PROVIDER_ID, displayName, fetchedAt, false),
+    );
   }
 
   const resolved = await resolveProviderAccessToken(
