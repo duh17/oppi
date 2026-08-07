@@ -70,6 +70,7 @@ struct AgentManagementView: View {
                                     name: updated.name,
                                     icon: updated.definition.icon,
                                     description: updated.description,
+                                    launchConstraints: updated.definition.launchConstraints,
                                     status: updated.status,
                                     version: updated.version,
                                     createdAt: updated.createdAt,
@@ -289,6 +290,13 @@ private struct AgentDetailView: View {
                     }
                 }
 
+                if let constraints = agent.definition.launchConstraints {
+                    Section("Launch Constraints") {
+                        detailRow("Runtime", constraints.requiredRuntime?.rawValue.capitalized ?? "Any")
+                        detailRow("Workspaces", allowedWorkspaceNames(constraints.allowedWorkspaceIds))
+                    }
+                }
+
                 Section("Start") {
                     Button {
                         isShowingLaunch = true
@@ -400,9 +408,19 @@ private struct AgentDetailView: View {
         .sheet(isPresented: $isShowingLaunch) {
             if let agent {
                 NavigationStack {
-                    AgentLaunchSheet(agent: agent) { session in
-                        connection.sessionStore.upsert(session)
-                    }
+                    AgentLaunchSheet(
+                        agent: agent,
+                        onSessionCreated: { session in
+                            connection.sessionStore.upsert(session)
+                        },
+                        onEditAgent: {
+                            isShowingLaunch = false
+                            Task { @MainActor in
+                                await Task.yield()
+                                isShowingNativeEdit = true
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -507,6 +525,13 @@ private struct AgentDetailView: View {
         if !allowed.isEmpty { return "Allowed: \(allowed.joined(separator: ", "))" }
         if !excluded.isEmpty { return "Excluded: \(excluded.joined(separator: ", "))" }
         return "Default"
+    }
+
+    private func allowedWorkspaceNames(_ ids: [String]?) -> String {
+        guard let ids else { return "Any" }
+        return ids.map { id in
+            workspaceStore.workspaces.first(where: { $0.id == id })?.name ?? id
+        }.joined(separator: ", ")
     }
 
     private func resourceSummary(_ values: [String]?, displayValues: [String]? = nil) -> String {
@@ -647,6 +672,7 @@ private struct AgentLaunchSheet: View {
 
     let agent: StoredAgentDefinition
     let onSessionCreated: (Session) -> Void
+    let onEditAgent: () -> Void
 
     @State private var selectedWorkspaceId = ""
     @State private var prompt = ""
@@ -656,8 +682,25 @@ private struct AgentLaunchSheet: View {
     @State private var thinkingSelection = ""
     @State private var isLaunching = false
     @State private var error: String?
+    @State private var launchFailure: AgentLaunchFailureResponse?
 
-    private var workspaces: [Workspace] { workspaceStore.workspaces }
+    private var effectiveLaunchConstraints: AgentLaunchConstraints? {
+        guard let recovery = launchFailure?.recovery,
+              recovery.allowedWorkspaceIds != nil || recovery.requiredRuntime != nil else {
+            return agent.definition.launchConstraints
+        }
+        return AgentLaunchConstraints(
+            allowedWorkspaceIds: recovery.allowedWorkspaceIds,
+            requiredRuntime: recovery.requiredRuntime
+        )
+    }
+
+    private var workspaces: [Workspace] {
+        QuickSessionLaunchRouting.compatibleWorkspaces(
+            for: effectiveLaunchConstraints,
+            in: workspaceStore.workspaces
+        )
+    }
 
     private var canLaunch: Bool {
         !selectedWorkspaceId.isEmpty
@@ -668,9 +711,17 @@ private struct AgentLaunchSheet: View {
     var body: some View {
         Form {
             Section("Target") {
-                Picker("Workspace", selection: $selectedWorkspaceId) {
-                    ForEach(workspaces) { workspace in
-                        Text(workspace.name).tag(workspace.id)
+                if workspaces.isEmpty {
+                    ContentUnavailableView(
+                        "No Compatible Workspace",
+                        systemImage: "folder.badge.questionmark",
+                        description: Text(launchConstraintRequirement)
+                    )
+                } else {
+                    Picker("Workspace", selection: $selectedWorkspaceId) {
+                        ForEach(workspaces) { workspace in
+                            Text(workspace.name).tag(workspace.id)
+                        }
                     }
                 }
 
@@ -700,8 +751,24 @@ private struct AgentLaunchSheet: View {
 
             if let error {
                 Section {
-                    Text(error)
-                        .foregroundStyle(.themeOrange)
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.themeRed)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if launchFailure?.recovery.actions.contains(.editAgent) == true {
+                        Button("Edit \(agent.name)") {
+                            dismiss()
+                            onEditAgent()
+                        }
+                    }
+                    if launchFailure?.recovery.actions.contains(.chooseWorkspace) == true {
+                        Button("Choose Workspace Above") {
+                            selectedWorkspaceId = ""
+                        }
+                        .disabled(workspaces.isEmpty)
+                    }
+                } header: {
+                    Text("Couldn’t Start Agent")
                 }
             }
         }
@@ -721,11 +788,22 @@ private struct AgentLaunchSheet: View {
                 .accessibilityIdentifier("agent.launch.start")
             }
         }
-        .onAppear {
-            if selectedWorkspaceId.isEmpty {
-                selectedWorkspaceId = workspaces.first?.id ?? ""
+        .onChange(of: workspaces.map(\.id)) { _, ids in
+            if !ids.contains(selectedWorkspaceId) {
+                selectedWorkspaceId = ""
             }
         }
+    }
+
+    private var launchConstraintRequirement: String {
+        let constraints = effectiveLaunchConstraints
+        let runtime = constraints?.requiredRuntime.map { "a \($0.rawValue) workspace" }
+        let allowed = constraints?.allowedWorkspaceIds.map {
+            "an allowed workspace (\($0.joined(separator: ", ")))"
+        }
+        return [runtime, allowed].compactMap { $0 }.joined(separator: " and ").nilIfBlank
+            .map { "This Agent requires \($0). Edit the Agent or add a compatible workspace." }
+            ?? "Edit the Agent or add a compatible workspace."
     }
 
     @MainActor
@@ -748,8 +826,11 @@ private struct AgentLaunchSheet: View {
                 thinkingLevel: ThinkingLevel(rawValue: thinkingSelection),
                 sessionName: sessionName
             )
-            guard let session = response.session else {
-                error = response.receipt.reason ?? "Launch did not return a session"
+            guard QuickSessionLaunchRouting.canNavigateAfterAgentLaunch(response),
+                  let session = response.session else {
+                error = response.receipt.promptError
+                    ?? response.receipt.reason
+                    ?? "The Agent did not start. Review its configuration and try again."
                 return
             }
             onSessionCreated(session)
@@ -763,6 +844,9 @@ private struct AgentLaunchSheet: View {
                 )
             }
             dismiss()
+        } catch let failure as AgentLaunchFailureResponse {
+            launchFailure = failure
+            error = failure.localizedDescription
         } catch {
             self.error = error.localizedDescription
         }

@@ -81,6 +81,20 @@ enum QuickSessionLaunchRouting {
         )
     }
 
+    static func compatibleWorkspaces(
+        for constraints: AgentLaunchConstraints?,
+        in workspaces: [Workspace]
+    ) -> [Workspace] {
+        guard let constraints else { return workspaces }
+        return workspaces.filter(constraints.allows)
+    }
+
+    static func canNavigateAfterAgentLaunch(_ response: AgentSessionLaunchResponse) -> Bool {
+        response.receipt.accepted
+            && response.receipt.promptDispatch == "delivered"
+            && response.session != nil
+    }
+
     /// Prefer a remembered Agent only when it still exists in the active server list.
     static func preferredAgentId(
         lastAgentId: String?,

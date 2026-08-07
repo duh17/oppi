@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
+import { AgentConfigurationError } from "../src/agent-launch-errors.js";
 import { BoundSessionStreamMux, DictationStreamMux, type StreamContext } from "../src/stream.js";
 import type { SessionCatchUpResponse } from "../src/session-broadcast.js";
 import { Storage } from "../src/storage.js";
@@ -213,6 +214,27 @@ describe("BoundSessionStreamMux", () => {
       expect(rejected.closeCode).toBe(1008);
       expect(rejected.sent).toEqual([]);
     }
+  });
+
+  it("closes terminal Agent configuration failures without timeline errors or retries", async () => {
+    const session = makeSession("agent-config-failure", "w1");
+    const { ctx } = createMockContext([session]);
+    vi.mocked(ctx.sessions.startSession).mockRejectedValue(
+      new AgentConfigurationError("agent_tools_unavailable", {
+        missingTools: ["research_web_search"],
+      }),
+    );
+
+    const ws = new FakeWebSocket();
+    await new BoundSessionStreamMux(ctx).handleWebSocket(
+      "w1",
+      session.id,
+      ws as unknown as WebSocket,
+    );
+
+    expect(ws.closeCode).toBe(1008);
+    expect(ws.sentOfType("error", session.id)).toHaveLength(0);
+    expect(ws.sentOfType("connected", session.id)).toHaveLength(0);
   });
 
   it("opens a control stream after the declared session is reloaded from SQLite", async () => {

@@ -5,6 +5,7 @@
  * from subscribe() match the ServerMessage contract consumed by iOS.
  */
 
+import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { isDeclaredControlSession } from "./control-session.js";
 import { createLogger } from "./logger.js";
@@ -252,15 +253,25 @@ async function resolveSelectedAgentExtensionPaths(
       .map((resource) => [serverResourceId("extension", resource.path), resource.path]),
   );
   const selectedPaths: string[] = [];
+  const unavailableExtensions: string[] = [];
   for (const extensionId of new Set(extensionIds)) {
     if (extensionId === "oppi") {
-      throw new Error("The built-in Oppi extension is managed by server policy, not an Agent");
+      unavailableExtensions.push("oppi (managed by server policy)");
+      continue;
     }
     const path = pathsById.get(extensionId);
     if (!path) {
-      throw new Error(`Selected Agent Extension is unavailable: ${extensionId}`);
+      unavailableExtensions.push(extensionId);
+      continue;
     }
     selectedPaths.push(path);
+  }
+  if (unavailableExtensions.length > 0) {
+    throw new AgentConfigurationError(
+      "agent_extensions_unavailable",
+      { unavailableExtensions },
+      `Selected Agent Extension is unavailable: ${unavailableExtensions.join(", ")}`,
+    );
   }
   return selectedPaths;
 }
@@ -269,15 +280,21 @@ function assertSelectedAgentResourcesAvailable(
   selectedSkillPaths: string[] | undefined,
   selectedExtensionPaths: string[] | undefined,
 ): void {
-  for (const selectedPath of selectedSkillPaths ?? []) {
-    if (!existsSync(selectedPath)) {
-      throw new Error(`Selected Agent Skill is unavailable: ${selectedPath}`);
-    }
+  const unavailableSkills = (selectedSkillPaths ?? []).filter((path) => !existsSync(path));
+  if (unavailableSkills.length > 0) {
+    throw new AgentConfigurationError(
+      "agent_skills_unavailable",
+      { unavailableSkills },
+      `Selected Agent Skill is unavailable: ${unavailableSkills.join(", ")}`,
+    );
   }
-  for (const selectedPath of selectedExtensionPaths ?? []) {
-    if (!existsSync(selectedPath)) {
-      throw new Error(`Selected Agent Extension is unavailable: ${selectedPath}`);
-    }
+  const unavailableExtensions = (selectedExtensionPaths ?? []).filter((path) => !existsSync(path));
+  if (unavailableExtensions.length > 0) {
+    throw new AgentConfigurationError(
+      "agent_extensions_unavailable",
+      { unavailableExtensions },
+      `Selected Agent Extension is unavailable: ${unavailableExtensions.join(", ")}`,
+    );
   }
 }
 
@@ -286,16 +303,21 @@ function assertSelectedAgentSkillsLoaded(
   result: SkillLoadResult,
 ): void {
   if (selectedPaths === undefined) return;
-  for (const selectedPath of selectedPaths) {
-    const loaded = result.skills.some(
-      (skill) =>
-        isPathWithin(selectedPath, skill.filePath) ||
-        isPathWithin(selectedPath, skill.baseDir) ||
-        isPathWithin(skill.baseDir, selectedPath),
+  const unavailableSkills = selectedPaths.filter(
+    (selectedPath) =>
+      !result.skills.some(
+        (skill) =>
+          isPathWithin(selectedPath, skill.filePath) ||
+          isPathWithin(selectedPath, skill.baseDir) ||
+          isPathWithin(skill.baseDir, selectedPath),
+      ),
+  );
+  if (unavailableSkills.length > 0) {
+    throw new AgentConfigurationError(
+      "agent_skills_unavailable",
+      { unavailableSkills },
+      `Selected Agent Skill is unavailable: ${unavailableSkills.join(", ")}`,
     );
-    if (!loaded) {
-      throw new Error(`Selected Agent Skill is unavailable: ${selectedPath}`);
-    }
   }
 }
 
@@ -304,16 +326,21 @@ function assertSelectedAgentExtensionsLoaded(
   result: ExtensionLoadResult,
 ): void {
   if (selectedPaths === undefined) return;
-  for (const selectedPath of selectedPaths) {
-    const loaded = result.extensions.some(
-      (extension) =>
-        !extension.path.startsWith("<inline:") &&
-        (isPathWithin(selectedPath, extension.resolvedPath) ||
-          isPathWithin(extension.resolvedPath, selectedPath)),
+  const unavailableExtensions = selectedPaths.filter(
+    (selectedPath) =>
+      !result.extensions.some(
+        (extension) =>
+          !extension.path.startsWith("<inline:") &&
+          (isPathWithin(selectedPath, extension.resolvedPath) ||
+            isPathWithin(extension.resolvedPath, selectedPath)),
+      ),
+  );
+  if (unavailableExtensions.length > 0) {
+    throw new AgentConfigurationError(
+      "agent_extensions_unavailable",
+      { unavailableExtensions },
+      `Selected Agent Extension could not be loaded: ${unavailableExtensions.join(", ")}`,
     );
-    if (!loaded) {
-      throw new Error(`Selected Agent Extension could not be loaded: ${selectedPath}`);
-    }
   }
 }
 
@@ -519,7 +546,9 @@ function assertConfiguredAgentToolsAvailable(
   );
   if (missing.length === 0) return;
   const noun = missing.length === 1 ? "tool is" : "tools are";
-  throw new Error(
+  throw new AgentConfigurationError(
+    "agent_tools_unavailable",
+    { missingTools: missing },
     `Configured Agent ${noun} unavailable: ${missing.join(", ")}. Update the Agent's selected Extensions or tool allowlist.`,
   );
 }

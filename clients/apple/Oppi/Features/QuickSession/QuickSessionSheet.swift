@@ -82,6 +82,7 @@ struct QuickSessionSheet: View {
     @State private var isInitialized = false
     @State private var isCreating = false
     @State private var error: String?
+    @State private var launchFailure: AgentLaunchFailureResponse?
     @State private var voiceInputManager: VoiceInputManager?
     @State private var busyStreamingBehavior: StreamingBehavior = .followUp
     @State private var composerFocusRequestID = 0
@@ -92,9 +93,27 @@ struct QuickSessionSheet: View {
     @State private var keyboardFrame: CGRect = .null
 
     /// All workspaces across all connected servers.
-    private var allServerWorkspaces: [(serverId: String, workspace: Workspace)] {
+    private var rawServerWorkspaces: [(serverId: String, workspace: Workspace)] {
         coordinator.connections.flatMap { serverId, conn in
             conn.workspaceStore.workspaces.map { (serverId: serverId, workspace: $0) }
+        }
+    }
+
+    private var effectiveLaunchConstraints: AgentLaunchConstraints? {
+        guard let recovery = launchFailure?.recovery,
+              recovery.allowedWorkspaceIds != nil || recovery.requiredRuntime != nil else {
+            return selectedAgent?.launchConstraints
+        }
+        return AgentLaunchConstraints(
+            allowedWorkspaceIds: recovery.allowedWorkspaceIds,
+            requiredRuntime: recovery.requiredRuntime
+        )
+    }
+
+    private var allServerWorkspaces: [(serverId: String, workspace: Workspace)] {
+        guard let constraints = effectiveLaunchConstraints else { return rawServerWorkspaces }
+        return rawServerWorkspaces.filter { entry in
+            entry.serverId == selectedServerId && constraints.allows(entry.workspace)
         }
     }
 
@@ -238,13 +257,33 @@ struct QuickSessionSheet: View {
     private var composerContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let error {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.themeRed)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(.themeRed.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.themeRed)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if launchFailure?.recovery.actions.contains(.chooseWorkspace) == true {
+                        Button("Choose Compatible Workspace") {
+                            showWorkspacePicker = true
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    if launchFailure?.recovery.actions.contains(.editAgent) == true
+                        || (selectedAgent != nil && allServerWorkspaces.isEmpty) {
+                        Button("Open Agents") {
+                            onDismiss()
+                            navigation.openWorkspaceUtility(.agents)
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.themeRed.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
             // Only the Agent picker is detached above the input capsule.
@@ -380,7 +419,18 @@ struct QuickSessionSheet: View {
         agentThinkingOverride = nil
         showAgentPicker = false
         error = nil
+        launchFailure = nil
         AppPreferences.QuickSession.saveAgentId(agentId)
+        requireExplicitCompatibleWorkspaceIfNeeded()
+    }
+
+    private func requireExplicitCompatibleWorkspaceIfNeeded() {
+        guard let constraints = effectiveLaunchConstraints else { return }
+        if let selectedWorkspace, constraints.allows(selectedWorkspace) { return }
+        selectedWorkspace = nil
+        selectedWorkspaceSelectionSource = "agent_constraint_required"
+        error = "Choose a workspace compatible with \(selectedAgent?.name ?? "this Agent")."
+        showWorkspacePicker = true
     }
 
     // MARK: - Workspace Picker
@@ -399,7 +449,10 @@ struct QuickSessionSheet: View {
                 showsSectionHeaders: workspacePickerSections.count > 1,
                 selectedWorkspaceId: selectedWorkspace?.id,
                 selectedServerId: selectedServerId,
-                onSelect: selectWorkspace
+                onSelect: selectWorkspace,
+                emptyMessage: selectedAgent == nil
+                    ? "Pair or refresh a server, then try again."
+                    : "\(selectedAgent?.name ?? "This Agent") requires a compatible workspace. Edit the Agent or add one, then try again."
             )
             .presentationCompactAdaptation(.popover)
             .presentationBackground(Color.themeSurfaceFill(.popover))
@@ -414,6 +467,7 @@ struct QuickSessionSheet: View {
         selectedServerId = serverId
         showWorkspacePicker = false
         error = nil
+        launchFailure = nil
         configureVoiceInputForSelectedServer()
         AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
     }
@@ -427,7 +481,7 @@ struct QuickSessionSheet: View {
         }
 
         // Select workspace: last used > explicit default > first available.
-        let all = allServerWorkspaces
+        let all = rawServerWorkspaces
         if let preferred = AppPreferences.QuickSession.preferredWorkspaceSelection(
             in: all.map { (id: $0.workspace.id, name: $0.workspace.name) }
         ), let match = all.first(where: { $0.workspace.id == preferred.id }) {
@@ -598,6 +652,7 @@ struct QuickSessionSheet: View {
             )
             agentModelOverride = nil
             agentThinkingOverride = nil
+            requireExplicitCompatibleWorkspaceIfNeeded()
         } catch {
             logger.warning("Failed to load agents for quick session: \(error.localizedDescription, privacy: .public)")
             availableAgents = []
@@ -697,9 +752,12 @@ struct QuickSessionSheet: View {
                         model: modelId,
                         thinkingLevel: agentThinking
                     )
-                    guard let launched = response.session else {
+                    guard QuickSessionLaunchRouting.canNavigateAfterAgentLaunch(response),
+                          let launched = response.session else {
                         throw QuickSessionError.agentLaunchFailed(
-                            response.receipt.reason ?? response.receipt.promptError ?? "Launch did not return a session"
+                            response.receipt.promptError
+                                ?? response.receipt.reason
+                                ?? "The Agent did not start. Review its configuration and try again."
                         )
                     }
                     session = launched
@@ -734,6 +792,9 @@ struct QuickSessionSheet: View {
                 composerDraftStore?.clearQuickSessionDraft(ifRevision: submittedDraftRevision)
                 onDismiss()
             } catch {
+                if let failure = error as? AgentLaunchFailureResponse {
+                    launchFailure = failure
+                }
                 let errorKind = ChatSessionTelemetry.metricErrorKind(for: error)
                 ChatSessionTelemetry.recordTimingMetric(
                     .quickSessionCreateMs,
@@ -921,6 +982,7 @@ private struct QuickSessionWorkspacePicker: View {
     let selectedWorkspaceId: String?
     let selectedServerId: String?
     let onSelect: (Workspace, String) -> Void
+    let emptyMessage: String
 
     private var hasWorkspaces: Bool {
         sections.contains { !$0.workspaces.isEmpty }
@@ -975,7 +1037,7 @@ private struct QuickSessionWorkspacePicker: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("No workspaces available", systemImage: "folder.badge.questionmark")
                         .font(.body.weight(.semibold))
-                    Text("Pair or refresh a server, then try again.")
+                    Text(emptyMessage)
                         .font(.caption)
                         .foregroundStyle(.themeComment)
                 }

@@ -71,6 +71,29 @@ struct AgentResources: Codable, Sendable, Equatable {
     }
 }
 
+struct AgentLaunchConstraints: Codable, Sendable, Equatable {
+    var allowedWorkspaceIds: [String]?
+    var requiredRuntime: WorkspaceRuntime?
+
+    init(
+        allowedWorkspaceIds: [String]? = nil,
+        requiredRuntime: WorkspaceRuntime? = nil
+    ) {
+        self.allowedWorkspaceIds = allowedWorkspaceIds
+        self.requiredRuntime = requiredRuntime
+    }
+
+    func allows(_ workspace: Workspace) -> Bool {
+        let actualRuntime = workspace.runtime ?? .host
+        return (allowedWorkspaceIds?.contains(workspace.id) ?? true)
+            && (requiredRuntime.map { $0 == actualRuntime } ?? true)
+    }
+
+    var isEmpty: Bool {
+        allowedWorkspaceIds == nil && requiredRuntime == nil
+    }
+}
+
 struct AgentSessionDefaults: Codable, Sendable, Equatable {
     var model: String?
     var thinkingLevel: ThinkingLevel?
@@ -108,6 +131,7 @@ struct AgentDefinition: Codable, Sendable, Equatable {
     var instructions: AgentInstructions?
     var resources: AgentResources?
     var sessionDefaults: AgentSessionDefaults?
+    var launchConstraints: AgentLaunchConstraints?
 
     init(
         name: String,
@@ -115,7 +139,8 @@ struct AgentDefinition: Codable, Sendable, Equatable {
         description: String? = nil,
         instructions: AgentInstructions? = nil,
         resources: AgentResources? = nil,
-        sessionDefaults: AgentSessionDefaults? = nil
+        sessionDefaults: AgentSessionDefaults? = nil,
+        launchConstraints: AgentLaunchConstraints? = nil
     ) {
         self.name = name
         self.icon = icon
@@ -123,10 +148,11 @@ struct AgentDefinition: Codable, Sendable, Equatable {
         self.instructions = instructions
         self.resources = resources
         self.sessionDefaults = sessionDefaults
+        self.launchConstraints = launchConstraints
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, icon, description, instructions, resources, sessionDefaults
+        case name, icon, description, instructions, resources, sessionDefaults, launchConstraints
     }
 
     init(from decoder: Decoder) throws {
@@ -137,6 +163,7 @@ struct AgentDefinition: Codable, Sendable, Equatable {
         instructions = try container.decodeIfPresent(AgentInstructions.self, forKey: .instructions)
         resources = try container.decodeIfPresent(AgentResources.self, forKey: .resources)
         sessionDefaults = try container.decodeIfPresent(AgentSessionDefaults.self, forKey: .sessionDefaults)
+        launchConstraints = try container.decodeIfPresent(AgentLaunchConstraints.self, forKey: .launchConstraints)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -147,6 +174,7 @@ struct AgentDefinition: Codable, Sendable, Equatable {
         try container.encodeIfPresent(instructions, forKey: .instructions)
         try container.encodeIfPresent(resources, forKey: .resources)
         try container.encodeIfPresent(sessionDefaults, forKey: .sessionDefaults)
+        try container.encodeIfPresent(launchConstraints, forKey: .launchConstraints)
     }
 }
 
@@ -155,6 +183,7 @@ struct AgentDefinitionSummary: Identifiable, Sendable, Equatable {
     var name: String
     var icon: IconChoice
     var description: String?
+    var launchConstraints: AgentLaunchConstraints? = nil
     var status: AgentDefinitionStatus
     var version: Int
     var createdAt: Date
@@ -177,7 +206,7 @@ struct StoredAgentDefinition: Identifiable, Sendable, Equatable {
 
 extension AgentDefinitionSummary: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, name, icon, description, status, version, createdAt, updatedAt, archivedAt
+        case id, name, icon, description, launchConstraints, status, version, createdAt, updatedAt, archivedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -186,6 +215,7 @@ extension AgentDefinitionSummary: Codable {
         name = try c.decode(String.self, forKey: .name)
         icon = try c.decodeIfPresent(IconChoice.self, forKey: .icon) ?? .defaultValue
         description = try c.decodeIfPresent(String.self, forKey: .description)
+        launchConstraints = try c.decodeIfPresent(AgentLaunchConstraints.self, forKey: .launchConstraints)
         status = try c.decode(AgentDefinitionStatus.self, forKey: .status)
         version = try c.decode(Int.self, forKey: .version)
         createdAt = try c.decodeUnixMilliseconds(forKey: .createdAt)
@@ -199,6 +229,7 @@ extension AgentDefinitionSummary: Codable {
         try c.encode(name, forKey: .name)
         try c.encode(icon, forKey: .icon)
         try c.encodeIfPresent(description, forKey: .description)
+        try c.encodeIfPresent(launchConstraints, forKey: .launchConstraints)
         try c.encode(status, forKey: .status)
         try c.encode(version, forKey: .version)
         try c.encodeUnixMilliseconds(createdAt, forKey: .createdAt)
@@ -262,11 +293,66 @@ struct AgentLaunchReceipt: Decodable, Sendable, Equatable {
     var retryable: Bool?
     var reason: String?
     var retryAfterMs: Int?
+
+    init(
+        accepted: Bool,
+        agentId: String? = nil,
+        agentVersion: Int? = nil,
+        sessionId: String? = nil,
+        parentSessionId: String? = nil,
+        idempotencyKey: String? = nil,
+        existing: Bool? = nil,
+        promptDispatch: String? = nil,
+        promptError: String? = nil,
+        retryable: Bool? = nil,
+        reason: String? = nil,
+        retryAfterMs: Int? = nil
+    ) {
+        self.accepted = accepted
+        self.agentId = agentId
+        self.agentVersion = agentVersion
+        self.sessionId = sessionId
+        self.parentSessionId = parentSessionId
+        self.idempotencyKey = idempotencyKey
+        self.existing = existing
+        self.promptDispatch = promptDispatch
+        self.promptError = promptError
+        self.retryable = retryable
+        self.reason = reason
+        self.retryAfterMs = retryAfterMs
+    }
 }
 
 struct AgentSessionLaunchResponse: Decodable, Sendable, Equatable {
     let receipt: AgentLaunchReceipt
     let session: Session?
+}
+
+enum AgentLaunchRecoveryAction: String, Decodable, Sendable, Equatable {
+    case editAgent = "edit_agent"
+    case chooseWorkspace = "choose_workspace"
+}
+
+struct AgentLaunchRecovery: Decodable, Sendable, Equatable {
+    let actions: [AgentLaunchRecoveryAction]
+    let agentId: String
+    let workspaceId: String
+    let missingTools: [String]?
+    let unavailableExtensions: [String]?
+    let unavailableSkills: [String]?
+    let allowedWorkspaceIds: [String]?
+    let requiredRuntime: WorkspaceRuntime?
+    let actualRuntime: WorkspaceRuntime?
+}
+
+struct AgentLaunchFailureResponse: Decodable, LocalizedError, Sendable, Equatable {
+    let error: String
+    let code: String
+    let sessionId: String
+    let receipt: AgentLaunchReceipt
+    let recovery: AgentLaunchRecovery
+
+    var errorDescription: String? { error }
 }
 
 // MARK: - Schedules

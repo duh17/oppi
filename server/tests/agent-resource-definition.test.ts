@@ -18,6 +18,28 @@ describe("saved Agent resource definitions", () => {
     ).toEqual({ skillPaths: [], extensionIds: [] });
   });
 
+  it("preserves portable launch constraints", () => {
+    expect(
+      validateAgentDefinition({
+        name: "Sandbox Scout",
+        launchConstraints: {
+          allowedWorkspaceIds: ["research-workspace"],
+          requiredRuntime: "sandbox",
+        },
+      }).launchConstraints,
+    ).toEqual({
+      allowedWorkspaceIds: ["research-workspace"],
+      requiredRuntime: "sandbox",
+    });
+  });
+
+  it.each([
+    [{ allowedWorkspaceIds: [] }, "launchConstraints.allowedWorkspaceIds must not be empty"],
+    [{ requiredRuntime: "remote" }, "launchConstraints.requiredRuntime must be host or sandbox"],
+  ])("rejects invalid launch constraints %#", (launchConstraints, message) => {
+    expect(() => validateAgentDefinition({ name: "Invalid", launchConstraints })).toThrow(message);
+  });
+
   it("rejects prompt templates because they are interactive composer shortcuts", () => {
     expect(() =>
       validateAgentDefinition({

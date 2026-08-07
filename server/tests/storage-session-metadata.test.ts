@@ -134,6 +134,49 @@ describe("storage session metadata format", () => {
     }
   });
 
+  it("persists terminal Agent launch configuration failures", () => {
+    const storage = new Storage(dir);
+    const session = storage.createSession("failed Agent launch", "openai/gpt-5");
+    session.status = "error";
+    session.launch = {
+      source: "schedule",
+      agentId: "research-scout",
+      idempotencyKey: "scheduled-research",
+      status: "failed",
+      requestedAt: 1000,
+      completedAt: 1001,
+      promptDispatch: "not_sent",
+      promptError: "agent_workspace_incompatible",
+      failure: {
+        code: "agent_workspace_incompatible",
+        retryable: false,
+        details: {
+          targetWorkspaceId: "oppi",
+          allowedWorkspaceIds: ["research"],
+          requiredRuntime: "sandbox",
+          actualRuntime: "host",
+        },
+      },
+    };
+    storage.saveSession(session);
+
+    expect(new Storage(dir).getSession(session.id)).toMatchObject({
+      status: "error",
+      launch: {
+        source: "schedule",
+        idempotencyKey: "scheduled-research",
+        status: "failed",
+        failure: {
+          code: "agent_workspace_incompatible",
+          details: {
+            targetWorkspaceId: "oppi",
+            allowedWorkspaceIds: ["research"],
+          },
+        },
+      },
+    });
+  });
+
   it("persists pi-tui runtime metadata", () => {
     const storage = new Storage(dir);
     const session = storage.createSession("terminal live", "openai/gpt-5");

@@ -6,6 +6,7 @@
  */
 
 import { WebSocket, type RawData } from "ws";
+import { AgentConfigurationError } from "./agent-launch-errors.js";
 import type { SessionManager } from "./sessions.js";
 import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
@@ -599,14 +600,24 @@ export class BoundSessionStreamMux {
         pending_permissions: "0",
         pending_ui_requests: "0",
       });
-      send({ type: "error", error: message, sessionId });
-      cleanupBoundConnection(1011);
-      ws.close(1011, "Session stream setup failed");
+      const terminalAgentConfigurationFailure = err instanceof AgentConfigurationError;
+      if (!terminalAgentConfigurationFailure) {
+        send({ type: "error", error: message, sessionId });
+      }
+      const closeCode = terminalAgentConfigurationFailure ? 1008 : 1011;
+      cleanupBoundConnection(closeCode);
+      ws.close(
+        closeCode,
+        terminalAgentConfigurationFailure
+          ? "Agent configuration unavailable"
+          : "Session stream setup failed",
+      );
       log.warn("ws.bound_session_stream_setup_failed", {
         connId,
         workspaceId,
         sessionId,
         error: message,
+        ...(err instanceof AgentConfigurationError ? { failureCode: err.code } : {}),
       });
     }
   }

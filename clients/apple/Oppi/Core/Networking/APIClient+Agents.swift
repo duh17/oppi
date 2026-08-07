@@ -36,12 +36,17 @@ extension APIClient {
         return try JSONDecoder().decode(AgentResponse.self, from: data).agent
     }
 
-    func updateAgent(agentId: String, definition: AgentDefinition) async throws -> StoredAgentDefinition {
+    func updateAgent(
+        agentId: String,
+        definition: AgentDefinition,
+        previouslyHadLaunchConstraints: Bool = false
+    ) async throws -> StoredAgentDefinition {
         struct UpdateBody: Encodable {
             let definition: AgentDefinition
+            let includesLaunchConstraints: Bool
 
             enum CodingKeys: String, CodingKey {
-                case name, icon, description, instructions, resources, sessionDefaults
+                case name, icon, description, instructions, resources, sessionDefaults, launchConstraints
             }
 
             func encode(to encoder: Encoder) throws {
@@ -52,6 +57,9 @@ extension APIClient {
                 try encodeNullable(definition.instructions, to: &c, forKey: .instructions)
                 try encodeNullable(definition.resources, to: &c, forKey: .resources)
                 try encodeNullable(definition.sessionDefaults, to: &c, forKey: .sessionDefaults)
+                if includesLaunchConstraints {
+                    try encodeNullable(definition.launchConstraints, to: &c, forKey: .launchConstraints)
+                }
             }
 
             func encodeNullable<T: Encodable>(
@@ -68,7 +76,14 @@ extension APIClient {
         }
 
         let encodedAgentId = try percentEncodePathSegment(agentId)
-        let data = try await patch("/agents/\(encodedAgentId)", body: UpdateBody(definition: definition))
+        let data = try await patch(
+            "/agents/\(encodedAgentId)",
+            body: UpdateBody(
+                definition: definition,
+                includesLaunchConstraints: definition.launchConstraints != nil
+                    || previouslyHadLaunchConstraints
+            )
+        )
         return try JSONDecoder().decode(AgentResponse.self, from: data).agent
     }
 
@@ -80,7 +95,9 @@ extension APIClient {
         model: String?,
         thinkingLevel: ThinkingLevel?,
         skillPaths: [String]?,
-        extensionIds: [String]?
+        extensionIds: [String]?,
+        launchConstraints: AgentLaunchConstraints? = nil,
+        previouslyHadLaunchConstraints: Bool = false
     ) async throws -> StoredAgentDefinition {
         let encodedAgentId = try percentEncodePathSegment(agentId)
         let data = try await patch(
@@ -94,7 +111,10 @@ extension APIClient {
                 resources: agentId == "oppi-default-agent"
                     ? nil
                     : .init(skillPaths: skillPaths, extensionIds: extensionIds),
-                sessionDefaults: .init(model: model, thinkingLevel: thinkingLevel)
+                sessionDefaults: .init(model: model, thinkingLevel: thinkingLevel),
+                launchConstraints: launchConstraints,
+                includesLaunchConstraints: agentId != "oppi-default-agent"
+                    && (launchConstraints != nil || previouslyHadLaunchConstraints)
             )
         )
         return try JSONDecoder().decode(AgentResponse.self, from: data).agent
@@ -159,7 +179,17 @@ extension APIClient {
             sessionName: sessionName?.nilIfBlank,
             idempotencyKey: "ios-agent-launch-\(UUID().uuidString)"
         )
-        let data = try await post("/agents/\(encodedAgentId)/sessions", body: body)
+        let (data, response) = try await request(
+            "POST",
+            path: "/agents/\(encodedAgentId)/sessions",
+            body: body
+        )
+        if let http = response as? HTTPURLResponse,
+           http.statusCode == 422,
+           let failure = try? JSONDecoder().decode(AgentLaunchFailureResponse.self, from: data) {
+            throw failure
+        }
+        try checkStatus(response, data: data)
         return try JSONDecoder().decode(AgentSessionLaunchResponse.self, from: data)
     }
 
@@ -317,9 +347,11 @@ private struct NativeAgentUpdateBody: Encodable {
     let instructions: AgentInstructions?
     let resources: Resources?
     let sessionDefaults: SessionDefaults
+    let launchConstraints: AgentLaunchConstraints?
+    let includesLaunchConstraints: Bool
 
     enum CodingKeys: String, CodingKey {
-        case name, description, instructions, resources, sessionDefaults
+        case name, description, instructions, resources, sessionDefaults, launchConstraints
     }
 
     func encode(to encoder: Encoder) throws {
@@ -329,6 +361,9 @@ private struct NativeAgentUpdateBody: Encodable {
         try container.encodeNullable(instructions, forKey: .instructions)
         try container.encodeIfPresent(resources, forKey: .resources)
         try container.encode(sessionDefaults, forKey: .sessionDefaults)
+        if includesLaunchConstraints {
+            try container.encodeNullable(launchConstraints, forKey: .launchConstraints)
+        }
     }
 }
 

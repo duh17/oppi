@@ -259,6 +259,8 @@ File previews and media playback use authenticated HTTP routes. The focused sess
 - File browser views use workspace path/list/raw endpoints and client-side cached file indexes for search.
 - Sharing and export code uses redaction and file-rendering services outside the transport layer.
 
+Saved-Agent launchers consume server-authored launch constraints from Agent summaries. They show only allowed workspaces whose host or sandbox runtime matches, while the server remains authoritative. A rejected Agent configuration launch stays on the launch surface, shows the server's actionable explanation, and offers workspace or Agent-edit recovery instead of navigating into an unusable session. Terminal configuration stream closures are non-retryable and do not become repeated timeline rows.
+
 Quick Session intake has two paths:
 
 - `StartQuickSessionIntent` runs in the main app and can preload optional text plus one image from Shortcuts. The image must have an image representation and fit the composer's upload limit.

@@ -240,9 +240,9 @@ describe.sequential("saved Agent exact resource selection", () => {
 
       writeFileSync(skillFile, validSkill);
       await expect(backend.reloadResources()).resolves.toEqual({ success: true });
-      await expect(
-        backend.withModelTurnAdmission("prompt", async () => "allowed"),
-      ).resolves.toBe("allowed");
+      await expect(backend.withModelTurnAdmission("prompt", async () => "allowed")).resolves.toBe(
+        "allowed",
+      );
     } finally {
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });
@@ -305,9 +305,9 @@ describe.sequential("saved Agent exact resource selection", () => {
 
       writeFileSync(selectedExtension, selectedExtensionSource);
       await expect(backend.reloadResources()).resolves.toEqual({ success: true });
-      await expect(
-        backend.withModelTurnAdmission("prompt", async () => "allowed"),
-      ).resolves.toBe("allowed");
+      await expect(backend.withModelTurnAdmission("prompt", async () => "allowed")).resolves.toBe(
+        "allowed",
+      );
     } finally {
       if (backend) await backend.dispose();
       if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -387,12 +387,19 @@ describe.sequential("saved Agent exact resource selection", () => {
           } as Workspace,
           agentDefinition: {
             name: "Missing Extension",
-            resources: { extensionIds: [`extension_${"0".repeat(64)}`] },
+            resources: {
+              extensionIds: [`extension_${"0".repeat(64)}`, `extension_${"1".repeat(64)}`],
+            },
           },
           onEvent: vi.fn(),
           onEnd: vi.fn(),
         }),
-      ).rejects.toThrow("Selected Agent Extension is unavailable");
+      ).rejects.toMatchObject({
+        message: expect.stringContaining("Selected Agent Extension is unavailable"),
+        details: {
+          unavailableExtensions: [`extension_${"0".repeat(64)}`, `extension_${"1".repeat(64)}`],
+        },
+      });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

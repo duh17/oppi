@@ -56,6 +56,29 @@ export interface ControlSessionMetadata {
   targetName?: string;
 }
 
+export type AgentConfigurationFailureCode =
+  | "agent_workspace_incompatible"
+  | "agent_tools_unavailable"
+  | "agent_extensions_unavailable"
+  | "agent_skills_unavailable";
+
+export interface AgentConfigurationFailureDetails {
+  targetWorkspaceId?: string;
+  targetWorkspaceName?: string;
+  allowedWorkspaceIds?: string[];
+  requiredRuntime?: "host" | "sandbox";
+  actualRuntime?: "host" | "sandbox";
+  missingTools?: string[];
+  unavailableExtensions?: string[];
+  unavailableSkills?: string[];
+}
+
+export interface AgentConfigurationFailure {
+  code: AgentConfigurationFailureCode;
+  retryable: false;
+  details: AgentConfigurationFailureDetails;
+}
+
 export interface SessionLaunchMetadata {
   source?: "human" | "agent" | "schedule" | "workspace-wrapper" | "api" | "cli";
   agentId?: string;
@@ -98,6 +121,8 @@ export interface SessionLaunchMetadata {
   status: "launching" | "accepted" | "failed" | "created";
   promptDispatch?: "delivered" | "not_sent";
   promptError?: string;
+  /** Typed terminal launch failure retained for audit and idempotent retry policy. */
+  failure?: AgentConfigurationFailure;
   requestedAt: number;
   completedAt?: number;
   todoId?: string;

@@ -63,6 +63,7 @@ enum AgentResourceCatalogState: Equatable {
 struct AgentNativeEditView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(ServerConnection.self) private var connection
+    @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(\.dismiss) private var dismiss
 
     let agent: StoredAgentDefinition
@@ -79,6 +80,9 @@ struct AgentNativeEditView: View {
     @State private var selectedSkillPaths: Set<String>
     @State private var extensionSelectionMode: AgentResourceSelectionMode
     @State private var selectedExtensionIds: Set<String>
+    @State private var workspaceConstraintMode: AgentResourceSelectionMode
+    @State private var selectedAllowedWorkspaceIds: Set<String>
+    @State private var requiredRuntime: WorkspaceRuntime?
     @State private var isShowingModelPicker = false
     @State private var isLoadingResources = false
     @State private var isSaving = false
@@ -103,6 +107,13 @@ struct AgentNativeEditView: View {
             initialValue: definition.resources?.extensionIds == nil ? .inherit : .exact
         )
         _selectedExtensionIds = State(initialValue: Set(definition.resources?.extensionIds ?? []))
+        _workspaceConstraintMode = State(
+            initialValue: definition.launchConstraints?.allowedWorkspaceIds == nil ? .inherit : .exact
+        )
+        _selectedAllowedWorkspaceIds = State(
+            initialValue: Set(definition.launchConstraints?.allowedWorkspaceIds ?? [])
+        )
+        _requiredRuntime = State(initialValue: definition.launchConstraints?.requiredRuntime)
     }
 
     private var canSave: Bool {
@@ -110,7 +121,17 @@ struct AgentNativeEditView: View {
             && (!usesCustomInstructions
                 || !instructionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             && canSaveResourceSelections
+            && canSaveLaunchConstraints
             && !isSaving
+    }
+
+    private var canSaveLaunchConstraints: Bool {
+        guard workspaceConstraintMode == .exact else { return true }
+        guard !selectedAllowedWorkspaceIds.isEmpty else { return false }
+        return workspaceStore.workspaces.contains { workspace in
+            selectedAllowedWorkspaceIds.contains(workspace.id)
+                && (requiredRuntime.map { $0 == (workspace.runtime ?? .host) } ?? true)
+        }
     }
 
     private var canSaveResourceSelections: Bool {
@@ -272,6 +293,43 @@ struct AgentNativeEditView: View {
                     Text("Inherit follows normal Pi discovery. Exact selection can be empty to give this Agent no Skills or optional Extensions. Exact selections explicitly override server discovery, including resources currently Disabled or Off, for this Agent only. Oppi's built-in session extension is controlled separately by server policy.")
                 }
 
+                if agent.id != "oppi-default-agent" {
+                    Section {
+                        Picker("Runtime", selection: $requiredRuntime) {
+                            Text("Any runtime").tag(WorkspaceRuntime?.none)
+                            Text("Host").tag(Optional(WorkspaceRuntime.host))
+                            Text("Sandbox").tag(Optional(WorkspaceRuntime.sandbox))
+                        }
+                        .accessibilityIdentifier("agent.nativeEdit.requiredRuntime")
+
+                        Picker("Workspaces", selection: $workspaceConstraintMode) {
+                            Text("Any workspace").tag(AgentResourceSelectionMode.inherit)
+                            Text("Allowed list").tag(AgentResourceSelectionMode.exact)
+                        }
+                        .accessibilityIdentifier("agent.nativeEdit.workspaceMode")
+
+                        if workspaceConstraintMode == .exact {
+                            NavigationLink {
+                                AgentWorkspaceSelectionView(
+                                    workspaces: workspaceStore.workspaces,
+                                    selectedIds: $selectedAllowedWorkspaceIds,
+                                    requiredRuntime: requiredRuntime
+                                )
+                            } label: {
+                                LabeledContent(
+                                    "Allowed Workspaces",
+                                    value: selectionCount(selectedAllowedWorkspaceIds.count)
+                                )
+                            }
+                            .accessibilityIdentifier("agent.nativeEdit.workspaces")
+                        }
+                    } header: {
+                        Text("Launch Constraints")
+                    } footer: {
+                        Text("Only compatible workspaces appear when this Agent starts. The server enforces the same restrictions for API and scheduled launches.")
+                    }
+                }
+
                 if let error {
                     Section {
                         Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -379,13 +437,92 @@ struct AgentNativeEditView: View {
                 model: model.managementNilIfBlank,
                 thinkingLevel: thinkingLevel,
                 skillPaths: skillSelectionMode == .inherit ? nil : selectedSkillPaths.sorted(),
-                extensionIds: extensionSelectionMode == .inherit ? nil : selectedExtensionIds.sorted()
+                extensionIds: extensionSelectionMode == .inherit ? nil : selectedExtensionIds.sorted(),
+                launchConstraints: resolvedLaunchConstraints,
+                previouslyHadLaunchConstraints: agent.definition.launchConstraints != nil
             )
             onSaved(updated)
             dismiss()
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private var resolvedLaunchConstraints: AgentLaunchConstraints? {
+        let constraints = AgentLaunchConstraints(
+            allowedWorkspaceIds: workspaceConstraintMode == .inherit
+                ? nil
+                : selectedAllowedWorkspaceIds.sorted(),
+            requiredRuntime: requiredRuntime
+        )
+        return constraints.isEmpty ? nil : constraints
+    }
+}
+
+private struct AgentWorkspaceSelectionView: View {
+    let workspaces: [Workspace]
+    @Binding var selectedIds: Set<String>
+    let requiredRuntime: WorkspaceRuntime?
+
+    private var displayedWorkspaces: [Workspace] {
+        workspaces.filter { workspace in
+            selectedIds.contains(workspace.id)
+                || (requiredRuntime.map { $0 == (workspace.runtime ?? .host) } ?? true)
+        }
+    }
+
+    var body: some View {
+        List {
+            if displayedWorkspaces.isEmpty {
+                ContentUnavailableView(
+                    "No Compatible Workspace",
+                    systemImage: "folder.badge.questionmark",
+                    description: Text("Add a workspace that matches the required runtime, or choose Any runtime.")
+                )
+            } else {
+                ForEach(displayedWorkspaces) { workspace in
+                    let selected = selectedIds.contains(workspace.id)
+                    Button {
+                        if selected {
+                            selectedIds.remove(workspace.id)
+                        } else {
+                            selectedIds.insert(workspace.id)
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selected ? .themeBlue : .themeComment)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(workspace.name)
+                                    .foregroundStyle(.themeFg)
+                                Text(workspaceRuntimeSummary(workspace))
+                                    .font(.caption)
+                                    .foregroundStyle(
+                                        runtimeMatches(workspace) ? .themeComment : .themeOrange
+                                    )
+                            }
+                            Spacer()
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(selected ? "Selected" : "Not selected")
+                }
+            }
+        }
+        .navigationTitle("Allowed Workspaces")
+        .navigationBarTitleDisplayMode(.inline)
+        .themedListSurface()
+    }
+
+    private func runtimeMatches(_ workspace: Workspace) -> Bool {
+        requiredRuntime.map { $0 == (workspace.runtime ?? .host) } ?? true
+    }
+
+    private func workspaceRuntimeSummary(_ workspace: Workspace) -> String {
+        let runtime = (workspace.runtime ?? .host).rawValue.capitalized
+        return runtimeMatches(workspace) ? runtime : "\(runtime) · Does not match required runtime"
     }
 }
 

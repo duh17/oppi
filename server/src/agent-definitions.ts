@@ -35,6 +35,7 @@ export interface AgentDefinitionSummary {
   name: string;
   icon: NonNullable<AgentDefinition["icon"]>;
   description?: string;
+  launchConstraints?: AgentDefinition["launchConstraints"];
   status: AgentDefinitionStatus;
   version: number;
   createdAt: number;
@@ -103,6 +104,7 @@ const AGENT_DEFINITION_KEYS = new Set([
   "instructions",
   "resources",
   "sessionDefaults",
+  "launchConstraints",
 ]);
 const INSTRUCTION_KEYS = new Set(["mode", "text"]);
 const RESOURCE_KEYS = new Set(["agentsFiles", "noContextFiles", "skillPaths", "extensionIds"]);
@@ -114,6 +116,7 @@ const SESSION_DEFAULT_KEYS = new Set([
   "excludeTools",
   "noTools",
 ]);
+const LAUNCH_CONSTRAINT_KEYS = new Set(["allowedWorkspaceIds", "requiredRuntime"]);
 const MAX_UNVERSIONED_AGENT_UPDATE_ATTEMPTS = 3;
 export class AgentDefinitionStore {
   private readonly db: SqliteDatabase;
@@ -476,6 +479,9 @@ export function agentSummary(agent: StoredAgentDefinition): AgentDefinitionSumma
     name: agent.name,
     icon: agent.definition.icon ?? DEFAULT_ICON_CHOICE,
     ...(agent.definition.description ? { description: agent.definition.description } : {}),
+    ...(agent.definition.launchConstraints
+      ? { launchConstraints: agent.definition.launchConstraints }
+      : {}),
     status: agent.status,
     version: agent.version,
     createdAt: agent.createdAt,
@@ -524,6 +530,7 @@ export function validateAgentDefinition(input: unknown): AgentDefinition {
   const instructions = validateInstructions(input.instructions);
   const resources = validateResources(input.resources);
   const sessionDefaults = validateSessionDefaults(input.sessionDefaults);
+  const launchConstraints = validateLaunchConstraints(input.launchConstraints);
 
   return {
     name,
@@ -532,6 +539,7 @@ export function validateAgentDefinition(input: unknown): AgentDefinition {
     ...(instructions !== undefined ? { instructions } : {}),
     ...(resources !== undefined ? { resources } : {}),
     ...(sessionDefaults !== undefined ? { sessionDefaults } : {}),
+    ...(launchConstraints !== undefined ? { launchConstraints } : {}),
   };
 }
 
@@ -556,6 +564,14 @@ function mergeAgentDefinition(current: AgentDefinition, patch: unknown): AgentDe
     ...(isRecord(patch.sessionDefaults)
       ? { sessionDefaults: { ...(current.sessionDefaults ?? {}), ...patch.sessionDefaults } }
       : {}),
+    ...(isRecord(patch.launchConstraints)
+      ? {
+          launchConstraints: {
+            ...(current.launchConstraints ?? {}),
+            ...patch.launchConstraints,
+          },
+        }
+      : {}),
   } as Record<string, unknown>;
 
   removeNullValue(merged, "icon");
@@ -563,8 +579,10 @@ function mergeAgentDefinition(current: AgentDefinition, patch: unknown): AgentDe
   removeNullValue(merged, "instructions");
   removeNullValue(merged, "resources");
   removeNullValue(merged, "sessionDefaults");
+  removeNullValue(merged, "launchConstraints");
   if (isRecord(merged.resources)) removeNullValues(merged.resources);
   if (isRecord(merged.sessionDefaults)) removeNullValues(merged.sessionDefaults);
+  if (isRecord(merged.launchConstraints)) removeNullValues(merged.launchConstraints);
 
   return merged as unknown as AgentDefinition;
 }
@@ -657,6 +675,39 @@ function validateSessionDefaults(value: unknown): AgentDefinition["sessionDefaul
       ? { excludeTools: validateStringArray(value.excludeTools, "sessionDefaults.excludeTools") }
       : {}),
     ...(noTools !== undefined ? { noTools: noTools as "all" | "builtin" } : {}),
+  };
+}
+
+function validateLaunchConstraints(
+  value: unknown,
+): AgentDefinition["launchConstraints"] | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("launchConstraints must be an object");
+  assertAllowedKeys(value, LAUNCH_CONSTRAINT_KEYS, "launchConstraints");
+
+  const allowedWorkspaceIds =
+    value.allowedWorkspaceIds === undefined
+      ? undefined
+      : validateStringArray(value.allowedWorkspaceIds, "launchConstraints.allowedWorkspaceIds");
+  if (allowedWorkspaceIds?.length === 0) {
+    throw new Error("launchConstraints.allowedWorkspaceIds must not be empty");
+  }
+
+  const requiredRuntime = validateString(
+    value.requiredRuntime,
+    "launchConstraints.requiredRuntime",
+  );
+  if (
+    requiredRuntime !== undefined &&
+    requiredRuntime !== "host" &&
+    requiredRuntime !== "sandbox"
+  ) {
+    throw new Error("launchConstraints.requiredRuntime must be host or sandbox");
+  }
+
+  return {
+    ...(allowedWorkspaceIds ? { allowedWorkspaceIds: [...new Set(allowedWorkspaceIds)] } : {}),
+    ...(requiredRuntime ? { requiredRuntime: requiredRuntime as "host" | "sandbox" } : {}),
   };
 }
 

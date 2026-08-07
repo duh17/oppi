@@ -142,6 +142,62 @@ describe("AgentLaunchService", () => {
     expect(saveSession).toHaveBeenCalledTimes(2);
   });
 
+  it("persists one terminal failure when the target violates Agent launch constraints", async () => {
+    const { service, startSession, listSessions } = makeService();
+
+    const request = {
+      agent: {
+        name: "Research Scout",
+        launchConstraints: {
+          allowedWorkspaceIds: ["research-workspace"],
+          requiredRuntime: "sandbox",
+        },
+      },
+      agentId: "research-scout",
+      target: { workspace: makeWorkspace({ id: "oppi", name: "oppi", runtime: "host" }) },
+      prompt: "Research this",
+      source: "schedule" as const,
+      idempotencyKey: "scheduled-research",
+    };
+    const result = await service.launch(request);
+
+    expect(result).toMatchObject({
+      kind: "created",
+      promptDispatch: "not_sent",
+      failure: {
+        code: "agent_workspace_incompatible",
+        retryable: false,
+        details: {
+          targetWorkspaceId: "oppi",
+          targetWorkspaceName: "oppi",
+          allowedWorkspaceIds: ["research-workspace"],
+          requiredRuntime: "sandbox",
+          actualRuntime: "host",
+        },
+      },
+      session: {
+        status: "error",
+        launch: {
+          source: "schedule",
+          status: "failed",
+          promptDispatch: "not_sent",
+          failure: { code: "agent_workspace_incompatible" },
+        },
+      },
+    });
+    expect(startSession).not.toHaveBeenCalled();
+    expect(listSessions()).toHaveLength(1);
+
+    await expect(service.launch(request)).resolves.toMatchObject({
+      kind: "existing",
+      promptDispatch: "not_sent",
+      failure: { code: "agent_workspace_incompatible" },
+      session: { status: "error" },
+    });
+    expect(startSession).not.toHaveBeenCalled();
+    expect(listSessions()).toHaveLength(1);
+  });
+
   it("snapshots the saved Agent icon without changing execution identity", async () => {
     const { service } = makeService();
 

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { AgentDefinitionStore } from "../src/agent-definitions.js";
+import { AgentConfigurationError } from "../src/agent-launch-errors.js";
 import { DEFAULT_AGENT_ID } from "../src/default-agent.js";
 import { openDatabase } from "../src/sqlite-compat.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -367,6 +368,10 @@ describe("agent routes", () => {
             instructions: { mode: "append", text: "Focus on risk." },
             resources: { skillPaths: [".pi/skills/reviewer"] },
             sessionDefaults: { model: "openai-codex/gpt-5.5", thinkingLevel: "medium" },
+            launchConstraints: {
+              allowedWorkspaceIds: ["review-workspace"],
+              requiredRuntime: "sandbox",
+            },
           }) as never,
           res: createRes as never,
         }),
@@ -391,7 +396,15 @@ describe("agent routes", () => {
             name: "Oppi",
             status: "active",
           }),
-          expect.objectContaining({ id: created.id, name: "Reviewer", status: "active" }),
+          expect.objectContaining({
+            id: created.id,
+            name: "Reviewer",
+            launchConstraints: {
+              allowedWorkspaceIds: ["review-workspace"],
+              requiredRuntime: "sandbox",
+            },
+            status: "active",
+          }),
         ]),
       );
 
@@ -1198,6 +1211,87 @@ describe("agent routes", () => {
           promptError: modelError.message,
         },
       });
+
+      startSession.mockRejectedValueOnce(
+        new AgentConfigurationError("agent_tools_unavailable", {
+          missingTools: ["research_web_search", "research_youtube_transcribe"],
+        }),
+      );
+      const configurationRes = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: `/agents/${agent.id}/sessions`,
+        url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+        req: makeRequest({
+          prompt: { text: "Research safely" },
+          target: { workspaceId: "ws-1", worktreeId: "main" },
+        }) as never,
+        res: configurationRes as never,
+      });
+
+      expect(configurationRes.statusCode).toBe(422);
+      expect(JSON.parse(configurationRes.body)).toMatchObject({
+        code: "agent_tools_unavailable",
+        error:
+          "Reviewer can’t start in Oppi because these configured tools are unavailable: research_web_search, research_youtube_transcribe. Edit Reviewer → Resources → Extensions and select Extensions that provide these tools, or remove them from Allowed Tools. Then start again.",
+        sessionId: expect.any(String),
+        receipt: {
+          accepted: false,
+          retryable: false,
+          reason: "agent_tools_unavailable",
+          promptDispatch: "not_sent",
+        },
+        recovery: {
+          actions: ["edit_agent"],
+          agentId: agent.id,
+          workspaceId: "ws-1",
+          missingTools: ["research_web_search", "research_youtube_transcribe"],
+        },
+      });
+      expect(sessions.at(-1)).toMatchObject({
+        status: "error",
+        launch: {
+          status: "failed",
+          promptDispatch: "not_sent",
+          failure: { code: "agent_tools_unavailable" },
+        },
+      });
+
+      store.updateAgent(agent.id, {
+        launchConstraints: {
+          allowedWorkspaceIds: ["research-workspace"],
+          requiredRuntime: "sandbox",
+        },
+      });
+      const workspaceConstraintRes = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: `/agents/${agent.id}/sessions`,
+        url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+        req: makeRequest({
+          prompt: { text: "Use the wrong target" },
+          target: { workspaceId: "ws-1", worktreeId: "main" },
+        }) as never,
+        res: workspaceConstraintRes as never,
+      });
+
+      expect(workspaceConstraintRes.statusCode).toBe(422);
+      expect(JSON.parse(workspaceConstraintRes.body)).toMatchObject({
+        code: "agent_workspace_incompatible",
+        receipt: {
+          accepted: false,
+          retryable: false,
+          reason: "agent_workspace_incompatible",
+          promptDispatch: "not_sent",
+        },
+        recovery: {
+          actions: ["choose_workspace", "edit_agent"],
+          allowedWorkspaceIds: ["research-workspace"],
+          requiredRuntime: "sandbox",
+          actualRuntime: "host",
+        },
+      });
+      expect(startSession).toHaveBeenCalledTimes(3);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

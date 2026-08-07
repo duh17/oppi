@@ -1,4 +1,5 @@
 import { generateId } from "./id.js";
+import { AgentConfigurationError, type AgentConfigurationFailure } from "./agent-launch-errors.js";
 import {
   isRequiredModelUnavailableError,
   isRequiredModelUnavailableMessage,
@@ -32,6 +33,10 @@ export interface AgentDefinition {
     tools?: string[];
     excludeTools?: string[];
     noTools?: "all" | "builtin";
+  };
+  launchConstraints?: {
+    allowedWorkspaceIds?: string[];
+    requiredRuntime?: "host" | "sandbox";
   };
 }
 
@@ -67,6 +72,7 @@ export type AgentLaunchResult =
       createdSession: Session;
       summarySession?: Session;
       promptDispatch: PromptDispatchStatus;
+      failure?: AgentConfigurationFailure;
     }
   | {
       kind: "launch_in_progress";
@@ -167,6 +173,18 @@ export class AgentLaunchService {
     }
     const createdSession = this.hydratedSnapshot(session);
 
+    const targetFailure = this.targetConfigurationFailure(request);
+    if (targetFailure) {
+      this.markLaunchFailed(session, targetFailure);
+      return {
+        kind: "created",
+        session: this.hydratedSnapshot(session),
+        createdSession,
+        promptDispatch: "not_sent",
+        failure: targetFailure,
+      };
+    }
+
     const prompt = request.prompt?.trim();
     if (!prompt) {
       this.markLaunchComplete(session, "not_sent");
@@ -194,17 +212,23 @@ export class AgentLaunchService {
         promptDispatch: "delivered",
       };
     } catch (error: unknown) {
-      this.markLaunchComplete(
-        session,
-        "not_sent",
-        error instanceof Error ? error.message : String(error),
-        isRequiredModelUnavailableError(error),
-      );
+      const failure = error instanceof AgentConfigurationError ? error.toFailure() : undefined;
+      if (failure) {
+        this.markLaunchFailed(session, failure);
+      } else {
+        this.markLaunchComplete(
+          session,
+          "not_sent",
+          error instanceof Error ? error.message : String(error),
+          isRequiredModelUnavailableError(error),
+        );
+      }
       return {
         kind: "created",
         session: this.hydratedSnapshot(session),
         createdSession,
         promptDispatch: "not_sent",
+        ...(failure ? { failure } : {}),
       };
     }
   }
@@ -295,6 +319,29 @@ export class AgentLaunchService {
     return session;
   }
 
+  private targetConfigurationFailure(
+    request: AgentLaunchRequest,
+  ): AgentConfigurationFailure | undefined {
+    const constraints = request.agent.launchConstraints;
+    if (!constraints) return undefined;
+    const actualRuntime = request.target.workspace.runtime === "sandbox" ? "sandbox" : "host";
+    const workspaceAllowed =
+      !constraints.allowedWorkspaceIds ||
+      constraints.allowedWorkspaceIds.includes(request.target.workspace.id);
+    const runtimeAllowed =
+      !constraints.requiredRuntime || constraints.requiredRuntime === actualRuntime;
+    if (workspaceAllowed && runtimeAllowed) return undefined;
+    return new AgentConfigurationError("agent_workspace_incompatible", {
+      targetWorkspaceId: request.target.workspace.id,
+      targetWorkspaceName: request.target.workspace.name,
+      ...(constraints.allowedWorkspaceIds
+        ? { allowedWorkspaceIds: constraints.allowedWorkspaceIds }
+        : {}),
+      ...(constraints.requiredRuntime ? { requiredRuntime: constraints.requiredRuntime } : {}),
+      actualRuntime,
+    }).toFailure();
+  }
+
   private resolveDelegation(request: AgentLaunchRequest): {
     parentSessionId?: string;
     allowsNestedDelegation?: boolean;
@@ -373,6 +420,22 @@ export class AgentLaunchService {
     }
   }
 
+  private markLaunchFailed(session: Session, failure: AgentConfigurationFailure): void {
+    session.status = "error";
+    if (session.launch) {
+      session.launch = {
+        ...session.launch,
+        status: "failed",
+        completedAt: this.nowMs(),
+        promptDispatch: "not_sent",
+        promptError: failure.code,
+        failure,
+        lease: undefined,
+      };
+    }
+    this.deps.storage.saveSession(session);
+  }
+
   private markLaunchComplete(
     session: Session,
     promptDispatch: PromptDispatchStatus,
@@ -415,6 +478,7 @@ export class AgentLaunchService {
       createdSession: this.hydratedSnapshot(existing),
       promptDispatch:
         existing.launch?.promptDispatch ?? (existing.firstMessage ? "delivered" : "not_sent"),
+      ...(existing.launch?.failure ? { failure: existing.launch.failure } : {}),
     };
   }
 
@@ -427,7 +491,7 @@ export class AgentLaunchService {
     if (!launch) return false;
     if (launch.promptDispatch === "delivered") return false;
     if (!this.launchTargetMatchesRequest(existing, request)) return false;
-    if (requiredModelLaunchFailureMessage(existing)) return false;
+    if (requiredModelLaunchFailureMessage(existing) || existing.launch?.failure) return false;
     if (launch.status === "failed") return true;
     if (launch.status !== "launching") return false;
     const lease = launch.lease;
@@ -499,14 +563,25 @@ export class AgentLaunchService {
       const session = this.hydratedSnapshot(recovered);
       return { kind: "existing", session, createdSession: session, promptDispatch: "delivered" };
     } catch (error: unknown) {
-      this.markLaunchComplete(
-        recovered,
-        "not_sent",
-        error instanceof Error ? error.message : String(error),
-        isRequiredModelUnavailableError(error),
-      );
+      const failure = error instanceof AgentConfigurationError ? error.toFailure() : undefined;
+      if (failure) {
+        this.markLaunchFailed(recovered, failure);
+      } else {
+        this.markLaunchComplete(
+          recovered,
+          "not_sent",
+          error instanceof Error ? error.message : String(error),
+          isRequiredModelUnavailableError(error),
+        );
+      }
       const session = this.hydratedSnapshot(recovered);
-      return { kind: "existing", session, createdSession: session, promptDispatch: "not_sent" };
+      return {
+        kind: "existing",
+        session,
+        createdSession: session,
+        promptDispatch: "not_sent",
+        ...(failure ? { failure } : {}),
+      };
     }
   }
 

@@ -57,7 +57,7 @@ struct AgentScheduleAPIClientTests {
             #expect(request.httpMethod == "GET")
             #expect(request.url?.path == "/agents")
             return mockResponse(json: """
-            {"agents":[{"id":"agent-1","name":"Sensei","icon":{"kind":"emoji","value":"🧘"},"status":"active","version":2,"createdAt":1000,"updatedAt":2000}]}
+            {"agents":[{"id":"agent-1","name":"Sensei","icon":{"kind":"emoji","value":"🧘"},"launchConstraints":{"allowedWorkspaceIds":["research"],"requiredRuntime":"sandbox"},"status":"active","version":2,"createdAt":1000,"updatedAt":2000}]}
             """)
         }
 
@@ -65,6 +65,8 @@ struct AgentScheduleAPIClientTests {
 
         #expect(agents.count == 1)
         #expect(agents.first?.icon == .emoji("🧘"))
+        #expect(agents.first?.launchConstraints?.allowedWorkspaceIds == ["research"])
+        #expect(agents.first?.launchConstraints?.requiredRuntime == .sandbox)
     }
 
     @Test func agentCreatePostsDefinitionAndDecodesStoredAgent() async throws {
@@ -114,6 +116,7 @@ struct AgentScheduleAPIClientTests {
             #expect(json?["instructions"] is NSNull)
             #expect(json?["resources"] is NSNull)
             #expect(json?["sessionDefaults"] is NSNull)
+            #expect(json?["launchConstraints"] == nil)
             return mockResponse(json: """
             {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":2,"definition":{"name":"Reviewer"},"createdAt":1000,"updatedAt":2000}}
             """)
@@ -201,6 +204,56 @@ struct AgentScheduleAPIClientTests {
         #expect(updated.definition.resources?.isEmpty == false)
     }
 
+    @Test func nativeAgentUpdateAddsAndClearsLaunchConstraintsExplicitly() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        var requestCount = 0
+        TestURLProtocol.handler = { request in
+            requestCount += 1
+            let json = try #require(
+                JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
+            )
+            if requestCount == 1 {
+                let constraints = try #require(json["launchConstraints"] as? [String: Any])
+                #expect(constraints["allowedWorkspaceIds"] as? [String] == ["research"])
+                #expect(constraints["requiredRuntime"] as? String == "sandbox")
+            } else {
+                #expect(json["launchConstraints"] is NSNull)
+            }
+            return mockResponse(json: """
+            {"agent":{"id":"agent-1","name":"Research Scout","status":"active","version":\(requestCount + 1),"definition":{"name":"Research Scout"},"createdAt":1000,"updatedAt":2000}}
+            """)
+        }
+
+        _ = try await client.updateAgentNative(
+            agentId: "agent-1",
+            name: "Research Scout",
+            description: nil,
+            instructions: nil,
+            model: nil,
+            thinkingLevel: nil,
+            skillPaths: nil,
+            extensionIds: nil,
+            launchConstraints: AgentLaunchConstraints(
+                allowedWorkspaceIds: ["research"],
+                requiredRuntime: .sandbox
+            )
+        )
+        _ = try await client.updateAgentNative(
+            agentId: "agent-1",
+            name: "Research Scout",
+            description: nil,
+            instructions: nil,
+            model: nil,
+            thinkingLevel: nil,
+            skillPaths: nil,
+            extensionIds: nil,
+            launchConstraints: nil,
+            previouslyHadLaunchConstraints: true
+        )
+    }
+
     @Test func nativeDefaultAgentUpdateOmitsForbiddenResourcesOnCanonicalRoute() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -212,6 +265,7 @@ struct AgentScheduleAPIClientTests {
                 JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
             )
             #expect(json["resources"] == nil)
+            #expect(json["launchConstraints"] == nil)
             #expect(json["name"] as? String == "Home Agent")
             #expect(json["description"] is NSNull)
             #expect(json["instructions"] is NSNull)
@@ -234,6 +288,39 @@ struct AgentScheduleAPIClientTests {
 
         #expect(updated.id == "oppi-default-agent")
         #expect(updated.definition.resources?.noContextFiles == true)
+    }
+
+    @Test func agentLaunchDecodesActionableConfigurationFailure() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/agents/research-scout/sessions")
+            return mockResponse(status: 422, json: """
+            {
+              "error":"Research Scout can’t start in Oppi. Edit Research Scout → Resources → Extensions.",
+              "code":"agent_tools_unavailable",
+              "sessionId":"failed-1",
+              "receipt":{"accepted":false,"retryable":false,"reason":"agent_tools_unavailable","sessionId":"failed-1","promptDispatch":"not_sent"},
+              "recovery":{"actions":["edit_agent","choose_workspace"],"agentId":"research-scout","workspaceId":"oppi","missingTools":["research_web_search"]}
+            }
+            """)
+        }
+
+        do {
+            _ = try await client.launchAgentSession(
+                agentId: "research-scout",
+                prompt: "Research this",
+                workspaceId: "oppi"
+            )
+            Issue.record("Expected an actionable Agent launch failure")
+        } catch let failure as AgentLaunchFailureResponse {
+            #expect(failure.code == "agent_tools_unavailable")
+            #expect(failure.receipt.accepted == false)
+            #expect(failure.recovery.actions == [.editAgent, .chooseWorkspace])
+            #expect(failure.recovery.missingTools == ["research_web_search"])
+        }
     }
 
     @Test func agentIconUpdateSendsOnlyIconForSetAndClear() async throws {

@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { actionableAgentConfigurationMessage } from "../agent-launch-errors.js";
 import {
   AgentLaunchService,
   DelegationPolicyError,
@@ -16,10 +17,13 @@ import {
 } from "../agent-definitions.js";
 import { isDefaultAgentId } from "../default-agent.js";
 import { iconAssetId } from "../icon-choice.js";
+import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
 import type { ChatAttachmentRef, Session } from "../types.js";
 import { normalizeSessionWorktreeId } from "../worktrees.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+
+const log = createLogger({ base: { component: "agent_routes" } });
 
 export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   function agentStore(): AgentDefinitionStore {
@@ -234,6 +238,56 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
             },
           },
           409,
+        );
+        return true;
+      }
+
+      if (result.failure) {
+        const message = actionableAgentConfigurationMessage(result.failure, {
+          agentName: agent.name,
+          workspaceName: workspace.name,
+        });
+        if (result.kind !== "existing") {
+          ctx.appEvents?.emitSessionCreated(result.session);
+        }
+        log.warn("agent.launch.configuration_failed", {
+          agentId: agent.id,
+          agentVersion: agent.version,
+          workspaceId: workspace.id,
+          sessionId: result.session.id,
+          failureCode: result.failure.code,
+          existing: result.kind === "existing",
+        });
+        helpers.json(
+          res,
+          {
+            error: message,
+            code: result.failure.code,
+            sessionId: result.session.id,
+            receipt: {
+              accepted: false,
+              retryable: false,
+              reason: result.failure.code,
+              agentId: agent.id,
+              agentVersion: agent.version,
+              sessionId: result.session.id,
+              ...(result.session.launch?.idempotencyKey
+                ? { idempotencyKey: result.session.launch.idempotencyKey }
+                : {}),
+              promptDispatch: "not_sent",
+              promptError: message,
+            },
+            recovery: {
+              actions:
+                result.failure.code === "agent_workspace_incompatible"
+                  ? ["choose_workspace", "edit_agent"]
+                  : ["edit_agent"],
+              agentId: agent.id,
+              workspaceId: workspace.id,
+              ...result.failure.details,
+            },
+          },
+          422,
         );
         return true;
       }

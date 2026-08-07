@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Oppi
 
@@ -109,6 +110,64 @@ struct QuickSessionLaunchRoutingTests {
         #expect(plan.mode == .agent(agentId: "reviewer"))
         #expect(plan.prompt == "Review this")
         #expect(plan.shouldAutoSend == false)
+    }
+
+    @Test func filtersWorkspacesUsingAgentConstraints() {
+        let host = Workspace(
+            id: "host",
+            name: "Host",
+            createdAt: .distantPast,
+            updatedAt: .distantPast
+        )
+        var sandbox = Workspace(
+            id: "research",
+            name: "Research",
+            createdAt: .distantPast,
+            updatedAt: .distantPast
+        )
+        sandbox.runtime = .sandbox
+        let constraints = AgentLaunchConstraints(
+            allowedWorkspaceIds: ["research"],
+            requiredRuntime: .sandbox
+        )
+
+        #expect(
+            QuickSessionLaunchRouting.compatibleWorkspaces(
+                for: constraints,
+                in: [host, sandbox]
+            ).map(\.id) == ["research"]
+        )
+    }
+
+    @Test func rejectedOrUndeliveredAgentLaunchNeverNavigates() {
+        let rejected = AgentSessionLaunchResponse(
+            receipt: AgentLaunchReceipt(
+                accepted: false,
+                promptDispatch: "not_sent"
+            ),
+            session: nil
+        )
+        #expect(!QuickSessionLaunchRouting.canNavigateAfterAgentLaunch(rejected))
+    }
+
+    @Test func acceptedButUndeliveredAgentLaunchWithSessionNeverNavigates() throws {
+        let response = try JSONDecoder().decode(
+            AgentSessionLaunchResponse.self,
+            from: Data("""
+            {
+              "receipt":{"accepted":true,"promptDispatch":"not_sent"},
+              "session":{
+                "id":"failed-1","status":"error","createdAt":1,"lastActivity":1,
+                "messageCount":0,
+                "tokens":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},
+                "cost":0
+              }
+            }
+            """.utf8)
+        )
+
+        #expect(response.session != nil)
+        #expect(!QuickSessionLaunchRouting.canNavigateAfterAgentLaunch(response))
     }
 
     @Test(arguments: [
