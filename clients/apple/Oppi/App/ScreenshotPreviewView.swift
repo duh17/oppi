@@ -33,6 +33,8 @@ struct ScreenshotPreviewView: View {
             ServerResourcesScreenshotPreview(screen: .oppi)
         case "server-resources-oppi-pending":
             ServerResourcesScreenshotPreview(screen: .oppiPending)
+        case "model-providers-quota-inline":
+            ModelProvidersQuotaPreview()
         case "agent-icons":
             AgentIconProofPreview()
         case "agent-icons-save-failure":

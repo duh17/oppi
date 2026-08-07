@@ -1212,6 +1212,41 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitDetailPath.count == 1)
     }
 
+    @Test func modelProvidersPushesServerScopedDestinationFromCompactInbox() {
+        let navigation = readyNavigation()
+        let target = ModelProvidersNavTarget(serverId: "server-a")
+
+        navigation.openModelProviders(target)
+
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "model_providers")
+    }
+
+    @Test func modelProvidersPreservesServerDetailsBackLayerAcrossWidthChanges() {
+        let navigation = readyNavigation()
+        let details = ServerDetailsNavTarget(serverId: "server-a")
+        let providers = ModelProvidersNavTarget(serverId: "server-a")
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceUtility(.manageServers)
+        navigation.openServerDetails(details)
+
+        navigation.openModelProviders(providers)
+
+        #expect(navigation.splitDetailTarget == .utility(.manageServers))
+        #expect(navigation.splitDetailPath.count == 2)
+
+        navigation.setWorkspaceNavigationPresentation(.stack)
+        #expect(navigation.workspacePath.count == 3)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "model_providers")
+
+        navigation.workspacePath.removeLast()
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_details")
+
+        navigation.setWorkspaceNavigationPresentation(.split)
+        #expect(navigation.splitDetailTarget == .utility(.manageServers))
+        #expect(navigation.splitDetailPath.count == 1)
+    }
+
     private func readyNavigation() -> AppNavigation {
         let navigation = AppNavigation()
         navigation.launchPhase = .ready

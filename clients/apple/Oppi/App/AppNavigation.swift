@@ -59,6 +59,14 @@ struct ServerSkillFileNavTarget: Hashable, Sendable {
     let path: String
 }
 
+struct ServerDetailsNavTarget: Hashable, Sendable {
+    let serverId: String
+}
+
+struct ModelProvidersNavTarget: Hashable, Sendable {
+    let serverId: String
+}
+
 /// Detail-column target for the regular-width workspace split shell.
 ///
 /// The sidebar keeps the workspace catalog visible. The detail pane hosts the
@@ -79,6 +87,8 @@ enum WorkspaceSplitDetailPathElement: Hashable {
     case serverResourceDetail(ServerResourceDetailNavTarget)
     case serverSkillBrowser(ServerSkillBrowserNavTarget)
     case serverSkillFile(ServerSkillFileNavTarget)
+    case serverDetails(ServerDetailsNavTarget)
+    case modelProviders(ModelProvidersNavTarget)
 }
 
 struct WorkspaceConfigurationNavTarget: Hashable {
@@ -92,6 +102,8 @@ private enum WorkspaceStackRouteElement: Hashable {
     case linkedFile(WorkspaceLinkedFileNavTarget)
     case workspaceConfiguration(WorkspaceNavTarget)
     case utility(WorkspaceUtilityNavTarget)
+    case serverDetails(ServerDetailsNavTarget)
+    case modelProviders(ModelProvidersNavTarget)
     case serverResourceDetail(ServerResourceDetailNavTarget)
     case serverSkillBrowser(ServerSkillBrowserNavTarget)
     case serverSkillFile(ServerSkillFileNavTarget)
@@ -440,6 +452,38 @@ final class AppNavigation {
         }
     }
 
+    func openServerDetails(_ target: ServerDetailsNavTarget) {
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.serverDetailsDiagnosticContext,
+                routeElement: .serverDetails(target)
+            )
+        case .split:
+            splitDetailPath.append(target)
+            splitDetailPathElements.append(.serverDetails(target))
+            splitColumnVisibility = .all
+        }
+    }
+
+    func openModelProviders(_ target: ModelProvidersNavTarget) {
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.modelProvidersDiagnosticContext,
+                routeElement: .modelProviders(target)
+            )
+        case .split:
+            splitDetailPath.append(target)
+            splitDetailPathElements.append(.modelProviders(target))
+            splitColumnVisibility = .all
+        }
+    }
+
     func openServerResourceDetail(_ target: ServerResourceDetailNavTarget) {
         selectedTab = .workspaces
         switch workspaceNavigationPresentation {
@@ -696,6 +740,10 @@ final class AppNavigation {
                 path.append(target)
             case .serverSkillFile(let target):
                 path.append(target)
+            case .serverDetails(let target):
+                path.append(target)
+            case .modelProviders(let target):
+                path.append(target)
             }
         }
         splitDetailPathElements = elements
@@ -843,6 +891,18 @@ final class AppNavigation {
         workspaceId: nil
     )
 
+    private static let serverDetailsDiagnosticContext = WorkspaceStackDiagnosticContext(
+        screen: "server_details",
+        sessionId: nil,
+        workspaceId: nil
+    )
+
+    private static let modelProvidersDiagnosticContext = WorkspaceStackDiagnosticContext(
+        screen: "model_providers",
+        sessionId: nil,
+        workspaceId: nil
+    )
+
     private func stackStateForCurrentSplitSelection() -> (
         path: NavigationPath,
         contexts: [WorkspaceStackDiagnosticContext],
@@ -917,6 +977,14 @@ final class AppNavigation {
                 path.append(target)
                 contexts.append(Self.serverSkillFileDiagnosticContext)
                 routeElements.append(.serverSkillFile(target))
+            case .serverDetails(let target):
+                path.append(target)
+                contexts.append(Self.serverDetailsDiagnosticContext)
+                routeElements.append(.serverDetails(target))
+            case .modelProviders(let target):
+                path.append(target)
+                contexts.append(Self.modelProvidersDiagnosticContext)
+                routeElements.append(.modelProviders(target))
             }
         }
 
@@ -967,6 +1035,10 @@ final class AppNavigation {
                 detailPathElements.append(.serverSkillBrowser(target))
             case .serverSkillFile(let target):
                 detailPathElements.append(.serverSkillFile(target))
+            case .serverDetails(let target):
+                detailPathElements.append(.serverDetails(target))
+            case .modelProviders(let target):
+                detailPathElements.append(.modelProviders(target))
             case .unknown:
                 break
             }

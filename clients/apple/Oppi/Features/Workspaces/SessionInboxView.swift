@@ -194,6 +194,7 @@ struct SessionInboxView: View {
     @State private var hasAutoOpenedE2EWorkspace = false
     @State private var hasAutoCreatedE2ESession = false
     @State private var hasAutoOpenedE2ESession = false
+    @State private var providerSetupState: ProviderSetupState = .unknown
 
     init(onOpenSidebar: (() -> Void)? = nil) {
         self.onOpenSidebar = onOpenSidebar
@@ -280,6 +281,15 @@ struct SessionInboxView: View {
         let data = viewData
 
         List {
+            if selectedWorkspace == nil,
+               ProviderSetupPromptPolicy.shouldShow(for: providerSetupState),
+               let selectedServer {
+                Section {
+                    providerSetupPrompt(for: selectedServer)
+                        .listRowBackground(theme.bg.primary)
+                }
+            }
+
             if selectedServerRefreshFailed, !data.isEmpty, let selectedServer {
                 Section {
                     Label(
@@ -320,14 +330,27 @@ struct SessionInboxView: View {
         .searchable(text: $searchText, prompt: "Search sessions")
         .toolbar { toolbarContent }
         .refreshable {
-            await refreshVisibleServer()
+            async let refresh: () = refreshVisibleServer()
+            async let providers: () = loadProviderSetupState()
+            _ = await (refresh, providers)
         }
         .task(id: activeServerId) {
-            await refreshVisibleServer()
+            providerSetupState = .unknown
+            async let refresh: () = refreshVisibleServer()
+            async let providers: () = loadProviderSetupState()
+            _ = await (refresh, providers)
             await applyE2ELaunchHintsIfNeeded()
         }
         .task(id: selectedWorkspace?.workspace.id) {
             await applyE2ELaunchHintsIfNeeded()
+        }
+        .onChange(of: navigation.workspacePath.count) { oldCount, newCount in
+            guard newCount < oldCount else { return }
+            Task { await loadProviderSetupState() }
+        }
+        .onChange(of: navigation.splitDetailPath.count) { oldCount, newCount in
+            guard newCount < oldCount else { return }
+            Task { await loadProviderSetupState() }
         }
         .overlay {
             if isCreating {
@@ -409,6 +432,12 @@ struct SessionInboxView: View {
         }
         .navigationDestination(for: ServerSkillFileNavTarget.self) { target in
             ServerSkillFileScopedDestinationView(target: target)
+        }
+        .navigationDestination(for: ServerDetailsNavTarget.self) { target in
+            ServerDetailsScopedDestinationView(target: target)
+        }
+        .navigationDestination(for: ModelProvidersNavTarget.self) { target in
+            ModelProvidersScopedDestinationView(target: target)
         }
     }
 
@@ -522,6 +551,13 @@ struct SessionInboxView: View {
             Divider()
 
             Button {
+                navigation.openModelProviders(ModelProvidersNavTarget(serverId: current.id))
+            } label: {
+                Label("Model Providers", systemImage: "cpu")
+            }
+            .accessibilityIdentifier("workspace.modelProviders.open")
+
+            Button {
                 navigation.openWorkspaceUtility(.manageServers)
             } label: {
                 Label("Manage Servers", systemImage: "server.rack")
@@ -535,6 +571,49 @@ struct SessionInboxView: View {
         }
         .accessibilityLabel("Current server: \(current.name)")
         .accessibilityValue(serverBadgeConnectionState(for: current).title)
+    }
+
+    private func providerSetupPrompt(for server: PairedServer) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Finish server setup", systemImage: "key.fill")
+                .font(.headline)
+                .foregroundStyle(.themeFg)
+
+            Text("Connect a model provider before starting a session on \(server.name).")
+                .font(.subheadline)
+                .foregroundStyle(.themeComment)
+
+            Button {
+                navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
+            } label: {
+                Label("Configure Model Provider", systemImage: "plus.circle.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("workspace.providerSetup.open")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+    }
+
+    private func loadProviderSetupState() async {
+        guard let requestedServerId = activeServerId else {
+            providerSetupState = .unavailable
+            return
+        }
+        guard let client = await coordinator.apiClientReady(for: requestedServerId) else {
+            guard requestedServerId == coordinator.activeServerId else { return }
+            providerSetupState = .unavailable
+            return
+        }
+
+        do {
+            let statuses = try await client.listProviderAuthStatus()
+            guard requestedServerId == coordinator.activeServerId else { return }
+            providerSetupState = ProviderSetupState(providerStatuses: statuses)
+        } catch {
+            guard requestedServerId == coordinator.activeServerId else { return }
+            providerSetupState = .unavailable
+        }
     }
 
     private func switchVisibleServer(to server: PairedServer) async {

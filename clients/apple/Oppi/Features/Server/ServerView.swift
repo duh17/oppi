@@ -11,6 +11,7 @@ import SwiftUI
 struct ServerView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(AppNavigation.self) private var navigation
 
     @State private var selectedServerId: String?
     @State private var stats: ServerStats?
@@ -76,9 +77,19 @@ struct ServerView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     if let server = selectedServer {
-                        NavigationLink(value: server) {
+                        Button {
+                            navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
+                        } label: {
+                            Label("Model Providers", systemImage: "cpu")
+                        }
+                        .accessibilityIdentifier("server.modelProviders.menu")
+
+                        Button {
+                            navigation.openServerDetails(ServerDetailsNavTarget(serverId: server.id))
+                        } label: {
                             Label("Server Details", systemImage: "info.circle")
                         }
+                        .accessibilityIdentifier("server.details.menu")
                     }
                     Button {
                         showAddServer = true
@@ -88,10 +99,17 @@ struct ServerView: View {
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
+                .accessibilityIdentifier("server.menu")
             }
         }
         .navigationDestination(for: PairedServer.self) { server in
             ServerDetailView(server: server)
+        }
+        .navigationDestination(for: ServerDetailsNavTarget.self) { target in
+            ServerDetailsScopedDestinationView(target: target)
+        }
+        .navigationDestination(for: ModelProvidersNavTarget.self) { target in
+            ModelProvidersScopedDestinationView(target: target)
         }
         .sheet(isPresented: $showAddServer) {
             OnboardingView(mode: .addServer)
@@ -215,10 +233,13 @@ struct ServerView: View {
                 .font(.subheadline)
                 .foregroundStyle(.themeComment)
 
-            NavigationLink(value: server) {
-                Label("Manage Providers", systemImage: "plus.circle.fill")
+            Button {
+                navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
+            } label: {
+                Label("Configure Model Provider", systemImage: "plus.circle.fill")
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("server.providerSetup.open")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)

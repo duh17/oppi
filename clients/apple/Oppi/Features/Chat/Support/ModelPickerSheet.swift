@@ -278,13 +278,17 @@ struct ModelPickerSheet: View {
     }
 
     private func quotaPill(_ badge: ProviderQuota.ProviderBadge) -> some View {
-        StatusPill(
-            text: badge.label,
-            tone: tone(for: badge.tone),
-            emphasis: .tinted,
-            size: .small,
-            monospacedDigit: true
-        )
+        let style = quotaStyle(for: badge.tone)
+
+        return Text(badge.label)
+            .font(.caption2.weight(.semibold))
+            .monospacedDigit()
+            .foregroundStyle(style)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(style.opacity(0.14), in: Capsule())
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
     }
 
     @ViewBuilder
@@ -352,14 +356,14 @@ struct ModelPickerSheet: View {
         providerQuotas?.providerBadges(for: provider, relativeTo: now) ?? []
     }
 
-    private func tone(for tone: ProviderQuota.BadgeTone) -> StatusPillTone {
+    private func quotaStyle(for tone: ProviderQuota.BadgeTone) -> ThemeShapeStyle {
         switch tone {
         case .green:
-            return .success
+            .themeGreen
         case .orange:
-            return .warning
+            .themeOrange
         case .red:
-            return .danger
+            .themeRed
         }
     }
 }

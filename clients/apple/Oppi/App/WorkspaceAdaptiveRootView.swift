@@ -83,6 +83,12 @@ private struct WorkspaceSplitRootView: View {
                     .navigationDestination(for: ServerSkillFileNavTarget.self) { target in
                         ServerSkillFileScopedDestinationView(target: target)
                     }
+                    .navigationDestination(for: ServerDetailsNavTarget.self) { target in
+                        ServerDetailsScopedDestinationView(target: target)
+                    }
+                    .navigationDestination(for: ModelProvidersNavTarget.self) { target in
+                        ModelProvidersScopedDestinationView(target: target)
+                    }
             }
             .id(navigation.splitDetailTarget)
             .toolbar {

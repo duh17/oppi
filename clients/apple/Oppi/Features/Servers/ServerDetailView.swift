@@ -4,8 +4,14 @@ import SwiftUI
 ///
 /// Shows server metadata, stats, security info, and management actions.
 /// Data is fetched on-demand from `GET /server/info`.
+enum ServerDetailPresentation {
+    case details
+    case modelProviders
+}
+
 struct ServerDetailView: View {
     let server: PairedServer
+    var presentation: ServerDetailPresentation = .details
 
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
@@ -18,11 +24,11 @@ struct ServerDetailView: View {
     @State private var showRemoveConfirmation = false
 
     @State private var providerStatuses: [ProviderAuthProviderStatus] = []
+    @State private var providerSetupState: ProviderSetupState = .unknown
     @State private var providerQuotas: ProviderQuotasInfo?
     @State private var isLoadingProviders = false
     @State private var providerError: String?
     @State private var providerActionInFlightId: String?
-    @State private var isProviderManagerPresented = false
 
     @State private var activeFlow: ProviderAuthFlowSnapshot?
     @State private var isFlowSheetPresented = false
@@ -40,173 +46,134 @@ struct ServerDetailView: View {
 
     var body: some View {
         List {
-            if isLoading {
-                Section {
-                    HStack {
-                        Spacer()
-                        ProgressView("Loading server info…")
-                        Spacer()
-                    }
-                }
-            } else if let error {
-                Section {
-                    VStack(spacing: 8) {
-                        Label("Unable to reach server", systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.themeOrange)
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    }
-                }
-            }
-
-            if let info {
-                Section("Server") {
-                    LabeledContent("Host", value: "\(pairedServer.host):\(pairedServer.port)")
-                    LabeledContent("Uptime", value: info.uptimeLabel)
-                    LabeledContent("Platform", value: info.platformLabel)
-                }
-
-                Section("Stats") {
-                    LabeledContent("Workspaces", value: String(info.stats.workspaceCount))
-                    LabeledContent("Active Sessions", value: String(info.stats.activeSessionCount))
-                    LabeledContent("Skills", value: String(info.stats.skillCount))
-                }
-
-                workspaceManagementSection
-
-                Section("Runtime") {
-                    LabeledContent("Agent", value: info.agentVersionLabel)
-                    LabeledContent("Server", value: info.version)
-                }
-            }
-
-            Section {
-                if isLoadingProviders && providerStatuses.isEmpty {
-                    HStack {
-                        Spacer()
-                        ProgressView("Loading providers…")
-                        Spacer()
-                    }
-                } else {
-                    LabeledContent("Connected", value: String(connectedProviders.count))
-
-                    if connectedProviders.isEmpty {
-                        providerOnboardingCard
-
-                        ForEach(availableProviders.prefix(3)) { provider in
-                            providerQuickConnectRow(provider)
-                        }
-                    } else {
-                        ForEach(connectedProviders) { provider in
-                            HStack(alignment: .top, spacing: 12) {
-                                ProviderIcon(provider: provider.id, size: 16)
-                                    .padding(.top, 3)
-
-                                Text(provider.name)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                                Text(providerStatusText(provider))
-                                    .font(.caption)
-                                    .foregroundStyle(providerStatusColor(provider))
-                                    .multilineTextAlignment(.trailing)
-                            }
-                        }
-                    }
-
-                    Button {
-                        isProviderManagerPresented = true
-                    } label: {
+            if presentation == .modelProviders {
+                providerManagementSections
+            } else {
+                if isLoading {
+                    Section {
                         HStack {
-                            Label("Manage Providers", systemImage: "plus.circle")
                             Spacer()
-                            Text("\(providerStatuses.count) available")
+                            ProgressView("Loading server info…")
+                            Spacer()
+                        }
+                    }
+                } else if let error {
+                    Section {
+                        VStack(spacing: 8) {
+                            Label("Unable to reach server", systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(.themeOrange)
+                            Text(error)
                                 .font(.caption)
                                 .foregroundStyle(.themeComment)
                         }
                     }
-                    .disabled(providerActionInFlightId != nil)
                 }
-            } header: {
-                Text("Model Providers")
-            } footer: {
-                if let providerError {
-                    Text(providerError)
-                        .foregroundStyle(.themeRed)
-                } else if connectedProviders.isEmpty {
-                    Text("Oppi needs at least one model provider before new sessions can run. Connect one here, or open the full provider list for more options.")
-                }
-            }
 
-            if let providerQuotas, !providerQuotas.presentableProviders.isEmpty {
+                if let info {
+                    Section("Server") {
+                        LabeledContent("Host", value: "\(pairedServer.host):\(pairedServer.port)")
+                        LabeledContent("Uptime", value: info.uptimeLabel)
+                        LabeledContent("Platform", value: info.platformLabel)
+                    }
+
+                    Section("Stats") {
+                        LabeledContent("Workspaces", value: String(info.stats.workspaceCount))
+                        LabeledContent("Active Sessions", value: String(info.stats.activeSessionCount))
+                        LabeledContent("Skills", value: String(info.stats.skillCount))
+                    }
+
+                    workspaceManagementSection
+
+                    Section("Runtime") {
+                        LabeledContent("Agent", value: info.agentVersionLabel)
+                        LabeledContent("Server", value: info.version)
+                    }
+                }
+
+                Section("Configuration") {
+                    Button {
+                        navigation.openModelProviders(ModelProvidersNavTarget(serverId: pairedServer.id))
+                    } label: {
+                        HStack {
+                            Label("Model Providers", systemImage: "cpu")
+                            Spacer()
+                            Text(providerConfigurationSummary)
+                                .font(.caption)
+                                .foregroundStyle(providerConfigurationSummaryStyle)
+                        }
+                    }
+                    .accessibilityIdentifier("server.modelProviders.open")
+                }
+
                 Section {
-                    ForEach(providerQuotas.presentableProviders) { quota in
-                        ProviderQuotaSection(quota: quota)
-                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                            .listRowBackground(Color.clear)
+                    HStack {
+                        Text("Preview")
+                        Spacer()
+                        RuntimeBadge(
+                            compact: false,
+                            icon: pairedServer.resolvedBadgeIcon,
+                            tint: badgePreviewConnectionState.tintColor
+                        )
+                    }
+
+                    BadgeIconGrid(selection: badgeIconSelection, tint: .themeBlue)
+                } header: {
+                    Text("Badge")
+                } footer: {
+                    Text("Badge color reflects connection status: green connected, blue connecting, red disconnected.")
+                }
+
+                Section {
+                    Picker("Connection", selection: routeModeSelection) {
+                        ForEach(availableRouteModes, id: \.self) { mode in
+                            Text(ServerRouteModePresentation.label(for: mode))
+                                .tag(mode)
+                        }
+                    }
+                    .accessibilityLabel("Connection mode")
+                    .accessibilityValue(ServerRouteModePresentation.label(for: pairedServer.effectiveRouteMode))
+                    .accessibilityHint("\(ServerRouteModePresentation.description(for: pairedServer.effectiveRouteMode)) Oppi reconnects this server immediately when you change it.")
+
+                    LabeledContent("Paired", value: pairedServer.addedAt.formatted(date: .abbreviated, time: .shortened))
+                } header: {
+                    Text("Connection")
+                } footer: {
+                    Text("\(ServerRouteModePresentation.description(for: pairedServer.effectiveRouteMode)) Oppi reconnects this server immediately when you change it.")
+                }
+
+                Section {
+                    Button(role: .destructive) {
+                        showRemoveConfirmation = true
+                    } label: {
+                        Label("Remove Server", systemImage: "trash")
                     }
                 } header: {
-                    Text("Provider Quotas")
+                    Text("Remove Server")
+                } footer: {
+                    Text("This only removes pairing from this iPhone. It does not delete the server or its data.")
                 }
-            }
-
-            Section {
-                HStack {
-                    Text("Preview")
-                    Spacer()
-                    RuntimeBadge(
-                        compact: false,
-                        icon: pairedServer.resolvedBadgeIcon,
-                        tint: badgePreviewConnectionState.tintColor
-                    )
-                }
-
-                BadgeIconGrid(selection: badgeIconSelection, tint: .themeBlue)
-            } header: {
-                Text("Badge")
-            } footer: {
-                Text("Badge color reflects connection status: green connected, blue connecting, red disconnected.")
-            }
-
-            Section {
-                Picker("Connection", selection: routeModeSelection) {
-                    ForEach(availableRouteModes, id: \.self) { mode in
-                        Text(ServerRouteModePresentation.label(for: mode))
-                            .tag(mode)
-                    }
-                }
-                .accessibilityLabel("Connection mode")
-                .accessibilityValue(ServerRouteModePresentation.label(for: pairedServer.effectiveRouteMode))
-                .accessibilityHint("\(ServerRouteModePresentation.description(for: pairedServer.effectiveRouteMode)) Oppi reconnects this server immediately when you change it.")
-
-                LabeledContent("Paired", value: pairedServer.addedAt.formatted(date: .abbreviated, time: .shortened))
-            } header: {
-                Text("Connection")
-            } footer: {
-                Text("\(ServerRouteModePresentation.description(for: pairedServer.effectiveRouteMode)) Oppi reconnects this server immediately when you change it.")
-            }
-
-            Section {
-                Button(role: .destructive) {
-                    showRemoveConfirmation = true
-                } label: {
-                    Label("Remove Server", systemImage: "trash")
-                }
-            } header: {
-                Text("Remove Server")
-            } footer: {
-                Text("This only removes pairing from this iPhone. It does not delete the server or its data.")
             }
         }
         .iPadReadableContent(maxWidth: IPadReadableContentWidth.detail)
         .themedListSurface()
-        .navigationTitle(pairedServer.name)
+        .accessibilityIdentifier(
+            presentation == .modelProviders ? "server.modelProviders.list" : "server.details.list"
+        )
+        .navigationTitle(presentation == .modelProviders ? "Model Providers" : pairedServer.name)
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
-            await load()
+            if presentation == .modelProviders {
+                await loadProviderConfiguration()
+            } else {
+                await load()
+            }
         }
         .task {
-            await load()
+            if presentation == .modelProviders {
+                await loadProviderConfiguration()
+            } else {
+                await load()
+            }
         }
         .onDisappear {
             flowPollTask?.cancel()
@@ -224,15 +191,72 @@ struct ServerDetailView: View {
         } message: {
             Text(removeDialogMessage)
         }
-        .sheet(isPresented: $isProviderManagerPresented) {
-            providerManagerSheet
-        }
         .sheet(isPresented: $isFlowSheetPresented, onDismiss: handleFlowSheetDismissed) {
             providerFlowSheet
         }
         .sheet(item: $apiKeyEditorProvider) { provider in
             apiKeyEditorSheet(provider: provider)
         }
+    }
+
+    @ViewBuilder
+    private var providerManagementSections: some View {
+        if providerPresentation.showsLoading {
+            Section {
+                HStack {
+                    Spacer()
+                    ProgressView("Loading providers…")
+                    Spacer()
+                }
+            }
+        } else if providerPresentation.showsProviderSections {
+            Section("Connected") {
+                if connectedProviders.isEmpty {
+                    providerOnboardingCard
+                } else {
+                    ForEach(connectedProviders) { provider in
+                        providerManagerRow(provider, quota: providerQuota(for: provider))
+                    }
+                }
+            }
+
+            Section("Available") {
+                if availableProviders.isEmpty {
+                    Text("All providers are currently connected")
+                        .foregroundStyle(.themeComment)
+                } else {
+                    ForEach(availableProviders) { provider in
+                        providerManagerRow(provider, quota: nil)
+                    }
+                }
+            }
+        }
+
+        if let providerError {
+            Section {
+                Text(providerError)
+                    .foregroundStyle(.themeRed)
+            }
+        }
+    }
+
+    private var providerPresentation: ProviderConfigurationPresentation {
+        ProviderConfigurationPresentation(state: providerSetupState)
+    }
+
+    private var providerConfigurationSummary: String {
+        providerPresentation.summary(connectedCount: connectedProviders.count)
+    }
+
+    private var providerConfigurationSummaryStyle: ThemeShapeStyle {
+        providerSetupState == .needsConfiguration ? .themeOrange : .themeComment
+    }
+
+    private func providerQuota(for provider: ProviderAuthProviderStatus) -> ProviderQuota? {
+        guard let quota = providerQuotas?.quota(forProviderId: provider.id),
+              quota.hasAnyUsageWindow || quota.error != nil || quota.planLabel != nil
+        else { return nil }
+        return quota
     }
 
     private var workspaceManagementSection: some View {
@@ -331,8 +355,11 @@ struct ServerDetailView: View {
     }
 
     @ViewBuilder
-    private func providerQuickConnectRow(_ provider: ProviderAuthProviderStatus) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func providerManagerRow(
+        _ provider: ProviderAuthProviderStatus,
+        quota: ProviderQuota?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
                 ProviderIcon(provider: provider.id, size: 16)
                     .padding(.top, 3)
@@ -348,118 +375,33 @@ struct ServerDetailView: View {
                 if providerActionInFlightId == provider.id {
                     ProgressView()
                         .controlSize(.small)
+                } else if provider.authenticated {
+                    providerManageMenu(provider)
+                } else {
+                    providerConnectButtons(provider)
                 }
             }
 
-            if providerActionInFlightId != provider.id {
-                providerConnectButtons(provider, dismissManagerBeforeAction: false)
+            if let quota {
+                ProviderQuotaDetails(quota: quota, providerName: provider.name)
+                    .padding(.leading, 28)
             }
         }
         .padding(.vertical, 4)
     }
 
     @ViewBuilder
-    private var providerManagerSheet: some View {
-        NavigationStack {
-            List {
-                if isLoadingProviders && providerStatuses.isEmpty {
-                    Section {
-                        HStack {
-                            Spacer()
-                            ProgressView("Loading providers…")
-                            Spacer()
-                        }
-                    }
-                } else {
-                    Section("Connected") {
-                        if connectedProviders.isEmpty {
-                            Text("No connected providers")
-                                .foregroundStyle(.themeComment)
-                        } else {
-                            ForEach(connectedProviders) { provider in
-                                providerManagerRow(provider)
-                            }
-                        }
-                    }
-
-                    Section("Available") {
-                        if availableProviders.isEmpty {
-                            Text("All providers are currently connected")
-                                .foregroundStyle(.themeComment)
-                        } else {
-                            ForEach(availableProviders) { provider in
-                                providerManagerRow(provider)
-                            }
-                        }
-                    }
-                }
-
-                if let providerError {
-                    Section {
-                        Text(providerError)
-                            .foregroundStyle(.themeRed)
-                    }
-                }
-            }
-            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
-            .themedListSurface()
-            .navigationTitle("Model Providers")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        isProviderManagerPresented = false
-                    }
-                }
-            }
-            .refreshable {
-                await loadProviderConfiguration()
-            }
-            .task {
-                await loadProviderConfiguration()
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func providerManagerRow(_ provider: ProviderAuthProviderStatus) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            ProviderIcon(provider: provider.id, size: 16)
-                .padding(.top, 3)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(provider.name)
-                Text(providerStatusText(provider))
-                    .font(.caption)
-                    .foregroundStyle(providerStatusColor(provider))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if providerActionInFlightId == provider.id {
-                ProgressView()
-                    .controlSize(.small)
-            } else if provider.authenticated {
-                providerManageMenu(provider)
-            } else {
-                providerConnectButtons(provider, dismissManagerBeforeAction: true)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    @ViewBuilder
     private func providerConnectButtons(
-        _ provider: ProviderAuthProviderStatus,
-        dismissManagerBeforeAction: Bool
+        _ provider: ProviderAuthProviderStatus
     ) -> some View {
         if let oauth = provider.oauth, provider.supportsApiKey {
             Menu {
                 Button(provider.authenticated ? "Reauthenticate" : "Sign In") {
-                    startProviderOAuthAction(provider: provider, oauth: oauth, dismissManagerBeforeAction: dismissManagerBeforeAction)
+                    startProviderOAuthAction(provider: provider, oauth: oauth)
                 }
 
                 Button(apiKeyButtonTitle(provider)) {
-                    startProviderAPIKeyAction(provider: provider, dismissManagerBeforeAction: dismissManagerBeforeAction)
+                    startProviderAPIKeyAction(provider: provider)
                 }
             } label: {
                 HStack(spacing: 4) {
@@ -474,7 +416,7 @@ struct ServerDetailView: View {
             .disabled(providerActionInFlightId != nil)
         } else if let oauth = provider.oauth {
             Button(provider.authenticated ? "Reauthenticate" : "Sign In") {
-                startProviderOAuthAction(provider: provider, oauth: oauth, dismissManagerBeforeAction: dismissManagerBeforeAction)
+                startProviderOAuthAction(provider: provider, oauth: oauth)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -482,7 +424,7 @@ struct ServerDetailView: View {
             .disabled(providerActionInFlightId != nil)
         } else if provider.supportsApiKey {
             Button(apiKeyButtonTitle(provider)) {
-                startProviderAPIKeyAction(provider: provider, dismissManagerBeforeAction: dismissManagerBeforeAction)
+                startProviderAPIKeyAction(provider: provider)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -493,24 +435,16 @@ struct ServerDetailView: View {
 
     private func startProviderOAuthAction(
         provider: ProviderAuthProviderStatus,
-        oauth: ProviderAuthOAuthCapabilities,
-        dismissManagerBeforeAction: Bool
+        oauth: ProviderAuthOAuthCapabilities
     ) {
-        if dismissManagerBeforeAction {
-            isProviderManagerPresented = false
-        }
         DispatchQueue.main.async {
             startProviderFlow(provider: provider, oauth: oauth)
         }
     }
 
     private func startProviderAPIKeyAction(
-        provider: ProviderAuthProviderStatus,
-        dismissManagerBeforeAction: Bool
+        provider: ProviderAuthProviderStatus
     ) {
-        if dismissManagerBeforeAction {
-            isProviderManagerPresented = false
-        }
         DispatchQueue.main.async {
             beginApiKeyEntry(for: provider)
         }
@@ -521,7 +455,6 @@ struct ServerDetailView: View {
         Menu {
             if let oauth = provider.oauth {
                 Button("Reauthenticate") {
-                    isProviderManagerPresented = false
                     DispatchQueue.main.async {
                         startProviderFlow(provider: provider, oauth: oauth)
                     }
@@ -530,7 +463,6 @@ struct ServerDetailView: View {
 
             if provider.supportsApiKey {
                 Button(apiKeyButtonTitle(provider)) {
-                    isProviderManagerPresented = false
                     DispatchQueue.main.async {
                         beginApiKeyEntry(for: provider)
                     }
@@ -760,26 +692,29 @@ struct ServerDetailView: View {
     }
 
     private func loadProviderConfiguration(api: APIClient? = nil) async {
+        isLoadingProviders = true
+        defer { isLoadingProviders = false }
+
         let client: APIClient
         if let api {
             client = api
         } else if let prepared = await prepareAPIClient() {
             client = prepared
         } else {
+            providerSetupState = .unavailable
             providerError = "Unable to prepare server transport"
             return
         }
-
-        isLoadingProviders = true
-        defer { isLoadingProviders = false }
 
         async let quotas = loadProviderQuotas(api: client)
 
         do {
             providerStatuses = try await client.listProviderAuthStatus()
+            providerSetupState = ProviderSetupState(providerStatuses: providerStatuses)
             providerError = nil
         } catch {
             providerStatuses = []
+            providerSetupState = .unavailable
             providerError = "Failed to load provider status: \(error.localizedDescription)"
         }
 
@@ -884,17 +819,16 @@ struct ServerDetailView: View {
             return
         }
 
-        let launchMode: ProviderAuthFlowSnapshot.LaunchMode
-        if oauth.flowType == .deviceCode, oauth.supportsPhoneBrowserLaunch {
+        let launchMode: ProviderAuthFlowSnapshot.LaunchMode = if oauth.flowType == .deviceCode, oauth.supportsPhoneBrowserLaunch {
             // Device-code flows are naturally cross-device. Prefer phone browser.
-            launchMode = .phoneBrowser
+            .phoneBrowser
         } else if oauth.supportsServerBrowserLaunch {
             // Callback-server providers work best when auth runs on server machine browser.
-            launchMode = .serverBrowser
+            .serverBrowser
         } else if oauth.supportsPhoneBrowserLaunch {
-            launchMode = .phoneBrowser
+            .phoneBrowser
         } else {
-            launchMode = .none
+            .none
         }
 
         providerActionInFlightId = provider.id
@@ -1069,27 +1003,21 @@ struct ServerDetailView: View {
     }
 }
 
-private struct ProviderQuotaSection: View {
+fileprivate struct ProviderQuotaDetails: View {
     let quota: ProviderQuota
+    let providerName: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 8) {
-                ProviderIcon(provider: quota.providerId)
-                Text(quota.displayName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-
-                Spacer(minLength: 8)
-
-                if let plan = quota.planLabel {
-                    Text(plan)
-                        .font(.caption.bold())
-                        .foregroundStyle(.themeBlue)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.themeBlue.opacity(0.14), in: Capsule())
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            if let plan = quota.planLabel {
+                Text(plan)
+                    .font(.caption.bold())
+                    .foregroundStyle(.themeBlue)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.themeBlue.opacity(0.14), in: Capsule())
+                    .accessibilityLabel("\(providerName) plan \(plan)")
+                    .accessibilityIdentifier("provider.quota.\(quota.providerId).plan")
             }
 
             ForEach(quota.windows) { window in
@@ -1101,11 +1029,9 @@ private struct ProviderQuotaSection: View {
                     .font(.caption)
                     .foregroundStyle(.themeComment)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("\(providerName) quota error: \(error)")
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     @ViewBuilder
@@ -1115,22 +1041,26 @@ private struct ProviderQuotaSection: View {
                 Text(window.title)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.themeComment)
+                    .lineLimit(1)
 
                 Spacer(minLength: 8)
 
                 Text("\(Int(window.remainingPercent.rounded()))% left")
                     .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(remainingColor(window.remainingPercent))
+                    .foregroundStyle(remainingStyle(window.remainingPercent))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .layoutPriority(1)
             }
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.themeComment.opacity(0.18))
+                        .fill(.themeComment.opacity(0.18))
                         .frame(height: 6)
 
                     Capsule()
-                        .fill(remainingColor(window.remainingPercent))
+                        .fill(remainingStyle(window.remainingPercent))
                         .frame(
                             width: geo.size.width * max(0, min(1, window.remainingPercent / 100)),
                             height: 6
@@ -1145,32 +1075,190 @@ private struct ProviderQuotaSection: View {
                     .foregroundStyle(.themeComment)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(providerName) \(window.title) quota")
+        .accessibilityValue(accessibilityValue(for: window))
+        .accessibilityIdentifier("provider.quota.\(quota.providerId).\(window.key)")
     }
 
-    private func remainingColor(_ remainingPercent: Double) -> Color {
+    private func accessibilityValue(for window: ProviderQuota.Window) -> String {
+        let remaining = "\(Int(window.remainingPercent.rounded()))% left"
+        guard let resetDate = window.resetDate else { return remaining }
+        return "\(remaining), \(resetLabel(for: resetDate, window: window))"
+    }
+
+    private func remainingStyle(_ remainingPercent: Double) -> ThemeShapeStyle {
         switch ProviderQuota.badgeTone(for: remainingPercent) {
         case .green:
-            return .themeGreen
+            .themeGreen
         case .orange:
-            return .themeOrange
+            .themeOrange
         case .red:
-            return .themeRed
+            .themeRed
         }
     }
 
     private func resetLabel(for date: Date, window: ProviderQuota.Window) -> String {
         let secondsUntilReset = date.timeIntervalSinceNow
-        let formatted: String
-        if secondsUntilReset <= 36 * 60 * 60, !window.includeWeekdayInReset {
+        let formatted: String = if secondsUntilReset <= 36 * 60 * 60, !window.includeWeekdayInReset {
             // Short windows (e.g. Codex 5h): time-of-day is enough.
-            formatted = date.formatted(.dateTime.hour().minute())
+            date.formatted(.dateTime.hour().minute())
         } else if secondsUntilReset <= 8 * 24 * 60 * 60 {
             // Within about a week: weekday + time.
-            formatted = date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+            date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
         } else {
             // Farther out (monthly): calendar day + time.
-            formatted = date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+            date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
         }
         return "resets \(formatted)"
     }
 }
+
+#if DEBUG
+struct ModelProvidersQuotaPreview: View {
+    private static let sampleNow = Date()
+
+    private static let codexQuota = ProviderQuota(
+        providerId: "openai-codex",
+        displayName: "Codex",
+        authenticated: true,
+        planType: "prolite",
+        windows: [
+            ProviderQuota.Window(
+                key: "five_hour",
+                shortLabel: "5h",
+                title: "5-hour",
+                usedPercent: 28,
+                remainingPercent: 72,
+                limitWindowSeconds: 18_000,
+                resetAt: Int(sampleNow.addingTimeInterval(2 * 60 * 60).timeIntervalSince1970),
+                includeWeekdayInReset: false
+            ),
+            ProviderQuota.Window(
+                key: "weekly",
+                shortLabel: "7d",
+                title: "Weekly",
+                usedPercent: 44,
+                remainingPercent: 56,
+                limitWindowSeconds: 604_800,
+                resetAt: Int(sampleNow.addingTimeInterval(5 * 24 * 60 * 60).timeIntervalSince1970),
+                includeWeekdayInReset: true
+            ),
+        ],
+        credits: nil,
+        prepaidBalanceCents: nil,
+        fetchedAt: Int(sampleNow.timeIntervalSince1970),
+        error: nil
+    )
+
+    private static let xaiQuota = ProviderQuota(
+        providerId: "xai",
+        displayName: "xAI",
+        authenticated: true,
+        planType: "supergrok",
+        windows: [
+            ProviderQuota.Window(
+                key: "monthly",
+                shortLabel: "30d",
+                title: "Monthly",
+                usedPercent: 61,
+                remainingPercent: 39,
+                limitWindowSeconds: 2_592_000,
+                resetAt: Int(sampleNow.addingTimeInterval(7 * 24 * 60 * 60).timeIntervalSince1970),
+                includeWeekdayInReset: false
+            ),
+        ],
+        credits: nil,
+        prepaidBalanceCents: nil,
+        fetchedAt: Int(sampleNow.timeIntervalSince1970),
+        error: nil
+    )
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Connected") {
+                    connectedProviderRow(
+                        providerID: "openai-codex",
+                        name: "OpenAI Codex",
+                        status: "OAuth connected",
+                        quota: Self.codexQuota
+                    )
+                    connectedProviderRow(
+                        providerID: "xai",
+                        name: "xAI",
+                        status: "OAuth connected",
+                        quota: Self.xaiQuota
+                    )
+                    connectedProviderRow(
+                        providerID: "deepseek",
+                        name: "DeepSeek",
+                        status: "API key connected"
+                    )
+                }
+
+                Section("Available") {
+                    HStack(alignment: .top, spacing: 12) {
+                        ProviderIcon(provider: "anthropic", size: 16)
+                            .padding(.top, 3)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Anthropic")
+                            Text("Not connected")
+                                .font(.caption)
+                                .foregroundStyle(.themeComment)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("Connect")
+                            .font(.subheadline)
+                            .foregroundStyle(.themeBlue)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.themeBlue.opacity(0.14), in: Capsule())
+                    }
+                }
+            }
+            .iPadReadableContent(maxWidth: IPadReadableContentWidth.detail)
+            .themedListSurface()
+            .navigationTitle("Model Providers")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .preferredColorScheme(.light)
+        .accessibilityIdentifier("screenshot.ready")
+    }
+
+    @ViewBuilder
+    private func connectedProviderRow(
+        providerID: String,
+        name: String,
+        status: String,
+        quota: ProviderQuota? = nil
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                ProviderIcon(provider: providerID, size: 16)
+                    .padding(.top, 3)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.themeGreen)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "ellipsis.circle")
+                    .font(.title3)
+                    .foregroundStyle(.themeComment)
+            }
+
+            if let quota {
+                ProviderQuotaDetails(quota: quota, providerName: name)
+                    .padding(.leading, 28)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+#endif

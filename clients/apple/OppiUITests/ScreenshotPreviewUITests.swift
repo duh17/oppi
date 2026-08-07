@@ -353,6 +353,33 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "workspace-edit-skills")
     }
 
+    func testModelProvidersQuotaInlinePreview() throws {
+        launchPreview(screen: "model-providers-quota-inline")
+
+        XCTAssertTrue(app.navigationBars["Model Providers"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Connected"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["OpenAI Codex"].waitForExistence(timeout: 5))
+        let codexPlan = app.descendants(matching: .any)["provider.quota.openai-codex.plan"]
+        XCTAssertTrue(codexPlan.waitForExistence(timeout: 5), "Codex plan label not visible")
+        XCTAssertFalse(app.staticTexts["Provider Quotas"].exists)
+
+        let fiveHourQuota = app.descendants(matching: .any)["provider.quota.openai-codex.five_hour"]
+        XCTAssertTrue(fiveHourQuota.waitForExistence(timeout: 5), "Codex quota row not visible")
+        XCTAssertTrue(
+            (fiveHourQuota.value as? String)?.contains("72% left") == true,
+            "Quota accessibility value must expose remaining percentage"
+        )
+        XCTAssertTrue(
+            (fiveHourQuota.value as? String)?.contains("resets") == true,
+            "Quota accessibility value must expose reset time"
+        )
+
+        let weeklyQuota = app.descendants(matching: .any)["provider.quota.openai-codex.weekly"]
+        XCTAssertTrue(weeklyQuota.waitForExistence(timeout: 5), "Weekly quota row not visible")
+        XCTAssertTrue(app.staticTexts["Anthropic"].waitForExistence(timeout: 5))
+        saveScreenshot(name: "model-providers-quota-inline")
+    }
+
     func testExtensionWidgetPreview() throws {
         launchPreview(screen: "extension-widget")
 
