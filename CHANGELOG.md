@@ -38,7 +38,7 @@ Example:
 
 ## [Unreleased]
 
-Target: iOS `1.1.0` build `44` and `oppi-server@0.46.0`; `oppi-mirror@0.45.0` is unchanged.
+Target: iOS `1.1.0` build `44` (candidate build `45` pending approval) and `oppi-server@0.46.0` with bundled Pi runtime `0.84.1`; `oppi-mirror@0.45.0` is unchanged.
 
 ### Added
 
@@ -51,6 +51,7 @@ Target: iOS `1.1.0` build `44` and `oppi-server@0.46.0`; `oppi-mirror@0.45.0` is
 - **Protocol/Client/Server:** Agent, schedule, Skill, workspace, model, and session APIs changed incompatibly; Build 44 requires `oppi-server@0.46.0`.
 - **Server:** Explicit model selection fails visibly when the requested model is unavailable instead of substituting another provider or model.
 - **Client/Server:** Session, tool, Markdown, and cached-content presentation survives navigation, replay, and reconnection more consistently.
+- **Server:** Updated the bundled Pi runtime packages from `0.84.0` to `0.84.1`, including fixes for extension method-wrapper recursion and active-run `Agent.reset()`, plus new `terminate` support for blocked extension tool-call batches.
 
 ### Fixed
 
