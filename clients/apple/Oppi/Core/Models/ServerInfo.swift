@@ -97,9 +97,13 @@ struct ProviderQuotasInfo: Codable, Sendable, Equatable {
 
     func providerBadges(
         for provider: String,
+        presentation: ProviderQuota.WindowPresentation = .picker,
         relativeTo now: Date = Date()
     ) -> [ProviderQuota.ProviderBadge] {
-        quota(forProviderId: provider)?.providerBadges(relativeTo: now) ?? []
+        quota(forProviderId: provider)?.providerBadges(
+            presentation: presentation,
+            relativeTo: now
+        ) ?? []
     }
 }
 
@@ -115,6 +119,17 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
     let prepaidBalanceCents: Int?
     let fetchedAt: Int
     let error: String?
+
+    /// How many usage windows to surface in a given UI density.
+    enum WindowPresentation: Sendable, Equatable {
+        /// Model Providers and other roomy surfaces: every window, shortest first.
+        case detail
+        /// Model picker and other tight surfaces: shortest `limit` periods.
+        case compact(limit: Int)
+
+        /// Default picker density: one shortest window.
+        static let picker = WindowPresentation.compact(limit: 1)
+    }
 
     struct Window: Codable, Sendable, Equatable, Identifiable {
         var id: String { key }
@@ -166,6 +181,16 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
         authenticated || error != nil || hasAnyUsageWindow
     }
 
+    /// All windows, shortest period first. Null durations sort last; original order breaks ties.
+    var detailWindows: [Window] {
+        windows(for: .detail)
+    }
+
+    /// Shortest period windows for space-limited chrome (model picker).
+    var compactWindows: [Window] {
+        windows(for: .picker)
+    }
+
     var planLabel: String? {
         guard let planType else { return nil }
         let normalized = planType.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -191,9 +216,24 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
         return .green
     }
 
-    func providerBadges(relativeTo now: Date = Date()) -> [ProviderBadge] {
+    /// Provider-agnostic window selection. Never branches on provider id or window key names.
+    func windows(for presentation: WindowPresentation) -> [Window] {
+        let sorted = Self.sortedWindows(windows)
+        switch presentation {
+        case .detail:
+            return sorted
+        case .compact(let limit):
+            guard limit > 0 else { return [] }
+            return Array(sorted.prefix(limit))
+        }
+    }
+
+    func providerBadges(
+        presentation: WindowPresentation = .picker,
+        relativeTo now: Date = Date()
+    ) -> [ProviderBadge] {
         guard authenticated else { return [] }
-        return windows.map { window in
+        return windows(for: presentation).map { window in
             let usageLabel = "\(window.shortLabel) \(Int(window.remainingPercent.rounded()))%"
             guard let resetDate = window.resetDate else {
                 return ProviderBadge(
@@ -213,6 +253,19 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
                 tone: Self.badgeTone(for: window.remainingPercent)
             )
         }
+    }
+
+    static func sortedWindows(_ windows: [Window]) -> [Window] {
+        windows.enumerated()
+            .sorted { left, right in
+                let leftSeconds = left.element.limitWindowSeconds
+                let rightSeconds = right.element.limitWindowSeconds
+                let leftRank = leftSeconds ?? Int.max
+                let rightRank = rightSeconds ?? Int.max
+                if leftRank != rightRank { return leftRank < rightRank }
+                return left.offset < right.offset
+            }
+            .map(\.element)
     }
 
     private static func resetCountdown(from now: Date, to resetDate: Date) -> ResetCountdown {

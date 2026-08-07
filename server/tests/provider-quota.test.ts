@@ -4,6 +4,9 @@ import {
   fetchCodexProviderQuota,
   fetchProviderQuotas,
   fetchXaiProviderQuota,
+  normalizeProviderQuotaWindows,
+  type ProviderQuotaAdapter,
+  type ProviderQuotaWindow,
 } from "../src/provider-quota.js";
 
 describe("fetchCodexProviderQuota", () => {
@@ -425,7 +428,182 @@ describe("fetchXaiProviderQuota", () => {
   });
 });
 
+describe("normalizeProviderQuotaWindows", () => {
+  it("dedupes by key and sorts shortest period first", () => {
+    const windows: ProviderQuotaWindow[] = [
+      {
+        key: "monthly",
+        shortLabel: "30d",
+        title: "Monthly",
+        usedPercent: 50,
+        remainingPercent: 50,
+        limitWindowSeconds: 30 * 24 * 60 * 60,
+        resetAt: 3,
+        includeWeekdayInReset: false,
+      },
+      {
+        key: "weekly",
+        shortLabel: "7d",
+        title: "Weekly",
+        usedPercent: 40,
+        remainingPercent: 60,
+        limitWindowSeconds: 7 * 24 * 60 * 60,
+        resetAt: 2,
+        includeWeekdayInReset: true,
+      },
+      {
+        key: "weekly",
+        shortLabel: "dup",
+        title: "Dup",
+        usedPercent: 99,
+        remainingPercent: 1,
+        limitWindowSeconds: 7 * 24 * 60 * 60,
+        resetAt: 9,
+        includeWeekdayInReset: true,
+      },
+      {
+        key: "unknown",
+        shortLabel: "?",
+        title: "Unknown",
+        usedPercent: 10,
+        remainingPercent: 90,
+        limitWindowSeconds: null,
+        resetAt: null,
+        includeWeekdayInReset: false,
+      },
+      {
+        key: "five_hour",
+        shortLabel: "5h",
+        title: "5-hour",
+        usedPercent: 20,
+        remainingPercent: 80,
+        limitWindowSeconds: 18_000,
+        resetAt: 1,
+        includeWeekdayInReset: false,
+      },
+    ];
+
+    expect(normalizeProviderQuotaWindows(windows).map((window) => window.key)).toEqual([
+      "five_hour",
+      "weekly",
+      "monthly",
+      "unknown",
+    ]);
+    expect(normalizeProviderQuotaWindows(windows)[1]?.shortLabel).toBe("7d");
+  });
+});
+
 describe("fetchProviderQuotas", () => {
+  it("runs injected adapters without hard-coding provider ids", async () => {
+    const adapters: ProviderQuotaAdapter[] = [
+      {
+        providerId: "example",
+        displayName: "Example",
+        fetch: async () => ({
+          providerId: "example",
+          displayName: "Example",
+          authenticated: true,
+          planType: null,
+          windows: [
+            {
+              key: "monthly",
+              shortLabel: "30d",
+              title: "Monthly",
+              usedPercent: 10,
+              remainingPercent: 90,
+              limitWindowSeconds: 30 * 24 * 60 * 60,
+              resetAt: null,
+              includeWeekdayInReset: false,
+            },
+            {
+              key: "hourly",
+              shortLabel: "1h",
+              title: "Hourly",
+              usedPercent: 25,
+              remainingPercent: 75,
+              limitWindowSeconds: 3600,
+              resetAt: null,
+              includeWeekdayInReset: false,
+            },
+          ],
+          credits: null,
+          prepaidBalanceCents: null,
+          fetchedAt: 1,
+        }),
+      },
+    ];
+
+    const result = await fetchProviderQuotas({
+      modelRuntime: { getAuth: vi.fn() },
+      adapters,
+      now: () => 9,
+    });
+
+    expect(result.providers).toHaveLength(1);
+    expect(result.providers[0]?.providerId).toBe("example");
+    expect(result.providers[0]?.windows.map((window) => window.key)).toEqual(["hourly", "monthly"]);
+  });
+
+  it("isolates a throwing adapter and stamps registry identity", async () => {
+    const adapters: ProviderQuotaAdapter[] = [
+      {
+        providerId: "healthy",
+        displayName: "Healthy",
+        fetch: async () => ({
+          // Deliberately wrong identity — aggregator must stamp registry metadata.
+          providerId: "wrong",
+          displayName: "Wrong",
+          authenticated: true,
+          planType: null,
+          windows: [
+            {
+              key: "daily",
+              shortLabel: "1d",
+              title: "Daily",
+              usedPercent: 10,
+              remainingPercent: 90,
+              limitWindowSeconds: 86_400,
+              resetAt: null,
+              includeWeekdayInReset: false,
+            },
+          ],
+          credits: null,
+          prepaidBalanceCents: null,
+          fetchedAt: 1,
+        }),
+      },
+      {
+        providerId: "broken",
+        displayName: "Broken",
+        fetch: async () => {
+          throw new Error("upstream exploded");
+        },
+      },
+    ];
+
+    const result = await fetchProviderQuotas({
+      modelRuntime: { getAuth: vi.fn() },
+      adapters,
+      now: () => 42,
+    });
+
+    expect(result.providers).toHaveLength(2);
+    expect(result.providers.map((provider) => provider.providerId)).toEqual(["healthy", "broken"]);
+    expect(result.providers[0]).toMatchObject({
+      providerId: "healthy",
+      displayName: "Healthy",
+      authenticated: true,
+      windows: [{ key: "daily" }],
+    });
+    expect(result.providers[1]).toMatchObject({
+      providerId: "broken",
+      displayName: "Broken",
+      authenticated: true,
+      windows: [],
+      error: "Broken quota fetch failed: upstream exploded",
+    });
+  });
+
   it("aggregates codex and xai quotas", async () => {
     const readCredential = vi.fn((providerId: string) => {
       if (providerId === "openai-codex") {

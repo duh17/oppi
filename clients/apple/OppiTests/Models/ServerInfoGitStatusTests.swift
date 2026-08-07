@@ -200,12 +200,21 @@ struct ServerInfoTests {
         #expect(quotas.providerBadges(for: "anthropic").isEmpty)
         #expect(makeProviderQuota(authenticated: false).providerBadges().isEmpty)
         let now = Date(timeIntervalSince1970: 1_700_000_000)
+        // Compact (picker default): shortest window only.
         #expect(quotas.providerBadges(for: "openai-codex", relativeTo: now) == [
             .init(label: "5h 62% · now", accessibilityLabel: "5h 62%, resets now", tone: .green),
-            .init(label: "7d 18% · now", accessibilityLabel: "7d 18%, resets now", tone: .red),
         ])
         #expect(quotas.providerBadges(for: "xai", relativeTo: now) == [
             .init(label: "7d 76% · now", accessibilityLabel: "7d 76%, resets now", tone: .green),
+        ])
+        // Detail: every window, shortest first.
+        #expect(quotas.providerBadges(
+            for: "openai-codex",
+            presentation: .detail,
+            relativeTo: now
+        ) == [
+            .init(label: "5h 62% · now", accessibilityLabel: "5h 62%, resets now", tone: .green),
+            .init(label: "7d 18% · now", accessibilityLabel: "7d 18%, resets now", tone: .red),
         ])
     }
 
@@ -213,6 +222,42 @@ struct ServerInfoTests {
         #expect(ProviderQuota.badgeTone(for: 80) == .green)
         #expect(ProviderQuota.badgeTone(for: 50) == .orange)
         #expect(ProviderQuota.badgeTone(for: 20) == .red)
+    }
+
+    @Test func providerQuotaWindowsSortShortestFirstAndCompactTakesOne() {
+        let quota = makeProviderQuota(
+            authenticated: true,
+            windows: [
+                makeQuotaWindow(
+                    key: "monthly",
+                    shortLabel: "30d",
+                    limitWindowSeconds: 30 * 24 * 60 * 60,
+                    remainingPercent: 40
+                ),
+                makeQuotaWindow(
+                    key: "weekly",
+                    shortLabel: "7d",
+                    limitWindowSeconds: 7 * 24 * 60 * 60,
+                    remainingPercent: 55
+                ),
+                makeQuotaWindow(
+                    key: "five_hour",
+                    shortLabel: "5h",
+                    limitWindowSeconds: 5 * 60 * 60,
+                    remainingPercent: 70
+                ),
+                makeQuotaWindow(
+                    key: "unknown",
+                    shortLabel: "?",
+                    limitWindowSeconds: nil,
+                    remainingPercent: 90
+                ),
+            ]
+        )
+
+        #expect(quota.detailWindows.map(\.key) == ["five_hour", "weekly", "monthly", "unknown"])
+        #expect(quota.compactWindows.map(\.key) == ["five_hour"])
+        #expect(quota.windows(for: .compact(limit: 2)).map(\.key) == ["five_hour", "weekly"])
     }
 
     @Test func providerQuotaBadgesIncludeCompactResetCountdowns() {
@@ -224,6 +269,7 @@ struct ServerInfoTests {
                 makeQuotaWindow(
                     key: "weekly",
                     shortLabel: "7d",
+                    limitWindowSeconds: 7 * 24 * 60 * 60,
                     remainingPercent: 18,
                     resetAt: 1_700_273_600
                 ),
@@ -231,6 +277,9 @@ struct ServerInfoTests {
         )
 
         #expect(quota.providerBadges(relativeTo: now) == [
+            .init(label: "5h 62% · 2h 15m", accessibilityLabel: "5h 62%, resets in 2 hours 15 minutes", tone: .green),
+        ])
+        #expect(quota.providerBadges(presentation: .detail, relativeTo: now) == [
             .init(label: "5h 62% · 2h 15m", accessibilityLabel: "5h 62%, resets in 2 hours 15 minutes", tone: .green),
             .init(label: "7d 18% · 3d 4h", accessibilityLabel: "7d 18%, resets in 3 days 4 hours", tone: .red),
         ])
@@ -241,18 +290,45 @@ struct ServerInfoTests {
         let quota = makeProviderQuota(
             authenticated: true,
             windows: [
-                makeQuotaWindow(key: "elapsed", shortLabel: "1h", remainingPercent: 90, resetAt: 1_699_999_999),
-                makeQuotaWindow(key: "seconds", shortLabel: "1h", remainingPercent: 80, resetAt: 1_700_000_030),
-                makeQuotaWindow(key: "hour", shortLabel: "5h", remainingPercent: 70, resetAt: 1_700_003_600),
-                makeQuotaWindow(key: "missing", shortLabel: "7d", remainingPercent: 60, resetAt: nil),
+                makeQuotaWindow(
+                    key: "elapsed",
+                    shortLabel: "1h",
+                    limitWindowSeconds: 3600,
+                    remainingPercent: 90,
+                    resetAt: 1_699_999_999
+                ),
+                makeQuotaWindow(
+                    key: "seconds",
+                    shortLabel: "1h",
+                    limitWindowSeconds: 3600,
+                    remainingPercent: 80,
+                    resetAt: 1_700_000_030
+                ),
+                makeQuotaWindow(
+                    key: "hour",
+                    shortLabel: "5h",
+                    limitWindowSeconds: 5 * 60 * 60,
+                    remainingPercent: 70,
+                    resetAt: 1_700_003_600
+                ),
+                makeQuotaWindow(
+                    key: "missing",
+                    shortLabel: "7d",
+                    limitWindowSeconds: 7 * 24 * 60 * 60,
+                    remainingPercent: 60,
+                    resetAt: nil
+                ),
             ]
         )
 
-        #expect(quota.providerBadges(relativeTo: now).map(\.label) == [
+        #expect(quota.providerBadges(presentation: .detail, relativeTo: now).map(\.label) == [
             "1h 90% · now",
             "1h 80% · 1m",
             "5h 70% · 1h",
             "7d 60%",
+        ])
+        #expect(quota.providerBadges(relativeTo: now).map(\.label) == [
+            "1h 90% · now",
         ])
     }
 

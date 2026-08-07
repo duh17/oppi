@@ -1020,7 +1020,7 @@ fileprivate struct ProviderQuotaDetails: View {
                     .accessibilityIdentifier("provider.quota.\(quota.providerId).plan")
             }
 
-            ForEach(quota.windows) { window in
+            ForEach(quota.detailWindows) { window in
                 usageRow(window: window)
             }
 
