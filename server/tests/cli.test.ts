@@ -694,13 +694,7 @@ describe("unknown command", () => {
 // ── Config ──
 
 describe("oppi config", () => {
-  it("config show displays config", () => {
-    const { stdout, exitCode } = run(["config", "show"]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("port");
-  });
-
-  it("config show redacts authentication, device, and runtime secrets", () => {
+  function seedConfigDisplaySecrets(): Record<string, string> {
     const secrets = {
       owner: "sk_owner-config-display-secret",
       pairing: "pt_pairing-config-display-secret",
@@ -728,6 +722,17 @@ describe("oppi config", () => {
       liveActivityToken: secrets.liveActivity,
       runtimeEnv: { OPENAI_API_KEY: secrets.runtime },
     });
+    return secrets;
+  }
+
+  it("config show displays config", () => {
+    const { stdout, exitCode } = run(["config", "show"]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("port");
+  });
+
+  it("config show redacts authentication, device, and runtime secrets", () => {
+    const secrets = seedConfigDisplaySecrets();
 
     const { stdout, exitCode } = run(["config", "show"]);
 
@@ -744,29 +749,27 @@ describe("oppi config", () => {
     for (const secret of Object.values(secrets)) expect(stdout).not.toContain(secret);
   });
 
-  it("config get redacts secret scalars, collections, bindings, and runtime env", () => {
-    const keys = [
-      "token",
-      "pairingToken",
-      "authDeviceTokens",
-      "irohDeviceTokenBindings",
-      "pushDeviceTokens",
-      "liveActivityToken",
-      "runtimeEnv.OPENAI_API_KEY",
-      "runtimeEnv",
-    ];
+  it.each([
+    ["token", false],
+    ["pairingToken", false],
+    ["authDeviceTokens", false],
+    ["irohDeviceTokenBindings", true],
+    ["pushDeviceTokens", false],
+    ["liveActivityToken", false],
+    ["runtimeEnv.OPENAI_API_KEY", false],
+    ["runtimeEnv", false],
+  ] as const)("config get redacts %s", (key, exposesBindingMetadata) => {
+    seedConfigDisplaySecrets();
 
-    for (const key of keys) {
-      const { stdout, exitCode } = run(["config", "get", key]);
-      expect(exitCode, key).toBe(0);
-      if (key === "irohDeviceTokenBindings") {
-        expect(stdout).toContain('"count": 1');
-        expect(stdout).toContain('"transports": [');
-      } else {
-        expect(stdout, key).toContain("[REDACTED");
-      }
-      expect(stdout, key).not.toContain("config-display-secret");
+    const { stdout, exitCode } = run(["config", "get", key]);
+    expect(exitCode).toBe(0);
+    if (exposesBindingMetadata) {
+      expect(stdout).toContain('"count": 1');
+      expect(stdout).toContain('"transports": [');
+    } else {
+      expect(stdout).toContain("[REDACTED");
     }
+    expect(stdout).not.toContain("config-display-secret");
   });
 
   it("config set output and errors never echo runtime secrets", () => {
