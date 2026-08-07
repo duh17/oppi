@@ -512,7 +512,6 @@ struct AgentScheduleAPIClientTests {
         #expect(runs.map(\.id) == ["run-new", "run-middle", "run-old"])
     }
 
-
     @Test func scheduleRunNowPostsRequestIdAndDecodesRun() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -1236,7 +1235,7 @@ struct NativeScheduleEditingTests {
         #expect(weeklyDraft.makeTrigger() == weekly)
     }
 
-    @Test func advancedCronIsPreservedUntilTheUserChoosesANativeCadence() {
+    @Test func advancedCronCanBeEditedDirectlyWithItsTimeZone() {
         let custom = AgentScheduleTrigger.cron(
             expression: "0 8 1 * *",
             timeZone: "UTC"
@@ -1244,10 +1243,73 @@ struct NativeScheduleEditingTests {
         var draft = ScheduleTriggerDraft(trigger: custom)
 
         #expect(draft.cadence == .custom)
+        #expect(draft.customExpression == "0 8 1 * *")
         #expect(draft.makeTrigger() == custom)
+
+        draft.customExpression = "*/15 9-17 * * 1-5"
+        draft.timeZone = "America/Los_Angeles"
+
+        #expect(draft.canSave)
+        #expect(
+            draft.makeTrigger() == .cron(
+                expression: "*/15 9-17 * * 1-5",
+                timeZone: "America/Los_Angeles"
+            )
+        )
+    }
+
+    @Test func customCronRequiresFiveFieldsOrSixWithSeconds() {
+        var draft = ScheduleTriggerDraft(
+            trigger: .cron(expression: "0 8 1 * *", timeZone: "UTC")
+        )
+
+        draft.customExpression = "not a cron"
+        #expect(!draft.canSave)
+        #expect(draft.customExpressionError != nil)
+
+        draft.customExpression = "99 25 * * *"
+        #expect(!draft.canSave)
+        #expect(draft.customExpressionError != nil)
+
+        for invalidSeconds in ["30", "*", "*/1"] {
+            draft.customExpression = "\(invalidSeconds) */15 9-17 * * 1-5"
+            #expect(!draft.canSave)
+            #expect(draft.customExpressionError != nil)
+        }
+
+        draft.customExpression = "0 */15 9-17 * * 1-5"
+        #expect(draft.canSave)
+        #expect(draft.customExpressionError == nil)
+        #expect(draft.customFieldLabels.hasPrefix("second"))
+
+        draft.customExpression = "+1 9 * * 1-5"
+        #expect(!draft.canSave)
+    }
+
+    @Test func advancedCronIsRetainedWhenSwitchingCadenceBeforeSaving() {
+        let custom = AgentScheduleTrigger.cron(
+            expression: "0 8 1 * *",
+            timeZone: "UTC"
+        )
+        var draft = ScheduleTriggerDraft(trigger: custom)
 
         draft.cadence = .daily
         #expect(draft.makeTrigger()?.scheduleScreenCadence == "DAILY")
+
+        draft.cadence = .custom
+        #expect(draft.makeTrigger() == custom)
+    }
+
+    @Test func zeroSecondsCronStaysCustomAndRoundTripsWithoutDroppingItsField() {
+        let custom = AgentScheduleTrigger.cron(
+            expression: "0 0 8 * * *",
+            timeZone: "UTC"
+        )
+        let draft = ScheduleTriggerDraft(trigger: custom)
+
+        #expect(draft.cadence == .custom)
+        #expect(draft.customFieldLabels.hasPrefix("second"))
+        #expect(draft.makeTrigger() == custom)
     }
 
     @Test func manualRunInsertionKeepsOnlyTheNewestTwentyRows() {

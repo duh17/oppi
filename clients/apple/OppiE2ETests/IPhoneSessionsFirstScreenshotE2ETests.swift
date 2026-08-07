@@ -17,6 +17,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     nonisolated(unsafe) private var archivedScheduleId: String?
     nonisolated(unsafe) private var nativeEditorAgentId: String?
     nonisolated(unsafe) private var nativeEditorScheduleId: String?
+    nonisolated(unsafe) private var customCronScheduleId: String?
 
     override var e2eLaunchesSessionsInboxOnly: Bool {
         true
@@ -109,6 +110,12 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             nativeEditorScheduleId = try createScheduleFixture(
                 name: "Native schedule editor",
                 expression: "0 7 * * *",
+                workspaceId: anchorWorkspaceId
+            )
+        } else if name.contains("testNativeCustomScheduleEditorScreenshot") {
+            customCronScheduleId = try createScheduleFixture(
+                name: "Custom cron editor",
+                expression: "0 7 1 * *",
                 workspaceId: anchorWorkspaceId
             )
         } else if name.contains("testScheduleScreenCreatesAndRestoresWithSimpleControls") {
@@ -463,6 +470,24 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         let action = try XCTUnwrap(storedSchedule["action"] as? [String: Any])
         XCTAssertEqual(action["prompt"] as? String, "Run the edited native briefing.")
         XCTAssertEqual(action["thinkingLevel"] as? String, "high")
+    }
+
+    func testNativeCustomScheduleEditorScreenshot() throws {
+        XCUIDevice.shared.orientation = .portrait
+
+        let scheduleId = try XCTUnwrap(customCronScheduleId, "Custom cron schedule was not seeded")
+        openWorkspaceSidebar()
+        tap(app.buttons["workspace.schedules.open"], named: "Schedules sidebar destination")
+        tap(app.buttons["schedules.row.\(scheduleId)"], named: "custom cron schedule", timeout: 10)
+        tap(app.buttons["schedule.detail.nativeEdit"], named: "native Schedule Edit", timeout: 10)
+
+        XCTAssertTrue(app.navigationBars["Edit Schedule"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["schedule.nativeEdit.cronExpression"].waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            app.buttons["schedule.nativeEdit.timeZone"].isEnabled,
+            "Custom schedule time zone remained disabled"
+        )
+        try saveLabScreenshot(name: "iphone-native-schedule-custom-cron-editor-e2e")
     }
 
     func testScheduleScreenCreatesAndRestoresWithSimpleControls() throws {

@@ -119,17 +119,18 @@ struct ScheduleNativeEditView: View {
                         isShowingTimeZonePicker = true
                     } label: {
                         LabeledContent("Time Zone") {
-                            Text(timeZoneDisplayName(triggerDraft.timeZone))
-                                .foregroundStyle(.themeFg)
+                            HStack(spacing: 6) {
+                                Text(timeZoneDisplayName(triggerDraft.timeZone))
+                                    .foregroundStyle(.themeFg)
+                                Image(systemName: "chevron.forward")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.themeComment)
+                                    .accessibilityHidden(true)
+                            }
                         }
                     }
                     .buttonStyle(.plain)
-                    .disabled(triggerDraft.cadence == .custom)
-                    .accessibilityHint(
-                        triggerDraft.cadence == .custom
-                            ? "Use Edit with Oppi to change the time zone for an advanced schedule"
-                            : "Choose the schedule time zone"
-                    )
+                    .accessibilityHint("Choose the schedule time zone")
                     .accessibilityIdentifier("schedule.nativeEdit.timeZone")
                 }
 
@@ -288,13 +289,35 @@ struct ScheduleNativeEditView: View {
                 .environment(\.timeZone, triggerTimeZone)
                 .accessibilityIdentifier("schedule.nativeEdit.time")
         case .custom:
-            LabeledContent("Timing") {
-                Text("Custom schedule")
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Cron Expression")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.themeFg)
+
+                TextField("0 9 * * 1-5", text: $triggerDraft.customExpression)
+                    .font(.body.monospaced())
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .accessibilityLabel("Cron expression")
+                    .accessibilityHint(triggerDraft.customAccessibilityHint)
+                    .accessibilityIdentifier("schedule.nativeEdit.cronExpression")
+
+                Text(triggerDraft.customFieldLabels)
+                    .font(.caption2.monospaced())
                     .foregroundStyle(.themeComment)
+
+                if let expressionError = triggerDraft.customExpressionError {
+                    Label(expressionError, systemImage: "exclamationmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.themeRed)
+                        .accessibilityIdentifier("schedule.nativeEdit.cronError")
+                } else {
+                    Text(triggerDraft.customGuidanceText)
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                }
             }
-            Text("Choose a supported cadence above to replace it, or use Edit with Oppi for advanced cron timing.")
-                .font(.caption)
-                .foregroundStyle(.themeComment)
+            .padding(.vertical, 4)
         }
     }
 
@@ -401,7 +424,7 @@ struct ScheduleTriggerDraft: Equatable {
     var timeOfDay: Date
     var weekday: Int
     var timeZone: String
-    private var customTrigger: AgentScheduleTrigger?
+    var customExpression: String
 
     init(trigger: AgentScheduleTrigger, now: Date = Date()) {
         oneTimeDate = now
@@ -409,7 +432,7 @@ struct ScheduleTriggerDraft: Equatable {
         timeOfDay = now
         weekday = 1
         timeZone = trigger.timeZone
-        customTrigger = nil
+        customExpression = ""
 
         switch trigger {
         case .at(let date, _):
@@ -419,6 +442,7 @@ struct ScheduleTriggerDraft: Equatable {
             cadence = .interval
             self.intervalMs = intervalMs
         case .cron(let expression, let timeZone):
+            customExpression = expression
             if let parsed = Self.parseSimpleCron(expression) {
                 cadence = parsed.weekday == nil ? .daily : .weekly
                 weekday = parsed.weekday ?? 1
@@ -430,13 +454,56 @@ struct ScheduleTriggerDraft: Equatable {
                 )
             } else {
                 cadence = .custom
-                customTrigger = trigger
             }
         }
     }
 
+    var customFieldLabels: String {
+        hasSecondsField
+            ? "second  minute  hour  day  month  weekday"
+            : "minute  hour  day  month  weekday"
+    }
+
+    var customAccessibilityHint: String {
+        hasSecondsField
+            ? "Second, minute, hour, day, month, and weekday. Seconds must be zero."
+            : "Minute, hour, day, month, and weekday"
+    }
+
+    var customGuidanceText: String {
+        if hasSecondsField {
+            return "Seconds must be 0. Example: 0 0 9 * * 1-5 runs weekdays at 9:00."
+        }
+        return "Example: 0 9 * * 1-5 runs weekdays at 9:00. */15 * * * * runs every 15 minutes."
+    }
+
+    private var hasSecondsField: Bool {
+        customExpression.split(whereSeparator: { $0.isWhitespace }).count == 6
+    }
+
+    var customExpressionError: String? {
+        guard cadence == .custom else { return nil }
+        let fields = customExpression.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard fields.count == 5 || fields.count == 6 else {
+            return "Enter 5 fields, or 6 with seconds first."
+        }
+        // The server accepts six fields for parser compatibility but schedules at minute resolution.
+        if fields.count == 6, fields[0] != "0" {
+            return "Seconds must be 0 because schedules run at minute resolution."
+        }
+        let ranges = fields.count == 6
+            ? [(0, 0), (0, 59), (0, 23), (1, 31), (1, 12), (0, 7)]
+            : [(0, 59), (0, 23), (1, 31), (1, 12), (0, 7)]
+        guard zip(fields, ranges).allSatisfy({
+            Self.isValidCronField($0.0, range: $0.1)
+        }) else {
+            return "Use valid numbers, *, lists, ranges, or / steps for each field."
+        }
+        return nil
+    }
+
     var canSave: Bool {
-        cadence != .custom || customTrigger != nil
+        cadence != .custom || customExpressionError == nil
     }
 
     func makeTrigger() -> AgentScheduleTrigger? {
@@ -455,7 +522,11 @@ struct ScheduleTriggerDraft: Equatable {
                 timeZone: timeZone
             )
         case .custom:
-            return customTrigger
+            guard customExpressionError == nil else { return nil }
+            return .cron(
+                expression: customExpression.trimmingCharacters(in: .whitespacesAndNewlines),
+                timeZone: timeZone
+            )
         }
     }
 
@@ -474,16 +545,42 @@ struct ScheduleTriggerDraft: Equatable {
 
     private static func parseSimpleCron(_ expression: String) -> (hour: Int, minute: Int, weekday: Int?)? {
         let fields = expression.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        let normalized = fields.count == 6 ? Array(fields.dropFirst()) : fields
-        guard normalized.count == 5,
-              let minute = Int(normalized[0]), (0...59).contains(minute),
-              let hour = Int(normalized[1]), (0...23).contains(hour),
-              normalized[2] == "*", normalized[3] == "*" else { return nil }
-        if normalized[4] == "*" {
+        guard fields.count == 5,
+              let minute = Int(fields[0]), (0...59).contains(minute),
+              let hour = Int(fields[1]), (0...23).contains(hour),
+              fields[2] == "*", fields[3] == "*" else { return nil }
+        if fields[4] == "*" {
             return (hour, minute, nil)
         }
-        guard let weekday = Int(normalized[4]), (0...7).contains(weekday) else { return nil }
+        guard let weekday = Int(fields[4]), (0...7).contains(weekday) else { return nil }
         return (hour, minute, weekday == 7 ? 0 : weekday)
+    }
+
+    private static func isValidCronField(_ field: String, range: (Int, Int)) -> Bool {
+        let segments = field.split(separator: ",", omittingEmptySubsequences: false)
+        return !segments.isEmpty && segments.allSatisfy { segment in
+            let stepParts = segment.split(separator: "/", omittingEmptySubsequences: false)
+            guard stepParts.count <= 2, let base = stepParts.first, !base.isEmpty else { return false }
+            if stepParts.count == 2 {
+                guard let step = parseUnsignedCronNumber(stepParts[1]), step > 0 else { return false }
+            }
+            if base == "*" { return true }
+
+            let rangeParts = base.split(separator: "-", omittingEmptySubsequences: false)
+            if rangeParts.count == 2,
+               let lower = parseUnsignedCronNumber(rangeParts[0]),
+               let upper = parseUnsignedCronNumber(rangeParts[1]) {
+                return range.0 <= lower && lower <= upper && upper <= range.1
+            }
+            guard rangeParts.count == 1,
+                  let value = parseUnsignedCronNumber(base) else { return false }
+            return (range.0...range.1).contains(value)
+        }
+    }
+
+    private static func parseUnsignedCronNumber(_ text: Substring) -> Int? {
+        guard !text.isEmpty, text.allSatisfy({ ("0"..."9").contains($0) }) else { return nil }
+        return Int(text)
     }
 
     private static func dateForTime(
