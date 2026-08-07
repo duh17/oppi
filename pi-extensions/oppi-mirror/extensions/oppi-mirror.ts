@@ -2703,6 +2703,99 @@ export async function terminalAskFallback(
 const DEFAULT_RECONNECT_DELAY_MS = 2_000;
 const OPPI_RUNTIME_CONFLICT_NOTIFY_INTERVAL_MS = 60_000;
 const MIRROR_BRIDGE_MAX_SAFE_PAYLOAD_BYTES = 14 * 1024 * 1024;
+// Keep the standalone mirror package on the same caller contract as
+// server/src/session-caller-identity.ts without importing server-only code.
+const OPPI_CALLER_SESSION_ID_ENV = "OPPI_CALLER_SESSION_ID";
+
+interface MirrorCallerSessionIdentity {
+  bind(sessionId: string): void;
+  clear(): void;
+}
+
+interface MirrorCallerSessionIdentityState {
+  baselineSessionId: string | undefined;
+  appliedSessionId: string;
+  ownerOrder: symbol[];
+  sessionIdsByOwner: Map<symbol, string>;
+}
+
+type MirrorCallerSessionIdentityGlobal = typeof globalThis & {
+  __oppiMirrorCallerSessionIdentity?: MirrorCallerSessionIdentityState;
+};
+
+function createMirrorCallerSessionIdentity(): MirrorCallerSessionIdentity {
+  const owner = Symbol("oppi-mirror-caller-session");
+  const identityGlobal = globalThis as MirrorCallerSessionIdentityGlobal;
+
+  return {
+    bind(sessionId) {
+      const normalized = sessionId.trim();
+      if (!normalized)
+        throw new Error("Oppi Mirror hello_ack is missing sessionId");
+
+      let state = identityGlobal.__oppiMirrorCallerSessionIdentity;
+      if (
+        state &&
+        process.env[OPPI_CALLER_SESSION_ID_ENV] !== state.appliedSessionId
+      ) {
+        // An unrelated owner replaced the environment. A new acknowledged
+        // mirror may take a fresh lease, but stale mirror leases must not return.
+        delete identityGlobal.__oppiMirrorCallerSessionIdentity;
+        state = undefined;
+      }
+      if (!state) {
+        state = {
+          baselineSessionId: process.env[OPPI_CALLER_SESSION_ID_ENV],
+          appliedSessionId: normalized,
+          ownerOrder: [],
+          sessionIdsByOwner: new Map(),
+        };
+        identityGlobal.__oppiMirrorCallerSessionIdentity = state;
+      }
+
+      if (!state.sessionIdsByOwner.has(owner)) state.ownerOrder.push(owner);
+      state.sessionIdsByOwner.set(owner, normalized);
+      if (state.ownerOrder.at(-1) === owner) {
+        state.appliedSessionId = normalized;
+        process.env[OPPI_CALLER_SESSION_ID_ENV] = normalized;
+      }
+    },
+    clear() {
+      const state = identityGlobal.__oppiMirrorCallerSessionIdentity;
+      if (!state) return;
+      const ownerIndex = state.ownerOrder.indexOf(owner);
+      if (ownerIndex < 0) return;
+
+      const wasActiveOwner = ownerIndex === state.ownerOrder.length - 1;
+      state.ownerOrder.splice(ownerIndex, 1);
+      state.sessionIdsByOwner.delete(owner);
+      if (!wasActiveOwner) return;
+
+      if (process.env[OPPI_CALLER_SESSION_ID_ENV] !== state.appliedSessionId) {
+        // A newer, unrelated environment owner wins. Retire every stale lease.
+        delete identityGlobal.__oppiMirrorCallerSessionIdentity;
+        return;
+      }
+
+      const nextOwner = state.ownerOrder.at(-1);
+      const nextSessionId = nextOwner
+        ? state.sessionIdsByOwner.get(nextOwner)
+        : undefined;
+      if (nextSessionId) {
+        state.appliedSessionId = nextSessionId;
+        process.env[OPPI_CALLER_SESSION_ID_ENV] = nextSessionId;
+        return;
+      }
+
+      if (state.baselineSessionId === undefined) {
+        delete process.env[OPPI_CALLER_SESSION_ID_ENV];
+      } else {
+        process.env[OPPI_CALLER_SESSION_ID_ENV] = state.baselineSessionId;
+      }
+      delete identityGlobal.__oppiMirrorCallerSessionIdentity;
+    },
+  };
+}
 
 interface TuiMirrorRuntime {
   startSession(ctx: ExtensionContext): void;
@@ -2729,6 +2822,7 @@ async function createTuiMirrorRuntime(
   const bridgeId = `pi-tui-${process.pid}`;
   let connectedSessionId: string | null = null;
   let connectedWorkspaceId: string | null = null;
+  const callerSessionIdentity = createMirrorCallerSessionIdentity();
   const queueProjection = new MirrorQueueProjection();
   const inputPreflightsByClientTurnId = new Map<
     string,
@@ -2763,6 +2857,13 @@ async function createTuiMirrorRuntime(
   let serverSupportsAuthoritativeInputAcceptance = false;
   let queueReplacementInProgress = false;
   let pendingInputBootstrapSessionId: string | null = null;
+
+  function clearConnectedCallerIdentity(): void {
+    callerSessionIdentity.clear();
+    connectedSessionId = null;
+    connectedWorkspaceId = null;
+    serverSupportsAuthoritativeInputAcceptance = false;
+  }
 
   const queueUpdateBridge = await (async () => {
     try {
@@ -2812,8 +2913,7 @@ async function createTuiMirrorRuntime(
     pendingUISettledIds.clear();
     persistentExtensionUIRequests.clear();
     latestCtx = null;
-    connectedSessionId = null;
-    connectedWorkspaceId = null;
+    clearConnectedCallerIdentity();
 
     const socket = ws;
     ws = null;
@@ -4003,6 +4103,7 @@ async function createTuiMirrorRuntime(
     pendingUIResponses.clear();
     pendingUIRequestPayloads.clear();
     pendingUISettledIds.clear();
+    clearConnectedCallerIdentity();
     const socket = ws;
     ws = null;
     if (
@@ -4285,6 +4386,7 @@ async function createTuiMirrorRuntime(
       });
       clearTimers();
       ws = null;
+      clearConnectedCallerIdentity();
       if (!manualStop) {
         const delayMs = Math.max(
           DEFAULT_RECONNECT_DELAY_MS,
@@ -4353,8 +4455,7 @@ async function createTuiMirrorRuntime(
       socket.close();
     }
     ws = null;
-    connectedSessionId = null;
-    connectedWorkspaceId = null;
+    clearConnectedCallerIdentity();
     stopIndicator(stateCtx);
     latestCtx = null;
     if (shouldNotify) notify(ctx, "Oppi Mirror stopped");
@@ -4376,6 +4477,7 @@ async function createTuiMirrorRuntime(
           .protocolVersion;
         if (serverProtocolVersion !== OPPI_MIRROR_BRIDGE_PROTOCOL_VERSION) {
           manualStop = true;
+          clearConnectedCallerIdentity();
           setIndicatorMode("error");
           writeMirrorLog("warn", "bridge_hello_ack_rejected", {
             runtime: "pi-tui",
@@ -4390,11 +4492,27 @@ async function createTuiMirrorRuntime(
           }
           return;
         }
+        const authoritativeSessionId = (message as { sessionId?: unknown })
+          .sessionId;
+        if (
+          typeof authoritativeSessionId !== "string" ||
+          authoritativeSessionId.trim().length === 0
+        ) {
+          manualStop = true;
+          clearConnectedCallerIdentity();
+          setIndicatorMode("error");
+          try {
+            ws?.close(1008, "Oppi Mirror hello_ack is missing sessionId");
+          } catch (error) {
+            writeMirrorLog("warn", "bridge_hello_ack_close_failed", { error });
+          }
+          return;
+        }
         serverSupportsAuthoritativeInputAcceptance = true;
-        connectedSessionId =
-          (message as { sessionId?: string }).sessionId ?? null;
+        connectedSessionId = authoritativeSessionId.trim();
         connectedWorkspaceId =
           (message as { workspaceId?: string }).workspaceId ?? null;
+        callerSessionIdentity.bind(connectedSessionId);
         nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
         createWorkspaceOnNextConnect = false;
         workspaceCreationPromptActive = false;
@@ -4445,6 +4563,7 @@ async function createTuiMirrorRuntime(
         const errorText = err.error ?? "unknown";
         if (err.code === "invalid_bridge_hello") {
           manualStop = true;
+          clearConnectedCallerIdentity();
           nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
           setIndicatorMode("error");
           writeMirrorLog("warn", "bridge_hello_rejected", {
@@ -5091,6 +5210,8 @@ async function createTuiMirrorRuntime(
         );
         persistentExtensionUIRequests.clear();
         const shutdownReason = (event as { reason?: unknown }).reason;
+        // Pi tears down and recreates extension runtimes for new/resume/fork.
+        // Stop clears the old Oppi caller ID before the replacement mirror registers.
         const reason =
           shutdownReason === "reload"
             ? "reload"

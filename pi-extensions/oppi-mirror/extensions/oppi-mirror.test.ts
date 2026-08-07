@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import oppiPiMirror, { type MessageQueueState } from "./oppi-mirror.js";
 import { OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY } from "./oppi-mirror-contract.ts";
 
+const OPPI_CALLER_SESSION_ID_ENV = "OPPI_CALLER_SESSION_ID";
+const originalCallerSessionId = process.env[OPPI_CALLER_SESSION_ID_ENV];
+
 const wsMock = vi.hoisted(() => {
   type Handler = (...args: unknown[]) => void;
 
@@ -280,6 +283,16 @@ async function startSession(
   }
 }
 
+async function shutdownSession(
+  pi: MockPi,
+  ctx: MockExtensionContext,
+  reason: "quit" | "reload" | "new" | "resume" | "fork",
+): Promise<void> {
+  for (const handler of pi.handlers.get("session_shutdown") ?? []) {
+    await handler({ type: "session_shutdown", reason }, ctx);
+  }
+}
+
 async function startMirror(
   pi: MockPi,
   ctx: MockExtensionContext,
@@ -361,7 +374,35 @@ afterEach(() => {
   wsMock.instances.length = 0;
   piAgentMock.FakeAgentSession.latest = undefined;
   piAgentMock.version = "0.81.1";
+  const queueBridge = (
+    globalThis as typeof globalThis & {
+      __oppiMirrorQueueUpdateBridge?: {
+        listeners: Set<unknown>;
+        internalEventListeners: Set<unknown>;
+        sessions: Map<unknown, unknown>;
+        last?: unknown;
+        lastSession?: unknown;
+      };
+    }
+  ).__oppiMirrorQueueUpdateBridge;
+  queueBridge?.listeners.clear();
+  queueBridge?.internalEventListeners.clear();
+  queueBridge?.sessions.clear();
+  if (queueBridge) {
+    delete queueBridge.last;
+    delete queueBridge.lastSession;
+  }
+  delete (
+    globalThis as typeof globalThis & {
+      __oppiMirrorCallerSessionIdentity?: unknown;
+    }
+  ).__oppiMirrorCallerSessionIdentity;
   vi.unstubAllEnvs();
+  if (originalCallerSessionId === undefined) {
+    delete process.env[OPPI_CALLER_SESSION_ID_ENV];
+  } else {
+    process.env[OPPI_CALLER_SESSION_ID_ENV] = originalCallerSessionId;
+  }
   vi.useRealTimers();
 });
 
@@ -479,6 +520,14 @@ describe("oppi mirror input preflight", () => {
         type: "hello_ack",
         protocolVersion: 1,
         sessionId: "s1",
+        workspaceId: "w1",
+      },
+    ],
+    [
+      "missing-session-id",
+      {
+        type: "hello_ack",
+        protocolVersion: 2,
         workspaceId: "w1",
       },
     ],
@@ -770,6 +819,184 @@ describe("oppi mirror input preflight", () => {
         expect.objectContaining({ id: "cmd-pending-1", success: true }),
         expect.objectContaining({ id: "cmd-pending-2", success: true }),
       ]);
+    });
+  });
+});
+
+describe("oppi mirror caller session identity", () => {
+  it("binds the authoritative hello_ack session id and clears it on disconnect", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.useFakeTimers();
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      delete process.env[OPPI_CALLER_SESSION_ID_ENV];
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+
+      await pi.commands.get("oppi-mirror")?.handler("start", ctx);
+      const socket = wsMock.instances.at(-1);
+      if (!socket) throw new Error("Expected mirror websocket");
+      socket.open();
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBeUndefined();
+
+      socket.receive(
+        JSON.stringify({
+          type: "hello_ack",
+          protocolVersion: 2,
+          sessionId: "mirror-session-1",
+          workspaceId: "w1",
+        }),
+      );
+      await drainMicrotasks();
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBe("mirror-session-1");
+
+      socket.close();
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      const reconnectSocket = wsMock.instances.at(-1);
+      if (!reconnectSocket || reconnectSocket === socket) {
+        throw new Error("Expected mirror reconnect websocket");
+      }
+      reconnectSocket.open();
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBeUndefined();
+      reconnectSocket.receive(
+        JSON.stringify({
+          type: "hello_ack",
+          protocolVersion: 2,
+          sessionId: "mirror-session-2",
+          workspaceId: "w1",
+        }),
+      );
+      await drainMicrotasks();
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBe("mirror-session-2");
+    });
+  });
+
+  it("restores a pre-existing caller id when mirroring stops", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      process.env[OPPI_CALLER_SESSION_ID_ENV] = "parent-session";
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      await startMirror(pi, ctx, {
+        type: "hello_ack",
+        protocolVersion: 2,
+        sessionId: "mirror-session-1",
+        workspaceId: "w1",
+      });
+
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBe("mirror-session-1");
+      await pi.commands.get("oppi-mirror")?.handler("stop", ctx);
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBe("parent-session");
+    });
+  });
+
+  it("does not overwrite a newer environment owner when mirroring stops", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      process.env[OPPI_CALLER_SESSION_ID_ENV] = "parent-session";
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      await startMirror(pi, ctx, {
+        type: "hello_ack",
+        protocolVersion: 2,
+        sessionId: "mirror-session-1",
+        workspaceId: "w1",
+      });
+
+      process.env[OPPI_CALLER_SESSION_ID_ENV] = "newer-owner";
+      await pi.commands.get("oppi-mirror")?.handler("stop", ctx);
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBe("newer-owner");
+    });
+  });
+
+  it("does not restore a stale id when mirror runtimes overlap", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      process.env[OPPI_CALLER_SESSION_ID_ENV] = "parent-session";
+
+      const firstPi = createMockPi();
+      await oppiPiMirror(firstPi as never);
+      const firstCtx = createMockContext("pi-session-1");
+      await startSession(firstPi, firstCtx);
+      await startMirror(firstPi, firstCtx, {
+        type: "hello_ack",
+        protocolVersion: 2,
+        sessionId: "mirror-session-1",
+        workspaceId: "w1",
+      });
+
+      const secondPi = createMockPi();
+      await oppiPiMirror(secondPi as never);
+      const secondCtx = createMockContext("pi-session-2");
+      await startSession(secondPi, secondCtx);
+      await startMirror(secondPi, secondCtx, {
+        type: "hello_ack",
+        protocolVersion: 2,
+        sessionId: "mirror-session-2",
+        workspaceId: "w1",
+      });
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBe("mirror-session-2");
+
+      await firstPi.commands.get("oppi-mirror")?.handler("stop", firstCtx);
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBe("mirror-session-2");
+
+      await secondPi.commands.get("oppi-mirror")?.handler("stop", secondCtx);
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBe("parent-session");
+    });
+  });
+
+  it("clears stale identity and re-registers when Pi switches sessions", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      delete process.env[OPPI_CALLER_SESSION_ID_ENV];
+      const firstPi = createMockPi();
+      await oppiPiMirror(firstPi as never);
+      const firstCtx = createMockContext("pi-session-1");
+      await startSession(firstPi, firstCtx);
+      const firstSocket = await startMirror(firstPi, firstCtx, {
+        type: "hello_ack",
+        protocolVersion: 2,
+        sessionId: "mirror-session-1",
+        workspaceId: "w1",
+      });
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBe("mirror-session-1");
+
+      await shutdownSession(firstPi, firstCtx, "new");
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBeUndefined();
+      expect(firstSocket.readyState).toBe(wsMock.FakeWebSocket.CLOSED);
+
+      const secondPi = createMockPi();
+      await oppiPiMirror(secondPi as never);
+      const secondCtx = createMockContext("pi-session-2");
+      await startSession(secondPi, secondCtx);
+      const secondSocket = await startMirror(secondPi, secondCtx, {
+        type: "hello_ack",
+        protocolVersion: 2,
+        sessionId: "mirror-session-2",
+        workspaceId: "w1",
+      });
+      const hello = secondSocket.sent
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((message) => message.type === "hello");
+      expect(hello?.state).toMatchObject({ piSessionId: "pi-session-2" });
+      expect(process.env[OPPI_CALLER_SESSION_ID_ENV]).toBe("mirror-session-2");
     });
   });
 });

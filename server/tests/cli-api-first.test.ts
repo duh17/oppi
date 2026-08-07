@@ -784,26 +784,99 @@ describe("CLI app-state API boundary", () => {
     ["tool-output", ["tool-output", "caller-1"]],
     ["trace-page", ["trace-page", "caller-1"]],
     ["trace-outline", ["trace-outline", "caller-1"]],
-  ])("rejects managed self-targeting session %s commands before local API calls", async (_command, args) => {
-    await withOrchApi(
-      (res) => sendJson(res, { error: "local API must not be called" }, 500),
-      async ({ dataDir, requests }) => {
-        const { stdout, code } = await runCliResult(
-          ["session", ...args, "--json"],
-          dataDir,
-          undefined,
-          { OPPI_CALLER_SESSION_ID: "caller-1" },
-        );
+  ])(
+    "rejects managed or mirrored self-targeting session %s commands before local API calls",
+    async (_command, args) => {
+      await withOrchApi(
+        (res) => sendJson(res, { error: "local API must not be called" }, 500),
+        async ({ dataDir, requests }) => {
+          const { stdout, code } = await runCliResult(
+            ["session", ...args, "--json"],
+            dataDir,
+            undefined,
+            { OPPI_CALLER_SESSION_ID: "caller-1" },
+          );
 
-        expect(code).toBe(1);
-        expect(JSON.parse(stdout)).toEqual({
-          ok: false,
-          error: { message: "Cannot target the calling Oppi session (caller-1)" },
-        });
-        expect(requests).toEqual([]);
-      },
-    );
-  });
+          expect(code).toBe(1);
+          expect(JSON.parse(stdout)).toEqual({
+            ok: false,
+            error: { message: "Cannot target the calling Oppi session (caller-1)" },
+          });
+          expect(requests).toEqual([]);
+        },
+      );
+    },
+  );
+
+  it.each([
+    ["wait", ["wait", "mirror-1", "--for", "idle"]],
+    ["send", ["send", "mirror-1", "--text", "hello"]],
+    ["abort", ["abort", "mirror-1"]],
+    ["stop", ["stop", "mirror-1"]],
+  ] as const)(
+    "rejects a mirrored caller self-targeting with a valid %s command",
+    async (_command, args) => {
+      await withOrchApi(
+        (res) => sendJson(res, { error: "local API must not be called" }, 500),
+        async ({ dataDir, requests }) => {
+          const { stdout, code } = await runCliResult(
+            ["session", ...args, "--json"],
+            dataDir,
+            undefined,
+            { OPPI_CALLER_SESSION_ID: "mirror-1" },
+          );
+
+          expect(code).toBe(1);
+          expect(JSON.parse(stdout)).toEqual({
+            ok: false,
+            error: { message: "Cannot target the calling Oppi session (mirror-1)" },
+          });
+          expect(requests).toEqual([]);
+        },
+      );
+    },
+  );
+
+  it.each([
+    ["wait", ["wait", "other-1", "--for", "idle"], "/sessions/other-1/events"],
+    ["send", ["send", "other-1", "--text", "hello"], "/sessions/other-1/command"],
+    ["abort", ["abort", "other-1"], "/sessions/other-1/command"],
+    ["stop", ["stop", "other-1"], "/sessions/other-1/stop"],
+  ] as const)(
+    "allows a mirrored caller to control a different session with %s",
+    async (_command, args, expectedPath) => {
+      await withOrchApi(
+        (res, ctx) => {
+          if (ctx.path === "/sessions/other-1/events") {
+            sendJson(res, {
+              session: { id: "other-1", status: "ready" },
+              events: [],
+              currentSeq: 0,
+            });
+            return;
+          }
+          if (ctx.path === "/sessions/other-1/dialogs") {
+            sendJson(res, { dialogs: [] });
+            return;
+          }
+          if (ctx.path === "/sessions/other-1/stop") {
+            sendJson(res, { session: { id: "other-1", status: "stopped" } });
+            return;
+          }
+          sendJson(res, { messages: [] });
+        },
+        async ({ dataDir, requests }) => {
+          const { code } = await runCliResult(["session", ...args, "--json"], dataDir, undefined, {
+            OPPI_CALLER_SESSION_ID: "mirror-1",
+          });
+
+          expect(code).toBe(0);
+          expect(requests.some((request) => request.path === expectedPath)).toBe(true);
+          expect(requests.every((request) => request.path.includes("other-1"))).toBe(true);
+        },
+      );
+    },
+  );
 
   it("keeps human terminal session commands unchanged without caller identity", async () => {
     await withOrchApi(
