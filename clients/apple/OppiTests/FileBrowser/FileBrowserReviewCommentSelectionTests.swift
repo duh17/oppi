@@ -325,7 +325,7 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(target.worktreeId == "wt-feature")
     }
 
-    @Test func codeBodyNoCommentMenuWhenRouterNil() throws {
+    @Test func codeBodyKeepsSystemCopyMenuWhenRouterNil() throws {
         let codeBody = NativeFullScreenCodeBody(
             content: "let answer = 42",
             language: "swift",
@@ -343,13 +343,79 @@ struct FileBrowserReviewCommentSelectionTests {
             timelineRenderedText(of: $0).contains("let answer = 42")
         })
 
-        let menu = textView.delegate?.textView?(
+        let menu = try #require(textView.delegate?.textView?(
             textView,
             editMenuForTextIn: NSRange(location: 0, length: 3),
             suggestedActions: [UIAction(title: "Copy") { _ in }]
-        )
+        ))
 
-        #expect(menu == nil)
+        // Returning nil from UITextView.editMenuForTextIn suppresses the menu entirely.
+        #expect(timelineActionTitles(in: menu) == ["Copy"])
+    }
+
+    @Test func documentCodeFileViewShowsCommentMenuWhenEnvironmentScopeSet() throws {
+        let host = UIHostingController(rootView:
+            CodeFileView(
+                content: "let answer = 42",
+                language: .swift,
+                startLine: 1,
+                presentation: .document,
+                filePath: "Answer.swift"
+            )
+            .environment(\.reviewCommentSelectionScope, .activeSession(ReviewCommentSelectionRouter { _ in }))
+        )
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+
+        let textView = try #require(timelineAllTextViews(in: host.view).first {
+            timelineRenderedText(of: $0).contains("let answer = 42")
+        })
+
+        let menu = try #require(textView.delegate?.textView?(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 3),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+
+        #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
+    }
+
+    @Test func documentCodeFileViewShowsSystemCopyMenuWithoutScope() throws {
+        let host = UIHostingController(rootView:
+            CodeFileView(
+                content: "let answer = 42",
+                language: .swift,
+                startLine: 1,
+                presentation: .document,
+                filePath: "Answer.swift"
+            )
+        )
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+
+        let textView = try #require(timelineAllTextViews(in: host.view).first {
+            timelineRenderedText(of: $0).contains("let answer = 42")
+        })
+
+        let menu = try #require(textView.delegate?.textView?(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 3),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+
+        #expect(timelineActionTitles(in: menu) == ["Copy"])
     }
 
     private struct HostedInlineFileView {

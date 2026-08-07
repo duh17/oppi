@@ -871,10 +871,13 @@ final class FullScreenReviewCommentTextView: UITextView {
     private func presentReviewCommentEditMenuIfNeeded() {
         noteSelectionRangeDidMaybeChange()
         guard nativeTextViewEditMenuGeneration != selectionGeneration else { return }
-        guard window != nil,
-              reviewCommentSelectionRouter != nil,
-              reviewCommentSourceContext != nil,
-              ReviewCommentSelectionTextViewSupport.selectedText(in: self, range: selectedRange) != nil else {
+        // Present for any non-empty selection. Requiring a review-comment router hid the
+        // system Copy menu on File-tab / non-chat code surfaces (UITextView nil = no menu).
+        // Use raw range length so whitespace-only selections still get Copy.
+        let hasRawSelection = selectedRange.location != NSNotFound
+            && selectedRange.length > 0
+            && NSMaxRange(selectedRange) <= (attributedText?.string ?? text ?? "" as String).utf16.count
+        guard window != nil, hasRawSelection else {
             currentEditMenuTargetRect = nil
             reviewCommentEditMenuInteraction.dismissMenu()
             return
@@ -898,7 +901,84 @@ final class FullScreenReviewCommentTextView: UITextView {
         noteSelectionRangeDidMaybeChange()
         return nativeTextViewEditMenuGeneration != selectionGeneration
     }
+
+    func fallbackEditMenuForTesting(suggestedActions: [UIMenuElement]) -> UIMenu? {
+        makeFallbackEditMenu(suggestedActions: suggestedActions)
+    }
 #endif
+
+    fileprivate func makeFallbackEditMenu(
+        suggestedActions: [UIMenuElement],
+        range: NSRange? = nil
+    ) -> UIMenu? {
+        // Prefer the explicit edit-menu range from UITextViewDelegate; selectedRange may
+        // still be empty when tests or UIKit query the menu before committing selection.
+        let effectiveRange = range ?? selectedRange
+        guard effectiveRange.location != NSNotFound,
+              effectiveRange.length > 0 else {
+            return nil
+        }
+
+        let fullText = attributedText?.string ?? text ?? ""
+        let nsText = fullText as NSString
+        guard NSMaxRange(effectiveRange) <= nsText.length else { return nil }
+        // Copy must use the raw substring so indentation/trailing whitespace survive.
+        // Comment payloads still go through the normalized selected-text helper below.
+        let rawSelectedText = nsText.substring(with: effectiveRange)
+        let actions = Self.suggestedActionsEnsuringCopy(
+            suggestedActions,
+            rawSelectedText: rawSelectedText
+        )
+
+        if let router = reviewCommentSelectionRouter,
+           let sourceContext = reviewCommentSourceContext,
+           let commentText = ReviewCommentSelectionTextViewSupport.selectedText(
+            in: self,
+            range: effectiveRange
+           ) {
+            return ReviewCommentSelectionMenuBuilder.editMenu(
+                suggestedActions: actions,
+                selectedText: commentText,
+                sourceContext: ReviewCommentSelectionEditMenuSupport.enrichedSourceContext(
+                    sourceContext,
+                    textView: self,
+                    range: effectiveRange
+                ),
+                router: router,
+                presentingViewController: nearestViewController(from: self),
+                textView: self,
+                selectedRange: effectiveRange
+            )
+        }
+
+        // UITextView treats a nil return as no menu — always keep at least Copy.
+        return UIMenu(children: actions)
+    }
+
+    private static let synthesizedCopyActionIdentifier = UIAction.Identifier("oppi.fullscreen-code.copy")
+
+    private static func suggestedActionsEnsuringCopy(
+        _ suggestedActions: [UIMenuElement],
+        rawSelectedText: String
+    ) -> [UIMenuElement] {
+        let localizedCopyTitle = String(localized: "Copy")
+        let alreadyHasCopy = suggestedActions.contains { element in
+            guard let action = element as? UIAction else { return false }
+            if action.identifier == synthesizedCopyActionIdentifier { return true }
+            // UIKit/system and Oppi menus both surface Copy via localized title.
+            return action.title == localizedCopyTitle || action.title == "Copy"
+        }
+        guard !alreadyHasCopy else { return suggestedActions }
+
+        let copyAction = UIAction(
+            title: localizedCopyTitle,
+            image: UIImage(systemName: "doc.on.doc"),
+            identifier: synthesizedCopyActionIdentifier
+        ) { _ in
+            UIPasteboard.general.string = rawSelectedText
+        }
+        return [copyAction] + suggestedActions
+    }
 
     private func selectionAnchorRect(for range: NSRange) -> CGRect? {
         guard range.location != NSNotFound,
@@ -931,25 +1011,7 @@ extension FullScreenReviewCommentTextView: @preconcurrency UIEditMenuInteraction
         menuFor configuration: UIEditMenuConfiguration,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        guard let router = reviewCommentSelectionRouter,
-              let sourceContext = reviewCommentSourceContext,
-              let selectedText = ReviewCommentSelectionTextViewSupport.selectedText(in: self, range: selectedRange) else {
-            return nil
-        }
-
-        return ReviewCommentSelectionMenuBuilder.editMenu(
-            suggestedActions: suggestedActions,
-            selectedText: selectedText,
-            sourceContext: ReviewCommentSelectionEditMenuSupport.enrichedSourceContext(
-                sourceContext,
-                textView: self,
-                range: selectedRange
-            ),
-            router: router,
-            presentingViewController: nearestViewController(from: self),
-            textView: self,
-            selectedRange: selectedRange
-        )
+        makeFallbackEditMenu(suggestedActions: suggestedActions)
     }
 
     func editMenuInteraction(
@@ -968,18 +1030,36 @@ func buildFullScreenReviewCommentMenu(
     router: ReviewCommentSelectionRouter?,
     sourceContext: ReviewCommentSourceContext?
 ) -> UIMenu? {
-    let menu = ReviewCommentSelectionEditMenuSupport.buildMenu(
+    // Always mark the native request so the fallback interaction stands down for this
+    // selection generation, whether we return Comment+actions or system actions only.
+    (textView as? FullScreenReviewCommentTextView)?.noteNativeTextViewEditMenuRequest(for: range)
+
+    // One construction path for full-screen code text views so native delegate and
+    // UIEditMenuInteraction fallback cannot diverge on Copy synthesis.
+    // Router/sourceContext come from configureReviewCommentSelection on the text view
+    // (set by NativeFullScreenCodeBody / full-screen controllers). Explicit params remain
+    // for non-full-screen UITextView call sites below.
+    if let fullScreenTextView = textView as? FullScreenReviewCommentTextView {
+        return fullScreenTextView.makeFallbackEditMenu(
+            suggestedActions: suggestedActions,
+            range: range
+        )
+    }
+
+    if let menu = ReviewCommentSelectionEditMenuSupport.buildMenu(
         textView: textView,
         range: range,
         suggestedActions: suggestedActions,
         router: router,
         sourceContext: sourceContext,
         presentingViewController: nearestViewController(from: textView)
-    )
-    if menu != nil {
-        (textView as? FullScreenReviewCommentTextView)?.noteNativeTextViewEditMenuRequest(for: range)
+    ) {
+        return menu
     }
-    return menu
+
+    // UITextView: nil means "no menu", not "use defaults". Preserve system actions.
+    guard !suggestedActions.isEmpty else { return nil }
+    return UIMenu(children: suggestedActions)
 }
 
 @MainActor

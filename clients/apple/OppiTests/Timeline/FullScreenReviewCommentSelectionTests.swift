@@ -1263,12 +1263,137 @@ struct FullScreenReviewCommentSelectionTests {
         })
 
         #expect(textView.isSelectable)
-        let menu = textView.delegate?.textView?(
+        let menu = try #require(textView.delegate?.textView?(
             textView,
             editMenuForTextIn: NSRange(location: 0, length: 3),
             suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+        // UITextView treats a nil edit-menu return as "no menu". Keep system actions.
+        #expect(timelineActionTitles(in: menu) == ["Copy"])
+    }
+
+    @Test func fallbackEditMenuPresentsSystemActionsWithoutReviewRouter() throws {
+        let textView = FullScreenReviewCommentTextView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 200),
+            textContainer: nil
         )
-        #expect(menu == nil)
+        textView.text = "let answer = 42"
+        textView.configureReviewCommentSelection(router: nil, sourceContext: nil)
+        textView.selectedRange = NSRange(location: 0, length: 3)
+
+        #expect(textView.shouldPresentFallbackEditMenuForTesting())
+
+        let menu = try #require(
+            textView.fallbackEditMenuForTesting(
+                suggestedActions: [UIAction(title: "Copy") { _ in }]
+            )
+        )
+        #expect(timelineActionTitles(in: menu) == ["Copy"])
+    }
+
+    @Test func fallbackEditMenuPrependsCommentWhenReviewRouterConfigured() throws {
+        let textView = FullScreenReviewCommentTextView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 200),
+            textContainer: nil
+        )
+        textView.text = "let answer = 42"
+        textView.configureReviewCommentSelection(
+            router: ReviewCommentSelectionRouter { _ in },
+            sourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenCode,
+                filePath: "Answer.swift"
+            )
+        )
+        textView.selectedRange = NSRange(location: 0, length: 3)
+
+        let menu = try #require(
+            textView.fallbackEditMenuForTesting(
+                suggestedActions: [UIAction(title: "Copy") { _ in }]
+            )
+        )
+        #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
+    }
+
+    @Test func fallbackEditMenuSynthesizesCopyWhenSuggestedActionsEmpty() throws {
+        let textView = FullScreenReviewCommentTextView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 200),
+            textContainer: nil
+        )
+        textView.text = "    indented"
+        textView.configureReviewCommentSelection(
+            router: ReviewCommentSelectionRouter { _ in },
+            sourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenCode,
+                filePath: "Answer.swift"
+            )
+        )
+        // Include leading indentation in the selection.
+        textView.selectedRange = NSRange(location: 0, length: 8)
+
+        let menu = try #require(textView.fallbackEditMenuForTesting(suggestedActions: []))
+        #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
+
+        let copyAction = try #require(menu.children.compactMap { $0 as? UIAction }.first { $0.title == "Copy" })
+        let previous = UIPasteboard.general.string
+        defer { UIPasteboard.general.string = previous }
+        let button = UIButton(type: .system)
+        button.addAction(copyAction, for: .touchUpInside)
+        button.sendActions(for: .touchUpInside)
+        #expect(UIPasteboard.general.string == "    inde")
+    }
+
+    @Test func nativeDelegateMenuSynthesizesCopyWhenSuggestedActionsEmpty() throws {
+        let textView = FullScreenReviewCommentTextView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 200),
+            textContainer: nil
+        )
+        textView.text = "    indented"
+        textView.configureReviewCommentSelection(
+            router: ReviewCommentSelectionRouter { _ in },
+            sourceContext: ReviewCommentSourceContext(
+                sessionId: "session-1",
+                surface: .fullScreenCode,
+                filePath: "Answer.swift"
+            )
+        )
+        textView.selectedRange = NSRange(location: 0, length: 8)
+
+        let menu = try #require(buildFullScreenReviewCommentMenu(
+            textView: textView,
+            range: NSRange(location: 0, length: 8),
+            suggestedActions: [],
+            router: textView.reviewCommentSelectionRouter,
+            sourceContext: textView.reviewCommentSourceContext
+        ))
+        #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
+
+        let copyAction = try #require(menu.children.compactMap { $0 as? UIAction }.first { $0.title == "Copy" })
+        let previous = UIPasteboard.general.string
+        defer { UIPasteboard.general.string = previous }
+        let button = UIButton(type: .system)
+        button.addAction(copyAction, for: .touchUpInside)
+        button.sendActions(for: .touchUpInside)
+        #expect(UIPasteboard.general.string == "    inde")
+    }
+
+    @Test func nativeNilCommentMenuStillSuppressesFallbackForSameSelection() throws {
+        let textView = FullScreenReviewCommentTextView()
+        textView.text = "let answer = 42"
+        textView.configureReviewCommentSelection(router: nil, sourceContext: nil)
+        textView.selectedRange = NSRange(location: 0, length: 3)
+        #expect(textView.shouldPresentFallbackEditMenuForTesting())
+
+        let menu = try #require(buildFullScreenReviewCommentMenu(
+            textView: textView,
+            range: NSRange(location: 0, length: 3),
+            suggestedActions: [UIAction(title: "Copy") { _ in }],
+            router: nil,
+            sourceContext: nil
+        ))
+        #expect(timelineActionTitles(in: menu) == ["Copy"])
+        #expect(!textView.shouldPresentFallbackEditMenuForTesting())
     }
 
     private func makeController(content: FullScreenCodeContent) -> FullScreenCodeViewController {
