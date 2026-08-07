@@ -78,7 +78,18 @@ export class ModelCatalog {
       const reload = this.registry.refresh();
       this.populateFromRegistry();
       const tracked = reload
-        .then(() => this.populateFromRegistry())
+        .then((result) => {
+          if (result.aborted) {
+            log.debug("models.refresh.aborted");
+          }
+          for (const [provider, error] of result.errors) {
+            log.warn("models.refresh.provider_failed", {
+              provider,
+              error: error.message,
+            });
+          }
+          this.populateFromRegistry();
+        })
         .catch((err: unknown) => {
           const message = err instanceof Error ? err.message : String(err);
           log.warn("models.refresh.failed", { error: message });

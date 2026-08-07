@@ -21,7 +21,7 @@ function makeRegistry(
 ): ModelRegistry {
   const oauth = new Set(oauthModelIds);
   return {
-    refresh: vi.fn(async () => {}),
+    refresh: vi.fn(async () => ({ aborted: false, errors: new Map() })),
     getAvailable: vi.fn(() => available),
     getAll: vi.fn(() => all ?? available),
     isUsingOAuth: vi.fn((model: TestModel) => oauth.has(`${model.provider}/${model.id}`)),
@@ -154,7 +154,7 @@ describe("ModelCatalog", () => {
 
     it("does not wait for a stalled registry refresh", async () => {
       const registry = makeRegistry([SONNET]);
-      (registry.refresh as ReturnType<typeof vi.fn>).mockReturnValue(new Promise<void>(() => {}));
+      (registry.refresh as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
       const catalog = new ModelCatalog(registry, makeStorage());
       let completed = false;
 
@@ -171,8 +171,11 @@ describe("ModelCatalog", () => {
 
     it("updates the cached catalog after a background refresh completes", async () => {
       let finishRefresh: (() => void) | undefined;
-      const reload = new Promise<void>((resolve) => {
-        finishRefresh = resolve;
+      const reload = new Promise<{
+        aborted: boolean;
+        errors: ReadonlyMap<string, Error>;
+      }>((resolve) => {
+        finishRefresh = () => resolve({ aborted: false, errors: new Map() });
       });
       const registry = makeRegistry([SONNET]);
       (registry.refresh as ReturnType<typeof vi.fn>).mockReturnValue(reload);
@@ -192,7 +195,7 @@ describe("ModelCatalog", () => {
 
     it("coalesces calls while a background refresh is in flight", async () => {
       const registry = makeRegistry([SONNET]);
-      (registry.refresh as ReturnType<typeof vi.fn>).mockReturnValue(new Promise<void>(() => {}));
+      (registry.refresh as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
       const catalog = new ModelCatalog(registry, makeStorage());
 
       await catalog.refresh();
@@ -210,6 +213,43 @@ describe("ModelCatalog", () => {
       const catalog = new ModelCatalog(registry, makeStorage());
       expect(() => catalog.refresh()).not.toThrow();
       expect(catalog.getAll()).toEqual([]);
+    });
+
+    it("logs provider errors returned by Pi 0.84 refreshes", async () => {
+      // model-catalog binds its logger at import time. Pre-commit runs with
+      // OPPI_LOG_LEVEL=error, which would suppress warn events unless we reload.
+      const previousLogLevel = process.env.OPPI_LOG_LEVEL;
+      process.env.OPPI_LOG_LEVEL = "warn";
+      vi.resetModules();
+
+      const lines: string[] = [];
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+        lines.push(String(chunk));
+        return true;
+      }) as typeof process.stderr.write);
+
+      try {
+        const { ModelCatalog: FreshModelCatalog } = await import("../src/model-catalog.js");
+        const registry = makeRegistry([SONNET]);
+        const reload = Promise.resolve({
+          aborted: false,
+          errors: new Map([["dynamic-provider", new Error("catalog unavailable")]]),
+        });
+        (registry.refresh as ReturnType<typeof vi.fn>).mockReturnValue(reload);
+
+        const catalog = new FreshModelCatalog(registry, makeStorage());
+        await catalog.refresh();
+        await reload;
+        await vi.waitFor(() => {
+          expect(lines.join("\n")).toContain('"event":"models.refresh.provider_failed"');
+        });
+        expect(lines.join("\n")).toContain('"provider":"dynamic-provider"');
+      } finally {
+        stderr.mockRestore();
+        if (previousLogLevel === undefined) delete process.env.OPPI_LOG_LEVEL;
+        else process.env.OPPI_LOG_LEVEL = previousLogLevel;
+        vi.resetModules();
+      }
     });
 
     it("defaults contextWindow to 200000 when SDK returns 0", () => {
