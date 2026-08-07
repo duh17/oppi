@@ -334,21 +334,6 @@ private struct ScheduleDetailView: View {
                         .disabled(isMutating)
                         .accessibilityIdentifier("schedule.detail.enabled")
                     }
-
-                    Button {
-                        showRevision = true
-                    } label: {
-                        Label("Edit with Oppi", systemImage: "bubble.left.and.bubble.right")
-                    }
-                    .disabled(isMutating)
-                    .accessibilityIdentifier("schedule.detail.edit")
-
-                    if schedule.status != .archived {
-                        Button("Archive", role: .destructive) {
-                            confirmArchive = true
-                        }
-                        .disabled(isMutating)
-                    }
                 }
 
                 Section {
@@ -385,12 +370,38 @@ private struct ScheduleDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .themedListSurface()
         .toolbar {
-            if let schedule, schedule.status != .archived {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Edit") {
-                        showNativeEdit = true
+            // Match agent detail: native Edit plus overflow for guided edit / archive.
+            if let schedule {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if schedule.status != .archived {
+                        Button("Edit") {
+                            showNativeEdit = true
+                        }
+                        .disabled(isMutating)
+                        .accessibilityIdentifier("schedule.detail.nativeEdit")
                     }
-                    .accessibilityIdentifier("schedule.detail.nativeEdit")
+
+                    Menu {
+                        Button {
+                            showRevision = true
+                        } label: {
+                            Label("Edit with Oppi", systemImage: "text.bubble")
+                        }
+                        .disabled(isMutating)
+                        .accessibilityIdentifier("schedule.detail.edit")
+
+                        if schedule.status != .archived {
+                            Button("Archive", role: .destructive) {
+                                confirmArchive = true
+                            }
+                            .disabled(isMutating)
+                            .accessibilityIdentifier("schedule.detail.archive")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("Schedule actions")
+                    .accessibilityIdentifier("schedule.detail.actions")
                 }
             }
         }

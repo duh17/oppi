@@ -326,17 +326,8 @@ private struct AgentDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .themedListSurface()
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if let agent, agent.status == .active {
-                    Button {
-                        startQuickSession(with: agent)
-                    } label: {
-                        Image(systemName: "square.and.pencil")
-                    }
-                    .disabled(workspaceStore.workspaces.isEmpty || connection.currentServerId == nil)
-                    .accessibilityLabel("Start session with \(agent.name)")
-                    .accessibilityIdentifier("agents.detail.launch")
-
+            if let agent, agent.status == .active {
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Edit") {
                         isShowingNativeEdit = true
                     }
@@ -348,15 +339,35 @@ private struct AgentDetailView: View {
                         } label: {
                             Label("Edit with Oppi", systemImage: "text.bubble")
                         }
+                        .accessibilityIdentifier("agents.detail.revise")
 
                         Button("Archive Agent", role: .destructive) {
                             Task { await archiveAgent() }
                         }
                         .disabled(isArchiving)
+                        .accessibilityIdentifier("agents.detail.archive")
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
                     .accessibilityLabel("Agent actions")
+                    .accessibilityIdentifier("agents.detail.actions")
+                }
+
+                // Match session inbox: pin compose to the trailing bottom bar with neutral chrome.
+                ToolbarItem(placement: .bottomBar) {
+                    Spacer()
+                }
+
+                ToolbarItem(placement: .bottomBar) {
+                    Button {
+                        startQuickSession(with: agent)
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                    }
+                    .foregroundStyle(.themeFg)
+                    .disabled(workspaceStore.workspaces.isEmpty || connection.currentServerId == nil)
+                    .accessibilityLabel("Start session with \(agent.name)")
+                    .accessibilityIdentifier("agents.detail.launch")
                 }
             }
         }

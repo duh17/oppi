@@ -567,12 +567,16 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             "Enabled toggle missing on schedule detail"
         )
         XCTAssertTrue(
-            app.buttons["schedule.detail.edit"].waitForExistence(timeout: 5),
-            "Edit with Oppi missing on schedule detail"
+            app.buttons["schedule.detail.actions"].waitForExistence(timeout: 5),
+            "Schedule actions menu missing on schedule detail"
         )
         try saveLabScreenshot(name: "iphone-schedule-detail-human-when-e2e")
 
-        tap(app.buttons["schedule.detail.edit"], named: "guided schedule revision")
+        tap(app.buttons["schedule.detail.actions"], named: "schedule actions menu")
+        let editWithOppi = app.buttons["schedule.detail.edit"].exists
+            ? app.buttons["schedule.detail.edit"]
+            : app.buttons["Edit with Oppi"]
+        tap(editWithOppi, named: "guided schedule revision")
         XCTAssertTrue(app.navigationBars["Revise Daily telemetry review"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["schedule.edit.save"].exists, "Schedule revision must not expose the manual form")
