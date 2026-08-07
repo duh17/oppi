@@ -44,6 +44,8 @@ export function actionableAgentConfigurationMessage(
       ].filter((value): value is string => value !== undefined);
       return `${prefix} because it requires ${requirements.join(" and ")}. Choose a compatible workspace in the Workspace picker, or edit ${context.agentName} → Launch Constraints. Then start again.`;
     }
+    case "agent_workspace_unavailable":
+      return `${prefix} because the selected workspace or worktree is unavailable: ${failure.details.workspaceError ?? "the target could not be resolved"}. Choose another workspace or repair the selected worktree, then start again.`;
     case "agent_tools_unavailable":
       return `${prefix} because these configured tools are unavailable: ${(failure.details.missingTools ?? []).join(", ")}. Edit ${context.agentName} → Resources → Extensions and select Extensions that provide these tools, or remove them from Allowed Tools. Then start again.`;
     case "agent_extensions_unavailable":

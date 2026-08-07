@@ -13,7 +13,9 @@ export interface AgentScheduleDispatchDeps {
     Storage,
     | "claimSessionLaunchRecovery"
     | "createSession"
+    | "deleteSession"
     | "findSessionByLaunchIdempotencyKey"
+    | "getDataDir"
     | "getAgentScheduleStore"
     | "getAgentDefinitionStore"
     | "getSession"
@@ -84,9 +86,16 @@ async function launchNewSession(
   if (result.kind === "launch_in_progress") {
     throw new Error("launch_in_progress");
   }
-  if (input.action.prompt.trim().length > 0 && result.promptDispatch !== "delivered") {
-    deps.appEvents?.emitSessionCreated(result.session);
-    throw new Error(result.session.launch?.promptError ?? "prompt_not_sent");
+  if (
+    result.promptDispatch !== "delivered" &&
+    (input.action.prompt.trim().length > 0 || result.failure)
+  ) {
+    // A pre-start configuration failure may discard an unannounced shell. Do
+    // not publish an app-event row or return a dangling session ID.
+    if (!result.discarded) deps.appEvents?.emitSessionCreated(result.session);
+    throw new Error(
+      result.session.launch?.promptError ?? result.failure?.code ?? "prompt_not_sent",
+    );
   }
   deps.appEvents?.emitSessionCreated(result.createdSession);
   if (result.summarySession) deps.appEvents?.emitSessionSummary(result.summarySession);

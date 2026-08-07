@@ -1,3 +1,7 @@
+import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { existsSync, statSync } from "node:fs";
+
+import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
 import { generateId } from "./id.js";
 import { AgentConfigurationError, type AgentConfigurationFailure } from "./agent-launch-errors.js";
 import {
@@ -8,6 +12,7 @@ import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 import type { ChatAttachmentRef, IconChoice, Session, Workspace } from "./types.js";
+import { resolveSdkSessionCwd } from "./sdk-backend.js";
 
 export type { ThinkingLevel } from "./thinking-levels.js";
 
@@ -73,6 +78,8 @@ export type AgentLaunchResult =
       summarySession?: Session;
       promptDispatch: PromptDispatchStatus;
       failure?: AgentConfigurationFailure;
+      /** True when an empty failed launch shell was deleted instead of kept. */
+      discarded?: boolean;
     }
   | {
       kind: "launch_in_progress";
@@ -86,7 +93,9 @@ export interface AgentLaunchServiceDeps {
     Storage,
     | "claimSessionLaunchRecovery"
     | "createSession"
+    | "deleteSession"
     | "findSessionByLaunchIdempotencyKey"
+    | "getDataDir"
     | "getSession"
     | "listSessions"
     | "saveSession"
@@ -175,14 +184,18 @@ export class AgentLaunchService {
 
     const targetFailure = this.targetConfigurationFailure(request);
     if (targetFailure) {
-      this.markLaunchFailed(session, targetFailure);
-      return {
-        kind: "created",
-        session: this.hydratedSnapshot(session),
-        createdSession,
-        promptDispatch: "not_sent",
-        failure: targetFailure,
-      };
+      return this.failNewLaunch(session, createdSession, targetFailure);
+    }
+
+    try {
+      // Validate before create-only acceptance so Quick Session cannot leave an
+      // idle shell that only fails later on resume/start.
+      await this.assertSelectedExtensionsAvailable(request, session);
+    } catch (error: unknown) {
+      if (error instanceof AgentConfigurationError) {
+        return this.failNewLaunch(session, createdSession, error.toFailure());
+      }
+      throw error;
     }
 
     const prompt = request.prompt?.trim();
@@ -201,34 +214,46 @@ export class AgentLaunchService {
       await this.deps.sessions.sendPrompt(session.id, prompt, {
         ...(request.attachments ? { attachments: request.attachments } : {}),
       });
-      session.firstMessage = prompt.slice(0, 200);
-      this.markLaunchComplete(session, "delivered");
-      const summarySession = this.hydratedSnapshot(session);
+      const startedSession = this.currentSession(session);
+      startedSession.firstMessage = prompt.slice(0, 200);
+      this.markLaunchComplete(startedSession, "delivered");
+      const summarySession = this.hydratedSnapshot(startedSession);
       return {
         kind: "created",
         session: summarySession,
-        createdSession,
+        createdSession: summarySession,
         summarySession,
         promptDispatch: "delivered",
       };
     } catch (error: unknown) {
       const failure = error instanceof AgentConfigurationError ? error.toFailure() : undefined;
       if (failure) {
-        this.markLaunchFailed(session, failure);
-      } else {
-        this.markLaunchComplete(
-          session,
-          "not_sent",
-          error instanceof Error ? error.message : String(error),
-          isRequiredModelUnavailableError(error),
-        );
+        // The runtime was already asked to start. Preserve the failed shell so
+        // lifecycle cleanup can account for any files it materialized.
+        const failedSession = this.currentSession(session);
+        this.markLaunchFailed(failedSession, failure);
+        const snapshot = this.hydratedSnapshot(failedSession);
+        return {
+          kind: "created",
+          session: snapshot,
+          createdSession: snapshot,
+          promptDispatch: "not_sent",
+          failure,
+        };
       }
+      const failedSession = this.currentSession(session);
+      this.markLaunchComplete(
+        failedSession,
+        "not_sent",
+        error instanceof Error ? error.message : String(error),
+        isRequiredModelUnavailableError(error),
+      );
+      const snapshot = this.hydratedSnapshot(failedSession);
       return {
         kind: "created",
-        session: this.hydratedSnapshot(session),
-        createdSession,
+        session: snapshot,
+        createdSession: snapshot,
         promptDispatch: "not_sent",
-        ...(failure ? { failure } : {}),
       };
     }
   }
@@ -436,6 +461,67 @@ export class AgentLaunchService {
     this.deps.storage.saveSession(session);
   }
 
+  private failNewLaunch(
+    session: Session,
+    createdSession: Session,
+    failure: AgentConfigurationFailure,
+  ): AgentLaunchResult {
+    this.markLaunchFailed(session, failure);
+    const discarded = this.discardEmptyFailedLaunch(session);
+    return {
+      kind: "created",
+      session: this.hydratedSnapshot(session),
+      createdSession,
+      promptDispatch: "not_sent",
+      failure,
+      ...(discarded ? { discarded: true } : {}),
+    };
+  }
+
+  /**
+   * Empty Agent shells that never received a prompt should not linger in the
+   * session list after a terminal configuration failure.
+   */
+  private discardEmptyFailedLaunch(session: Session): boolean {
+    if ((session.messageCount ?? 0) > 0) return false;
+    if (session.firstMessage) return false;
+    if (session.piSessionFile || (session.piSessionFiles?.length ?? 0) > 0) return false;
+    if (session.launch?.promptDispatch === "delivered") return false;
+    return this.deps.storage.deleteSession(session.id) === true;
+  }
+
+  /**
+   * Resolve selected Extensions using the same host/worktree cwd policy as
+   * SdkBackend before the launch shell can be announced.
+   */
+  private async assertSelectedExtensionsAvailable(
+    request: AgentLaunchRequest,
+    session: Session,
+  ): Promise<void> {
+    const extensionIds = request.agent.resources?.extensionIds;
+    if (extensionIds === undefined || extensionIds.length === 0) return;
+
+    let hostCwd: string;
+    try {
+      hostCwd = resolveSdkSessionCwd(request.target.workspace, session, {
+        dataDir: this.deps.storage.getDataDir(),
+      });
+      if (!existsSync(hostCwd) || !statSync(hostCwd).isDirectory()) {
+        throw new Error(`Workspace path is not an accessible directory: ${hostCwd}`);
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new AgentConfigurationError(
+        "agent_workspace_unavailable",
+        { workspaceError: message },
+        message,
+      );
+    }
+    const agentDir = getAgentDir();
+    const settingsManager = SettingsManager.create(hostCwd, agentDir);
+    await resolveSelectedAgentExtensionPaths(extensionIds, hostCwd, agentDir, settingsManager);
+  }
+
   private markLaunchComplete(
     session: Session,
     promptDispatch: PromptDispatchStatus,
@@ -554,33 +640,43 @@ export class AgentLaunchService {
     }
 
     try {
+      await this.assertSelectedExtensionsAvailable(request, recovered);
       await this.deps.sessions.startSession(recovered.id, request.target.workspace);
       await this.deps.sessions.sendPrompt(recovered.id, prompt, {
         ...(request.attachments ? { attachments: request.attachments } : {}),
       });
-      recovered.firstMessage = prompt.slice(0, 200);
-      this.markLaunchComplete(recovered, "delivered");
-      const session = this.hydratedSnapshot(recovered);
+      const startedSession = this.currentSession(recovered);
+      startedSession.firstMessage = prompt.slice(0, 200);
+      this.markLaunchComplete(startedSession, "delivered");
+      const session = this.hydratedSnapshot(startedSession);
       return { kind: "existing", session, createdSession: session, promptDispatch: "delivered" };
     } catch (error: unknown) {
       const failure = error instanceof AgentConfigurationError ? error.toFailure() : undefined;
       if (failure) {
-        this.markLaunchFailed(recovered, failure);
-      } else {
-        this.markLaunchComplete(
-          recovered,
-          "not_sent",
-          error instanceof Error ? error.message : String(error),
-          isRequiredModelUnavailableError(error),
-        );
+        const failedSession = this.currentSession(recovered);
+        this.markLaunchFailed(failedSession, failure);
+        const session = this.hydratedSnapshot(failedSession);
+        return {
+          kind: "existing",
+          session,
+          createdSession: session,
+          promptDispatch: "not_sent",
+          failure,
+        };
       }
-      const session = this.hydratedSnapshot(recovered);
+      const failedSession = this.currentSession(recovered);
+      this.markLaunchComplete(
+        failedSession,
+        "not_sent",
+        error instanceof Error ? error.message : String(error),
+        isRequiredModelUnavailableError(error),
+      );
+      const session = this.hydratedSnapshot(failedSession);
       return {
         kind: "existing",
         session,
         createdSession: session,
         promptDispatch: "not_sent",
-        ...(failure ? { failure } : {}),
       };
     }
   }
@@ -591,6 +687,10 @@ export class AgentLaunchService {
     return this.deps.storage
       .listSessions()
       .find((session) => session.launch?.idempotencyKey === idempotencyKey);
+  }
+
+  private currentSession(session: Session): Session {
+    return this.deps.storage.getSession?.(session.id) ?? session;
   }
 
   private hydratedSnapshot(session: Session): Session {

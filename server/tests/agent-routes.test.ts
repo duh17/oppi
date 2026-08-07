@@ -1098,6 +1098,12 @@ describe("agent routes", () => {
             return session;
           }),
           saveSession,
+          deleteSession: vi.fn((sessionId: string) => {
+            const index = sessions.findIndex((candidate) => candidate.id === sessionId);
+            if (index < 0) return false;
+            sessions.splice(index, 1);
+            return true;
+          }),
           getSession: vi.fn((sessionId: string) =>
             sessions.find((candidate) => candidate.id === sessionId),
           ),
@@ -1323,7 +1329,6 @@ describe("agent routes", () => {
         code: "agent_tools_unavailable",
         error:
           "Reviewer can’t start in Oppi because these configured tools are unavailable: research_web_search, research_youtube_transcribe. Edit Reviewer → Resources → Extensions and select Extensions that provide these tools, or remove them from Allowed Tools. Then start again.",
-        sessionId: expect.any(String),
         receipt: {
           accepted: false,
           retryable: false,
@@ -1337,14 +1342,17 @@ describe("agent routes", () => {
           missingTools: ["research_web_search", "research_youtube_transcribe"],
         },
       });
-      expect(sessions.at(-1)).toMatchObject({
-        status: "error",
-        launch: {
-          status: "failed",
-          promptDispatch: "not_sent",
-          failure: { code: "agent_tools_unavailable" },
-        },
-      });
+      expect(JSON.parse(configurationRes.body).sessionId).toEqual(expect.any(String));
+      // A failure after runtime start keeps the row so lifecycle cleanup can
+      // account for any trace or attachment metadata it materialized.
+      expect(
+        sessions.some(
+          (session) =>
+            session.status === "error" &&
+            session.launch?.promptDispatch === "not_sent" &&
+            session.launch.failure?.code === "agent_tools_unavailable",
+        ),
+      ).toBe(true);
 
       store.updateAgent(agent.id, {
         launchConstraints: {
@@ -1365,7 +1373,8 @@ describe("agent routes", () => {
       });
 
       expect(workspaceConstraintRes.statusCode).toBe(422);
-      expect(JSON.parse(workspaceConstraintRes.body)).toMatchObject({
+      const workspaceConstraintBody = JSON.parse(workspaceConstraintRes.body);
+      expect(workspaceConstraintBody).toMatchObject({
         code: "agent_workspace_incompatible",
         receipt: {
           accepted: false,
@@ -1380,6 +1389,8 @@ describe("agent routes", () => {
           actualRuntime: "host",
         },
       });
+      expect(workspaceConstraintBody.sessionId).toBeUndefined();
+      expect(workspaceConstraintBody.receipt.sessionId).toBeUndefined();
       expect(startSession).toHaveBeenCalledTimes(3);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
@@ -1428,6 +1439,12 @@ describe("agent routes", () => {
             const copy = structuredClone(session);
             if (existing >= 0) sessions[existing] = copy;
             else sessions.push(copy);
+          }),
+          deleteSession: vi.fn((sessionId: string) => {
+            const index = sessions.findIndex((candidate) => candidate.id === sessionId);
+            if (index < 0) return false;
+            sessions.splice(index, 1);
+            return true;
           }),
           getSession: vi.fn((sessionId: string) =>
             sessions.find((candidate) => candidate.id === sessionId),

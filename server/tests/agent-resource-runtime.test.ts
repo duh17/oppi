@@ -373,6 +373,69 @@ describe.sequential("saved Agent exact resource selection", () => {
     }
   });
 
+  it("resolves selected Extension IDs that are only available at project scope", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-project-extension-cwd-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-agent-project-extension-agent-"));
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const userExtensionDir = join(agentDir, "extensions");
+    const projectExtensionDir = join(cwd, ".pi", "extensions");
+    const selectedExtension = join(userExtensionDir, "selected-command.ts");
+    mkdirSync(userExtensionDir, { recursive: true });
+    mkdirSync(projectExtensionDir, { recursive: true });
+    writeFileSync(join(agentDir, "auth.json"), "{}");
+    // Disabled at user scope so package discovery only keeps the project enablement.
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      JSON.stringify({
+        extensions: ["-extensions/selected-command.ts"],
+      }),
+    );
+    writeFileSync(
+      selectedExtension,
+      "export default function (pi) { pi.registerCommand('selected-command', { description: 'Selected', handler: async () => {} }); }",
+    );
+    writeFileSync(
+      join(cwd, ".pi", "settings.json"),
+      JSON.stringify({
+        extensions: [`+${selectedExtension}`],
+      }),
+    );
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    let backend: SdkBackend | undefined;
+    try {
+      backend = await SdkBackend.create({
+        session: makeSession(),
+        workspace: {
+          id: "workspace-1",
+          name: "Project Extension Test",
+          runtime: "host",
+          hostMount: cwd,
+        } as Workspace,
+        agentDefinition: {
+          name: "Project Extension",
+          resources: {
+            skillPaths: [],
+            extensionIds: [serverResourceId("extension", selectedExtension)],
+          },
+        },
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      const commands = resourceLoader(backend)
+        .getExtensions()
+        .extensions.flatMap((extension) => [...extension.commands.keys()]);
+      expect(commands).toContain("selected-command");
+    } finally {
+      if (backend) await backend.dispose();
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when a selected Extension ID is no longer discovered", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-missing-extension-"));
     try {

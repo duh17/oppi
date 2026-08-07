@@ -248,7 +248,8 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
           agentName: agent.name,
           workspaceName: workspace.name,
         });
-        if (result.kind !== "existing") {
+        // Discarded empty shells never enter the session list; do not broadcast them.
+        if (result.kind !== "existing" && !result.discarded) {
           ctx.appEvents?.emitSessionCreated(result.session);
         }
         log.warn("agent.launch.configuration_failed", {
@@ -258,20 +259,21 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
           sessionId: result.session.id,
           failureCode: result.failure.code,
           existing: result.kind === "existing",
+          discarded: result.discarded === true,
         });
         helpers.json(
           res,
           {
             error: message,
             code: result.failure.code,
-            sessionId: result.session.id,
+            ...(result.discarded ? {} : { sessionId: result.session.id }),
             receipt: {
               accepted: false,
               retryable: false,
               reason: result.failure.code,
               agentId: agent.id,
               agentVersion: agent.version,
-              sessionId: result.session.id,
+              ...(result.discarded ? {} : { sessionId: result.session.id }),
               ...(result.session.launch?.idempotencyKey
                 ? { idempotencyKey: result.session.launch.idempotencyKey }
                 : {}),
@@ -280,7 +282,8 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
             },
             recovery: {
               actions:
-                result.failure.code === "agent_workspace_incompatible"
+                result.failure.code === "agent_workspace_incompatible" ||
+                result.failure.code === "agent_workspace_unavailable"
                   ? ["choose_workspace", "edit_agent"]
                   : ["edit_agent"],
               agentId: agent.id,

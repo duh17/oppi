@@ -9,6 +9,7 @@ import {
   type AgentLaunchResult,
   type ThinkingLevel,
 } from "./agent-launch-service.js";
+import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
 import { DEFAULT_AGENT_ID, DEFAULT_AGENT_TOOL_NAMES } from "./default-agent.js";
 import { isDeclaredControlSession } from "./control-session.js";
@@ -761,6 +762,25 @@ export class SessionLifecycleService {
     try {
       return await this.deps.sessions.startSession(session.id, workspace);
     } catch (error) {
+      if (error instanceof AgentConfigurationError) {
+        // A focused-session open can target a previously announced shell. Keep
+        // that row and its trace metadata intact; only pre-start launch checks
+        // may discard a never-announced shell.
+        session.status = "error";
+        if (session.launch) {
+          session.launch = {
+            ...session.launch,
+            status: "failed",
+            completedAt: Date.now(),
+            promptDispatch: session.launch.promptDispatch ?? "not_sent",
+            promptError: error.code,
+            failure: error.toFailure(),
+            lease: undefined,
+          };
+        }
+        this.deps.storage.saveSession(session);
+        throw new SessionLifecycleError(error.message, 422);
+      }
       if (session.launch?.modelPolicy !== "required" || !isRequiredModelUnavailableError(error)) {
         throw error;
       }

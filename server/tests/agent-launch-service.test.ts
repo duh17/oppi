@@ -69,11 +69,19 @@ function makeService(
   );
   const startSession = vi.fn(async (sessionId: string) => makeSession({ id: sessionId }));
   const sendPrompt = vi.fn(async () => undefined);
+  const deleteSession = vi.fn((sessionId: string) => {
+    const index = storedSessions.findIndex((session) => session.id === sessionId);
+    if (index < 0) return false;
+    storedSessions.splice(index, 1);
+    return true;
+  });
 
   const service = new AgentLaunchService({
     storage: {
       createSession,
       saveSession,
+      deleteSession,
+      getDataDir: () => process.cwd(),
       getSession,
       listSessions,
       findSessionByLaunchIdempotencyKey,
@@ -89,6 +97,7 @@ function makeService(
     service,
     createSession,
     saveSession,
+    deleteSession,
     getSession,
     listSessions,
     findSessionByLaunchIdempotencyKey,
@@ -142,8 +151,8 @@ describe("AgentLaunchService", () => {
     expect(saveSession).toHaveBeenCalledTimes(2);
   });
 
-  it("persists one terminal failure when the target violates Agent launch constraints", async () => {
-    const { service, startSession, listSessions } = makeService();
+  it("discards empty shells when the target violates Agent launch constraints", async () => {
+    const { service, startSession, listSessions, deleteSession } = makeService();
 
     const request = {
       agent: {
@@ -163,6 +172,7 @@ describe("AgentLaunchService", () => {
 
     expect(result).toMatchObject({
       kind: "created",
+      discarded: true,
       promptDispatch: "not_sent",
       failure: {
         code: "agent_workspace_incompatible",
@@ -186,15 +196,102 @@ describe("AgentLaunchService", () => {
       },
     });
     expect(startSession).not.toHaveBeenCalled();
-    expect(listSessions()).toHaveLength(1);
+    expect(deleteSession).toHaveBeenCalledWith(result.session.id);
+    expect(listSessions()).toHaveLength(0);
 
+    // Discarded shells free the idempotency key so a corrected launch can retry.
     await expect(service.launch(request)).resolves.toMatchObject({
-      kind: "existing",
-      promptDispatch: "not_sent",
+      kind: "created",
+      discarded: true,
       failure: { code: "agent_workspace_incompatible" },
-      session: { status: "error" },
     });
     expect(startSession).not.toHaveBeenCalled();
+    expect(listSessions()).toHaveLength(0);
+  });
+
+  it("discards empty shells before runtime start when an Extension selection is unavailable", async () => {
+    const { service, startSession, listSessions, deleteSession } = makeService();
+
+    const result = await service.launch({
+      agent: {
+        name: "Missing Extension",
+        resources: { extensionIds: ["missing-extension-id"] },
+      },
+      target: { workspace: makeWorkspace({ hostMount: process.cwd() }) },
+      prompt: "Run with the selected Extension",
+    });
+
+    expect(result).toMatchObject({
+      kind: "created",
+      discarded: true,
+      failure: { code: "agent_extensions_unavailable" },
+    });
+    expect(startSession).not.toHaveBeenCalled();
+    expect(deleteSession).toHaveBeenCalledWith(result.session.id);
+    expect(listSessions()).toHaveLength(0);
+  });
+
+  it("reports a non-directory workspace during Extension preflight", async () => {
+    const { service, startSession, listSessions, deleteSession } = makeService();
+
+    const result = await service.launch({
+      agent: {
+        name: "Invalid Workspace",
+        resources: { extensionIds: ["missing-extension-id"] },
+      },
+      target: { workspace: makeWorkspace({ hostMount: `${process.cwd()}/package.json` }) },
+      prompt: "Run with the selected Extension",
+    });
+
+    expect(result).toMatchObject({
+      kind: "created",
+      discarded: true,
+      failure: {
+        code: "agent_workspace_unavailable",
+        details: { workspaceError: expect.stringContaining("not an accessible directory") },
+      },
+    });
+    expect(startSession).not.toHaveBeenCalled();
+    expect(deleteSession).toHaveBeenCalledWith(result.session.id);
+    expect(listSessions()).toHaveLength(0);
+  });
+
+  it("preserves shells when runtime start fails with Agent configuration errors", async () => {
+    const { AgentConfigurationError } = await import("../src/agent-launch-errors.js");
+    const { service, startSession, listSessions, deleteSession } = makeService();
+    startSession.mockImplementationOnce(async (sessionId: string) => {
+      const started = listSessions().find((session) => session.id === sessionId);
+      if (!started) throw new Error("started session missing");
+      const runtimeSession = structuredClone(started);
+      runtimeSession.piSessionId = "pi-runtime-session";
+      runtimeSession.piSessionFile = "/tmp/pi-runtime-session.jsonl";
+      runtimeSession.piSessionFiles = [runtimeSession.piSessionFile];
+      listSessions()[0] = runtimeSession;
+      throw new AgentConfigurationError(
+        "agent_extensions_unavailable",
+        { unavailableExtensions: ["extension_missing"] },
+        "Selected Agent Extension is unavailable: extension_missing",
+      );
+    });
+
+    const result = await service.launch({
+      agent: { name: "Research Scout" },
+      agentId: "research-scout",
+      target: { workspace: makeWorkspace() },
+      prompt: "Research this",
+    });
+
+    expect(result).toMatchObject({
+      kind: "created",
+      failure: { code: "agent_extensions_unavailable" },
+    });
+    expect(result.discarded).toBeUndefined();
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(result.session).toMatchObject({
+      piSessionId: "pi-runtime-session",
+      piSessionFile: "/tmp/pi-runtime-session.jsonl",
+      piSessionFiles: ["/tmp/pi-runtime-session.jsonl"],
+    });
     expect(listSessions()).toHaveLength(1);
   });
 
@@ -666,6 +763,8 @@ describe("AgentLaunchService", () => {
       storage: {
         createSession: vi.fn(),
         saveSession,
+        deleteSession: vi.fn(() => false),
+        getDataDir: vi.fn(() => process.cwd()),
         getSession: vi.fn(),
         listSessions: vi.fn(() => (persistedWinner ? [persistedWinner] : [])),
         findSessionByLaunchIdempotencyKey: vi.fn(() => persistedWinner),
@@ -721,6 +820,8 @@ describe("AgentLaunchService", () => {
       storage: {
         createSession: vi.fn(),
         saveSession,
+        deleteSession: vi.fn(() => false),
+        getDataDir: vi.fn(() => process.cwd()),
         getSession: vi.fn((sessionId: string) => (sessionId === root.id ? root : undefined)),
         listSessions: vi.fn(() => (persistedWinner ? [persistedWinner] : [root])),
         findSessionByLaunchIdempotencyKey: vi.fn(() => persistedWinner),

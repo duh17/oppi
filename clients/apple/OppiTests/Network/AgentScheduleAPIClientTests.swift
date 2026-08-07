@@ -329,6 +329,22 @@ struct AgentScheduleAPIClientTests {
         }
     }
 
+    @Test func agentLaunchDecodesDiscardedFailureWithoutSessionId() throws {
+        let failure = try JSONDecoder().decode(AgentLaunchFailureResponse.self, from: Data("""
+        {
+          "error":"Research Scout can’t start in Oppi.",
+          "code":"agent_workspace_incompatible",
+          "receipt":{"accepted":false,"retryable":false,"reason":"agent_workspace_incompatible","promptDispatch":"not_sent"},
+          "recovery":{"actions":["choose_workspace","edit_agent"],"agentId":"research-scout","workspaceId":"wrong-workspace","allowedWorkspaceIds":["research-workspace"]}
+        }
+        """.utf8))
+
+        #expect(failure.sessionId == nil)
+        #expect(failure.receipt.sessionId == nil)
+        #expect(failure.recovery.actions == [.chooseWorkspace, .editAgent])
+        #expect(failure.recovery.allowedWorkspaceIds == ["research-workspace"])
+    }
+
     @Test func agentLaunchCanCreateSessionWithoutDispatchingPrompt() async throws {
         let client = makeClient()
         defer { cleanup() }

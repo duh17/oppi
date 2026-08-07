@@ -348,7 +348,7 @@ struct AgentLaunchRecovery: Decodable, Sendable, Equatable {
 struct AgentLaunchFailureResponse: Decodable, LocalizedError, Sendable, Equatable {
     let error: String
     let code: String
-    let sessionId: String
+    let sessionId: String?
     let receipt: AgentLaunchReceipt
     let recovery: AgentLaunchRecovery
 

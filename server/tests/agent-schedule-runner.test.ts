@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAgentScheduleDispatchHooks } from "../src/agent-schedule-dispatch.js";
 import { AgentScheduleRunner, dueSlotKeysForSchedule } from "../src/agent-schedule-runner.js";
+import type { AgentDefinition } from "../src/agent-launch-service.js";
 import { AgentScheduleStore } from "../src/agent-schedules.js";
 import type { AgentScheduleAction } from "../src/agent-schedules.js";
 import type { Session, Workspace } from "../src/types.js";
@@ -44,12 +45,20 @@ describe("agent schedule runner", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  function storage() {
+  function storage(
+    resolvedAgent?: {
+      id: string;
+      version: number;
+      status: "active";
+      definition: AgentDefinition;
+    },
+  ) {
     return {
       getAgentScheduleStore: () => store,
       getWorkspace: vi.fn((workspaceId: string) =>
         workspaceId === workspace.id ? workspace : undefined,
       ),
+      getDataDir: vi.fn(() => dataDir),
       getSession: vi.fn((sessionId: string) =>
         sessions.find((session) => session.id === sessionId),
       ),
@@ -63,13 +72,19 @@ describe("agent schedule runner", () => {
         if (index >= 0) sessions[index] = session;
         else sessions.push(session);
       }),
+      deleteSession: vi.fn((sessionId: string) => {
+        const index = sessions.findIndex((session) => session.id === sessionId);
+        if (index < 0) return false;
+        sessions.splice(index, 1);
+        return true;
+      }),
       listSessions: vi.fn(() => sessions),
       findSessionByLaunchIdempotencyKey: vi.fn((key: string) =>
         sessions.find((session) => session.launch?.idempotencyKey === key),
       ),
       claimSessionLaunchRecovery: vi.fn(() => undefined),
       getAgentDefinitionStore: vi.fn(() => ({
-        resolveAgent: vi.fn(() => undefined),
+        resolveAgent: vi.fn(() => resolvedAgent),
       })),
     };
   }
@@ -183,6 +198,58 @@ describe("agent schedule runner", () => {
         promptError: 'Required model "ds4/deepseek-v4-flash" is not available',
       },
     });
+  });
+
+  it("does not broadcast a discarded scheduled launch shell", async () => {
+    const schedule = store.createSchedule(
+      {
+        name: "Constrained check",
+        trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+        action: { ...action(), agentId: "agent-1" },
+      },
+      500,
+    );
+    const resolvedAgent = {
+      id: "agent-1",
+      version: 1,
+      status: "active" as const,
+      definition: {
+        name: "Constrained check",
+        launchConstraints: { allowedWorkspaceIds: ["other-workspace"] },
+      },
+    };
+    const appEvents = {
+      emitSessionCreated: vi.fn(),
+      emitSessionSummary: vi.fn(),
+    };
+    const dispatchStorage = storage(resolvedAgent);
+    const run = store.createDueRun(schedule.id, "at:1000", 1_000);
+    const claimed = store.claimReadyRuns({
+      now: 1_000,
+      ownerId: "worker-a",
+      leaseMs: 500,
+      limit: 1,
+      runIds: [run.id],
+    })[0];
+
+    await store.dispatchClaimedRun(
+      claimed.id,
+      createAgentScheduleDispatchHooks(
+        {
+          storage: dispatchStorage,
+          sessions: { startSession, sendPrompt },
+          ensureSessionContextWindow: (session) => session,
+          appEvents,
+        },
+        "worker-a",
+      ),
+      { leaseOwner: "worker-a", now: 1_000 },
+    ).catch(() => undefined);
+
+    expect(appEvents.emitSessionCreated).not.toHaveBeenCalled();
+    expect(appEvents.emitSessionSummary).not.toHaveBeenCalled();
+    expect(sessions).toHaveLength(0);
+    expect(store.getRun(run.id)).toMatchObject({ status: "failed" });
   });
 
   it("does not let the automatic runner claim manual runs", async () => {

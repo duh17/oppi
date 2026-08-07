@@ -58,6 +58,7 @@ export interface ControlSessionMetadata {
 
 export type AgentConfigurationFailureCode =
   | "agent_workspace_incompatible"
+  | "agent_workspace_unavailable"
   | "agent_tools_unavailable"
   | "agent_extensions_unavailable"
   | "agent_skills_unavailable";
@@ -68,6 +69,7 @@ export interface AgentConfigurationFailureDetails {
   allowedWorkspaceIds?: string[];
   requiredRuntime?: "host" | "sandbox";
   actualRuntime?: "host" | "sandbox";
+  workspaceError?: string;
   missingTools?: string[];
   unavailableExtensions?: string[];
   unavailableSkills?: string[];

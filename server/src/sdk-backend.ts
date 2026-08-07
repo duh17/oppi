@@ -30,7 +30,6 @@ import {
   type Skill,
   type ToolDefinition,
   SessionManager as PiSessionManager,
-  DefaultPackageManager,
   DefaultResourceLoader,
   ModelRuntime,
   ModelRegistry,
@@ -68,7 +67,7 @@ import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
-import { serverResourceId } from "./server-resource-id.js";
+import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
@@ -235,46 +234,6 @@ type SkillLoadResult = {
 };
 
 type ExtensionLoadResult = ReturnType<DefaultResourceLoader["getExtensions"]>;
-
-async function resolveSelectedAgentExtensionPaths(
-  extensionIds: string[] | undefined,
-  cwd: string,
-  agentDir: string,
-  settingsManager: SettingsManager,
-): Promise<string[] | undefined> {
-  if (extensionIds === undefined) return undefined;
-  if (extensionIds.length === 0) return [];
-
-  const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
-  const resolved = await packageManager.resolve(async () => "skip");
-  const pathsById = new Map(
-    resolved.extensions
-      .filter((resource) => resource.metadata.scope === "user")
-      .map((resource) => [serverResourceId("extension", resource.path), resource.path]),
-  );
-  const selectedPaths: string[] = [];
-  const unavailableExtensions: string[] = [];
-  for (const extensionId of new Set(extensionIds)) {
-    if (extensionId === "oppi") {
-      unavailableExtensions.push("oppi (managed by server policy)");
-      continue;
-    }
-    const path = pathsById.get(extensionId);
-    if (!path) {
-      unavailableExtensions.push(extensionId);
-      continue;
-    }
-    selectedPaths.push(path);
-  }
-  if (unavailableExtensions.length > 0) {
-    throw new AgentConfigurationError(
-      "agent_extensions_unavailable",
-      { unavailableExtensions },
-      `Selected Agent Extension is unavailable: ${unavailableExtensions.join(", ")}`,
-    );
-  }
-  return selectedPaths;
-}
 
 function assertSelectedAgentResourcesAvailable(
   selectedSkillPaths: string[] | undefined,

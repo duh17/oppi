@@ -12,7 +12,7 @@ import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { DictationManager } from "./dictation-manager.js";
-import { SessionLifecycleService } from "./session-lifecycle-service.js";
+import { SessionLifecycleError, SessionLifecycleService } from "./session-lifecycle-service.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
 import { createLogger } from "./logger.js";
@@ -600,7 +600,12 @@ export class BoundSessionStreamMux {
         pending_permissions: "0",
         pending_ui_requests: "0",
       });
-      const terminalAgentConfigurationFailure = err instanceof AgentConfigurationError;
+      // Session lifecycle wraps configuration failures for HTTP callers with a
+      // typed 422 error. Keep the focused stream's policy close semantics for
+      // that same terminal configuration boundary.
+      const terminalAgentConfigurationFailure =
+        err instanceof AgentConfigurationError ||
+        (err instanceof SessionLifecycleError && err.statusCode === 422);
       if (!terminalAgentConfigurationFailure) {
         send({ type: "error", error: message, sessionId });
       }
