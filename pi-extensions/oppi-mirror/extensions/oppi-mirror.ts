@@ -129,6 +129,9 @@ interface EditableAgentSession {
   setAutoRetryEnabled?: (enabled: boolean) => void;
   setSteeringMode?: (mode: "all" | "one-at-a-time") => void;
   setFollowUpMode?: (mode: "all" | "one-at-a-time") => void;
+  getAvailableThinkingLevels?: () => Array<
+    ReturnType<ExtensionAPI["getThinkingLevel"]>
+  >;
   getUserMessagesForForking?: () => Array<{ entryId: string; text: string }>;
   navigateTree?: (
     targetId: string,
@@ -4821,7 +4824,13 @@ async function createTuiMirrorRuntime(
         return { level: pi.getThinkingLevel() };
 
       case "cycle_thinking_level": {
-        const levels = pi.getAvailableThinkingLevels();
+        const session = requireEditableAgentSession(ctx);
+        if (!session.getAvailableThinkingLevels) {
+          throw new Error(
+            "Terminal Pi runtime thinking-level control is not attached yet",
+          );
+        }
+        const levels = session.getAvailableThinkingLevels();
         const current = pi.getThinkingLevel();
         if (levels.length === 0) return { level: current };
         const currentIndex = levels.indexOf(current);

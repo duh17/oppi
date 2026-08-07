@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["node"],
+    "typeRoots": ["../../server/node_modules/@types"],
+    "paths": {
+      "@earendil-works/pi-coding-agent": [
+        "../../server/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+      ],
+      "ws": ["../../server/node_modules/@types/ws/index.d.ts"]
+    }
+  },
+  "files": ["extensions/oppi-mirror.ts", "extensions/oppi-mirror-contract.ts"]
+}

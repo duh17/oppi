@@ -76,6 +76,12 @@ const piAgentMock = vi.hoisted(() => {
 
     readonly promptCalls: PendingPrompt[] = [];
     readonly reload = vi.fn(async () => {});
+    readonly getAvailableThinkingLevels = vi.fn(() => [
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
     sessionId = "pi-session-1";
     sessionManager = { getSessionId: () => this.sessionId };
     _steeringMessages: string[] = [];
@@ -166,6 +172,7 @@ interface MockPi {
   ): void;
   appendEntry: ReturnType<typeof vi.fn>;
   getThinkingLevel: ReturnType<typeof vi.fn>;
+  setThinkingLevel: ReturnType<typeof vi.fn>;
   sendUserMessage: ReturnType<typeof vi.fn>;
 }
 
@@ -204,6 +211,7 @@ function createMockPi(): MockPi {
     string,
     { handler: (args: string, ctx: MockExtensionContext) => Promise<void> }
   >();
+  let thinkingLevel = "medium";
   return {
     handlers,
     commands,
@@ -216,7 +224,10 @@ function createMockPi(): MockPi {
       commands.set(name, command);
     },
     appendEntry: vi.fn(),
-    getThinkingLevel: vi.fn(() => "medium"),
+    getThinkingLevel: vi.fn(() => thinkingLevel),
+    setThinkingLevel: vi.fn((level: string) => {
+      thinkingLevel = level;
+    }),
     sendUserMessage: vi.fn(),
   };
 }
@@ -630,6 +641,37 @@ describe("oppi mirror input preflight", () => {
 
       expect(agentSession.promptCalls).toHaveLength(6);
       expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  it("cycles thinking levels through the attached AgentSession", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const agentSession = new piAgentMock.FakeAgentSession();
+      agentSession.bindExtensions();
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "cycle-thinking",
+          command: { type: "cycle_thinking_level" },
+        }),
+      );
+      await drainMicrotasks();
+
+      expect(agentSession.getAvailableThinkingLevels).toHaveBeenCalledOnce();
+      expect(pi.setThinkingLevel).toHaveBeenCalledWith("high");
+      expect(sentCommandResults(socket, "cycle-thinking")).toEqual([
+        expect.objectContaining({ success: true, data: { level: "high" } }),
+      ]);
     });
   });
 

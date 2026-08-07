@@ -26,7 +26,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "check:release": "node scripts/check-release.mjs",
+    "typecheck": "node ../../server/node_modules/@typescript/native/bin/tsc -p tsconfig.json",
+    "test": "node ../../server/node_modules/vitest/vitest.mjs run --config vitest.config.ts",
+    "check:release": "npm run typecheck && npm test && node scripts/check-release.mjs",
     "prepack": "npm run check:release"
   },
   "dependencies": {
