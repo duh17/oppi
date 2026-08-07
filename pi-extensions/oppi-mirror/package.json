@@ -30,7 +30,7 @@
     "prepack": "npm run check:release"
   },
   "dependencies": {
-    "ws": "8.21.0"
+    "ws": "8.21.2"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
