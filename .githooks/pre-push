@@ -12,6 +12,17 @@ PLANNER="$REPO_ROOT/scripts/pre-push-plan.ts"
 GATE_VERSION="5"
 ZERO_OID="0000000000000000000000000000000000000000"
 CACHE_DIR="$(git rev-parse --git-dir)/oppi/pre-push-cache/v${GATE_VERSION}"
+GIT_LOCAL_ENV_VARS="$(git rev-parse --local-env-vars)"
+
+run_without_git_local_env() {
+  (
+    local name
+    while IFS= read -r name; do
+      [[ -n "$name" ]] && unset "$name"
+    done <<< "$GIT_LOCAL_ENV_VARS"
+    "$@"
+  )
+}
 
 report_ios_coverage_result() {
   local status="$1"
@@ -74,6 +85,44 @@ run_self_test() {
     echo "pre-push self-test: run_cached must not use \"\$@\" || status=\$?" >&2
     exit 1
   fi
+
+  # Git exports repository-local variables to hooks. Those variables are required
+  # above for planning and cache checks, but they must not escape into tests that
+  # create independent temporary repositories.
+  local git_env_fixture contaminant_git target_repo contaminated_status sanitized_status
+  git_env_fixture="$(mktemp -d -t oppi-pre-push-git-env.XXXXXX)"
+  contaminant_git="$git_env_fixture/contaminant.git"
+  target_repo="$git_env_fixture/target"
+  git init --bare --quiet "$contaminant_git"
+  mkdir -p "$target_repo"
+  set +e
+  (
+    export GIT_DIR="$contaminant_git"
+    unset GIT_WORK_TREE
+    cd "$target_repo"
+    git init --quiet --initial-branch=main
+    printf 'fixture\n' > tracked.txt
+    git add tracked.txt
+  ) >/dev/null 2>&1
+  contaminated_status=$?
+  (
+    export GIT_DIR="$contaminant_git"
+    unset GIT_WORK_TREE
+    cd "$target_repo"
+    run_without_git_local_env bash -c \
+      "git init --quiet --initial-branch=main && printf 'fixture\\n' > tracked.txt && git add tracked.txt"
+  ) >/dev/null 2>&1
+  sanitized_status=$?
+  set -e
+  rm -rf "$git_env_fixture"
+  [[ "$contaminated_status" -ne 0 ]] || {
+    echo "pre-push self-test: contaminated Git-local environment should break temp git add" >&2
+    exit 1
+  }
+  [[ "$sanitized_status" -eq 0 ]] || {
+    echo "pre-push self-test: sanitized Git-local environment should allow temp git add" >&2
+    exit 1
+  }
 
   echo "pre-push self-test passed."
 }
@@ -312,9 +361,11 @@ run_server_gate() {
 
   set +e
   if [[ "$SERVER_MODE" == "full" ]]; then
-    (cd "$REPO_ROOT/server" && npm test -- --reporter=dot --silent=passed-only) >"$test_log" 2>&1
+    (cd "$REPO_ROOT/server" && run_without_git_local_env \
+      npm test -- --reporter=dot --silent=passed-only) >"$test_log" 2>&1
   else
-    (cd "$REPO_ROOT/server" && npm exec --offline -- vitest run --changed "$BASE_SHA" --passWithNoTests \
+    (cd "$REPO_ROOT/server" && run_without_git_local_env \
+      npm exec --offline -- vitest run --changed "$BASE_SHA" --passWithNoTests \
       --reporter=dot --silent=passed-only) >"$test_log" 2>&1
   fi
   local status=$?
