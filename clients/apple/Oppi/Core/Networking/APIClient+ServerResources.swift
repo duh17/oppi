@@ -43,6 +43,15 @@ extension APIClient {
         return try JSONDecoder().decode(ServerExtensionDetail.self, from: data)
     }
 
+    /// Executes one explicitly selected user Extension only to inspect its Agent tools.
+    func inspectAgentExtensionTools(id: String) async throws -> ServerExtensionDetail {
+        let data = try await get(url: serverResourceURL(
+            pathSegments: ["extensions", id],
+            queryItems: [URLQueryItem(name: "agentTools", value: "true")]
+        ))
+        return try JSONDecoder().decode(ServerExtensionDetail.self, from: data)
+    }
+
     func setServerExtensionEnabled(id: String, enabled: Bool) async throws -> ServerExtensionSummary {
         let data = try await put(
             url: serverResourceURL(pathSegments: ["extensions", id, "enabled"]),

@@ -71,32 +71,33 @@ struct QuickSessionLaunchRoutingTests {
         #expect(result == .failure(.agentRequiresPrompt))
     }
 
-    @Test func agentRejectsAttachmentsAndRepoReferences() {
-        #expect(
-            QuickSessionLaunchRouting.plan(
-                for: .init(
-                    workspaceId: "ws-1",
-                    agentId: "reviewer",
-                    prompt: "Review this",
-                    hasAttachments: true,
-                    hasRepoReferences: false
-                )
-            ) == .failure(.agentAttachmentsUnsupported)
-        )
-        #expect(
-            QuickSessionLaunchRouting.plan(
-                for: .init(
-                    workspaceId: "ws-1",
-                    agentId: "reviewer",
-                    prompt: "Review this",
-                    hasAttachments: false,
-                    hasRepoReferences: true
-                )
-            ) == .failure(.agentAttachmentsUnsupported)
-        )
+    @Test func agentAllowsAttachmentsAndRepoReferences() throws {
+        let withAttachment = try QuickSessionLaunchRouting.plan(
+            for: .init(
+                workspaceId: "ws-1",
+                agentId: "reviewer",
+                prompt: "Review this",
+                hasAttachments: true,
+                hasRepoReferences: false
+            )
+        ).get()
+        let withReference = try QuickSessionLaunchRouting.plan(
+            for: .init(
+                workspaceId: "ws-1",
+                agentId: "reviewer",
+                prompt: "Review this",
+                hasAttachments: false,
+                hasRepoReferences: true
+            )
+        ).get()
+
+        #expect(withAttachment.mode == .agent(agentId: "reviewer"))
+        #expect(withAttachment.shouldAutoSend)
+        #expect(withReference.mode == .agent(agentId: "reviewer"))
+        #expect(withReference.shouldAutoSend)
     }
 
-    @Test func agentLaunchDoesNotAutoSend() throws {
+    @Test func agentLaunchAutoSendsThroughChat() throws {
         let plan = try QuickSessionLaunchRouting.plan(
             for: .init(
                 workspaceId: "ws-1",
@@ -109,7 +110,7 @@ struct QuickSessionLaunchRoutingTests {
 
         #expect(plan.mode == .agent(agentId: "reviewer"))
         #expect(plan.prompt == "Review this")
-        #expect(plan.shouldAutoSend == false)
+        #expect(plan.shouldAutoSend)
     }
 
     @Test func filtersWorkspacesUsingAgentConstraints() {

@@ -97,7 +97,10 @@ extension APIClient {
         skillPaths: [String]?,
         extensionIds: [String]?,
         launchConstraints: AgentLaunchConstraints? = nil,
-        previouslyHadLaunchConstraints: Bool = false
+        previouslyHadLaunchConstraints: Bool = false,
+        tools: [String]? = nil,
+        excludeTools: [String]? = nil,
+        noTools: AgentNoToolsMode? = nil
     ) async throws -> StoredAgentDefinition {
         let encodedAgentId = try percentEncodePathSegment(agentId)
         let data = try await patch(
@@ -111,7 +114,14 @@ extension APIClient {
                 resources: agentId == "oppi-default-agent"
                     ? nil
                     : .init(skillPaths: skillPaths, extensionIds: extensionIds),
-                sessionDefaults: .init(model: model, thinkingLevel: thinkingLevel),
+                sessionDefaults: .init(
+                    model: model,
+                    thinkingLevel: thinkingLevel,
+                    includesToolPolicy: agentId != "oppi-default-agent",
+                    tools: tools,
+                    excludeTools: excludeTools,
+                    noTools: noTools
+                ),
                 launchConstraints: launchConstraints,
                 includesLaunchConstraints: agentId != "oppi-default-agent"
                     && (launchConstraints != nil || previouslyHadLaunchConstraints)
@@ -141,12 +151,13 @@ extension APIClient {
 
     func launchAgentSession(
         agentId: String,
-        prompt: String,
+        prompt: String?,
         workspaceId: String,
         worktreeId: String? = nil,
         model: String? = nil,
         thinkingLevel: ThinkingLevel? = nil,
-        sessionName: String? = nil
+        sessionName: String? = nil,
+        idempotencyKey: String = "ios-agent-launch-\(UUID().uuidString)"
     ) async throws -> AgentSessionLaunchResponse {
         struct PromptBody: Encodable {
             let text: String
@@ -160,7 +171,7 @@ extension APIClient {
             let thinkingLevel: ThinkingLevel?
         }
         struct Body: Encodable {
-            let prompt: PromptBody
+            let prompt: PromptBody?
             let target: TargetBody
             let overrides: OverridesBody?
             let sessionName: String?
@@ -173,11 +184,11 @@ extension APIClient {
             ? OverridesBody(model: cleanModel?.isEmpty == false ? cleanModel : nil, thinkingLevel: thinkingLevel)
             : nil
         let body = Body(
-            prompt: PromptBody(text: prompt),
+            prompt: prompt?.nilIfBlank.map { PromptBody(text: $0) },
             target: TargetBody(workspaceId: workspaceId, worktreeId: worktreeId?.nilIfBlank),
             overrides: overrides,
             sessionName: sessionName?.nilIfBlank,
-            idempotencyKey: "ios-agent-launch-\(UUID().uuidString)"
+            idempotencyKey: idempotencyKey
         )
         let (data, response) = try await request(
             "POST",
@@ -336,13 +347,24 @@ private struct NativeAgentUpdateBody: Encodable {
     struct SessionDefaults: Encodable {
         let model: String?
         let thinkingLevel: ThinkingLevel?
+        let includesToolPolicy: Bool
+        let tools: [String]?
+        let excludeTools: [String]?
+        let noTools: AgentNoToolsMode?
 
-        enum CodingKeys: String, CodingKey { case model, thinkingLevel }
+        enum CodingKeys: String, CodingKey {
+            case model, thinkingLevel, tools, excludeTools, noTools
+        }
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encodeNullable(model, forKey: .model)
             try container.encodeNullable(thinkingLevel, forKey: .thinkingLevel)
+            if includesToolPolicy {
+                try container.encodeNullable(tools, forKey: .tools)
+                try container.encodeNullable(excludeTools, forKey: .excludeTools)
+                try container.encodeNullable(noTools, forKey: .noTools)
+            }
         }
     }
 

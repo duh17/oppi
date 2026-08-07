@@ -180,6 +180,7 @@ private struct AgentDetailView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(ServerConnection.self) private var connection
     @Environment(WorkspaceStore.self) private var workspaceStore
+    @Environment(AppNavigation.self) private var navigation
 
     let agentId: String
     let onUpdated: (StoredAgentDefinition) -> Void
@@ -191,7 +192,6 @@ private struct AgentDetailView: View {
     @State private var isShowingRevision = false
     @State private var isShowingDefinitionReview = false
     @State private var isShowingIconPicker = false
-    @State private var isShowingLaunch = false
     @State private var isShowingSchedule = false
     @State private var isArchiving = false
     @State private var isLoadingResources = false
@@ -297,14 +297,7 @@ private struct AgentDetailView: View {
                     }
                 }
 
-                Section("Start") {
-                    Button {
-                        isShowingLaunch = true
-                    } label: {
-                        Label("Start Session with Agent", systemImage: "play.circle.fill")
-                    }
-                    .disabled(workspaceStore.workspaces.isEmpty)
-                    .accessibilityIdentifier("agents.detail.launch")
+                Section("Automation") {
 
                     Button {
                         isShowingSchedule = true
@@ -315,7 +308,7 @@ private struct AgentDetailView: View {
                     .accessibilityIdentifier("agents.detail.schedule")
 
                     if workspaceStore.workspaces.isEmpty {
-                        Text("Create or sync a workspace before launching or scheduling this Agent.")
+                        Text("Create or sync a workspace before starting or scheduling this Agent.")
                             .font(.caption)
                             .foregroundStyle(.themeComment)
                     } else {
@@ -334,7 +327,16 @@ private struct AgentDetailView: View {
         .themedListSurface()
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if agent?.status == .active {
+                if let agent, agent.status == .active {
+                    Button {
+                        startQuickSession(with: agent)
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                    }
+                    .disabled(workspaceStore.workspaces.isEmpty || connection.currentServerId == nil)
+                    .accessibilityLabel("Start session with \(agent.name)")
+                    .accessibilityIdentifier("agents.detail.launch")
+
                     Button("Edit") {
                         isShowingNativeEdit = true
                     }
@@ -405,25 +407,7 @@ private struct AgentDetailView: View {
                 )
             }
         }
-        .sheet(isPresented: $isShowingLaunch) {
-            if let agent {
-                NavigationStack {
-                    AgentLaunchSheet(
-                        agent: agent,
-                        onSessionCreated: { session in
-                            connection.sessionStore.upsert(session)
-                        },
-                        onEditAgent: {
-                            isShowingLaunch = false
-                            Task { @MainActor in
-                                await Task.yield()
-                                isShowingNativeEdit = true
-                            }
-                        }
-                    )
-                }
-            }
-        }
+
         .sheet(isPresented: $isShowingSchedule) {
             if let agent {
                 GuidedControlSessionSheet(
@@ -520,10 +504,12 @@ private struct AgentDetailView: View {
 
     private func agentToolSummary(_ defaults: AgentSessionDefaults?) -> String {
         if let noTools = defaults?.noTools { return noTools.displayName }
-        let allowed = defaults?.tools ?? []
-        let excluded = defaults?.excludeTools ?? []
-        if !allowed.isEmpty { return "Allowed: \(allowed.joined(separator: ", "))" }
-        if !excluded.isEmpty { return "Excluded: \(excluded.joined(separator: ", "))" }
+        if let allowed = defaults?.tools {
+            return allowed.isEmpty ? "Allowed: None" : "Allowed: \(allowed.joined(separator: ", "))"
+        }
+        if let excluded = defaults?.excludeTools {
+            return excluded.isEmpty ? "Excluded: None" : "Excluded: \(excluded.joined(separator: ", "))"
+        }
         return "Default"
     }
 
@@ -582,19 +568,23 @@ private struct AgentDetailView: View {
 
     @ViewBuilder
     private func toolDefaultRows(_ defaults: AgentSessionDefaults?) -> some View {
-        let allowed = defaults?.tools ?? []
-        let excluded = defaults?.excludeTools ?? []
-        if defaults?.noTools == nil && allowed.isEmpty && excluded.isEmpty {
+        if defaults?.noTools == nil && defaults?.tools == nil && defaults?.excludeTools == nil {
             detailRow("Tools", "Default")
         } else {
             if let noTools = defaults?.noTools {
                 detailRow("Tools", noTools.displayName)
             }
-            if !allowed.isEmpty {
-                detailTextBlock("Allowed Tools", allowed.joined(separator: ", "))
+            if let allowed = defaults?.tools {
+                detailTextBlock(
+                    "Allowed Tools",
+                    allowed.isEmpty ? "None" : allowed.joined(separator: ", ")
+                )
             }
-            if !excluded.isEmpty {
-                detailTextBlock("Excluded Tools", excluded.joined(separator: ", "))
+            if let excluded = defaults?.excludeTools {
+                detailTextBlock(
+                    "Excluded Tools",
+                    excluded.isEmpty ? "None" : excluded.joined(separator: ", ")
+                )
             }
         }
     }
@@ -649,6 +639,15 @@ private struct AgentDetailView: View {
         await connection.serverResourceStore.load(serverId: serverId, api: apiClient)
     }
 
+    private func startQuickSession(with agent: StoredAgentDefinition) {
+        guard let serverId = connection.currentServerId else { return }
+        navigation.pendingQuickSessionLaunchContext = QuickSessionLaunchContext(
+            serverId: serverId,
+            agentId: agent.id
+        )
+        navigation.showQuickSession = true
+    }
+
     @MainActor
     private func archiveAgent() async {
         guard let apiClient else { return }
@@ -658,195 +657,6 @@ private struct AgentDetailView: View {
         do {
             agent = try await apiClient.archiveAgent(agentId: agentId)
             error = nil
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-}
-
-private struct AgentLaunchSheet: View {
-    @Environment(\.apiClient) private var apiClient
-    @Environment(WorkspaceStore.self) private var workspaceStore
-    @Environment(AppNavigation.self) private var navigation
-    @Environment(\.dismiss) private var dismiss
-
-    let agent: StoredAgentDefinition
-    let onSessionCreated: (Session) -> Void
-    let onEditAgent: () -> Void
-
-    @State private var selectedWorkspaceId = ""
-    @State private var prompt = ""
-    @State private var sessionName = ""
-    @State private var worktreeId = ""
-    @State private var model = ""
-    @State private var thinkingSelection = ""
-    @State private var isLaunching = false
-    @State private var error: String?
-    @State private var launchFailure: AgentLaunchFailureResponse?
-
-    private var effectiveLaunchConstraints: AgentLaunchConstraints? {
-        guard let recovery = launchFailure?.recovery,
-              recovery.allowedWorkspaceIds != nil || recovery.requiredRuntime != nil else {
-            return agent.definition.launchConstraints
-        }
-        return AgentLaunchConstraints(
-            allowedWorkspaceIds: recovery.allowedWorkspaceIds,
-            requiredRuntime: recovery.requiredRuntime
-        )
-    }
-
-    private var workspaces: [Workspace] {
-        QuickSessionLaunchRouting.compatibleWorkspaces(
-            for: effectiveLaunchConstraints,
-            in: workspaceStore.workspaces
-        )
-    }
-
-    private var canLaunch: Bool {
-        !selectedWorkspaceId.isEmpty
-            && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !isLaunching
-    }
-
-    var body: some View {
-        Form {
-            Section("Target") {
-                if workspaces.isEmpty {
-                    ContentUnavailableView(
-                        "No Compatible Workspace",
-                        systemImage: "folder.badge.questionmark",
-                        description: Text(launchConstraintRequirement)
-                    )
-                } else {
-                    Picker("Workspace", selection: $selectedWorkspaceId) {
-                        ForEach(workspaces) { workspace in
-                            Text(workspace.name).tag(workspace.id)
-                        }
-                    }
-                }
-
-                TextField("Worktree ID (optional)", text: $worktreeId)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-            }
-
-            Section("Prompt") {
-                TextField("Session name", text: $sessionName)
-                TextEditor(text: $prompt)
-                    .frame(minHeight: 180)
-                    .accessibilityIdentifier("agent.launch.prompt")
-            }
-
-            Section("Overrides") {
-                TextField("Model", text: $model)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Picker("Thinking", selection: $thinkingSelection) {
-                    Text("Agent default").tag("")
-                    ForEach(ThinkingLevel.allCases) { level in
-                        Text(level.displayTitle).tag(level.rawValue)
-                    }
-                }
-            }
-
-            if let error {
-                Section {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.themeRed)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if launchFailure?.recovery.actions.contains(.editAgent) == true {
-                        Button("Edit \(agent.name)") {
-                            dismiss()
-                            onEditAgent()
-                        }
-                    }
-                    if launchFailure?.recovery.actions.contains(.chooseWorkspace) == true {
-                        Button("Choose Workspace Above") {
-                            selectedWorkspaceId = ""
-                        }
-                        .disabled(workspaces.isEmpty)
-                    }
-                } header: {
-                    Text("Couldn’t Start Agent")
-                }
-            }
-        }
-        .navigationTitle("Start \(agent.name)")
-        .navigationBarTitleDisplayMode(.inline)
-        .themedListSurface()
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { dismiss() }
-                    .disabled(isLaunching)
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                Button(isLaunching ? "Starting…" : "Start") {
-                    Task { await launch() }
-                }
-                .disabled(!canLaunch)
-                .accessibilityIdentifier("agent.launch.start")
-            }
-        }
-        .onChange(of: workspaces.map(\.id)) { _, ids in
-            if !ids.contains(selectedWorkspaceId) {
-                selectedWorkspaceId = ""
-            }
-        }
-    }
-
-    private var launchConstraintRequirement: String {
-        let constraints = effectiveLaunchConstraints
-        let runtime = constraints?.requiredRuntime.map { "a \($0.rawValue) workspace" }
-        let allowed = constraints?.allowedWorkspaceIds.map {
-            "an allowed workspace (\($0.joined(separator: ", ")))"
-        }
-        return [runtime, allowed].compactMap { $0 }.joined(separator: " and ").nilIfBlank
-            .map { "This Agent requires \($0). Edit the Agent or add a compatible workspace." }
-            ?? "Edit the Agent or add a compatible workspace."
-    }
-
-    @MainActor
-    private func launch() async {
-        guard let apiClient else {
-            error = "Server is offline"
-            return
-        }
-
-        isLaunching = true
-        defer { isLaunching = false }
-
-        do {
-            let response = try await apiClient.launchAgentSession(
-                agentId: agent.id,
-                prompt: prompt,
-                workspaceId: selectedWorkspaceId,
-                worktreeId: worktreeId,
-                model: model,
-                thinkingLevel: ThinkingLevel(rawValue: thinkingSelection),
-                sessionName: sessionName
-            )
-            guard QuickSessionLaunchRouting.canNavigateAfterAgentLaunch(response),
-                  let session = response.session else {
-                error = response.receipt.promptError
-                    ?? response.receipt.reason
-                    ?? "The Agent did not start. Review its configuration and try again."
-                return
-            }
-            onSessionCreated(session)
-            if let serverId = workspaceStore.activeServerId {
-                navigation.openWorkspaceSession(
-                    WorkspaceSessionNavTarget(
-                        serverId: serverId,
-                        sessionId: session.id,
-                        workspaceId: session.workspaceId ?? selectedWorkspaceId
-                    )
-                )
-            }
-            dismiss()
-        } catch let failure as AgentLaunchFailureResponse {
-            launchFailure = failure
-            error = failure.localizedDescription
         } catch {
             self.error = error.localizedDescription
         }

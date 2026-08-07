@@ -99,14 +99,14 @@ struct ServerResourceAPIClientTests {
                 #expect(request.url?.path == "/server/resources/extensions")
                 #expect(request.url?.query == nil)
                 return mockResponse(json: """
-                {"extensions":[{"id":"oppi","name":"Oppi","description":"Server-owned controls.","kind":"builtIn","provenance":{"kind":"builtIn","label":"Built-in extension"},"state":"off","warnings":[],"isRemovable":false}],"oppiConfiguration":{"enabled":false,"approvalPolicy":"confirmDestructiveOnly","revision":0}}
+                {"extensions":[{"id":"oppi","name":"Oppi","description":"Server-owned controls.","kind":"builtIn","provenance":{"kind":"builtIn","label":"Built-in extension"},"state":"off","warnings":[],"isRemovable":false}],"builtInTools":[{"name":"read","description":"Read files","defaultEnabled":true},{"name":"grep","description":"Search files","defaultEnabled":false}],"oppiConfiguration":{"enabled":false,"approvalPolicy":"confirmDestructiveOnly","revision":0}}
                 """)
             }
 
             #expect(request.httpMethod == "GET")
             #expect(request.url?.path == "/server/resources/extensions/oppi")
             return mockResponse(json: """
-            {"summary":{"id":"oppi","name":"Oppi","description":"Server-owned controls.","kind":"builtIn","provenance":{"kind":"builtIn","label":"Built-in extension"},"state":"off","warnings":[],"isRemovable":false}}
+            {"summary":{"id":"oppi","name":"Oppi","description":"Server-owned controls.","kind":"builtIn","provenance":{"kind":"builtIn","label":"Built-in extension"},"state":"off","warnings":[],"isRemovable":false,"contributedTools":["oppi"]},"contributedTools":["oppi"],"contributedToolDetails":[{"name":"oppi","description":"Manage Oppi"}]}
             """)
         }
 
@@ -115,7 +115,27 @@ struct ServerResourceAPIClientTests {
 
         #expect(catalog.extensions.first?.path == nil)
         #expect(catalog.oppiConfiguration.revision == 0)
+        #expect(catalog.builtInTools.map(\.name) == ["read", "grep"])
+        #expect(catalog.builtInTools.first?.defaultEnabled == true)
         #expect(detail.summary.kind == .builtIn)
+        #expect(detail.contributedToolDetails?.first?.description == "Manage Oppi")
+    }
+
+    @Test func agentToolInspectionUsesExplicitExtensionDetailQuery() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/server/resources/extensions/extension_abc")
+            #expect(request.url?.query == "agentTools=true")
+            return mockResponse(json: """
+            {"summary":{"id":"extension_abc","name":"Search","kind":"file","provenance":{"kind":"piAgent","label":"~/.pi/agent/extensions"},"state":"off","warnings":[],"isRemovable":false,"contributedTools":["search"]},"contributedTools":["search"],"contributedToolDetails":[{"name":"search","description":"Search files"}]}
+            """)
+        }
+
+        let detail = try await client.inspectAgentExtensionTools(id: "extension_abc")
+        #expect(detail.contributedTools == ["search"])
     }
 
     @Test func oppiConfigurationPutUsesFullCASBodyAndDecodesAuthoritativeResponse() async throws {

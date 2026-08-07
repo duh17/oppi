@@ -181,7 +181,7 @@ describe("ServerResourceService catalogs", () => {
     mkdirSync(join(fixture.agentDir, "extensions"), { recursive: true });
     writeFileSync(
       join(fixture.agentDir, "extensions", "enabled.js"),
-      "export default function (pi) { pi.registerCommand('enabled-command', { handler: async () => {} }); }\n",
+      "export default function (pi) { pi.registerCommand('enabled-command', { handler: async () => {} }); pi.registerTool({ name: 'enabled_tool', label: 'Enabled', description: 'Inspect enabled resources', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }) }); }\n",
     );
     writeFileSync(
       join(fixture.agentDir, "extensions", "disabled.js"),
@@ -227,10 +227,55 @@ describe("ServerResourceService catalogs", () => {
       extensionsResult.extensions.find((extension) => extension.name === "disabled")?.state,
     ).toBe("off");
     expect(existsSync(join(fixture.root, "disabled-executed"))).toBe(false);
-    expect(
-      extensionsResult.extensions.find((extension) => extension.name === "enabled")
-        ?.contributedCommands,
-    ).toEqual(["enabled-command"]);
+    const enabled = extensionsResult.extensions.find((extension) => extension.name === "enabled");
+    expect(enabled?.contributedCommands).toEqual(["enabled-command"]);
+    expect(enabled?.contributedTools).toEqual(["enabled_tool"]);
+    expect(enabled?.contributedToolDetails).toEqual([
+      { name: "enabled_tool", description: "Inspect enabled resources" },
+    ]);
+    expect(extensionsResult.builtInTools.map((tool) => tool.name)).toEqual([
+      "read",
+      "bash",
+      "edit",
+      "write",
+      "grep",
+      "find",
+      "ls",
+    ]);
+  });
+
+  it("inspects tools from one explicitly selected disabled extension without enabling it", async () => {
+    const fixture = makeFixture();
+    mkdirSync(join(fixture.agentDir, "extensions"), { recursive: true });
+    writeFileSync(
+      join(fixture.agentDir, "extensions", "selected-off.js"),
+      "export default function (pi) { pi.registerTool({ name: 'off_tool', label: 'Off Tool', description: 'Runs only for this Agent', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }) }); }\n",
+    );
+    writeFileSync(
+      join(fixture.agentDir, "settings.json"),
+      JSON.stringify({ extensions: ["-extensions/selected-off.js"] }),
+    );
+
+    const service = makeService(fixture);
+    const listed = await service.listExtensions();
+    const selected = listed.extensions.find((extension) => extension.name === "selected-off");
+    expect(selected?.state).toBe("off");
+    expect(selected?.contributedTools).toBeUndefined();
+
+    const ordinaryDetail = await service.getExtensionDetail(selected!.id);
+    expect(ordinaryDetail.summary.state).toBe("off");
+    expect(ordinaryDetail.contributedToolDetails).toBeUndefined();
+
+    const detail = await service.inspectAgentExtensionTools(selected!.id);
+    expect(detail.summary.state).toBe("off");
+    expect(detail.contributedToolDetails).toEqual([
+      { name: "off_tool", description: "Runs only for this Agent" },
+    ]);
+
+    const listedAgain = await service.listExtensions();
+    expect(listedAgain.extensions.find((extension) => extension.id === selected!.id)?.state).toBe(
+      "off",
+    );
   });
 
   it("uses semantic Pi provenance and configured package source", async () => {
@@ -549,6 +594,36 @@ describe("ServerResourceService mutations and skill details", () => {
     await expect(
       service.updateSkillFile(matching[0]!.id, "SKILL.md", "# Bypass\n", snapshot.revision),
     ).rejects.toThrow(/read-only/i);
+  });
+
+  it("deduplicates a package Extension when a top-level symlink aliases its canonical path", async () => {
+    const fixture = makeFixture();
+    const packageDir = join(fixture.root, "aliased-extension-package");
+    const packagedExtension = join(packageDir, "extensions", "package-extension.js");
+    mkdirSync(join(packageDir, "extensions"), { recursive: true });
+    writeFileSync(packagedExtension, "export default function () {}\n");
+    writeFileSync(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "aliased-extension-package",
+        version: "1.0.0",
+        pi: { extensions: ["extensions/package-extension.js"] },
+      }),
+    );
+    writeFileSync(
+      join(fixture.agentDir, "settings.json"),
+      JSON.stringify({ packages: [packageDir] }),
+    );
+    const agentExtensions = join(fixture.agentDir, "extensions");
+    mkdirSync(agentExtensions, { recursive: true });
+    symlinkSync(packagedExtension, join(agentExtensions, "extension-alias.js"));
+
+    const listed = (await makeService(fixture).listExtensions()).extensions.filter(
+      (extension) => extension.id !== "oppi",
+    );
+
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.id).toMatch(/^extension_[a-f0-9]{64}$/);
   });
 
   it("rejects a stale file revision instead of overwriting an intervening local edit", async () => {

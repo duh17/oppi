@@ -16,6 +16,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     nonisolated(unsafe) private var activeScheduleId: String?
     nonisolated(unsafe) private var archivedScheduleId: String?
     nonisolated(unsafe) private var nativeEditorAgentId: String?
+    nonisolated(unsafe) private var nativeEditorAgentName: String?
     nonisolated(unsafe) private var nativeEditorScheduleId: String?
     nonisolated(unsafe) private var customCronScheduleId: String?
 
@@ -92,11 +93,13 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
                 _ = try createLabWorkspace(named: "Scroll Workspace \(index)")
             }
         } else if name.contains("testNativeAgentEditorSavesReplacePromptAndThinking") {
+            let agentName = "Native editor reviewer \(UUID().uuidString.prefix(8))"
+            nativeEditorAgentName = agentName
             let response = try e2eLabAPIJSON(
                 method: "POST",
                 path: "/agents",
                 body: [
-                    "name": "Native editor reviewer",
+                    "name": agentName,
                     "instructions": [
                         "mode": "append",
                         "text": "Review carefully.",
@@ -413,6 +416,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCUIDevice.shared.orientation = .portrait
 
         let agentId = try XCTUnwrap(nativeEditorAgentId, "Native editor Agent was not seeded")
+        let agentName = try XCTUnwrap(nativeEditorAgentName, "Native editor Agent name was not seeded")
         openWorkspaceSidebar()
         tap(app.buttons["workspace.agents.open"], named: "Agents sidebar destination")
         tap(app.buttons["agents.row.\(agentId)"], named: "native editor Agent", timeout: 10)
@@ -425,13 +429,26 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertTrue(promptMode.buttons["Replace"].isSelected)
         XCTAssertTrue(app.buttons["agent.nativeEdit.model"].exists, "Model picker did not appear")
         XCTAssertTrue(app.buttons["agent.nativeEdit.thinking"].exists, "Thinking picker did not appear")
+        tap(app.buttons["agent.nativeEdit.tools"], named: "Agent tools")
+        XCTAssertTrue(app.navigationBars["Agent Tools"].waitForExistence(timeout: 10))
+        tap(app.buttons["agent.nativeEdit.toolMode"], named: "tool selection mode")
+        tap(app.buttons["Choose tools"], named: "exact tool selection")
+        let grepTool = app.buttons["agent.nativeEdit.tool.grep"]
+        for _ in 0..<3 where !grepTool.exists {
+            app.swipeUp()
+        }
+        XCTAssertTrue(grepTool.waitForExistence(timeout: 5), "All Pi built-in tools were not listed")
+        tap(grepTool, named: "Grep tool")
+        try saveLabScreenshot(name: "iphone-native-agent-tool-picker-e2e")
+        tap(app.navigationBars["Agent Tools"].buttons.firstMatch, named: "Agent tools back")
+        XCTAssertTrue(app.navigationBars["Edit Agent"].waitForExistence(timeout: 5))
 
         tap(app.buttons["agent.nativeEdit.thinking"], named: "Agent thinking picker")
         tap(app.buttons["Max"], named: "Max Agent thinking")
         replaceText(in: app.textViews["agent.nativeEdit.prompt"], with: "Use only native instructions.")
         try saveLabScreenshot(name: "iphone-native-agent-editor-e2e")
         tap(app.buttons["agent.nativeEdit.save"], named: "Save native Agent edit")
-        XCTAssertTrue(app.navigationBars["Native editor reviewer"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars[agentName].waitForExistence(timeout: 10))
 
         let response = try e2eLabAPIJSON(method: "GET", path: "/agents/\(agentId)")
         let storedAgent = try XCTUnwrap(response["agent"] as? [String: Any])
@@ -441,6 +458,31 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertEqual(instructions["mode"] as? String, "replace")
         XCTAssertEqual(instructions["text"] as? String, "Use only native instructions.")
         XCTAssertEqual(defaults["thinkingLevel"] as? String, "max")
+        let tools = try XCTUnwrap(defaults["tools"] as? [String])
+        XCTAssertEqual(tools, ["bash", "edit", "grep", "read", "write"])
+
+        tap(app.buttons["agents.detail.launch"], named: "Agent compose", timeout: 10)
+        let selectedAgent = app.buttons["quickSession.agentPicker"]
+        XCTAssertTrue(selectedAgent.waitForExistence(timeout: 10), "Quick Session did not open")
+        XCTAssertTrue(
+            selectedAgent.label.contains(agentName),
+            "Quick Session did not preselect the Agent"
+        )
+        let composer = app.textViews["chat.input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        replaceText(in: composer, with: "Start from the saved Agent")
+        try saveLabScreenshot(name: "iphone-agent-preselected-quick-session-e2e")
+        tap(app.buttons["chat.send"], named: "Agent Quick Session send")
+        XCTAssertTrue(
+            app.collectionViews["chat.timeline"].waitForExistence(timeout: 20),
+            "Agent Quick Session did not open the ordinary timeline"
+        )
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        let launchedSession = try e2eSession(sessionId: sessionId)
+        let launch = try XCTUnwrap(launchedSession["launch"] as? [String: Any])
+        XCTAssertEqual(launch["agentId"] as? String, agentId)
+        XCTAssertEqual(launchedSession["firstMessage"] as? String, "Start from the saved Agent")
+        XCTAssertGreaterThanOrEqual(launchedSession["messageCount"] as? Int ?? 0, 1)
     }
 
     func testNativeScheduleEditorSavesThinkingAndPrompt() throws {

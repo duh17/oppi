@@ -157,6 +157,7 @@ struct ContentView: View {
             : nil
         quickSessionLaunchAccessibilityElement = nil
         composerDraftStore?.saveQuickSessionLifecycleFallback()
+        navigation.pendingQuickSessionLaunchContext = nil
         navigation.showQuickSession = false
         QuickSessionTrigger.shared.isPresented = false
         Task { @MainActor in
@@ -179,7 +180,8 @@ struct ContentView: View {
     private func captureQuickSessionLaunchAccessibilityElement() {
         guard let focusedElement = UIAccessibility.focusedElement(using: .notificationVoiceOver),
               let identifiedElement = focusedElement as? UIAccessibilityIdentification,
-              identifiedElement.accessibilityIdentifier == "workspace.quickSession.start" else {
+              let identifier = identifiedElement.accessibilityIdentifier,
+              ["workspace.quickSession.start", "agents.detail.launch"].contains(identifier) else {
             quickSessionLaunchAccessibilityElement = nil
             return
         }
@@ -188,7 +190,6 @@ struct ContentView: View {
 
     private func completePendingQuickSessionNavigation() async {
         guard let pending = navigation.pendingQuickSessionNav else { return }
-        navigation.pendingQuickSessionNav = nil
 
         // Switch server FIRST so coordinator.activeConnection (and all
         // environment-injected stores) reflect the target server by the time
@@ -197,6 +198,7 @@ struct ContentView: View {
         guard await coordinator.switchToServerReady(pending.target.serverId) else {
             return
         }
+        navigation.pendingQuickSessionNav = nil
 
         // Keep the existing send path intact. ChatView will upload any pending
         // local attachments and dispatch the message through the focused stream.

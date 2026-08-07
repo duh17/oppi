@@ -114,6 +114,20 @@ enum ServerExtensionKind: String, Codable, Sendable, Equatable {
     }
 }
 
+struct ServerToolSummary: Codable, Sendable, Equatable, Identifiable {
+    let name: String
+    let description: String?
+    let defaultEnabled: Bool?
+
+    var id: String { name }
+
+    init(name: String, description: String? = nil, defaultEnabled: Bool? = nil) {
+        self.name = name
+        self.description = description
+        self.defaultEnabled = defaultEnabled
+    }
+}
+
 enum ServerExtensionState: String, Codable, Sendable, Equatable {
     case on
     case off
@@ -145,6 +159,8 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
     let loadError: String?
     let warnings: [String]
     let isRemovable: Bool
+    let contributedTools: [String]?
+    let contributedToolDetails: [ServerToolSummary]?
 
     init(
         id: String,
@@ -157,7 +173,9 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
         state: ServerExtensionState,
         loadError: String?,
         warnings: [String],
-        isRemovable: Bool
+        isRemovable: Bool,
+        contributedTools: [String]? = nil,
+        contributedToolDetails: [ServerToolSummary]? = nil
     ) {
         self.id = id
         self.name = name
@@ -170,6 +188,8 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
         self.loadError = loadError
         self.warnings = warnings
         self.isRemovable = isRemovable
+        self.contributedTools = contributedTools
+        self.contributedToolDetails = contributedToolDetails
     }
 
     /// The built-in identity is a server contract, not a display-name or path heuristic.
@@ -181,7 +201,20 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
 struct ServerExtensionDetail: Codable, Sendable, Equatable {
     let summary: ServerExtensionSummary
     let contributedTools: [String]?
+    let contributedToolDetails: [ServerToolSummary]?
     let contributedCommands: [String]?
+
+    init(
+        summary: ServerExtensionSummary,
+        contributedTools: [String]? = nil,
+        contributedToolDetails: [ServerToolSummary]? = nil,
+        contributedCommands: [String]? = nil
+    ) {
+        self.summary = summary
+        self.contributedTools = contributedTools
+        self.contributedToolDetails = contributedToolDetails
+        self.contributedCommands = contributedCommands
+    }
 }
 
 enum OppiApprovalPolicy: String, Codable, Sendable, Equatable {
@@ -198,5 +231,33 @@ struct OppiExtensionConfiguration: Codable, Sendable, Equatable {
 
 struct ServerExtensionCatalog: Codable, Sendable, Equatable {
     let extensions: [ServerExtensionSummary]
+    let builtInTools: [ServerToolSummary]
     let oppiConfiguration: OppiExtensionConfiguration
+
+    init(
+        extensions: [ServerExtensionSummary],
+        builtInTools: [ServerToolSummary] = [],
+        oppiConfiguration: OppiExtensionConfiguration
+    ) {
+        self.extensions = extensions
+        self.builtInTools = builtInTools
+        self.oppiConfiguration = oppiConfiguration
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case extensions, builtInTools, oppiConfiguration
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        extensions = try container.decode([ServerExtensionSummary].self, forKey: .extensions)
+        builtInTools = try container.decodeIfPresent(
+            [ServerToolSummary].self,
+            forKey: .builtInTools
+        ) ?? []
+        oppiConfiguration = try container.decode(
+            OppiExtensionConfiguration.self,
+            forKey: .oppiConfiguration
+        )
+    }
 }

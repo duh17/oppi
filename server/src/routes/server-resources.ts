@@ -375,12 +375,18 @@ export function createServerResourceRoutes(
   }
 
   async function extensionDetail(id: string, url: URL, res: ServerResponse): Promise<void> {
-    if (!hasNoQuery(url)) {
-      error(res, helpers, "This server-global route does not accept query parameters");
+    const inspectForAgent = hasExactQuery(url, "agentTools");
+    if (!hasNoQuery(url) && inspectForAgent !== "true") {
+      error(res, helpers, "This server-global route accepts only agentTools=true");
       return;
     }
     try {
-      helpers.json(res, await ctx.serverResources.getExtensionDetail(id));
+      helpers.json(
+        res,
+        inspectForAgent === "true"
+          ? await ctx.serverResources.inspectAgentExtensionTools(id)
+          : await ctx.serverResources.getExtensionDetail(id),
+      );
     } catch (cause: unknown) {
       errorForResource(res, helpers, "Extension", "detail", cause);
     }

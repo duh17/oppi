@@ -643,6 +643,10 @@ final class AppNavigation {
     // 3. ContentView.onDismiss reads nav, extracts message/images, builds path
     // 4. ChatView.task(id: sessionId) reads message/images, auto-sends
 
+    /// One-shot source context for opening Quick Session from an Agent detail.
+    /// QuickSessionSheet consumes it before resolving its initial workspace and Agent.
+    var pendingQuickSessionLaunchContext: QuickSessionLaunchContext?
+
     /// Atomic navigation intent from QuickSessionSheet.
     /// Bundles target workspace, session ID, and optional auto-send data.
     /// Set before dismiss; consumed in ContentView.onDismiss.
@@ -1057,6 +1061,11 @@ final class AppNavigation {
             .all
         }
     }
+}
+
+struct QuickSessionLaunchContext: Equatable, Sendable {
+    let serverId: String
+    let agentId: String
 }
 
 /// Atomic navigation intent for quick session deep-link.

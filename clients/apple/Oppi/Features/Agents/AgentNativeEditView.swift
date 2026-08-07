@@ -1,5 +1,25 @@
 import SwiftUI
 
+private enum AgentToolSelectionMode: String, CaseIterable {
+    case inherit
+    case exact
+    case existingPolicy
+
+    var title: String {
+        switch self {
+        case .inherit: "Pi defaults"
+        case .exact: "Choose tools"
+        case .existingPolicy: "Existing policy"
+        }
+    }
+}
+
+private struct AgentExtensionToolGroup: Identifiable {
+    let id: String
+    let name: String
+    let tools: [ServerToolSummary]
+}
+
 private enum AgentResourceSelectionMode: String, CaseIterable {
     case inherit
     case exact
@@ -76,6 +96,11 @@ struct AgentNativeEditView: View {
     @State private var instructionText: String
     @State private var model: String
     @State private var thinkingLevel: ThinkingLevel?
+    @State private var toolSelectionMode: AgentToolSelectionMode
+    @State private var selectedToolNames: Set<String>
+    @State private var extensionToolDetailsById: [String: ServerExtensionDetail] = [:]
+    @State private var extensionToolInspectionIds: Set<String> = []
+    @State private var isLoadingExtensionTools = false
     @State private var skillSelectionMode: AgentResourceSelectionMode
     @State private var selectedSkillPaths: Set<String>
     @State private var extensionSelectionMode: AgentResourceSelectionMode
@@ -99,6 +124,16 @@ struct AgentNativeEditView: View {
         _instructionText = State(initialValue: definition.instructions?.text ?? "")
         _model = State(initialValue: definition.sessionDefaults?.model ?? "")
         _thinkingLevel = State(initialValue: definition.sessionDefaults?.thinkingLevel)
+        let defaults = definition.sessionDefaults
+        let toolMode: AgentToolSelectionMode = if defaults?.tools != nil {
+            .exact
+        } else if defaults?.excludeTools != nil || defaults?.noTools != nil {
+            .existingPolicy
+        } else {
+            .inherit
+        }
+        _toolSelectionMode = State(initialValue: toolMode)
+        _selectedToolNames = State(initialValue: Set(defaults?.tools ?? []))
         _skillSelectionMode = State(
             initialValue: definition.resources?.skillPaths == nil ? .inherit : .exact
         )
@@ -122,6 +157,7 @@ struct AgentNativeEditView: View {
                 || !instructionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             && canSaveResourceSelections
             && canSaveLaunchConstraints
+            && canSaveToolSelection
             && !isSaving
     }
 
@@ -147,6 +183,11 @@ struct AgentNativeEditView: View {
                 catalogState: extensionCatalogState
             )
         return skillsAllowed && extensionsAllowed
+    }
+
+    private var canSaveToolSelection: Bool {
+        guard agent.id != "oppi-default-agent", toolSelectionMode == .exact else { return true }
+        return agent.definition.sessionDefaults?.tools != nil || !availableBuiltInTools.isEmpty
     }
 
     var body: some View {
@@ -213,6 +254,28 @@ struct AgentNativeEditView: View {
                         }
                     }
                     .accessibilityIdentifier("agent.nativeEdit.thinking")
+
+                    if agent.id == "oppi-default-agent" {
+                        LabeledContent("Tools", value: "Managed by Oppi")
+                            .foregroundStyle(.themeComment)
+                            .accessibilityHint("Oppi controls the tools for its built-in Agent")
+                    } else {
+                        NavigationLink {
+                            AgentToolSelectionView(
+                                mode: $toolSelectionMode,
+                                selectedNames: $selectedToolNames,
+                                builtInTools: availableBuiltInTools,
+                                extensionGroups: effectiveExtensionToolGroups,
+                                unavailableNames: unavailableSelectedToolNames,
+                                defaultSelection: effectiveDefaultToolNames,
+                                existingPolicySummary: existingToolPolicySummary,
+                                isLoadingExtensionTools: isLoadingExtensionTools
+                            )
+                        } label: {
+                            LabeledContent("Tools", value: toolSelectionSummary)
+                        }
+                        .accessibilityIdentifier("agent.nativeEdit.tools")
+                    }
                 }
 
                 Section {
@@ -363,6 +426,14 @@ struct AgentNativeEditView: View {
             }
         }
         .task { await refreshResources() }
+        .task(id: extensionToolRefreshKey) {
+            await refreshSelectedExtensionToolDetails()
+        }
+    }
+
+    private var availableBuiltInTools: [ServerToolSummary] {
+        guard let serverId = connection.currentServerId else { return [] }
+        return connection.serverResourceStore.builtInTools(forServer: serverId)
     }
 
     private var availableSkills: [ServerSkillSummary] {
@@ -375,6 +446,79 @@ struct AgentNativeEditView: View {
         return connection.serverResourceStore.extensions(forServer: serverId).filter {
             !$0.isBuiltInOppi
         }
+    }
+
+    private var effectiveExtensionToolGroups: [AgentExtensionToolGroup] {
+        let effectiveExtensions = availableExtensions.filter { resource in
+            switch extensionSelectionMode {
+            case .inherit:
+                resource.state == .on
+            case .exact:
+                selectedExtensionIds.contains(resource.id)
+            }
+        }
+        return effectiveExtensions.compactMap { resource in
+            let details = extensionToolDetailsById[resource.id]
+            let tools = details?.contributedToolDetails
+                ?? resource.contributedToolDetails
+                ?? (details?.contributedTools ?? resource.contributedTools ?? []).map {
+                    ServerToolSummary(name: $0)
+                }
+            guard !tools.isEmpty else { return nil }
+            return AgentExtensionToolGroup(id: resource.id, name: resource.name, tools: tools)
+        }
+    }
+
+    private var knownToolNames: Set<String> {
+        Set(availableBuiltInTools.map(\.name) + effectiveExtensionToolGroups.flatMap { $0.tools.map(\.name) })
+    }
+
+    private var unavailableSelectedToolNames: [String] {
+        selectedToolNames
+            .subtracting(knownToolNames)
+            .subtracting(["oppi"])
+            .sorted()
+    }
+
+    private var effectiveDefaultToolNames: Set<String> {
+        var names = Set(availableBuiltInTools.filter { $0.defaultEnabled == true }.map(\.name))
+        names.formUnion(effectiveExtensionToolGroups.flatMap { $0.tools.map(\.name) })
+        names.subtract(agent.definition.sessionDefaults?.excludeTools ?? [])
+        if agent.definition.sessionDefaults?.noTools == .all {
+            names.removeAll()
+        } else if agent.definition.sessionDefaults?.noTools == .builtin {
+            names.subtract(availableBuiltInTools.map(\.name))
+        }
+        return names
+    }
+
+    private var toolSelectionSummary: String {
+        switch toolSelectionMode {
+        case .inherit:
+            return "Pi defaults"
+        case .exact:
+            return selectedToolNames.isEmpty ? "None" : "\(selectedToolNames.count) selected"
+        case .existingPolicy:
+            return "Existing policy"
+        }
+    }
+
+    private var existingToolPolicySummary: String? {
+        guard agent.definition.sessionDefaults?.tools == nil,
+              (agent.definition.sessionDefaults?.excludeTools != nil
+                || agent.definition.sessionDefaults?.noTools != nil) else { return nil }
+        if let noTools = agent.definition.sessionDefaults?.noTools {
+            return noTools.displayName
+        }
+        if let excluded = agent.definition.sessionDefaults?.excludeTools, !excluded.isEmpty {
+            return "Excludes \(excluded.joined(separator: ", "))"
+        }
+        return "Existing advanced policy"
+    }
+
+    private var extensionToolRefreshKey: String {
+        let catalogIds = availableExtensions.map(\.id).sorted().joined(separator: ",")
+        return "\(extensionSelectionMode.rawValue):\(selectedExtensionIds.sorted().joined(separator: ",")):\(catalogIds)"
     }
 
     private var skillCatalogState: AgentResourceCatalogState {
@@ -417,6 +561,37 @@ struct AgentNativeEditView: View {
     }
 
     @MainActor
+    private func refreshSelectedExtensionToolDetails() async {
+        guard extensionSelectionMode == .exact,
+              let apiClient else { return }
+        let resources = availableExtensions.filter {
+            selectedExtensionIds.contains($0.id)
+                && $0.contributedToolDetails == nil
+                && $0.contributedTools == nil
+                && extensionToolDetailsById[$0.id] == nil
+                && !extensionToolInspectionIds.contains($0.id)
+        }
+        guard !resources.isEmpty else { return }
+
+        isLoadingExtensionTools = true
+        defer { isLoadingExtensionTools = false }
+        for resource in resources {
+            guard !Task.isCancelled else { return }
+            guard extensionToolDetailsById[resource.id] == nil,
+                  extensionToolInspectionIds.insert(resource.id).inserted else { continue }
+            defer { extensionToolInspectionIds.remove(resource.id) }
+            do {
+                extensionToolDetailsById[resource.id] = try await apiClient.inspectAgentExtensionTools(
+                    id: resource.id
+                )
+            } catch {
+                // Keep the resource selection intact. The tool screen presents
+                // saved unknown names as unavailable rather than dropping them.
+            }
+        }
+    }
+
+    @MainActor
     private func save() async {
         guard let apiClient else {
             error = "Server is offline"
@@ -427,6 +602,22 @@ struct AgentNativeEditView: View {
         defer { isSaving = false }
 
         do {
+            let originalDefaults = agent.definition.sessionDefaults
+            let toolPolicy: (tools: [String]?, excluded: [String]?, noTools: AgentNoToolsMode?)
+            switch toolSelectionMode {
+            case .inherit:
+                toolPolicy = (nil, nil, nil)
+            case .exact:
+                let reserved = Set(originalDefaults?.tools ?? []).intersection(["oppi"])
+                toolPolicy = (selectedToolNames.union(reserved).sorted(), nil, nil)
+            case .existingPolicy:
+                toolPolicy = (
+                    originalDefaults?.tools,
+                    originalDefaults?.excludeTools,
+                    originalDefaults?.noTools
+                )
+            }
+
             let updated = try await apiClient.updateAgentNative(
                 agentId: agent.id,
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -439,7 +630,10 @@ struct AgentNativeEditView: View {
                 skillPaths: skillSelectionMode == .inherit ? nil : selectedSkillPaths.sorted(),
                 extensionIds: extensionSelectionMode == .inherit ? nil : selectedExtensionIds.sorted(),
                 launchConstraints: resolvedLaunchConstraints,
-                previouslyHadLaunchConstraints: agent.definition.launchConstraints != nil
+                previouslyHadLaunchConstraints: agent.definition.launchConstraints != nil,
+                tools: toolPolicy.tools,
+                excludeTools: toolPolicy.excluded,
+                noTools: toolPolicy.noTools
             )
             onSaved(updated)
             dismiss()
@@ -523,6 +717,178 @@ private struct AgentWorkspaceSelectionView: View {
     private func workspaceRuntimeSummary(_ workspace: Workspace) -> String {
         let runtime = (workspace.runtime ?? .host).rawValue.capitalized
         return runtimeMatches(workspace) ? runtime : "\(runtime) · Does not match required runtime"
+    }
+}
+
+private struct AgentToolSelectionView: View {
+    @Binding var mode: AgentToolSelectionMode
+    @Binding var selectedNames: Set<String>
+    let builtInTools: [ServerToolSummary]
+    let extensionGroups: [AgentExtensionToolGroup]
+    let unavailableNames: [String]
+    let defaultSelection: Set<String>
+    let existingPolicySummary: String?
+    let isLoadingExtensionTools: Bool
+
+    private var selectableModes: [AgentToolSelectionMode] {
+        existingPolicySummary == nil
+            ? [.inherit, .exact]
+            : [.inherit, .exact, .existingPolicy]
+    }
+
+    private var knownNames: Set<String> {
+        Set(builtInTools.map(\.name) + extensionGroups.flatMap { $0.tools.map(\.name) })
+    }
+
+    private var modeBinding: Binding<AgentToolSelectionMode> {
+        Binding(
+            get: { mode },
+            set: { newMode in
+                if newMode == .exact, mode != .exact {
+                    selectedNames = defaultSelection
+                }
+                mode = newMode
+            }
+        )
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Picker("Selection", selection: modeBinding) {
+                    ForEach(selectableModes, id: \.self) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+                .accessibilityIdentifier("agent.nativeEdit.toolMode")
+            } footer: {
+                switch mode {
+                case .inherit:
+                    Text("Uses Pi's default coding tools and tools from effective extensions. Future extension tools follow discovery automatically.")
+                case .exact:
+                    Text("Only selected names are available. This freezes both built-in and extension tools until the Agent is edited again.")
+                case .existingPolicy:
+                    Text("This Agent uses \(existingPolicySummary ?? "an existing tool policy"). Choose another mode to replace it.")
+                }
+            }
+
+            if mode == .exact {
+                if builtInTools.isEmpty {
+                    Section {
+                        Label("Built-in tool catalog unavailable", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.themeOrange)
+                    } footer: {
+                        Text("Reconnect to a current server before creating a new exact selection.")
+                    }
+                } else {
+                    Section("Built-in Pi Tools") {
+                        ForEach(builtInTools) { tool in
+                            toolButton(tool, source: nil, canAdd: true)
+                        }
+                    }
+                }
+
+                if isLoadingExtensionTools {
+                    Section {
+                        ProgressView("Loading selected extension tools…")
+                    }
+                }
+
+                ForEach(extensionGroups) { group in
+                    Section(group.name) {
+                        ForEach(group.tools) { tool in
+                            toolButton(tool, source: group.name, canAdd: true)
+                        }
+                    }
+                }
+
+                if !unavailableNames.isEmpty {
+                    Section {
+                        ForEach(unavailableNames, id: \.self) { name in
+                            toolButton(
+                                ServerToolSummary(
+                                    name: name,
+                                    description: "Not resolved by the server-global catalog"
+                                ),
+                                source: nil,
+                                canAdd: false
+                            )
+                        }
+                    } header: {
+                        Text("Unavailable Selections")
+                    } footer: {
+                        Text("These saved names are preserved. Launch succeeds only in a workspace that supplies them; deselect a name to remove it.")
+                    }
+                }
+            }
+        }
+        .navigationTitle("Agent Tools")
+        .navigationBarTitleDisplayMode(.inline)
+        .themedListSurface()
+        .toolbar {
+            if mode == .exact {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Select All") { selectedNames.formUnion(knownNames) }
+                            .disabled(knownNames.isEmpty)
+                        Button("Select None") { selectedNames.removeAll() }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("Tool selection actions")
+                }
+            }
+        }
+    }
+
+    private func toolButton(
+        _ tool: ServerToolSummary,
+        source: String?,
+        canAdd: Bool
+    ) -> some View {
+        let isSelected = selectedNames.contains(tool.name)
+        return Button {
+            if isSelected {
+                selectedNames.remove(tool.name)
+            } else if canAdd {
+                selectedNames.insert(tool.name)
+            }
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? .themeBlue : .themeComment)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(tool.name)
+                        .foregroundStyle(.themeFg)
+                    if let description = tool.description, !description.isEmpty {
+                        Text(description)
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                            .lineLimit(2)
+                    }
+                    if !canAdd {
+                        Text("Unavailable")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.themeOrange)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isSelected && !canAdd)
+        .accessibilityLabel(tool.name)
+        .accessibilityHint(tool.description ?? "")
+        .accessibilityValue([
+            isSelected ? "Selected" : "Not selected",
+            source,
+            canAdd ? nil : "Unavailable",
+        ].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityIdentifier("agent.nativeEdit.tool.\(tool.name)")
     }
 }
 

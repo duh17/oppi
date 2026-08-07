@@ -4,6 +4,7 @@ import Foundation
 struct ServerResourceCatalogSnapshot: Codable, Sendable, Equatable {
     let skills: [ServerSkillSummary]
     let extensions: [ServerExtensionSummary]
+    let builtInTools: [ServerToolSummary]
     let oppiConfiguration: OppiExtensionConfiguration?
     let savedAt: Date
     let skillsLoaded: Bool
@@ -23,6 +24,7 @@ struct ServerResourceCatalogSnapshot: Codable, Sendable, Equatable {
         self.init(
             skills: skills,
             extensions: extensions,
+            builtInTools: [],
             oppiConfiguration: oppiConfiguration,
             savedAt: savedAt,
             skillsLoaded: true,
@@ -36,6 +38,7 @@ struct ServerResourceCatalogSnapshot: Codable, Sendable, Equatable {
     init(
         skills: [ServerSkillSummary],
         extensions: [ServerExtensionSummary],
+        builtInTools: [ServerToolSummary] = [],
         oppiConfiguration: OppiExtensionConfiguration?,
         savedAt: Date,
         skillsLoaded: Bool,
@@ -46,6 +49,7 @@ struct ServerResourceCatalogSnapshot: Codable, Sendable, Equatable {
     ) {
         self.skills = skills
         self.extensions = extensions
+        self.builtInTools = builtInTools
         self.oppiConfiguration = oppiConfiguration
         self.savedAt = savedAt
         self.skillsLoaded = skillsLoaded
@@ -58,6 +62,7 @@ struct ServerResourceCatalogSnapshot: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case skills
         case extensions
+        case builtInTools
         case oppiConfiguration
         case savedAt
         case skillsLoaded
@@ -71,6 +76,10 @@ struct ServerResourceCatalogSnapshot: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let skills = try container.decode([ServerSkillSummary].self, forKey: .skills)
         let extensions = try container.decode([ServerExtensionSummary].self, forKey: .extensions)
+        let builtInTools = try container.decodeIfPresent(
+            [ServerToolSummary].self,
+            forKey: .builtInTools
+        ) ?? []
         let configuration = try container.decodeIfPresent(
             OppiExtensionConfiguration.self,
             forKey: .oppiConfiguration
@@ -81,6 +90,7 @@ struct ServerResourceCatalogSnapshot: Codable, Sendable, Equatable {
         self.init(
             skills: skills,
             extensions: extensions,
+            builtInTools: builtInTools,
             oppiConfiguration: configuration,
             savedAt: savedAt,
             skillsLoaded: skillsLoaded,
@@ -100,6 +110,7 @@ struct ServerResourceCatalogSnapshot: Codable, Sendable, Equatable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(skills, forKey: .skills)
         try container.encode(extensions, forKey: .extensions)
+        try container.encode(builtInTools, forKey: .builtInTools)
         try container.encodeIfPresent(oppiConfiguration, forKey: .oppiConfiguration)
         try container.encode(savedAt, forKey: .savedAt)
         try container.encode(skillsLoaded, forKey: .skillsLoaded)
@@ -139,6 +150,7 @@ final class ServerResourceStore {
     private struct Partition {
         var skills: [ServerSkillSummary] = []
         var extensions: [ServerExtensionSummary] = []
+        var builtInTools: [ServerToolSummary] = []
         var authoritativeOppiConfiguration: OppiExtensionConfiguration?
         var desiredOppiConfiguration: OppiExtensionConfiguration?
         var skillsLoaded = false
@@ -189,6 +201,10 @@ final class ServerResourceStore {
 
     func extensions(forServer serverId: String) -> [ServerExtensionSummary] {
         partitions[serverId]?.extensions ?? []
+    }
+
+    func builtInTools(forServer serverId: String) -> [ServerToolSummary] {
+        partitions[serverId]?.builtInTools ?? []
     }
 
     func oppiConfiguration(forServer serverId: String) -> OppiExtensionConfiguration? {
@@ -335,6 +351,7 @@ final class ServerResourceStore {
                         preserveOppi: preserveOppi
                     )
                     $0.extensions = mergedExtensions
+                    $0.builtInTools = catalog.builtInTools
                     $0.extensionsLoaded = true
                     if !preserveOppi {
                         $0.authoritativeOppiConfiguration = catalog.oppiConfiguration
@@ -552,11 +569,13 @@ final class ServerResourceStore {
 
     func replaceExtensions(
         _ extensions: [ServerExtensionSummary],
+        builtInTools: [ServerToolSummary] = [],
         oppiConfiguration: OppiExtensionConfiguration,
         serverId: String
     ) {
         update(serverId) {
             $0.extensions = extensions
+            $0.builtInTools = builtInTools
             $0.extensionsLoaded = true
             for resource in extensions where !resource.isBuiltInOppi {
                 Self.advanceNormalResourceVersion(.normalExtension(resource.id), in: &$0)
@@ -591,6 +610,7 @@ final class ServerResourceStore {
                snapshot.extensionsLoaded,
                let configuration = snapshot.oppiConfiguration {
                 $0.extensions = snapshot.extensions
+                $0.builtInTools = snapshot.builtInTools
                 $0.extensionsLoaded = true
                 $0.authoritativeOppiConfiguration = configuration
                 $0.desiredOppiConfiguration = configuration
@@ -667,6 +687,9 @@ final class ServerResourceStore {
             ServerResourceCatalogSnapshot(
                 skills: cachedSkills,
                 extensions: cachedExtensions,
+                builtInTools: hasCurrentExtensions
+                    ? partition.builtInTools
+                    : (existing?.builtInTools ?? []),
                 oppiConfiguration: cachedConfiguration,
                 savedAt: savedAt,
                 skillsLoaded: skillsLoaded,
@@ -1061,7 +1084,9 @@ final class ServerResourceStore {
             state: state,
             loadError: resource.loadError,
             warnings: resource.warnings,
-            isRemovable: resource.isRemovable
+            isRemovable: resource.isRemovable,
+            contributedTools: resource.contributedTools,
+            contributedToolDetails: resource.contributedToolDetails
         )
     }
 

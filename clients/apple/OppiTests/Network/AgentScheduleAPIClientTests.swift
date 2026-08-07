@@ -183,6 +183,10 @@ struct AgentScheduleAPIClientTests {
             #expect(resources["skillPaths"] is NSNull)
             #expect(resources["extensionIds"] as? [String] == [])
             #expect(resources["promptTemplateIds"] is NSNull)
+            let defaults = try #require(json["sessionDefaults"] as? [String: Any])
+            #expect(defaults["tools"] as? [String] == [])
+            #expect(defaults["excludeTools"] is NSNull)
+            #expect(defaults["noTools"] is NSNull)
             return mockResponse(json: """
             {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":4,"definition":{"name":"Reviewer","resources":{"extensionIds":[]}},"createdAt":1000,"updatedAt":4000}}
             """)
@@ -196,7 +200,8 @@ struct AgentScheduleAPIClientTests {
             model: nil,
             thinkingLevel: nil,
             skillPaths: nil,
-            extensionIds: []
+            extensionIds: [],
+            tools: []
         )
 
         #expect(updated.definition.resources?.skillPaths == nil)
@@ -269,7 +274,8 @@ struct AgentScheduleAPIClientTests {
             #expect(json["name"] as? String == "Home Agent")
             #expect(json["description"] is NSNull)
             #expect(json["instructions"] is NSNull)
-            #expect(json["sessionDefaults"] is [String: Any])
+            let defaults = try #require(json["sessionDefaults"] as? [String: Any])
+            #expect(Set(defaults.keys) == ["model", "thinkingLevel"])
             return mockResponse(json: """
             {"agent":{"id":"oppi-default-agent","name":"Home Agent","status":"active","version":2,"definition":{"name":"Home Agent","resources":{"noContextFiles":true}},"createdAt":1000,"updatedAt":2000}}
             """)
@@ -322,6 +328,37 @@ struct AgentScheduleAPIClientTests {
             #expect(failure.recovery.missingTools == ["research_web_search"])
         }
     }
+
+    @Test func agentLaunchCanCreateSessionWithoutDispatchingPrompt() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/agents/agent-1/sessions")
+            let json = try #require(
+                JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
+            )
+            #expect(json["prompt"] == nil)
+            #expect(json["idempotencyKey"] as? String == "stable-launch-key")
+            let target = try #require(json["target"] as? [String: Any])
+            #expect(target["workspaceId"] as? String == "ws-1")
+            return mockResponse(status: 201, json: """
+            {"receipt":{"accepted":true,"agentId":"agent-1","agentVersion":2,"sessionId":"session-1","promptDispatch":"not_sent"},"session":{"id":"session-1","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"cost":0,"runtime":"oppi","workspaceId":"ws-1"}}
+            """)
+        }
+
+        let response = try await client.launchAgentSession(
+            agentId: "agent-1",
+            prompt: nil,
+            workspaceId: "ws-1",
+            idempotencyKey: "stable-launch-key"
+        )
+
+        #expect(response.receipt.promptDispatch == "not_sent")
+        #expect(response.session?.id == "session-1")
+    }
+
 
     @Test func agentIconUpdateSendsOnlyIconForSetAndClear() async throws {
         let client = makeClient()

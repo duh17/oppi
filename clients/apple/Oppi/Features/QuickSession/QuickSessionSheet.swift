@@ -43,6 +43,24 @@ struct QuickSessionOverlayLayout {
     }
 }
 
+private struct AgentQuickSessionSubmitKey: Equatable {
+    let serverId: String
+    let workspaceId: String
+    let agentId: String
+    let prompt: String
+    let attachmentIds: [String]
+    let modelId: String?
+    let thinkingLevel: ThinkingLevel?
+}
+
+private struct AgentQuickSessionSubmitAttempt {
+    let key: AgentQuickSessionSubmitKey
+    let launchIdempotencyKey: String
+    let clientTurnId: String
+    var sessionId: String?
+    var uploadedAttachments: [ChatAttachmentRef]?
+}
+
 /// Compact sheet for starting a new session.
 ///
 /// Presented from Oppi, the Control widget, App Intents, or saved share intake.
@@ -74,6 +92,8 @@ struct QuickSessionSheet: View {
     @State private var selectedAgentId: String?
     @State private var availableAgents: [AgentDefinitionSummary] = []
     @State private var isLoadingAgents = false
+    @State private var agentLoadGeneration: UInt64 = 0
+    @State private var shouldRememberAgentSelection = true
     /// When an Agent is selected, model/thinking only apply if the user sets them.
     @State private var agentModelOverride: String?
     @State private var agentThinkingOverride: ThinkingLevel?
@@ -81,6 +101,7 @@ struct QuickSessionSheet: View {
     @State private var showExpandedComposer = false
     @State private var isInitialized = false
     @State private var isCreating = false
+    @State private var agentSubmitAttempt: AgentQuickSessionSubmitAttempt?
     @State private var error: String?
     @State private var launchFailure: AgentLaunchFailureResponse?
     @State private var voiceInputManager: VoiceInputManager?
@@ -153,7 +174,7 @@ struct QuickSessionSheet: View {
     }
 
     private var selectedServerIconAssetCache: IconAssetCache? {
-        selectedServerConnection().iconAssetCache
+        selectedServerConnection()?.iconAssetCache
     }
 
     var body: some View {
@@ -247,6 +268,7 @@ struct QuickSessionSheet: View {
         }
         .onChange(of: selectedServerId) { _, _ in
             configureVoiceInputForSelectedServer()
+            guard isInitialized else { return }
             Task { await loadAgentsForSelectedServer() }
         }
         .onChange(of: text) { _, newValue in
@@ -417,6 +439,7 @@ struct QuickSessionSheet: View {
         selectedAgentId = agentId
         agentModelOverride = nil
         agentThinkingOverride = nil
+        shouldRememberAgentSelection = true
         showAgentPicker = false
         error = nil
         launchFailure = nil
@@ -462,6 +485,12 @@ struct QuickSessionSheet: View {
     }
 
     private func selectWorkspace(_ workspace: Workspace, serverId: String) {
+        if selectedServerId != serverId {
+            selectedAgentId = nil
+            agentModelOverride = nil
+            agentThinkingOverride = nil
+            shouldRememberAgentSelection = true
+        }
         selectedWorkspace = workspace
         selectedWorkspaceSelectionSource = "manual"
         selectedServerId = serverId
@@ -480,8 +509,16 @@ struct QuickSessionSheet: View {
             text = composerDraftStore.quickSessionDraftText
         }
 
-        // Select workspace: last used > explicit default > first available.
-        let all = rawServerWorkspaces
+        let launchContext = navigation.pendingQuickSessionLaunchContext
+        navigation.pendingQuickSessionLaunchContext = nil
+        shouldRememberAgentSelection = launchContext == nil
+
+        // Select workspace: requested Agent server, then last used > explicit default > first available.
+        // Prefer constraint-filtered lists when an Agent is already known.
+        let baseWorkspaces = launchContext.map { context in
+            rawServerWorkspaces.filter { $0.serverId == context.serverId }
+        } ?? rawServerWorkspaces
+        let all = baseWorkspaces
         if let preferred = AppPreferences.QuickSession.preferredWorkspaceSelection(
             in: all.map { (id: $0.workspace.id, name: $0.workspace.name) }
         ), let match = all.first(where: { $0.workspace.id == preferred.id }) {
@@ -492,6 +529,10 @@ struct QuickSessionSheet: View {
             selectedWorkspace = first.workspace
             selectedWorkspaceSelectionSource = "first_available"
             selectedServerId = first.serverId
+        } else if let launchContext {
+            selectedServerId = launchContext.serverId
+        } else {
+            selectedServerId = coordinator.activeServerId
         }
 
         // Initialize voice input
@@ -501,7 +542,7 @@ struct QuickSessionSheet: View {
             configureVoiceInputForSelectedServer(manager)
         }
 
-        await loadAgentsForSelectedServer()
+        await loadAgentsForSelectedServer(requestedAgentId: launchContext?.agentId)
 
         if let pendingPayload = QuickSessionTrigger.shared.consumePendingPayload() {
             applyInitialPayload(pendingPayload)
@@ -514,7 +555,7 @@ struct QuickSessionSheet: View {
         await moveAccessibilityFocusToComposer()
 
         // Ensure model cache is fresh for the selected server.
-        if let api = selectedServerConnection().apiClient {
+        if let api = selectedServerConnection()?.apiClient {
             await chatState.refreshModelCache(api: api)
         }
 
@@ -571,7 +612,7 @@ struct QuickSessionSheet: View {
 
     private func configureVoiceInputForSelectedServer(_ manager: VoiceInputManager? = nil) {
         guard let manager = manager ?? voiceInputManager else { return }
-        let targetConnection = selectedServerConnection()
+        guard let targetConnection = selectedServerConnection() else { return }
         manager.setServerCredentials(targetConnection.credentials)
         manager.setServerConnection(targetConnection)
         manager.setPlaybackInterrupter(targetConnection.audioPlayer)
@@ -585,10 +626,9 @@ struct QuickSessionSheet: View {
         manager.setServerDictationTarget(nil)
     }
 
-    private func selectedServerConnection() -> ServerConnection {
-        if let selectedServerId,
-           let connection = coordinator.connection(for: selectedServerId) {
-            return connection
+    private func selectedServerConnection() -> ServerConnection? {
+        if let selectedServerId {
+            return coordinator.connection(for: selectedServerId)
         }
         return coordinator.activeConnection
     }
@@ -628,14 +668,24 @@ struct QuickSessionSheet: View {
         }
     }
 
-    private func loadAgentsForSelectedServer() async {
-        isLoadingAgents = true
-        defer { isLoadingAgents = false }
-
-        let connection = selectedServerConnection()
-        guard let api = connection.apiClient else {
+    private func loadAgentsForSelectedServer(requestedAgentId: String? = nil) async {
+        guard let targetServerId = selectedServerId ?? coordinator.activeServerId else {
             availableAgents = []
             selectedAgentId = nil
+            return
+        }
+        if selectedServerId == nil { selectedServerId = targetServerId }
+        agentLoadGeneration &+= 1
+        let generation = agentLoadGeneration
+        isLoadingAgents = true
+
+        guard let connection = coordinator.connection(for: targetServerId),
+              let api = connection.apiClient else {
+            if generation == agentLoadGeneration, selectedServerId == targetServerId {
+                availableAgents = []
+                selectedAgentId = nil
+                isLoadingAgents = false
+            }
             return
         }
 
@@ -645,18 +695,38 @@ struct QuickSessionSheet: View {
                 .sorted {
                     $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
                 }
+            guard generation == agentLoadGeneration, selectedServerId == targetServerId else {
+                return
+            }
             availableAgents = agents
-            selectedAgentId = QuickSessionLaunchRouting.preferredAgentId(
-                lastAgentId: AppPreferences.QuickSession.lastAgentId,
-                availableAgentIds: agents.map(\.id)
-            )
+            if let requestedAgentId {
+                if agents.contains(where: { $0.id == requestedAgentId }) {
+                    selectedAgentId = requestedAgentId
+                } else {
+                    selectedAgentId = nil
+                    error = "This Agent is no longer available on the selected server."
+                }
+            } else {
+                selectedAgentId = QuickSessionLaunchRouting.preferredAgentId(
+                    lastAgentId: AppPreferences.QuickSession.lastAgentId,
+                    availableAgentIds: agents.map(\.id)
+                )
+            }
             agentModelOverride = nil
             agentThinkingOverride = nil
             requireExplicitCompatibleWorkspaceIfNeeded()
+            isLoadingAgents = false
         } catch {
+            guard generation == agentLoadGeneration, selectedServerId == targetServerId else {
+                return
+            }
             logger.warning("Failed to load agents for quick session: \(error.localizedDescription, privacy: .public)")
             availableAgents = []
             selectedAgentId = nil
+            if requestedAgentId != nil {
+                self.error = "Could not load this Agent: \(error.localizedDescription)"
+            }
+            isLoadingAgents = false
         }
     }
 
@@ -721,12 +791,12 @@ struct QuickSessionSheet: View {
         Task { @MainActor in
             do {
                 // Use the correct server's API client
-                let targetConnection = coordinator.connection(for: serverId) ?? coordinator.activeConnection
-                guard let api = targetConnection.apiClient else {
+                guard let targetConnection = coordinator.connection(for: serverId),
+                      let api = targetConnection.apiClient else {
                     throw QuickSessionError.noConnection
                 }
 
-                let session: Session
+                var session: Session
                 let autoSendMessage: String?
                 let autoSendAttachments: [PendingAttachment]?
 
@@ -745,23 +815,92 @@ struct QuickSessionSheet: View {
                     AppPreferences.QuickSession.saveThinkingLevel(thinking)
 
                 case .agent(let agentId):
-                    let response = try await api.launchAgentSession(
+                    // Keep stable launch and turn IDs until authoritative delivery is
+                    // confirmed. Retrying an ambiguous HTTP failure must resume the same
+                    // Agent session rather than create and prompt a second one.
+                    let submitKey = AgentQuickSessionSubmitKey(
+                        serverId: serverId,
+                        workspaceId: workspace.id,
                         agentId: agentId,
                         prompt: plan.prompt,
-                        workspaceId: workspace.id,
-                        model: modelId,
+                        attachmentIds: attachments.map(\.id),
+                        modelId: modelId,
                         thinkingLevel: agentThinking
                     )
-                    guard QuickSessionLaunchRouting.canNavigateAfterAgentLaunch(response),
-                          let launched = response.session else {
-                        throw QuickSessionError.agentLaunchFailed(
-                            response.receipt.promptError
-                                ?? response.receipt.reason
-                                ?? "The Agent did not start. Review its configuration and try again."
+                    var attempt: AgentQuickSessionSubmitAttempt
+                    if let pending = agentSubmitAttempt, pending.key == submitKey {
+                        attempt = pending
+                    } else {
+                        let attemptId = UUID().uuidString
+                        attempt = AgentQuickSessionSubmitAttempt(
+                            key: submitKey,
+                            launchIdempotencyKey: "ios-agent-launch-\(attemptId)",
+                            clientTurnId: "quick-agent-\(attemptId)"
                         )
+                        agentSubmitAttempt = attempt
                     }
-                    session = launched
-                    // Prompt is delivered by the agent launch path.
+
+                    let launchedSessionId: String
+                    if let pendingSessionId = attempt.sessionId {
+                        launchedSessionId = pendingSessionId
+                    } else {
+                        do {
+                            let response = try await api.launchAgentSession(
+                                agentId: agentId,
+                                prompt: nil,
+                                workspaceId: workspace.id,
+                                model: modelId,
+                                thinkingLevel: agentThinking,
+                                idempotencyKey: attempt.launchIdempotencyKey
+                            )
+                            // Create-only launch: prompt is sent after attachment upload.
+                            // Reject non-accepted receipts and missing sessions.
+                            guard response.receipt.accepted, let launched = response.session else {
+                                throw QuickSessionError.agentLaunchFailed(
+                                    response.receipt.promptError
+                                        ?? response.receipt.reason
+                                        ?? "The Agent did not start. Review its configuration and try again."
+                                )
+                            }
+                            launchedSessionId = launched.id
+                            attempt.sessionId = launched.id
+                            agentSubmitAttempt = attempt
+                        } catch let failure as AgentLaunchFailureResponse {
+                            launchFailure = failure
+                            throw QuickSessionError.agentLaunchFailed(failure.localizedDescription)
+                        }
+                    }
+
+                    let scope = SessionRouteScope.workspace(workspace.id)
+                    session = try await api.resumeWorkspaceSession(
+                        workspaceId: workspace.id,
+                        sessionId: launchedSessionId
+                    )
+                    let uploaded: [ChatAttachmentRef]
+                    if let pendingUploads = attempt.uploadedAttachments {
+                        uploaded = pendingUploads
+                    } else {
+                        uploaded = try await PendingAttachmentUploader.upload(
+                            attachments,
+                            api: api,
+                            scope: scope,
+                            sessionId: launchedSessionId
+                        )
+                        attempt.uploadedAttachments = uploaded
+                        agentSubmitAttempt = attempt
+                    }
+                    try await api.sendWorkspaceSessionCommand(
+                        workspaceId: workspace.id,
+                        sessionId: launchedSessionId,
+                        message: .prompt(
+                            message: plan.prompt,
+                            attachments: uploaded.isEmpty ? nil : uploaded,
+                            requestId: attempt.clientTurnId,
+                            clientTurnId: attempt.clientTurnId
+                        )
+                    )
+                    session = try await api.getSession(scope: scope, sessionId: launchedSessionId).session
+                    agentSubmitAttempt = nil
                     autoSendMessage = nil
                     autoSendAttachments = nil
                 }
@@ -772,7 +911,9 @@ struct QuickSessionSheet: View {
                 targetConnection.sessionStore.upsert(session)
 
                 AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
-                AppPreferences.QuickSession.saveAgentId(selectedAgentId)
+                if shouldRememberAgentSelection {
+                    AppPreferences.QuickSession.saveAgentId(selectedAgentId)
+                }
                 ChatSessionTelemetry.recordTimingMetric(
                     .quickSessionCreateMs,
                     durationMs: max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs),

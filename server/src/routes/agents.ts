@@ -171,11 +171,12 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         helpers.error(res, 400, "Oppi launch overrides cannot change tools");
         return true;
       }
-      const prompt = parsePromptText(body.prompt);
-      if (!prompt) {
-        helpers.error(res, 400, "prompt.text required");
+      const parsedPrompt = parsePrompt(body.prompt);
+      if (parsedPrompt.error) {
+        helpers.error(res, 400, parsedPrompt.error);
         return true;
       }
+      const prompt = parsedPrompt.text;
       if (!body.target?.workspaceId?.trim()) {
         helpers.error(res, 400, "target.workspaceId required");
         return true;
@@ -214,7 +215,7 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         allowNestedDelegation: body.allowNestedDelegation === true,
         target: { workspace, worktreeId: worktreeSelection.worktreeId },
         prompt,
-        attachments: body.prompt?.attachments,
+        attachments: parsedPrompt.attachments,
         idempotencyKey: body.idempotencyKey,
         leaseOwner: body.launchLeaseOwner ?? "agent-api-launch",
         source: "agent",
@@ -410,10 +411,7 @@ function parseExpectedAgentVersion(url: URL): number | undefined {
 }
 
 interface CreateAgentSessionRequest {
-  prompt?: {
-    text?: string;
-    attachments?: ChatAttachmentRef[];
-  };
+  prompt?: unknown;
   target?: {
     workspaceId?: string;
     worktreeId?: string;
@@ -440,9 +438,93 @@ function serializeAgent(agent: StoredAgentDefinition): Record<string, unknown> {
   };
 }
 
-function parsePromptText(prompt: CreateAgentSessionRequest["prompt"]): string | undefined {
-  const text = prompt?.text?.trim();
-  return text ? text : undefined;
+const ATTACHMENT_KINDS = new Set(["image", "text", "pdf", "audio", "video", "archive", "unknown"]);
+
+function parsePrompt(prompt: unknown): {
+  text?: string;
+  attachments?: ChatAttachmentRef[];
+  error?: string;
+} {
+  if (prompt === undefined) return {};
+  if (!isRecord(prompt)) return { error: "prompt must be an object" };
+  if (typeof prompt.text !== "string" || !prompt.text.trim()) {
+    return { error: "prompt.text required" };
+  }
+  if (prompt.attachments !== undefined && !Array.isArray(prompt.attachments)) {
+    return { error: "prompt.attachments must be an array" };
+  }
+  if ((prompt.attachments?.length ?? 0) > 100) {
+    return { error: "prompt.attachments must contain at most 100 items" };
+  }
+
+  const attachments: ChatAttachmentRef[] = [];
+  for (const [index, value] of (prompt.attachments ?? []).entries()) {
+    const parsed = parsePromptAttachment(value, index);
+    if (typeof parsed === "string") return { error: parsed };
+    attachments.push(parsed);
+  }
+  return {
+    text: prompt.text.trim(),
+    ...(prompt.attachments !== undefined ? { attachments } : {}),
+  };
+}
+
+function parsePromptAttachment(value: unknown, index: number): ChatAttachmentRef | string {
+  const field = `prompt.attachments[${index}]`;
+  if (!isRecord(value)) return `${field} must be an object`;
+  if (value.type !== "attachment") return `${field}.type must be attachment`;
+  if (value.source !== "upload" && value.source !== "workspace") {
+    return `${field}.source must be upload or workspace`;
+  }
+  const id = boundedInputString(value.id, 512);
+  if (!id) return `${field}.id must be a non-empty string of at most 512 characters`;
+  const name = boundedInputString(value.name, 512);
+  if (!name) return `${field}.name must be a non-empty string of at most 512 characters`;
+  const mimeType = boundedInputString(value.mimeType, 256);
+  if (!mimeType) {
+    return `${field}.mimeType must be a non-empty string of at most 256 characters`;
+  }
+  if (!Number.isSafeInteger(value.sizeBytes) || (value.sizeBytes as number) < 0) {
+    return `${field}.sizeBytes must be a non-negative safe integer`;
+  }
+  if (
+    value.sha256 !== undefined &&
+    (typeof value.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(value.sha256))
+  ) {
+    return `${field}.sha256 must be a 64-character hexadecimal string`;
+  }
+  if (
+    value.kind !== undefined &&
+    (typeof value.kind !== "string" || !ATTACHMENT_KINDS.has(value.kind))
+  ) {
+    return `${field}.kind is invalid`;
+  }
+  const workspacePath =
+    value.workspacePath === undefined ? undefined : boundedInputString(value.workspacePath, 4096);
+  if (value.workspacePath !== undefined && !workspacePath) {
+    return `${field}.workspacePath must be a non-empty string of at most 4096 characters`;
+  }
+  if (value.source === "workspace" && !workspacePath) {
+    return `${field}.workspacePath is required for workspace attachments`;
+  }
+
+  return {
+    type: "attachment",
+    id,
+    source: value.source,
+    name,
+    mimeType,
+    sizeBytes: value.sizeBytes as number,
+    ...(typeof value.sha256 === "string" ? { sha256: value.sha256 } : {}),
+    ...(value.kind !== undefined ? { kind: value.kind as ChatAttachmentRef["kind"] } : {}),
+    ...(workspacePath ? { workspacePath } : {}),
+  };
+}
+
+function boundedInputString(value: unknown, maximumLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed && trimmed.length <= maximumLength ? trimmed : undefined;
 }
 
 function invalidDelegationFields(

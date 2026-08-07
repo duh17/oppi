@@ -118,8 +118,8 @@ struct AgentSessionDefaults: Codable, Sendable, Equatable {
     var isEmpty: Bool {
         model?.isEmpty ?? true
             && thinkingLevel == nil
-            && (tools?.isEmpty ?? true)
-            && (excludeTools?.isEmpty ?? true)
+            && tools == nil
+            && excludeTools == nil
             && noTools == nil
     }
 }

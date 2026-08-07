@@ -6,6 +6,13 @@ import {
   DefaultPackageManager,
   DefaultResourceLoader,
   SettingsManager,
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  createLsToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
   loadSkills,
   type Extension,
   type PackageSource,
@@ -69,6 +76,12 @@ export interface ServerSkillDetail {
   files: string[];
 }
 
+export interface ServerToolSummary {
+  name: string;
+  description?: string;
+  defaultEnabled?: boolean;
+}
+
 export interface ServerExtensionSummary {
   id: string;
   name: string;
@@ -82,12 +95,14 @@ export interface ServerExtensionSummary {
   warnings: string[];
   isRemovable: false;
   contributedTools?: string[];
+  contributedToolDetails?: ServerToolSummary[];
   contributedCommands?: string[];
 }
 
 export interface ServerExtensionDetail {
   summary: ServerExtensionSummary;
   contributedTools?: string[];
+  contributedToolDetails?: ServerToolSummary[];
   contributedCommands?: string[];
 }
 
@@ -177,12 +192,14 @@ export class ServerResourceService {
 
   async listExtensions(): Promise<{
     extensions: ServerExtensionSummary[];
+    builtInTools: ServerToolSummary[];
     oppiConfiguration: OppiExtensionSettingsSnapshot;
   }> {
     const configuration = this.oppiSettings.get();
     const entries = await this.buildExtensionCatalog(await this.resolveContext(), configuration);
     return {
       extensions: entries.map((entry) => copyExtensionSummary(entry.summary)),
+      builtInTools: builtInToolSummaries(this.catalogCwd),
       oppiConfiguration: configuration,
     };
   }
@@ -259,15 +276,31 @@ export class ServerResourceService {
   }
 
   async getExtensionDetail(id: string): Promise<ServerExtensionDetail> {
+    return this.extensionDetail(id, false);
+  }
+
+  /** Inspect tools only after a user explicitly selects an Extension for an Agent. */
+  async inspectAgentExtensionTools(id: string): Promise<ServerExtensionDetail> {
+    if (id === "oppi") throw new ServerResourceNotFoundError("extension");
+    return this.extensionDetail(id, true);
+  }
+
+  private async extensionDetail(id: string, inspectTools: boolean): Promise<ServerExtensionDetail> {
     const configuration = this.oppiSettings.get();
-    const entry = (
-      await this.buildExtensionCatalog(await this.resolveContext(), configuration)
-    ).find((candidate) => candidate.summary.id === id);
+    const context = await this.resolveContext();
+    if (id !== "oppi") this.findResourceById("extension", context.extensions, id);
+    const inspectToolIds = inspectTools ? new Set([id]) : new Set<string>();
+    const entry = (await this.buildExtensionCatalog(context, configuration, inspectToolIds)).find(
+      (candidate) => candidate.summary.id === id,
+    );
     if (!entry) throw new ServerResourceNotFoundError("extension");
     const summary = copyExtensionSummary(entry.summary);
     return {
       summary,
       contributedTools: summary.contributedTools ? [...summary.contributedTools] : undefined,
+      contributedToolDetails: summary.contributedToolDetails
+        ? summary.contributedToolDetails.map(copyToolSummary)
+        : undefined,
       contributedCommands: summary.contributedCommands
         ? [...summary.contributedCommands]
         : undefined,
@@ -421,13 +454,29 @@ export class ServerResourceService {
   private async buildExtensionCatalog(
     context: ResolutionContext,
     configuration: OppiExtensionSettingsSnapshot,
+    inspectToolIds: ReadonlySet<string> = new Set(),
   ): Promise<ExtensionCatalogEntry[]> {
-    const resources = context.extensions.map((resource) => ({
-      resource,
-      canonicalPath: canonicalPath(resource.path),
-    }));
+    const resourcesByCanonicalPath = new Map<
+      string,
+      { resource: ResolvedResource; canonicalPath: string }
+    >();
+    for (const resource of context.extensions) {
+      const path = canonicalPath(resource.path);
+      const current = resourcesByCanonicalPath.get(path);
+      if (
+        !current ||
+        (current.resource.metadata.origin !== "package" && resource.metadata.origin === "package")
+      ) {
+        resourcesByCanonicalPath.set(path, { resource, canonicalPath: path });
+      }
+    }
+    const resources = [...resourcesByCanonicalPath.values()];
     const enabledPaths = resources
-      .filter((entry) => entry.resource.enabled)
+      .filter(
+        (entry) =>
+          entry.resource.enabled ||
+          inspectToolIds.has(resourceId("extension", entry.canonicalPath)),
+      )
       .map((entry) => entry.resource.path);
     const loader = new DefaultResourceLoader({
       cwd: context.cwd,
@@ -466,14 +515,26 @@ export class ServerResourceService {
           resourceContainsPath(resource, error.path) || pathsMatch(error.path, resource.path),
       );
       const warnings = boundedWarnings(extensionErrors.slice(1).map((error) => error.error));
-      const loadError = resource.enabled
+      const extensionId = resourceId("extension", path);
+      const wasLoadedForCatalog = resource.enabled || inspectToolIds.has(extensionId);
+      const loadError = wasLoadedForCatalog
         ? (extensionErrors[0]?.error ?? (!extension ? "Extension could not be loaded" : undefined))
         : undefined;
-      const contributedTools = extension ? [...extension.tools.keys()].sort() : undefined;
+      const contributedToolDetails = extension
+        ? [...extension.tools.entries()]
+            .map(([name, tool]) => ({
+              name,
+              ...(tool.definition.description
+                ? { description: boundMessage(tool.definition.description) }
+                : {}),
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name, "en-US"))
+        : undefined;
+      const contributedTools = contributedToolDetails?.map((tool) => tool.name);
       const contributedCommands = extension ? [...extension.commands.keys()].sort() : undefined;
       const packageName = configuredPackageName(resource.metadata.source);
       const summary: ServerExtensionSummary = {
-        id: resourceId("extension", path),
+        id: extensionId,
         name: boundMessage(extensionNameFromPath(resource.path)),
         kind: extensionKind(resource),
         provenance: resourceProvenance(resource, context.agentDir),
@@ -484,6 +545,7 @@ export class ServerResourceService {
         warnings,
         isRemovable: false,
         ...(contributedTools ? { contributedTools } : {}),
+        ...(contributedToolDetails ? { contributedToolDetails } : {}),
         ...(contributedCommands ? { contributedCommands } : {}),
       };
       return { resource, canonicalPath: path, summary };
@@ -813,12 +875,36 @@ function copySkillSummary(summary: ServerSkillSummary): ServerSkillSummary {
   return { ...summary, provenance: { ...summary.provenance }, warnings: [...summary.warnings] };
 }
 
+function builtInToolSummaries(cwd: string): ServerToolSummary[] {
+  const defaultToolNames = new Set(["read", "bash", "edit", "write"]);
+  return [
+    createReadToolDefinition(cwd),
+    createBashToolDefinition(cwd),
+    createEditToolDefinition(cwd),
+    createWriteToolDefinition(cwd),
+    createGrepToolDefinition(cwd),
+    createFindToolDefinition(cwd),
+    createLsToolDefinition(cwd),
+  ].map((tool) => ({
+    name: tool.name,
+    ...(tool.description ? { description: boundMessage(tool.description) } : {}),
+    defaultEnabled: defaultToolNames.has(tool.name),
+  }));
+}
+
+function copyToolSummary(summary: ServerToolSummary): ServerToolSummary {
+  return { ...summary };
+}
+
 function copyExtensionSummary(summary: ServerExtensionSummary): ServerExtensionSummary {
   return {
     ...summary,
     provenance: { ...summary.provenance },
     warnings: [...summary.warnings],
     contributedTools: summary.contributedTools ? [...summary.contributedTools] : undefined,
+    contributedToolDetails: summary.contributedToolDetails
+      ? summary.contributedToolDetails.map(copyToolSummary)
+      : undefined,
     contributedCommands: summary.contributedCommands ? [...summary.contributedCommands] : undefined,
   };
 }

@@ -1562,98 +1562,19 @@ struct ChatView: View {
     private func uploadPendingLocalAttachments(
         _ sourceAttachments: [PendingAttachment]
     ) async throws -> [ChatAttachmentRef] {
-        let localAttachments = sourceAttachments.filter { $0.source == .image || $0.source == .localFile }
-        guard !localAttachments.isEmpty else { return [] }
         guard let api = connection.apiClient else {
             throw APIError.server(status: 503, message: "No server connection available")
         }
         guard let routeScope = focusedRouteScope else {
             throw TreeNavigationError.sessionNotReady
         }
-
-        let imageAutoResize: Bool
-        if localAttachments.contains(where: { $0.source == .image }) {
-            imageAutoResize = await imageAutoResizeEnabled(api: api)
-        } else {
-            imageAutoResize = false
-        }
-
-        var uploaded: [ChatAttachmentRef] = []
-        for (index, pending) in localAttachments.enumerated() {
-            attachmentPreparationText = "Uploading attachment \(index + 1) of \(localAttachments.count)…"
-
-            let payload: (data: Data, mimeType: String, name: String)
-            switch pending.source {
-            case .image:
-                guard let imageAttachment = pending.imageAttachment else {
-                    throw APIError.server(status: 400, message: "Invalid pending image data")
-                }
-                let uploadAttachment = PendingImage.uploadAttachment(
-                    from: imageAttachment,
-                    autoResize: imageAutoResize
-                )
-                guard let data = Data(base64Encoded: uploadAttachment.data, options: .ignoreUnknownCharacters) else {
-                    throw APIError.server(status: 400, message: "Invalid pending image data")
-                }
-                let name = imageUploadName(
-                    displayName: pending.displayName,
-                    mimeType: uploadAttachment.mimeType,
-                    index: index
-                )
-                payload = (data, uploadAttachment.mimeType, name)
-            case .localFile:
-                guard let data = pending.localFileData,
-                      let mimeType = pending.localMimeType else {
-                    throw APIError.server(status: 400, message: "Invalid pending file data")
-                }
-                payload = (data, mimeType, pending.displayName)
-            }
-
-            let upload = try await api.createSessionAttachmentUpload(
-                scope: routeScope,
-                sessionId: sessionId,
-                name: payload.name,
-                mimeType: payload.mimeType,
-                sizeBytes: payload.data.count
-            )
-            let attachment = try await api.uploadSessionAttachmentContent(
-                scope: routeScope,
-                sessionId: sessionId,
-                attachmentId: upload.uploadId,
-                data: payload.data,
-                contentType: payload.mimeType
-            )
-            uploaded.append(attachment)
-        }
-        return uploaded
-    }
-
-    private func imageAutoResizeEnabled(api: APIClient) async -> Bool {
-        do {
-            return try await api.serverInfo().images?.autoResize ?? false
-        } catch {
-            return false
-        }
-    }
-
-    private func imageUploadName(displayName: String, mimeType: String, index: Int) -> String {
-        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fileExtension = imageUploadFileExtension(for: mimeType)
-        if !trimmed.isEmpty,
-           trimmed.lowercased().hasSuffix(".\(fileExtension)") {
-            return trimmed
-        }
-        return "image-\(index + 1).\(fileExtension)"
-    }
-
-    private func imageUploadFileExtension(for mimeType: String) -> String {
-        switch mimeType.split(separator: ";", maxSplits: 1).first?.lowercased() {
-        case "image/png": return "png"
-        case "image/gif": return "gif"
-        case "image/webp": return "webp"
-        case "image/jpeg", "image/jpg": return "jpg"
-        default: return "jpg"
-        }
+        return try await PendingAttachmentUploader.upload(
+            sourceAttachments,
+            api: api,
+            scope: routeScope,
+            sessionId: sessionId,
+            onProgress: { attachmentPreparationText = $0 }
+        )
     }
 
     private func uploadPreparationErrorMessage(_ error: Error) -> String {

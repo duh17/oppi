@@ -11,7 +11,6 @@ enum QuickSessionLaunchMode: Equatable, Sendable {
 enum QuickSessionLaunchValidationError: Equatable, Sendable, LocalizedError {
     case missingWorkspace
     case agentRequiresPrompt
-    case agentAttachmentsUnsupported
 
     var errorDescription: String? {
         switch self {
@@ -19,8 +18,6 @@ enum QuickSessionLaunchValidationError: Equatable, Sendable, LocalizedError {
             return "Choose a workspace first."
         case .agentRequiresPrompt:
             return "Add a message to start with an Agent."
-        case .agentAttachmentsUnsupported:
-            return "Remove attachments to start with an Agent."
         }
     }
 }
@@ -55,9 +52,6 @@ enum QuickSessionLaunchRouting {
         let agentId = request.agentId?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let agentId, !agentId.isEmpty {
-            if request.hasAttachments || request.hasRepoReferences {
-                return .failure(.agentAttachmentsUnsupported)
-            }
             if prompt.isEmpty {
                 return .failure(.agentRequiresPrompt)
             }
@@ -66,7 +60,7 @@ enum QuickSessionLaunchRouting {
                     mode: .agent(agentId: agentId),
                     workspaceId: workspaceId,
                     prompt: prompt,
-                    shouldAutoSend: false
+                    shouldAutoSend: true
                 )
             )
         }

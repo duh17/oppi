@@ -81,6 +81,10 @@ function makeRoutes() {
       },
     })),
     getExtensionDetail: vi.fn(async () => ({ summary: extension })),
+    inspectAgentExtensionTools: vi.fn(async () => ({
+      summary: extension,
+      contributedTools: ["review"],
+    })),
     setExtensionEnabled: vi.fn(async () => ({ ...extension, state: "off" as const })),
   };
   const storage = {
@@ -426,6 +430,16 @@ describe("server resource routes", () => {
     const detail = await dispatch(routes, "GET", `/server/resources/extensions/${extension.id}`);
     expect(detail.statusCode).toBe(200);
     expect(JSON.parse(detail.body)).toEqual({ summary: extension });
+    expect(serverResources.inspectAgentExtensionTools).not.toHaveBeenCalled();
+
+    const agentTools = await dispatch(
+      routes,
+      "GET",
+      `/server/resources/extensions/${extension.id}?agentTools=true`,
+    );
+    expect(agentTools.statusCode).toBe(200);
+    expect(JSON.parse(agentTools.body).contributedTools).toEqual(["review"]);
+    expect(serverResources.inspectAgentExtensionTools).toHaveBeenCalledWith(extension.id);
 
     const enabled = await dispatch(
       routes,

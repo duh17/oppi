@@ -338,7 +338,7 @@ describe("agent routes", () => {
         launchRes as never,
       );
       expect(launchRes.statusCode).toBe(400);
-      expect(JSON.parse(launchRes.body)).toEqual({ error: "prompt.text required" });
+      expect(JSON.parse(launchRes.body)).toEqual({ error: "target.workspaceId required" });
     } finally {
       store.close();
       rmSync(dataDir, { recursive: true, force: true });
@@ -1112,8 +1112,63 @@ describe("agent routes", () => {
         appEvents: { emitSessionCreated: vi.fn(), emitSessionSummary: vi.fn() },
       } as unknown as RouteContext;
       const dispatch = createAgentRoutes(ctx, createRouteHelpers());
-      const res = makeResponse();
 
+      for (const [prompt, expectedError] of [
+        ["invalid", "prompt must be an object"],
+        [{ text: 42 }, "prompt.text required"],
+        [{ text: "Review", attachments: "invalid" }, "prompt.attachments must be an array"],
+        [{ text: "Review", attachments: [null] }, "prompt.attachments[0] must be an object"],
+        [
+          { text: "Review", attachments: [{ type: "future" }] },
+          "prompt.attachments[0].type must be attachment",
+        ],
+        [
+          {
+            text: "Review",
+            attachments: [
+              {
+                type: "attachment",
+                id: "upload-1",
+                source: "upload",
+                name: "notes.txt",
+                mimeType: "text/plain",
+                sizeBytes: -1,
+              },
+            ],
+          },
+          "prompt.attachments[0].sizeBytes must be a non-negative safe integer",
+        ],
+        [
+          {
+            text: "Review",
+            attachments: [
+              {
+                type: "attachment",
+                id: "workspace-1",
+                source: "workspace",
+                name: "notes.txt",
+                mimeType: "text/plain",
+                sizeBytes: 12,
+              },
+            ],
+          },
+          "prompt.attachments[0].workspacePath is required for workspace attachments",
+        ],
+      ] as const) {
+        const invalidRes = makeResponse();
+        await dispatch({
+          method: "POST",
+          path: `/agents/${agent.id}/sessions`,
+          url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+          req: makeRequest({ prompt, target: { workspaceId: "ws-1" } }) as never,
+          res: invalidRes as never,
+        });
+        expect(invalidRes.statusCode).toBe(400);
+        expect(JSON.parse(invalidRes.body)).toEqual({ error: expectedError });
+      }
+      expect(sessions).toHaveLength(0);
+
+      const res = makeResponse();
       expect(
         await dispatch({
           method: "POST",
@@ -1162,6 +1217,40 @@ describe("agent routes", () => {
         name: "Oppi",
       });
       expect(sendPrompt).toHaveBeenCalledWith(body.receipt.sessionId, "Review this", {});
+
+      const draftRes = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: `/agents/${agent.id}/sessions`,
+        url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+        req: makeRequest({
+          target: { workspaceId: "ws-1" },
+          idempotencyKey: "agent-draft-1",
+        }) as never,
+        res: draftRes as never,
+      });
+
+      expect(draftRes.statusCode).toBe(201);
+      expect(JSON.parse(draftRes.body)).toMatchObject({
+        receipt: {
+          accepted: true,
+          agentId: agent.id,
+          agentVersion: 1,
+          promptDispatch: "not_sent",
+        },
+        session: {
+          workspaceId: "ws-1",
+          model: "agent-model",
+          thinkingLevel: "high",
+          launch: {
+            agentId: agent.id,
+            status: "accepted",
+            promptDispatch: "not_sent",
+          },
+        },
+      });
+      expect(startSession).toHaveBeenCalledOnce();
+      expect(sendPrompt).toHaveBeenCalledOnce();
 
       const modelError = new Error(
         'Required model "agent-model" is not available; refusing model fallback',
