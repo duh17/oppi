@@ -121,6 +121,10 @@ final class ServerConnection {
     private var focusedSessionStreamRouteScope: SessionRouteScope?
     private var focusedSessionStreamURL: URL?
     private(set) var transportPath: ConnectionTransportPath = .paired
+    /// True while a route demotion/reconfigure has torn down composition and a
+    /// replacement commit (or budgeted retry) is still outstanding. UI and stream
+    /// open paths treat this as recovering, not settled offline-on-LAN.
+    private(set) var isTransportDemoting = false
 
     var requiredSplitStreamCapabilitiesStatusForDiagnostics: String {
         if streamCapabilitiesRefreshFailed, streamCapabilitiesLoaded, missingRequiredSplitStreamCapabilities.isEmpty {
@@ -188,6 +192,9 @@ final class ServerConnection {
     }
 
     private func focusedSessionTransportState() -> ServerHealth.TransportState {
+        if isTransportDemoting {
+            return .connecting
+        }
         switch wsClient?.status {
         case .connected:
             return .connected
@@ -528,8 +535,8 @@ final class ServerConnection {
             sessionId: focusedSessionStreamSessionId,
             routeScope: focusedSessionStreamRouteScope
         )
-        let shouldReconnectFocused = streamConsumptionTask != nil || wsClient?.status != .disconnected
 
+        isTransportDemoting = true
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
         wsClient?.disconnect()
@@ -553,18 +560,24 @@ final class ServerConnection {
             irohProxyFactory: irohProxyFactory,
             credentialGrantDidChange: credentialGrantDidChange
         )
-        guard configured else { return false }
+        guard configured else {
+            // Leave `isTransportDemoting` set when the caller will schedule a
+            // budgeted retry; clear it only when this was a terminal failed pass.
+            return false
+        }
 
+        // Always reopen a prepared focused stream after route demotion. Sampling
+        // the previous socket status is wrong on Wi‑Fi→cell handoff: the LAN WS
+        // often reaches `.disconnected` before path monitor demotes the route.
         if let sessionId = focusedTarget.sessionId,
            let routeScope = focusedTarget.routeScope {
             prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: routeScope)
-            if shouldReconnectFocused {
-                connectStream()
-            }
+            connectStream()
         }
         if appEventStreamAvailable {
             startAppEventStreamIfAvailable()
         }
+        isTransportDemoting = false
         return true
     }
 
@@ -1212,9 +1225,32 @@ final class ServerConnection {
         }
 
         if wasOnLAN {
-            // LAN is tied to this network context. Its loss starts one fresh
-            // selection pass; paired HTTPS and Iroh own their own mobility.
-            _ = setDiscoveredLANEndpoint(nil)
+            // LAN is tied to this network context. Stop burning reconnect
+            // attempts against the dead private IP immediately, then start one
+            // fresh selection pass (paired HTTPS / Iroh). Stream rebind happens
+            // inside reconfigureForExplicitRetry once the next route commits.
+            isTransportDemoting = true
+            streamConsumptionTask?.cancel()
+            streamConsumptionTask = nil
+            if let wsClient {
+                wsClient.cancelReconnectBackoff()
+                wsClient.disconnect()
+            }
+
+            let transition = setDiscoveredLANEndpoint(nil)
+            if transition == nil {
+                if apiClient != nil {
+                    // Synchronous HTTP seam already rebound composition.
+                    isTransportDemoting = false
+                } else {
+                    // Endpoint already cleared or HTTPS not currently requested — still
+                    // force a demotion pass so we do not return with the socket down
+                    // and no replacement scheduled.
+                    Task { @MainActor [weak self] in
+                        await self?.reevaluateIrohPreferredTransportAtBoundary(excluding: [.lan])
+                    }
+                }
+            }
             return
         }
 
@@ -1487,10 +1523,11 @@ final class ServerConnection {
         defer { irohBoundaryReevaluationInFlight = false }
 
         var nextExclusions = exclusions
+        var demotionSucceeded = false
         repeat {
             pendingBoundaryReevaluation = false
             pendingBoundaryExclusions.removeAll()
-            _ = await reconfigureForExplicitRetry(
+            demotionSucceeded = await reconfigureForExplicitRetry(
                 credentials: credentials,
                 routeMode: configuredRouteMode,
                 excluding: nextExclusions,
@@ -1505,6 +1542,37 @@ final class ServerConnection {
             )
             nextExclusions = pendingBoundaryExclusions
         } while pendingBoundaryReevaluation || !nextExclusions.isEmpty
+
+        if demotionSucceeded {
+            return
+        }
+        // Boundary demotion tore composition down and failed to commit a
+        // replacement. Arm the shared automatic recovery budget instead of
+        // settling with nil clients until the user taps Retry.
+        scheduleAutomaticRecoveryAfterFailedDemotion(credentials: credentials)
+    }
+
+    private func scheduleAutomaticRecoveryAfterFailedDemotion(credentials: ServerCredentials) {
+        guard canAutomaticallyRetryInitialTransport else {
+            isTransportDemoting = false
+            return
+        }
+        if automaticIrohRecoveryAttempt == 0 {
+            guard reserveAutomaticIrohRecoveryAttempt() else {
+                isTransportDemoting = false
+                return
+            }
+        } else if automaticIrohRecoveryAttempt >= Self.automaticIrohRecoveryMaximumAttempts {
+            isTransportDemoting = false
+            return
+        } else if automaticIrohRecoveryNextAllowedAt == nil {
+            automaticIrohRecoveryNextAllowedAt = automaticIrohRecoveryNow().addingTimeInterval(
+                Self.automaticIrohRecoveryBackoff(attempt: automaticIrohRecoveryAttempt)
+            )
+        }
+        // Keep demoting=true while a budgeted retry is outstanding.
+        isTransportDemoting = true
+        scheduleAutomaticIrohRecoveryRetry(credentials: credentials)
     }
 
     private func installActiveIrohFailureHandler(
@@ -1733,10 +1801,12 @@ final class ServerConnection {
         guard configured else {
             if canAutomaticallyRetryInitialTransport,
                automaticIrohRecoveryAttempt < Self.automaticIrohRecoveryMaximumAttempts {
+                isTransportDemoting = true
                 scheduleAutomaticIrohRecoveryRetry(credentials: credentials)
             } else {
                 automaticIrohRecoveryRetryTask?.cancel()
                 automaticIrohRecoveryRetryTask = nil
+                isTransportDemoting = false
             }
             return
         }
@@ -1828,6 +1898,7 @@ final class ServerConnection {
         automaticIrohRecoveryNextAllowedAt = nil
         automaticIrohRecoveryRetryTask?.cancel()
         automaticIrohRecoveryRetryTask = nil
+        isTransportDemoting = false
     }
 
     private func automaticIrohRecoveryNow() -> Date {
@@ -1861,6 +1932,7 @@ final class ServerConnection {
         wsClient = nil
         endpointSelection = nil
         irohManager = nil
+        isTransportDemoting = false
         transportFailureDisposition = .failClosed
         ClientLog.error("Network", "Terminal transport failure; fallback disabled", metadata: [
             "transport": transportPath.rawValue,
@@ -2215,6 +2287,7 @@ final class ServerConnection {
 
     func streamSession(_ sessionId: String, routeScope: SessionRouteScope) async -> AsyncStream<SessionStreamEvent>? {
         await refreshStreamCapabilitiesIfNeeded()
+        await waitWhileTransportDemotingIfNeeded()
         guard hasRequiredSplitStreamCapabilities else {
             recordSessionStreamUnavailable(reason: streamCapabilityUnavailableReason())
             return nil
@@ -2225,6 +2298,24 @@ final class ServerConnection {
             sessionId: sessionId,
             routeScope: routeScope
         )
+    }
+
+    /// Silence watchdog and session re-entry can race a Wi‑Fi→cell demotion.
+    /// Wait briefly for the replacement route instead of failing open on the
+    /// mid-reconfigure hole (`endpointSelection == nil`, stale `transport=lan`).
+    private func waitWhileTransportDemotingIfNeeded() async {
+        guard isTransportDemoting || (endpointSelection == nil && automaticIrohRecoveryRetryTask != nil) else {
+            return
+        }
+        for _ in 0..<50 {
+            if !isTransportDemoting, endpointSelection != nil {
+                return
+            }
+            if transportFailureDisposition == .failClosed {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     private func prepareFocusedSessionStreamEndpoint(sessionId: String, routeScope: SessionRouteScope) {
@@ -2315,9 +2406,10 @@ final class ServerConnection {
 
     private func recordSessionStreamUnavailable(reason: String) {
         var metadata: [String: String] = [
-            "reason": reason,
+            "reason": isTransportDemoting ? "transportDemoting" : reason,
             "capabilityStatus": requiredSplitStreamCapabilitiesStatusForDiagnostics,
-            "transport": transportPath.rawValue,
+            "transport": isTransportDemoting ? "demoting" : transportPath.rawValue,
+            "demoting": isTransportDemoting ? "true" : "false",
             "hasWebSocketClient": wsClient == nil ? "false" : "true",
         ]
         metadata.merge(diagnosticEndpointMetadata(endpointSelection?.baseURL, prefix: "api")) { current, _ in current }
@@ -2756,6 +2848,10 @@ final class ServerConnection {
 
     var focusedSessionStreamURLForTesting: URL? {
         focusedSessionStreamURL
+    }
+
+    var hasScheduledAutomaticRouteRecoveryForTesting: Bool {
+        automaticIrohRecoveryRetryTask != nil
     }
 
     var persistentStreamGenerationForTesting: UInt64 {

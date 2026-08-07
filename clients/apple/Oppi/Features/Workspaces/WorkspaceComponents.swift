@@ -301,6 +301,12 @@ enum ServerConnectionLanePresentation {
             }
         }
 
+        // Mid Wi‑Fi→cell demotion keeps a stale transportPath (.lan) while
+        // composition is nil. Don't claim "via local network" in that hole.
+        if connection.isTransportDemoting {
+            return "Recovering connection"
+        }
+
         let lane = switch connection.transportPath {
         case .iroh: "Iroh"
         case .lan: "local network"
