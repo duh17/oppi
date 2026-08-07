@@ -9,7 +9,7 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 SIM_POOL="$REPO_ROOT/clients/apple/scripts/sim-pool.sh"
 PLANNER="$REPO_ROOT/scripts/pre-push-plan.ts"
-GATE_VERSION="4"
+GATE_VERSION="5"
 ZERO_OID="0000000000000000000000000000000000000000"
 CACHE_DIR="$(git rev-parse --git-dir)/oppi/pre-push-cache/v${GATE_VERSION}"
 
@@ -47,6 +47,34 @@ run_self_test() {
   set -e
   [[ "$status" -eq 1 && "$output" == *"below threshold"* ]]
   [[ "$(report_ios_coverage_result 0)" == "iOS coverage gate passed." ]]
+
+  # Regression for run_cached status capture.
+  # Bash suppresses set -e for a function invoked in an || / && list, so
+  # `"$@" || status=$?` lets a later success hide an earlier gate failure.
+  demo_gate() { false; echo "gate-continued"; }
+  local demo_status=0
+  demo_gate >/dev/null || demo_status=$?
+  [[ "$demo_status" -eq 0 ]] || {
+    echo "pre-push self-test: expected bash || set -e quirk (status 0); got $demo_status" >&2
+    exit 1
+  }
+  # Safe pattern: nested shell with set -e, not part of || / &&.
+  set +e
+  (
+    set -euo pipefail
+    demo_gate
+  ) >/dev/null
+  demo_status=$?
+  set -e
+  [[ "$demo_status" -ne 0 ]] || {
+    echo "pre-push self-test: nested set -e shell should preserve early failure" >&2
+    exit 1
+  }
+  if grep -nE '^[[:space:]]*\"\$@\" \|\| status=\$\?' "$REPO_ROOT/.githooks/pre-push" >/dev/null; then
+    echo "pre-push self-test: run_cached must not use \"\$@\" || status=\$?" >&2
+    exit 1
+  fi
+
   echo "pre-push self-test passed."
 }
 
@@ -234,6 +262,10 @@ run_cached() {
   local lane="$1"
   shift
   local marker status=0
+  # Remember caller errexit: we must toggle set -e around the lane without
+  # permanently changing the caller's option state.
+  local caller_errexit=0
+  [[ $- == *e* ]] && caller_errexit=1
   ensure_lane_clean "$lane" || return $?
   marker="$(cache_path "$lane")"
   if [[ -f "$marker" ]]; then
@@ -241,7 +273,24 @@ run_cached() {
     return 0
   fi
   echo "[$lane] starting"
-  "$@" || status=$?
+  # Run the lane in a nested shell with set -e. Do not use `"$@" || status=$?`:
+  # bash disables set -e for the duration of a command in an || / && list, including
+  # function bodies, so a later success (npm test) can hide prettier failures.
+  # A plain `set +e; "$@"; status=$?` is also wrong: with set +e the function
+  # continues after failures and returns the last command's status.
+  # `if "$@"; then` / `if (set -e; "$@"); then` are also wrong: if-tests suppress
+  # set -e inside the condition, including nested shells and function bodies.
+  set +e
+  (
+    set -euo pipefail
+    "$@"
+  )
+  status=$?
+  if [[ "$caller_errexit" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
   [[ "$status" -eq 0 ]] || return "$status"
   ensure_lane_clean "$lane" || return $?
   : > "$marker.tmp.$$"
