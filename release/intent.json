@@ -13,11 +13,11 @@
       "release": true,
       "target": "Oppi",
       "marketingVersion": "1.1.0",
-      "build": 44,
+      "build": 45,
       "whatsNewFromBuild": 43
     }
   },
   "candidateTTLHours": 336,
-  "whatToTestPath": ".internal/release-notes/testflight-build-44-what-to-test.md",
-  "changelogPath": ".internal/release-notes/testflight-build-44-changelog.md"
+  "whatToTestPath": ".internal/release-notes/testflight-build-45-what-to-test.md",
+  "changelogPath": ".internal/release-notes/testflight-build-45-changelog.md"
 }

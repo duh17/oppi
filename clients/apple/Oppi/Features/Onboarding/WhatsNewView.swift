@@ -131,7 +131,7 @@ struct WhatsNewView: View {
                 .font(.largeTitle.bold())
                 .foregroundStyle(.themeFg)
 
-            Text("Builds 44–45")
+            Text("Builds 43–45")
                 .font(.title2)
                 .foregroundStyle(.themeComment)
         }
