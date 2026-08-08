@@ -10,11 +10,13 @@ final class AppEventStreamCoordinator {
     private var client: AppEventStreamClient?
     private var streamURL: URL?
     private var generation: UInt64 = 0
-    private let refreshSnapshot: (ServerConnection) async -> Void
+    private let refreshSnapshot: (ServerConnection, Bool) async -> Bool
 
     init(
-        refreshSnapshot: @escaping (ServerConnection) async -> Void = { connection in
-            await connection.refreshSessionList(force: true)
+        refreshSnapshot: @escaping (ServerConnection, Bool) async -> Bool = { connection, snapshotRequired in
+            await connection.reconcileListSnapshotsAfterAppEventConnection(
+                snapshotRequired: snapshotRequired
+            )
         }
     ) {
         self.refreshSnapshot = refreshSnapshot
@@ -54,10 +56,11 @@ final class AppEventStreamCoordinator {
                       !Task.isCancelled else { break }
                 if case .connected(_, let snapshotRequired) = event {
                     connection.setAppEventStreamTransportState(.connected)
-                    if snapshotRequired {
-                        await self.refreshSnapshot(connection)
-                        guard self.generation == activeGeneration, !Task.isCancelled else { break }
-                    }
+                    // Repair may leave lastSyncFailed set; keep the socket so
+                    // late-failure follow-up and live events can still recover
+                    // without a permanent teardown.
+                    _ = await self.refreshSnapshot(connection, snapshotRequired)
+                    guard self.generation == activeGeneration, !Task.isCancelled else { break }
                 }
                 connection.handleAppEvent(event)
             }

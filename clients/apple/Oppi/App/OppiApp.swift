@@ -165,6 +165,39 @@ private struct PendingResourceReferenceChoice {
     let matches: [ResourceReferenceMatch]
 }
 
+struct LaunchRefreshTelemetryOutcome: Equatable, Sendable {
+    let overall: String
+    let workspace: String
+    let session: String
+
+    static func resolve(
+        selectedServerReady: Bool,
+        workspaceFailed: Bool,
+        sessionFailed: Bool
+    ) -> Self {
+        guard selectedServerReady else {
+            return Self(
+                overall: "offline_cache_only",
+                workspace: "not_attempted",
+                session: "not_attempted"
+            )
+        }
+
+        let workspace = workspaceFailed ? "failure" : "success"
+        let session = sessionFailed ? "failure" : "success"
+        let overall: String
+        switch (workspaceFailed, sessionFailed) {
+        case (false, false):
+            overall = "online_refresh_ok"
+        case (true, true):
+            overall = "offline_cache_only"
+        default:
+            overall = "online_refresh_partial"
+        }
+        return Self(overall: overall, workspace: workspace, session: session)
+    }
+}
+
 enum FileLinkOpenPolicy {
     struct ResolvedLink: Equatable {
         let serverId: String
@@ -1359,10 +1392,14 @@ struct OppiApp: App {
     private func reconnectOnLaunch() async {
         let startedAt = Date()
         var launchOutcome = "unknown"
+        var workspaceRefreshOutcome = "unknown"
+        var sessionRefreshOutcome = "unknown"
         var usedCachedSessions = false
 
         defer {
             let outcome = launchOutcome
+            let workspaceOutcome = workspaceRefreshOutcome
+            let sessionOutcome = sessionRefreshOutcome
             let usedCache = usedCachedSessions
             let launchDurationMs = max(0, Int((Date().timeIntervalSince(startedAt) * 1_000.0).rounded()))
 
@@ -1370,6 +1407,8 @@ struct OppiApp: App {
                 let metrics = await TimelineCache.shared.metrics()
                 let metadata: [String: String] = [
                     "outcome": outcome,
+                    "workspaceOutcome": workspaceOutcome,
+                    "sessionOutcome": sessionOutcome,
                     "durationMs": String(launchDurationMs),
                     "usedCachedSessions": usedCache ? "1" : "0",
                     "cacheHits": String(metrics.hits),
@@ -1416,6 +1455,8 @@ struct OppiApp: App {
 
         guard let server = targetServer else {
             launchOutcome = "no_credentials"
+            workspaceRefreshOutcome = "not_attempted"
+            sessionRefreshOutcome = "not_attempted"
             navigation.showOnboarding = true
             navigation.launchPhase = .ready
             return
@@ -1489,13 +1530,24 @@ struct OppiApp: App {
         // stopped session and can be multi-megabyte on long-lived installs.
         if selectedServerReady {
             await coordinator.refreshAllServers()
-            launchOutcome = preparedConnection.workspaceStore.lastSyncFailed
-                && preparedConnection.sessionStore.lastSyncFailed
-                ? "offline_cache_only"
-                : "online_refresh_ok"
+            let refreshOutcome = LaunchRefreshTelemetryOutcome.resolve(
+                selectedServerReady: true,
+                workspaceFailed: preparedConnection.workspaceStore.lastSyncFailed,
+                sessionFailed: preparedConnection.sessionStore.lastSyncFailed
+            )
+            launchOutcome = refreshOutcome.overall
+            workspaceRefreshOutcome = refreshOutcome.workspace
+            sessionRefreshOutcome = refreshOutcome.session
         } else {
             await coordinator.refreshInactiveServers()
-            launchOutcome = "offline_cache_only"
+            let refreshOutcome = LaunchRefreshTelemetryOutcome.resolve(
+                selectedServerReady: false,
+                workspaceFailed: false,
+                sessionFailed: false
+            )
+            launchOutcome = refreshOutcome.overall
+            workspaceRefreshOutcome = refreshOutcome.workspace
+            sessionRefreshOutcome = refreshOutcome.session
         }
 
         // 6. Register for remote push notifications with all paired servers.

@@ -253,10 +253,7 @@ extension ServerConnection {
                 self.recordRefreshEvent(
                     "workspace_git_summary.refresh_failed",
                     level: .warning,
-                    metadata: [
-                        "workspaceId": workspaceId,
-                        "error": Self.compactError(error),
-                    ]
+                    metadata: Self.refreshErrorMetadata(error)
                 )
             }
         }

@@ -46,6 +46,11 @@ private struct ForegroundIrohRebuild: Sendable {
     let serverInfo: ServerInfo
 }
 
+enum ServerListRefreshOrigin: Equatable {
+    case external
+    case appEventReconciliation
+}
+
 /// Top-level connection coordinator.
 ///
 /// Owns the APIClient and WebSocketClient and shared stores.
@@ -110,6 +115,13 @@ final class ServerConnection {
     var dictationStreamAvailable = false
     var appEventStreamAvailable = false
     private(set) var appEventStreamTransportState: ServerHealth.TransportState = .disconnected
+    /// Identity of the current connected app-event window. Equality only.
+    private(set) var appEventStreamConnectedAt: Date?
+    var appEventListRepairFollowUpUsed = false
+    var appEventListPendingExternalFailure = false
+    /// Bumped when a repair owner is installed or the stream tears down so a
+    /// cancelled owner's defer cannot clear a newer owner's slot.
+    var appEventListRepairGeneration: UInt64 = 0
     private(set) var missingRequiredSplitStreamCapabilities: [String] = []
     private var streamCapabilitiesLoaded = false
     private var streamCapabilitiesRefreshFailed = false
@@ -1015,6 +1027,14 @@ final class ServerConnection {
     }
 
     private func installAPIClient(_ client: APIClient?) {
+        // Route epoch + stream teardown are one structural invariant: any new
+        // API client invalidates in-flight list work and the app-event window.
+        listRefreshGeneration &+= 1
+        sessionListRefreshTask?.cancel()
+        sessionListRefreshTask = nil
+        workspaceCatalogRefreshTask?.cancel()
+        workspaceCatalogRefreshTask = nil
+        disconnectAppEventStream()
         if client == nil {
             installedAPIClientIdentity = nil
             installedAPIClientConfigurationGeneration = nil
@@ -2769,15 +2789,27 @@ final class ServerConnection {
     }
 
     func disconnectAppEventStream() {
+        appEventListRepairGeneration &+= 1
+        appEventListRepairTask?.cancel()
+        appEventListRepairTask = nil
+        appEventListRepairFollowUpUsed = false
+        appEventListPendingExternalFailure = false
+        appEventStreamConnectedAt = nil
         appEventStreamCoordinator.disconnect()
         appEventStreamTransportState = .disconnected
     }
 
     func setAppEventStreamTransportState(_ state: ServerHealth.TransportState) {
         appEventStreamTransportState = state
-        if state == .connected {
-            noteAutomaticIrohRecoverySucceeded()
+        guard state == .connected else {
+            appEventStreamConnectedAt = nil
+            return
         }
+
+        appEventStreamConnectedAt = Date()
+        appEventListRepairFollowUpUsed = false
+        appEventListPendingExternalFailure = false
+        noteAutomaticIrohRecoverySucceeded()
     }
 
     private func makeAppEventStreamURL(selection: EndpointSelection) -> URL? {
@@ -2800,6 +2832,9 @@ final class ServerConnection {
     /// Shared in-flight tasks to coalesce overlapping refresh requests.
     var sessionListRefreshTask: Task<Void, Never>?
     var workspaceCatalogRefreshTask: Task<Void, Never>?
+    var appEventListRepairTask: Task<Void, Never>?
+    var listRefreshGeneration: UInt64 = 0
+
     var workspaceGitSummaryRefreshTasks: [String: Task<Void, Never>] = [:]
 
     var workspaceGitSummaryRefreshGeneration: [String: UInt64] = [:]

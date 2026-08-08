@@ -1,5 +1,10 @@
 import Foundation
 
+struct SessionStoreSyncToken: Equatable, Sendable {
+    fileprivate let key: String
+    fileprivate let generation: UInt64
+}
+
 /// Observable store for session list and active session state.
 ///
 /// Internally partitioned by server ID — each server's sessions are stored
@@ -59,6 +64,7 @@ final class SessionStore {
     private var serverLastSyncAt: [String: Date] = [:]
     private var serverIsSyncing: [String: Bool] = [:]
     private var serverSyncFailed: [String: Bool] = [:]
+    private var serverSyncGeneration: [String: UInt64] = [:]
 
     // ── Public API: delegates to active server ──
 
@@ -163,6 +169,7 @@ final class SessionStore {
         serverLastSyncAt.removeValue(forKey: serverId)
         serverIsSyncing.removeValue(forKey: serverId)
         serverSyncFailed.removeValue(forKey: serverId)
+        serverSyncGeneration.removeValue(forKey: serverId)
         if activeServerId == serverId {
             activeServerId = nil
         }
@@ -216,10 +223,43 @@ final class SessionStore {
         isSyncing = true
     }
 
+    func beginSync() -> SessionStoreSyncToken {
+        let key = freshnessKey
+        let generation = (serverSyncGeneration[key] ?? 0) &+ 1
+        serverSyncGeneration[key] = generation
+        serverIsSyncing[key] = true
+        return SessionStoreSyncToken(key: key, generation: generation)
+    }
+
+    func finishSyncIfOwned(_ token: SessionStoreSyncToken) {
+        guard serverSyncGeneration[token.key] == token.generation else { return }
+        serverIsSyncing[token.key] = false
+    }
+
+    @discardableResult
+    func markSyncSucceeded(
+        ifOwned token: SessionStoreSyncToken,
+        at date: Date = Date()
+    ) -> Bool {
+        guard serverSyncGeneration[token.key] == token.generation else { return false }
+        serverIsSyncing[token.key] = false
+        serverSyncFailed[token.key] = false
+        serverLastSyncAt[token.key] = date
+        return true
+    }
+
     func markSyncSucceeded(at date: Date = Date()) {
         isSyncing = false
         lastSyncFailed = false
         lastSuccessfulSyncAt = date
+    }
+
+    @discardableResult
+    func markSyncFailed(ifOwned token: SessionStoreSyncToken) -> Bool {
+        guard serverSyncGeneration[token.key] == token.generation else { return false }
+        serverIsSyncing[token.key] = false
+        serverSyncFailed[token.key] = true
+        return true
     }
 
     func markSyncFailed() {

@@ -3,6 +3,68 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "WorkspaceStore")
 
+enum WorkspaceCatalogLoadFailure: Equatable, Sendable {
+    case url(domain: String, code: Int)
+    case http(status: Int)
+    case invalidResponse
+    case other
+
+    init(error: Error) {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .server(let status, _), .codedServer(let status, _, _):
+                self = .http(status: status)
+            case .invalidResponse:
+                self = .invalidResponse
+            }
+            return
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            self = .url(domain: nsError.domain, code: nsError.code)
+        } else {
+            self = .other
+        }
+    }
+
+    var telemetryMetadata: [String: String] {
+        switch self {
+        case .url(let domain, let code):
+            return [
+                "errorKind": "url",
+                "errorDomain": domain,
+                "errorCode": String(code),
+                "urlErrorCode": String(code),
+            ]
+        case .http(let status):
+            return [
+                "errorKind": "http",
+                "statusCode": String(status),
+            ]
+        case .invalidResponse:
+            return ["errorKind": "invalid_response"]
+        case .other:
+            return ["errorKind": "other"]
+        }
+    }
+
+    var logLabel: String {
+        switch self {
+        case .url(_, let code): "url_\(code)"
+        case .http(let status): "http_\(status)"
+        case .invalidResponse: "invalid_response"
+        case .other: "other"
+        }
+    }
+}
+
+enum WorkspaceCatalogLoadOutcome: Equatable, Sendable {
+    case success(workspaceCount: Int, skillCount: Int)
+    case failure(WorkspaceCatalogLoadFailure)
+    case superseded
+}
+
 /// Observable store for workspaces and the available skill pool.
 ///
 /// Canonical source of truth is per-server storage (`workspacesByServer`,
@@ -49,6 +111,7 @@ final class WorkspaceStore {
 
     /// Per-server sync freshness tracking.
     var serverFreshness: [String: ServerSyncState] = [:]
+    private var serverSyncGeneration: [String: UInt64] = [:]
 
     /// Ordered server IDs reflecting display order.
     var serverOrder: [String] = []
@@ -294,6 +357,7 @@ final class WorkspaceStore {
         workspaceSummariesByServer.removeValue(forKey: serverId)
         storedWorkspaceSummariesByServer.removeValue(forKey: serverId)
         serverFreshness.removeValue(forKey: serverId)
+        serverSyncGeneration.removeValue(forKey: serverId)
         serverLoaded.removeValue(forKey: serverId)
         serverOrder.removeAll { $0 == serverId }
         if activeServerId == serverId {
@@ -336,12 +400,21 @@ final class WorkspaceStore {
     ///
     /// Uses cache immediately when first loading this server, then refreshes
     /// from network. Single- and multi-server paths share `loadServer`.
-    func load(api: APIClient) async {
-        await loadServer(serverId: activeKey, api: api)
+    @discardableResult
+    func load(
+        api: APIClient,
+        isCurrent: @escaping @MainActor () -> Bool = { true }
+    ) async -> WorkspaceCatalogLoadOutcome {
+        await loadServer(serverId: activeKey, api: api, isCurrent: isCurrent)
     }
 
     /// Load workspaces + skills for a specific server.
-    func loadServer(serverId: String, api: APIClient) async {
+    @discardableResult
+    func loadServer(
+        serverId: String,
+        api: APIClient,
+        isCurrent: @escaping @MainActor () -> Bool = { true }
+    ) async -> WorkspaceCatalogLoadOutcome {
         let cache = _cacheForTesting ?? TimelineCache.shared
 
         if !serverId.isEmpty && !serverOrder.contains(serverId) {
@@ -352,9 +425,11 @@ final class WorkspaceStore {
         }
         ensureFreshness(for: serverId)
 
-        // Show cached data immediately on first load for this server.
+        // Show cached data immediately on first load for this server, but never
+        // let a superseded client publish the cache it was reading.
         if serverLoaded[serverId] != true {
             let cached = await loadCachedCatalog(serverId: serverId, cache: cache)
+            guard !Task.isCancelled, isCurrent() else { return .superseded }
 
             if let cws = cached.workspaces {
                 workspacesByServer[serverId] = cws
@@ -369,13 +444,21 @@ final class WorkspaceStore {
             }
         }
 
-        markSyncStarted(forServer: serverId)
+        let syncToken = beginSync(forServer: serverId)
+        defer { finishSyncIfOwned(forServer: serverId, token: syncToken) }
+        guard !Task.isCancelled, isCurrent() else { return .superseded }
 
         async let fetchCatalog = api.listWorkspaceCatalog()
         async let fetchSkills = api.listSkills()
 
         do {
             let (catalog, sk) = try await (fetchCatalog, fetchSkills)
+            guard !Task.isCancelled,
+                  isCurrent(),
+                  ownsSync(forServer: serverId, token: syncToken) else {
+                return .superseded
+            }
+
             let ws = catalog.workspaces
             workspacesByServer[serverId] = ws
             skillsByServer[serverId] = sk
@@ -414,13 +497,19 @@ final class WorkspaceStore {
                     await cache.saveSkills(sk, serverId: capturedServerId)
                 }
             }
+            return .success(workspaceCount: ws.count, skillCount: sk.count)
         } catch {
-            markSyncFailed(forServer: serverId)
-            if serverId.isEmpty {
-                logger.error("Failed to load workspaces/skills: \(error.localizedDescription, privacy: .public)")
-            } else {
-                logger.error("Failed to load from server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
+            guard !Task.isCancelled,
+                  isCurrent(),
+                  ownsSync(forServer: serverId, token: syncToken) else {
+                return .superseded
             }
+
+            let failure = WorkspaceCatalogLoadFailure(error: error)
+            markSyncFailed(forServer: serverId)
+            logger.error(
+                "Failed to load workspace catalog (\(failure.logLabel, privacy: .public))"
+            )
 
             // Keep stale/cached data on error.
             if serverLoaded[serverId] != true {
@@ -430,6 +519,7 @@ final class WorkspaceStore {
                     serverLoaded[serverId] = true
                 }
             }
+            return .failure(failure)
         }
     }
 
@@ -450,6 +540,22 @@ final class WorkspaceStore {
         var state = serverFreshness[serverId] ?? ServerSyncState()
         mutate(&state)
         serverFreshness[serverId] = state
+    }
+
+    private func beginSync(forServer serverId: String) -> UInt64 {
+        let generation = (serverSyncGeneration[serverId] ?? 0) &+ 1
+        serverSyncGeneration[serverId] = generation
+        markSyncStarted(forServer: serverId)
+        return generation
+    }
+
+    private func finishSyncIfOwned(forServer serverId: String, token: UInt64) {
+        guard ownsSync(forServer: serverId, token: token) else { return }
+        mutateFreshness(for: serverId) { $0.isSyncing = false }
+    }
+
+    private func ownsSync(forServer serverId: String, token: UInt64) -> Bool {
+        serverSyncGeneration[serverId] == token
     }
 
     private func markSyncStarted(forServer serverId: String) {

@@ -13,13 +13,48 @@ extension ServerConnection {
         max(0, Int((Date().timeIntervalSince(startedAt) * 1_000.0).rounded()))
     }
 
-    static func compactError(_ error: any Error, maxLength: Int = 200) -> String {
-        let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty else { return "unknown" }
-        if message.count <= maxLength {
-            return message
+    static func refreshErrorMetadata(_ error: Error) -> [String: String] {
+        var metadata = [
+            "errorKind": MessageSender.telemetryErrorKind(from: error),
+        ]
+        if error is URLError {
+            metadata.merge(ClientLog.networkErrorMetadata(error)) { current, _ in current }
         }
-        return String(message.prefix(maxLength)) + "…"
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .server(let status, _), .codedServer(let status, _, _):
+                metadata["errorKind"] = "http"
+                metadata["statusCode"] = String(status)
+            case .invalidResponse:
+                metadata["errorKind"] = "invalid_response"
+            }
+        }
+        return metadata
+    }
+
+    private static let refreshTelemetryKeys: Set<String> = [
+        "force",
+        "cachedSessionCount",
+        "cachedWorkspaceCount",
+        "isLoaded",
+        "durationMs",
+        "result",
+        "sessionCount",
+        "workspaceCount",
+        "skillCount",
+        "source",
+        "errorKind",
+        "errorDomain",
+        "errorCode",
+        "urlErrorCode",
+        "statusCode",
+    ]
+
+    private static func boundedRefreshMetadata(_ metadata: [String: String]) -> [String: String] {
+        metadata.reduce(into: [:]) { result, entry in
+            guard refreshTelemetryKeys.contains(entry.key) else { return }
+            result[entry.key] = entry.value
+        }
     }
 
     func recordRefreshEvent(
@@ -27,7 +62,52 @@ extension ServerConnection {
         level: ClientLogLevel = .info,
         metadata: [String: String] = [:]
     ) {
-        _onRefreshEventForTesting?(message, metadata, level)
+        let safeMetadata = Self.boundedRefreshMetadata(metadata)
+        // Lifecycle tracing stays local; only outcome ends should upload.
+        let uploadLevel: ClientLogLevel = message.hasSuffix(".end") ? level : .debug
+        ClientLog.record(
+            uploadLevel,
+            category: "Network",
+            message: message,
+            metadata: safeMetadata
+        )
+        _onRefreshEventForTesting?(message, safeMetadata, level)
+    }
+
+    private struct ListRefreshOwnership {
+        let apiClient: APIClient
+        let generation: UInt64
+    }
+
+    private func ownsListRefresh(_ ownership: ListRefreshOwnership) -> Bool {
+        apiClient === ownership.apiClient
+            && listRefreshGeneration == ownership.generation
+    }
+
+    private func noteExternalListFailureForAppEventRepair(origin: ServerListRefreshOrigin) {
+        guard origin == .external else { return }
+        guard appEventStreamTransportState == .connected else { return }
+
+        // An active owner consumes at most one late external failure after the
+        // current pass. Repair-originated failures never enter this path.
+        if appEventListRepairTask != nil {
+            appEventListPendingExternalFailure = true
+            return
+        }
+
+        guard !appEventListRepairFollowUpUsed else { return }
+        appEventListRepairFollowUpUsed = true
+        let connectedAt = appEventStreamConnectedAt
+        Task { @MainActor [weak self] in
+            // Let the failed list task unwind its defer before the owner starts.
+            await Task.yield()
+            guard let self,
+                  self.appEventStreamTransportState == .connected,
+                  self.appEventStreamConnectedAt == connectedAt else {
+                return
+            }
+            _ = await self.reconcileListSnapshotsAfterAppEventConnection(snapshotRequired: true)
+        }
     }
 
     func shouldRefreshSessionList(now: Date = Date(), force: Bool) -> Bool {
@@ -52,10 +132,15 @@ extension ServerConnection {
     /// `retryAfterJoinedFailure` is only for route recovery: after joining a
     /// pre-recovery pass that left `lastSyncFailed`, run exactly one fresh pass
     /// on the post-recovery client. Ordinary callers join once and return.
-    func refreshSessionList(force: Bool = false, retryAfterJoinedFailure: Bool = false) async {
+    func refreshSessionList(
+        force: Bool = false,
+        retryAfterJoinedFailure: Bool = false,
+        origin: ServerListRefreshOrigin = .external
+    ) async {
         // Cold list/home paths also need capability discovery so the global
         // app-event stream starts before users focus a chat session.
         await refreshStreamCapabilitiesIfNeeded()
+        guard !Task.isCancelled else { return }
 
         let callStartedAt = Date()
         let callMetadata: [String: String] = [
@@ -72,6 +157,7 @@ extension ServerConnection {
                 ]) { _, new in new }
             )
             await inFlight.value
+            guard !Task.isCancelled else { return }
             guard retryAfterJoinedFailure, sessionStore.lastSyncFailed else { return }
             // A peer may have installed a replacement while we were suspended.
             // Join it; do not overwrite (its defer would clear our follow-up).
@@ -79,11 +165,9 @@ extension ServerConnection {
                 await replacement.value
                 return
             }
-            // Nil on MainActor with no further await: safe to install one follow-up.
         }
 
-        // Re-capture after join — recovery may have replaced the route.
-        guard let apiClient else { return }
+        guard !Task.isCancelled, let apiClient else { return }
         guard shouldRefreshSessionList(force: force) else {
             logger.debug("Skipping session list refresh (recent successful sync)")
             recordRefreshEvent(
@@ -96,40 +180,58 @@ extension ServerConnection {
         }
 
         recordRefreshEvent("session_list.start", metadata: callMetadata)
+        let ownership = ListRefreshOwnership(
+            apiClient: apiClient,
+            generation: listRefreshGeneration
+        )
 
         let task = Task { @MainActor [weak self, apiClient] in
             guard let self else { return }
             let requestStartedAt = Date()
             let cache = self._cacheForTesting ?? TimelineCache.shared
-            defer { self.sessionListRefreshTask = nil }
+            var syncToken: SessionStoreSyncToken?
+            defer {
+                if let syncToken {
+                    self.sessionStore.finishSyncIfOwned(syncToken)
+                }
+                self.sessionListRefreshTask = nil
+            }
 
+            // Ownership is the commit fence. Cancellation is cooperative after
+            // installAPIClient cancels the in-flight list task.
+            guard !Task.isCancelled, self.ownsListRefresh(ownership) else { return }
             if self.sessionStore.sessions.isEmpty,
                let serverId = self.currentServerId,
                let cached = await cache.loadSessionList(serverId: serverId) {
+                guard !Task.isCancelled, self.ownsListRefresh(ownership) else { return }
                 self.sessionStore.applyServerSnapshot(cached)
                 self.syncAllWorkspaceSummariesFromLocalState()
                 self.syncLiveActivityState()
             }
 
-            self.sessionStore.markSyncStarted()
+            guard !Task.isCancelled, self.ownsListRefresh(ownership) else { return }
+            syncToken = self.sessionStore.beginSync()
             do {
                 // An authoritative empty catalog is still loaded. Retry only when
                 // no catalog has ever succeeded, and stay on the shared single-flight path.
                 if !self.workspaceStore.isLoaded {
-                    await self.refreshWorkspaceCatalog(force: true)
+                    await self.refreshWorkspaceCatalog(force: true, origin: origin)
+                    guard !Task.isCancelled, self.ownsListRefresh(ownership) else { return }
                 }
 
                 let workspaces = self.workspaceStore.workspaces
                 let sessionSummaries = try await apiClient.listRecentWorkspaceSessionSummaries(
                     recentDays: Self.globalSessionRefreshRecentDays
                 )
+                guard !Task.isCancelled, self.ownsListRefresh(ownership) else { return }
                 self.sessionStore.applyRecentWorkspaceSummaryProjection(
                     workspaceIds: Set(workspaces.map(\.id)),
                     summaries: sessionSummaries,
                     requestStartedAt: requestStartedAt
                 )
                 self.syncAllWorkspaceSummariesFromLocalState()
-                self.sessionStore.markSyncSucceeded()
+                guard let syncToken,
+                      self.sessionStore.markSyncSucceeded(ifOwned: syncToken) else { return }
                 self.syncLiveActivityState()
                 let cachedSessions = self.sessionStore.listProjectionSessions
                 if let serverId = self.currentServerId {
@@ -148,8 +250,13 @@ extension ServerConnection {
                     ]
                 )
             } catch {
-                self.sessionStore.markSyncFailed()
-                logger.error("Failed to refresh sessions: \(error)")
+                guard !Task.isCancelled,
+                      self.ownsListRefresh(ownership),
+                      let syncToken,
+                      self.sessionStore.markSyncFailed(ifOwned: syncToken) else { return }
+                let errorMetadata = Self.refreshErrorMetadata(error)
+                let errorKind = errorMetadata["errorKind"] ?? "other"
+                logger.error("Failed to refresh sessions (\(errorKind, privacy: .public))")
 
                 self.recordRefreshEvent(
                     "session_list.end",
@@ -160,9 +267,9 @@ extension ServerConnection {
                         "durationMs": String(Self.elapsedMs(since: requestStartedAt)),
                         "sessionCount": String(self.sessionStore.sessions.count),
                         "workspaceCount": String(self.workspaceStore.workspaces.count),
-                        "error": Self.compactError(error),
-                    ]
+                    ].merging(errorMetadata) { current, _ in current }
                 )
+                self.noteExternalListFailureForAppEventRepair(origin: origin)
             }
         }
 
@@ -172,7 +279,13 @@ extension ServerConnection {
 
     /// Refresh workspaces + skills catalog with single-flight coalescing.
     /// See `refreshSessionList` for `retryAfterJoinedFailure`.
-    func refreshWorkspaceCatalog(force: Bool = false, retryAfterJoinedFailure: Bool = false) async {
+    func refreshWorkspaceCatalog(
+        force: Bool = false,
+        retryAfterJoinedFailure: Bool = false,
+        origin: ServerListRefreshOrigin = .external
+    ) async {
+        guard !Task.isCancelled else { return }
+
         let callStartedAt = Date()
         let callMetadata: [String: String] = [
             "force": force ? "1" : "0",
@@ -189,6 +302,7 @@ extension ServerConnection {
                 ]) { _, new in new }
             )
             await inFlight.value
+            guard !Task.isCancelled else { return }
             guard retryAfterJoinedFailure, workspaceStore.lastSyncFailed else { return }
             if let replacement = workspaceCatalogRefreshTask {
                 await replacement.value
@@ -196,7 +310,7 @@ extension ServerConnection {
             }
         }
 
-        guard let apiClient else { return }
+        guard !Task.isCancelled, let apiClient else { return }
         guard shouldRefreshWorkspaceCatalog(force: force) else {
             logger.debug("Skipping workspace catalog refresh (recent successful sync)")
             recordRefreshEvent(
@@ -209,28 +323,54 @@ extension ServerConnection {
         }
 
         recordRefreshEvent("workspace_catalog.start", metadata: callMetadata)
+        let ownership = ListRefreshOwnership(
+            apiClient: apiClient,
+            generation: listRefreshGeneration
+        )
 
         let task = Task { @MainActor [weak self, apiClient] in
             guard let self else { return }
             let requestStartedAt = Date()
             defer { self.workspaceCatalogRefreshTask = nil }
 
-            await self.workspaceStore.load(api: apiClient)
+            guard !Task.isCancelled, self.ownsListRefresh(ownership) else { return }
+            let outcome = await self.workspaceStore.load(api: apiClient) {
+                !Task.isCancelled && self.ownsListRefresh(ownership)
+            }
+            guard !Task.isCancelled, self.ownsListRefresh(ownership) else { return }
 
-            let level: ClientLogLevel = self.workspaceStore.lastSyncFailed ? .warning : .info
-            let result = self.workspaceStore.lastSyncFailed ? "failure" : "success"
-            self.recordRefreshEvent(
-                "workspace_catalog.end",
-                level: level,
-                metadata: [
-                    "force": force ? "1" : "0",
-                    "result": result,
-                    "durationMs": String(Self.elapsedMs(since: requestStartedAt)),
-                    "workspaceCount": String(self.workspaceStore.workspaces.count),
-                    "sessionCount": String(self.sessionStore.sessions.count),
-                    "skillCount": String(self.workspaceStore.skills.count),
-                ]
-            )
+            switch outcome {
+            case .superseded:
+                return
+
+            case .success:
+                self.recordRefreshEvent(
+                    "workspace_catalog.end",
+                    metadata: [
+                        "force": force ? "1" : "0",
+                        "result": "success",
+                        "durationMs": String(Self.elapsedMs(since: requestStartedAt)),
+                        "workspaceCount": String(self.workspaceStore.workspaces.count),
+                        "sessionCount": String(self.sessionStore.sessions.count),
+                        "skillCount": String(self.workspaceStore.skills.count),
+                    ]
+                )
+
+            case .failure(let failure):
+                self.recordRefreshEvent(
+                    "workspace_catalog.end",
+                    level: .warning,
+                    metadata: [
+                        "force": force ? "1" : "0",
+                        "result": "failure",
+                        "durationMs": String(Self.elapsedMs(since: requestStartedAt)),
+                        "workspaceCount": String(self.workspaceStore.workspaces.count),
+                        "sessionCount": String(self.sessionStore.sessions.count),
+                        "skillCount": String(self.workspaceStore.skills.count),
+                    ].merging(failure.telemetryMetadata) { current, _ in current }
+                )
+                self.noteExternalListFailureForAppEventRepair(origin: origin)
+            }
         }
 
         workspaceCatalogRefreshTask = task
@@ -241,10 +381,104 @@ extension ServerConnection {
     /// so overlapping callers don't trigger duplicate network fan-out.
     func refreshWorkspaceAndSessionLists(
         force: Bool = false,
-        retryAfterJoinedFailure: Bool = false
+        retryAfterJoinedFailure: Bool = false,
+        origin: ServerListRefreshOrigin = .external
     ) async {
-        await refreshWorkspaceCatalog(force: force, retryAfterJoinedFailure: retryAfterJoinedFailure)
-        await refreshSessionList(force: force, retryAfterJoinedFailure: retryAfterJoinedFailure)
+        await refreshWorkspaceCatalog(
+            force: force,
+            retryAfterJoinedFailure: retryAfterJoinedFailure,
+            origin: origin
+        )
+        guard !Task.isCancelled else { return }
+        await refreshSessionList(
+            force: force,
+            retryAfterJoinedFailure: retryAfterJoinedFailure,
+            origin: origin
+        )
+    }
+
+    /// Reconcile the REST projections after an app-event handshake.
+    ///
+    /// A healthy WebSocket is not a REST snapshot. Repair when the server asks
+    /// for a snapshot or either list projection still reports a failure.
+    /// Returns whether both list projections are healthy after repair when a
+    /// snapshot was required; otherwise whether the stream may stay up.
+    @discardableResult
+    func reconcileListSnapshotsAfterAppEventConnection(snapshotRequired: Bool) async -> Bool {
+        guard snapshotRequired
+                || workspaceStore.lastSyncFailed
+                || sessionStore.lastSyncFailed
+                || appEventListPendingExternalFailure else {
+            return true
+        }
+
+        if let inFlight = appEventListRepairTask {
+            let joinedConnectedAt = appEventStreamConnectedAt
+            await inFlight.value
+            guard !Task.isCancelled,
+                  appEventStreamTransportState == .connected,
+                  appEventStreamConnectedAt == joinedConnectedAt else {
+                return false
+            }
+            if snapshotRequired {
+                return !workspaceStore.lastSyncFailed && !sessionStore.lastSyncFailed
+            }
+            return true
+        }
+
+        let connectedAt = appEventStreamConnectedAt
+        // Install the owner slot before the first await so a late external
+        // failure during this pass can set the pending follow-up marker.
+        appEventListRepairGeneration &+= 1
+        let repairEpoch = appEventListRepairGeneration
+        appEventListRepairTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            // Owner cleanup and pending consumption happen in one MainActor
+            // transition. No await may sit between the final level check and
+            // clearing the owner slot. Epoch guards a cancelled owner from
+            // clearing a newer repair installed after stream teardown.
+            defer {
+                if self.appEventListRepairGeneration == repairEpoch {
+                    self.appEventListPendingExternalFailure = false
+                    self.appEventListRepairTask = nil
+                }
+            }
+
+            await self.refreshWorkspaceAndSessionLists(
+                force: true,
+                retryAfterJoinedFailure: true,
+                origin: .appEventReconciliation
+            )
+            guard !Task.isCancelled,
+                  self.appEventStreamTransportState == .connected,
+                  self.appEventStreamConnectedAt == connectedAt else {
+                return
+            }
+
+            if self.appEventListPendingExternalFailure,
+               !self.appEventListRepairFollowUpUsed {
+                // Consume the one-follow-up budget before awaiting. Failures
+                // from this pass are repair-owned and cannot reschedule.
+                self.appEventListPendingExternalFailure = false
+                self.appEventListRepairFollowUpUsed = true
+                await self.refreshWorkspaceAndSessionLists(
+                    force: true,
+                    retryAfterJoinedFailure: true,
+                    origin: .appEventReconciliation
+                )
+            }
+        }
+        await appEventListRepairTask?.value
+
+        guard !Task.isCancelled,
+              appEventStreamTransportState == .connected,
+              appEventStreamConnectedAt == connectedAt else {
+            return false
+        }
+        if snapshotRequired {
+            return !workspaceStore.lastSyncFailed && !sessionStore.lastSyncFailed
+        }
+        return true
     }
 
     /// Called when app returns to foreground.

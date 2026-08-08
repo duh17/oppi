@@ -278,11 +278,16 @@ struct AppEventStreamCoordinatorTests {
     @Test func prolongedOutageReconnectSnapshotCompletesBeforeQueuedLiveEventsApply() async throws {
         let gate = AppEventSnapshotGate()
         let snapshotSession = makeTestSession(id: "s1", workspaceId: "w1", status: .ready)
-        let coordinator = AppEventStreamCoordinator { connection in
+        let coordinator = AppEventStreamCoordinator { connection, _ in
             await gate.waitUntilReleased()
             connection.sessionStore.applyServerSnapshot([snapshotSession])
+            return true
         }
         let connection = ServerConnection()
+        #expect(connection.configure(credentials: makeTestCredentials(
+            host: "snapshot.example",
+            fingerprint: "sha256:snapshot"
+        )))
         connection.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1", status: .busy))
         let factory = ScriptedAppEventSocketFactory()
         let url = try #require(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
@@ -359,6 +364,481 @@ struct AppEventStreamCoordinatorTests {
         #expect(!connection.appEventStreamCoordinator.isRunning)
         #expect(connection.appEventStreamTransportState == .disconnected)
         #expect(connection.sessionStore.session(id: "s1") != nil)
+    }
+}
+
+@Suite("Sticky Refresh Reconciliation", .serialized)
+@MainActor
+struct StickyRefreshReconciliationTests {
+    @Test(arguments: ["workspace", "session"])
+    func connectedWithoutSnapshotRepairsPreexistingListFailure(_ failedProjection: String) async throws {
+        let connection = makeReconciliationConnection()
+        defer { cleanup(connection) }
+
+        if failedProjection == "workspace" {
+            connection.workspaceStore.markSyncFailed()
+        } else {
+            connection.sessionStore.markSyncFailed()
+        }
+
+        let requestCounter = ReconciliationRequestCounter()
+        TestURLProtocol.handler = { request in
+            requestCounter.record(path: request.url?.path ?? "")
+            return Self.reconciliationResponse(for: request)
+        }
+
+        _ = try await connectAppEventStream(
+            for: connection,
+            snapshotRequired: false
+        )
+
+        let repaired = await waitForMainActorCondition(timeout: .seconds(2)) {
+            requestCounter.count(path: "/workspaces") == 1
+                && requestCounter.count(path: "/skills") == 1
+                && requestCounter.count(path: "/sessions/recent") == 1
+                && !connection.workspaceStore.lastSyncFailed
+                && !connection.sessionStore.lastSyncFailed
+        }
+
+        #expect(repaired)
+        #expect(connection.workspaceStore.lastSyncFailed == false)
+        #expect(connection.sessionStore.lastSyncFailed == false)
+    }
+
+    @Test func snapshotRequiredRefreshesBothProjectionsBeforeQueuedEvent() async throws {
+        let connection = makeReconciliationConnection()
+        defer { cleanup(connection) }
+        connection.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
+
+        let workspaceGate = BlockingReconciliationRequestGate()
+        let requestCounter = ReconciliationRequestCounter()
+        TestURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            requestCounter.record(path: path)
+            if path == "/workspaces" {
+                workspaceGate.blockUntilReleased()
+            }
+            return Self.reconciliationResponse(for: request)
+        }
+
+        let factory = try await connectAppEventStream(for: connection, snapshotRequired: true)
+        #expect(await waitForTestCondition(timeout: .seconds(1)) { workspaceGate.isStarted })
+
+        let socket = try #require(factory.sockets.first)
+        socket.yield(.string(#"{"type":"session_deleted","sessionId":"s1","workspaceId":"w1","emittedAt":43}"#))
+        #expect(connection.sessionStore.session(id: "s1") != nil)
+
+        workspaceGate.release()
+
+        let applied = await waitForMainActorCondition(timeout: .seconds(2)) {
+            connection.sessionStore.session(id: "s1") == nil
+                && requestCounter.count(path: "/workspaces") == 1
+                && requestCounter.count(path: "/skills") == 1
+                && requestCounter.count(path: "/sessions/recent") == 1
+        }
+        #expect(applied)
+    }
+
+    @Test func lateRefreshFailureAfterAppEventConnectionGetsOneFullFollowUp() async throws {
+        let connection = makeReconciliationConnection()
+        defer { cleanup(connection) }
+        let requestGate = BlockingReconciliationRequestGate()
+        let requestCounter = ReconciliationRequestCounter()
+
+        TestURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            let occurrence = requestCounter.record(path: path)
+            if path == "/sessions/recent", occurrence == 1 {
+                requestGate.blockUntilReleased()
+                throw URLError(.cannotConnectToHost)
+            }
+            return Self.reconciliationResponse(for: request)
+        }
+
+        let initialRefresh = Task { @MainActor in
+            await connection.refreshSessionList(force: true)
+        }
+        #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
+        _ = try await connectAppEventStream(
+            for: connection,
+            snapshotRequired: false
+        )
+        requestGate.release()
+        await initialRefresh.value
+
+        let repaired = await waitForMainActorCondition(timeout: .seconds(2)) {
+            requestCounter.count(path: "/sessions/recent") == 2
+                && requestCounter.count(path: "/workspaces") == 1
+                && requestCounter.count(path: "/skills") == 1
+                && !connection.sessionStore.lastSyncFailed
+                && !connection.workspaceStore.lastSyncFailed
+        }
+
+        #expect(repaired)
+        #expect(requestCounter.count(path: "/sessions/recent") == 2)
+        #expect(connection.sessionStore.lastSyncFailed == false)
+        #expect(connection.workspaceStore.lastSyncFailed == false)
+    }
+
+    @Test func failedLateRepairIsBoundedWithoutNetworkFanOut() async throws {
+        let connection = makeReconciliationConnection()
+        defer { cleanup(connection) }
+        let requestGate = BlockingReconciliationRequestGate()
+        let requestCounter = ReconciliationRequestCounter()
+
+        TestURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            let occurrence = requestCounter.record(path: path)
+            if path == "/sessions/recent", occurrence == 1 {
+                requestGate.blockUntilReleased()
+            }
+            throw URLError(.cannotConnectToHost)
+        }
+
+        let initialRefresh = Task { @MainActor in
+            await connection.refreshSessionList(force: true)
+        }
+        #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
+        _ = try await connectAppEventStream(
+            for: connection,
+            snapshotRequired: false
+        )
+        requestGate.release()
+        await initialRefresh.value
+
+        let bounded = await waitForMainActorCondition(timeout: .seconds(2)) {
+            requestCounter.count(path: "/sessions/recent") == 2
+                && requestCounter.count(path: "/workspaces") == 1
+                && requestCounter.count(path: "/skills") == 1
+                && connection.sessionStore.lastSyncFailed
+                && connection.workspaceStore.lastSyncFailed
+        }
+        #expect(bounded)
+
+        let countsAfterRepair = requestCounter.snapshot()
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(requestCounter.snapshot() == countsAfterRepair)
+        #expect(connection.sessionStore.lastSyncFailed)
+        #expect(connection.workspaceStore.lastSyncFailed)
+    }
+
+    @Test func installingAPIClientDisconnectsAppEventStream() async throws {
+        let connection = makeReconciliationConnection()
+        defer { cleanup(connection) }
+        _ = try await connectAppEventStream(for: connection, snapshotRequired: false)
+        #expect(connection.appEventStreamTransportState == .connected)
+
+        connection.setAPIClientForTesting(makeReconciliationAPIClient(token: "replacement"))
+
+        #expect(connection.appEventStreamTransportState == .disconnected)
+        #expect(connection.appEventStreamCoordinator.isRunning == false)
+        #expect(connection.appEventListRepairTask == nil)
+    }
+
+    @Test func staleWorkspaceRefreshCannotCommitAfterAPIReplacement() async throws {
+        let connection = makeReconciliationConnection()
+        defer { cleanup(connection) }
+        connection.workspaceStore.workspaces = [
+            makeTestWorkspace(id: "kept", name: "Kept")
+        ]
+        connection.workspaceStore.isLoaded = true
+
+        let requestGate = BlockingReconciliationRequestGate()
+        TestURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            if path == "/workspaces" {
+                requestGate.blockUntilReleased()
+                let body = #"{"serverNow":1700000000000,"workspaces":[{"id":"stale","name":"Stale","path":"/stale","createdAt":1}],"summaries":[]}"#
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                return (Data(body.utf8), response)
+            }
+            return Self.reconciliationResponse(for: request)
+        }
+
+        let refresh = Task { @MainActor in
+            await connection.refreshWorkspaceCatalog(force: true)
+        }
+        #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
+        connection.setAPIClientForTesting(makeReconciliationAPIClient())
+        requestGate.release()
+        await refresh.value
+
+        #expect(connection.workspaceStore.workspaces.map(\.id) == ["kept"])
+        #expect(!connection.workspaceStore.isSyncing)
+    }
+
+    @Test func staleSessionRefreshBalancesSyncingAfterAPIReplacement() async throws {
+        let connection = makeReconciliationConnection()
+        defer { cleanup(connection) }
+        connection.sessionStore.upsert(makeTestSession(id: "kept", workspaceId: "w1"))
+
+        let requestGate = BlockingReconciliationRequestGate()
+        TestURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            if path == "/sessions/recent" {
+                requestGate.blockUntilReleased()
+            }
+            return Self.reconciliationResponse(for: request)
+        }
+
+        let refresh = Task { @MainActor in
+            await connection.refreshSessionList(force: true)
+        }
+        #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
+        #expect(await waitForMainActorCondition { connection.sessionStore.isSyncing })
+        connection.setAPIClientForTesting(makeReconciliationAPIClient())
+        requestGate.release()
+        await refresh.value
+
+        #expect(connection.sessionStore.session(id: "kept") != nil)
+        #expect(!connection.sessionStore.isSyncing)
+    }
+
+    @Test func cancelingRepairPreventsStartingTheNextListLeg() async throws {
+        let connection = makeReconciliationConnection()
+        defer { cleanup(connection) }
+        let workspaceGate = BlockingReconciliationRequestGate()
+        let requestCounter = ReconciliationRequestCounter()
+
+        TestURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            requestCounter.record(path: path)
+            if path == "/workspaces" {
+                workspaceGate.blockUntilReleased()
+            }
+            return Self.reconciliationResponse(for: request)
+        }
+
+        _ = try await connectAppEventStream(for: connection, snapshotRequired: false)
+        let repair = Task { @MainActor in
+            await connection.reconcileListSnapshotsAfterAppEventConnection(snapshotRequired: true)
+        }
+        #expect(await waitForTestCondition(timeout: .seconds(1)) { workspaceGate.isStarted })
+
+        connection.disconnectAppEventStream()
+        workspaceGate.release()
+        await repair.value
+
+        #expect(requestCounter.count(path: "/sessions/recent") == 0)
+        #expect(connection.appEventListRepairTask == nil)
+    }
+
+    @Test func refreshFailureTelemetryUsesCoarseErrorMetadata() async throws {
+        let connection = makeReconciliationConnection()
+        defer { cleanup(connection) }
+        var endMetadata: [String: String] = [:]
+        connection._onRefreshEventForTesting = { message, metadata, _ in
+            if message == "session_list.end" {
+                endMetadata = metadata
+            }
+        }
+        TestURLProtocol.handler = { _ in
+            throw URLError(.cannotConnectToHost)
+        }
+
+        await connection.refreshSessionList(force: true)
+
+        #expect(endMetadata["result"] == "failure")
+        #expect(endMetadata["error"] == nil)
+        #expect(endMetadata["errorKind"] == "url")
+        #expect(endMetadata["errorDomain"] == NSURLErrorDomain)
+        #expect(endMetadata["errorCode"] != nil)
+    }
+
+    @Test func workspaceURLErrorTelemetryOmitsRawFailureDetails() async throws {
+        let connection = makeReconciliationConnection()
+        defer { cleanup(connection) }
+        var endMetadata: [String: String] = [:]
+        connection._onRefreshEventForTesting = { message, metadata, _ in
+            if message == "workspace_catalog.end" {
+                endMetadata = metadata
+            }
+        }
+        let rawFailure = "https://secret.example.test/token=sk_secret"
+        TestURLProtocol.handler = { _ in
+            throw URLError(
+                .cannotConnectToHost,
+                userInfo: [
+                    NSURLErrorFailingURLStringErrorKey: rawFailure,
+                    NSLocalizedDescriptionKey: "could not connect to \(rawFailure)",
+                ]
+            )
+        }
+
+        await connection.refreshWorkspaceCatalog(force: true)
+
+        #expect(endMetadata["result"] == "failure")
+        #expect(endMetadata["errorKind"] == "url")
+        #expect(endMetadata["errorDomain"] == NSURLErrorDomain)
+        #expect(endMetadata["errorCode"] != nil)
+        #expect(endMetadata.values.allSatisfy { !$0.contains("secret.example.test") })
+        #expect(endMetadata.values.allSatisfy { !$0.contains("sk_secret") })
+    }
+
+    @Test func workspaceHTTPStatusTelemetryUsesStatusWithoutRawBody() async throws {
+        let connection = makeReconciliationConnection()
+        defer { cleanup(connection) }
+        var endMetadata: [String: String] = [:]
+        connection._onRefreshEventForTesting = { message, metadata, _ in
+            if message == "workspace_catalog.end" {
+                endMetadata = metadata
+            }
+        }
+        let rawBody = "https://secret.example.test/token=sk_secret"
+        TestURLProtocol.handler = { request in
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "http://reconcile.example.test:7749")!,
+                statusCode: 503,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (Data("{\"error\":\"\(rawBody)\"}".utf8), response)
+        }
+
+        await connection.refreshWorkspaceCatalog(force: true)
+
+        #expect(endMetadata["result"] == "failure")
+        #expect(endMetadata["errorKind"] == "http")
+        #expect(endMetadata["statusCode"] == "503")
+        #expect(endMetadata.values.allSatisfy { !$0.contains("secret.example.test") })
+        #expect(endMetadata.values.allSatisfy { !$0.contains("sk_secret") })
+    }
+
+    private func makeReconciliationConnection() -> ServerConnection {
+        let connection = ServerConnection()
+        #expect(connection.configure(credentials: ServerCredentials(
+            host: "reconcile.example.test",
+            port: 7749,
+            token: "sk_reconcile",
+            name: "Reconcile",
+            scheme: .http,
+            serverFingerprint: "sha256:reconcile"
+        )))
+        connection.setAPIClientForTesting(makeReconciliationAPIClient())
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.workspaceStore.isLoaded = true
+        connection.workspaceStore.markSyncSucceeded(at: Date())
+        connection.sessionStore.markSyncSucceeded(at: Date())
+        return connection
+    }
+
+    private func makeReconciliationAPIClient(token: String = "sk_reconcile") -> APIClient {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TestURLProtocol.self]
+        return APIClient(
+            environment: OppiClientEnvironment(
+                baseURL: URL(string: "http://reconcile.example.test:7749")!,
+                bearerToken: token
+            ),
+            configuration: configuration
+        )
+    }
+
+    private func connectAppEventStream(
+        for connection: ServerConnection,
+        snapshotRequired: Bool
+    ) async throws -> ScriptedAppEventSocketFactory {
+        let factory = ScriptedAppEventSocketFactory()
+        let url = try #require(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
+        let client = AppEventStreamClient(
+            url: url,
+            token: "test-token",
+            reconnectDelay: { _ in 60 },
+            webSocketFactory: { request in factory.makeTransport(for: request) }
+        )
+        connection.appEventStreamCoordinator.start(
+            connection: connection,
+            client: client,
+            streamURL: url
+        )
+        let socket = try #require(factory.sockets.first)
+        socket.yield(.string("{\"type\":\"app_events_connected\",\"serverTime\":42,\"snapshotRequired\":\(snapshotRequired) }"))
+        #expect(await waitForMainActorCondition {
+            connection.appEventStreamTransportState == .connected
+        })
+        return factory
+    }
+
+    private func cleanup(_ connection: ServerConnection) {
+        TestURLProtocol.handler = nil
+        connection.disconnectAppEventStream()
+        connection.disconnectStream()
+    }
+
+    private static func reconciliationResponse(
+        for request: URLRequest
+    ) -> (Data, HTTPURLResponse) {
+        let body: String
+        switch request.url?.path {
+        case "/workspaces":
+            body = "{\"serverNow\":1700000000000,\"workspaces\":[],\"summaries\":[]}"
+        case "/skills":
+            body = "{\"skills\":[]}"
+        case "/sessions/recent":
+            body = "{\"sessions\":[]}"
+        default:
+            body = "{}"
+        }
+        let response = HTTPURLResponse(
+            url: request.url ?? URL(string: "http://reconcile.example.test:7749")!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        return (Data(body.utf8), response)
+    }
+}
+
+private final class BlockingReconciliationRequestGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    private let releaseSemaphore = DispatchSemaphore(value: 0)
+
+    var isStarted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return started
+    }
+
+    func blockUntilReleased() {
+        lock.lock()
+        started = true
+        lock.unlock()
+        releaseSemaphore.wait()
+    }
+
+    func release() {
+        releaseSemaphore.signal()
+    }
+}
+
+private final class ReconciliationRequestCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paths: [String: Int] = [:]
+
+    @discardableResult
+    func record(path: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        paths[path, default: 0] += 1
+        return paths[path, default: 0]
+    }
+
+    func count(path: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return paths[path, default: 0]
+    }
+
+    func snapshot() -> [String: Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        return paths
     }
 }
 
