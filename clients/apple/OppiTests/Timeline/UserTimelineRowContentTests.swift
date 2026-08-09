@@ -433,6 +433,100 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("detached mid-history anchor survives raster image Done dismissal")
+    func detachedMidHistoryAnchorSurvivesRasterImageDoneDismissal() async throws {
+        let fixture = ImagePreviewTimelineFixture()
+        defer { fixture.teardown() }
+
+        let anchor = try fixture.exerciseUpThenDownAndCaptureMidHistoryAnchor()
+        ToolTimelineRowPresentationHelpers.presentFullScreenImage(makeTestImage(), from: fixture.sourceView)
+        let navigation = try #require(fixture.host.presentedViewController as? UINavigationController)
+        let viewer = try #require(navigation.viewControllers.first as? FullScreenImageViewController)
+        viewer.loadViewIfNeeded()
+
+        let imageScrollView = try #require(firstSubview(ofType: UIScrollView.self, in: viewer.view))
+        imageScrollView.setZoomScale(2, animated: false)
+        imageScrollView.contentOffset = CGPoint(x: 18, y: 24)
+        fixture.assertReadingAnchor(anchor)
+
+        fixture.simulatePreviewReturnLosingDetachedPosition()
+        let done = try #require(viewer.navigationItem.leftBarButtonItem)
+        _ = UIApplication.shared.sendAction(
+            try #require(done.action),
+            to: done.target,
+            from: done,
+            for: nil
+        )
+
+        #expect(await fixture.waitForPreviewDismissal())
+        fixture.assertReadingAnchor(anchor)
+    }
+
+    @MainActor
+    @Test("detached mid-history anchor survives data-image custom swipe dismissal")
+    func detachedMidHistoryAnchorSurvivesDataImageCustomSwipeDismissal() async throws {
+        let fixture = ImagePreviewTimelineFixture()
+        defer { fixture.teardown() }
+
+        let anchor = try fixture.exerciseUpThenDownAndCaptureMidHistoryAnchor()
+        let svg = Data("<svg xmlns='http://www.w3.org/2000/svg' width='120' height='80'></svg>".utf8)
+        FullScreenImageDataPreviewPresenter.present(
+            data: svg,
+            mimeType: "image/svg+xml",
+            from: fixture.host
+        )
+        let navigation = try #require(fixture.host.presentedViewController as? UINavigationController)
+        let viewer = try #require(navigation.viewControllers.first as? FullScreenImageDataPreviewViewController)
+        viewer.loadViewIfNeeded()
+
+        fixture.simulatePreviewReturnLosingDetachedPosition()
+        let swipeInstaller = try #require(
+            viewer.view.gestureRecognizers?.compactMap { $0.delegate as? HorizontalBackSwipeGestureInstaller }.first
+        )
+        swipeInstaller.handleNavigationSwipeEnded(
+            translation: CGSize(width: 0, height: 180),
+            in: viewer.view
+        )
+
+        #expect(await fixture.waitForPreviewDismissal())
+        fixture.assertReadingAnchor(anchor)
+    }
+
+    @MainActor
+    @Test("detached mid-history anchor survives native sheet dismissal lifecycle")
+    func detachedMidHistoryAnchorSurvivesNativeSheetDismissalLifecycle() async throws {
+        let fixture = ImagePreviewTimelineFixture()
+        defer { fixture.teardown() }
+
+        let anchor = try fixture.exerciseUpThenDownAndCaptureMidHistoryAnchor()
+        FullScreenImageViewController.present(image: makeTestImage(), from: fixture.host)
+        _ = try #require(fixture.host.presentedViewController)
+
+        fixture.simulatePreviewReturnLosingDetachedPosition()
+        fixture.host.dismiss(animated: false)
+
+        #expect(await fixture.waitForPreviewDismissal())
+        fixture.assertReadingAnchor(anchor)
+    }
+
+    @MainActor
+    @Test("attached image return stays on the live tail")
+    func attachedImageReturnStaysOnLiveTail() async throws {
+        let fixture = ImagePreviewTimelineFixture()
+        defer { fixture.teardown() }
+
+        fixture.prepareAttachedTail()
+        FullScreenImageViewController.present(image: makeTestImage(), from: fixture.host)
+        _ = try #require(fixture.host.presentedViewController)
+
+        fixture.simulatePreviewReturnLosingAttachedTail()
+        fixture.host.dismiss(animated: false)
+
+        #expect(await fixture.waitForPreviewDismissal())
+        fixture.assertAttachedToTail()
+    }
+
+    @MainActor
     private func makeTestImage() -> UIImage {
         let size = CGSize(width: 120, height: 80)
         let renderer = UIGraphicsImageRenderer(size: size)
@@ -440,6 +534,168 @@ struct UserTimelineRowContentTests {
             UIColor.systemPurple.setFill()
             context.fill(CGRect(origin: .zero, size: size))
         }
+    }
+}
+
+@MainActor
+private final class ImagePreviewTimelineFixture {
+    struct ReadingAnchor {
+        let itemID: String
+        let viewportRelativeY: CGFloat
+    }
+
+    let windowed: WindowedTimelineHarness
+    let host: UIViewController
+    let sourceView = UIView()
+
+    var collectionView: UICollectionView { windowed.collectionView }
+    var coordinator: ChatTimelineCollectionHost.Controller { windowed.coordinator }
+    var scrollController: ChatScrollController { windowed.scrollController }
+
+    init() {
+        windowed = makeWindowedTimelineHarness(
+            sessionId: "image-preview-return-position-\(UUID().uuidString)",
+            useAnchoredCollectionView: true
+        )
+        host = UIViewController()
+        host.loadViewIfNeeded()
+        host.view.frame = windowed.window.bounds
+
+        collectionView.removeFromSuperview()
+        collectionView.frame = host.view.bounds
+        collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        collectionView.accessibilityIdentifier = "chat.timeline"
+        collectionView.delegate = coordinator
+        host.view.addSubview(collectionView)
+
+        sourceView.frame = CGRect(x: 8, y: 8, width: 44, height: 44)
+        host.view.addSubview(sourceView)
+        windowed.window.rootViewController = host
+        windowed.window.makeKeyAndVisible()
+
+        let items = (0 ..< 90).map { index in
+            ChatItem.assistantMessage(
+                id: "assistant-history-\(index)",
+                text: Array(
+                    repeating: "Stable assistant history row \(index) with deterministic wrapped text.",
+                    count: 4
+                ).joined(separator: "\n"),
+                timestamp: Date(timeIntervalSince1970: TimeInterval(index))
+            )
+        }
+        windowed.applyItems(items, isBusy: false)
+        settleTimelineLayout(collectionView, passes: 4)
+    }
+
+    func exerciseUpThenDownAndCaptureMidHistoryAnchor() throws -> ReadingAnchor {
+        let lastIndex = coordinator.currentIDs.count - 1
+        collectionView.scrollToItem(
+            at: IndexPath(item: lastIndex, section: 0),
+            at: .bottom,
+            animated: false
+        )
+        settleTimelineLayout(collectionView, passes: 2)
+
+        // Match the reported interaction sequence: scroll away from the tail,
+        // reverse direction, then stop at a deliberate detached reading point.
+        collectionView.scrollToItem(
+            at: IndexPath(item: 16, section: 0),
+            at: .top,
+            animated: false
+        )
+        settleTimelineLayout(collectionView, passes: 2)
+        scrollController.detachFromBottomForUserScroll()
+        collectionView.scrollToItem(
+            at: IndexPath(item: 27, section: 0),
+            at: .top,
+            animated: false
+        )
+        settleTimelineLayout(collectionView, passes: 3)
+        coordinator.updateScrollState(collectionView)
+        scrollController.detachFromBottomForUserScroll()
+
+        let visible = collectionView.indexPathsForVisibleItems.sorted { lhs, rhs in
+            let lhsY = collectionView.layoutAttributesForItem(at: lhs)?.frame.minY ?? .greatestFiniteMagnitude
+            let rhsY = collectionView.layoutAttributesForItem(at: rhs)?.frame.minY ?? .greatestFiniteMagnitude
+            return lhsY < rhsY
+        }
+        let indexPath = try #require(visible.first)
+        let attributes = try #require(collectionView.layoutAttributesForItem(at: indexPath))
+        let itemID = coordinator.currentIDs[indexPath.item]
+        let viewportRelativeY = attributes.frame.minY - collectionView.contentOffset.y
+
+        #expect(!scrollController.isCurrentlyNearBottom)
+        #expect(indexPath.item > 0 && indexPath.item < lastIndex)
+        return ReadingAnchor(itemID: itemID, viewportRelativeY: viewportRelativeY)
+    }
+
+    func prepareAttachedTail() {
+        let lastIndex = coordinator.currentIDs.count - 1
+        collectionView.scrollToItem(
+            at: IndexPath(item: lastIndex, section: 0),
+            at: .bottom,
+            animated: false
+        )
+        settleTimelineLayout(collectionView, passes: 3)
+        scrollController.updateNearBottom(true)
+    }
+
+    func simulatePreviewReturnLosingDetachedPosition() {
+        prepareAttachedTail()
+    }
+
+    func simulatePreviewReturnLosingAttachedTail() {
+        collectionView.scrollToItem(
+            at: IndexPath(item: 22, section: 0),
+            at: .top,
+            animated: false
+        )
+        settleTimelineLayout(collectionView, passes: 2)
+        scrollController.detachFromBottomForUserScroll()
+    }
+
+    func waitForPreviewDismissal() async -> Bool {
+        let dismissed = await waitForTimelineCondition(timeoutMs: 500) { @MainActor in
+            self.host.presentedViewController == nil
+        }
+        await Task.yield()
+        await Task.yield()
+        return dismissed
+    }
+
+    func assertReadingAnchor(_ anchor: ReadingAnchor) {
+        settleTimelineLayout(collectionView, passes: 4)
+        guard let index = coordinator.currentIDs.firstIndex(of: anchor.itemID),
+              let attributes = collectionView.layoutAttributesForItem(
+                at: IndexPath(item: index, section: 0)
+              ) else {
+            Issue.record("Stable timeline item \(anchor.itemID) disappeared after image preview dismissal")
+            return
+        }
+
+        let actualY = attributes.frame.minY - collectionView.contentOffset.y
+        #expect(
+            abs(actualY - anchor.viewportRelativeY) <= 1,
+            "Image return moved \(anchor.itemID) from viewport y=\(anchor.viewportRelativeY) to y=\(actualY)"
+        )
+        #expect(!scrollController.isCurrentlyNearBottom, "Detached image return must not attach to the live tail")
+    }
+
+    func assertAttachedToTail() {
+        settleTimelineLayout(collectionView, passes: 4)
+        let insets = collectionView.adjustedContentInset
+        let maxOffsetY = max(
+            -insets.top,
+            collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
+        )
+        #expect(scrollController.isCurrentlyNearBottom)
+        #expect(abs(collectionView.contentOffset.y - maxOffsetY) <= 1)
+    }
+
+    func teardown() {
+        host.dismiss(animated: false)
+        windowed.window.isHidden = true
+        windowed.window.rootViewController = nil
     }
 }
 

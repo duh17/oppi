@@ -258,6 +258,55 @@ extension FullScreenImageViewController: UIScrollViewDelegate {
 
 // MARK: - Presentation Helper
 
+@MainActor
+final class ImagePreviewNavigationController: UINavigationController, UIAdaptivePresentationControllerDelegate {
+    private var viewportRestoration: TimelineScrollCoordinator.ImagePreviewViewportRestoration?
+    private var restorationScheduled = false
+
+    func preserveTimelineViewport(from presenter: UIViewController) {
+        viewportRestoration = TimelineScrollCoordinator.captureImagePreviewViewport(from: presenter)
+        presentationController?.delegate = self
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        guard isBeingDismissed || presentingViewController == nil else { return }
+        scheduleViewportRestoration()
+    }
+
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        scheduleViewportRestoration()
+    }
+
+    private func scheduleViewportRestoration() {
+        guard !restorationScheduled, let viewportRestoration else { return }
+        restorationScheduled = true
+        self.viewportRestoration = nil
+
+        if let transitionCoordinator {
+            transitionCoordinator.animate(alongsideTransition: nil) { _ in
+                Task { @MainActor in viewportRestoration.restore() }
+            }
+        } else {
+            DispatchQueue.main.async {
+                viewportRestoration.restore()
+            }
+        }
+    }
+}
+
+@MainActor
+enum ImagePreviewPresentationCoordinator {
+    static func present(_ controller: UIViewController, from presenter: UIViewController) {
+        let navigation = controller as? ImagePreviewNavigationController
+        navigation?.preserveTimelineViewport(from: presenter)
+        presenter.present(controller, animated: true) {
+            navigation?.presentationController?.delegate = navigation
+        }
+        navigation?.presentationController?.delegate = navigation
+    }
+}
+
 extension FullScreenImageViewController {
     /// Build a large-detent sheet controller with the app's standard
     /// slide-down dismissal affordance.
@@ -267,7 +316,7 @@ extension FullScreenImageViewController {
     ) -> UIViewController {
         let themeID = ThemeRuntimeState.currentThemeID()
         let viewer = FullScreenImageViewController(image: image)
-        let navigation = UINavigationController(rootViewController: viewer)
+        let navigation = ImagePreviewNavigationController(rootViewController: viewer)
         navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
 
         if prefersFullScreenOverlay {
@@ -287,14 +336,14 @@ extension FullScreenImageViewController {
 
     /// Present the image viewer from a specific presenter.
     static func present(image: UIImage, from presenter: UIViewController) {
-        presenter.present(
+        ImagePreviewPresentationCoordinator.present(
             makeSlideDownController(
                 image: image,
                 prefersFullScreenOverlay: FullScreenViewerPresentationPolicy.prefersFullScreenOverlay(
                     for: presenter.traitCollection
                 )
             ),
-            animated: true
+            from: presenter
         )
     }
 

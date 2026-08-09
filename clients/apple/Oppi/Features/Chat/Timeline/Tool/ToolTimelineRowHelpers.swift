@@ -76,7 +76,7 @@ enum ToolTimelineRowPresentationHelpers {
                 for: sourceView.traitCollection
             )
         )
-        presenter.present(controller, animated: true)
+        ImagePreviewPresentationCoordinator.present(controller, from: presenter)
     }
 
     static func nearestViewController(from sourceView: UIView) -> UIViewController? {

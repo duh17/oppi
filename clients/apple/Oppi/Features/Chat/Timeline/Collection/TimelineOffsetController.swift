@@ -14,6 +14,7 @@ enum TimelineOffsetReason: Equatable {
     case expandCollapse(edge: TimelineAnchorEdge)
     case programmaticTopAlign
     case detachedFallback
+    case imagePreviewReturn
 }
 
 @MainActor
@@ -80,6 +81,13 @@ enum TimelineOffsetController {
 
         case .detachedFallback:
             guard !(scrollController?.isCurrentlyNearBottom ?? true) else { return false }
+            guard !isUserInteracting(with: collectionView) else { return false }
+            return true
+
+        case .imagePreviewReturn:
+            // The image dismissal transition has completed before this reason is
+            // issued. Refuse real touch interaction, but supersede any stale
+            // programmatic scroll animation left by timeline re-entry.
             guard !isUserInteracting(with: collectionView) else { return false }
             return true
         }

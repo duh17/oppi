@@ -681,7 +681,7 @@ enum FullScreenImageDataPreviewPresenter {
     }
 
     static func present(data: Data, mimeType: String?, title: String = "Preview", from presenter: UIViewController) {
-        presenter.present(
+        ImagePreviewPresentationCoordinator.present(
             FullScreenImageDataPreviewViewController.makeSlideDownController(
                 data: data,
                 mimeType: mimeType,
@@ -690,7 +690,7 @@ enum FullScreenImageDataPreviewPresenter {
                     for: presenter.traitCollection
                 )
             ),
-            animated: true
+            from: presenter
         )
     }
 
@@ -836,7 +836,7 @@ extension FullScreenImageDataPreviewViewController {
     ) -> UIViewController {
         let themeID = ThemeRuntimeState.currentThemeID()
         let viewer = FullScreenImageDataPreviewViewController(data: data, mimeType: mimeType, title: title)
-        let navigation = UINavigationController(rootViewController: viewer)
+        let navigation = ImagePreviewNavigationController(rootViewController: viewer)
         navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
 
         if prefersFullScreenOverlay {
