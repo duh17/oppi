@@ -23,6 +23,10 @@ struct ScreenshotPreviewView: View {
         switch ScreenshotPreviewConfig.screen {
         case "workspace-edit":
             WorkspaceEditPreview()
+        case "whats-new-build45-light":
+            WhatsNewScreenshotPreview(themeID: .light)
+        case "whats-new-build45-dark":
+            WhatsNewScreenshotPreview(themeID: .dark)
         case "server-resources-skills":
             ServerResourcesScreenshotPreview(screen: .skills)
         case "server-resources-extensions":
@@ -116,6 +120,33 @@ struct ScreenshotPreviewView: View {
         default:
             Text("Unknown screen: \(ScreenshotPreviewConfig.screen)")
         }
+    }
+}
+
+// MARK: - What’s New Preview
+
+/// Renders the production What’s New view with an explicit Oppi theme.
+///
+/// The wrapper owns only deterministic preview setup; the screen content stays
+/// in `WhatsNewView` so screenshot acceptance cannot drift from production UI.
+private struct WhatsNewScreenshotPreview: View {
+    let themeID: ThemeID
+
+    init(themeID: ThemeID) {
+        self.themeID = themeID
+        ThemeRuntimeState.setThemeID(themeID)
+    }
+
+    var body: some View {
+        WhatsNewView(onContinue: {})
+            .environment(\.theme, themeID.appTheme)
+            .environment(\.themeID, themeID)
+            .tint(.themeBlue)
+            .preferredColorScheme(themeID.preferredColorScheme)
+            .onAppear {
+                ThemeRuntimeState.setThemeID(themeID)
+            }
+            .accessibilityIdentifier("screenshot.ready")
     }
 }
 

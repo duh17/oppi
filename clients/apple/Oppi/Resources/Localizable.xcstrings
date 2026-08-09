@@ -212,6 +212,7 @@
         }
       }
     },
+    "Agents and schedules are easier to set up": {},
     "All skills enabled": {
       "localizations": {
         "zh-Hans": {
@@ -322,6 +323,7 @@
         }
       }
     },
+    "Ask an agent to cite workspace files as `[[wiki links]]`, then tap a link to open the file in Oppi.": {},
     "Ask Before Running": {
       "localizations": {
         "zh-Hans": {
@@ -402,6 +404,7 @@
         }
       }
     },
+    "Build 45 · Changes since Build 43": {},
     "Cache": {
       "localizations": {
         "zh-Hans": {
@@ -472,6 +475,8 @@
         }
       }
     },
+    "Chat controls are more reliable": {},
+    "Choose Automatic, HTTPS Only, or Iroh Only for each server; Oppi now follows that choice more consistently.": {},
     "Clear Local Cache": {
       "localizations": {
         "zh-Hans": {
@@ -642,6 +647,7 @@
         }
       }
     },
+    "Context shows more Pi usage details, slash commands wait while the agent is busy, `/compact` works like a normal slash command, and extension prompts preserve your draft.": {},
     "Context compacted — retrying...": {
       "localizations": {
         "zh-Hans": {
@@ -1292,6 +1298,7 @@
         }
       }
     },
+    "Model providers are easier to manage": {},
     "Models": {
       "localizations": {
         "zh-Hans": {
@@ -1302,6 +1309,7 @@
         }
       }
     },
+    "More predictable server connections": {},
     "More options": {
       "localizations": {
         "zh-Hans": {
@@ -1452,6 +1460,7 @@
         }
       }
     },
+    "Open workspace files with wiki links": {},
     "Open Full Screen": {
       "localizations": {
         "zh-Hans": {
@@ -1543,6 +1552,7 @@
         }
       }
     },
+    "Provider settings are easier to find, xAI shows quota and reset details, and extensions can supply custom model providers more reliably.": {},
     "Preview": {
       "localizations": {
         "zh-Hans": {
@@ -2373,6 +2383,8 @@
         }
       }
     },
+    "We cleaned up Agent creation and editing, and made schedules simpler to configure.": {},
+    "What’s New in Oppi": {},
     "What's New": {
       "localizations": {
         "zh-Hans": {

@@ -61,6 +61,20 @@ describe("release preflight", () => {
     expect(validateReleasePreflight(validInput())).toEqual([]);
   });
 
+  test("accepts the compact Build 45 caption while covering the prior build", () => {
+    const input = validInput();
+    input.targetBuild = 45;
+    input.intent.components.ios.build = 45;
+    input.iosBuilds = {
+      Oppi: 45,
+      OppiActivityExtension: 45,
+      OppiShareExtension: 45,
+      OppiControlWidget: 45,
+    };
+    input.whatsNewSource = 'Text("Build 45 · Changes since Build 43")';
+    expect(validateReleasePreflight(input)).toEqual([]);
+  });
+
   test("rejects version, build, notes, and tracking drift", () => {
     const input = validInput();
     input.mirrorManifestVersion = "0.44.0";

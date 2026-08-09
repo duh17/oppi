@@ -134,14 +134,20 @@ export function validateReleasePreflight(
       );
     }
   }
-  const whatsNewPattern =
+  const whatsNewPatterns =
     input.whatsNewStartBuild === input.targetBuild
-      ? new RegExp(`Build[^\\n]*\\b${input.targetBuild}\\b`, "i")
-      : new RegExp(
-          `Builds?\\s+${input.whatsNewStartBuild}\\s*[–-]\\s*${input.targetBuild}\\b`,
-          "i",
-        );
-  if (!whatsNewPattern.test(input.whatsNewSource)) {
+      ? [new RegExp(`Build[^\\n]*\\b${input.targetBuild}\\b`, "i")]
+      : [
+          new RegExp(
+            `Builds?\\s+${input.whatsNewStartBuild}\\s*[–-]\\s*${input.targetBuild}\\b`,
+            "i",
+          ),
+          new RegExp(
+            `Build\\s+${input.targetBuild}\\b[\\s\\S]*Changes\\s+since\\s+Build\\s+${input.whatsNewStartBuild}\\b`,
+            "i",
+          ),
+        ];
+  if (!whatsNewPatterns.some((pattern) => pattern.test(input.whatsNewSource))) {
     const expected =
       input.whatsNewStartBuild === input.targetBuild
         ? `build ${input.targetBuild}`

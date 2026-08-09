@@ -353,6 +353,20 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "workspace-edit-skills")
     }
 
+    func testWhatsNewBuild45LightScreenshot() throws {
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "whats-new-build45-light", reduceMotion: true)
+        assertWhatsNewBuild45Content()
+        saveScreenshot(name: "whats-new-build45-light")
+    }
+
+    func testWhatsNewBuild45DarkScreenshot() throws {
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "whats-new-build45-dark", reduceMotion: true)
+        assertWhatsNewBuild45Content()
+        saveScreenshot(name: "whats-new-build45-dark")
+    }
+
     func testModelProvidersQuotaInlinePreview() throws {
         launchPreview(screen: "model-providers-quota-inline")
 
@@ -905,15 +919,90 @@ final class ScreenshotPreviewUITests: XCTestCase {
         option.tap()
     }
 
-    private func launchPreview(screen: String) {
+    private func launchPreview(screen: String, reduceMotion: Bool = false) {
         app = XCUIApplication()
         app.launchArguments.append("--screenshot-preview")
+        if reduceMotion {
+            app.launchArguments.append(contentsOf: ["-UIAccessibilityReduceMotion", "YES"])
+        }
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         app.launch()
 
         // Wait for the preview to signal readiness.
         let ready = app.descendants(matching: .any)["screenshot.ready"]
         XCTAssertTrue(ready.waitForExistence(timeout: 8), "Screenshot preview did not become ready")
+    }
+
+    private func assertWhatsNewBuild45Content() {
+        // The launch arguments request reduced motion; this extra settle makes
+        // the artifact safe even on simulators that ignore that preference.
+        sleep(1)
+
+        let title = app.staticTexts["whatsNew.title"]
+        let caption = app.staticTexts["whatsNew.caption"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "What’s New title not visible")
+        XCTAssertTrue(caption.waitForExistence(timeout: 5), "Build caption not visible")
+        XCTAssertEqual(title.label, "What’s New in Oppi")
+        XCTAssertEqual(caption.label, "Build 45 · Changes since Build 43")
+
+        let expectedFeatures = [
+            (
+                id: "agents-schedules",
+                title: "Agents and schedules are easier to set up",
+                description: "We cleaned up Agent creation and editing, and made schedules simpler to configure."
+            ),
+            (
+                id: "chat-controls",
+                title: "Chat controls are more reliable",
+                description: "Context shows more Pi usage details, slash commands wait while the agent is busy, `/compact` works like a normal slash command, and extension prompts preserve your draft."
+            ),
+            (
+                id: "workspace-wiki-links",
+                title: "Open workspace files with wiki links",
+                description: "Ask an agent to cite workspace files as `[[wiki links]]`, then tap a link to open the file in Oppi."
+            ),
+            (
+                id: "model-providers",
+                title: "Model providers are easier to manage",
+                description: "Provider settings are easier to find, xAI shows quota and reset details, and extensions can supply custom model providers more reliably."
+            ),
+            (
+                id: "server-connections",
+                title: "More predictable server connections",
+                description: "Choose Automatic, HTTPS Only, or Iroh Only for each server; Oppi now follows that choice more consistently."
+            ),
+        ]
+
+        var rowFrames: [CGRect] = []
+        for feature in expectedFeatures {
+            let headline = app.staticTexts
+                .containing(NSPredicate(format: "label == %@", feature.title))
+                .firstMatch
+            let description = app.staticTexts
+                .containing(NSPredicate(format: "label == %@", feature.description))
+                .firstMatch
+            XCTAssertTrue(headline.waitForExistence(timeout: 5), "Missing What’s New headline: \(feature.title)")
+            XCTAssertTrue(description.waitForExistence(timeout: 5), "Missing What’s New description: \(feature.title)")
+            XCTAssertEqual(headline.label, feature.title)
+            XCTAssertEqual(description.label, feature.description)
+            XCTAssertTrue(headline.isHittable, "Headline is not visible: \(feature.title)")
+            XCTAssertTrue(description.isHittable, "Description is not visible: \(feature.title)")
+            rowFrames.append(headline.frame.union(description.frame))
+        }
+
+        for pair in zip(rowFrames, rowFrames.dropFirst()) {
+            XCTAssertLessThan(pair.0.maxY, pair.1.minY, "What’s New rows overlap")
+        }
+        XCTAssertFalse(
+            app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", "turn your workspace into")).firstMatch.exists,
+            "The wiki-link point must use factual workspace-file framing"
+        )
+
+        let done = app.buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "Done CTA not visible")
+        XCTAssertTrue(done.isHittable, "Done CTA is not hittable")
+        XCTAssertGreaterThanOrEqual(done.frame.height, 44, "Done CTA must preserve a 44-point touch target")
+        XCTAssertLessThanOrEqual(rowFrames.last?.maxY ?? .greatestFiniteMagnitude, done.frame.minY, "Final What’s New row must remain above the CTA")
     }
 
     private func openTreeNavigateDialog() {

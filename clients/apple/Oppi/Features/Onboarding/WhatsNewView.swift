@@ -41,9 +41,9 @@ enum WhatsNewManager {
 // MARK: - Feature Model
 
 private struct WhatsNewFeature: Identifiable {
-    let id = UUID()
+    let id: String
     let icon: String
-    let iconColor: Color
+    let iconColor: ThemeShapeStyle
     let title: String
     let description: String
 }
@@ -58,60 +58,66 @@ struct WhatsNewView: View {
 
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
+            id: "agents-schedules",
             icon: "person.crop.circle.badge.checkmark",
             iconColor: .themePurple,
-            title: String(localized: "Agents, Schedules, and Quick Sessions"),
-            description: String(localized: "Edit Agents and schedules directly, assign Skills and Extensions to Agents, and start Quick Sessions with a saved Agent.")
+            title: String(localized: "Agents and schedules are easier to set up"),
+            description: String(localized: "We cleaned up Agent creation and editing, and made schedules simpler to configure.")
         ),
         WhatsNewFeature(
-            icon: "cpu",
+            id: "chat-controls",
+            icon: "bubble.left.and.bubble.right",
             iconColor: .themeOrange,
-            title: String(localized: "Model Providers and Quotas"),
-            description: String(localized: "Manage providers from the server screen, discover extension models, and see quota bars, reset times, and reset countdowns when the picker opens.")
+            title: String(localized: "Chat controls are more reliable"),
+            description: String(localized: "Context shows more Pi usage details, slash commands wait while the agent is busy, `/compact` works like a normal slash command, and extension prompts preserve your draft.")
         ),
         WhatsNewFeature(
+            id: "workspace-wiki-links",
+            icon: "link",
+            iconColor: .themeCyan,
+            title: String(localized: "Open workspace files with wiki links"),
+            description: String(localized: "Ask an agent to cite workspace files as `[[wiki links]]`, then tap a link to open the file in Oppi.")
+        ),
+        WhatsNewFeature(
+            id: "model-providers",
+            icon: "cpu",
+            iconColor: .themeBlue,
+            title: String(localized: "Model providers are easier to manage"),
+            description: String(localized: "Provider settings are easier to find, xAI shows quota and reset details, and extensions can supply custom model providers more reliably.")
+        ),
+        WhatsNewFeature(
+            id: "server-connections",
             icon: "point.3.connected.trianglepath.dotted",
             iconColor: .themeGreen,
-            title: String(localized: "Connection Controls"),
-            description: String(localized: "Choose Automatic, HTTPS Only, or Iroh Only for each server. Pairing keeps each client on its authorized transports.")
-        ),
-        WhatsNewFeature(
-            icon: "chart.bar.doc.horizontal",
-            iconColor: .themeBlue,
-            title: String(localized: "Usage and Linked Resources"),
-            description: String(localized: "Review full-history token, cache, and model costs in Context, then open assistant wiki links as workspace or server resources.")
-        ),
-        WhatsNewFeature(
-            icon: "text.document",
-            iconColor: .themeCyan,
-            title: String(localized: "More Reliable Chat and Review"),
-            description: String(localized: "Read long Markdown and tables, keep drafts through extension prompts, and queue /compact until an active turn finishes.")
-        ),
-        WhatsNewFeature(
-            icon: "slider.horizontal.3",
-            iconColor: .themeRed,
-            title: String(localized: "Safer Server Control"),
-            description: String(localized: "Oppi control sessions can manage supported server settings, while explicit model choices fail clearly instead of switching providers.")
+            title: String(localized: "More predictable server connections"),
+            description: String(localized: "Choose Automatic, HTTPS Only, or Iroh Only for each server; Oppi now follows that choice more consistently.")
         ),
     ]
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(spacing: 32) {
+                VStack(spacing: 0) {
                     header
-                        .padding(.top, 60)
+                        .padding(.top, 28)
+                        .padding(.horizontal, 24)
 
                     featureList
+                        .padding(.top, 28)
                         .padding(.horizontal, 24)
                 }
-                .padding(.bottom, 120)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 24)
             }
             .scrollBounceBehavior(.basedOnSize)
 
             continueButton
         }
-        .background(Color.themeBg)
+        .background {
+            Rectangle()
+                .fill(.themeBg)
+                .ignoresSafeArea()
+        }
         .onAppear {
             if reduceMotion {
                 appeared = true
@@ -126,15 +132,18 @@ struct WhatsNewView: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(spacing: 12) {
-            Text("What's New")
+        VStack(spacing: 6) {
+            Text(String(localized: "What’s New in Oppi"))
                 .font(.largeTitle.bold())
                 .foregroundStyle(.themeFg)
+                .accessibilityIdentifier("whatsNew.title")
 
-            Text("Builds 43–45")
-                .font(.title2)
+            Text(String(localized: "Build 45 · Changes since Build 43"))
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(.themeComment)
+                .accessibilityIdentifier("whatsNew.caption")
         }
+        .multilineTextAlignment(.center)
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared || reduceMotion ? 0 : 20)
     }
@@ -142,13 +151,13 @@ struct WhatsNewView: View {
     // MARK: - Feature List
 
     private var featureList: some View {
-        VStack(spacing: 20) {
+        VStack(alignment: .leading, spacing: 18) {
             ForEach(Array(features.enumerated()), id: \.element.id) { index, feature in
                 featureRow(feature)
                     .opacity(appeared ? 1 : 0)
                     .offset(y: appeared || reduceMotion ? 0 : 30)
                     .animation(
-                        reduceMotion ? nil : .easeOut(duration: 0.5).delay(Double(index) * 0.08 + 0.15),
+                        reduceMotion ? nil : .easeOut(duration: 0.5).delay(Double(index) * 0.06 + 0.1),
                         value: appeared
                     )
             }
@@ -156,46 +165,54 @@ struct WhatsNewView: View {
     }
 
     private func featureRow(_ feature: WhatsNewFeature) -> some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: feature.icon)
-                .font(.title2)
+                .font(.title3.weight(.semibold))
                 .foregroundStyle(feature.iconColor)
-                .frame(width: 40, alignment: .center)
-                .padding(.top, 2)
+                .frame(width: 28, height: 28)
+                .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(feature.title)
-                    .font(.headline)
+                    .font(.headline.weight(.semibold))
                     .foregroundStyle(.themeFg)
+                    .accessibilityIdentifier("whatsNew.feature.\(feature.id).title")
 
                 Text(feature.description)
                     .font(.subheadline)
                     .foregroundStyle(.themeComment)
+                    .lineSpacing(1)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("whatsNew.feature.\(feature.id).description")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("whatsNew.feature.\(feature.id)")
     }
 
     // MARK: - Continue Button
 
     private var continueButton: some View {
-        VStack {
+        VStack(spacing: 0) {
             Button {
                 WhatsNewManager.markSeen()
                 onContinue()
             } label: {
-                Text("Continue")
+                Text("Done")
                     .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
             .padding(.horizontal, 24)
+            .padding(.top, 12)
             .padding(.bottom, 8)
+            .accessibilityIdentifier("whatsNew.done")
         }
-        .padding(.top, 12)
-        .background(Color.themeSurfaceFill(.opaqueCard).ignoresSafeArea(edges: .bottom))
+        .background {
+            Rectangle()
+                .fill(.themeBgDark)
+                .ignoresSafeArea(edges: .bottom)
+        }
         .opacity(appeared ? 1 : 0)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.4).delay(0.6), value: appeared)
     }
