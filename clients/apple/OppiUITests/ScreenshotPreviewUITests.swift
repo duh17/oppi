@@ -729,6 +729,23 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "ask-card-multiselect-long")
     }
 
+    func testLatexRenderingPreview() throws {
+        for colorScheme in ["dark", "light"] {
+            launchPreview(
+                screen: "latex-rendering",
+                environment: ["SCREENSHOT_COLOR_SCHEME": colorScheme]
+            )
+
+            let content = app.descendants(matching: .any)["latex.preview.content"]
+            XCTAssertTrue(
+                content.waitForExistence(timeout: 5),
+                "Production Markdown/LaTeX preview did not render in \(colorScheme) mode"
+            )
+            saveScreenshot(name: "latex-rendering-\(colorScheme)")
+            app.terminate()
+        }
+    }
+
     func testSessionTimelinePreview() throws {
         launchPreview(screen: "session-timeline")
 
@@ -919,13 +936,20 @@ final class ScreenshotPreviewUITests: XCTestCase {
         option.tap()
     }
 
-    private func launchPreview(screen: String, reduceMotion: Bool = false) {
+    private func launchPreview(
+        screen: String,
+        reduceMotion: Bool = false,
+        environment: [String: String] = [:]
+    ) {
         app = XCUIApplication()
         app.launchArguments.append("--screenshot-preview")
         if reduceMotion {
             app.launchArguments.append(contentsOf: ["-UIAccessibilityReduceMotion", "YES"])
         }
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
+        for (key, value) in environment {
+            app.launchEnvironment[key] = value
+        }
         app.launch()
 
         // Wait for the preview to signal readiness.

@@ -1,77 +1,168 @@
 import cmark_gfm
 import cmark_gfm_extensions
 
-/// Protects assistant-style inline math delimiters from CommonMark backslash
-/// escaping. cmark-gfm treats `\(` as an escaped `(`, which erases the only
-/// signal the timeline renderer has that the parenthesized text is LaTeX.
+/// Protects recognized inline math as an opaque token while cmark-gfm parses
+/// the surrounding Markdown. This keeps TeX backslashes and underscores intact
+/// and, crucially, distinguishes real delimiters from escaped dollars before
+/// CommonMark consumes the escape.
 private enum MarkdownMathDelimiterRewriter {
-    private static let inlineOpenSentinel = "\u{E000}"
-    private static let inlineCloseSentinel = "\u{E001}"
+    struct Restoration {
+        fileprivate let replacements: [String: String]
 
-    static func sourceForCommonMarkParsing(_ source: String) -> String {
-        guard source.contains(#"\("#), source.contains(#"\)"#) else { return source }
+        func restore(_ text: String) -> String {
+            guard !replacements.isEmpty else { return text }
+            var restored = text
+            for (token, source) in replacements {
+                restored = restored.replacingOccurrences(of: token, with: source)
+            }
+            return restored
+        }
+    }
 
-        var result = ""
-        result.reserveCapacity(source.utf8.count)
-        var inFence = false
+    struct ParserInput {
+        let source: String
+        let restoration: Restoration
+    }
+
+    private static let tokenBaseCandidates = [
+        "opmathaz", "opmathbz", "opmathcz", "opmathdz",
+        "opmathez", "opmathfz", "opmathgz", "opmathhz",
+    ]
+
+    static func parserInput(_ source: String) -> ParserInput {
+        guard source.contains("$") || (source.contains(#"\("#) && source.contains(#"\)"#)),
+              let tokenBase = tokenBaseCandidates.first(where: { !source.contains($0) }) else {
+            return ParserInput(source: source, restoration: Restoration(replacements: [:]))
+        }
+
+        var rewritten = ""
+        rewritten.reserveCapacity(source.utf8.count)
+        var replacements: [String: String] = [:]
         var lineStart = source.startIndex
 
         while lineStart < source.endIndex {
             let lineEnd = source[lineStart...].firstIndex(of: "\n") ?? source.endIndex
             let includesNewline = lineEnd < source.endIndex
             let line = String(source[lineStart ..< lineEnd])
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if isFenceLine(trimmed) {
-                result += line
-                inFence.toggle()
-            } else if !inFence, !isIndentedCodeLine(line) {
-                result += replacingInlineMathDelimitersOutsideCodeSpans(in: line)
-            } else {
-                result += line
-            }
+            rewritten += replacingInlineMath(
+                in: line,
+                tokenBase: tokenBase,
+                replacements: &replacements
+            )
 
             if includesNewline {
-                result += "\n"
+                rewritten += "\n"
                 lineStart = source.index(after: lineEnd)
             } else {
                 lineStart = lineEnd
             }
         }
 
-        return result
+        return ParserInput(
+            source: rewritten,
+            restoration: Restoration(replacements: replacements)
+        )
     }
 
-    static func restoreCommonMarkText(_ text: String) -> String {
-        text
-            .replacingOccurrences(of: inlineOpenSentinel, with: #"\("#)
-            .replacingOccurrences(of: inlineCloseSentinel, with: #"\)"#)
-    }
-
-    private static func replacingInlineMathDelimitersOutsideCodeSpans(in line: String) -> String {
+    private static func replacingInlineMath(
+        in line: String,
+        tokenBase: String,
+        replacements: inout [String: String]
+    ) -> String {
         var result = ""
         result.reserveCapacity(line.utf8.count)
         var cursor = line.startIndex
-        var inCode = false
+        var codeDelimiterLength: Int?
 
         while cursor < line.endIndex {
             if line[cursor] == "`", !isEscaped(at: cursor, in: line) {
-                inCode.toggle()
+                let runLength = repeatedCharacterCount(in: line, from: cursor)
+                if codeDelimiterLength == nil {
+                    codeDelimiterLength = runLength
+                } else if codeDelimiterLength == runLength {
+                    codeDelimiterLength = nil
+                }
+                let runEnd = line.index(cursor, offsetBy: runLength)
+                result.append(contentsOf: line[cursor ..< runEnd])
+                cursor = runEnd
+                continue
+            }
+
+            guard codeDelimiterLength == nil else {
                 result.append(line[cursor])
                 cursor = line.index(after: cursor)
                 continue
             }
 
-            if !inCode, matches(#"\("#, in: line, at: cursor) {
-                result += inlineOpenSentinel
+            if line[cursor] == "]",
+               let next = line.index(cursor, offsetBy: 1, limitedBy: line.endIndex),
+               next < line.endIndex,
+               line[next] == "(",
+               let destinationEnd = inlineLinkDestinationEnd(in: line, openingParen: next) {
+                let end = line.index(after: destinationEnd)
+                result.append(contentsOf: line[cursor ..< end])
+                cursor = end
+                continue
+            }
+
+            if (matches(#"\\("#, in: line, at: cursor)
+                || matches(#"\\)"#, in: line, at: cursor)),
+               !isEscaped(at: cursor, in: line) {
+                let end = line.index(cursor, offsetBy: 3)
+                appendToken(
+                    for: String(line[cursor ..< end]),
+                    tokenBase: tokenBase,
+                    replacements: &replacements,
+                    to: &result
+                )
+                cursor = end
+                continue
+            }
+
+            if matches(#"\$"#, in: line, at: cursor),
+               !isEscaped(at: cursor, in: line) {
+                appendToken(
+                    for: #"\$"#,
+                    tokenBase: tokenBase,
+                    replacements: &replacements,
+                    to: &result
+                )
                 cursor = line.index(cursor, offsetBy: 2)
                 continue
             }
 
-            if !inCode, matches(#"\)"#, in: line, at: cursor) {
-                result += inlineCloseSentinel
-                cursor = line.index(cursor, offsetBy: 2)
+            if matches(#"\("#, in: line, at: cursor),
+               !isEscaped(at: cursor, in: line),
+               let closeRange = nextUnescaped(#"\)"#, in: line, after: line.index(cursor, offsetBy: 2)) {
+                let sourceRange = cursor ..< closeRange.upperBound
+                appendToken(
+                    for: String(line[sourceRange]),
+                    tokenBase: tokenBase,
+                    replacements: &replacements,
+                    to: &result
+                )
+                cursor = closeRange.upperBound
                 continue
+            }
+
+            if line[cursor] == "$",
+               !isEscaped(at: cursor, in: line),
+               !isAdjacentDollar(at: cursor, in: line) {
+                let contentStart = line.index(after: cursor)
+                if let close = nextSingleUnescapedDollar(in: line, from: contentStart) {
+                    let latex = String(line[contentStart ..< close])
+                    if isLikelyDollarMath(latex) {
+                        let sourceRange = cursor ..< line.index(after: close)
+                        appendToken(
+                            for: String(line[sourceRange]),
+                            tokenBase: tokenBase,
+                            replacements: &replacements,
+                            to: &result
+                        )
+                        cursor = line.index(after: close)
+                        continue
+                    }
+                }
             }
 
             result.append(line[cursor])
@@ -79,6 +170,97 @@ private enum MarkdownMathDelimiterRewriter {
         }
 
         return result
+    }
+
+    private static func appendToken(
+        for source: String,
+        tokenBase: String,
+        replacements: inout [String: String],
+        to result: inout String
+    ) {
+        let token = "\(tokenBase)\(replacements.count)z"
+        replacements[token] = source
+        result += token
+    }
+
+    private static func nextUnescaped(
+        _ needle: String,
+        in source: String,
+        after start: String.Index
+    ) -> Range<String.Index>? {
+        var cursor = start
+        while let range = source.range(of: needle, range: cursor ..< source.endIndex) {
+            if !isEscaped(at: range.lowerBound, in: source) {
+                return range
+            }
+            cursor = range.upperBound
+        }
+        return nil
+    }
+
+    private static func nextSingleUnescapedDollar(
+        in source: String,
+        from start: String.Index
+    ) -> String.Index? {
+        var cursor = start
+        while cursor < source.endIndex {
+            if source[cursor] == "$",
+               !isEscaped(at: cursor, in: source),
+               !isAdjacentDollar(at: cursor, in: source) {
+                return cursor
+            }
+            cursor = source.index(after: cursor)
+        }
+        return nil
+    }
+
+    private static func isLikelyDollarMath(_ source: String) -> Bool {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed == source,
+              !trimmed.contains("`"), !trimmed.contains("[") else { return false }
+        if trimmed.contains("\\") || trimmed.contains("^") || trimmed.contains("_")
+            || (trimmed.contains("{") && trimmed.contains("}")) {
+            return true
+        }
+        if trimmed.contains(where: { "=+-*/<>".contains($0) })
+            && trimmed.contains(where: { $0.isLetter || $0.isNumber }) {
+            return true
+        }
+        if trimmed.allSatisfy({ $0.isNumber || ".,".contains($0) }) {
+            return false
+        }
+        return trimmed.first?.isLetter == true
+    }
+
+    private static func inlineLinkDestinationEnd(
+        in source: String,
+        openingParen: String.Index
+    ) -> String.Index? {
+        var depth = 1
+        var cursor = source.index(after: openingParen)
+        while cursor < source.endIndex {
+            if !isEscaped(at: cursor, in: source) {
+                if source[cursor] == "(" {
+                    depth += 1
+                } else if source[cursor] == ")" {
+                    depth -= 1
+                    if depth == 0 { return cursor }
+                }
+            }
+            cursor = source.index(after: cursor)
+        }
+        return nil
+    }
+
+    private static func repeatedCharacterCount(in source: String, from start: String.Index) -> Int {
+        let character = source[start]
+        var count = 0
+        var cursor = start
+        while cursor < source.endIndex, source[cursor] == character {
+            count += 1
+            cursor = source.index(after: cursor)
+        }
+        return count
     }
 
     private static func matches(_ needle: String, in source: String, at index: String.Index) -> Bool {
@@ -97,12 +279,20 @@ private enum MarkdownMathDelimiterRewriter {
         return slashCount % 2 == 1
     }
 
-    private static func isFenceLine(_ trimmedLine: String) -> Bool {
-        trimmedLine.hasPrefix("```") || trimmedLine.hasPrefix("~~~")
+    private static func isAdjacentDollar(at index: String.Index, in source: String) -> Bool {
+        let previousIsDollar = index > source.startIndex && source[source.index(before: index)] == "$"
+        let next = source.index(after: index)
+        let nextIsDollar = next < source.endIndex && source[next] == "$"
+        return previousIsDollar || nextIsDollar
     }
+}
 
-    private static func isIndentedCodeLine(_ line: String) -> Bool {
-        line.hasPrefix("    ") || line.hasPrefix("\t")
+private struct CMarkRestoration {
+    let wiki: MarkdownWikiLinkRewriter.Restoration
+    let math: MarkdownMathDelimiterRewriter.Restoration
+
+    func restore(_ text: String) -> String {
+        math.restore(wiki.restore(text))
     }
 }
 
@@ -114,7 +304,7 @@ private enum MarkdownMathDelimiterRewriter {
 /// positions are not needed.
 private struct CMarkParsedDocument {
     let root: UnsafeMutablePointer<cmark_node>
-    let wikiLinkRestoration: MarkdownWikiLinkRewriter.Restoration
+    let restoration: CMarkRestoration
 }
 
 /// Shared parser setup: register GFM extensions, create parser, attach extensions, feed source.
@@ -135,10 +325,10 @@ private func cmarkParsedDocument(_ source: String) -> CMarkParsedDocument? {
         cmark_parser_attach_syntax_extension(parser, tasklistExt)
     }
 
-    // Math owns its sentinels independently. Wiki-link protection then
-    // carries per-parse restoration context through CMark conversion.
-    let mathSource = MarkdownMathDelimiterRewriter.sourceForCommonMarkParsing(source)
-    let parserInput = MarkdownWikiLinkRewriter.parserInput(mathSource)
+    // Inline math is opaque while CommonMark parses its TeX punctuation.
+    // Wiki-link protection then applies its independent scoped tokens.
+    let mathInput = MarkdownMathDelimiterRewriter.parserInput(source)
+    let parserInput = MarkdownWikiLinkRewriter.parserInput(mathInput.source)
     parserInput.source.withCString { ptr in
         cmark_parser_feed(parser, ptr, parserInput.source.utf8.count)
     }
@@ -146,7 +336,13 @@ private func cmarkParsedDocument(_ source: String) -> CMarkParsedDocument? {
     let doc = cmark_parser_finish(parser)
     cmark_parser_free(parser)
     guard let doc else { return nil }
-    return CMarkParsedDocument(root: doc, wikiLinkRestoration: parserInput.restoration)
+    return CMarkParsedDocument(
+        root: doc,
+        restoration: CMarkRestoration(
+            wiki: parserInput.restoration,
+            math: mathInput.restoration
+        )
+    )
 }
 
 nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
@@ -156,7 +352,7 @@ nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
     var blocks: [MarkdownBlock] = []
     var child = cmark_node_first_child(parsed.root)
     while let node = child {
-        if let block = convertCMarkBlock(node, restoration: parsed.wikiLinkRestoration) {
+        if let block = convertCMarkBlock(node, restoration: parsed.restoration) {
             blocks.append(block)
         }
         child = cmark_node_next(node)
@@ -171,7 +367,7 @@ nonisolated func parseCommonMarkFastLocated(_ source: String) -> [LocatedMarkdow
     var blocks: [LocatedMarkdownBlock] = []
     var child = cmark_node_first_child(parsed.root)
     while let node = child {
-        if let block = convertCMarkBlock(node, restoration: parsed.wikiLinkRestoration) {
+        if let block = convertCMarkBlock(node, restoration: parsed.restoration) {
             blocks.append(LocatedMarkdownBlock(
                 block: block,
                 lineRange: sourceLineRange(for: node)
@@ -192,7 +388,7 @@ nonisolated func parseCommonMarkFastWithLastLine(_ source: String) -> (blocks: [
     var lastNode: UnsafeMutablePointer<cmark_node>?
     var child = cmark_node_first_child(parsed.root)
     while let node = child {
-        if let block = convertCMarkBlock(node, restoration: parsed.wikiLinkRestoration) {
+        if let block = convertCMarkBlock(node, restoration: parsed.restoration) {
             blocks.append(block)
         }
         lastNode = node
@@ -235,7 +431,7 @@ private func sourceLineRange(for node: UnsafeMutablePointer<cmark_node>) -> Clos
 
 private func convertCMarkBlock(
     _ node: UnsafeMutablePointer<cmark_node>,
-    restoration: MarkdownWikiLinkRewriter.Restoration
+    restoration: CMarkRestoration
 ) -> MarkdownBlock? {
     let nodeType = cmark_node_get_type(node)
 
@@ -336,7 +532,7 @@ private func convertCMarkBlock(
 
 private func convertCMarkTable(
     _ node: UnsafeMutablePointer<cmark_node>,
-    restoration: MarkdownWikiLinkRewriter.Restoration
+    restoration: CMarkRestoration
 ) -> MarkdownBlock {
     var headers: [[MarkdownInline]] = []
     var rows: [[[MarkdownInline]]] = []
@@ -364,7 +560,7 @@ private func convertCMarkTable(
 
 private func extractCMarkPlainText(
     _ node: UnsafeMutablePointer<cmark_node>,
-    restoration: MarkdownWikiLinkRewriter.Restoration
+    restoration: CMarkRestoration
 ) -> String {
     var result = ""
     var child = cmark_node_first_child(node)
@@ -389,7 +585,7 @@ private func extractCMarkPlainText(
 
 private func convertCMarkInlines(
     _ parentNode: UnsafeMutablePointer<cmark_node>,
-    restoration: MarkdownWikiLinkRewriter.Restoration
+    restoration: CMarkRestoration
 ) -> [MarkdownInline] {
     var inlines: [MarkdownInline] = []
     var child = cmark_node_first_child(parentNode)
@@ -404,15 +600,14 @@ private func convertCMarkInlines(
 
 private func convertCMarkInline(
     _ node: UnsafeMutablePointer<cmark_node>,
-    restoration: MarkdownWikiLinkRewriter.Restoration
+    restoration: CMarkRestoration
 ) -> MarkdownInline? {
     let nodeType = cmark_node_get_type(node)
 
     switch nodeType {
     case CMARK_NODE_TEXT:
         guard let literal = cmark_node_get_literal(node) else { return nil }
-        let mathRestored = MarkdownMathDelimiterRewriter.restoreCommonMarkText(String(cString: literal))
-        return .text(restoration.restore(mathRestored))
+        return .text(restoration.restore(String(cString: literal)))
 
     case CMARK_NODE_EMPH:
         return .emphasis(convertCMarkInlines(node, restoration: restoration))

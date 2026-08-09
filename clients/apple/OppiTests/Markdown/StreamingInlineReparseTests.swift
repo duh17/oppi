@@ -119,6 +119,21 @@ struct StreamingInlineReparseTests {
         #expect(!text2.contains("`"))
     }
 
+    // MARK: - Inline math closure
+
+    @Test func dollarMathClosureReplacesLiteralSourceWithAttachment() throws {
+        let (stackView, applier) = makeApplier()
+
+        streamTick(applier: applier, content: "Inline $x^2")
+        let initial = try #require(firstTextView(in: stackView))
+        #expect(initial.textStorage.string == "Inline $x^2")
+
+        streamTick(applier: applier, content: "Inline $x^2$ done")
+        let rendered = try #require(firstTextView(in: stackView))
+        #expect(rendered.textStorage.string == "Inline \u{FFFC} done")
+        #expect(rendered.textStorage.attribute(.attachment, at: 7, effectiveRange: nil) is NSTextAttachment)
+    }
+
     // MARK: - Link closure
 
     @Test func linkClosureFallsBackToFullReplacement() {

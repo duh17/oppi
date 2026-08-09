@@ -727,7 +727,7 @@ final class AssistantMarkdownSegmentApplier {
 
         for byte in currentBytes.dropFirst(previousBytes.count) {
             switch byte {
-            case 33, 38, 40, 41, 42, 60, 62, 91, 92, 93, 95, 96, 124, 126:
+            case 33, 36, 38, 40, 41, 42, 60, 62, 91, 92, 93, 95, 96, 124, 126:
                 return false
             default:
                 continue

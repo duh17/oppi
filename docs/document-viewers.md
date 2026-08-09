@@ -54,6 +54,22 @@ Copy this into a Pi or agent system prompt:
 When citing a relevant file from the current Oppi workspace, use a workspace-relative wiki link such as [[path/to/file.ext|Short human-readable label]]. Reuse an existing path from the workspace; never fabricate a path or use an absolute, ~, file://, or outside-workspace path. Keep a normal human-readable sentence and brief context around every link so Oppi can render it as a navigable personal-wiki reference. Do not cite secrets, credentials, private runtime state, or sensitive files.
 ```
 
+Inline Markdown images support workspace-relative raster paths, source-relative paths when source context is known, and the existing client SVG path for SVG. See [Markdown image resolution](attachment-rendering.md#markdown-image-resolution).
+
+### Copyable `AGENTS.md` guidance for other projects
+
+````markdown
+- When pointing the user to a relevant file in the current workspace for navigation, use a real workspace-relative wiki link such as `[[path/to/file.ext|Short label]]`.
+- When the image or SVG itself should appear inline, use standard Markdown image syntax such as `![Short description](path/to/image.png)` or `![Diagram](path/to/diagram.svg)`.
+- For both formats, reuse a real existing workspace-relative path; never fabricate a path, use an absolute or outside-workspace path, or expose secrets or private runtime state. Keep normal human-readable context, and use these formats when actually showing or citing content—not for every casual filename mention.
+- For a diagram that should render inline, use a fenced Markdown code block labeled `mermaid` with valid Mermaid source:
+  ```mermaid
+  graph LR
+    A[Start] --> B[Done]
+  ```
+- For inline math, use `$x^2$` or `\(x^2\)`; for a displayed formula, use `$$x^2 + y^2 = z^2$$`, `\[...\]`, or a fenced `latex` block.
+````
+
 ## Viewing Options
 
 Full-screen document viewers show a **Viewing Options** button near the bottom-right corner of the screen. The panel adapts to the content type.

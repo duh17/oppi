@@ -13,6 +13,21 @@ struct FlatSegmentBuildTests {
         return String(attributed.characters)
     }
 
+    private func inlineMathAttachments(in segments: [FlatSegment]) -> [NSTextAttachment] {
+        guard let first = segments.first, case .text(let attributed) = first else { return [] }
+        let rendered = NSAttributedString(attributed)
+        var attachments: [NSTextAttachment] = []
+        rendered.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: rendered.length)
+        ) { value, _, _ in
+            if let attachment = value as? NSTextAttachment {
+                attachments.append(attachment)
+            }
+        }
+        return attachments
+    }
+
     @Test func emptyBlocksProduceNoSegments() {
         let segments = FlatSegment.build(from: [], themeID: .dark)
         #expect(segments.isEmpty)
@@ -106,22 +121,84 @@ struct FlatSegmentBuildTests {
         }
     }
 
-    @Test func inlineDollarLatexArrowRendersAsTextSegment() {
-        let blocks = parseCommonMark("A $\\rightarrow$ B\n")
-        let segments = FlatSegment.build(from: blocks, themeID: .dark)
-        #expect(textSegmentString(segments) == "A → B")
+    @Test func physicalDevicePayloadRendersBothInlineFormsAndPromotesDisplayMath() throws {
+        let markdown = #"""
+        Inline math: $x^2 + y^2 = z^2$ and \(\alpha \leq \beta\).
+
+        $$
+        \frac{1}{2} + \frac{1}{3} = \frac{5}{6}
+        $$
+        """#
+
+        let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+
+        #expect(segments.count == 2)
+        let attachments = inlineMathAttachments(in: segments)
+        #expect(attachments.count == 2)
+        #expect(attachments.allSatisfy { $0.image?.size.width ?? 0 > 0 })
+        #expect(attachments.allSatisfy {
+            ($0.image?.size.height ?? 0) >= AppFont.messageBody.pointSize * 0.75
+        })
+        guard case .text(let prose) = try #require(segments.first) else {
+            Issue.record("Expected inline formulas inside the prose text segment")
+            return
+        }
+        let renderedProse = NSAttributedString(prose).string
+        #expect(renderedProse.hasPrefix("Inline math: "))
+        #expect(renderedProse.hasSuffix(" and \u{FFFC}."))
+
+        guard case .latexBlock(let displaySource) = try #require(segments.last) else {
+            Issue.record("Expected displayed formula segment")
+            return
+        }
+        #expect(displaySource == #"\frac{1}{2} + \frac{1}{3} = \frac{5}{6}"#)
     }
 
-    @Test func inlineEscapedParenLatexRendersAsTextSegment() {
-        let blocks = parseCommonMark("A \\(\\alpha \\leq \\beta\\) B\n")
+    @Test func inlineMathPreservesMarkdownAndRejectsFalsePositives() throws {
+        let markdown = #"""
+        **Result:** $x^2$; see [proof](https://example.com/$value$), keep `$code^2$`, escaped \$y^2$, and prices $5 today and $6 tomorrow.
+        """#
+        let blocks = parseCommonMark(markdown)
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
-        #expect(textSegmentString(segments) == "A α ≤ β B")
+
+        #expect(inlineMathAttachments(in: segments).count == 1)
+        guard case .text(let attributed) = try #require(segments.first) else {
+            Issue.record("Expected one text segment")
+            return
+        }
+        let rendered = NSAttributedString(attributed)
+        #expect(rendered.string.contains("Result:"))
+        #expect(rendered.string.contains("proof"))
+        #expect(rendered.string.contains("$code^2$"))
+        #expect(rendered.string.contains("$y^2$"))
+        #expect(rendered.string.contains("$5 today and $6 tomorrow"))
+        #expect(attributed.runs.compactMap(\.link).map(\.absoluteString) == ["https://example.com/$value$"])
+        #expect(attributed.runs.contains { $0.inlinePresentationIntent == .stronglyEmphasized })
     }
 
-    @Test func inlineDollarLatexTextChainRendersPlainly() {
+    @Test func inlineDollarLatexArrowRendersAsFormulaAttachment() {
+        let segments = FlatSegment.build(
+            from: parseCommonMark("A $\\rightarrow$ B\n"),
+            themeID: .dark
+        )
+        #expect(inlineMathAttachments(in: segments).count == 1)
+        #expect(textSegmentString(segments) == "A \u{FFFC} B")
+    }
+
+    @Test func inlineEscapedParenLatexRendersAsFormulaAttachment() {
+        let segments = FlatSegment.build(
+            from: parseCommonMark("A \\(\\alpha \\leq \\beta\\) B\n"),
+            themeID: .dark
+        )
+        #expect(inlineMathAttachments(in: segments).count == 1)
+        #expect(textSegmentString(segments) == "A \u{FFFC} B")
+    }
+
+    @Test func inlineDollarLatexTextChainRendersAsFormulaAttachment() {
         let blocks = parseCommonMark("$\\text{First} \\rightarrow \\text{Second} \\rightarrow \\text{Done}$\n")
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
-        #expect(textSegmentString(segments) == "First → Second → Done")
+        #expect(inlineMathAttachments(in: segments).count == 1)
+        #expect(textSegmentString(segments) == "\u{FFFC}")
     }
 
     @Test func bareLatexTextChainRendersPlainly() {
@@ -130,22 +207,29 @@ struct FlatSegmentBuildTests {
         #expect(textSegmentString(segments) == "Alpha → Beta")
     }
 
-    @Test func inlineLatexTextPreservesNonLatinText() {
+    @Test func inlineLatexAttachmentPreservesNonLatinText() {
         let blocks = parseCommonMark("$\\text{第一步} \\rightarrow \\text{第二步}$\n")
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
-        #expect(textSegmentString(segments) == "第一步 → 第二步")
+        #expect(inlineMathAttachments(in: segments).count == 1)
     }
 
-    @Test func inlineLatexUsesMathParserSymbolsAndOperators() {
+    @Test func inlineLatexSymbolsAndOperatorsRenderAsFormulaAttachment() {
         let blocks = parseCommonMark("$\\alpha \\leq \\beta \\rightarrow \\gamma$\n")
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
-        #expect(textSegmentString(segments) == "α ≤ β → γ")
+        #expect(inlineMathAttachments(in: segments).count == 1)
     }
 
     @Test func inlineDollarCurrencyRemainsPlainText() {
         let blocks = parseCommonMark("Costs $5 today and $6 tomorrow\n")
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
         #expect(textSegmentString(segments) == "Costs $5 today and $6 tomorrow")
+    }
+
+    @Test func escapedInlineDelimitersRemainLiteralText() {
+        let markdown = #"Literal \\(not math\\), escaped \$x^2$, and $5.00$."#
+        let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+        #expect(inlineMathAttachments(in: segments).isEmpty)
+        #expect(textSegmentString(segments) == #"Literal \(not math\), escaped $x^2$, and $5.00$."#)
     }
 
     @Test func unmatchedDollarLatexRemainsPlainText() {
@@ -2292,6 +2376,73 @@ struct NativeMarkdownImageViewTests {
             UIColor.green.setFill()
             context.fill(CGRect(x: 10, y: 0, width: 10, height: 10))
         }
+    }
+}
+
+// MARK: - NativeLatexBlockView tests
+
+@Suite("NativeLatexBlockView")
+@MainActor
+struct NativeLatexBlockViewTests {
+    // The total fraction box includes numerator/denominator stacking; compare
+    // the largest contiguous ink band so undersized glyphs cannot pass by box height alone.
+    private func largestVisibleBandHeight(of image: UIImage) -> CGFloat? {
+        guard let cgImage = image.cgImage,
+              cgImage.width > 0,
+              cgImage.height > 0 else { return nil }
+
+        let width = cgImage.width
+        let height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var largestBand = 0
+        var currentBand = 0
+        for y in 0..<height {
+            let rowHasInk = (0..<width).contains { x in
+                pixels[(y * width + x) * 4 + 3] > 16
+            }
+            if rowHasInk {
+                currentBand += 1
+                largestBand = max(largestBand, currentBand)
+            } else {
+                currentBand = 0
+            }
+        }
+        return CGFloat(largestBand) / max(image.scale, 1)
+    }
+
+    @Test func displayedFractionUsesReadableDynamicBodyTypography() throws {
+        let view = NativeLatexBlockView()
+        view.frame = CGRect(x: 0, y: 0, width: 360, height: 200)
+        view.layoutIfNeeded()
+
+        view.applyAsFormulaSync(
+            code: #"\frac{1}{2} + \frac{1}{3} = \frac{5}{6}"#,
+            palette: ThemeID.dark.palette
+        )
+        view.layoutIfNeeded()
+
+        let imageView = try #require(
+            timelineAllImageViews(in: view).first {
+                !$0.isHidden && $0.image != nil && $0.isUserInteractionEnabled
+            }
+        )
+        let image = try #require(imageView.image)
+        let largestVisibleBand = try #require(largestVisibleBandHeight(of: image))
+        #expect(
+            largestVisibleBand > AppFont.messageBody.pointSize,
+            "Displayed glyphs should exceed the message body scale; band=\(largestVisibleBand), body=\(AppFont.messageBody.pointSize)"
+        )
     }
 }
 

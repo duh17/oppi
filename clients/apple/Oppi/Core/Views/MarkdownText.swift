@@ -738,97 +738,257 @@ enum FlatSegment: Sendable {
         return false
     }
 
-    // MARK: - Inline Math Text
+    // MARK: - Inline Math Rendering
 
-    private static func renderInlineLatexParagraph(_ inlines: [MarkdownInline]) -> String? {
-        let source = inlineSourcePreservingBreaks(inlines)
-        var renderedSource = source
-        var renderedAny = false
+    private struct InlineLatexRender {
+        var attributed = AttributedString()
+        var handledDelimiter = false
+    }
 
-        if let rendered = renderEscapedParenDelimitedInlineLatex(renderedSource) {
-            renderedSource = rendered
-            renderedAny = true
+    /// Render formulas as baseline-aligned text attachments while preserving
+    /// the surrounding CommonMark runs. The previous plain-text conversion
+    /// flattened the whole paragraph, dropping links, code styling, emphasis,
+    /// and the mathematical layout users expected from LaTeX.
+    private static func renderInlineLatexParagraph(
+        _ inlines: [MarkdownInline],
+        palette: ThemePalette,
+        bodyColor: UIColor,
+        bodyFont: UIFont
+    ) -> AttributedString? {
+        let render = renderInlineLatexInlines(
+            inlines,
+            palette: palette,
+            bodyColor: bodyColor,
+            bodyFont: bodyFont
+        )
+        return render.handledDelimiter ? render.attributed : nil
+    }
+
+    private static func renderInlineLatexInlines(
+        _ inlines: [MarkdownInline],
+        palette: ThemePalette,
+        bodyColor: UIColor,
+        bodyFont: UIFont
+    ) -> InlineLatexRender {
+        var result = InlineLatexRender()
+
+        for inline in inlines {
+            switch inline {
+            case .text(let source):
+                let rendered = renderInlineLatexText(
+                    source,
+                    palette: palette,
+                    bodyColor: bodyColor,
+                    bodyFont: bodyFont
+                )
+                result.attributed.append(rendered.attributed)
+                result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
+
+            case .emphasis(let children):
+                var rendered = renderInlineLatexInlines(
+                    children,
+                    palette: palette,
+                    bodyColor: bodyColor,
+                    bodyFont: bodyFont
+                )
+                rendered.attributed.inlinePresentationIntent = .emphasized
+                result.attributed.append(rendered.attributed)
+                result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
+
+            case .strong(let children):
+                var rendered = renderInlineLatexInlines(
+                    children,
+                    palette: palette,
+                    bodyColor: bodyColor,
+                    bodyFont: bodyFont
+                )
+                rendered.attributed.inlinePresentationIntent = .stronglyEmphasized
+                result.attributed.append(rendered.attributed)
+                result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
+
+            case .code(let code):
+                var rendered = AttributedString(code)
+                rendered.uiKit.font = monospacedFont(forTextStyle: .subheadline)
+                rendered.uiKit.foregroundColor = UIColor(palette.mdCode)
+                rendered.uiKit.backgroundColor = UIColor(palette.bgHighlight)
+                result.attributed.append(rendered)
+
+            case .link(let children, let destination):
+                var rendered = renderInlineLatexInlines(
+                    children,
+                    palette: palette,
+                    bodyColor: bodyColor,
+                    bodyFont: bodyFont
+                )
+                rendered.attributed.uiKit.foregroundColor = UIColor(palette.mdLink)
+                rendered.attributed.underlineStyle = .single
+                if let destination,
+                   let url = URL(string: destination),
+                   url.scheme != nil {
+                    rendered.attributed.link = url
+                }
+                result.attributed.append(rendered.attributed)
+                result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
+
+            case .image(let alt, _):
+                var rendered = AttributedString(imageFallbackText(alt: alt))
+                rendered.uiKit.font = bodyFont
+                rendered.uiKit.foregroundColor = UIColor(palette.comment)
+                result.attributed.append(rendered)
+
+            case .softBreak, .hardBreak:
+                var rendered = AttributedString("\n")
+                rendered.uiKit.font = bodyFont
+                rendered.uiKit.foregroundColor = bodyColor
+                result.attributed.append(rendered)
+
+            case .html(let raw):
+                var rendered = AttributedString(raw)
+                rendered.uiKit.font = bodyFont
+                rendered.uiKit.foregroundColor = UIColor(palette.comment)
+                result.attributed.append(rendered)
+
+            case .strikethrough(let children):
+                var rendered = renderInlineLatexInlines(
+                    children,
+                    palette: palette,
+                    bodyColor: bodyColor,
+                    bodyFont: bodyFont
+                )
+                rendered.attributed.strikethroughStyle = .single
+                result.attributed.append(rendered.attributed)
+                result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
+            }
         }
 
-        if let rendered = renderDollarDelimitedInlineLatex(renderedSource) {
-            renderedSource = rendered
-            renderedAny = true
+        return result
+    }
+
+    private static func renderInlineLatexText(
+        _ source: String,
+        palette: ThemePalette,
+        bodyColor: UIColor,
+        bodyFont: UIFont
+    ) -> InlineLatexRender {
+        var result = InlineLatexRender()
+        var plain = ""
+        var cursor = source.startIndex
+
+        func flushPlain() {
+            guard !plain.isEmpty else { return }
+            var attributed = AttributedString(plain)
+            attributed.uiKit.font = bodyFont
+            attributed.uiKit.foregroundColor = bodyColor
+            result.attributed.append(attributed)
+            plain.removeAll(keepingCapacity: true)
         }
 
-        if renderedAny {
-            return renderedSource
+        while cursor < source.endIndex {
+            if source[cursor...].hasPrefix(#"\\("#) {
+                plain += #"\("#
+                cursor = source.index(cursor, offsetBy: 3)
+                result.handledDelimiter = true
+                continue
+            }
+
+            if source[cursor...].hasPrefix(#"\\)"#) {
+                plain += #"\)"#
+                cursor = source.index(cursor, offsetBy: 3)
+                result.handledDelimiter = true
+                continue
+            }
+
+            if source[cursor...].hasPrefix(#"\$"#), isEscapedDollar(at: source.index(after: cursor), in: source) {
+                plain.append("$")
+                cursor = source.index(cursor, offsetBy: 2)
+                result.handledDelimiter = true
+                continue
+            }
+
+            if source[cursor...].hasPrefix(#"\("#),
+               let closeRange = source.range(
+                   of: #"\)"#,
+                   range: source.index(cursor, offsetBy: 2) ..< source.endIndex
+               ) {
+                let latexStart = source.index(cursor, offsetBy: 2)
+                let latex = String(source[latexStart ..< closeRange.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !latex.isEmpty,
+                   let attachment = inlineLatexAttachment(
+                       source: latex,
+                       palette: palette,
+                       bodyFont: bodyFont
+                   ) {
+                    flushPlain()
+                    result.attributed.append(attachment)
+                    result.handledDelimiter = true
+                    cursor = closeRange.upperBound
+                    continue
+                }
+            }
+
+            if source[cursor] == "$",
+               !isEscapedDollar(at: cursor, in: source),
+               !isDisplayMathDollar(at: cursor, in: source) {
+                let latexStart = source.index(after: cursor)
+                if let close = nextInlineMathDelimiter(in: source, from: latexStart) {
+                    let latex = String(source[latexStart ..< close])
+                    if isLikelyLatexMath(latex),
+                       let attachment = inlineLatexAttachment(
+                           source: latex,
+                           palette: palette,
+                           bodyFont: bodyFont
+                       ) {
+                        flushPlain()
+                        result.attributed.append(attachment)
+                        result.handledDelimiter = true
+                        cursor = source.index(after: close)
+                        continue
+                    }
+                }
+            }
+
+            plain.append(source[cursor])
+            cursor = source.index(after: cursor)
         }
 
+        flushPlain()
+        return result
+    }
+
+    private static func inlineLatexAttachment(
+        source: String,
+        palette: ThemePalette,
+        bodyFont: UIFont
+    ) -> AttributedString? {
+        guard let rendered = DocumentRenderPipeline.renderInlineLatexImage(
+            text: source,
+            config: RenderConfiguration(
+                fontSize: bodyFont.pointSize,
+                maxWidth: 1_000,
+                theme: palette.renderTheme,
+                displayMode: .inline
+            )
+        ) else { return nil }
+
+        let attachment = NSTextAttachment()
+        attachment.image = rendered.image
+        attachment.bounds = CGRect(
+            x: 0,
+            y: -(rendered.size.height - rendered.baseline),
+            width: rendered.size.width,
+            height: rendered.size.height
+        )
+        attachment.accessibilityLabel = "Math: \(renderInlineLatexPlainText(source))"
+        return AttributedString(NSAttributedString(attachment: attachment))
+    }
+
+    private static func renderBareInlineLatexText(_ inlines: [MarkdownInline]) -> String? {
+        guard inlines.count == 1, case .text(let source) = inlines[0] else { return nil }
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.contains("$"), trimmed.hasPrefix("\\text{") else { return nil }
         let rendered = renderInlineLatexPlainText(trimmed)
         return rendered.isEmpty ? nil : rendered
-    }
-
-    private static func renderEscapedParenDelimitedInlineLatex(_ source: String) -> String? {
-        renderDelimitedInlineLatex(source, open: #"\("#, close: #"\)"#, requiresLikelyMath: false)
-    }
-
-    private static func renderDollarDelimitedInlineLatex(_ source: String) -> String? {
-        var cursor = source.startIndex
-        var output = ""
-        var renderedAny = false
-
-        while cursor < source.endIndex,
-              let open = nextInlineMathDelimiter(in: source, from: cursor) {
-            let afterOpen = source.index(after: open)
-            guard let close = nextInlineMathDelimiter(in: source, from: afterOpen) else { break }
-
-            let inner = String(source[afterOpen ..< close])
-            guard isLikelyLatexMath(inner) else {
-                let afterClose = source.index(after: close)
-                output.append(contentsOf: source[cursor ..< afterClose])
-                cursor = afterClose
-                continue
-            }
-
-            output.append(contentsOf: source[cursor ..< open])
-            output.append(renderInlineLatexPlainText(inner))
-            cursor = source.index(after: close)
-            renderedAny = true
-        }
-
-        output.append(contentsOf: source[cursor...])
-        return renderedAny ? output : nil
-    }
-
-    private static func renderDelimitedInlineLatex(
-        _ source: String,
-        open: String,
-        close: String,
-        requiresLikelyMath: Bool
-    ) -> String? {
-        var cursor = source.startIndex
-        var output = ""
-        var renderedAny = false
-
-        while cursor < source.endIndex,
-              let openRange = source.range(of: open, range: cursor ..< source.endIndex) {
-            let afterOpen = openRange.upperBound
-            guard let closeRange = source.range(of: close, range: afterOpen ..< source.endIndex) else { break }
-
-            let inner = String(source[afterOpen ..< closeRange.lowerBound])
-            let trimmedInner = inner.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedInner.isEmpty,
-                  !requiresLikelyMath || isLikelyLatexMath(trimmedInner) else {
-                output.append(contentsOf: source[cursor ..< closeRange.upperBound])
-                cursor = closeRange.upperBound
-                continue
-            }
-
-            output.append(contentsOf: source[cursor ..< openRange.lowerBound])
-            output.append(renderInlineLatexPlainText(trimmedInner))
-            cursor = closeRange.upperBound
-            renderedAny = true
-        }
-
-        output.append(contentsOf: source[cursor...])
-        return renderedAny ? output : nil
     }
 
     private static func nextInlineMathDelimiter(in source: String, from start: String.Index) -> String.Index? {
@@ -1365,7 +1525,15 @@ enum FlatSegment: Sendable {
         case .paragraph(let inlines):
             let bodyFont = AppFont.messageBody
             let bodyColor = defaultTextColor ?? UIColor(palette.fg)
-            if let renderedLatex = renderInlineLatexParagraph(inlines) {
+            if let renderedLatex = renderInlineLatexParagraph(
+                inlines,
+                palette: palette,
+                bodyColor: bodyColor,
+                bodyFont: bodyFont
+            ) {
+                return renderedLatex
+            }
+            if let renderedLatex = renderBareInlineLatexText(inlines) {
                 var container = AttributeContainer()
                 container.uiKit.foregroundColor = bodyColor
                 container.uiKit.font = bodyFont

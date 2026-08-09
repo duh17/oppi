@@ -36,6 +36,16 @@ final class NativeLatexBlockView: UIView {
     /// Cap formula height in the timeline to keep cells reasonable.
     private static let maxInlineHeight: CGFloat = 400
 
+    /// Display math uses Apple's title1 role rather than a caption-sized scalar.
+    /// Applying the configured message-body ratio keeps Dynamic Type and the
+    /// chat text-size preference aligned with the surrounding typography.
+    private static var displayFormulaFontSize: CGFloat {
+        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        let displayFont = UIFont.preferredFont(forTextStyle: .title1)
+        let messageBodyScale = AppFont.messageBody.pointSize / bodyFont.pointSize
+        return displayFont.pointSize * messageBodyScale
+    }
+
     // MARK: - State
 
     private var currentCode: String?
@@ -114,10 +124,10 @@ final class NativeLatexBlockView: UIView {
             renderer: MathCoreGraphicsRenderer(),
             text: code,
             config: RenderConfiguration(
-                fontSize: 13,
+                fontSize: Self.displayFormulaFontSize,
                 maxWidth: availableWidth,
                 theme: theme,
-                displayMode: .inline
+                displayMode: .document
             )
         ) else {
             showAsCodeFallback(code: code, palette: palette)
@@ -140,6 +150,7 @@ final class NativeLatexBlockView: UIView {
             let availableWidth = self.bounds.width > 0
                 ? self.bounds.width
                 : (self.window?.windowScene?.screen.bounds.width ?? 360)
+            let fontSize = Self.displayFormulaFontSize
 
             let result: (image: UIImage, size: CGSize)? = await Task.detached(priority: .userInitiated) {
                 DocumentRenderPipeline.renderInlineGraphicalImage(
@@ -147,10 +158,10 @@ final class NativeLatexBlockView: UIView {
                     renderer: MathCoreGraphicsRenderer(),
                     text: code,
                     config: RenderConfiguration(
-                        fontSize: 13,
+                        fontSize: fontSize,
                         maxWidth: availableWidth,
                         theme: theme,
-                        displayMode: .inline
+                        displayMode: .document
                     )
                 )
             }.value

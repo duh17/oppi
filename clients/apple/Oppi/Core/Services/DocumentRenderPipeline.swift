@@ -70,6 +70,29 @@ enum DocumentRenderPipeline {
         return (image: image, size: layout.size)
     }
 
+    /// Rasterize one inline formula and preserve its TeX baseline so a text
+    /// attachment can align with surrounding prose instead of sitting on the
+    /// bottom of the line fragment.
+    static func renderInlineLatexImage(
+        text: String,
+        config: RenderConfiguration,
+        scale: CGFloat = 2.0
+    ) -> (image: UIImage, size: CGSize, baseline: CGFloat)? {
+        let parser = TeXMathParser()
+        let renderer = MathCoreGraphicsRenderer()
+        let layout = renderer.layout(parser.parse(text), configuration: config)
+        let size = renderer.boundingBox(layout)
+        guard size.width > 0, size.height > 0 else { return nil }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        let imageRenderer = UIGraphicsImageRenderer(size: size, format: format)
+        let image = imageRenderer.image { context in
+            renderer.draw(layout, in: context.cgContext, at: .zero)
+        }
+        return (image: image, size: size, baseline: layout.rootBox.baseline)
+    }
+
     // MARK: - LaTeX Multi-Expression Layout
 
     /// Result of laying out multiple LaTeX expressions separated by blank lines.
