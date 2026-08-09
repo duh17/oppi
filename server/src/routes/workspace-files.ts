@@ -1,11 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Dirent, Stats } from "node:fs";
 import { createReadStream } from "node:fs";
-import { stat, realpath, readdir } from "node:fs/promises";
+import { opendir, stat, realpath, readdir } from "node:fs/promises";
 import { join, extname, relative } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import {
   decodeWorkspaceRoutePath,
   getContentType,
@@ -15,6 +12,7 @@ import {
   MAX_BROWSE_IMAGE_FILE_SIZE,
   MAX_BROWSE_TEXT_FILE_SIZE,
   SEARCH_IGNORE_DIRS,
+  SEARCH_ROOT_IGNORE_DIRS,
 } from "../file-serving-policy.js";
 import { parseByteRangeHeader } from "../http-range.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
@@ -35,18 +33,19 @@ export {
   isSensitivePath,
   isStreamingMediaContentType,
   SEARCH_IGNORE_DIRS,
+  SEARCH_ROOT_IGNORE_DIRS,
   SENSITIVE_FILE_PATTERNS,
   TEXT_EXTENSIONS,
 } from "../file-serving-policy.js";
 
-const execFileAsync = promisify(execFile);
-
 const MAX_IMAGE_FILE_SIZE = MAX_BROWSE_IMAGE_FILE_SIZE;
 const MAX_TEXT_FILE_SIZE = MAX_BROWSE_TEXT_FILE_SIZE;
 const MAX_DIR_ENTRIES = 1000;
-const GIT_TIMEOUT_MS = 5000;
-const WALK_MAX_FILES = 10_000;
 const WALK_MAX_DEPTH = 12;
+const MAX_INDEX_PATHS = 50_000;
+const MAX_WALK_DIRECTORIES = 10_000;
+const MAX_WALK_ENTRIES = 100_000;
+const MAX_WALK_ENTRIES_PER_DIRECTORY = MAX_WALK_ENTRIES;
 
 function pipeFileStream(
   filePath: string,
@@ -75,6 +74,14 @@ function pipeFileStream(
  * `null` if the path does not exist or escapes the workspace root via symlinks
  * or `..` traversal.
  */
+async function resolveWorkspaceRootPath(workspaceRoot: string): Promise<string> {
+  try {
+    return await realpath(workspaceRoot);
+  } catch {
+    return workspaceRoot;
+  }
+}
+
 export async function resolveWorkspaceFilePath(
   workspaceRoot: string,
   requestedPath: string,
@@ -88,13 +95,7 @@ export async function resolveWorkspaceFilePath(
     return null;
   }
 
-  let realRoot: string;
-  try {
-    realRoot = await realpath(workspaceRoot);
-  } catch {
-    realRoot = workspaceRoot;
-  }
-
+  const realRoot = await resolveWorkspaceRootPath(workspaceRoot);
   const normalizedRoot = realRoot.endsWith("/") ? realRoot : realRoot + "/";
   if (realFile !== realRoot && !realFile.startsWith(normalizedRoot)) {
     return null;
@@ -159,40 +160,149 @@ export async function listDirectoryEntries(
   return { entries, truncated };
 }
 
-async function walkDirectoryForSearch(root: string): Promise<string[]> {
-  const results: string[] = [];
+interface SearchWalkResult {
+  paths: string[];
+  truncated: boolean;
+}
 
-  async function walk(dir: string, depth: number): Promise<void> {
-    if (depth > WALK_MAX_DEPTH || results.length >= WALK_MAX_FILES) return;
+interface SearchDirectoryReadResult {
+  entries: Dirent[];
+  truncated: boolean;
+  stopTraversal: boolean;
+}
 
-    let dirents: Dirent[];
+function compareSearchNames(lhs: string, rhs: string): number {
+  if (lhs === rhs) return 0;
+  return lhs < rhs ? -1 : 1;
+}
+
+/**
+ * Walk the workspace filesystem without consulting Git's ignore rules.
+ *
+ * Directory streams are bounded before sorting, and both directory and entry
+ * budgets include filtered/empty work. Entries read within the bound are
+ * sorted before traversal. `Dirent.isDirectory()` is intentionally used
+ * without stat or realpath; symbolic links are leaves and are not indexed or
+ * followed.
+ */
+async function walkDirectoryForSearch(root: string): Promise<SearchWalkResult> {
+  const paths: string[] = [];
+  let truncated = false;
+  let pathLimitExceeded = false;
+  let globalBudgetExceeded = false;
+  let visitedDirectories = 0;
+  let scannedEntries = 0;
+
+  async function readDirectoryEntries(dir: string): Promise<SearchDirectoryReadResult> {
+    let directory: Awaited<ReturnType<typeof opendir>>;
     try {
-      dirents = await readdir(dir, { withFileTypes: true });
+      directory = await opendir(dir);
     } catch {
-      return;
+      return { entries: [], truncated: true, stopTraversal: false };
     }
 
-    for (const dirent of dirents) {
-      if (results.length >= WALK_MAX_FILES) return;
+    const entries: Dirent[] = [];
+    let directoryTruncated = false;
+    let stopTraversal = false;
+    let readFailed = false;
+    let reachedEnd = false;
+    try {
+      while (entries.length < MAX_WALK_ENTRIES_PER_DIRECTORY && scannedEntries < MAX_WALK_ENTRIES) {
+        const entry = await directory.read();
+        if (entry === null) {
+          reachedEnd = true;
+          break;
+        }
+        scannedEntries += 1;
+        entries.push(entry);
+      }
+
+      // Probe once beyond either budget. An extra entry proves that the
+      // directory/global budget was exceeded; discard the partial subset so
+      // traversal never exposes an arbitrary filesystem-order prefix.
+      if (!reachedEnd) {
+        const extraEntry = await directory.read();
+        if (extraEntry !== null) {
+          scannedEntries += 1;
+          directoryTruncated = true;
+          stopTraversal = scannedEntries > MAX_WALK_ENTRIES;
+        } else {
+          reachedEnd = true;
+        }
+      }
+    } catch {
+      readFailed = true;
+    } finally {
+      try {
+        await directory.close();
+      } catch {
+        readFailed = true;
+      }
+    }
+
+    if (readFailed || directoryTruncated) {
+      return { entries: [], truncated: true, stopTraversal };
+    }
+
+    entries.sort((lhs, rhs) => compareSearchNames(lhs.name, rhs.name));
+    return { entries, truncated: false, stopTraversal: false };
+  }
+
+  async function walk(dir: string, depth: number): Promise<void> {
+    if (pathLimitExceeded || globalBudgetExceeded) return;
+    if (depth > WALK_MAX_DEPTH || scannedEntries >= MAX_WALK_ENTRIES) {
+      truncated = true;
+      return;
+    }
+    if (visitedDirectories >= MAX_WALK_DIRECTORIES) {
+      truncated = true;
+      return;
+    }
+    visitedDirectories += 1;
+
+    const directoryResult = await readDirectoryEntries(dir);
+    if (directoryResult.stopTraversal) {
+      globalBudgetExceeded = true;
+      truncated = true;
+      return;
+    }
+    if (directoryResult.truncated) truncated = true;
+
+    for (const dirent of directoryResult.entries) {
+      if (pathLimitExceeded || globalBudgetExceeded) return;
+      if (depth === 0 && SEARCH_ROOT_IGNORE_DIRS.has(dirent.name)) continue;
+      if (dirent.isSymbolicLink()) continue;
 
       if (dirent.isDirectory()) {
         if (SEARCH_IGNORE_DIRS.has(dirent.name)) continue;
+        if (depth >= WALK_MAX_DEPTH) {
+          truncated = true;
+          continue;
+        }
         await walk(join(dir, dirent.name), depth + 1);
-      } else {
-        if (dirent.name === ".DS_Store") continue;
-        results.push(relative(root, join(dir, dirent.name)));
+        continue;
       }
+
+      if (dirent.name === ".DS_Store") continue;
+      const path = relative(root, join(dir, dirent.name)).replaceAll("\\", "/");
+      if (isSensitivePath(path)) continue;
+
+      if (paths.length >= MAX_INDEX_PATHS) {
+        pathLimitExceeded = true;
+        truncated = true;
+        return;
+      }
+      paths.push(path);
     }
   }
 
   await walk(root, 0);
-  return results;
+  return { paths, truncated };
 }
 
 // ─── File Index Cache ───
 
 const FILE_INDEX_TTL_MS = 30_000; // 30 seconds
-const MAX_INDEX_PATHS = 50_000;
 
 interface CachedFileIndex {
   paths: string[];
@@ -202,20 +312,6 @@ interface CachedFileIndex {
 
 const fileIndexCache = new Map<string, CachedFileIndex>();
 
-/** Collect all workspace-relative file paths (no stat calls, no sensitive filtering). */
-async function collectFilePaths(workspaceRoot: string): Promise<string[]> {
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["ls-files", "--cached", "--others", "--exclude-standard"],
-      { cwd: workspaceRoot, maxBuffer: 10 * 1024 * 1024, timeout: GIT_TIMEOUT_MS },
-    );
-    return stdout.split("\n").filter(Boolean);
-  } catch {
-    return walkDirectoryForSearch(workspaceRoot);
-  }
-}
-
 /** Get file index for a workspace, using cache when fresh. */
 export async function getFileIndex(workspaceRoot: string): Promise<FileIndexResponse> {
   const cached = fileIndexCache.get(workspaceRoot);
@@ -223,12 +319,9 @@ export async function getFileIndex(workspaceRoot: string): Promise<FileIndexResp
     return { paths: cached.paths, truncated: cached.truncated };
   }
 
-  const allPaths = await collectFilePaths(workspaceRoot);
-  const truncated = allPaths.length > MAX_INDEX_PATHS;
-  const paths = truncated ? allPaths.slice(0, MAX_INDEX_PATHS) : allPaths;
-
-  fileIndexCache.set(workspaceRoot, { paths, truncated, timestamp: Date.now() });
-  return { paths, truncated };
+  const result = await walkDirectoryForSearch(workspaceRoot);
+  fileIndexCache.set(workspaceRoot, { ...result, timestamp: Date.now() });
+  return result;
 }
 
 export function createWorkspaceFileRoutes(
@@ -280,6 +373,13 @@ export function createWorkspaceFileRoutes(
     const realFile = await resolveWorkspaceFilePath(workspaceRoot, requestedPath);
     if (!realFile) {
       helpers.error(res, 404, "File not found");
+      return;
+    }
+
+    const realRoot = await resolveWorkspaceRootPath(workspaceRoot);
+    const canonicalPath = relative(realRoot, realFile).replaceAll("\\", "/");
+    if (isSensitivePath(canonicalPath)) {
+      helpers.error(res, 403, "Access denied: sensitive file");
       return;
     }
 

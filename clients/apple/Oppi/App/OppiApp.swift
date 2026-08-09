@@ -618,31 +618,13 @@ struct OppiApp: App {
             }
 
             do {
-                let index = try await apiClient.fetchFileIndex(
-                    workspaceId: workspaceID,
-                    worktreeId: worktreeID
-                )
-                try Task.checkCancellation()
-                let fileExists: Bool
-                switch ResourceFileCandidatePolicy.indexDecision(
-                    candidatePath: fileCandidatePath,
-                    paths: index.paths,
-                    truncated: index.truncated
-                ) {
-                case .found:
-                    fileExists = true
-                case .missing:
-                    fileExists = false
-                case .inspectDirectory:
-                    guard let listingResult = try await exactFileListingResult(
-                        fileCandidatePath,
-                        workspaceID: workspaceID,
-                        worktreeID: worktreeID,
-                        apiClient: apiClient
-                    ) else {
-                        return .unavailable
-                    }
-                    fileExists = listingResult
+                guard let fileExists = try await exactFileListingResult(
+                    fileCandidatePath,
+                    workspaceID: workspaceID,
+                    worktreeID: worktreeID,
+                    apiClient: apiClient
+                ) else {
+                    return .unavailable
                 }
 
                 if fileExists {

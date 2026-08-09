@@ -4,6 +4,56 @@ Oppi renders text and document output in native full-screen viewers on iPhone an
 
 This page covers full-screen viewers for markdown, code, source text, diffs, terminal output, HTML, and rendered document formats such as Org, LaTeX, Mermaid, and Graphviz. Media viewers such as images, audio, video players, and PDFs use their own controls.
 
+## Workspace wiki links
+
+Assistant messages can reference files in the active workspace with:
+
+```text
+[[path/to/file]]
+[[path/to/file|Human-readable label]]
+```
+
+The target is a workspace-relative path. Oppi preserves an explicit extension, adds `.md` to an extensionless target, and resolves `./` or `../` relative to the source Markdown file's directory when that directory is known. Backslashes become `/`. Absolute paths, `~` paths, `file://` URLs, query strings, and fragments are not workspace wiki links.
+
+### What links can open
+
+Git tracking does not decide whether an exact link can open. Tracked files and safe Git-ignored files can use the same syntax. Examples include:
+
+- Markdown and text: `[[.internal/release-notes/testflight-build-45-changelog.md|Build 45 release note]]`
+- Source and structured text: `[[server/src/file-serving-policy.ts|File-serving policy]]` and `[[package.json|Package metadata]]`
+- Images: `[[docs/images/app-icon.png|Oppi app icon]]`
+- Audio and video: recognized files such as `.mp3`, `.wav`, `.m4a`, `.mp4`, `.mov`, and `.m3u8`
+- Other recognized documents: HTML, CSS, XML, CSV, and PDF files
+
+Oppi selects a document or media viewer from the detected file type. An unknown binary file can be served within the file limits below, but it does not guarantee a native preview.
+
+### Resolution, navigation, and limits
+
+Oppi resolves a wiki link when the user taps it. It checks the exact parent directory instead of relying on fuzzy search. One matching session or workspace file opens directly. Multiple matches show a chooser; no match shows an unresolved-file message. A link to the current session remains inert. Opening a file pushes its viewer onto the current navigation stack, and Back returns to the originating chat or file context.
+
+Fuzzy discovery uses a deterministic, bounded filesystem walk rather than Git's ignore rules. It includes safe Git-ignored files such as `.internal/**`, but excludes major VCS, dependency, build, generated, and cache directories, root `.pi` runtime state, sensitive files, and symlink aliases. An explicitly named existing file can still be checked by exact lookup; agents must not cite private `.pi` state, session stores, credentials, or configuration.
+
+The server enforces these limits:
+
+- Images and PDFs: 50 MB maximum.
+- Text and other non-streaming files: 10 MB maximum.
+- Audio, video, and HLS media: authenticated range streaming without the text/image size cap.
+- Exact parent-directory lookup: at most 1,000 entries. Resolution can fail when a candidate's directory has more than 1,000 siblings. Fuzzy search reports truncation when it reaches its traversal bounds.
+
+### Workspace and security boundary
+
+Wiki links can open workspace files only. The server canonicalizes the workspace root and requested file with `realpath`, then requires the canonical file to remain inside the canonical workspace root. This rejects `..` traversal, absolute or other path escapes, and symlinks that resolve outside the workspace. Search does not follow symlinks or index aliases.
+
+Directory listings can show sensitive names, but raw serving blocks `.env` files, private-key and certificate extensions, SSH private-key names, credential files such as `.netrc` and `.npmrc`, and paths under `.git`. A rejected path fails closed instead of falling back to an external or arbitrary host path.
+
+### Recommended agent instruction
+
+Copy this into a Pi or agent system prompt:
+
+```text
+When citing a relevant file from the current Oppi workspace, use a workspace-relative wiki link such as [[path/to/file.ext|Short human-readable label]]. Reuse an existing path from the workspace; never fabricate a path or use an absolute, ~, file://, or outside-workspace path. Keep a normal human-readable sentence and brief context around every link so Oppi can render it as a navigable personal-wiki reference. Do not cite secrets, credentials, private runtime state, or sensitive files.
+```
+
 ## Viewing Options
 
 Full-screen document viewers show a **Viewing Options** button near the bottom-right corner of the screen. The panel adapts to the content type.

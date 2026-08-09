@@ -191,23 +191,9 @@ final class ResourceReferenceRequestCoordinator {
     }
 }
 
-enum ResourceFileCandidateIndexDecision: Equatable {
-    case found
-    case missing
-    case inspectDirectory
-}
-
 enum ResourceFileCandidatePolicy {
-    static func indexDecision(
-        candidatePath: String,
-        paths: [String],
-        truncated: Bool
-    ) -> ResourceFileCandidateIndexDecision {
-        if paths.contains(candidatePath) { return .found }
-        return truncated ? .inspectDirectory : .missing
-    }
-
-    /// Nil means the listing was truncated before it could prove absence.
+    /// Nil means the parent-directory listing was truncated before it could
+    /// prove that the candidate is absent.
     static func directoryResult(
         fileName: String,
         entries: [FileEntry],

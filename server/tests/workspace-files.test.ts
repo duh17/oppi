@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { parseByteRangeHeader } from "../src/http-range.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -15,6 +15,7 @@ import { makeResponse } from "./harness/route-test-helpers.js";
 import {
   ALLOWED_EXTENSIONS,
   SEARCH_IGNORE_DIRS,
+  SEARCH_ROOT_IGNORE_DIRS,
   SENSITIVE_FILE_PATTERNS,
   resolveWorkspaceFilePath,
   isSensitivePath,
@@ -172,6 +173,11 @@ describe("file-browser visibility filters", () => {
     for (const dir of ["src", "lib", "test", "docs", ".github", ".vscode"]) {
       expect(SEARCH_IGNORE_DIRS.has(dir), `search should not ignore ${dir}`).toBe(false);
     }
+  });
+
+  test("keeps root-only private state separate from generic directory exclusions", () => {
+    expect(SEARCH_IGNORE_DIRS.has(".pi")).toBe(false);
+    expect(SEARCH_ROOT_IGNORE_DIRS.has(".pi")).toBe(true);
   });
 });
 
@@ -559,6 +565,47 @@ describe("getFileIndex", () => {
     const result = await getFileIndex(tmpRoot);
     expect(result.paths).not.toContain("node_modules/dep/index.js");
   });
+
+  test("omits root .pi but includes nested .pi", async () => {
+    mkdirSync(join(tmpRoot, ".pi", "private"), { recursive: true });
+    mkdirSync(join(tmpRoot, "src", ".pi", "notes"), { recursive: true });
+    writeFileSync(join(tmpRoot, ".pi", "private", "state.json"), "private");
+    writeFileSync(join(tmpRoot, "src", ".pi", "notes", "user-note.md"), "note");
+
+    const result = await getFileIndex(tmpRoot);
+
+    expect(result.paths).not.toContain(".pi/private/state.json");
+    expect(result.paths).toContain("src/.pi/notes/user-note.md");
+  });
+
+  test("omits sensitive files from the search index", async () => {
+    mkdirSync(join(tmpRoot, "config", "secrets"), { recursive: true });
+    writeFileSync(join(tmpRoot, ".env"), "SECRET=value");
+    writeFileSync(join(tmpRoot, "config", "secrets", "server.pem"), "private key");
+    writeFileSync(join(tmpRoot, "config", "secrets", ".netrc"), "machine example");
+
+    const result = await getFileIndex(tmpRoot);
+
+    expect(result.paths).not.toContain(".env");
+    expect(result.paths).not.toContain("config/secrets/server.pem");
+    expect(result.paths).not.toContain("config/secrets/.netrc");
+  });
+
+  test("omits generic ignored directories at any depth", async () => {
+    for (const directory of SEARCH_IGNORE_DIRS) {
+      const ignoredDirectory = join(tmpRoot, "nested", directory, "deeper");
+      mkdirSync(ignoredDirectory, { recursive: true });
+      writeFileSync(join(ignoredDirectory, "ignored.txt"), "ignored");
+    }
+    writeFileSync(join(tmpRoot, "nested", "visible.txt"), "visible");
+
+    const result = await getFileIndex(tmpRoot);
+
+    expect(result.paths).toContain("nested/visible.txt");
+    for (const directory of SEARCH_IGNORE_DIRS) {
+      expect(result.paths).not.toContain(`nested/${directory}/deeper/ignored.txt`);
+    }
+  });
 });
 
 // MARK: - workspace file routes
@@ -620,6 +667,65 @@ describe("workspace file routes", () => {
   });
 });
 
+describe("workspace file symlink security", () => {
+  test("does not index or serve a symlink alias to a sensitive file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-ws-symlink-security-"));
+    try {
+      mkdirSync(join(root, "notes"), { recursive: true });
+      writeFileSync(join(root, ".env"), "SECRET=value");
+      writeFileSync(join(root, "notes", "safe.md"), "safe");
+      symlinkSync("../.env", join(root, "notes", "report.md"));
+      symlinkSync("safe.md", join(root, "notes", "safe-alias.md"));
+
+      const index = await getFileIndex(root);
+      expect(index.paths).toContain("notes/safe.md");
+      expect(index.paths).not.toContain("notes/report.md");
+      expect(index.paths).not.toContain("notes/safe-alias.md");
+
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Workspace",
+        hostMount: root,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const dispatch = createWorkspaceFileRoutes(
+        {
+          storage: {
+            getWorkspace: (workspaceId: string) => (workspaceId === "ws-1" ? workspace : undefined),
+            getDataDir: () => root,
+          },
+        } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+
+      const sensitiveResponse = makeResponse();
+      const sensitiveHandled = await dispatch({
+        method: "HEAD",
+        path: "/workspaces/ws-1/raw/notes/report.md",
+        url: new URL("http://localhost/workspaces/ws-1/raw/notes/report.md"),
+        req: { headers: {} } as never,
+        res: sensitiveResponse as never,
+      });
+      expect(sensitiveHandled).toBe(true);
+      expect(sensitiveResponse.statusCode).toBe(403);
+
+      const safeResponse = makeResponse();
+      const safeHandled = await dispatch({
+        method: "HEAD",
+        path: "/workspaces/ws-1/raw/notes/safe.md",
+        url: new URL("http://localhost/workspaces/ws-1/raw/notes/safe.md"),
+        req: { headers: {} } as never,
+        res: safeResponse as never,
+      });
+      expect(safeHandled).toBe(true);
+      expect(safeResponse.statusCode).toBe(200);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // MARK: - getFileIndex (git-backed)
 
 describe("getFileIndex with git repo", () => {
@@ -636,7 +742,8 @@ describe("getFileIndex with git repo", () => {
     writeFileSync(join(tmpRoot, "README.md"), "# Hello");
     writeFileSync(join(tmpRoot, "src", "app.ts"), "console.log('hi')");
     writeFileSync(join(tmpRoot, "node_modules", "dep", "index.js"), "module.exports = {}");
-    writeFileSync(join(tmpRoot, ".gitignore"), "node_modules/\n");
+    writeFileSync(join(tmpRoot, "ignored-report.md"), "ignored");
+    writeFileSync(join(tmpRoot, ".gitignore"), "node_modules/\nignored-report.md\n");
 
     execSync("git add -A && git commit -m init", { cwd: tmpRoot, stdio: "ignore" });
   });
@@ -645,10 +752,30 @@ describe("getFileIndex with git repo", () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  test("uses git ls-files and respects .gitignore", async () => {
+  test("includes files ignored by Git", async () => {
     const result = await getFileIndex(tmpRoot);
-    expect(result.paths).toContain("src/app.ts");
+    expect(result.paths).toContain("ignored-report.md");
     expect(result.paths).not.toContain("node_modules/dep/index.js");
+  });
+
+  test("Git and non-Git workspaces use the same filesystem visibility", async () => {
+    const nonGitRoot = mkdtempSync(join(tmpdir(), "oppi-ws-no-git-index-"));
+    try {
+      mkdirSync(join(nonGitRoot, "src"), { recursive: true });
+      mkdirSync(join(nonGitRoot, "node_modules", "dep"), { recursive: true });
+      writeFileSync(join(nonGitRoot, "README.md"), "# Hello");
+      writeFileSync(join(nonGitRoot, "src", "app.ts"), "");
+      writeFileSync(join(nonGitRoot, "node_modules", "dep", "index.js"), "");
+      writeFileSync(join(nonGitRoot, "ignored-report.md"), "ignored");
+      writeFileSync(join(nonGitRoot, ".gitignore"), "node_modules/\nignored-report.md\n");
+
+      const gitResult = await getFileIndex(tmpRoot);
+      const nonGitResult = await getFileIndex(nonGitRoot);
+
+      expect(nonGitResult).toEqual(gitResult);
+    } finally {
+      rmSync(nonGitRoot, { recursive: true, force: true });
+    }
   });
 
   test("includes untracked but non-ignored files", async () => {
@@ -905,7 +1032,7 @@ describe("getFileIndex", () => {
     expect(result.paths).toContain("src/components/Button.tsx");
   });
 
-  test("skips files in ignored directories (walk fallback)", async () => {
+  test("skips files in ignored directories", async () => {
     const result = await getFileIndex(tmpRoot);
     const hasNodeModules = result.paths.some((p) => p.startsWith("node_modules/"));
     expect(hasNodeModules).toBe(false);
@@ -921,6 +1048,97 @@ describe("getFileIndex", () => {
     const second = await getFileIndex(tmpRoot);
     expect(second.paths).toEqual(first.paths);
     expect(second.truncated).toBe(first.truncated);
+  });
+
+  test("walks entries in deterministic code-unit order", async () => {
+    mkdirSync(join(tmpRoot, "z-directory"), { recursive: true });
+    mkdirSync(join(tmpRoot, "a-directory"), { recursive: true });
+    writeFileSync(join(tmpRoot, "z-directory", "file.txt"), "z");
+    writeFileSync(join(tmpRoot, "a-directory", "file.txt"), "a");
+    const unicodeNames = ["é-report.md", "e\u0301-report.md"];
+    for (const name of unicodeNames) {
+      writeFileSync(join(tmpRoot, name), name);
+    }
+
+    const result = await getFileIndex(tmpRoot);
+    const compareCodeUnits = (lhs: string, rhs: string): number =>
+      lhs === rhs ? 0 : lhs < rhs ? -1 : 1;
+
+    expect(result.paths).toEqual([...result.paths].sort(compareCodeUnits));
+    const presentUnicodeNames = result.paths.filter((path) => unicodeNames.includes(path));
+    if (presentUnicodeNames.length === unicodeNames.length) {
+      expect(presentUnicodeNames).toEqual([...unicodeNames].sort(compareCodeUnits));
+    }
+  });
+
+  test("reports a filesystem read failure as truncated", async () => {
+    const result = await getFileIndex(join(tmpRoot, "does-not-exist"));
+
+    expect(result).toEqual({ paths: [], truncated: true });
+  });
+
+  test("reports exact path and entry caps, then rejects over-budget work", async () => {
+    const capDirectory = join(tmpRoot, "cap");
+    mkdirSync(capDirectory, { recursive: true });
+    for (let i = 0; i < 50_000; i += 1) {
+      const suffix = i.toString().padStart(5, "0");
+      writeFileSync(join(capDirectory, `entry-${suffix}.txt`), "");
+      writeFileSync(join(capDirectory, `.env.${suffix}.txt`), "");
+    }
+
+    const exactResult = await getFileIndex(capDirectory);
+
+    expect(exactResult.paths).toHaveLength(50_000);
+    expect(exactResult.truncated).toBe(false);
+
+    writeFileSync(join(capDirectory, "entry-50000.txt"), "");
+    const overResult = await getFileIndex(`${capDirectory}${sep}.`);
+
+    expect(overResult.paths).toEqual([]);
+    expect(overResult.truncated).toBe(true);
+  }, 60_000);
+
+  test("reports a depth cap as truncated", async () => {
+    let currentDirectory = tmpRoot;
+    const pathParts: string[] = [];
+    for (let depth = 0; depth < 13; depth += 1) {
+      const name = `level-${depth}`;
+      pathParts.push(name);
+      currentDirectory = join(currentDirectory, name);
+      mkdirSync(currentDirectory, { recursive: true });
+    }
+    writeFileSync(join(currentDirectory, "too-deep.md"), "too deep");
+
+    const result = await getFileIndex(tmpRoot);
+
+    expect(result.truncated).toBe(true);
+    expect(result.paths).not.toContain(`${pathParts.join("/")}/too-deep.md`);
+  });
+
+  test("reports bounded directory work for many empty directories", async () => {
+    for (let i = 0; i <= 10_000; i += 1) {
+      mkdirSync(join(tmpRoot, `empty-${i.toString().padStart(5, "0")}`));
+    }
+
+    const result = await getFileIndex(tmpRoot);
+
+    expect(result.truncated).toBe(true);
+  }, 30_000);
+
+  test("does not traverse directory symlinks or symlink cycles", async () => {
+    const outsideDirectory = mkdtempSync(join(tmpdir(), "oppi-ws-index-outside-"));
+    writeFileSync(join(outsideDirectory, "outside-secret.txt"), "outside");
+    symlinkSync(outsideDirectory, join(tmpRoot, "outside-link"));
+    symlinkSync(tmpRoot, join(tmpRoot, "cycle-link"));
+
+    try {
+      const result = await getFileIndex(tmpRoot);
+
+      expect(result.paths).not.toContain("outside-link/outside-secret.txt");
+      expect(result.paths).not.toContain("cycle-link/README.md");
+    } finally {
+      rmSync(outsideDirectory, { recursive: true, force: true });
+    }
   });
 });
 
@@ -946,7 +1164,7 @@ describe("getFileIndex with git repo", () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  test("uses git ls-files and respects .gitignore", async () => {
+  test("omits generic ignored directories in Git workspaces", async () => {
     const result = await getFileIndex(tmpRoot);
     const hasNodeModules = result.paths.some((p) => p.startsWith("node_modules/"));
     expect(hasNodeModules).toBe(false);

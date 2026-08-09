@@ -816,38 +816,37 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspacePath.count == 1)
     }
 
-    @Test func truncatedFileIndexRequiresFreshDirectoryCheckInsteadOfReportingMissing() {
-        #expect(ResourceFileCandidatePolicy.indexDecision(
-            candidatePath: "notes/RV97TbYj.md",
-            paths: ["README.md"],
-            truncated: true
-        ) == .inspectDirectory)
-        #expect(ResourceFileCandidatePolicy.indexDecision(
-            candidatePath: "notes/RV97TbYj.md",
-            paths: ["README.md"],
-            truncated: false
-        ) == .missing)
-    }
-
-    @Test func truncatedDirectoryWithoutCandidateRemainsUnavailable() {
-        let entries = [FileEntry(
+    @Test func exactDirectoryLookupPreservesPresentAbsentAndTruncatedSemantics() {
+        let presentEntry = FileEntry(
+            name: "RV97TbYj.md",
+            type: .file,
+            size: 10,
+            modifiedAt: 0,
+            path: "notes/RV97TbYj.md"
+        )
+        let otherEntry = FileEntry(
             name: "other.md",
             type: .file,
             size: 10,
             modifiedAt: 0,
             path: "notes/other.md"
-        )]
+        )
 
         #expect(ResourceFileCandidatePolicy.directoryResult(
             fileName: "RV97TbYj.md",
-            entries: entries,
+            entries: [presentEntry, otherEntry],
             truncated: true
-        ) == nil)
+        ) == true)
         #expect(ResourceFileCandidatePolicy.directoryResult(
             fileName: "RV97TbYj.md",
-            entries: entries,
+            entries: [otherEntry],
             truncated: false
         ) == false)
+        #expect(ResourceFileCandidatePolicy.directoryResult(
+            fileName: "RV97TbYj.md",
+            entries: [otherEntry],
+            truncated: true
+        ) == nil)
     }
 
     @Test func givenWorkspaceFileInsideHostMountWhenResolvingThenItOpensThatWorkspaceFile() {

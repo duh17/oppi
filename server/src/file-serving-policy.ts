@@ -204,6 +204,9 @@ export const SEARCH_IGNORE_DIRS = new Set([
   ".hg",
 ]);
 
+/** Private Oppi state is ignored only at the workspace root. */
+export const SEARCH_ROOT_IGNORE_DIRS = new Set([".pi"]);
+
 export const SENSITIVE_FILE_PATTERNS: RegExp[] = [
   /^\.env($|\.)/, // .env, .env.local, .env.production
   /\.pem$/i, // Private keys / certificates

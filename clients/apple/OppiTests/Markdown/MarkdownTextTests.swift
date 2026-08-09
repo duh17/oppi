@@ -588,6 +588,22 @@ struct WorkspaceWikiLinkRenderingTests {
         #expect(parsed.fileCandidatePath == "notes/sessions/topic.md")
     }
 
+    @Test func givenIgnoredInternalReportWikiLinkThenCandidatePathRemainsUnchanged() throws {
+        let path = ".internal/reports/apple-wikilink-rendering-contract-2026-06-06.md"
+        let blocks = parseCommonMark("Open [[\(path)]]")
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        )
+        let attributed = try textSegment(from: segments)
+
+        let url = try firstLink(in: attributed)
+        let parsed = try #require(ResourceReferenceURL.parse(url))
+        #expect(parsed.target == path)
+        #expect(parsed.fileCandidatePath == path)
+    }
+
     @Test func givenWorkspaceContextMissingThenWikiLinkRemainsATappableGenericResourceReference() throws {
         let blocks = parseCommonMark("See [[RV97TbYj|that session]]")
         let segments = FlatSegment.build(
