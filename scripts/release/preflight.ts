@@ -85,13 +85,8 @@ export function validateReleasePreflight(
       "release intent does not authorize the target server version",
     );
   }
-  if (
-    input.intent.components.mirror.release ||
-    input.intent.components.mirror.version !== input.mirrorVersion
-  ) {
-    failures.push(
-      "release intent must retain the declared non-released mirror version",
-    );
+  if (input.intent.components.mirror.version !== input.mirrorVersion) {
+    failures.push("release intent mirror version does not match the candidate");
   }
   const intentIos = input.intent.components.ios;
   if (

@@ -10,16 +10,16 @@ These scripts contain release-critical logic that must remain reviewable from a 
 For an internal candidate, run these commands in order:
 
 ```bash
-bun scripts/release/preflight.ts --build-number 44 --whats-new-from-build 43 --server-version 0.46.0 --mirror-version 0.45.0
+bun scripts/release/preflight.ts --build-number 45 --whats-new-from-build 43 --server-version 0.46.0 --mirror-version 0.46.0
 # Run the reviewed release-candidate gates through the personal wrapper.
 # After explicit upload approval:
-bun scripts/release/apple/testflight.ts --build-number 44
-bun scripts/release/apple/testflight.ts sync-internal 44
+bun scripts/release/apple/testflight.ts --build-number 45
+bun scripts/release/apple/testflight.ts sync-internal 45
 ```
 
 External groups and beta review are never part of the internal upload step:
 
 ```bash
-bun scripts/release/apple/testflight.ts add-external-groups 44 "Pi Discord Beta" "Friends"
-bun scripts/release/apple/testflight.ts submit-beta-review 44
+bun scripts/release/apple/testflight.ts add-external-groups 45 "Pi Discord Beta" "Friends"
+bun scripts/release/apple/testflight.ts submit-beta-review 45
 ```

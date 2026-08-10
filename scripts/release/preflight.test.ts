@@ -10,13 +10,13 @@ function validInput(): ReleasePreflightInput {
     targetBuild: 44,
     whatsNewStartBuild: 43,
     serverVersion: "0.46.0",
-    mirrorVersion: "0.45.0",
+    mirrorVersion: "0.46.0",
     iosMarketingVersion: "1.1.0",
     intent: {
       schemaVersion: 1,
       components: {
         server: { release: true, version: "0.46.0" },
-        mirror: { release: false, version: "0.45.0" },
+        mirror: { release: true, version: "0.46.0" },
         ios: {
           release: true,
           target: "Oppi",
@@ -36,7 +36,7 @@ function validInput(): ReleasePreflightInput {
     serverManifestVersion: "0.46.0",
     lockfileVersion: "0.46.0",
     lockfileRootVersion: "0.46.0",
-    mirrorManifestVersion: "0.45.0",
+    mirrorManifestVersion: "0.46.0",
     iosBuilds: {
       Oppi: 44,
       OppiActivityExtension: 44,
@@ -59,6 +59,12 @@ function validInput(): ReleasePreflightInput {
 describe("release preflight", () => {
   test("accepts matching release coordinates and complete notes", () => {
     expect(validateReleasePreflight(validInput())).toEqual([]);
+  });
+
+  test("accepts a matching mirror version when the mirror is not released", () => {
+    const input = validInput();
+    input.intent.components.mirror.release = false;
+    expect(validateReleasePreflight(input)).toEqual([]);
   });
 
   test("accepts the compact Build 45 caption while covering the prior build", () => {
@@ -84,7 +90,7 @@ describe("release preflight", () => {
     input.trackedReleasePaths[0] = "missing:release/intent.json";
 
     expect(validateReleasePreflight(input)).toEqual([
-      "oppi-mirror version 0.44.0 does not match target 0.45.0",
+      "oppi-mirror version 0.44.0 does not match target 0.46.0",
       "OppiShareExtension build 43 does not match 44",
       "What's New does not identify builds 43–44",
       "release notes still contain Draft placeholders",
@@ -95,12 +101,12 @@ describe("release preflight", () => {
   test("rejects drift between release intent and candidate coordinates", () => {
     const input = validInput();
     input.intent.components.server.version = "0.45.0";
-    input.intent.components.mirror.release = true;
+    input.intent.components.mirror.version = "0.45.0";
     input.intent.components.ios.build = 45;
     input.intent.whatToTestPath = ".internal/release-notes/wrong.md";
     expect(validateReleasePreflight(input)).toEqual([
       "release intent does not authorize the target server version",
-      "release intent must retain the declared non-released mirror version",
+      "release intent mirror version does not match the candidate",
       "release intent iOS coordinates do not match the candidate",
       "release intent note paths do not match the candidate files",
     ]);

@@ -38,7 +38,7 @@ Example:
 
 ## [Unreleased]
 
-Target: iOS `1.1.0` build `44` (candidate build `45` pending approval) and `oppi-server@0.46.0` with bundled Pi runtime `0.84.1`; `oppi-mirror@0.45.0` is unchanged.
+Target: iOS `1.1.0` build `45`, `oppi-server@0.46.0` with bundled Pi runtime `0.84.1`, and `oppi-mirror@0.46.0`.
 
 ### Added
 
