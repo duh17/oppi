@@ -1,6 +1,93 @@
 import SwiftUI
 import UIKit
 
+struct TimelineViewportSnapshot: Equatable {
+    let anchorItemID: String
+    let anchorRelativeY: CGFloat
+    /// The complete timeline order, not the currently rendered suffix window.
+    let fullTimelineItemIDs: [String]
+    /// The anchor's absolute ordinal in `fullTimelineItemIDs`.
+    let anchorOrdinal: Int
+
+    init(anchorItemID: String, anchorRelativeY: CGFloat, fullTimelineItemIDs: [String]) {
+        self.anchorItemID = anchorItemID
+        self.anchorRelativeY = anchorRelativeY
+        self.fullTimelineItemIDs = fullTimelineItemIDs
+        anchorOrdinal = fullTimelineItemIDs.firstIndex(of: anchorItemID) ?? 0
+    }
+}
+
+struct TimelineViewportRestoration: Equatable {
+    let itemID: String
+    let relativeY: CGFloat
+}
+
+enum TimelineInitialPlacement: Equatable {
+    case bottom(itemID: String)
+    case viewport(TimelineViewportRestoration)
+}
+
+enum TimelineViewportRestorationResolver {
+    static func resolve(
+        _ snapshot: TimelineViewportSnapshot,
+        availableFullTimelineItemIDs: [String]
+    ) -> TimelineViewportRestoration? {
+        guard !availableFullTimelineItemIDs.isEmpty else { return nil }
+        let available = Set(availableFullTimelineItemIDs)
+
+        if available.contains(snapshot.anchorItemID) {
+            return TimelineViewportRestoration(
+                itemID: snapshot.anchorItemID,
+                relativeY: snapshot.anchorRelativeY
+            )
+        }
+
+        // Prefer any surviving following context over all preceding context.
+        // This keeps the same reading direction even when the nearest item on
+        // the preceding side is closer than the nearest surviving following row.
+        let followingStart = snapshot.anchorOrdinal + 1
+        if followingStart < snapshot.fullTimelineItemIDs.count {
+            for index in followingStart..<snapshot.fullTimelineItemIDs.count {
+                let followingID = snapshot.fullTimelineItemIDs[index]
+                if available.contains(followingID) {
+                    return TimelineViewportRestoration(
+                        itemID: followingID,
+                        relativeY: snapshot.anchorRelativeY
+                    )
+                }
+            }
+        }
+
+        if snapshot.anchorOrdinal > 0 {
+            let precedingStart = min(
+                snapshot.anchorOrdinal - 1,
+                snapshot.fullTimelineItemIDs.count - 1
+            )
+            for index in stride(from: precedingStart, through: 0, by: -1) {
+                let precedingID = snapshot.fullTimelineItemIDs[index]
+                if available.contains(precedingID) {
+                    return TimelineViewportRestoration(
+                        itemID: precedingID,
+                        relativeY: snapshot.anchorRelativeY
+                    )
+                }
+            }
+        }
+
+        // `anchorOrdinal` is absolute in the full timeline. The available IDs
+        // must use that same full-timeline coordinate system; a rendered suffix
+        // window would turn this fallback into a window-relative jump.
+        let fallbackIndex = min(
+            max(0, snapshot.anchorOrdinal),
+            availableFullTimelineItemIDs.count - 1
+        )
+        return TimelineViewportRestoration(
+            itemID: availableFullTimelineItemIDs[fallbackIndex],
+            relativeY: snapshot.anchorRelativeY
+        )
+    }
+}
+
 /// Manages scroll behavior for the chat timeline.
 ///
 /// Coordinates auto-follow (scroll to bottom as content grows), user
@@ -21,6 +108,18 @@ final class ChatScrollController: NSObject {
 
     /// Last completed idle auto-scroll timestamp.
     private var lastAutoScrollAt: ContinuousClock.Instant?
+
+    private enum NavigationRestoration {
+        case liveTail
+        case viewport(TimelineViewportSnapshot)
+    }
+
+    /// Current stable item order and viewport anchor are kept in the chat's
+    /// state owner, not the pushed document view, so either back path can use
+    /// the same re-entry restoration.
+    private var timelineItemOrder: [String] = []
+    private var latestViewportSnapshot: TimelineViewportSnapshot?
+    private var navigationRestoration: NavigationRestoration?
 
     // MARK: - Tuning Constants
 
@@ -174,6 +273,7 @@ final class ChatScrollController: NSObject {
         anchor.isUserInteracting = isInteracting
 
         if isInteracting {
+            navigationRestoration = nil
             scrollTask?.cancel()
             scrollTask = nil
         }
@@ -184,6 +284,7 @@ final class ChatScrollController: NSObject {
     func detachFromBottomForUserScroll() {
         anchor.isNearBottom = false
         anchor.isFollowLocked = false
+        navigationRestoration = nil
         scrollTask?.cancel()
         scrollTask = nil
     }
@@ -200,10 +301,103 @@ final class ChatScrollController: NSObject {
         isJumpToBottomHintVisible = isVisible
     }
 
+    /// CollectionView backend updates the complete stable timeline order after
+    /// a structural snapshot change. Synthetic load-more/working rows are
+    /// omitted, and this must not be replaced with the rendered suffix window.
+    func updateTimelineItemOrder(_ itemIDs: [String]) {
+        timelineItemOrder = itemIDs
+    }
+
+    /// CollectionView backend updates the stable visible anchor and its exact
+    /// screen-relative Y. This is cheap on scroll: the item order is copied only
+    /// when the diffable snapshot changes.
+    func updateViewportAnchor(itemID: String?, relativeY: CGFloat?) {
+        updateTopVisibleItemId(itemID)
+        guard let itemID, let relativeY, relativeY.isFinite else { return }
+        latestViewportSnapshot = TimelineViewportSnapshot(
+            anchorItemID: itemID,
+            anchorRelativeY: relativeY,
+            fullTimelineItemIDs: timelineItemOrder
+        )
+    }
+
     /// CollectionView backend updates top visible item from scroll position.
     func updateTopVisibleItemId(_ itemId: String?) {
         guard anchor.topVisibleItemId != itemId else { return }
         anchor.topVisibleItemId = itemId
+    }
+
+    /// Freeze the current navigation re-entry intent while cancelling only
+    /// transient scroll work. A later permanent session change still calls
+    /// `cancel()` and discards this snapshot.
+    func suspendForNavigation() {
+        scrollTask?.cancel()
+        scrollTask = nil
+        lastAutoScrollAt = nil
+        keyboardTransitionUntil = nil
+        anchor.isUserInteracting = false
+        anchor.isFollowLocked = false
+        isDetachedStreamingHintVisible = false
+        isJumpToBottomHintVisible = false
+        pendingNavigationHighlightItemID = nil
+
+        // A route preflight captures live collection geometry before the push.
+        // Arm re-entry here rather than waiting for a reconnect flag: NavigationStack
+        // can rebuild the collection without republishing session history.
+        needsInitialScroll = true
+
+        // The later onDisappear cleanup must not overwrite that frozen intent.
+        guard navigationRestoration == nil else { return }
+
+        if anchor.isNearBottom {
+            navigationRestoration = .liveTail
+        } else if let latestViewportSnapshot {
+            navigationRestoration = .viewport(latestViewportSnapshot)
+        }
+    }
+
+    /// Resolve one initial placement after cache/fresh history publication.
+    /// Navigation restoration remains armed until the user explicitly moves,
+    /// allowing a later authoritative history refresh to restore the same
+    /// stable context again instead of reverting to the tail.
+    /// `availableFullTimelineItemIDs` must be the full timeline order, not the
+    /// currently rendered suffix window.
+    func initialPlacement(
+        availableFullTimelineItemIDs: [String],
+        bottomItemID: String?
+    ) -> TimelineInitialPlacement? {
+        guard needsInitialScroll else { return nil }
+        guard !availableFullTimelineItemIDs.isEmpty || bottomItemID != nil else { return nil }
+
+        switch navigationRestoration {
+        case .liveTail:
+            needsInitialScroll = false
+            return prepareBottomPlacement(bottomItemID: bottomItemID)
+        case .viewport(let snapshot):
+            guard let restoration = TimelineViewportRestorationResolver.resolve(
+                snapshot,
+                availableFullTimelineItemIDs: availableFullTimelineItemIDs
+            ) else {
+                return nil
+            }
+            needsInitialScroll = false
+            anchor.isNearBottom = false
+            anchor.isFollowLocked = false
+            isJumpToBottomHintVisible = true
+            return .viewport(restoration)
+        case nil:
+            needsInitialScroll = false
+            return prepareBottomPlacement(bottomItemID: bottomItemID)
+        }
+    }
+
+    private func prepareBottomPlacement(bottomItemID: String?) -> TimelineInitialPlacement? {
+        anchor.isNearBottom = true
+        anchor.isFollowLocked = true
+        isJumpToBottomHintVisible = false
+        isDetachedStreamingHintVisible = false
+        guard let bottomItemID else { return nil }
+        return .bottom(itemID: bottomItemID)
     }
 
     /// CollectionView backend updates precise visual offset for diagnostics.
@@ -264,15 +458,13 @@ final class ChatScrollController: NSObject {
         guard needsInitialScroll else { return }
         needsInitialScroll = false
 
-        // Re-entry should always land attached at the live bottom, even if the
-        // previous visit left the controller detached while reading history.
-        anchor.isNearBottom = true
-        anchor.isFollowLocked = true
-        isJumpToBottomHintVisible = false
-        isDetachedStreamingHintVisible = false
-
-        guard let bottomItemID else { return }
-        performScrollToBottom(bottomItemID)
+        // A detached same-session re-entry is restored through
+        // `initialPlacement(availableFullTimelineItemIDs:bottomItemID:)`; this
+        // compatibility helper must never silently convert detached reading state
+        // to tail follow.
+        guard case .none = navigationRestoration else { return }
+        guard case .bottom(let itemID) = prepareBottomPlacement(bottomItemID: bottomItemID) else { return }
+        performScrollToBottom(itemID)
     }
 
     /// Called when `scrollTargetID` changes. Issues a scroll command
@@ -281,6 +473,7 @@ final class ChatScrollController: NSObject {
     func handleScrollTarget(performScrollToTop: @escaping (String) -> Void) {
         guard let target = scrollTargetID else { return }
         scrollTargetID = nil
+        navigationRestoration = nil
         requestNavigationHighlight(for: target)
         performScrollToTop(target)
     }
@@ -315,6 +508,7 @@ final class ChatScrollController: NSObject {
     /// Re-attaches and temporarily locks follow so passive layout/content
     /// shifts cannot detach until the user explicitly scrolls up.
     func requestScrollToBottom() {
+        navigationRestoration = nil
         anchor.isNearBottom = true
         anchor.isFollowLocked = true
         isJumpToBottomHintVisible = false
@@ -329,9 +523,14 @@ final class ChatScrollController: NSObject {
         scrollTask = nil
         lastAutoScrollAt = nil
         keyboardTransitionUntil = nil
+        anchor.isNearBottom = true
         anchor.isUserInteracting = false
         anchor.isFollowLocked = false
+        anchor.topVisibleItemId = nil
         anchor.contentOffsetY = 0
+        timelineItemOrder = []
+        latestViewportSnapshot = nil
+        navigationRestoration = nil
         isDetachedStreamingHintVisible = false
         isJumpToBottomHintVisible = false
         pendingNavigationHighlightItemID = nil

@@ -635,6 +635,16 @@ struct ChatView: View {
             .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { notification in
                 handleAudioPlayerStateChange(notification)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .workspaceLinkedFileWillOpen)) { notification in
+                guard notification.object as? String == sessionId,
+                      let sourceServerID = notification.userInfo?[Notification.Name.workspaceLinkedFileSourceServerIDKey] as? String,
+                      sourceServerID == connection.currentServerId else {
+                    return
+                }
+                // Capture while the source timeline still owns its live geometry;
+                // NavigationStack teardown can report tail geometry before onDisappear.
+                scrollController.suspendForNavigation()
+            }
             .onChange(of: sessionId) { oldId, newId in
                 // Self-healing: when SwiftUI reuses this view at the same
                 // structural position with a different session ID (e.g.
@@ -683,9 +693,11 @@ struct ChatView: View {
                 ChatFileBrowserPanelTabStore.shared.setTab(newTab, for: sessionId)
             }
             .onDisappear {
+                // Freeze the viewport before cleanup can publish an empty timeline
+                // and make collection geometry look tail-attached during the push.
+                scrollController.suspendForNavigation()
                 actionHandler.cleanup()
                 sessionManager.cleanup()
-                scrollController.cancel()
                 Task {
                     if let composerDraftStore {
                         await composerDraftStore.flush()

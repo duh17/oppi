@@ -25,6 +25,165 @@ struct SessionTimelineNavigationTests {
         #expect(result.didHighlightTarget, "Expected tool target row to flash after navigation")
         #expect(result.highlightOverlayFrontmost, "Expected tool highlight overlay to render above row content")
     }
+
+    @Test func navigationReentryRestoresStableItemAtExactRelativeViewportPosition() async throws {
+        let harness = makeWindowedTimelineHarness(
+            sessionId: "session-document-reentry",
+            useAnchoredCollectionView: true
+        )
+        let originalItems = makeMixedTimelineItems(count: 50)
+        applyTimelineItems(originalItems, hiddenCount: 0, nonce: nil, to: harness)
+
+        let anchorID = "msg-20"
+        let anchorIndex = try #require(harness.coordinator.currentIDs.firstIndex(of: anchorID))
+        harness.collectionView.scrollToItem(
+            at: IndexPath(item: anchorIndex, section: 0),
+            at: .top,
+            animated: false
+        )
+        settleTimelineLayout(harness.collectionView, passes: 3)
+        setTimelineUserScrollOffsetY(
+            harness.collectionView,
+            harness.collectionView.contentOffset.y + 37
+        )
+        harness.coordinator.updateScrollState(harness.collectionView)
+        harness.scrollController.detachFromBottomForUserScroll()
+
+        let before = try #require(
+            harness.collectionView.layoutAttributesForItem(
+                at: IndexPath(item: anchorIndex, section: 0)
+            )
+        ).frame.minY - harness.collectionView.contentOffset.y
+        harness.scrollController.suspendForNavigation()
+
+        let changedItems: [ChatItem] = [
+            .assistantMessage(id: "new-prefix", text: "New context while reading the document", timestamp: Date()),
+        ] + originalItems + [
+            .assistantMessage(id: "new-tail", text: "New live-tail context", timestamp: Date()),
+        ]
+        harness.scrollController.needsInitialScroll = true
+        let changedIDs = changedItems.map(\.id)
+        let placement = try #require(harness.scrollController.initialPlacement(
+            availableFullTimelineItemIDs: changedIDs,
+            bottomItemID: "new-tail"
+        ))
+        guard case .viewport(let restoration) = placement else {
+            Issue.record("Expected detached viewport restoration, got \(placement)")
+            return
+        }
+
+        let command = ChatTimelineScrollCommand(
+            id: restoration.itemID,
+            anchor: .viewport(relativeY: restoration.relativeY),
+            animated: false,
+            nonce: 7
+        )
+        let config = makeTimelineConfiguration(
+            items: changedItems,
+            isBusy: false,
+            scrollCommand: command,
+            sessionId: harness.sessionId,
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            toolSegmentStore: harness.toolSegmentStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+
+        let restored = await waitForTimelineCondition(timeoutMs: 500) {
+            await MainActor.run {
+                settleTimelineLayout(harness.collectionView, passes: 3)
+                guard let index = harness.coordinator.currentIDs.firstIndex(of: anchorID),
+                      let attributes = harness.collectionView.layoutAttributesForItem(
+                          at: IndexPath(item: index, section: 0)
+                      ) else {
+                    return false
+                }
+                let after = attributes.frame.minY - harness.collectionView.contentOffset.y
+                return abs(after - before) < 2
+            }
+        }
+
+        #expect(restored, "Expected \(anchorID) to return to relativeY=\(before)")
+    }
+
+    @Test func viewportCorrectionDoesNotReattachDuringEstimatedLayout() {
+        let harness = makeWindowedTimelineHarness(
+            sessionId: "session-document-estimated-layout",
+            useAnchoredCollectionView: true
+        )
+        applyTimelineItems(
+            makeMixedTimelineItems(count: 2),
+            hiddenCount: 0,
+            nonce: nil,
+            to: harness
+        )
+        harness.scrollController.detachFromBottomForUserScroll()
+
+        harness.coordinator.updateScrollState(
+            harness.collectionView,
+            preserveDetachedState: true
+        )
+
+        #expect(!harness.scrollController.isCurrentlyNearBottom)
+
+        // The same geometry would normally enter near-bottom hysteresis; only
+        // navigation restoration suppresses that transient reattachment.
+        harness.coordinator.updateScrollState(harness.collectionView)
+        #expect(harness.scrollController.isCurrentlyNearBottom)
+    }
+
+    @Test func windowedReentryUsesAbsoluteFullTimelineOrdinalForFallback() throws {
+        let harness = makeWindowedTimelineHarness(
+            sessionId: "session-windowed-document-reentry",
+            useAnchoredCollectionView: true
+        )
+        let allItems = makeMixedTimelineItems(count: 240)
+        let visibleItems = Array(allItems.suffix(80))
+        applyTimelineItems(
+            visibleItems,
+            hiddenCount: allItems.count - visibleItems.count,
+            nonce: nil,
+            to: harness
+        )
+
+        // `currentIDs` is the rendered suffix, but viewport restoration must
+        // retain the absolute ordinal from the complete timeline.
+        harness.scrollController.updateTimelineItemOrder(allItems.map(\.id))
+        let anchorID = "msg-180"
+        let anchorIndex = try #require(harness.coordinator.currentIDs.firstIndex(of: anchorID))
+        harness.collectionView.scrollToItem(
+            at: IndexPath(item: anchorIndex, section: 0),
+            at: .top,
+            animated: false
+        )
+        settleTimelineLayout(harness.collectionView, passes: 3)
+        setTimelineUserScrollOffsetY(
+            harness.collectionView,
+            harness.collectionView.contentOffset.y + 37
+        )
+        harness.scrollController.detachFromBottomForUserScroll()
+        // Pin the known anchor explicitly: the collection is windowed, while
+        // the controller's saved ordinal comes from the full timeline order.
+        harness.scrollController.updateViewportAnchor(itemID: anchorID, relativeY: -37)
+        harness.scrollController.suspendForNavigation()
+
+        let availableFullTimelineItemIDs = (0..<240).map { "replacement-\($0)" }
+        let placement = try #require(harness.scrollController.initialPlacement(
+            availableFullTimelineItemIDs: availableFullTimelineItemIDs,
+            bottomItemID: "replacement-239"
+        ))
+        guard case .viewport(let restoration) = placement else {
+            Issue.record("Expected detached viewport restoration, got \(placement)")
+            return
+        }
+
+        #expect(restoration.itemID == "replacement-180")
+        #expect(restoration.relativeY == -37)
+    }
 }
 
 private struct NavigationResult {

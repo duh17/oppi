@@ -99,13 +99,33 @@ struct ChatTimelineView: View {
     }
 
     private func consumeInitialScrollIfNeeded() {
-        guard sessionManager.needsInitialScroll else { return }
+        if sessionManager.needsInitialScroll {
+            sessionManager.needsInitialScroll = false
+            scrollController.needsInitialScroll = true
+        }
+        guard scrollController.needsInitialScroll else { return }
         guard let bottomItemID else { return }
 
-        sessionManager.needsInitialScroll = false
-        scrollController.needsInitialScroll = true
-        scrollController.handleInitialScroll(bottomItemID: bottomItemID) { targetID in
-            issueScrollCommand(id: targetID, anchor: .bottom, animated: false)
+        let availableFullTimelineItemIDs = reducer.items.map(\.id)
+        guard let placement = scrollController.initialPlacement(
+            availableFullTimelineItemIDs: availableFullTimelineItemIDs,
+            bottomItemID: bottomItemID
+        ) else {
+            return
+        }
+
+        switch placement {
+        case .bottom(let itemID):
+            issueScrollCommand(id: itemID, anchor: .bottom, animated: false)
+        case .viewport(let restoration):
+            if let itemIndex = availableFullTimelineItemIDs.firstIndex(of: restoration.itemID) {
+                renderWindow = max(renderWindow, availableFullTimelineItemIDs.count - itemIndex)
+            }
+            issueScrollCommand(
+                id: restoration.itemID,
+                anchor: .viewport(relativeY: restoration.relativeY),
+                animated: false
+            )
         }
     }
 
@@ -113,6 +133,7 @@ struct ChatTimelineView: View {
         ChatTimelineCollectionHost(
             configuration: .init(
                 items: Array(visibleItems),
+                fullTimelineItemIDs: reducer.items.map(\.id),
                 hiddenCount: hiddenCount,
                 hasOlderServerPage: sessionManager.hasOlderTracePage,
                 renderWindowStep: Self.renderWindowStep,
@@ -188,6 +209,7 @@ struct ChatTimelineView: View {
         }
         .onChange(of: reducer.items.count) { _, _ in
             syncRenderWindow()
+            consumeInitialScrollIfNeeded()
         }
         // Jump-to-bottom button lives in ChatView (above the footer overlay) to avoid
         // the footer's z-order blocking taps on this overlay.

@@ -483,6 +483,16 @@ async function handleHarnessMessage(
 
   message = materializeHarnessToolMedia(ctx, sessionId, message);
 
+  if (
+    booleanField(body.persist) === true &&
+    message.type === "message_end" &&
+    message.role === "assistant" &&
+    !ctx.sessions.appendE2EAssistantMessage(sessionId, message.content)
+  ) {
+    helpers.error(res, 409, "Assistant fixture could not be persisted");
+    return;
+  }
+
   let subscriberCount: number;
   if (message.type === "extension_ui_request") {
     recordSyntheticE2EUIRequest(sessionId, message.id);
@@ -534,6 +544,10 @@ function normalizeHarnessMessage(
       return { type: "agent_start" };
     case "agent_end":
       return { type: "agent_end" };
+    case "text_delta":
+      return normalizeTextDelta(body);
+    case "message_end":
+      return normalizeMessageEnd(body);
     case "thinking_delta":
       return normalizeThinkingDelta(body);
     case "tool_start":
@@ -607,6 +621,19 @@ function normalizeExtensionUINotification(body: Record<string, unknown>): Server
     toolsExpanded: booleanField(body.toolsExpanded),
     nativeSurface,
   });
+}
+
+function normalizeTextDelta(body: Record<string, unknown>): ServerMessage | null {
+  const delta = stringField(body.delta);
+  if (delta === undefined) return null;
+  return { type: "text_delta", delta };
+}
+
+function normalizeMessageEnd(body: Record<string, unknown>): ServerMessage | null {
+  const role = stringField(body.role);
+  const content = stringField(body.content);
+  if ((role !== "user" && role !== "assistant") || content === undefined) return null;
+  return { type: "message_end", role, content };
 }
 
 function normalizeThinkingDelta(body: Record<string, unknown>): ServerMessage {

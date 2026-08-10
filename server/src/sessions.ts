@@ -477,6 +477,34 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.broadcaster.broadcast(this.sessionKey(sessionId), message);
   }
 
+  /** Persist an assistant fixture on the active Pi branch for deterministic E2E replay. */
+  appendE2EAssistantMessage(sessionId: string, content: string): boolean {
+    if (process.env.OPPI_E2E_UI_HARNESS !== "1") return false;
+
+    const active = this.active.get(this.sessionKey(sessionId));
+    if (!active) return false;
+
+    const runtimeModel = active.sdkBackend.session.model;
+    active.sdkBackend.session.sessionManager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: content }],
+      api: runtimeModel?.api ?? "openai-completions",
+      provider: runtimeModel?.provider ?? "oppi-e2e",
+      model: runtimeModel?.id ?? active.session.model ?? "oppi-e2e",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    });
+    return true;
+  }
+
   private broadcast(key: string, message: ServerMessage): void {
     this.broadcaster.broadcast(key, message);
   }

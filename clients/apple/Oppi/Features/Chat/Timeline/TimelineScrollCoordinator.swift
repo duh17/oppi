@@ -230,7 +230,7 @@ enum TimelineScrollCoordinator {
 
         let position: UICollectionView.ScrollPosition
         switch command.anchor {
-        case .top:
+        case .top, .viewport:
             position = .top
         case .bottom:
             position = .bottom
@@ -278,7 +278,8 @@ enum TimelineScrollCoordinator {
         scrollController: ChatScrollController?,
         currentIDs: [String],
         nearBottomEnterThreshold: CGFloat,
-        nearBottomExitThreshold: CGFloat
+        nearBottomExitThreshold: CGFloat,
+        preserveDetachedState: Bool = false
     ) -> CGFloat? {
         guard let scrollController else { return nil }
 
@@ -291,30 +292,41 @@ enum TimelineScrollCoordinator {
         let bottomY = collectionView.contentOffset.y + insets.top + visibleHeight
         let contentHeight = collectionView.contentSize.height
         let distanceFromBottom = max(0, contentHeight - bottomY)
-        let nearBottomThreshold = scrollController.isCurrentlyNearBottom
-            ? nearBottomExitThreshold
-            : nearBottomEnterThreshold
-        scrollController.updateNearBottom(distanceFromBottom <= nearBottomThreshold)
+        if !preserveDetachedState {
+            let nearBottomThreshold = scrollController.isCurrentlyNearBottom
+                ? nearBottomExitThreshold
+                : nearBottomEnterThreshold
+            scrollController.updateNearBottom(distanceFromBottom <= nearBottomThreshold)
+        }
 
+        let visibleRect = CGRect(
+            x: collectionView.contentOffset.x,
+            y: collectionView.contentOffset.y,
+            width: collectionView.bounds.width,
+            height: collectionView.bounds.height
+        )
         let firstVisible = collectionView.indexPathsForVisibleItems
-            .min { lhs, rhs in lhs.item < rhs.item }
+            .compactMap { indexPath -> (indexPath: IndexPath, attributes: UICollectionViewLayoutAttributes)? in
+                guard indexPath.item < currentIDs.count else { return nil }
+                let id = currentIDs[indexPath.item]
+                guard id != ChatTimelineCollectionHost.loadMoreID,
+                      id != ChatTimelineCollectionHost.workingIndicatorID,
+                      let attributes = collectionView.layoutAttributesForItem(at: indexPath),
+                      attributes.frame.intersects(visibleRect) else {
+                    return nil
+                }
+                return (indexPath, attributes)
+            }
+            .min { lhs, rhs in lhs.attributes.frame.minY < rhs.attributes.frame.minY }
 
         guard let firstVisible else {
-            scrollController.updateTopVisibleItemId(nil)
+            scrollController.updateViewportAnchor(itemID: nil, relativeY: nil)
             return distanceFromBottom
         }
 
-        guard firstVisible.item < currentIDs.count else {
-            scrollController.updateTopVisibleItemId(nil)
-            return distanceFromBottom
-        }
-
-        let id = currentIDs[firstVisible.item]
-        if id == ChatTimelineCollectionHost.loadMoreID || id == ChatTimelineCollectionHost.workingIndicatorID {
-            scrollController.updateTopVisibleItemId(nil)
-        } else {
-            scrollController.updateTopVisibleItemId(id)
-        }
+        let id = currentIDs[firstVisible.indexPath.item]
+        let relativeY = firstVisible.attributes.frame.minY - collectionView.contentOffset.y
+        scrollController.updateViewportAnchor(itemID: id, relativeY: relativeY)
 
         return distanceFromBottom
     }

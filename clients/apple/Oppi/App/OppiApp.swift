@@ -714,6 +714,17 @@ struct OppiApp: App {
                 return
             }
 
+            if let sourceSessionID = reference.sourceSessionID,
+               let sourceServerID = reference.sourceServerID {
+                // Session IDs are only unique within one server. Keep this
+                // pre-navigation capture scoped so another server's chat cannot
+                // freeze its viewport when IDs happen to collide.
+                NotificationCenter.default.post(
+                    name: .workspaceLinkedFileWillOpen,
+                    object: sourceSessionID,
+                    userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: sourceServerID]
+                )
+            }
             navigation.openWorkspaceLinkedFile(
                 .workspaceFile(
                     serverId: file.serverID,

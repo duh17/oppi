@@ -307,6 +307,159 @@ struct ChatScrollControllerTests {
         #expect(!controller.needsInitialScroll)
     }
 
+    @Test func sameSessionReentryDoesNotForceDetachedReaderToBottom() {
+        let controller = makeTestScrollController()
+        controller.updateTimelineItemOrder(["before", "assistant-anchor", "after"])
+        controller.detachFromBottomForUserScroll()
+        controller.updateViewportAnchor(itemID: "assistant-anchor", relativeY: -24)
+        controller.suspendForNavigation()
+
+        var targets: [String] = []
+        controller.handleInitialScroll(bottomItemID: "live-tail") { targets.append($0) }
+
+        #expect(targets.isEmpty, "same-session navigation re-entry must restore the reading anchor instead of the live tail")
+        #expect(!controller.isCurrentlyNearBottom)
+    }
+
+    @Test func detachedNavigationReentryResolvesStableAnchorAndRelativePosition() {
+        let controller = makeTestScrollController()
+        controller.updateTimelineItemOrder(["before", "assistant-anchor", "after"])
+        controller.detachFromBottomForUserScroll()
+        controller.updateViewportAnchor(itemID: "assistant-anchor", relativeY: -37)
+        controller.suspendForNavigation()
+
+        let placement = controller.initialPlacement(
+            availableFullTimelineItemIDs: ["new-before", "before", "assistant-anchor", "after", "new-after"],
+            bottomItemID: "new-after"
+        )
+
+        #expect(placement == .viewport(TimelineViewportRestoration(
+            itemID: "assistant-anchor",
+            relativeY: -37
+        )))
+        #expect(!controller.isCurrentlyNearBottom)
+    }
+
+    @Test func navigationSnapshotSurvivesCleanupGeometryReset() {
+        let controller = makeTestScrollController()
+        controller.updateTimelineItemOrder(["before", "assistant-anchor", "after"])
+        controller.detachFromBottomForUserScroll()
+        controller.updateViewportAnchor(itemID: "assistant-anchor", relativeY: -37)
+        controller.suspendForNavigation()
+
+        // Session cleanup can temporarily empty the collection and report tail
+        // geometry after the chat has disappeared. The frozen intent must win.
+        controller.updateTimelineItemOrder([])
+        controller.updateViewportAnchor(itemID: nil, relativeY: nil)
+        controller.updateNearBottom(true)
+        controller.suspendForNavigation()
+
+        let placement = controller.initialPlacement(
+            availableFullTimelineItemIDs: ["before", "assistant-anchor", "after", "new-tail"],
+            bottomItemID: "new-tail"
+        )
+
+        #expect(placement == .viewport(TimelineViewportRestoration(
+            itemID: "assistant-anchor",
+            relativeY: -37
+        )))
+        #expect(!controller.isCurrentlyNearBottom)
+    }
+
+    @Test func missingAnchorFallsForwardToNearestSurvivingContext() {
+        let snapshot = TimelineViewportSnapshot(
+            anchorItemID: "anchor",
+            anchorRelativeY: 24,
+            fullTimelineItemIDs: ["older-2", "older-1", "anchor", "newer-1", "newer-2"]
+        )
+
+        let restoration = TimelineViewportRestorationResolver.resolve(
+            snapshot,
+            availableFullTimelineItemIDs: ["older-1", "newer-1"]
+        )
+
+        #expect(restoration == TimelineViewportRestoration(itemID: "newer-1", relativeY: 24))
+    }
+
+    @Test func missingAnchorFallsBackwardWhenNoFollowingContextSurvives() {
+        let snapshot = TimelineViewportSnapshot(
+            anchorItemID: "anchor",
+            anchorRelativeY: -12,
+            fullTimelineItemIDs: ["older-2", "older-1", "anchor", "newer-1"]
+        )
+
+        let restoration = TimelineViewportRestorationResolver.resolve(
+            snapshot,
+            availableFullTimelineItemIDs: ["older-2", "older-1"]
+        )
+
+        #expect(restoration == TimelineViewportRestoration(itemID: "older-1", relativeY: -12))
+    }
+
+    @Test func missingAnchorScansAllFollowingItemsBeforeAnyPrecedingItem() {
+        let snapshot = TimelineViewportSnapshot(
+            anchorItemID: "anchor",
+            anchorRelativeY: 11,
+            fullTimelineItemIDs: ["older-far", "older-near", "anchor", "newer-gone", "newer-far"]
+        )
+
+        let restoration = TimelineViewportRestorationResolver.resolve(
+            snapshot,
+            availableFullTimelineItemIDs: ["older-near", "newer-far"]
+        )
+
+        #expect(restoration == TimelineViewportRestoration(itemID: "newer-far", relativeY: 11))
+    }
+
+    @Test func missingContextUsesClampedOldOrdinalWithoutChoosingTailByDefault() {
+        let snapshot = TimelineViewportSnapshot(
+            anchorItemID: "old-anchor",
+            anchorRelativeY: 18,
+            fullTimelineItemIDs: ["gone-0", "gone-1", "old-anchor", "gone-3", "gone-4"]
+        )
+
+        let restoration = TimelineViewportRestorationResolver.resolve(
+            snapshot,
+            availableFullTimelineItemIDs: ["replacement-0", "replacement-1", "replacement-2", "replacement-tail"]
+        )
+
+        #expect(restoration == TimelineViewportRestoration(itemID: "replacement-2", relativeY: 18))
+    }
+
+    @Test func missingContextUsesAbsoluteOrdinalAcrossLongRenderedWindow() {
+        let fullTimelineItemIDs = (0..<240).map { "item-\($0)" }
+        let renderedWindowItemIDs = Array(fullTimelineItemIDs.suffix(80))
+        #expect(renderedWindowItemIDs.first == "item-160")
+
+        let snapshot = TimelineViewportSnapshot(
+            anchorItemID: "item-180",
+            anchorRelativeY: 18,
+            fullTimelineItemIDs: fullTimelineItemIDs
+        )
+        let availableFullTimelineItemIDs = (0..<240).map { "replacement-\($0)" }
+
+        let restoration = TimelineViewportRestorationResolver.resolve(
+            snapshot,
+            availableFullTimelineItemIDs: availableFullTimelineItemIDs
+        )
+
+        #expect(restoration == TimelineViewportRestoration(itemID: "replacement-180", relativeY: 18))
+    }
+
+    @Test func tailAttachedNavigationReentryReturnsToCurrentBottom() {
+        let controller = makeTestScrollController()
+        controller.updateNearBottom(true)
+        controller.suspendForNavigation()
+
+        let placement = controller.initialPlacement(
+            availableFullTimelineItemIDs: ["old", "new-tail"],
+            bottomItemID: "working-indicator"
+        )
+
+        #expect(placement == .bottom(itemID: "working-indicator"))
+        #expect(controller.isCurrentlyNearBottom)
+    }
+
     @Test func handleScrollTargetInvokesCallbackAndResetsTarget() async {
         let controller = makeTestScrollController()
         controller.scrollTargetID = "target-1"

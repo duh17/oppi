@@ -226,6 +226,74 @@ describe("E2E UI harness routes", () => {
     }
   });
 
+  it("broadcasts deterministic assistant text deltas", async () => {
+    process.env.OPPI_E2E_UI_HARNESS = "1";
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-e2e-text-route-"));
+    const sessionId = "session-text-harness";
+    const broadcasted: unknown[] = [];
+    const delta = "Context line 12\\n\\n[[reader-note|Open reader note]]";
+    try {
+      const dispatch = createE2EUIHarnessRoutes(
+        makeContext(dataDir, sessionId, broadcasted),
+        createRouteHelpers(),
+      );
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "POST",
+        path: `/e2e/ui/sessions/${sessionId}/message`,
+        url: new URL(`http://localhost/e2e/ui/sessions/${sessionId}/message`),
+        req: makeRequest({ type: "text_delta", delta }),
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        message: { type: string; delta: string };
+      };
+      expect(body.message).toEqual({ type: "text_delta", delta });
+      expect(broadcasted).toEqual([body.message]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("broadcasts deterministic assistant message completion", async () => {
+    process.env.OPPI_E2E_UI_HARNESS = "1";
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-e2e-message-end-route-"));
+    const sessionId = "session-message-end-harness";
+    const broadcasted: unknown[] = [];
+    const persisted: Array<{ sessionId: string; content: string }> = [];
+    const content = "Context line 12\\n\\n[[reader-note|Open reader note]]";
+    try {
+      const dispatch = createE2EUIHarnessRoutes(
+        makeContext(dataDir, sessionId, broadcasted, undefined, persisted),
+        createRouteHelpers(),
+      );
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "POST",
+        path: `/e2e/ui/sessions/${sessionId}/message`,
+        url: new URL(`http://localhost/e2e/ui/sessions/${sessionId}/message`),
+        req: makeRequest({ type: "message_end", role: "assistant", content, persist: true }),
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        message: { type: string; role: string; content: string };
+      };
+      expect(body.message).toEqual({ type: "message_end", role: "assistant", content });
+      expect(broadcasted).toEqual([body.message]);
+      expect(persisted).toEqual([{ sessionId, content }]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("materializes tool media before broadcasting synthetic session messages", async () => {
     process.env.OPPI_E2E_UI_HARNESS = "1";
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-e2e-media-route-"));
@@ -287,6 +355,7 @@ function makeContext(
   sessionId = "session-1",
   broadcasted: unknown[] = [],
   fixtureSessions?: Array<Record<string, unknown>>,
+  persistedAssistantMessages?: Array<{ sessionId: string; content: string }>,
 ): RouteContext {
   return {
     storage: {
@@ -324,6 +393,10 @@ function makeContext(
       broadcastSessionMessage: (_id: string, message: unknown) => {
         broadcasted.push(message);
         return 1;
+      },
+      appendE2EAssistantMessage: (id: string, content: string) => {
+        persistedAssistantMessages?.push({ sessionId: id, content });
+        return true;
       },
     },
   } as unknown as RouteContext;

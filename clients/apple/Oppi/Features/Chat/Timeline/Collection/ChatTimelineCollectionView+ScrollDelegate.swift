@@ -50,6 +50,10 @@ extension ChatTimelineCollectionHost.Controller {
                 scrollController?.detachFromBottomForUserScroll()
                 detachedProgrammaticTargetOffsetY = nil
                 lastObservedContentOffsetY = scrollView.contentOffset.y
+                // Detaching must still sample the live viewport. Returning
+                // without this left navigation restoration holding the last
+                // tail-attached anchor from before the user's drag.
+                updateScrollState(collectionView, preserveDetachedState: true)
                 updateDetachedStreamingHintVisibility()
                 return
             }
@@ -180,13 +184,17 @@ extension ChatTimelineCollectionHost.Controller {
         )
     }
 
-    func updateScrollState(_ collectionView: UICollectionView) {
+    func updateScrollState(
+        _ collectionView: UICollectionView,
+        preserveDetachedState: Bool = false
+    ) {
         if let distanceFromBottom = TimelineScrollCoordinator.updateScrollState(
             collectionView: collectionView,
             scrollController: scrollController,
             currentIDs: currentIDs,
             nearBottomEnterThreshold: nearBottomEnterThreshold,
-            nearBottomExitThreshold: nearBottomExitThreshold
+            nearBottomExitThreshold: nearBottomExitThreshold,
+            preserveDetachedState: preserveDetachedState
         ) {
             lastDistanceFromBottom = distanceFromBottom
         }

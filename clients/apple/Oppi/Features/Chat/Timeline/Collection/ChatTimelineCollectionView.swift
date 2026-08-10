@@ -6,6 +6,7 @@ struct ChatTimelineScrollCommand: Equatable {
     enum Anchor: Equatable {
         case top
         case bottom
+        case viewport(relativeY: CGFloat)
     }
 
     let id: String
@@ -20,6 +21,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
     struct Configuration {
         let items: [ChatItem]
+        /// Full timeline order used for absolute navigation ordinals. This is
+        /// separate from `items`, which may only contain the rendered suffix.
+        let fullTimelineItemIDs: [String]
         let hiddenCount: Int
         let hasOlderServerPage: Bool
         let renderWindowStep: Int
@@ -53,6 +57,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         init(
             items: [ChatItem],
+            fullTimelineItemIDs: [String]? = nil,
             hiddenCount: Int,
             hasOlderServerPage: Bool = false,
             renderWindowStep: Int,
@@ -85,6 +90,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             bottomOverlap: CGFloat = 0
         ) {
             self.items = items
+            self.fullTimelineItemIDs = fullTimelineItemIDs ?? items.map(\.id)
             self.hiddenCount = hiddenCount
             self.hasOlderServerPage = hasOlderServerPage
             self.renderWindowStep = renderWindowStep
@@ -576,6 +582,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             context.apply(configuration: configuration)
             self.collectionView = collectionView
+            scrollController?.updateTimelineItemOrder(configuration.fullTimelineItemIDs)
             onBackSwipe = configuration.onBackSwipe
             bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
 
@@ -1436,7 +1443,19 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 collectionView.layoutIfNeeded()
                 self.correctProgrammaticScrollAlignmentIfNeeded(command, in: collectionView)
                 self.triggerNavigationHighlightIfNeeded(for: command, in: collectionView)
-                self.updateScrollState(collectionView)
+                let preservesDetachedState: Bool
+                if case .viewport = command.anchor {
+                    // Estimated row heights can temporarily place a restored
+                    // viewport inside near-bottom hysteresis. Reattaching here
+                    // lets the later self-sizing pass pin to the live tail.
+                    preservesDetachedState = true
+                } else {
+                    preservesDetachedState = false
+                }
+                self.updateScrollState(
+                    collectionView,
+                    preserveDetachedState: preservesDetachedState
+                )
                 self.updateDetachedStreamingHintVisibility()
             }
         }
@@ -1503,8 +1522,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             _ command: ChatTimelineScrollCommand,
             in collectionView: UICollectionView
         ) {
-            guard command.anchor == .top,
-                  let itemIndex = currentIDs.firstIndex(of: command.id) else {
+            let relativeY: CGFloat
+            let reason: TimelineOffsetReason
+            switch command.anchor {
+            case .top:
+                relativeY = collectionView.adjustedContentInset.top
+                reason = .programmaticTopAlign
+            case .viewport(let savedRelativeY):
+                relativeY = savedRelativeY
+                reason = .navigationViewportRestore
+            case .bottom:
+                return
+            }
+
+            guard let itemIndex = currentIDs.firstIndex(of: command.id) else {
                 return
             }
 
@@ -1514,10 +1545,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 return
             }
 
-            let desiredOffsetY = attrs.frame.minY - collectionView.adjustedContentInset.top
             TimelineOffsetController.apply(
-                targetOffsetY: desiredOffsetY,
-                reason: .programmaticTopAlign,
+                targetOffsetY: attrs.frame.minY - relativeY,
+                reason: reason,
                 collectionView: collectionView,
                 scrollController: scrollController
             )

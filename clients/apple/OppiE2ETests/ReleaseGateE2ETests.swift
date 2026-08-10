@@ -310,3 +310,279 @@ final class ReleaseGateE2ETests: E2ETestCase {
 
     private static let onePixelPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 }
+
+/// Native navigation-lifecycle proof for chat viewport restoration after a
+/// workspace document opened from assistant markdown.
+@MainActor
+final class TimelineDocumentPositionE2ETests: E2ETestCase {
+    nonisolated(unsafe) private var workspaceName = ""
+
+    override var e2eStartsInAutoCreatedChat: Bool { true }
+    override var e2eRequiresFreshLaunch: Bool { true }
+
+    override func configureE2ELaunch(_ application: XCUIApplication) {
+        application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = workspaceName
+        application.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
+    }
+
+    override func seedE2EFixtures() throws {
+        let suffix = UUID().uuidString.prefix(8).lowercased()
+        workspaceName = "timeline-document-anchor-\(suffix)"
+        let fixture = try createLabWorkspaceFileFixture(
+            directoryName: workspaceName,
+            filename: "reader-note.md",
+            base64: Data("# Reader note\n\nDocument navigation proof.\n".utf8).base64EncodedString()
+        )
+        _ = try createLabWorkspace(
+            named: workspaceName,
+            hostMount: fixture.hostMount
+        )
+    }
+
+    func testWorkspaceWikiDocumentBackPathsPreserveReadingAnchor() throws {
+        let linkLabel = "Open reader note"
+        waitForRequiredSplitStreamCapabilities()
+        waitForWebSocketConnected()
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        try clearE2EHarnessResponses(sessionId: sessionId)
+        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_start"])
+        try sendE2EHarnessMessage(sessionId: sessionId, [
+            "type": "text_delta",
+            "delta": Self.deterministicWikiResponse,
+        ])
+        try sendE2EHarnessMessage(sessionId: sessionId, [
+            "type": "message_end",
+            "role": "assistant",
+            "content": Self.deterministicWikiResponse,
+            "persist": true,
+        ])
+        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
+        waitForActiveResponseToFinish()
+
+        // Re-enter once so the measured journey starts from the same persisted
+        // trace rendering path used after document navigation, rather than the
+        // synthetic stream's transient row layout.
+        let backButton = app.buttons["fullscreen-code.back"]
+        let streamedLink = try waitForStableWikiLink(label: linkLabel)
+        tap(streamedLink, named: "workspace document wiki link fixture warm-up", timeout: 5)
+        XCTAssertTrue(waitForElementToExist(backButton, timeout: 20), "Workspace document did not open")
+        tap(backButton, named: "workspace document warm-up back control", timeout: 5)
+
+        // The fixture places the link in the initial tail viewport. Perform a
+        // bounded user drag to detach while keeping that known link visible;
+        // all later lookup helpers are read-only and never recover by scrolling,
+        // so each Y measurement describes the restored viewport.
+        let initialLink = try waitForStableWikiLink(label: linkLabel)
+        let initialBeforeY = timelineRelativeY(of: initialLink)
+        var link = initialLink
+        var firstBeforeY = initialBeforeY
+        for _ in 0..<2 where abs(firstBeforeY - initialBeforeY) <= 0.5 {
+            detachTimelineForReadingAnchor()
+            link = try waitForStableWikiLink(label: linkLabel)
+            firstBeforeY = timelineRelativeY(of: link)
+        }
+        XCTAssertNotEqual(
+            initialBeforeY,
+            firstBeforeY,
+            accuracy: 0.5,
+            "The bounded setup drags should move the link before the first navigation"
+        )
+
+        tap(link, named: "workspace document wiki link", timeout: 5)
+        XCTAssertTrue(waitForElementToExist(backButton, timeout: 20), "Workspace document did not open")
+        tap(backButton, named: "workspace document back control", timeout: 5)
+
+        let afterButtonBack = try waitForRestoredWikiLink(
+            label: linkLabel,
+            expectedRelativeY: firstBeforeY,
+            failureMessage: "Back control changed the assistant wiki link's viewport position"
+        )
+
+        let secondBeforeY = timelineRelativeY(of: afterButtonBack)
+        tap(afterButtonBack, named: "workspace document wiki link before swipe back", timeout: 5)
+        XCTAssertTrue(waitForElementToExist(backButton, timeout: 20), "Workspace document did not reopen")
+        app.swipeRight()
+
+        _ = try waitForRestoredWikiLink(
+            label: linkLabel,
+            expectedRelativeY: secondBeforeY,
+            failureMessage: "Swipe Back changed the assistant wiki link's viewport position"
+        )
+    }
+
+    private func waitForStableWikiLink(label: String) throws -> XCUIElement {
+        let timeline = app.collectionViews["chat.timeline"]
+        XCTAssertTrue(waitForElementToExist(timeline, timeout: 20), "Chat timeline did not appear")
+        let deadline = Date().addingTimeInterval(20)
+        var previousRelativeY: CGFloat?
+        var stableObservations = 0
+        var latestVisible: XCUIElement?
+
+        repeat {
+            if let visible = currentVisibleWikiLink(label: label, timeline: timeline) {
+                let relativeY = timelineRelativeY(of: visible)
+                latestVisible = visible
+                if let previousRelativeY, abs(relativeY - previousRelativeY) <= 0.5 {
+                    stableObservations += 1
+                    if stableObservations >= 5 {
+                        return visible
+                    }
+                } else {
+                    stableObservations = 0
+                }
+                previousRelativeY = relativeY
+            } else {
+                stableObservations = 0
+                previousRelativeY = nil
+                latestVisible = nil
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+
+        XCTFail("Assistant wiki link \(label) did not settle in the viewport; last visible: \(latestVisible != nil)")
+        throw TimelineDocumentPositionE2EError.linkNotVisible
+    }
+
+    private func waitForRestoredWikiLink(
+        label: String,
+        expectedRelativeY: CGFloat,
+        failureMessage: String
+    ) throws -> XCUIElement {
+        let timeline = app.collectionViews["chat.timeline"]
+        XCTAssertTrue(waitForElementToExist(timeline, timeout: 20), "Chat timeline did not return")
+        let deadline = Date().addingTimeInterval(20)
+        var lastRelativeY: CGFloat?
+
+        repeat {
+            if let visible = currentVisibleWikiLink(label: label, timeline: timeline) {
+                let relativeY = timelineRelativeY(of: visible)
+                lastRelativeY = relativeY
+                if abs(relativeY - expectedRelativeY) <= 8 {
+                    return visible
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+
+        let lastObserved = lastRelativeY.map { String(describing: $0) } ?? "none"
+        XCTFail("\(failureMessage); expected \(expectedRelativeY), last observed \(lastObserved)")
+        throw TimelineDocumentPositionE2EError.linkNotVisible
+    }
+
+    private func currentVisibleWikiLink(
+        label: String,
+        timeline: XCUIElement
+    ) -> XCUIElement? {
+        let predicate = NSPredicate(format: "label == %@", label)
+        let linkCandidates = timeline.descendants(matching: .link)
+            .matching(predicate)
+            .allElementsBoundByIndex
+        let staticTextCandidates = timeline.descendants(matching: .staticText)
+            .matching(predicate)
+            .allElementsBoundByIndex
+        let candidates: [XCUIElement]
+        if !linkCandidates.isEmpty {
+            candidates = linkCandidates
+        } else if !staticTextCandidates.isEmpty {
+            candidates = staticTextCandidates
+        } else {
+            candidates = timeline.descendants(matching: .any)
+                .matching(predicate)
+                .allElementsBoundByIndex
+        }
+        let timelineFrame = timeline.frame
+        return candidates.last(where: { element in
+            element.exists && !element.frame.isEmpty && element.frame.intersects(timelineFrame)
+        })
+    }
+
+    private func detachTimelineForReadingAnchor() {
+        let timeline = app.collectionViews["chat.timeline"]
+        // Stay in the collection's trailing section inset, outside the full-width
+        // markdown UITextView, so its selection recognizer cannot consume the drag.
+        let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.3))
+        let end = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.72))
+        start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+    }
+
+    private func timelineRelativeY(of element: XCUIElement) -> CGFloat {
+        element.frame.minY - app.collectionViews["chat.timeline"].frame.minY
+    }
+
+    private func waitForActiveResponseToFinish() {
+        let stopButton = app.buttons["chat.stop"]
+        guard stopButton.exists else { return }
+        let finished = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: stopButton
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [finished], timeout: 240),
+            .completed,
+            "Assistant response did not finish before document navigation"
+        )
+    }
+
+    private static let deterministicWikiResponse = """
+    Context line 1
+
+    Context line 2
+
+    Context line 3
+
+    Context line 4
+
+    Context line 5
+
+    Context line 6
+
+    Context line 7
+
+    Context line 8
+
+    Context line 9
+
+    Context line 10
+
+    Context line 11
+
+    Context line 12
+
+    [[reader-note|Open reader note]]
+
+    Context line 13
+
+    Context line 14
+
+    Context line 15
+
+    Context line 16
+
+    Context line 17
+
+    Context line 18
+
+    Context line 19
+
+    Context line 20
+
+    Context line 21
+
+    Context line 22
+
+    Context line 23
+
+    Context line 24
+
+    Context line 25
+
+    Context line 26
+
+    Context line 27
+    """
+}
+
+private enum TimelineDocumentPositionE2EError: Error {
+    case linkNotVisible
+}
