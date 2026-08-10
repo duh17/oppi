@@ -143,6 +143,7 @@ enum MathSymbolTable {
         "vdots": .vdots,
         "ddots": .ddots,
         "prime": .prime,
+        "top": .top,
     ]
 
     // MARK: - Big Operator Table

@@ -130,23 +130,50 @@ struct ServerMessageTests {
         #expect(msg == .agentSettled)
     }
 
-    @Test func decodesMessageEnd() throws {
-        let msg = try ServerMessage.decode(from: #"{"type":"message_end","role":"assistant","content":"Done"}"#)
-        guard case .messageEnd(let role, let content) = msg else {
+    @Test func decodesMessageEndWithOptionalOrderedAssistantContent() throws {
+        let structured = try ServerMessage.decode(
+            from: #"{"type":"message_end","role":"assistant","content":"Before\n\nAfter","assistantContent":[{"kind":"text","content":"Before","contentIndex":0},{"kind":"thinking","content":"Check","contentIndex":1},{"kind":"text","content":"After","contentIndex":2}]}"#
+        )
+        guard case .messageEnd(let role, let content, let assistantContent) = structured else {
             Issue.record("Expected .messageEnd")
             return
         }
         #expect(role == "assistant")
-        #expect(content == "Done")
+        #expect(content == "Before\n\nAfter")
+        #expect(assistantContent == [
+            AssistantMessageContentPart(kind: "text", content: "Before", contentIndex: 0),
+            AssistantMessageContentPart(kind: "thinking", content: "Check", contentIndex: 1),
+            AssistantMessageContentPart(kind: "text", content: "After", contentIndex: 2),
+        ])
+
+        let olderPeer = try ServerMessage.decode(
+            from: #"{"type":"message_end","role":"assistant","content":"Done"}"#
+        )
+        guard case .messageEnd(_, let olderContent, let olderAssistantContent) = olderPeer else {
+            Issue.record("Expected older .messageEnd")
+            return
+        }
+        #expect(olderContent == "Done")
+        #expect(olderAssistantContent == nil)
     }
 
-    @Test func decodesTextDelta() throws {
-        let msg = try ServerMessage.decode(from: #"{"type":"text_delta","delta":"Hello "}"#)
-        guard case .textDelta(let delta) = msg else {
+    @Test func decodesTextDeltaWithOptionalContentIndex() throws {
+        let indexed = try ServerMessage.decode(
+            from: #"{"type":"text_delta","delta":"Hello ","contentIndex":2}"#
+        )
+        guard case .textDelta(let delta, let contentIndex) = indexed else {
             Issue.record("Expected .textDelta")
             return
         }
         #expect(delta == "Hello ")
+        #expect(contentIndex == 2)
+
+        let olderPeer = try ServerMessage.decode(from: #"{"type":"text_delta","delta":"Hello "}"#)
+        guard case .textDelta(_, let oldContentIndex) = olderPeer else {
+            Issue.record("Expected older .textDelta")
+            return
+        }
+        #expect(oldContentIndex == nil)
     }
 
     @Test func decodesThinkingDelta() throws {

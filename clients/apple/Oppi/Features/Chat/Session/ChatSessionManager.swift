@@ -977,7 +977,7 @@ final class ChatSessionManager {
                 resultSegments: resultSegments
             ))
 
-        case .messageEnd(let role, let content):
+        case .messageEnd(let role, let content, _):
             if role == "user", !content.isEmpty,
                !suppressTimelineMutationWhilePaused(),
                !reducer.hasUserMessage(matching: content) {

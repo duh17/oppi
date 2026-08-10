@@ -680,7 +680,7 @@ enum FlatSegment: Sendable {
 
     private static func unwrapDisplayMathByDollars(_ source: String) -> String? {
         guard let inner = stripWrapping(source, open: "$$", close: "$$") else { return nil }
-        guard isLikelyLatexMath(inner) else { return nil }
+        guard isLikelyDisplayLatexMath(inner) else { return nil }
         return inner
     }
 
@@ -698,15 +698,14 @@ enum FlatSegment: Sendable {
 
         let opening = String(lines[firstNonEmpty]).trimmingCharacters(in: .whitespaces)
         let closing = String(lines[lastNonEmpty]).trimmingCharacters(in: .whitespaces)
-        guard (opening == "[" || opening == "\\["),
-              (closing == "]" || closing == "\\]") else {
+        guard opening == "\\[", closing == "\\]" else {
             return nil
         }
 
         let inner = lines[(firstNonEmpty + 1) ..< lastNonEmpty]
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isLikelyLatexMath(inner) else { return nil }
+        guard isLikelyDisplayLatexMath(inner) else { return nil }
         return inner
     }
 
@@ -721,21 +720,48 @@ enum FlatSegment: Sendable {
         return inner.isEmpty ? nil : inner
     }
 
+    private static func isLikelyDisplayLatexMath(_ source: String) -> Bool {
+        TeXMathParser().parseValidated(source).isRenderable
+    }
+
     private static func isLikelyLatexMath(_ source: String) -> Bool {
-        guard !source.isEmpty else { return false }
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed == source, hasBalancedLatexBraces(trimmed) else { return false }
 
-        // Strong signals for TeX math, without aggressively rewriting prose.
-        if source.contains("\\") {
+        if trimmed.contains("\\") || trimmed.contains("^") || trimmed.contains("_")
+            || (trimmed.contains("{") && trimmed.contains("}")) {
             return true
         }
-        if source.contains("^") || source.contains("_") {
+        if trimmed.contains(where: { "=+-*/<>".contains($0) })
+            && trimmed.contains(where: { $0.isLetter || $0.isNumber }) {
             return true
         }
-        if source.contains("{") && source.contains("}") {
-            return true
+        if trimmed.allSatisfy({ $0.isNumber || ".,".contains($0) }) {
+            return false
         }
+        return trimmed.first?.isLetter == true
+    }
 
-        return false
+    private static func hasBalancedLatexBraces(_ source: String) -> Bool {
+        var depth = 0
+        for index in source.indices {
+            var slashCount = 0
+            var cursor = index
+            while cursor > source.startIndex {
+                let previous = source.index(before: cursor)
+                guard source[previous] == "\\" else { break }
+                slashCount += 1
+                cursor = previous
+            }
+            guard slashCount % 2 == 0 else { continue }
+            if source[index] == "{" {
+                depth += 1
+            } else if source[index] == "}" {
+                depth -= 1
+                if depth < 0 { return false }
+            }
+        }
+        return depth == 0
     }
 
     // MARK: - Inline Math Rendering
@@ -961,7 +987,8 @@ enum FlatSegment: Sendable {
         palette: ThemePalette,
         bodyFont: UIFont
     ) -> AttributedString? {
-        guard let rendered = DocumentRenderPipeline.renderInlineLatexImage(
+        guard hasBalancedLatexBraces(source),
+              let rendered = DocumentRenderPipeline.renderInlineLatexImage(
             text: source,
             config: RenderConfiguration(
                 fontSize: bodyFont.pointSize,
@@ -979,7 +1006,7 @@ enum FlatSegment: Sendable {
             width: rendered.size.width,
             height: rendered.size.height
         )
-        attachment.accessibilityLabel = "Math: \(renderInlineLatexPlainText(source))"
+        attachment.accessibilityLabel = formulaAccessibilityLabel(for: source)
         return AttributedString(NSAttributedString(attachment: attachment))
     }
 
@@ -1022,6 +1049,24 @@ enum FlatSegment: Sendable {
         return previousIsDollar || nextIsDollar
     }
 
+    static func formulaAccessibilityLabel(for source: String) -> String {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsed = TeXMathParser().parseValidated(trimmed)
+        let plain = parsed.isRenderable && !containsLossyAccessibilityNode(in: parsed.nodes)
+            ? mathPlainText(from: parsed.nodes)
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+        let accessibleValue = plain.isEmpty ? trimmed : plain
+        if plain.isEmpty {
+            return String(
+                format: String(localized: "Math formula source: %@"),
+                accessibleValue
+            )
+        }
+        return String(format: String(localized: "Math formula: %@"), accessibleValue)
+    }
+
     private static func renderInlineLatexPlainText(_ source: String) -> String {
         let parsed = TeXMathParser().parse(source.trimmingCharacters(in: .whitespacesAndNewlines))
         return mathPlainText(from: parsed)
@@ -1046,23 +1091,23 @@ enum FlatSegment: Sendable {
         case .symbol(let symbol):
             appendMathToken(mathSymbolText(symbol), to: &output)
         case .fraction(let numerator, let denominator):
-            appendMathToken(mathPlainText(from: numerator), to: &output)
+            appendMathToken(groupedFractionOperand(numerator), to: &output)
             appendMathToken("/", to: &output)
-            appendMathToken(mathPlainText(from: denominator), to: &output)
+            appendMathToken(groupedFractionOperand(denominator), to: &output)
         case .superscript(let base, let exponent):
             appendMathToken(mathPlainText(from: base), to: &output)
             appendMathToken("^", to: &output)
-            appendMathToken(mathPlainText(from: exponent), to: &output)
+            appendMathToken(groupedScriptOperand(exponent), to: &output)
         case .subscript(let base, let index):
             appendMathToken(mathPlainText(from: base), to: &output)
             appendMathToken("_", to: &output)
-            appendMathToken(mathPlainText(from: index), to: &output)
+            appendMathToken(groupedScriptOperand(index), to: &output)
         case .subSuperscript(let base, let sub, let sup):
             appendMathToken(mathPlainText(from: base), to: &output)
             appendMathToken("_", to: &output)
-            appendMathToken(mathPlainText(from: sub), to: &output)
+            appendMathToken(groupedScriptOperand(sub), to: &output)
             appendMathToken("^", to: &output)
-            appendMathToken(mathPlainText(from: sup), to: &output)
+            appendMathToken(groupedScriptOperand(sup), to: &output)
         case .sqrt(let index, let radicand):
             appendMathToken("√", to: &output)
             if let index {
@@ -1090,12 +1135,77 @@ enum FlatSegment: Sendable {
             appendMathToken(bigOperatorText(kind), to: &output)
             if let lower = limits?.lower {
                 appendMathToken("_", to: &output)
-                appendMathToken(mathPlainText(from: lower), to: &output)
+                appendMathToken(groupedScriptOperand(lower), to: &output)
             }
             if let upper = limits?.upper {
                 appendMathToken("^", to: &output)
-                appendMathToken(mathPlainText(from: upper), to: &output)
+                appendMathToken(groupedScriptOperand(upper), to: &output)
             }
+        }
+    }
+
+    private static func groupedFractionOperand(_ nodes: [MathNode]) -> String {
+        groupedMathOperand(nodes)
+    }
+
+    private static func groupedScriptOperand(_ nodes: [MathNode]) -> String {
+        groupedMathOperand(nodes)
+    }
+
+    private static func groupedMathOperand(_ nodes: [MathNode]) -> String {
+        let plain = mathPlainText(from: nodes)
+        guard nodes.count != 1 || !isAtomicFractionOperand(nodes[0]) else {
+            return plain
+        }
+        return "(\(plain))"
+    }
+
+    private static func isAtomicFractionOperand(_ node: MathNode) -> Bool {
+        switch node {
+        case .number, .variable, .text, .symbol:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func containsLossyAccessibilityNode(in nodes: [MathNode]) -> Bool {
+        nodes.contains(where: containsLossyAccessibilityNode)
+    }
+
+    private static func containsLossyAccessibilityNode(_ node: MathNode) -> Bool {
+        switch node {
+        case .accent:
+            // Omitting an accent changes the expression. Until a spoken accent
+            // vocabulary is available, preserve exact TeX instead.
+            return true
+        case .fraction(let numerator, let denominator):
+            return containsLossyAccessibilityNode(in: numerator)
+                || containsLossyAccessibilityNode(in: denominator)
+        case .superscript(let base, let exponent):
+            return containsLossyAccessibilityNode(in: base)
+                || containsLossyAccessibilityNode(in: exponent)
+        case .subscript(let base, let index):
+            return containsLossyAccessibilityNode(in: base)
+                || containsLossyAccessibilityNode(in: index)
+        case .subSuperscript(let base, let sub, let sup):
+            return containsLossyAccessibilityNode(in: base)
+                || containsLossyAccessibilityNode(in: sub)
+                || containsLossyAccessibilityNode(in: sup)
+        case .sqrt(let index, let radicand):
+            return (index.map { containsLossyAccessibilityNode(in: $0) } ?? false)
+                || containsLossyAccessibilityNode(in: radicand)
+        case .group(let body), .font(_, let body):
+            return containsLossyAccessibilityNode(in: body)
+        case .leftRight(_, _, let body):
+            return containsLossyAccessibilityNode(in: body)
+        case .matrix(let rows, _), .environment(_, let rows):
+            return rows.flatMap { $0 }.contains { containsLossyAccessibilityNode(in: $0) }
+        case .bigOperator(_, let limits):
+            return (limits?.lower.map { containsLossyAccessibilityNode(in: $0) } ?? false)
+                || (limits?.upper.map { containsLossyAccessibilityNode(in: $0) } ?? false)
+        case .number, .variable, .operator, .symbol, .text, .space:
+            return false
         }
     }
 
@@ -1257,6 +1367,7 @@ enum FlatSegment: Sendable {
         case .vdots: return "⋮"
         case .ddots: return "⋱"
         case .prime: return "′"
+        case .top: return "⊤"
         }
     }
 

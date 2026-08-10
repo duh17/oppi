@@ -212,7 +212,12 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     message_end: {
       type: "message_end",
       role: "assistant",
-      content: "I've finished updating the code.",
+      content: "Before\n\nAfter",
+      assistantContent: [
+        { kind: "text", content: "Before", contentIndex: 0 },
+        { kind: "thinking", content: "Check", contentIndex: 1 },
+        { kind: "text", content: "After", contentIndex: 2 },
+      ],
     },
     cache_miss: {
       type: "cache_miss",
@@ -221,7 +226,7 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     },
 
     // Streaming
-    text_delta: { type: "text_delta", delta: "Hello, " },
+    text_delta: { type: "text_delta", delta: "Hello, ", contentIndex: 0 },
     thinking_delta: { type: "thinking_delta", delta: "Let me analyze...", contentIndex: 0 },
     audio_stream: {
       type: "audio_stream",

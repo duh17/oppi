@@ -162,6 +162,7 @@ enum MathSymbol: String, Equatable, Sendable {
     case vdots = "\\vdots"
     case ddots = "\\ddots"
     case prime = "\\prime"
+    case top = "\\top"
 }
 
 /// Delimiter symbols for \left / \right.

@@ -822,7 +822,7 @@ struct APIClientTests {
         #expect(response.events.count == 3)
         #expect(response.events.map(\.seq) == [6, 7, 8])
 
-        guard case .messageEnd(_, let content) = response.events[1].message else {
+        guard case .messageEnd(_, let content, _) = response.events[1].message else {
             Issue.record("Expected message_end in second event")
             return
         }

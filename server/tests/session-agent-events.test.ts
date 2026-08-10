@@ -188,6 +188,81 @@ describe("SessionAgentEventCoordinator", () => {
     expect(summaryBroadcasts).toEqual([["child-1", { type: "session_summary", summary }]]);
   });
 
+  it("broadcasts one compatibility-safe message_end with ordered assistant structure", () => {
+    const active = makeActiveSession({ status: "busy" });
+    const { broadcast, coordinator } = makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Before tool " },
+          { type: "output_text", text: "### authored heading text" },
+          { type: "toolCall", id: "tool-1", name: "read", arguments: {} },
+          { type: "text", text: "After tool" },
+          { type: "thinking", thinking: "Check" },
+          { type: "text", text: "After thinking" },
+          { type: "image", data: "abc", mimeType: "image/png" },
+          { type: "text", text: "After media" },
+          { type: "future_block", payload: true },
+          { type: "text", text: "Tail\n\n" },
+        ],
+      },
+    } as unknown as SessionBackendEvent);
+
+    const messageEnds = broadcast.mock.calls
+      .map(([, message]) => message)
+      .filter((message) => message.type === "message_end");
+
+    expect(messageEnds).toEqual([
+      {
+        type: "message_end",
+        role: "assistant",
+        content:
+          "Before tool ### authored heading text\n\nAfter tool\n\nAfter thinking\n\nAfter media\n\nTail\n\n",
+        assistantContent: [
+          { kind: "text", content: "Before tool ### authored heading text", contentIndex: 0 },
+          { kind: "tool", contentIndex: 2, toolCallId: "tool-1" },
+          { kind: "text", content: "After tool", contentIndex: 3 },
+          { kind: "thinking", content: "Check", contentIndex: 4 },
+          { kind: "text", content: "After thinking", contentIndex: 5 },
+          { kind: "boundary", contentIndex: 6 },
+          { kind: "text", content: "After media", contentIndex: 7 },
+          { kind: "boundary", contentIndex: 8 },
+          { kind: "text", content: "Tail\n\n", contentIndex: 9 },
+        ],
+      },
+    ]);
+  });
+
+  it("preserves older-client assistant behavior after optional structure is stripped", () => {
+    const active = makeActiveSession({ status: "busy" });
+    const { broadcast, coordinator } = makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "First" },
+          { type: "thinking", thinking: "between" },
+          { type: "text", text: "Second" },
+        ],
+      },
+    } as unknown as SessionBackendEvent);
+
+    const olderClientFrames = broadcast.mock.calls.flatMap(([, message]) => {
+      if (message.type !== "message_end") return [];
+      const { type, role, content } = message;
+      return [{ type, role, content }];
+    });
+
+    expect(olderClientFrames).toEqual([
+      { type: "message_end", role: "assistant", content: "First\n\nSecond" },
+    ]);
+  });
+
   it("does not broadcast cold summaries for hot timeline events", () => {
     const active = makeActiveSession({ status: "busy" });
     const { broadcast, coordinator } = makeCoordinator(active);

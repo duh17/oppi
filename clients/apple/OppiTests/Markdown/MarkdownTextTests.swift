@@ -121,6 +121,143 @@ struct FlatSegmentBuildTests {
         }
     }
 
+    @Test func exactPhysicalDeviceDisplayPayloadProducesFormulaSegmentsAndFollowingHeading() throws {
+        let markdown = #"""
+        ### 1. Inline and display LaTeX
+
+        Inline expressions: $E=mc^2$, \(e^{i\pi}+1=0\), and \(\nabla\!\cdot\!\mathbf E=\rho/\varepsilon_0\).
+
+        A larger display block:
+
+        $$
+        \mathcal L(\theta)
+        =
+        -\sum_{i=1}^{n}\log
+        \left(
+        \frac{\exp(z_{i,y_i}/\tau)}
+        {\sum_{j=1}^{K}\exp(z_{i,j}/\tau)}
+        \right)
+        +\lambda\lVert\theta\rVert_2^2
+        $$
+
+        A matrix-heavy expression:
+
+        \[
+        \begin{aligned}
+        \mathbf H &= \mathbf X^\top\mathbf W\mathbf X+\lambda\mathbf I,\\
+        \Delta\theta &= -\mathbf H^{-1}\nabla_\theta\mathcal L,\\
+        \begin{bmatrix}x_{t+1}\\v_{t+1}\end{bmatrix}
+        &=
+        \begin{bmatrix}1&\Delta t\\0&1\end{bmatrix}
+        \begin{bmatrix}x_t\\v_t\end{bmatrix}
+        +
+        \begin{bmatrix}\frac12\Delta t^2\\\Delta t\end{bmatrix}a_t.
+        \end{aligned}
+        \]
+
+        **LATEX-END ANCHOR** — rendering should not move the earlier anchor.
+
+        ### 2. Raster image and SVG
+        """#
+
+        let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+        let formulas = segments.compactMap { segment -> String? in
+            guard case .latexBlock(let source) = segment else { return nil }
+            return source
+        }
+        let prose = segments.compactMap { segment -> String? in
+            guard case .text(let attributed) = segment else { return nil }
+            return NSAttributedString(attributed).string
+        }.joined(separator: "\n")
+
+        #expect(formulas.count == 2)
+        let firstFormula = try #require(formulas.first)
+        let secondFormula = try #require(formulas.dropFirst().first)
+        #expect(firstFormula.contains("\n=\n"))
+        #expect(firstFormula.contains(#"\mathcal L(\theta)"#))
+        #expect(secondFormula.contains(#"\begin{aligned}"#))
+        #expect(secondFormula.contains(#"\begin{bmatrix}"#))
+        #expect(!prose.contains("$$"))
+        #expect(!prose.contains(#"\begin{aligned}"#))
+        #expect(prose.contains("LATEX-END ANCHOR"))
+        #expect(prose.contains("2. Raster image and SVG"))
+    }
+
+    @MainActor
+    @Test func displayMathIntegratesAlignedMatrixAndCasesEnvironmentsWithVisibleGeometry() throws {
+        let markdown = #"""
+        $$
+        \begin{aligned}
+        A &= \begin{bmatrix}1&2\\3&4\end{bmatrix} \\
+        f(x) &= \begin{cases}x^2,&x\ge0\\-x,&x<0\end{cases}
+        \end{aligned}
+        $$
+        """#
+
+        let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+        guard case .latexBlock(let source) = try #require(segments.first) else {
+            Issue.record("Expected integrated aligned/matrix/cases display")
+            return
+        }
+
+        let validation = TeXMathParser().parseValidated(source)
+        #expect(validation.diagnostics.isEmpty, "Supported environment diagnostics: \(validation.diagnostics)")
+        #expect(validation.isRenderable)
+
+        let view = NativeLatexBlockView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 300)
+        view.layoutIfNeeded()
+        view.applyAsFormulaSync(code: source, palette: ThemeID.dark.palette)
+        view.layoutIfNeeded()
+
+        let imageView = try #require(timelineAllImageViews(in: view).first {
+            timelineViewIsVisible($0) && $0.image != nil
+        })
+        let image = try #require(imageView.image)
+        #expect(image.size.width > AppFont.messageBody.pointSize * 4)
+        #expect(image.size.height > AppFont.messageBody.lineHeight * 3)
+        #expect(view.bounds.height >= imageView.bounds.height)
+    }
+
+    @Test func malformedAndUnclosedDisplayDelimitersFallBackToExactVisibleSource() {
+        let cases = [
+            ("Before\n\n$$\n\\frac{a\nAfter", ["$$", #"\frac{a"#]),
+            ("Before\n\n\\[\n\\begin{matrix}1&2\nAfter", [#"\["#, #"\begin{matrix}"#]),
+            ("Before\n\n$$\n\\frac{a\n$$\nAfter", ["$$", #"\frac{a"#]),
+        ]
+
+        for (markdown, expectedFragments) in cases {
+            let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+            #expect(!segments.contains { if case .latexBlock = $0 { return true }; return false })
+            let visible = segments.compactMap { segment -> String? in
+                guard case .text(let attributed) = segment else { return nil }
+                return String(attributed.characters)
+            }.joined(separator: "\n")
+            #expect(visible.contains("Before"))
+            #expect(visible.contains("After"))
+            for fragment in expectedFragments {
+                #expect(visible.contains(fragment))
+            }
+        }
+    }
+
+    @Test func multipleInlineFormulasRenderWhileCodeLinksCurrencyAndEscapesStayLiteral() {
+        let markdown = #"""
+        A $x$ B \(y_0\) C $z^2$; keep `$code^2$`, [price](https://example.com/$value$), \$escaped$, and $5.00$.
+        """#
+        let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+        guard let first = segments.first, case .text(let attributed) = first else {
+            Issue.record("Expected one inline text segment")
+            return
+        }
+        let rendered = NSAttributedString(attributed).string
+
+        #expect(inlineMathAttachments(in: segments).count == 3)
+        #expect(rendered.contains("$code^2$"))
+        #expect(rendered.contains("$escaped$"))
+        #expect(rendered.contains("$5.00$"))
+    }
+
     @Test func physicalDevicePayloadRendersBothInlineFormsAndPromotesDisplayMath() throws {
         let markdown = #"""
         Inline math: $x^2 + y^2 = z^2$ and \(\alpha \leq \beta\).
@@ -2381,7 +2518,7 @@ struct NativeMarkdownImageViewTests {
 
 // MARK: - NativeLatexBlockView tests
 
-@Suite("NativeLatexBlockView")
+@Suite("NativeLatexBlockView", .serialized)
 @MainActor
 struct NativeLatexBlockViewTests {
     // The total fraction box includes numerator/denominator stacking; compare
@@ -2419,6 +2556,477 @@ struct NativeLatexBlockViewTests {
             }
         }
         return CGFloat(largestBand) / max(image.scale, 1)
+    }
+
+    private func visibleFormulaScrollView(in root: UIView) -> HorizontalPanPassthroughScrollView? {
+        if let scrollView = root as? HorizontalPanPassthroughScrollView, !scrollView.isHidden {
+            return scrollView
+        }
+        for child in root.subviews where !child.isHidden {
+            if let found = visibleFormulaScrollView(in: child) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private let wideDeviceFormula = #"""
+    \begin{aligned}
+    \mathbf H &= \mathbf X^\top\mathbf W\mathbf X+\lambda\mathbf I,\\
+    \Delta\theta &= -\mathbf H^{-1}\nabla_\theta\mathcal L,\\
+    \begin{bmatrix}x_{t+1}\\v_{t+1}\end{bmatrix}
+    &=
+    \begin{bmatrix}1&\Delta t\\0&1\end{bmatrix}
+    \begin{bmatrix}x_t\\v_t\end{bmatrix}
+    +
+    \begin{bmatrix}\frac12\Delta t^2\\\Delta t\end{bmatrix}a_t.
+    \end{aligned}
+    """#
+
+    /// Characterization: natural-width geometry creates horizontal overflow;
+    /// gesture ownership is proven separately through the nested recognizer test.
+    @Test func wideTimelineFormulaCreatesReachableHorizontalOverflowWithoutVerticalDrift() throws {
+        let view = NativeLatexBlockView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+        view.layoutIfNeeded()
+
+        view.applyAsFormulaSync(code: wideDeviceFormula, palette: ThemeID.dark.palette)
+        view.layoutIfNeeded()
+
+        let scrollView = try #require(visibleFormulaScrollView(in: view))
+        #expect(scrollView.contentSize.width > scrollView.bounds.width + 1)
+        let maximumOffset = scrollView.contentSize.width - scrollView.bounds.width
+        scrollView.setContentOffset(CGPoint(x: maximumOffset, y: 0), animated: false)
+        view.layoutIfNeeded()
+        #expect(scrollView.contentOffset.x > 0)
+        #expect(abs(scrollView.contentOffset.y) < 0.5)
+        #expect(HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: -240, y: 4)))
+        #expect(!HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: 4, y: -240)))
+    }
+
+    @Test func nestedTimelineGestureRecognizerHandsVerticalDragToOuterTimeline() throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let outer = UICollectionView(
+            frame: window.bounds,
+            collectionViewLayout: UICollectionViewFlowLayout()
+        )
+        window.addSubview(outer)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let view = NativeLatexBlockView()
+        view.frame = CGRect(x: 16, y: 100, width: 320, height: 240)
+        outer.addSubview(view)
+        view.applyAsFormulaSync(code: wideDeviceFormula, palette: ThemeID.dark.palette)
+        outer.layoutIfNeeded()
+        view.layoutIfNeeded()
+
+        let inner = try #require(visibleFormulaScrollView(in: view))
+        #expect(inner.contentSize.width > inner.bounds.width)
+        #expect(outer.panGestureRecognizer.isEnabled)
+
+        inner.panVelocityOverrideForTesting = CGPoint(x: 6, y: -240)
+        #expect(!inner.gestureRecognizerShouldBegin(inner.panGestureRecognizer))
+        #expect(outer.panGestureRecognizer.isEnabled)
+
+        inner.panVelocityOverrideForTesting = CGPoint(x: -240, y: 6)
+        #expect(inner.gestureRecognizerShouldBegin(inner.panGestureRecognizer))
+    }
+
+    @Test func wideTimelineFormulaKeepsEffectiveDisplayedGlyphsReadable() throws {
+        let view = NativeLatexBlockView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+        view.layoutIfNeeded()
+
+        view.applyAsFormulaSync(code: wideDeviceFormula, palette: ThemeID.dark.palette)
+        view.layoutIfNeeded()
+
+        let scrollView = try #require(visibleFormulaScrollView(in: view))
+        let imageView = try #require(timelineAllImageViews(in: scrollView).first { $0.image != nil })
+        let image = try #require(imageView.image)
+        let sourceBand = try #require(largestVisibleBandHeight(of: image))
+        let presentedScale = min(
+            imageView.bounds.width / image.size.width,
+            imageView.bounds.height / image.size.height
+        )
+        let effectiveBand = sourceBand * presentedScale
+
+        #expect(presentedScale >= 0.99, "Wide formulas must pan at natural scale, not aspect-fit shrink")
+        #expect(effectiveBand >= AppFont.messageBody.xHeight * 0.9)
+    }
+
+    @Test func formulaOpenActionHasLocalAccessibilityMetadataAndHitHeight() {
+        let view = NativeLatexBlockView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 100)
+        view.layoutIfNeeded()
+        view.applyAsFormulaSync(code: #"\frac{1}{2} + x"#, palette: ThemeID.dark.palette)
+        view.layoutIfNeeded()
+
+        #expect(view.isAccessibilityElement)
+        #expect(view.accessibilityTraits.contains(.button))
+        #expect(view.accessibilityLabel?.contains("Math") == true)
+        #expect(view.accessibilityLabel?.contains("1/2") == true)
+        #expect(view.accessibilityLabel?.contains(#"\frac"#) == false)
+        #expect(view.accessibilityHint?.localizedCaseInsensitiveContains("full screen") == true)
+        #expect(view.bounds.height >= 44)
+    }
+
+    /// Characterization: full-screen constraints expose both horizontal ends.
+    @Test func fullScreenFormulaCreatesReachableHorizontalOverflowToBothEnds() throws {
+        let body = NativeFullScreenRenderedDocumentBody(
+            content: .latex(wideDeviceFormula),
+            themeID: .dark,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 500))
+        body.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            body.topAnchor.constraint(equalTo: host.topAnchor),
+            body.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.layoutIfNeeded()
+
+        let scrollView = try #require(timelineFirstView(ofType: UIScrollView.self, in: body))
+        #expect(scrollView.contentSize.width > scrollView.bounds.width + 1)
+        let maximumOffset = scrollView.contentSize.width - scrollView.bounds.width
+        scrollView.setContentOffset(CGPoint(x: maximumOffset, y: 0), animated: false)
+        host.layoutIfNeeded()
+        #expect(scrollView.contentOffset.x > 0)
+        #expect(abs(scrollView.contentOffset.y) < 0.5)
+        #expect(!NavigationSwipeGesturePolicy.canClaimSwipe(
+            direction: .right,
+            scrollViews: [scrollView]
+        ))
+        #expect(NavigationSwipeGesturePolicy.canClaimSwipe(
+            direction: .down,
+            scrollViews: [scrollView]
+        ))
+
+        scrollView.setContentOffset(.zero, animated: false)
+        #expect(abs(scrollView.contentOffset.x) < 0.5)
+        #expect(NavigationSwipeGesturePolicy.canClaimSwipe(
+            direction: .right,
+            scrollViews: [scrollView]
+        ))
+    }
+
+    @Test func fullScreenFormulaExposesLocalizedAccessibilityAndForcesOnlyMathLTR() throws {
+        let body = NativeFullScreenRenderedDocumentBody(
+            content: .latex(#"\frac{1}{2} + x"#),
+            themeID: .dark,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        body.semanticContentAttribute = .forceRightToLeft
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 500))
+        body.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            body.topAnchor.constraint(equalTo: host.topAnchor),
+            body.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.layoutIfNeeded()
+
+        let formula = try #require(timelineFirstView(ofType: GraphicalRendererUIView.self, in: body))
+        #expect(formula.isAccessibilityElement)
+        #expect(formula.accessibilityTraits.contains(.image))
+        #expect(formula.accessibilityLabel?.localizedCaseInsensitiveContains("math") == true)
+        #expect(formula.accessibilityLabel?.contains("1/2") == true)
+        #expect(formula.semanticContentAttribute == .forceLeftToRight)
+        #expect(body.semanticContentAttribute == .forceRightToLeft)
+    }
+
+    @Test func compositeFractionAccessibilityPreservesGrouping() {
+        let source = #"\frac{a+b}{c+d}"#
+        let label = FlatSegment.formulaAccessibilityLabel(for: source)
+
+        #expect(label.contains("(a + b)/(c + d)"), "Composite operands must remain grouped: \(label)")
+        #expect(!label.contains("a + b/c + d"))
+    }
+
+    @Test func compositeScriptAccessibilityPreservesGrouping() {
+        let superscriptLabel = FlatSegment.formulaAccessibilityLabel(for: "x^{a+b}")
+        let subscriptLabel = FlatSegment.formulaAccessibilityLabel(for: "x_{i+j}")
+        let combined = FlatSegment.formulaAccessibilityLabel(for: "x_{i+j}^{a+b}")
+
+        #expect(superscriptLabel.contains("x^(a + b)"), "Composite superscript must stay grouped: \(superscriptLabel)")
+        #expect(subscriptLabel.contains("x_(i + j)"), "Composite subscript must stay grouped: \(subscriptLabel)")
+        #expect(combined.contains("x_(i + j)^(a + b)"), "Combined scripts must stay grouped: \(combined)")
+    }
+
+    @Test func operatorLimitAccessibilityPreservesGrouping() {
+        let label = FlatSegment.formulaAccessibilityLabel(for: #"\sum_{i=1}^{n+1}"#)
+
+        #expect(label.contains("∑_(i = 1)^(n + 1)"), "Operator limits must stay grouped: \(label)")
+    }
+
+    @Test func accentAccessibilityFallsBackToExactTeXInsteadOfDroppingMeaning() {
+        for source in [#"\hat{x}"#, #"\vec{v}"#, #"\overline{AB}"#] {
+            let label = FlatSegment.formulaAccessibilityLabel(for: source)
+            #expect(label.localizedCaseInsensitiveContains("source"))
+            #expect(label.contains(source), "Accent source must be preserved exactly: \(label)")
+        }
+    }
+
+    @Test func malformedFullScreenLatexBodyShowsExactSourceWithoutPartialRaster() throws {
+        let source = "\\frac{a}\n\\unsupported{x}"
+        let body = NativeFullScreenRenderedDocumentBody(
+            content: .latex(source),
+            themeID: .dark,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 500))
+        body.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            body.topAnchor.constraint(equalTo: host.topAnchor),
+            body.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.layoutIfNeeded()
+
+        #expect(timelineFirstView(ofType: GraphicalRendererUIView.self, in: body) == nil)
+        let visibleSource = timelineAllTextViews(in: body)
+            .filter { timelineViewIsVisible($0) }
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: "\n")
+        #expect(visibleSource == source)
+    }
+
+    @Test func malformedLatexFileBodyShowsExactSourceWithoutPartialRaster() throws {
+        let source = "\\left x\\right)\n\\unsupported{x}"
+        let controller = UIHostingController(rootView: LaTeXFileView(
+            content: source,
+            filePath: "broken.tex",
+            presentation: .document
+        ))
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = UIWindow(frame: controller.view.frame)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        controller.view.layoutIfNeeded()
+
+        #expect(timelineFirstView(ofType: GraphicalRendererUIView.self, in: controller.view) == nil)
+        let visibleSource = timelineAllTextViews(in: controller.view)
+            .filter { timelineViewIsVisible($0) }
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: "\n")
+        #expect(visibleSource.contains(source))
+    }
+
+    @Test func malformedCompletedFormulaFallsBackToExactSourceInsteadOfRaster() throws {
+        let malformedSources = [
+            #"\frac{a}"#,
+            #"\begin{matrix}1&2"#,
+            #"\left(x"#,
+            #"\unsupported{x}"#,
+        ]
+
+        for source in malformedSources {
+            let delimited = "$$\n\(source)\n$$"
+            let segments = FlatSegment.build(from: parseCommonMark(delimited), themeID: .dark)
+            #expect(!segments.contains { if case .latexBlock = $0 { return true }; return false })
+            let visible = segments.compactMap { segment -> String? in
+                guard case .text(let attributed) = segment else { return nil }
+                return String(attributed.characters)
+            }.joined(separator: "\n")
+            #expect(visible == delimited)
+        }
+    }
+
+    @Test func hostileWideFormulaDeterministicallyFallsBackBeforeRasterAllocation() throws {
+        #expect(!DocumentRenderPipeline.naturalRasterBudget.permits(
+            pointSize: CGSize(width: 2_049, height: 40),
+            scale: 2
+        ))
+        #expect(!DocumentRenderPipeline.naturalRasterBudget.permits(
+            pointSize: CGSize(width: 2_048, height: 2_048),
+            scale: 2
+        ))
+        let source = String(repeating: "x", count: 600)
+        let directRender = DocumentRenderPipeline.renderLatexGraphicalImage(
+            text: source,
+            config: RenderConfiguration(
+                fontSize: UIFont.preferredFont(forTextStyle: .title1).pointSize,
+                maxWidth: 320,
+                theme: ThemeID.dark.palette.renderTheme,
+                displayMode: .document
+            )
+        )
+        #expect(directRender == nil, "Hostile natural-width raster should be rejected before allocation")
+
+        let view = NativeLatexBlockView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 100)
+        view.layoutIfNeeded()
+        view.applyAsFormulaSync(code: source, palette: ThemeID.dark.palette)
+        view.layoutIfNeeded()
+
+        let visibleFormulaImage = timelineAllImageViews(in: view).first {
+            timelineViewIsVisible($0) && $0.isUserInteractionEnabled && $0.image != nil
+        }
+        #expect(visibleFormulaImage == nil)
+        let codeText = timelineAllTextViews(in: view)
+            .filter { timelineViewIsVisible($0) }
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: "\n")
+        #expect(codeText.contains(source))
+    }
+
+    @Test func exportRasterBudgetRejectsOversizedDocumentBeforeDrawing() {
+        var didDraw = false
+        let image = DocumentRenderPipeline.renderGraphicalToImage(
+            size: CGSize(width: 100_000, height: 100_000),
+            draw: { _, _ in didDraw = true },
+            backgroundColor: .white
+        )
+
+        #expect(!didDraw)
+        #expect(image.size == CGSize(width: 200, height: 100))
+        #expect(DocumentRenderPipeline.exportRasterBudget.permits(
+            pointSize: image.size,
+            scale: image.scale
+        ))
+    }
+
+    @Test func maximumValidFormulaExportFallsBackWithinRasterBudget() {
+        let source = String(repeating: "x", count: TeXMathLimits.maxTokenCount)
+        let layout = DocumentRenderPipeline.layoutLatexExpressions(
+            text: source,
+            config: RenderConfiguration(
+                fontSize: 18,
+                maxWidth: 320,
+                theme: ThemeID.dark.palette.renderTheme,
+                displayMode: .document
+            )
+        )
+        #expect(layout.isRenderable)
+
+        let image = DocumentRenderPipeline.renderLatexExpressionsToImage(
+            layout: layout,
+            backgroundColor: .white
+        )
+        #expect(image.size != CGSize(width: 200, height: 100))
+        #expect(DocumentRenderPipeline.exportRasterBudget.permits(
+            pointSize: image.size,
+            scale: image.scale
+        ))
+    }
+
+    @Test func maximumSourceFallbackExportStaysWithinRasterBudget() {
+        let source = String(repeating: "?", count: TeXMathLimits.maxSourceUTF8Bytes)
+        let layout = DocumentRenderPipeline.layoutLatexExpressions(
+            text: source,
+            config: RenderConfiguration(
+                fontSize: 18,
+                maxWidth: 320,
+                theme: ThemeID.dark.palette.renderTheme,
+                displayMode: .document
+            )
+        )
+        #expect(layout.exactSourceFallback == source)
+
+        let image = DocumentRenderPipeline.renderLatexExpressionsToImage(
+            layout: layout,
+            backgroundColor: .white
+        )
+        #expect(image.size != CGSize(width: 200, height: 100))
+        #expect(DocumentRenderPipeline.exportRasterBudget.permits(
+            pointSize: image.size,
+            scale: image.scale
+        ))
+    }
+
+    @Test func formulaRerendersWhenContentSizeCategoryChanges() async throws {
+        let controller = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 500))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let view = NativeLatexBlockView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        controller.view.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: controller.view.trailingAnchor),
+            view.topAnchor.constraint(equalTo: controller.view.topAnchor),
+        ])
+        controller.view.frame = window.bounds
+        controller.view.layoutIfNeeded()
+        view.applyAsFormulaSync(code: #"\frac{1}{2}"#, palette: ThemeID.dark.palette)
+        view.layoutIfNeeded()
+        let initialHeight = try #require(timelineAllImageViews(in: view).first {
+            timelineViewIsVisible($0) && $0.isUserInteractionEnabled && $0.image != nil
+        }?.image?.size.height)
+
+        let previousTraits = view.traitCollection
+        controller.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        controller.view.layoutIfNeeded()
+        #expect(view.traitCollection.preferredContentSizeCategory == .accessibilityExtraExtraExtraLarge)
+        // Reapplying the same source proves content-size category participates
+        // in render identity; the trait callback uses this same path in production.
+        view.applyAsFormula(code: #"\frac{1}{2}"#, palette: ThemeID.dark.palette)
+        view.traitCollectionDidChange(previousTraits)
+        let rerendered = await waitForTimelineCondition(timeoutMs: 1_800) { @MainActor in
+            controller.view.layoutIfNeeded()
+            return (timelineAllImageViews(in: view).first {
+                timelineViewIsVisible($0) && $0.isUserInteractionEnabled && $0.image != nil
+            }?.image?.size.height ?? 0) > initialHeight + 4
+        }
+
+        #expect(rerendered)
+    }
+
+    /// Characterization: this containment already passed before the display
+    /// repair; it guards the existing inline attachment geometry only.
+    @Test func reportedInlineSubscriptStaysInsideItsProductionWidthLineFragment() throws {
+        let markdown = #"Inline \(\nabla\!\cdot\!\mathbf E=\rho/\varepsilon_0\) after."#
+        let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+        guard case .text(let attributed) = try #require(segments.first) else {
+            Issue.record("Expected inline attributed text")
+            return
+        }
+
+        let textView = UITextView(frame: CGRect(x: 0, y: 0, width: 288, height: 200))
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.widthTracksTextView = true
+        textView.attributedText = NSAttributedString(attributed)
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+
+        let storage = textView.textStorage
+        let attachmentIndex = try #require((0..<storage.length).first { index in
+            storage.attribute(.attachment, at: index, effectiveRange: nil) is NSTextAttachment
+        })
+        let attachmentRange = NSRange(location: attachmentIndex, length: 1)
+        let glyphRange = textView.layoutManager.glyphRange(
+            forCharacterRange: attachmentRange,
+            actualCharacterRange: nil
+        )
+        let attachmentRect = textView.layoutManager.boundingRect(
+            forGlyphRange: glyphRange,
+            in: textView.textContainer
+        )
+        let lineFragment = textView.layoutManager.lineFragmentUsedRect(
+            forGlyphAt: glyphRange.location,
+            effectiveRange: nil
+        )
+
+        #expect(lineFragment.insetBy(dx: -0.5, dy: -0.5).contains(attachmentRect))
+        #expect(attachmentRect.maxX <= textView.textContainer.size.width + 0.5)
+        #expect(attachmentRect.height >= AppFont.messageBody.xHeight)
     }
 
     @Test func displayedFractionUsesReadableDynamicBodyTypography() throws {

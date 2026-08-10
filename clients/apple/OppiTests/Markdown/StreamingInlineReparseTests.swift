@@ -231,6 +231,40 @@ struct StreamingInlineReparseTests {
 @Suite("Streaming markdown differential rendering")
 @MainActor
 struct StreamingMarkdownDifferentialTests {
+    @Test func incompleteDisplayBecomesOneFormulaOnlyAfterItsCloserStreamsIn() {
+        let source = AssistantMarkdownSegmentSource()
+        let incomplete = "Before\n\n$$\n\\mathcal L(\\theta)\n=\n-\\sum_{i=1}^{n}"
+        let complete = incomplete + "\n$$\n### After"
+
+        let partial = source.buildSegments(.make(
+            content: incomplete,
+            isStreaming: true,
+            themeID: .dark
+        ))
+        #expect(!partial.contains { if case .latexBlock = $0 { return true }; return false })
+
+        let settled = source.buildSegments(.make(
+            content: complete,
+            isStreaming: true,
+            themeID: .dark
+        ))
+        let formulas = settled.compactMap { segment -> String? in
+            guard case .latexBlock(let code) = segment else { return nil }
+            return code
+        }
+        #expect(formulas.count == 1)
+        #expect(formulas.first?.contains("\n=\n") == true)
+        #expect(segmentsEqual(settled, canonicalSegments(content: complete, themeID: .dark)))
+    }
+
+    @Test func singleLineDisplayClosureMatchesCanonicalRender() {
+        assertIncrementalMatchesCanonical(chunks: [
+            "Before\n\n$$ x",
+            " $$\n",
+            "### After\n",
+        ])
+    }
+
     @Test func representativeBlockStreamMatchesCanonicalRenderAfterEveryChunk() {
         assertIncrementalMatchesCanonical(chunks: [
             "# Heading\n",

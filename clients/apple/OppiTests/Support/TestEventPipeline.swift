@@ -73,9 +73,13 @@ final class TestEventPipeline {
             conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
             coalescer.receive(.agentSettled(sessionId: sessionId))
             conn.silenceWatchdog.stop()
-        case .textDelta(let delta):
+        case .textDelta(let delta, let contentIndex):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(.textDelta(sessionId: sessionId, delta: delta))
+            coalescer.receive(.textDelta(
+                sessionId: sessionId,
+                delta: delta,
+                contentIndex: contentIndex
+            ))
         case .thinkingDelta(let delta, let contentIndex):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta, contentIndex: contentIndex))
@@ -91,9 +95,13 @@ final class TestEventPipeline {
         case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments))
-        case .messageEnd(let role, let content):
+        case .messageEnd(let role, let content, let assistantContent):
             if role == "assistant" {
-                coalescer.receive(.messageEnd(sessionId: sessionId, content: content))
+                coalescer.receive(.messageEnd(
+                    sessionId: sessionId,
+                    content: content,
+                    assistantContent: assistantContent
+                ))
             } else if role == "user", !content.isEmpty, !reducer.hasUserMessage(matching: content) {
                 reducer.appendUserMessage(content)
             }

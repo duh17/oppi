@@ -778,13 +778,25 @@ struct TraceEventCodableTests {
         #expect(event.tool == nil)
     }
 
-    @Test func decodeAssistantEvent() throws {
-        let json = """
-        {"id":"e2","type":"assistant","timestamp":"2025-01-01T00:00:00Z","text":"world"}
+    @Test func decodeAssistantEventWithOptionalStructuralIdentity() throws {
+        let indexedJSON = """
+        {"id":"e2","type":"assistant","timestamp":"2025-01-01T00:00:00Z","text":"world","contentIndex":3,"runOrdinal":1}
         """
-        let event = try JSONDecoder().decode(TraceEvent.self, from: json.data(using: .utf8)!)
-        #expect(event.type == .assistant)
-        #expect(event.text == "world")
+        let indexed = try JSONDecoder().decode(
+            TraceEvent.self,
+            from: indexedJSON.data(using: .utf8)!
+        )
+        #expect(indexed.type == .assistant)
+        #expect(indexed.text == "world")
+        #expect(indexed.contentIndex == 3)
+        #expect(indexed.runOrdinal == 1)
+
+        let olderJSON = """
+        {"id":"e2-old","type":"assistant","timestamp":"2025-01-01T00:00:00Z","text":"world"}
+        """
+        let older = try JSONDecoder().decode(TraceEvent.self, from: olderJSON.data(using: .utf8)!)
+        #expect(older.contentIndex == nil)
+        #expect(older.runOrdinal == nil)
     }
 
     @Test func decodeToolCallEvent() throws {

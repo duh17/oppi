@@ -11,7 +11,12 @@
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
-import type { ServerMessage, Session, SessionMessage } from "./types.js";
+import type {
+  AssistantMessageContentPart,
+  ServerMessage,
+  Session,
+  SessionMessage,
+} from "./types.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { PiMessage } from "./pi-events.js";
@@ -311,31 +316,143 @@ export function extractToolFullOutputPath(details: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-export function extractAssistantText(message: PiMessage): string {
+export function joinAssistantTextBlocks(parts: readonly string[]): string {
+  let joined = "";
+  for (const part of parts) {
+    if (part.length === 0) {
+      continue;
+    }
+    if (joined.length > 0 && !/\s$/u.test(joined) && !/^\s/u.test(part)) {
+      // Pi may emit one assistant message as adjacent text content blocks.
+      // Preserve authored whitespace, but insert a conservative block boundary
+      // when omission would concatenate Markdown tokens such as a following heading.
+      joined += "\n\n";
+    }
+    joined += part;
+  }
+  return joined;
+}
+
+export type AssistantContentProjection =
+  | { kind: "text"; text: string; contentIndex: number }
+  | { kind: "boundary"; block: Record<string, unknown>; contentIndex: number };
+
+/**
+ * Project one assistant message into ordered adjacent text runs and structural
+ * boundaries. Thinking, tools, media, malformed records, and future block types
+ * all end the current run; only adjacent text/output_text blocks may join.
+ */
+export function projectAssistantContentRuns(
+  message: Pick<PiMessage, "content">,
+): AssistantContentProjection[] {
   const content = message.content;
-
   if (typeof content === "string") {
-    return content;
+    return content.length > 0 ? [{ kind: "text", text: content, contentIndex: 0 }] : [];
   }
-
   if (!Array.isArray(content)) {
-    return "";
+    return [];
   }
 
-  const textParts: string[] = [];
-  for (const part of content as unknown[]) {
+  const projected: AssistantContentProjection[] = [];
+  let pendingTextParts: string[] = [];
+  let pendingTextContentIndex = 0;
+
+  const flushText = (): void => {
+    const text = joinAssistantTextBlocks(pendingTextParts);
+    if (text.length > 0) {
+      projected.push({ kind: "text", text, contentIndex: pendingTextContentIndex });
+    }
+    pendingTextParts = [];
+  };
+
+  for (const [contentIndex, part] of (content as unknown[]).entries()) {
     const block = asRecord(part);
-    if (!block) {
+    const isText =
+      block !== null &&
+      (block.type === "text" || block.type === "output_text") &&
+      typeof block.text === "string";
+    if (isText) {
+      if (pendingTextParts.length === 0) {
+        pendingTextContentIndex = contentIndex;
+      }
+      pendingTextParts.push(block.text as string);
       continue;
     }
 
-    const type = block.type;
-    if ((type === "text" || type === "output_text") && typeof block.text === "string") {
-      textParts.push(block.text);
-    }
+    flushText();
+    projected.push({
+      kind: "boundary",
+      block: block ?? { type: "invalid" },
+      contentIndex,
+    });
   }
+  flushText();
+  return projected;
+}
 
-  return textParts.join("");
+export interface AssistantTextProjection {
+  text: string;
+  contentIndex: number;
+  runOrdinal: number;
+}
+
+export function projectAssistantTextProjections(
+  message: Pick<PiMessage, "content">,
+): AssistantTextProjection[] {
+  let runOrdinal = 0;
+  return projectAssistantContentRuns(message).flatMap((part) => {
+    if (part.kind !== "text") {
+      return [];
+    }
+    return [{ text: part.text, contentIndex: part.contentIndex, runOrdinal: runOrdinal++ }];
+  });
+}
+
+export function projectAssistantTextRuns(message: Pick<PiMessage, "content">): string[] {
+  return projectAssistantTextProjections(message).map((run) => run.text);
+}
+
+/**
+ * Ordered assistant structure carried alongside the historical aggregate text.
+ * Tool markers reference the already-broadcast tool row; media, malformed, and
+ * future blocks remain non-rendering boundaries that still split text runs.
+ */
+export function projectAssistantMessageContent(
+  message: Pick<PiMessage, "content">,
+): AssistantMessageContentPart[] {
+  return projectAssistantContentRuns(message).map((part) => {
+    if (part.kind === "text") {
+      return {
+        kind: "text",
+        content: part.text,
+        contentIndex: part.contentIndex,
+      };
+    }
+
+    if (part.block.type === "thinking" && typeof part.block.thinking === "string") {
+      return {
+        kind: "thinking",
+        content: part.block.thinking,
+        contentIndex: part.contentIndex,
+      };
+    }
+
+    if (part.block.type === "toolCall") {
+      return {
+        kind: "tool",
+        contentIndex: part.contentIndex,
+        ...(typeof part.block.id === "string" && part.block.id.length > 0
+          ? { toolCallId: part.block.id }
+          : {}),
+      };
+    }
+
+    return { kind: "boundary", contentIndex: part.contentIndex };
+  });
+}
+
+export function extractAssistantText(message: PiMessage): string {
+  return joinAssistantTextBlocks(projectAssistantTextRuns(message));
 }
 
 function fullModelIdFromMessage(message: PiMessage): string | undefined {
@@ -751,7 +868,14 @@ export function translatePiEvent(
       const evt = event.assistantMessageEvent;
       if (evt?.type === "text_delta" && typeof evt.delta === "string") {
         ctx.streamedAssistantText += evt.delta;
-        return [{ type: "text_delta", delta: evt.delta }];
+        const contentIndex = contentIndexFrom(evt.contentIndex);
+        return [
+          {
+            type: "text_delta",
+            delta: evt.delta,
+            ...(contentIndex !== undefined ? { contentIndex } : {}),
+          },
+        ];
       }
       if (evt?.type === "thinking_start") {
         ctx.currentThinkingContentIndex = contentIndexFrom(evt.contentIndex);

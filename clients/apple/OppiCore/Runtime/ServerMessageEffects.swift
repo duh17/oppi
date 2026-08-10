@@ -41,12 +41,16 @@ enum ServerMessageEffects {
             return [.agentEnd(sessionId: sessionId)]
         case .agentSettled:
             return [.agentSettled(sessionId: sessionId)]
-        case .textDelta(let delta):
-            return [.textDelta(sessionId: sessionId, delta: delta)]
+        case .textDelta(let delta, let contentIndex):
+            return [.textDelta(sessionId: sessionId, delta: delta, contentIndex: contentIndex)]
         case .thinkingDelta(let delta, let contentIndex):
             return [.thinkingDelta(sessionId: sessionId, delta: delta, contentIndex: contentIndex)]
-        case .messageEnd(let role, let content) where role == "assistant":
-            return [.messageEnd(sessionId: sessionId, content: content)]
+        case .messageEnd(let role, let content, let assistantContent) where role == "assistant":
+            return [.messageEnd(
+                sessionId: sessionId,
+                content: content,
+                assistantContent: assistantContent
+            )]
         case .cacheMiss(let id, let message):
             return [.cacheMiss(sessionId: sessionId, id: id, message: message)]
         case .error(let message, _, _):

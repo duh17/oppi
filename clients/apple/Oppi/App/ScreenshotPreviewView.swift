@@ -168,6 +168,21 @@ private struct LatexRenderingPreview: View {
     \frac{1}{2} + \frac{1}{3} = \frac{5}{6}
     $$
 
+    **Wide formula — tap to inspect**
+
+    $$
+    \begin{aligned}
+    \mathbf H &= \mathbf X^\top\mathbf W\mathbf X+\lambda\mathbf I,\\
+    \Delta\theta &= -\mathbf H^{-1}\nabla_\theta\mathcal L,\\
+    \begin{bmatrix}x_{t+1}\\v_{t+1}\end{bmatrix}
+    &=
+    \begin{bmatrix}1&\Delta t\\0&1\end{bmatrix}
+    \begin{bmatrix}x_t\\v_t\end{bmatrix}
+    +
+    \begin{bmatrix}\frac12\Delta t^2\\\Delta t\end{bmatrix}a_t.
+    \end{aligned}
+    $$
+
     Normal chat text continues below the displayed formula.
     """#
 

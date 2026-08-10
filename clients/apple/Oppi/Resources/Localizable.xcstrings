@@ -1268,6 +1268,26 @@
         }
       }
     },
+    "Math formula source: %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "数学公式源码：%@"
+          }
+        }
+      }
+    },
+    "Math formula: %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "数学公式：%@"
+          }
+        }
+      }
+    },
     "Memory": {
       "localizations": {
         "zh-Hans": {
@@ -1467,6 +1487,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "全屏查看"
+          }
+        }
+      }
+    },
+    "Opens formula full screen": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全屏打开公式"
           }
         }
       }

@@ -77,6 +77,111 @@ struct TeXMathParserErrorRecoveryTests {
         ])
     }
 
+    // MARK: - Validation diagnostics for graphical rendering
+
+    @Test func validSupportedDisplaysHaveNoDiagnostics() {
+        let valid = [
+            "x",
+            "x + y",
+            "\\frac12",
+            "\\frac{a}{b}",
+            "\\left(x\\right)",
+            "\\begin{aligned}a&=b\\\\c&=d\\end{aligned}",
+            "\\begin{bmatrix}1&2\\\\3&4\\end{bmatrix}",
+            "\\begin{cases}x,&x\\ge0\\\\-x,&x<0\\end{cases}",
+        ]
+
+        for source in valid {
+            let result = parser.parseValidated(source)
+            #expect(result.diagnostics.isEmpty, "Unexpected diagnostics for \(source): \(result.diagnostics)")
+            #expect(result.isRenderable)
+        }
+    }
+
+    @Test func recoveredOrUnsupportedTeXIsNotRenderable() {
+        let malformed: [(String, TeXMathDiagnostic)] = [
+            ("\\frac{a}", .missingArgument(command: "frac", position: 2)),
+            ("\\begin{matrix}1&2", .unclosedEnvironment("matrix")),
+            ("\\left(x", .unmatchedLeft),
+            ("x \\right)", .unmatchedRight),
+            ("\\unsupported{x}", .unsupportedCommand("unsupported")),
+            ("{x", .unclosedGroup),
+            ("x}", .unmatchedClosingBrace),
+            ("x + \\", .trailingBackslash),
+        ]
+
+        for (source, diagnostic) in malformed {
+            let result = parser.parseValidated(source)
+            #expect(result.diagnostics.contains(diagnostic), "Missing \(diagnostic) for \(source)")
+            #expect(!result.isRenderable)
+            #expect(!result.nodes.isEmpty || source == "x + \\")
+        }
+    }
+
+    @Test func malformedScriptsAreRejectedBeforeGraphicalRendering() {
+        let malformed: [(String, TeXMathDiagnostic)] = [
+            ("^2", .missingScriptBase("^")),
+            ("_i", .missingScriptBase("_")),
+            ("(^2)", .missingScriptBase("^")),
+            ("x^^2", .duplicateScript("^")),
+            ("x^2^3", .duplicateScript("^")),
+            ("x_i_j", .duplicateScript("_")),
+            ("x^2_i^3", .duplicateScript("^")),
+        ]
+
+        for (source, diagnostic) in malformed {
+            let result = parser.parseValidated(source)
+            #expect(result.diagnostics.contains(diagnostic), "Missing \(diagnostic) for \(source): \(result.diagnostics)")
+            #expect(!result.isRenderable)
+        }
+    }
+
+    @Test func leftAndRightRequireSupportedDelimiters() {
+        let malformed: [(String, TeXMathDiagnostic)] = [
+            (#"\left x\right)"#, .unsupportedDelimiter(command: "left", delimiter: "x")),
+            (#"\left\alpha x\right)"#, .unsupportedDelimiter(command: "left", delimiter: #"\alpha"#)),
+            (#"\left"#, .missingDelimiter(command: "left")),
+            (#"\left(x\right"#, .missingDelimiter(command: "right")),
+            (#"\left(x\right\beta"#, .unsupportedDelimiter(command: "right", delimiter: #"\beta"#)),
+        ]
+
+        for (source, diagnostic) in malformed {
+            let result = parser.parseValidated(source)
+            #expect(result.diagnostics.contains(diagnostic), "Missing \(diagnostic) for \(source): \(result.diagnostics)")
+            #expect(!result.isRenderable)
+        }
+    }
+
+    @Test func hostileSourceTokenAndDepthLimitsFailClosed() {
+        let oversized = String(repeating: "x", count: TeXMathLimits.maxSourceUTF8Bytes + 1)
+        let oversizedResult = parser.parseValidated(oversized)
+        #expect(oversizedResult.nodes.isEmpty)
+        #expect(oversizedResult.diagnostics.contains(.sourceTooLong(maxUTF8Bytes: TeXMathLimits.maxSourceUTF8Bytes)))
+
+        let tooManyTokens = (0...TeXMathLimits.maxTokenCount).map { _ in "x" }.joined(separator: "+")
+        let tokenResult = parser.parseValidated(tooManyTokens)
+        #expect(tokenResult.nodes.isEmpty)
+        #expect(tokenResult.diagnostics.contains(.tooManyTokens(max: TeXMathLimits.maxTokenCount)))
+
+        let depth = TeXMathLimits.maxNestingDepth + 1
+        let deeplyNested = String(repeating: "{", count: depth) + "x" + String(repeating: "}", count: depth)
+        let depthResult = parser.parseValidated(deeplyNested)
+        #expect(depthResult.nodes.isEmpty)
+        #expect(depthResult.diagnostics.contains(.nestingTooDeep(max: TeXMathLimits.maxNestingDepth)))
+    }
+
+    @Test func unsupportedAndMismatchedEnvironmentsAreDiagnosed() {
+        let unsupported = parser.parseValidated("\\begin{equation}x\\end{equation}")
+        #expect(unsupported.diagnostics.contains(.unsupportedEnvironment("equation")))
+        #expect(!unsupported.isRenderable)
+
+        let mismatched = parser.parseValidated("\\begin{matrix}x\\end{cases}")
+        #expect(mismatched.diagnostics.contains(
+            .mismatchedEnvironmentEnd(expected: "matrix", found: "cases")
+        ))
+        #expect(!mismatched.isRenderable)
+    }
+
     // MARK: - Partial Results
 
     @Test func unmatchedOpenBrace() {

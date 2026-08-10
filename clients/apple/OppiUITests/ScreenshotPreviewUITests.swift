@@ -746,6 +746,50 @@ final class ScreenshotPreviewUITests: XCTestCase {
         }
     }
 
+    func testWideLatexFormulaFullScreenHorizontalPanAndDismiss() throws {
+        launchPreview(
+            screen: "latex-rendering",
+            environment: ["SCREENSHOT_COLOR_SCHEME": "dark"]
+        )
+
+        let formulas = app.buttons.matching(identifier: "latex.formula.open")
+        XCTAssertGreaterThanOrEqual(formulas.count, 2, "Expected short and wide production formulas")
+        let wideFormula = formulas.element(boundBy: formulas.count - 1)
+        if !wideFormula.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(wideFormula.waitForExistence(timeout: 5), "Wide formula did not render")
+        XCTAssertTrue(wideFormula.isHittable, "Wide formula could not be opened")
+        wideFormula.tap()
+
+        let latexScroll = app.scrollViews["fullscreen-latex.scroll"]
+        let dismiss = app.buttons["fullscreen-code.dismiss"]
+        XCTAssertTrue(latexScroll.waitForExistence(timeout: 5), "Full-screen formula scroll surface did not open")
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 5), "Full-screen formula dismiss control is missing")
+        sleep(1) // Let the sheet presentation settle before capturing layout evidence.
+        saveScreenshot(name: "latex-fullscreen-layout-leading")
+
+        latexScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).press(
+            forDuration: 0.1,
+            thenDragTo: latexScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5))
+        )
+        saveScreenshot(name: "latex-fullscreen-horizontal-pan")
+
+        // Return to the leading edge, then prove the modal navigation gesture
+        // remains available after the formula consumed horizontal pans.
+        latexScroll.swipeRight()
+        latexScroll.swipeDown()
+        let dismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: dismiss
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [dismissed], timeout: 5),
+            .completed,
+            "Full-screen formula did not dismiss after horizontal panning"
+        )
+    }
+
     func testSessionTimelinePreview() throws {
         launchPreview(screen: "session-timeline")
 

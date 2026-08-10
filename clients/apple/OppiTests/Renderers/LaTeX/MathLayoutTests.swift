@@ -171,6 +171,23 @@ struct MathLayoutTests {
         }
     }
 
+    @Test func compoundSubscriptBaselineStaysAttachedToBase() throws {
+        let box = layoutFromTeX("x_{t+1}")
+        guard case .container(let children) = box.content else {
+            Issue.record("compound subscript should be a container")
+            return
+        }
+        let base = try #require(children.first)
+        let sub = try #require(children.dropFirst().first)
+        let baselineDrop = (sub.origin.y + sub.baseline) - (base.origin.y + base.baseline)
+
+        #expect(baselineDrop > 0)
+        #expect(
+            baselineDrop <= fontSize * 0.35,
+            "Subscript baseline detached by \(baselineDrop)pt at \(fontSize)pt"
+        )
+    }
+
     // MARK: - Combined Sub + Superscript
 
     @Test func subSuperscriptBothAttached() {
@@ -250,6 +267,43 @@ struct MathLayoutTests {
                 "2x2 matrix should be wider than 2 chars")
         #expect(box.size.height > singleChar.size.height * 1.5,
                 "2x2 matrix should be taller than 1.5 chars")
+    }
+
+    @Test func matrixDelimitersVisuallySpanAllRows() throws {
+        let box = layoutFromTeX("\\begin{bmatrix} x \\\\ v \\end{bmatrix}")
+        guard case .container(let children) = box.content else {
+            Issue.record("bracketed matrix should contain delimiters and a body")
+            return
+        }
+        let leftDelimiter = try #require(children.first)
+        let body = try #require(children.dropFirst().first)
+        guard case .glyph("[", let delimiterFontSize) = leftDelimiter.content else {
+            Issue.record("expected a left bracket glyph")
+            return
+        }
+
+        #expect(body.size.height > fontSize * 2)
+        #expect(
+            delimiterFontSize > fontSize * 1.5,
+            "Matrix bracket stayed at \(delimiterFontSize)pt for a \(body.size.height)pt body"
+        )
+    }
+
+    @Test func alignedEnvironmentRightAlignsLeftColumnsAndLeftAlignsRightColumns() throws {
+        let box = layoutFromTeX("\\begin{aligned}x&=1\\\\long&=2\\end{aligned}")
+        guard case .container(let cells) = box.content else {
+            Issue.record("aligned environment should lay out a grid")
+            return
+        }
+        #expect(cells.count == 4)
+        let firstLeft = try #require(cells.first)
+        let firstRight = try #require(cells.dropFirst().first)
+        let secondLeft = try #require(cells.dropFirst(2).first)
+        let secondRight = try #require(cells.dropFirst(3).first)
+
+        #expect(abs(firstLeft.origin.x + firstLeft.size.width
+                    - secondLeft.origin.x - secondLeft.size.width) < 0.5)
+        #expect(abs(firstRight.origin.x - secondRight.origin.x) < 0.5)
     }
 
     @Test func matrixCellPositions() {

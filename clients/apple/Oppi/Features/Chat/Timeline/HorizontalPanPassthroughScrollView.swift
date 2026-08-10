@@ -11,6 +11,12 @@ import UIKit
 final class HorizontalPanPassthroughScrollView: UIScrollView {
     private static let horizontalIntentBias: CGFloat = 1.15
 
+    #if DEBUG
+    /// Unit tests cannot synthesize UIKit touch velocity. This seam still runs
+    /// through the real nested scroll view's gestureRecognizerShouldBegin path.
+    var panVelocityOverrideForTesting: CGPoint?
+    #endif
+
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer === panGestureRecognizer else {
             return super.gestureRecognizerShouldBegin(gestureRecognizer)
@@ -20,7 +26,11 @@ final class HorizontalPanPassthroughScrollView: UIScrollView {
             return false
         }
 
+        #if DEBUG
+        let velocity = panVelocityOverrideForTesting ?? panGestureRecognizer.velocity(in: self)
+        #else
         let velocity = panGestureRecognizer.velocity(in: self)
+        #endif
         guard Self.shouldBeginHorizontalPan(with: velocity) else {
             return false
         }

@@ -7,6 +7,8 @@ import {
   translatePiEvent,
   normalizeCommandError,
   normalizeUserFacingError,
+  extractAssistantText,
+  projectAssistantTextRuns,
   extractToolFullOutputPath,
   updateSessionChangeStats,
   type TranslationContext,
@@ -88,6 +90,105 @@ describe("normalizeUserFacingError", () => {
         'Codex error: {"type":"error","error":{"message":"Our servers are currently overloaded. Please try again later."}}',
       ),
     ).toBe("Our servers are currently overloaded. Please try again later.");
+  });
+});
+
+// ─── extractAssistantText ───
+
+describe("extractAssistantText", () => {
+  it("preserves a Markdown-safe boundary between adjacent assistant text blocks", () => {
+    const message = {
+      role: "assistant",
+      content: [
+        { type: "text", text: "**LATEX-END ANCHOR** — rendering should not move the earlier anchor." },
+        { type: "text", text: "### 2. Raster image and SVG" },
+      ],
+    };
+
+    expect(extractAssistantText(message)).toBe(
+      "**LATEX-END ANCHOR** — rendering should not move the earlier anchor.\n\n### 2. Raster image and SVG",
+    );
+  });
+
+  it("preserves intentional whitespace instead of normalizing text block edges", () => {
+    const message = {
+      role: "assistant",
+      content: [
+        { type: "text", text: "First paragraph.\n" },
+        { type: "output_text", text: "### Heading with an existing boundary\n\n" },
+        { type: "text", text: "Following paragraph." },
+      ],
+    };
+
+    expect(extractAssistantText(message)).toBe(
+      "First paragraph.\n### Heading with an existing boundary\n\nFollowing paragraph.",
+    );
+  });
+
+  it("uses the same joined assistant source for live extraction and session projection", () => {
+    const session = makeSession();
+    const message = {
+      role: "assistant",
+      content: [
+        { type: "text", text: "Live block" },
+        { type: "text", text: "### History heading" },
+      ],
+    };
+
+    applyMessageEndToSession(session, message);
+
+    expect(extractAssistantText(message)).toBe("Live block\n\n### History heading");
+    expect(session.lastMessage).toBe("Live block\n\n### History heading");
+  });
+
+  it("projects ordered adjacent text runs without crossing structural boundaries", () => {
+    const message = {
+      role: "assistant",
+      content: [
+        { type: "text", text: "Before tool " },
+        { type: "output_text", text: "### authored heading text" },
+        { type: "toolCall", id: "tool-1", name: "read", arguments: {} },
+        { type: "text", text: "After tool" },
+        { type: "thinking", thinking: "Check" },
+        { type: "text", text: "After thinking" },
+        { type: "image", data: "abc", mimeType: "image/png" },
+        { type: "text", text: "After media" },
+        { type: "future_block", payload: true },
+        { type: "text", text: "Tail\n\n" },
+      ],
+    };
+
+    expect(projectAssistantTextRuns(message)).toEqual([
+      "Before tool ### authored heading text",
+      "After tool",
+      "After thinking",
+      "After media",
+      "Tail\n\n",
+    ]);
+    expect(extractAssistantText(message)).toBe(
+      "Before tool ### authored heading text\n\nAfter tool\n\nAfter thinking\n\nAfter media\n\nTail\n\n",
+    );
+  });
+
+  it("projects stable content indexes and run ordinals for every text run", async () => {
+    const { projectAssistantTextProjections } = await import("../src/session-protocol.js");
+    const message = {
+      role: "assistant",
+      content: [
+        { type: "text", text: "First" },
+        { type: "output_text", text: "### adjacent" },
+        { type: "thinking", thinking: "between" },
+        { type: "text", text: "Second" },
+        { type: "image", data: "abc" },
+        { type: "text", text: "Third" },
+      ],
+    };
+
+    expect(projectAssistantTextProjections(message)).toEqual([
+      { text: "First\n\n### adjacent", contentIndex: 0, runOrdinal: 0 },
+      { text: "Second", contentIndex: 3, runOrdinal: 1 },
+      { text: "Third", contentIndex: 5, runOrdinal: 2 },
+    ]);
   });
 });
 
@@ -642,7 +743,7 @@ describe("translatePiEvent", () => {
       } as AgentSessionEvent;
 
       const result = translatePiEvent(event, ctx);
-      expect(result).toEqual([{ type: "text_delta", delta: "hello" }]);
+      expect(result).toEqual([{ type: "text_delta", delta: "hello", contentIndex: 0 }]);
       expect(ctx.streamedAssistantText).toBe("hello");
     });
 

@@ -184,6 +184,7 @@ final class AssistantMarkdownSegmentSource {
         // Reference definitions can retroactively resolve links in already-finalized
         // blocks. Keep the canonical full-document path while one is present.
         let requiresCanonicalFullParse = containsPotentialLinkReferenceDefinition(content)
+            || containsPotentialDisplayMath(content)
 
         if !requiresCanonicalFullParse,
            let state = streamingState,
@@ -469,6 +470,14 @@ final class AssistantMarkdownSegmentSource {
             hash &*= 1_099_511_628_211
         }
         return hash
+    }
+
+    /// Display delimiters can retroactively turn an earlier CommonMark block
+    /// into one opaque formula. Keep the canonical full-document path whenever
+    /// they are present rather than duplicating the pre-cmark scanner's HTML,
+    /// indentation, fence, and code-span state machine in the streaming cache.
+    private func containsPotentialDisplayMath(_ content: String) -> Bool {
+        content.contains("$$") || content.contains(#"\["#) || content.contains(#"\]"#)
     }
 
     /// Conservatively detects CommonMark link reference definitions by their

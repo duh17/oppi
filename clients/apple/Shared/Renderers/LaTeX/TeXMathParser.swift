@@ -1,3 +1,9 @@
+enum TeXMathLimits {
+    static let maxSourceUTF8Bytes = 64 * 1_024
+    static let maxTokenCount = 8_192
+    static let maxNestingDepth = 128
+}
+
 /// Recursive descent parser for TeX math mode.
 ///
 /// Converts raw LaTeX math strings into `[MathNode]` ASTs.
@@ -13,9 +19,510 @@
 /// big operators, matrices, cases, accents, fonts, spaces.
 struct TeXMathParser: DocumentParser, Sendable {
     nonisolated func parse(_ source: String) -> [MathNode] {
+        parseValidated(source).nodes
+    }
+
+    /// Parse with a conservative validation preflight for graphical rendering.
+    /// The parser still recovers partial ASTs for editing and diagnostics, while
+    /// render callers can reject recovered or unsupported source deterministically.
+    nonisolated func parseValidated(_ source: String) -> TeXMathParseResult {
+        var diagnostics = TeXMathValidator.validate(source)
+        if diagnostics.contains(where: { diagnostic in
+            switch diagnostic {
+            case .sourceTooLong, .nestingTooDeep:
+                return true
+            default:
+                return false
+            }
+        }) {
+            return TeXMathParseResult(nodes: [], diagnostics: diagnostics)
+        }
+
         var state = ParserState(source: source)
         state.tokenize()
-        return state.parseTopLevel()
+        guard state.tokens.count <= TeXMathLimits.maxTokenCount else {
+            diagnostics.append(.tooManyTokens(max: TeXMathLimits.maxTokenCount))
+            return TeXMathParseResult(nodes: [], diagnostics: diagnostics)
+        }
+        return TeXMathParseResult(
+            nodes: state.parseTopLevel(),
+            diagnostics: diagnostics
+        )
+    }
+}
+
+struct TeXMathParseResult: Equatable, Sendable {
+    let nodes: [MathNode]
+    let diagnostics: [TeXMathDiagnostic]
+
+    var isRenderable: Bool {
+        !nodes.isEmpty && diagnostics.isEmpty
+    }
+}
+
+enum TeXMathDiagnostic: Equatable, Sendable {
+    case unsupportedCommand(String)
+    case unsupportedEnvironment(String)
+    case missingArgument(command: String, position: Int)
+    case unclosedGroup
+    case unmatchedClosingBrace
+    case unmatchedLeft
+    case unmatchedRight
+    case unclosedEnvironment(String)
+    case mismatchedEnvironmentEnd(expected: String, found: String)
+    case trailingBackslash
+    case missingScriptBase(String)
+    case duplicateScript(String)
+    case missingDelimiter(command: String)
+    case unsupportedDelimiter(command: String, delimiter: String)
+    case sourceTooLong(maxUTF8Bytes: Int)
+    case tooManyTokens(max: Int)
+    case nestingTooDeep(max: Int)
+}
+
+/// Narrow validation layer for the supported renderer subset.
+///
+/// This is intentionally not a full TeX grammar. It verifies balanced groups,
+/// mandatory arguments, supported commands/environments, and paired structural
+/// delimiters before a recovered AST may become pixels. Valid TeX outside this
+/// renderer's explicit subset falls back to exact source rather than being
+/// approximated misleadingly.
+private enum TeXMathValidator {
+    private static let rowEnvironments = Set(["cases", "aligned", "gathered"])
+
+    static func validate(_ source: String) -> [TeXMathDiagnostic] {
+        guard source.utf8.count <= TeXMathLimits.maxSourceUTF8Bytes else {
+            return [.sourceTooLong(maxUTF8Bytes: TeXMathLimits.maxSourceUTF8Bytes)]
+        }
+
+        var diagnostics: [TeXMathDiagnostic] = []
+        var braceDepth = 0
+        var environmentStack: [String] = []
+        var leftDepth = 0
+        var index = source.startIndex
+
+        func append(_ diagnostic: TeXMathDiagnostic) {
+            if !diagnostics.contains(diagnostic) {
+                diagnostics.append(diagnostic)
+            }
+        }
+
+        func validateNestingDepth() {
+            if braceDepth + environmentStack.count + leftDepth > TeXMathLimits.maxNestingDepth {
+                append(.nestingTooDeep(max: TeXMathLimits.maxNestingDepth))
+            }
+        }
+
+        while index < source.endIndex {
+            let character = source[index]
+            if character == "\\" {
+                let commandStart = source.index(after: index)
+                guard commandStart < source.endIndex else {
+                    append(.trailingBackslash)
+                    break
+                }
+
+                if source[commandStart] == "\\" {
+                    index = source.index(after: commandStart)
+                    continue
+                }
+
+                let commandEnd: String.Index
+                let command: String
+                if source[commandStart].isLetter {
+                    commandEnd = source[commandStart...].firstIndex(where: { !$0.isLetter })
+                        ?? source.endIndex
+                    command = String(source[commandStart..<commandEnd])
+                } else {
+                    commandEnd = source.index(after: commandStart)
+                    command = String(source[commandStart..<commandEnd])
+                }
+
+                if command == "text" {
+                    let argument = argumentInfo(in: source, after: commandEnd)
+                    if argument == nil || argument?.isEmpty == true {
+                        append(.missingArgument(command: command, position: 1))
+                    }
+                    if let argument, argument.isBraced {
+                        if !argument.isClosed {
+                            append(.unclosedGroup)
+                            break
+                        }
+                        index = argument.end
+                        continue
+                    }
+                } else if command == "begin" || command == "end" {
+                    let environment = bracedText(in: source, after: commandEnd)
+                    guard let environment else {
+                        append(.missingArgument(command: command, position: 1))
+                        index = commandEnd
+                        continue
+                    }
+                    if !isSupportedEnvironment(environment.value) {
+                        append(.unsupportedEnvironment(environment.value))
+                    }
+                    if command == "begin" {
+                        environmentStack.append(environment.value)
+                        validateNestingDepth()
+                    } else if let expected = environmentStack.last {
+                        if expected == environment.value {
+                            environmentStack.removeLast()
+                        } else {
+                            append(.mismatchedEnvironmentEnd(
+                                expected: expected,
+                                found: environment.value
+                            ))
+                        }
+                    } else {
+                        append(.mismatchedEnvironmentEnd(expected: "", found: environment.value))
+                    }
+                } else if command == "left" {
+                    validateDelimiter(
+                        command: command,
+                        source: source,
+                        after: commandEnd,
+                        append: append
+                    )
+                    leftDepth += 1
+                    validateNestingDepth()
+                } else if command == "right" {
+                    validateDelimiter(
+                        command: command,
+                        source: source,
+                        after: commandEnd,
+                        append: append
+                    )
+                    if leftDepth > 0 {
+                        leftDepth -= 1
+                    } else {
+                        append(.unmatchedRight)
+                    }
+                } else if MathSymbolTable.lookup(command) == nil {
+                    append(.unsupportedCommand(command))
+                }
+
+                switch MathSymbolTable.lookup(command) {
+                case .fraction:
+                    validateArguments(
+                        command: command,
+                        count: 2,
+                        source: source,
+                        after: commandEnd,
+                        append: append
+                    )
+                case .sqrt:
+                    var argumentStart = skipWhitespace(in: source, from: commandEnd)
+                    if argumentStart < source.endIndex, source[argumentStart] == "[" {
+                        if let close = matchingDelimiter(
+                            in: source,
+                            from: argumentStart,
+                            open: "[",
+                            close: "]"
+                        ) {
+                            argumentStart = source.index(after: close)
+                        } else {
+                            append(.unclosedGroup)
+                        }
+                    }
+                    validateArguments(
+                        command: command,
+                        count: 1,
+                        source: source,
+                        after: argumentStart,
+                        append: append
+                    )
+                case .accent, .font:
+                    validateArguments(
+                        command: command,
+                        count: 1,
+                        source: source,
+                        after: commandEnd,
+                        append: append
+                    )
+                default:
+                    break
+                }
+
+                index = commandEnd
+                continue
+            }
+
+            if character == "{" {
+                braceDepth += 1
+                validateNestingDepth()
+            } else if character == "}" {
+                if braceDepth == 0 {
+                    append(.unmatchedClosingBrace)
+                } else {
+                    braceDepth -= 1
+                }
+            } else if character == "^" || character == "_" {
+                let script = String(character)
+                if !hasScriptBase(in: source, before: index) {
+                    append(.missingScriptBase(script))
+                } else {
+                    validateScriptChain(
+                        source: source,
+                        startingAt: index,
+                        append: append
+                    )
+                }
+            }
+            index = source.index(after: index)
+        }
+
+        if braceDepth > 0 {
+            append(.unclosedGroup)
+        }
+        if leftDepth > 0 {
+            append(.unmatchedLeft)
+        }
+        for environment in environmentStack.reversed() {
+            append(.unclosedEnvironment(environment))
+        }
+        return diagnostics
+    }
+
+    private static func hasScriptBase(
+        in source: String,
+        before scriptIndex: String.Index
+    ) -> Bool {
+        var cursor = scriptIndex
+        while cursor > source.startIndex {
+            cursor = source.index(before: cursor)
+            let character = source[cursor]
+            if character.isWhitespace { continue }
+            return !"^_{[(&+-*/=<>!,;:".contains(character) && character != "\\"
+        }
+        return false
+    }
+
+    private static func validateScriptChain(
+        source: String,
+        startingAt start: String.Index,
+        append: (TeXMathDiagnostic) -> Void
+    ) {
+        var cursor = start
+        var seen: Set<Character> = []
+
+        while cursor < source.endIndex,
+              (source[cursor] == "^" || source[cursor] == "_") {
+            let script = source[cursor]
+            if !seen.insert(script).inserted {
+                append(.duplicateScript(String(script)))
+            }
+
+            let argumentStart = source.index(after: cursor)
+            if let argument = argumentInfo(in: source, after: argumentStart),
+               !argument.isEmpty {
+                if argument.isBraced, !argument.isClosed {
+                    append(.unclosedGroup)
+                    return
+                }
+                cursor = skipWhitespace(in: source, from: argument.end)
+            } else {
+                append(.missingArgument(command: String(script), position: 1))
+                cursor = skipWhitespace(in: source, from: argumentStart)
+            }
+        }
+    }
+
+    private struct DelimiterInfo {
+        let source: String
+        let isSupported: Bool
+    }
+
+    private static func validateDelimiter(
+        command: String,
+        source: String,
+        after start: String.Index,
+        append: (TeXMathDiagnostic) -> Void
+    ) {
+        let cursor = skipWhitespace(in: source, from: start)
+        guard cursor < source.endIndex else {
+            append(.missingDelimiter(command: command))
+            return
+        }
+
+        let info: DelimiterInfo
+        if source[cursor] == "\\" {
+            let commandStart = source.index(after: cursor)
+            guard commandStart < source.endIndex else {
+                append(.missingDelimiter(command: command))
+                return
+            }
+            let commandEnd: String.Index
+            if source[commandStart].isLetter {
+                commandEnd = source[commandStart...].firstIndex(where: { !$0.isLetter })
+                    ?? source.endIndex
+            } else {
+                commandEnd = source.index(after: commandStart)
+            }
+            let name = String(source[commandStart..<commandEnd])
+            let supported: Bool
+            if let lookup = MathSymbolTable.lookup(name), case .delimiter = lookup {
+                supported = true
+            } else {
+                supported = false
+            }
+            info = DelimiterInfo(source: "\\" + name, isSupported: supported)
+        } else {
+            let delimiter = source[cursor]
+            info = DelimiterInfo(
+                source: String(delimiter),
+                isSupported: "()[]|.".contains(delimiter)
+            )
+        }
+
+        if !info.isSupported {
+            append(.unsupportedDelimiter(command: command, delimiter: info.source))
+        }
+    }
+
+    private struct ArgumentInfo {
+        let end: String.Index
+        let isBraced: Bool
+        let isClosed: Bool
+        let isEmpty: Bool
+    }
+
+    private static func validateArguments(
+        command: String,
+        count: Int,
+        source: String,
+        after start: String.Index,
+        append: (TeXMathDiagnostic) -> Void
+    ) {
+        var cursor = start
+        for position in 1...count {
+            guard let argument = argumentInfo(in: source, after: cursor),
+                  !argument.isEmpty else {
+                append(.missingArgument(command: command, position: position))
+                return
+            }
+            if argument.isBraced, !argument.isClosed {
+                append(.unclosedGroup)
+                return
+            }
+            cursor = argument.end
+        }
+    }
+
+    private static func argumentInfo(
+        in source: String,
+        after start: String.Index
+    ) -> ArgumentInfo? {
+        let cursor = skipWhitespace(in: source, from: start)
+        guard cursor < source.endIndex else { return nil }
+        if "^_}]&+-*/=<>!,;:".contains(source[cursor]) {
+            return nil
+        }
+
+        if source[cursor] == "{" {
+            guard let close = matchingDelimiter(
+                in: source,
+                from: cursor,
+                open: "{",
+                close: "}"
+            ) else {
+                return ArgumentInfo(
+                    end: source.endIndex,
+                    isBraced: true,
+                    isClosed: false,
+                    isEmpty: source.index(after: cursor) == source.endIndex
+                )
+            }
+            let bodyStart = source.index(after: cursor)
+            return ArgumentInfo(
+                end: source.index(after: close),
+                isBraced: true,
+                isClosed: true,
+                isEmpty: bodyStart == close
+            )
+        }
+
+        if source[cursor] == "\\" {
+            let next = source.index(after: cursor)
+            guard next < source.endIndex else { return nil }
+            if source[next].isLetter {
+                let end = source[next...].firstIndex(where: { !$0.isLetter }) ?? source.endIndex
+                return ArgumentInfo(end: end, isBraced: false, isClosed: true, isEmpty: false)
+            }
+            return ArgumentInfo(
+                end: source.index(after: next),
+                isBraced: false,
+                isClosed: true,
+                isEmpty: false
+            )
+        }
+
+        return ArgumentInfo(
+            end: source.index(after: cursor),
+            isBraced: false,
+            isClosed: true,
+            isEmpty: false
+        )
+    }
+
+    private static func bracedText(
+        in source: String,
+        after start: String.Index
+    ) -> (value: String, end: String.Index)? {
+        let cursor = skipWhitespace(in: source, from: start)
+        guard cursor < source.endIndex, source[cursor] == "{",
+              let close = matchingDelimiter(
+                  in: source,
+                  from: cursor,
+                  open: "{",
+                  close: "}"
+              ) else {
+            return nil
+        }
+        let bodyStart = source.index(after: cursor)
+        return (String(source[bodyStart..<close]), source.index(after: close))
+    }
+
+    private static func matchingDelimiter(
+        in source: String,
+        from opening: String.Index,
+        open: Character,
+        close: Character
+    ) -> String.Index? {
+        var depth = 0
+        var cursor = opening
+        while cursor < source.endIndex {
+            let character = source[cursor]
+            if character == "\\" {
+                let next = source.index(after: cursor)
+                if next < source.endIndex {
+                    cursor = source.index(after: next)
+                    continue
+                }
+            }
+            if character == open {
+                depth += 1
+            } else if character == close {
+                depth -= 1
+                if depth == 0 { return cursor }
+            }
+            cursor = source.index(after: cursor)
+        }
+        return nil
+    }
+
+    private static func skipWhitespace(
+        in source: String,
+        from start: String.Index
+    ) -> String.Index {
+        var cursor = start
+        while cursor < source.endIndex, source[cursor].isWhitespace {
+            cursor = source.index(after: cursor)
+        }
+        return cursor
+    }
+
+    private static func isSupportedEnvironment(_ name: String) -> Bool {
+        MatrixStyle(rawValue: name) != nil || rowEnvironments.contains(name)
     }
 }
 

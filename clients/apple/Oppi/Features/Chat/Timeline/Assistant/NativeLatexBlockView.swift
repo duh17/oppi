@@ -8,8 +8,8 @@ import UIKit
 /// `MathCoreGraphicsRenderer` on a background thread, then displays the
 /// resulting image.
 ///
-/// Tap opens `FullScreenCodeViewController` with pinch-to-zoom and full
-/// export support. Same pattern as `NativeMermaidBlockView`.
+/// Tap opens `FullScreenCodeViewController` with two-axis scrolling and
+/// full export support.
 @MainActor
 final class NativeLatexBlockView: UIView {
 
@@ -18,16 +18,37 @@ final class NativeLatexBlockView: UIView {
     /// Code block shown while the fence is open (streaming) or on parse failure.
     private let codeBlockView = NativeCodeBlockView()
 
-    /// Rasterized formula image.
-    private let formulaImageView: UIImageView = {
-        let iv = UIImageView()
-        iv.contentMode = .scaleAspectFit
-        iv.clipsToBounds = true
-        iv.isUserInteractionEnabled = true
-        iv.layer.cornerRadius = 8
-        iv.translatesAutoresizingMaskIntoConstraints = false
-        return iv
+    /// Horizontal-only viewport. Wide formulas retain natural typography and
+    /// pan independently while vertical/diagonal drags stay with the timeline.
+    private let formulaScrollView: HorizontalPanPassthroughScrollView = {
+        let scrollView = HorizontalPanPassthroughScrollView()
+        scrollView.showsHorizontalScrollIndicator = true
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.alwaysBounceHorizontal = false
+        scrollView.alwaysBounceVertical = false
+        scrollView.isDirectionalLockEnabled = true
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.layer.cornerRadius = 8
+        scrollView.clipsToBounds = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        return scrollView
     }()
+
+    private let formulaCanvas = UIView()
+
+    /// Rasterized formula image presented at its natural point size.
+    private let formulaImageView: UIImageView = {
+        let imageView = UIImageView()
+        imageView.contentMode = .scaleToFill
+        imageView.clipsToBounds = false
+        imageView.isUserInteractionEnabled = true
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        return imageView
+    }()
+
+    private var formulaCanvasHeightConstraint: NSLayoutConstraint?
+    private var formulaImageWidthConstraint: NSLayoutConstraint?
+    private var formulaImageHeightConstraint: NSLayoutConstraint?
 
     /// Active only while showing the rendered formula. A direct self-height
     /// constraint makes stack/scroll relayout more reliable after async renders.
@@ -39,20 +60,38 @@ final class NativeLatexBlockView: UIView {
     /// Display math uses Apple's title1 role rather than a caption-sized scalar.
     /// Applying the configured message-body ratio keeps Dynamic Type and the
     /// chat text-size preference aligned with the surrounding typography.
-    private static var displayFormulaFontSize: CGFloat {
-        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
-        let displayFont = UIFont.preferredFont(forTextStyle: .title1)
-        let messageBodyScale = AppFont.messageBody.pointSize / bodyFont.pointSize
+    private var displayFormulaFontSize: CGFloat {
+        let displayFont = UIFont.preferredFont(
+            forTextStyle: .title1,
+            compatibleWith: traitCollection
+        )
+        let defaultTraits = UITraitCollection(preferredContentSizeCategory: .large)
+        let defaultBodyFont = UIFont.preferredFont(
+            forTextStyle: .body,
+            compatibleWith: defaultTraits
+        )
+        let messageBodyScale = AppFont.messageBody.pointSize / max(defaultBodyFont.pointSize, 1)
         return displayFont.pointSize * messageBodyScale
     }
 
     // MARK: - State
 
+    private struct RenderIdentity: Equatable {
+        let code: String
+        let contentSizeCategory: UIContentSizeCategory
+    }
+
     private var currentCode: String?
+    private var currentPalette: ThemePalette?
+    private var currentRenderIdentity: RenderIdentity?
     private var isShowingFormula = false
     private var renderTask: Task<Void, Never>?
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
+
+    #if DEBUG
+    static var renderDelayForTesting: Duration?
+    #endif
 
     // MARK: - Init
 
@@ -70,11 +109,25 @@ final class NativeLatexBlockView: UIView {
         codeBlockView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(codeBlockView)
 
-        formulaImageView.isHidden = true
-        addSubview(formulaImageView)
+        formulaScrollView.isHidden = true
+        addSubview(formulaScrollView)
+
+        formulaCanvas.translatesAutoresizingMaskIntoConstraints = false
+        formulaCanvas.semanticContentAttribute = .forceLeftToRight
+        formulaImageView.semanticContentAttribute = .forceLeftToRight
+        formulaScrollView.semanticContentAttribute = .forceLeftToRight
+        formulaScrollView.addSubview(formulaCanvas)
+        formulaCanvas.addSubview(formulaImageView)
 
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
-        formulaImageView.addGestureRecognizer(tapGesture)
+        formulaScrollView.addGestureRecognizer(tapGesture)
+
+        let canvasHeight = formulaCanvas.heightAnchor.constraint(equalToConstant: 44)
+        let imageWidth = formulaImageView.widthAnchor.constraint(equalToConstant: 1)
+        let imageHeight = formulaImageView.heightAnchor.constraint(equalToConstant: 1)
+        formulaCanvasHeightConstraint = canvasHeight
+        formulaImageWidthConstraint = imageWidth
+        formulaImageHeightConstraint = imageHeight
 
         let formulaHeight = heightAnchor.constraint(equalToConstant: 200)
         formulaHeight.isActive = false
@@ -86,10 +139,24 @@ final class NativeLatexBlockView: UIView {
             codeBlockView.trailingAnchor.constraint(equalTo: trailingAnchor),
             codeBlockView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            formulaImageView.topAnchor.constraint(equalTo: topAnchor),
-            formulaImageView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            formulaImageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            formulaImageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            formulaScrollView.topAnchor.constraint(equalTo: topAnchor),
+            formulaScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            formulaScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            formulaScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            formulaCanvas.leadingAnchor.constraint(equalTo: formulaScrollView.contentLayoutGuide.leadingAnchor),
+            formulaCanvas.trailingAnchor.constraint(equalTo: formulaScrollView.contentLayoutGuide.trailingAnchor),
+            formulaCanvas.topAnchor.constraint(equalTo: formulaScrollView.contentLayoutGuide.topAnchor),
+            formulaCanvas.bottomAnchor.constraint(equalTo: formulaScrollView.contentLayoutGuide.bottomAnchor),
+            formulaCanvas.widthAnchor.constraint(greaterThanOrEqualTo: formulaScrollView.frameLayoutGuide.widthAnchor),
+            canvasHeight,
+
+            formulaImageView.centerXAnchor.constraint(equalTo: formulaCanvas.centerXAnchor),
+            formulaImageView.centerYAnchor.constraint(equalTo: formulaCanvas.centerYAnchor),
+            formulaImageView.leadingAnchor.constraint(greaterThanOrEqualTo: formulaCanvas.leadingAnchor),
+            formulaImageView.trailingAnchor.constraint(lessThanOrEqualTo: formulaCanvas.trailingAnchor),
+            imageWidth,
+            imageHeight,
         ])
     }
 
@@ -99,11 +166,14 @@ final class NativeLatexBlockView: UIView {
     func applyAsCode(language: String?, code: String, palette: ThemePalette, isOpen: Bool) {
         renderTask?.cancel()
         renderTask = nil
+        currentPalette = palette
+        currentRenderIdentity = nil
 
         codeBlockView.isHidden = false
-        formulaImageView.isHidden = true
+        formulaScrollView.isHidden = true
         formulaHeightConstraint?.isActive = false
         isShowingFormula = false
+        configureFormulaAccessibility(code: nil)
 
         codeBlockView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
         currentCode = code
@@ -112,19 +182,24 @@ final class NativeLatexBlockView: UIView {
     /// Render synchronously on the current thread. Used by export paths that
     /// snapshot the view immediately after layout.
     func applyAsFormulaSync(code: String, palette: ThemePalette) {
+        renderTask?.cancel()
+        renderTask = nil
         currentCode = code
+        currentPalette = palette
+        currentRenderIdentity = RenderIdentity(
+            code: code,
+            contentSizeCategory: traitCollection.preferredContentSizeCategory
+        )
 
         let theme = ThemeRuntimeState.currentRenderTheme()
         let availableWidth = bounds.width > 0
             ? bounds.width
             : (window?.windowScene?.screen.bounds.width ?? 360)
 
-        guard let result = DocumentRenderPipeline.renderInlineGraphicalImage(
-            parser: TeXMathParser(),
-            renderer: MathCoreGraphicsRenderer(),
+        guard let result = DocumentRenderPipeline.renderLatexGraphicalImage(
             text: code,
             config: RenderConfiguration(
-                fontSize: Self.displayFormulaFontSize,
+                fontSize: displayFormulaFontSize,
                 maxWidth: availableWidth,
                 theme: theme,
                 displayMode: .document
@@ -139,23 +214,33 @@ final class NativeLatexBlockView: UIView {
 
     /// Render as a formula (fence closed, not streaming).
     func applyAsFormula(code: String, palette: ThemePalette) {
-        guard code != currentCode || !isShowingFormula else { return }
+        let identity = RenderIdentity(
+            code: code,
+            contentSizeCategory: traitCollection.preferredContentSizeCategory
+        )
+        guard identity != currentRenderIdentity || !isShowingFormula else { return }
         currentCode = code
+        currentPalette = palette
+        currentRenderIdentity = identity
 
         renderTask?.cancel()
         renderTask = Task { [weak self] in
             guard let self else { return }
+            #if DEBUG
+            if let delay = Self.renderDelayForTesting {
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled else { return }
+            }
+            #endif
 
             let theme = ThemeRuntimeState.currentRenderTheme()
             let availableWidth = self.bounds.width > 0
                 ? self.bounds.width
                 : (self.window?.windowScene?.screen.bounds.width ?? 360)
-            let fontSize = Self.displayFormulaFontSize
+            let fontSize = self.displayFormulaFontSize
 
             let result: (image: UIImage, size: CGSize)? = await Task.detached(priority: .userInitiated) {
-                DocumentRenderPipeline.renderInlineGraphicalImage(
-                    parser: TeXMathParser(),
-                    renderer: MathCoreGraphicsRenderer(),
+                DocumentRenderPipeline.renderLatexGraphicalImage(
                     text: code,
                     config: RenderConfiguration(
                         fontSize: fontSize,
@@ -166,7 +251,7 @@ final class NativeLatexBlockView: UIView {
                 )
             }.value
 
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.currentRenderIdentity == identity else { return }
 
             guard let result else {
                 self.showAsCodeFallback(code: code, palette: palette)
@@ -198,23 +283,26 @@ final class NativeLatexBlockView: UIView {
     // MARK: - Private
 
     private func showFormula(image: UIImage, naturalSize: CGSize, palette: ThemePalette) {
-        let availableWidth = bounds.width > 0
-            ? bounds.width
-            : (window?.windowScene?.screen.bounds.width ?? 360)
-        let scale = min(1.0, availableWidth / naturalSize.width)
-        let displayHeight = min(naturalSize.height * scale, Self.maxInlineHeight)
+        let canvasHeight = max(naturalSize.height, 44)
+        let displayHeight = min(canvasHeight, Self.maxInlineHeight)
 
         formulaHeightConstraint?.constant = displayHeight
         formulaHeightConstraint?.isActive = true
-        formulaImageView.backgroundColor = UIColor(palette.bgHighlight)
+        formulaCanvasHeightConstraint?.constant = canvasHeight
+        formulaImageWidthConstraint?.constant = max(naturalSize.width, 1)
+        formulaImageHeightConstraint?.constant = max(naturalSize.height, 1)
+        formulaScrollView.backgroundColor = UIColor(palette.bgHighlight)
+        formulaCanvas.backgroundColor = UIColor(palette.bgHighlight)
         formulaImageView.image = image
 
         codeBlockView.isHidden = true
-        formulaImageView.isHidden = false
+        formulaScrollView.isHidden = false
         isShowingFormula = true
+        configureFormulaAccessibility(code: currentCode)
 
         invalidateIntrinsicContentSize()
         setNeedsLayout()
+        layoutIfNeeded()
         superview?.setNeedsLayout()
         superview?.layoutIfNeeded()
         invalidateTimelineLayout()
@@ -222,15 +310,51 @@ final class NativeLatexBlockView: UIView {
 
     private func showAsCodeFallback(code: String, palette: ThemePalette) {
         codeBlockView.isHidden = false
-        formulaImageView.isHidden = true
+        formulaScrollView.isHidden = true
         formulaHeightConstraint?.isActive = false
         isShowingFormula = false
+        configureFormulaAccessibility(code: nil)
         codeBlockView.apply(language: "latex", code: code, palette: palette, isOpen: false)
         invalidateTimelineLayout()
     }
 
     private func invalidateTimelineLayout() {
-        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
+    }
+
+    private func configureFormulaAccessibility(code: String?) {
+        guard let code else {
+            isAccessibilityElement = false
+            accessibilityIdentifier = nil
+            accessibilityLabel = nil
+            accessibilityHint = nil
+            accessibilityTraits = []
+            return
+        }
+        isAccessibilityElement = true
+        accessibilityIdentifier = "latex.formula.open"
+        accessibilityLabel = FlatSegment.formulaAccessibilityLabel(for: code)
+        accessibilityHint = String(localized: "Opens formula full screen")
+        accessibilityTraits = [.button]
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard previousTraitCollection?.preferredContentSizeCategory
+                != traitCollection.preferredContentSizeCategory,
+              let currentCode,
+              let currentPalette,
+              isShowingFormula else {
+            return
+        }
+        currentRenderIdentity = nil
+        applyAsFormula(code: currentCode, palette: currentPalette)
+    }
+
+    override func accessibilityActivate() -> Bool {
+        guard isShowingFormula else { return false }
+        handleTap()
+        return true
     }
 
     @objc private func handleTap() {

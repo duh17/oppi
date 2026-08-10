@@ -315,14 +315,14 @@ final class DeltaCoalescer {
 
     private func appendAppendableEvent(_ event: AgentEvent) {
         switch event {
-        case .textDelta(let sessionId, let delta):
+        case .textDelta(let sessionId, let delta, let contentIndex):
             recordOversizedTimelinePayloadIfNeeded(
                 sessionId: sessionId,
                 eventCount: 1,
                 bytes: delta.utf8.count
             )
             appendChunkedText(delta) { chunk in
-                .textDelta(sessionId: sessionId, delta: chunk)
+                .textDelta(sessionId: sessionId, delta: chunk, contentIndex: contentIndex)
             }
         case .thinkingDelta(let sessionId, let delta, let contentIndex):
             recordOversizedTimelinePayloadIfNeeded(
@@ -571,14 +571,18 @@ final class DeltaCoalescer {
              .agentSettled:
             return 0
 
-        case .textDelta(_, let delta):
+        case .textDelta(_, let delta, _):
             return delta.utf8.count
 
         case .thinkingDelta(_, let delta, _):
             return delta.utf8.count
 
-        case .messageEnd(_, let content):
-            return content.utf8.count
+        case .messageEnd(_, let content, let assistantContent):
+            return content.utf8.count + (assistantContent?.reduce(into: 0) { total, part in
+                total += part.kind.utf8.count
+                total += part.content?.utf8.count ?? 0
+                total += part.toolCallId?.utf8.count ?? 0
+            } ?? 0)
 
         case .cacheMiss(_, let id, let message):
             return id.utf8.count + message.utf8.count

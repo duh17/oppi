@@ -19,6 +19,7 @@ import { createLogger } from "./logger.js";
 import {
   extractAssistantText,
   extractToolFullOutputPath,
+  projectAssistantMessageContent,
   normalizeUserFacingError,
   translatePiEvent,
 } from "./session-protocol.js";
@@ -273,7 +274,17 @@ export class SessionAgentEventCoordinator {
 
     if (event.type === "message_end") {
       const role = event.message.role;
-      if (role === "assistant" || role === "user") {
+      if (role === "assistant") {
+        // Keep exactly one historical frame per Pi assistant message. Older
+        // clients ignore assistantContent and retain their complete aggregate
+        // row; newer clients use it to reconcile text/thinking/tool order.
+        this.deps.broadcast(key, {
+          type: "message_end",
+          role,
+          content: extractAssistantText(event.message),
+          assistantContent: projectAssistantMessageContent(event.message),
+        });
+      } else if (role === "user") {
         this.deps.broadcast(key, {
           type: "message_end",
           role,

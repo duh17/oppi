@@ -32,11 +32,22 @@ struct LaTeXFileView: View {
 
     @MainActor
     private static func makeLatexView(_ layout: DocumentRenderPipeline.LatexMultiLayout) -> UIView {
+        if let source = layout.exactSourceFallback {
+            return DocumentRenderPipeline.makeLatexSourceFallbackView(
+                source: source,
+                palette: ThemeRuntimeState.currentPalette()
+            )
+        }
+
         let container = UIView()
         container.backgroundColor = .clear
         var yOffset: CGFloat = 0
-        for expr in layout.expressions {
+        for (expr, source) in zip(layout.expressions, layout.sources) {
             let graphical = ZoomableGraphicalView(size: expr.size, draw: expr.draw)
+            graphical.isAccessibilityElement = true
+            graphical.accessibilityLabel = FlatSegment.formulaAccessibilityLabel(for: source)
+            graphical.accessibilityTraits = [.image]
+            graphical.semanticContentAttribute = .forceLeftToRight
             graphical.frame = CGRect(x: 0, y: yOffset, width: expr.size.width, height: max(expr.size.height, 30))
             container.addSubview(graphical)
             yOffset += max(expr.size.height, 30) + layout.spacing

@@ -14,6 +14,7 @@ import {
   buildSessionContext,
   replaceUnpairedSurrogates,
 } from "../src/trace.js";
+import { extractAssistantText, projectAssistantTextRuns } from "../src/session-protocol.js";
 
 // ─── parseJsonl unit tests ───
 
@@ -323,25 +324,102 @@ describe("parseJsonl", () => {
     expect(events[0].text).toBe("Response via output_text block");
   });
 
-  it("parses mixed output_text and text blocks in assistant message", () => {
+  it("joins adjacent cold-trace text blocks with the live Markdown boundary", () => {
+    const message = {
+      role: "assistant",
+      content: [
+        { type: "output_text", text: "First part" },
+        { type: "text", text: "### Second part" },
+      ],
+    };
     const jsonl = JSON.stringify({
       type: "message",
       id: "msg-mixed-text",
       timestamp: "2026-01-01T00:00:01Z",
+      message,
+    });
+
+    const events = parseJsonl(jsonl);
+    const assistantEvents = events.filter((event) => event.type === "assistant");
+    expect(assistantEvents).toHaveLength(1);
+    expect(assistantEvents[0]?.text).toBe(extractAssistantText(message));
+    expect(assistantEvents[0]?.text).toBe("First part\n\n### Second part");
+  });
+
+  it("preserves thinking and tool boundaries while joining only adjacent text", () => {
+    const jsonl = JSON.stringify({
+      type: "message",
+      id: "msg-interleaved-text",
+      timestamp: "2026-01-01T00:00:01Z",
       message: {
         role: "assistant",
         content: [
-          { type: "output_text", text: "First part" },
-          { type: "text", text: "Second part" },
+          { type: "text", text: "First" },
+          { type: "output_text", text: "### Adjacent" },
+          { type: "thinking", thinking: "Check the repository" },
+          { type: "text", text: "After thinking" },
+          { type: "toolCall", id: "tc-boundary", name: "read", arguments: { path: "README.md" } },
+          { type: "text", text: "After tool" },
         ],
       },
     });
 
     const events = parseJsonl(jsonl);
-    const assistantEvents = events.filter((e) => e.type === "assistant");
-    expect(assistantEvents).toHaveLength(2);
-    expect(assistantEvents[0].text).toBe("First part");
-    expect(assistantEvents[1].text).toBe("Second part");
+    expect(events.map((event) => event.type)).toEqual([
+      "assistant",
+      "thinking",
+      "assistant",
+      "toolCall",
+      "assistant",
+    ]);
+    expect(events.filter((event) => event.type === "assistant").map((event) => event.text)).toEqual([
+      "First\n\n### Adjacent",
+      "After thinking",
+      "After tool",
+    ]);
+  });
+
+  it("uses the shared adjacent-run policy across tool, thinking, media, and unknown boundaries", () => {
+    const message = {
+      role: "assistant",
+      content: [
+        { type: "text", text: "Before tool " },
+        { type: "output_text", text: "### authored heading text" },
+        { type: "toolCall", id: "tc-shared", name: "read", arguments: { path: "README.md" } },
+        { type: "text", text: "After tool" },
+        { type: "thinking", thinking: "Check" },
+        { type: "text", text: "After thinking" },
+        { type: "image", data: "abc", mimeType: "image/png" },
+        { type: "text", text: "After media" },
+        { type: "future_block", payload: true },
+        { type: "text", text: "Tail\n\n" },
+      ],
+    };
+    const events = parseJsonl(JSON.stringify({
+      type: "message",
+      id: "msg-shared-runs",
+      timestamp: "2026-01-01T00:00:01Z",
+      message,
+    }));
+
+    const assistantEvents = events.filter((event) => event.type === "assistant");
+    expect(assistantEvents.map((event) => event.text)).toEqual(projectAssistantTextRuns(message));
+    expect(assistantEvents).toMatchObject([
+      { contentIndex: 0, runOrdinal: 0 },
+      { contentIndex: 3, runOrdinal: 1 },
+      { contentIndex: 5, runOrdinal: 2 },
+      { contentIndex: 7, runOrdinal: 3 },
+      { contentIndex: 9, runOrdinal: 4 },
+    ]);
+    expect(events.map((event) => event.type)).toEqual([
+      "assistant",
+      "toolCall",
+      "assistant",
+      "thinking",
+      "assistant",
+      "assistant",
+      "assistant",
+    ]);
   });
 
   it("parses output_text alongside thinking and tool calls", () => {

@@ -373,7 +373,7 @@ struct DeltaCoalescerTests {
         #expect(flushed[0].count == 1)
         #expect(flushed[1].count == 1)
         let payload = flushed.flatMap { $0 }.compactMap { event -> String? in
-            guard case .textDelta(_, let payload) = event else { return nil }
+            guard case .textDelta(_, let payload, _) = event else { return nil }
             return payload
         }.joined()
         #expect(payload == oversized)

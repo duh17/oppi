@@ -566,7 +566,24 @@
     "message_end": {
       "type": "message_end",
       "role": "assistant",
-      "content": "I've finished updating the code."
+      "content": "Before\n\nAfter",
+      "assistantContent": [
+        {
+          "kind": "text",
+          "content": "Before",
+          "contentIndex": 0
+        },
+        {
+          "kind": "thinking",
+          "content": "Check",
+          "contentIndex": 1
+        },
+        {
+          "kind": "text",
+          "content": "After",
+          "contentIndex": 2
+        }
+      ]
     },
     "cache_miss": {
       "type": "cache_miss",
@@ -575,7 +592,8 @@
     },
     "text_delta": {
       "type": "text_delta",
-      "delta": "Hello, "
+      "delta": "Hello, ",
+      "contentIndex": 0
     },
     "thinking_delta": {
       "type": "thinking_delta",

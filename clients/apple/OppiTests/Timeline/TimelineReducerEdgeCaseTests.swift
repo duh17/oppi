@@ -543,6 +543,63 @@ struct TimelineReducerEdgeCaseTests {
         )
     }
 
+    @Test func runLocalOrdinalsDoNotRewriteAnEarlierAssistantMessageInTheSameAgentRun() {
+        let reducer = TimelineReducer()
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .textDelta(sessionId: "s1", delta: "first streamed", contentIndex: 0),
+            .messageEnd(
+                sessionId: "s1",
+                content: "first final",
+                assistantContent: [
+                    AssistantMessageContentPart(kind: "text", content: "first final", contentIndex: 0),
+                ]
+            ),
+            .textDelta(sessionId: "s1", delta: "second streamed", contentIndex: 0),
+            .messageEnd(
+                sessionId: "s1",
+                content: "second final",
+                assistantContent: [
+                    AssistantMessageContentPart(kind: "text", content: "second final", contentIndex: 0),
+                ]
+            ),
+            .agentEnd(sessionId: "s1"),
+        ])
+
+        #expect(structuralProjection(reducer.items) == [
+            "assistant:first final",
+            "assistant:second final",
+        ])
+    }
+
+    @Test func unstreamedTextThinkingTextRecoveryMatchesColdStructuralOrder() {
+        let live = TimelineReducer()
+        live.processBatch([
+            .agentStart(sessionId: "s1"),
+            // Current server recovery is delivered before authoritative text runs.
+            .thinkingDelta(sessionId: "s1", delta: "Check", contentIndex: 1),
+            .messageEnd(
+                sessionId: "s1",
+                content: "Before\n\nAfter",
+                assistantContent: [
+                    AssistantMessageContentPart(kind: "text", content: "Before", contentIndex: 0),
+                    AssistantMessageContentPart(kind: "thinking", content: "Check", contentIndex: 1),
+                    AssistantMessageContentPart(kind: "text", content: "After", contentIndex: 2),
+                ]
+            ),
+            .agentEnd(sessionId: "s1"),
+        ])
+
+        let cold = TimelineReducer()
+        cold.loadSession([
+            TraceEvent(id: "a-0", type: .assistant, timestamp: "2026-01-01T00:00:00Z", text: "Before"),
+            TraceEvent(id: "think-1", type: .thinking, timestamp: "2026-01-01T00:00:01Z", thinking: "Check"),
+            TraceEvent(id: "a-1", type: .assistant, timestamp: "2026-01-01T00:00:02Z", text: "After"),
+        ])
+
+        #expect(structuralProjection(live.items) == structuralProjection(cold.items))
+    }
+
     // MARK: - Ghost user message on re-entry
 
     /// Verifies that `preserveOrphans: false` prevents ghost user messages.
@@ -640,6 +697,21 @@ struct TimelineReducerEdgeCaseTests {
     }
 
     // MARK: - Helpers
+
+    private func structuralProjection(_ items: [ChatItem]) -> [String] {
+        items.map { item in
+            switch item {
+            case .assistantMessage(_, let text, _):
+                return "assistant:\(text)"
+            case .thinking(_, let preview, _, _):
+                return "thinking:\(preview)"
+            case .toolCall(_, let tool, _, _, _, _, _):
+                return "tool:\(tool)"
+            default:
+                return "other"
+            }
+        }
+    }
 
     // swiftlint:disable:next large_tuple
     private func makeConversation(_ entries: [(String, TraceEventType, String)]) -> [TraceEvent] {

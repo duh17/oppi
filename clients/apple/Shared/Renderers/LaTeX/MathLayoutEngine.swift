@@ -184,7 +184,13 @@ struct MathLayoutEngine: Sendable {
             return layoutLeftRight(left: left, right: right, body: body, fontSize: fontSize, cache: cache)
 
         case .matrix(let rows, let style):
-            return layoutMatrix(rows: rows, style: style, fontSize: fontSize, cache: cache)
+            return layoutMatrix(
+                rows: rows,
+                style: style,
+                columnAlignment: .centered,
+                fontSize: fontSize,
+                cache: cache
+            )
 
         case .bigOperator(let kind, let limits):
             return layoutBigOperator(kind, limits: limits, fontSize: fontSize, cache: cache)
@@ -207,9 +213,14 @@ struct MathLayoutEngine: Sendable {
             let childBoxes = layoutSequence(body, fontSize: fontSize, cache: cache)
             return wrapInContainer(childBoxes)
 
-        case .environment(_, let rows):
-            // Layout as matrix-like grid
-            return layoutMatrix(rows: rows, style: .plain, fontSize: fontSize, cache: cache)
+        case .environment(let name, let rows):
+            return layoutMatrix(
+                rows: rows,
+                style: .plain,
+                columnAlignment: name == "aligned" ? .alternatingRightLeft : .centered,
+                fontSize: fontSize,
+                cache: cache
+            )
         }
     }
 
@@ -362,14 +373,19 @@ struct MathLayoutEngine: Sendable {
 
         let raise = fontSize * Self.superscriptRaise
 
-        // Superscript is raised so its bottom aligns above the base midline
-        let supY = max(baseContainer.baseline - raise - supContainer.size.height, 0)
+        // Position by script baseline, not its top edge. Using the top edge
+        // makes the visible raise depend on the script glyph's ascent.
+        let unshiftedSupY = baseContainer.baseline - raise - supContainer.baseline
+        let topShift = max(-unshiftedSupY, 0)
 
         var basePlaced = baseContainer
-        basePlaced.origin = CGPoint(x: 0, y: max(-supY, 0))
+        basePlaced.origin = CGPoint(x: 0, y: topShift)
 
         var supPlaced = supContainer
-        supPlaced.origin = CGPoint(x: baseContainer.size.width, y: supY)
+        supPlaced.origin = CGPoint(
+            x: baseContainer.size.width,
+            y: unshiftedSupY + topShift
+        )
 
         let totalHeight = max(
             basePlaced.origin.y + basePlaced.size.height,
@@ -402,8 +418,10 @@ struct MathLayoutEngine: Sendable {
 
         let drop = fontSize * Self.subscriptDrop
 
-        // Subscript drops below the base baseline
-        let subY = baseContainer.baseline + drop
+        // Drop the script baseline below the base baseline. Positioning the
+        // script's top at that baseline detached compound indices by a full
+        // script ascent (for example x_{t+1} in matrices).
+        let subY = baseContainer.baseline + drop - subContainer.baseline
 
         var basePlaced = baseContainer
         basePlaced.origin = .zero
@@ -446,11 +464,9 @@ struct MathLayoutEngine: Sendable {
         let raise = fontSize * Self.superscriptRaise
         let drop = fontSize * Self.subscriptDrop
 
-        let supY = max(baseContainer.baseline - raise - supContainer.size.height, 0)
-        let subY = baseContainer.baseline + drop
-
-        // Adjust base position if superscript extends above
-        let baseOffsetY = max(-supY, 0)
+        let unshiftedSupY = baseContainer.baseline - raise - supContainer.baseline
+        let baseOffsetY = max(-unshiftedSupY, 0)
+        let subY = baseContainer.baseline + drop - subContainer.baseline
 
         var basePlaced = baseContainer
         basePlaced.origin = CGPoint(x: 0, y: baseOffsetY)
@@ -458,9 +474,7 @@ struct MathLayoutEngine: Sendable {
         let scriptX = baseContainer.size.width
 
         var supPlaced = supContainer
-        supPlaced.origin = CGPoint(x: scriptX, y: supY + baseOffsetY - baseOffsetY)
-        // Recalculate: supY was computed relative to base top=0
-        supPlaced.origin = CGPoint(x: scriptX, y: supY)
+        supPlaced.origin = CGPoint(x: scriptX, y: unshiftedSupY + baseOffsetY)
 
         var subPlaced = subContainer
         subPlaced.origin = CGPoint(x: scriptX, y: subY + baseOffsetY)
@@ -624,9 +638,15 @@ struct MathLayoutEngine: Sendable {
 
     // MARK: - Matrix Layout
 
+    private enum GridColumnAlignment {
+        case centered
+        case alternatingRightLeft
+    }
+
     private func layoutMatrix(
         rows: [[[MathNode]]],
         style: MatrixStyle,
+        columnAlignment: GridColumnAlignment,
         fontSize: CGFloat,
         cache: FontCache
     ) -> LayoutBox {
@@ -658,13 +678,15 @@ struct MathLayoutEngine: Sendable {
         var colWidths = [CGFloat](repeating: 0, count: numCols)
         var rowHeights = [CGFloat](repeating: 0, count: rows.count)
         var rowBaselines = [CGFloat](repeating: 0, count: rows.count)
+        var rowDescents = [CGFloat](repeating: 0, count: rows.count)
 
         for (r, rowBoxArr) in cellBoxes.enumerated() {
             for (c, cell) in rowBoxArr.enumerated() {
                 colWidths[c] = max(colWidths[c], cell.size.width)
-                rowHeights[r] = max(rowHeights[r], cell.size.height)
                 rowBaselines[r] = max(rowBaselines[r], cell.baseline)
+                rowDescents[r] = max(rowDescents[r], cell.size.height - cell.baseline)
             }
+            rowHeights[r] = rowBaselines[r] + rowDescents[r]
         }
 
         // Position cells
@@ -675,8 +697,17 @@ struct MathLayoutEngine: Sendable {
             for (c, cell) in rowBoxArr.enumerated() {
                 var placed = cell
                 // Center horizontally in column
+                let horizontalOffset: CGFloat
+                switch columnAlignment {
+                case .centered:
+                    horizontalOffset = (colWidths[c] - cell.size.width) / 2
+                case .alternatingRightLeft:
+                    horizontalOffset = c.isMultiple(of: 2)
+                        ? colWidths[c] - cell.size.width
+                        : 0
+                }
                 placed.origin = CGPoint(
-                    x: x + (colWidths[c] - cell.size.width) / 2,
+                    x: x + horizontalOffset,
                     y: y + (rowBaselines[r] - cell.baseline)
                 )
                 positioned.append(placed)
@@ -731,11 +762,17 @@ struct MathLayoutEngine: Sendable {
 
         if left != .none {
             let leftStr = Self.delimiterDisplayString(left)
-            let delBox = layoutGlyph(leftStr, fontSize: fontSize, italic: false, cache: cache)
+            let delBox = layoutDelimiterGlyph(
+                leftStr,
+                targetHeight: innerBox.size.height,
+                fontSize: fontSize,
+                cache: cache
+            )
             var placed = delBox
-            placed.origin = CGPoint(x: cursor, y: 0)
-            placed.size.height = innerBox.size.height
-            placed.baseline = innerBox.baseline
+            placed.origin = CGPoint(
+                x: cursor,
+                y: (innerBox.size.height - delBox.size.height) / 2
+            )
             children.append(placed)
             cursor += delBox.size.width + pad
         }
@@ -748,11 +785,17 @@ struct MathLayoutEngine: Sendable {
         if right != .none {
             cursor += pad
             let rightStr = Self.delimiterDisplayString(right)
-            let delBox = layoutGlyph(rightStr, fontSize: fontSize, italic: false, cache: cache)
+            let delBox = layoutDelimiterGlyph(
+                rightStr,
+                targetHeight: innerBox.size.height,
+                fontSize: fontSize,
+                cache: cache
+            )
             var placed = delBox
-            placed.origin = CGPoint(x: cursor, y: 0)
-            placed.size.height = innerBox.size.height
-            placed.baseline = innerBox.baseline
+            placed.origin = CGPoint(
+                x: cursor,
+                y: (innerBox.size.height - delBox.size.height) / 2
+            )
             children.append(placed)
             cursor += delBox.size.width
         }
@@ -762,6 +805,23 @@ struct MathLayoutEngine: Sendable {
             size: CGSize(width: cursor, height: innerBox.size.height),
             baseline: innerBox.baseline,
             content: .container(children)
+        )
+    }
+
+    private func layoutDelimiterGlyph(
+        _ delimiter: String,
+        targetHeight: CGFloat,
+        fontSize: CGFloat,
+        cache: FontCache
+    ) -> LayoutBox {
+        let base = layoutGlyph(delimiter, fontSize: fontSize, italic: false, cache: cache)
+        guard base.size.height > 0, targetHeight > base.size.height else { return base }
+        let scaledFontSize = fontSize * targetHeight / base.size.height
+        return layoutGlyph(
+            delimiter,
+            fontSize: scaledFontSize,
+            italic: false,
+            cache: cache
         )
     }
 
@@ -1137,6 +1197,7 @@ struct MathLayoutEngine: Sendable {
         case .vdots: return "\u{22EE}"
         case .ddots: return "\u{22F1}"
         case .prime: return "\u{2032}"
+        case .top: return "\u{22A4}"
         }
     }
 

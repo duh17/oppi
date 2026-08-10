@@ -10,11 +10,19 @@ final class GraphicalRendererUIView: UIView {
     private var drawBlock: ((CGContext, CGPoint) -> Void)?
     private var contentSize: CGSize = .zero
 
-    func configure(size: CGSize, draw: @escaping (CGContext, CGPoint) -> Void) {
+    func configure(
+        size: CGSize,
+        draw: @escaping (CGContext, CGPoint) -> Void,
+        accessibilityLabel: String? = nil
+    ) {
         contentSize = size
         drawBlock = draw
         backgroundColor = .clear
         isOpaque = false
+        isAccessibilityElement = accessibilityLabel != nil
+        self.accessibilityLabel = accessibilityLabel
+        accessibilityTraits = accessibilityLabel == nil ? [] : [.image]
+        semanticContentAttribute = accessibilityLabel == nil ? .unspecified : .forceLeftToRight
         // Enable high-quality scaling when zoomed.
         contentMode = .redraw
         invalidateIntrinsicContentSize()

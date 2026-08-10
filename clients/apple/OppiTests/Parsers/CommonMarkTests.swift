@@ -63,6 +63,350 @@ struct CommonMarkTests {
         }
     }
 
+    @Test func completeDisplayMathIsOpaqueBeforeSetextHeadingParsing() throws {
+        let markdown = #"""
+        A larger display block:
+
+        $$
+        \mathcal L(\theta)
+        =
+        -\sum_{i=1}^{n}\log
+        \left(
+        \frac{\exp(z_{i,y_i}/\tau)}
+        {\sum_{j=1}^{K}\exp(z_{i,j}/\tau)}
+        \right)
+        +\lambda\lVert\theta\rVert_2^2
+        $$
+        ### After formula
+        """#
+
+        let blocks = parseCommonMark(markdown)
+
+        #expect(blocks.count == 3)
+        guard case .codeBlock(let language, let source) = blocks[1] else {
+            Issue.record("Expected the complete display to be one typed LaTeX block, got \(blocks[1])")
+            return
+        }
+        #expect(language == "latex")
+        #expect(source.contains("\n=\n"))
+        #expect(source.hasPrefix(#"\mathcal L(\theta)"#))
+        #expect(source.hasSuffix(#"+\lambda\lVert\theta\rVert_2^2"#))
+        guard case .heading(3, let heading) = blocks[2] else {
+            Issue.record("Expected the heading immediately after the display closer")
+            return
+        }
+        #expect(plainText(from: heading) == "After formula")
+    }
+
+    @Test func displayMathMayContainBlankLinesWithoutBecomingMarkdownBlocks() {
+        let markdown = #"""
+        $$
+
+        \begin{cases}
+        x^2, & x \ge 0 \\
+        -x, & x < 0
+        \end{cases}
+
+        $$
+        """#
+
+        let blocks = parseCommonMark(markdown)
+
+        #expect(blocks.count == 1)
+        guard case .codeBlock("latex", let source) = blocks.first else {
+            Issue.record("Expected one LaTeX block")
+            return
+        }
+        #expect(source.hasPrefix("\n"))
+        #expect(source.contains(#"\begin{cases}"#))
+        #expect(source.hasSuffix("\n"))
+    }
+
+    @Test func multilineBracketDisplayIsOpaqueToCommonMark() {
+        let markdown = #"""
+        \[
+        \begin{aligned}
+        \mathbf H &= \mathbf X^\top\mathbf W\mathbf X+\lambda\mathbf I,\\
+        \Delta\theta &= -\mathbf H^{-1}\nabla_\theta\mathcal L
+        \end{aligned}
+        \]
+        """#
+
+        let blocks = parseCommonMark(markdown)
+
+        guard case .codeBlock("latex", let source) = blocks.first else {
+            Issue.record("Expected one bracket-delimited LaTeX block")
+            return
+        }
+        #expect(source.contains(#"\begin{aligned}"#))
+        #expect(source.contains(#"\Delta\theta &= -\mathbf H^{-1}"#))
+        #expect(!source.contains(#"\["#))
+        #expect(!source.contains(#"\]"#))
+    }
+
+    @Test func displayDelimitersInsideCodeRemainExactCodeSource() {
+        let markdown = #"""
+        ```text
+        $$
+        x^2
+        $$
+        \[
+        y_0
+        \]
+        ```
+        """#
+
+        let blocks = parseCommonMark(markdown)
+
+        guard case .codeBlock("text", let source) = blocks.first else {
+            Issue.record("Expected ordinary fenced code")
+            return
+        }
+        #expect(source.contains("$$\nx^2\n$$"))
+        #expect(source.contains("\\[\ny_0\n\\]"))
+    }
+
+    @Test func displayDelimitersInsideMultilineCodeSpanRemainInlineCode() {
+        let markdown = #"""
+        ``code begins
+        $$
+        x^2
+        $$
+        code ends``
+        """#
+
+        let blocks = parseCommonMark(markdown)
+
+        guard case .paragraph(let inlines) = blocks.first,
+              case .code(let source) = inlines.first else {
+            Issue.record("Expected one multiline CommonMark code span")
+            return
+        }
+        #expect(source.contains("$$ x^2 $$"))
+    }
+
+    @Test func displayMathLocatedRangeIncludesDelimitersAndFollowingHeadingKeepsItsLine() {
+        let markdown = "Before\n\n$$\nx^2\n=\ny^2\n$$\n### After\n"
+
+        let blocks = parseCommonMarkLocated(markdown)
+
+        #expect(blocks.map(\.lineRange) == [1...1, 3...7, 8...8])
+    }
+
+    @Test func simpleCompletedDisplayMathIsAcceptedWithoutHeuristics() throws {
+        for markdown in ["$$ x $$\n", "$$\nx\n$$\n"] {
+            let block = try #require(parseCommonMark(markdown).first)
+            guard case .codeBlock("latex", let source) = block else {
+                Issue.record("Expected explicit completed display to render as LaTeX: \(block)")
+                continue
+            }
+            #expect(source.trimmingCharacters(in: .whitespacesAndNewlines) == "x")
+        }
+    }
+
+    @Test func displayMarkersInsideCommonMarkHTMLBlocksRemainExactAndNeverLeakTokens() throws {
+        let sources = [
+            "<div>\n$$\nx\n$$\n</div>\n\n### After\n",
+            "<script>\nconst formula = `$$\\n x \\n$$`;\n</script>\n\n- After\n",
+            "<!--\n$$\nx\n$$\n-->\n\n### After\n",
+        ]
+
+        for markdown in sources {
+            let blocks = parseCommonMark(markdown)
+            guard case .htmlBlock(let html) = try #require(blocks.first) else {
+                Issue.record("Expected CommonMark HTML block")
+                continue
+            }
+            #expect(html.contains("$$"))
+            #expect(!html.contains("opmath"))
+            #expect(blocks.contains { block in
+                if case .heading = block { return true }
+                if case .unorderedList = block { return true }
+                return false
+            })
+        }
+    }
+
+    @Test func tabAndMixedIndentationKeepDisplayMarkersInsideIndentedCode() throws {
+        for markdown in ["\t$$\n\tx\n\t$$\n", " \t$$\n \tx\n \t$$\n"] {
+            let block = try #require(parseCommonMark(markdown).first)
+            guard case .codeBlock(nil, let code) = block else {
+                Issue.record("Expected tab-indented CommonMark code, got \(block)")
+                continue
+            }
+            #expect(code == "$$\nx\n$$")
+            #expect(!code.contains("opmath"))
+        }
+    }
+
+    @Test func unclosedDisplayDoesNotConsumeFollowingHeadingOrList() {
+        let markdown = "Before\n\n$$\nx\n### Still a heading\n\n- Still a list\n"
+        let blocks = parseCommonMark(markdown)
+
+        #expect(blocks.contains { if case .heading(3, _) = $0 { return true }; return false })
+        #expect(blocks.contains { if case .unorderedList = $0 { return true }; return false })
+        let visible = blocks.map { block -> String in
+            switch block {
+            case .paragraph(let inlines): return plainText(from: inlines)
+            case .heading(_, let inlines): return plainText(from: inlines)
+            default: return ""
+            }
+        }.joined(separator: "\n")
+        #expect(visible.contains("$$"))
+        #expect(visible.contains("Still a heading"))
+    }
+
+    @Test func recoveredDisplayStopsBeforeOrdinaryBlocksEvenIfLaterDollarLineExists() {
+        let markdown = "$$\nx\n### Heading after unmatched display\n\n- List after unmatched display\n\n$$\nAfter\n"
+        let blocks = parseCommonMark(markdown)
+
+        #expect(blocks.contains { if case .heading(3, _) = $0 { return true }; return false })
+        #expect(blocks.contains { if case .unorderedList = $0 { return true }; return false })
+        #expect(!blocks.contains { if case .codeBlock("latex", _) = $0 { return true }; return false })
+    }
+
+    @Test func apparentCloserInsideFenceDoesNotCloseDisplay() {
+        let markdown = "$$\nx\n```text\n$$\n```\n### After\n"
+        let blocks = parseCommonMark(markdown)
+
+        #expect(blocks.contains { if case .heading(3, _) = $0 { return true }; return false })
+        let code = blocks.compactMap { block -> String? in
+            guard case .codeBlock(let language, let source) = block, language == "text" else {
+                return nil
+            }
+            return source
+        }.first
+        #expect(code == "$$")
+    }
+
+    @Test func laterCloserAfterFenceDoesNotTurnCodeIntoDisplayMath() throws {
+        let markdown = "$$\nx\n```text\nordinary code\n```\n$$\nAfter\n"
+        let blocks = parseCommonMark(markdown)
+
+        #expect(!blocks.contains { if case .codeBlock("latex", _) = $0 { return true }; return false })
+        let code = try #require(blocks.compactMap { block -> String? in
+            guard case .codeBlock("text", let source) = block else { return nil }
+            return source
+        }.first)
+        #expect(code == "ordinary code")
+        let paragraphs = blocks.compactMap { block -> [MarkdownInline]? in
+            guard case .paragraph(let inlines) = block else { return nil }
+            return inlines
+        }
+        #expect(paragraphs.first == [.text("$$"), .softBreak, .text("x")])
+        #expect(paragraphs.last == [.text("$$"), .softBreak, .text("After")])
+    }
+
+    @Test func laterCloserAfterHTMLBlockDoesNotTurnHTMLIntoDisplayMath() throws {
+        let markdown = "$$\nx\n<div>\nordinary html\n</div>\n\n$$\nAfter\n"
+        let blocks = parseCommonMark(markdown)
+
+        #expect(!blocks.contains { if case .codeBlock("latex", _) = $0 { return true }; return false })
+        let html = try #require(blocks.compactMap { block -> String? in
+            guard case .htmlBlock(let source) = block else { return nil }
+            return source
+        }.first)
+        #expect(html == "<div>\nordinary html\n</div>\n")
+        let paragraphs = blocks.compactMap { block -> [MarkdownInline]? in
+            guard case .paragraph(let inlines) = block else { return nil }
+            return inlines
+        }
+        #expect(paragraphs.first == [.text("$$"), .softBreak, .text("x")])
+        #expect(paragraphs.last == [.text("$$"), .softBreak, .text("After")])
+    }
+
+    @Test func laterCloserAfterMultilineCodeSpanDoesNotTurnCodeIntoDisplayMath() throws {
+        let markdown = "$$\nx\n``code begins\nordinary code\ncode ends``\n$$\nAfter\n"
+        let blocks = parseCommonMark(markdown)
+
+        #expect(!blocks.contains { if case .codeBlock("latex", _) = $0 { return true }; return false })
+        let inlineCode = try #require(blocks.compactMap { block -> String? in
+            guard case .paragraph(let inlines) = block else { return nil }
+            return inlines.compactMap { inline -> String? in
+                guard case .code(let source) = inline else { return nil }
+                return source
+            }.first
+        }.first)
+        #expect(inlineCode == "code begins ordinary code code ends")
+        let paragraphs = blocks.compactMap { block -> [MarkdownInline]? in
+            guard case .paragraph(let inlines) = block else { return nil }
+            return inlines
+        }
+        #expect(paragraphs == [[
+            .text("$$"), .softBreak,
+            .text("x"), .softBreak,
+            .code("code begins ordinary code code ends"), .softBreak,
+            .text("$$"), .softBreak,
+            .text("After"),
+        ]])
+    }
+
+    @Test func repeatedUnmatchedBracketOpenersRemainBoundedLiteralMarkdown() {
+        let markdown = (0..<2_000).map { "\\[ unmatched-\($0)" }.joined(separator: "\n")
+        let blocks = parseCommonMark(markdown)
+
+        #expect(!blocks.contains { if case .codeBlock("latex", _) = $0 { return true }; return false })
+        let visible = blocks.compactMap { block -> String? in
+            guard case .paragraph(let inlines) = block else { return nil }
+            return plainText(from: inlines)
+        }.joined(separator: "\n")
+        #expect(visible.contains("[ unmatched-0"))
+        #expect(visible.contains("[ unmatched-1999"))
+    }
+
+    @Test func varyingUnmatchedBacktickRunsDoNotRescanDocumentSuffixes() {
+        let runCount = 192
+        let varyingRuns = (1...runCount).map { length in
+            "prefix \(String(repeating: "`", count: length)) unmatched-\(length)"
+        }
+        let markdown = ([#"\["#] + varyingRuns + varyingRuns).joined(separator: "\n")
+
+        let diagnostics = markdownMathScannerDiagnostics(markdown)
+        let lineCount = 1 + varyingRuns.count * 2
+
+        #expect(diagnostics.indexedBacktickRuns == varyingRuns.count * 2)
+        #expect(
+            diagnostics.suffixLineVisits == 0,
+            "Scanner revisited \(diagnostics.suffixLineVisits) suffix lines for \(lineCount) input lines"
+        )
+    }
+
+    @Test func boundedCandidateScannerStaysFastAcrossLateOpaqueBoundaryAndLaterCloser() {
+        let openers = Array(repeating: #"\["#, count: 1_023)
+        let largeGap = (0..<8_000).map { "gap line \($0)" }
+        let markdown = (openers + largeGap + ["<div>", "opaque", "</div>", "", #"\]"#, "After"])
+            .joined(separator: "\n")
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        let blocks = parseCommonMark(markdown)
+        let elapsed = start.duration(to: clock.now)
+
+        #expect(elapsed < .seconds(8), "Display scan should be linear/bounded; elapsed \(elapsed)")
+        #expect(!blocks.contains { if case .codeBlock("latex", _) = $0 { return true }; return false })
+        #expect(blocks.contains { block in
+            guard case .htmlBlock(let html) = block else { return false }
+            return html.contains("opaque")
+        })
+    }
+
+    @Test func displayTokenBaseExhaustionFailsClosedWithoutChangingSource() {
+        let collisions = [
+            "opmathaz", "opmathbz", "opmathcz", "opmathdz",
+            "opmathez", "opmathfz", "opmathgz", "opmathhz",
+        ].joined(separator: " ")
+        let markdown = "\(collisions)\n\n$$\nx\n$$\n"
+        let blocks = parseCommonMark(markdown)
+        let visible = blocks.compactMap { block -> String? in
+            guard case .paragraph(let inlines) = block else { return nil }
+            return plainText(from: inlines)
+        }.joined(separator: "\n")
+
+        #expect(visible.contains(collisions))
+        #expect(visible.contains("$$"))
+        #expect(visible.contains("x"))
+    }
+
     @Test func headingWithInlineFormatting() {
         let blocks = parseCommonMark("# Hello **bold** *world*\n")
         #expect(blocks.count == 1)

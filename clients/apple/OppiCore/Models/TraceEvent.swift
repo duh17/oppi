@@ -49,6 +49,10 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
 
     // Text content (user, assistant, system)
     let text: String?
+    /// Stable identity within one projected assistant message. Optional so
+    /// traces from older servers remain decodable.
+    let contentIndex: Int?
+    let runOrdinal: Int?
 
     // Tool call fields
     let tool: String?
@@ -84,6 +88,8 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         type: TraceEventType,
         timestamp: String,
         text: String? = nil,
+        contentIndex: Int? = nil,
+        runOrdinal: Int? = nil,
         tool: String? = nil,
         args: [String: JSONValue]? = nil,
         callSegments: [StyledSegment]? = nil,
@@ -105,6 +111,8 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.type = type
         self.timestamp = timestamp
         self.text = text
+        self.contentIndex = contentIndex
+        self.runOrdinal = runOrdinal
         self.tool = tool
         self.args = args
         self.callSegments = callSegments

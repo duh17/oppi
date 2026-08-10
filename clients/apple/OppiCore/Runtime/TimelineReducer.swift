@@ -57,6 +57,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     // Turn-local buffers (reset on agentStart, finalized on agentEnd)
     private var currentAssistantID: String?
+    /// Pi content-block index for the active assistant text stream. A changed
+    /// index is a structural boundary even when no media event is projected.
+    private var currentAssistantContentIndex: Int?
     private var assistantBuffer: String = ""
     /// Stable timestamp for the streaming assistant message — avoids
     /// creating a new Date() on every streaming upsert, which would cause
@@ -77,6 +80,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// The last assistant item ID created during this turn, preserved across
     /// `finalizeAssistantMessage()` so the view stays in streaming mode.
     private var lastAssistantIDThisTurn: String?
+    /// Renderable text/thinking rows created for the current Pi assistant
+    /// message. Cleared at each message_end, not agent_end: one agent run may
+    /// contain several assistant messages around tool round-trips.
+    private var assistantIDsThisMessage: [String] = []
+    private var thinkingIDsThisMessage: [String] = []
 
     /// The item ID currently being rendered in streaming mode.
     /// Non-nil while deltas arrive AND during tool-call gaps within a turn.
@@ -884,11 +892,23 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         for event in events {
             switch event {
-            case .textDelta(_, let delta):
+            case .textDelta(_, let delta, let contentIndex):
+                if prepareAssistantBlock(contentIndex: contentIndex) {
+                    flushPendingUpserts()
+                    finalizeAssistantMessage()
+                    didMutate = true
+                }
                 pendingAssistantDeltas.append(delta)
                 hasPendingAssistantUpsert = true
 
             case .thinkingDelta(_, let delta, let contentIndex):
+                // Thinking is a structural boundary. Finalize text that arrived
+                // before it so later text starts a distinct adjacent run.
+                if hasPendingAssistantUpsert || currentAssistantID != nil {
+                    flushPendingUpserts()
+                    finalizeAssistantMessage()
+                    didMutate = true
+                }
                 // Keep only preview-size text in memory for live rendering.
                 // Once overflowed, continue collecting full text in ToolOutputStore
                 // for post-turn expansion, but skip no-op rerenders.
@@ -1010,21 +1030,27 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             closeAllOrphanedTools()
             return renderMutationCheckpoint() != before
 
-        case .textDelta(_, let delta):
+        case .textDelta(_, let delta, let contentIndex):
+            let crossedBoundary = prepareAssistantBlock(contentIndex: contentIndex)
+            if crossedBoundary {
+                finalizeAssistantMessage()
+            }
             assistantBuffer += delta
             upsertAssistantMessage()
             return true
 
         case .thinkingDelta(_, let delta, let contentIndex):
+            let before = renderMutationCheckpoint()
+            finalizeAssistantMessage()
             if appendThinkingDelta(delta, contentIndex: contentIndex) {
                 upsertThinking()
                 return true
             }
-            return false
+            return renderMutationCheckpoint() != before
 
-        case .messageEnd(_, let content):
+        case .messageEnd(_, let content, let assistantContent):
             let before = renderMutationCheckpoint()
-            handleMessageEnd(content)
+            handleMessageEnd(content, assistantContent: assistantContent)
             return renderMutationCheckpoint() != before
 
         case .cacheMiss(_, let id, let message):
@@ -1432,37 +1458,41 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         assistantBuffer = ""
         thinkingBuffer = ""
         currentAssistantID = nil
+        currentAssistantContentIndex = nil
         currentAssistantTimestamp = nil
         currentThinkingID = nil
         currentThinkingContentIndex = nil
         turnInProgress = false
         lastAssistantIDThisTurn = nil
+        assistantIDsThisMessage.removeAll(keepingCapacity: false)
+        thinkingIDsThisMessage.removeAll(keepingCapacity: false)
     }
 
-    private func handleMessageEnd(_ content: String) {
-        // Thinking is per-message — finalize it when the message ends,
-        // not just on agentEnd. This ensures the spinner stops even if
-        // agentEnd is delayed (e.g., tool calls follow this message).
-        finalizeThinking()
+    private func handleMessageEnd(
+        _ content: String,
+        assistantContent: [AssistantMessageContentPart]?
+    ) {
+        if let assistantContent {
+            reconcileAssistantContent(assistantContent)
+            clearCurrentAssistantMessageTracking()
+            return
+        }
 
+        // Compatibility with servers that send only one aggregate assistant row.
+        finalizeThinking()
         guard !content.isEmpty else {
             finalizeAssistantMessage()
+            clearCurrentAssistantMessageTracking()
             return
         }
 
-        // Reconnect/history-reload race: suppress stale in-flight message_end duplicates.
         if shouldSuppressDuplicateMessageEnd(content) {
             finalizeAssistantMessage()
+            clearCurrentAssistantMessageTracking()
             return
         }
 
-        // If we're actively streaming (currentAssistantID != nil), replace
-        // the buffer with the authoritative messageEnd content and finalize.
-        // If no active streaming, update the latest assistant message in-place
-        // to avoid creating a duplicate row with different text.
         if currentAssistantID == nil, let latestID = latestAssistantItemID() {
-            // Stale messageEnd after finalize — update the existing item
-            // rather than appending a new one.
             let item = TimelineTurnAssembler.makeAssistantItem(
                 id: latestID,
                 text: content,
@@ -1477,6 +1507,105 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             upsertAssistantMessage()
         }
         finalizeAssistantMessage()
+        clearCurrentAssistantMessageTracking()
+    }
+
+    private func reconcileAssistantContent(_ parts: [AssistantMessageContentPart]) {
+        finalizeAssistantMessage()
+        finalizeThinking()
+
+        let referencedToolIDs = parts.compactMap { part in
+            part.kind == "tool" ? part.toolCallId : nil
+        }
+        let targetIDs = Set(
+            assistantIDsThisMessage + thinkingIDsThisMessage + referencedToolIDs
+        )
+        let existingByID = Dictionary(uniqueKeysWithValues: items.compactMap { item in
+            targetIDs.contains(item.id) ? (item.id, item) : nil
+        })
+        let insertionIndex = items.indices
+            .filter { targetIDs.contains(items[$0].id) }
+            .min() ?? items.endIndex
+
+        var reusableAssistantIDs = assistantIDsThisMessage
+        var reusableThinkingIDs = thinkingIDsThisMessage
+        var authoritativeItems: [ChatItem] = []
+        authoritativeItems.reserveCapacity(parts.count)
+
+        for part in parts {
+            switch part.kind {
+            case "text":
+                guard let text = part.content,
+                      !StringFastChecks.isEffectivelyEmpty(text) else { continue }
+                let id = reusableAssistantIDs.isEmpty
+                    ? UUID().uuidString
+                    : reusableAssistantIDs.removeFirst()
+                let timestamp: Date
+                if case .assistantMessage(_, _, let existingTimestamp)? = existingByID[id] {
+                    timestamp = existingTimestamp
+                } else {
+                    timestamp = Date()
+                }
+                authoritativeItems.append(TimelineTurnAssembler.makeAssistantItem(
+                    id: id,
+                    text: text,
+                    timestamp: timestamp
+                ))
+
+            case "thinking":
+                guard let thinking = part.content,
+                      !thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    continue
+                }
+                let id = reusableThinkingIDs.isEmpty
+                    ? UUID().uuidString
+                    : reusableThinkingIDs.removeFirst()
+                authoritativeItems.append(TimelineTurnAssembler.makeThinkingItem(
+                    id: id,
+                    preview: thinking,
+                    hasMore: thinking.utf8.count > ChatItem.maxPreviewLength,
+                    isDone: true
+                ))
+
+            case "tool":
+                if let toolCallId = part.toolCallId,
+                   let toolItem = existingByID[toolCallId] {
+                    authoritativeItems.append(toolItem)
+                }
+
+            default:
+                // Media, malformed, and future blocks split text without
+                // creating fabricated timeline rows.
+                continue
+            }
+        }
+
+        guard !targetIDs.isEmpty || !authoritativeItems.isEmpty else { return }
+        items.removeAll { targetIDs.contains($0.id) }
+        items.insert(contentsOf: authoritativeItems, at: min(insertionIndex, items.endIndex))
+        rebuildIndex()
+        bumpItemsMutationSeq()
+        lastAssistantIDThisTurn = authoritativeItems.reversed().first(where: { item in
+            if case .assistantMessage = item { return true }
+            return false
+        })?.id
+    }
+
+    private func clearCurrentAssistantMessageTracking() {
+        currentAssistantContentIndex = nil
+        assistantIDsThisMessage.removeAll(keepingCapacity: true)
+        thinkingIDsThisMessage.removeAll(keepingCapacity: true)
+    }
+
+    /// Returns true when an indexed delta starts a distinct assistant text run.
+    private func prepareAssistantBlock(contentIndex: Int?) -> Bool {
+        guard let contentIndex else { return false }
+        defer { currentAssistantContentIndex = contentIndex }
+        guard let currentAssistantContentIndex else { return false }
+        // Consecutive text/output_text blocks are one Markdown-safe run; a gap
+        // means an unprojected structural block (media/future content) occurred.
+        return contentIndex < currentAssistantContentIndex
+            || contentIndex > currentAssistantContentIndex + 1
     }
 
     private func shouldSuppressDuplicateMessageEnd(_ content: String) -> Bool {
@@ -1520,6 +1649,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             currentAssistantTimestamp = Date()
         }
         lastAssistantIDThisTurn = id
+        if turnInProgress, !assistantIDsThisMessage.contains(id) {
+            assistantIDsThisMessage.append(id)
+        }
 
         let item = TimelineTurnAssembler.makeAssistantItem(
             id: id,
@@ -1542,6 +1674,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
         let id = UUID().uuidString
         currentThinkingID = id
+        if turnInProgress, !thinkingIDsThisMessage.contains(id) {
+            thinkingIDsThisMessage.append(id)
+        }
         return id
     }
 

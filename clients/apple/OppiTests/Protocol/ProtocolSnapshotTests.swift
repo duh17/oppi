@@ -83,6 +83,24 @@ struct ProtocolSnapshotTests {
 
     // MARK: - Specific Type Assertions
 
+    @Test func orderedAssistantContentContract() throws {
+        let messageEnd = try decodeMessage("message_end")
+        guard case .messageEnd(_, let content, let assistantContent) = messageEnd else {
+            Issue.record("Expected structured message_end snapshot")
+            return
+        }
+        #expect(content == "Before\n\nAfter")
+        #expect(assistantContent?.map(\.kind) == ["text", "thinking", "text"])
+        #expect(assistantContent?.map(\.contentIndex) == [0, 1, 2])
+
+        let textDelta = try decodeMessage("text_delta")
+        guard case .textDelta(_, let deltaContentIndex) = textDelta else {
+            Issue.record("Expected indexed text_delta snapshot")
+            return
+        }
+        #expect(deltaContentIndex == 0)
+    }
+
     @Test func connectedMessage() throws {
         let msg = try decodeMessage("connected")
 

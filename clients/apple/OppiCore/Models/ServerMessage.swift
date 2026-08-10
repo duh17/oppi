@@ -21,6 +21,25 @@ enum AudioPlaybackBehavior: String, Codable, Sendable, Equatable {
     case playNow
 }
 
+struct AssistantMessageContentPart: Codable, Sendable, Equatable {
+    let kind: String
+    let content: String?
+    let contentIndex: Int
+    let toolCallId: String?
+
+    init(
+        kind: String,
+        content: String? = nil,
+        contentIndex: Int,
+        toolCallId: String? = nil
+    ) {
+        self.kind = kind
+        self.content = content
+        self.contentIndex = contentIndex
+        self.toolCallId = toolCallId
+    }
+}
+
 struct AudioStreamMessage: Sendable, Equatable {
     enum StreamEvent: String, Codable, Sendable {
         case metadata
@@ -57,9 +76,13 @@ enum ServerMessage: Sendable, Equatable {
     case agentStart
     case agentEnd
     case agentSettled
-    case messageEnd(role: String, content: String)
+    case messageEnd(
+        role: String,
+        content: String,
+        assistantContent: [AssistantMessageContentPart]? = nil
+    )
     case cacheMiss(id: String, message: String)
-    case textDelta(delta: String)
+    case textDelta(delta: String, contentIndex: Int? = nil)
     case thinkingDelta(delta: String, contentIndex: Int? = nil)
     case audioStream(AudioStreamMessage)
 
@@ -266,7 +289,7 @@ extension ServerMessage: Decodable {
         // session_ended / stop lifecycle
         case reason, source
         // message_end / cache_miss / text_delta / thinking_delta / audio_stream
-        case role, content, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior
+        case role, content, assistantContent, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior
         // tool_start / tool_update / tool_end
         case tool, args, toolCallId, details, callSegments, resultSegments
         // tool_output
@@ -354,7 +377,14 @@ extension ServerMessage: Decodable {
         case "message_end":
             let role = try c.decode(String.self, forKey: .role)
             let content = try c.decode(String.self, forKey: .content)
-            self = .messageEnd(role: role, content: content)
+            self = .messageEnd(
+                role: role,
+                content: content,
+                assistantContent: try c.decodeIfPresent(
+                    [AssistantMessageContentPart].self,
+                    forKey: .assistantContent
+                )
+            )
 
         case "cache_miss":
             self = .cacheMiss(
@@ -364,7 +394,10 @@ extension ServerMessage: Decodable {
 
         case "text_delta":
             let delta = try c.decode(String.self, forKey: .delta)
-            self = .textDelta(delta: delta)
+            self = .textDelta(
+                delta: delta,
+                contentIndex: try c.decodeIfPresent(Int.self, forKey: .contentIndex)
+            )
 
         case "thinking_delta":
             let delta = try c.decode(String.self, forKey: .delta)

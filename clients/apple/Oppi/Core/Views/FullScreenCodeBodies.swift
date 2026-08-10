@@ -2231,15 +2231,20 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
             addSubview(scrollView)
 
             let contentView: UIView
+            let allowsHorizontalOverflow: Bool
             switch content {
             case .orgMode(let text):
                 contentView = makeOrgView(text: text)
+                allowsHorizontalOverflow = false
             case .latex(let text):
                 contentView = makeLatexView(text: text)
+                allowsHorizontalOverflow = true
+                scrollView.accessibilityIdentifier = "fullscreen-latex.scroll"
             case .mermaid:
                 fatalError("Handled above")
             }
 
+            scrollView.alwaysBounceHorizontal = allowsHorizontalOverflow
             contentView.translatesAutoresizingMaskIntoConstraints = false
             scrollView.addSubview(contentView)
 
@@ -2250,16 +2255,26 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
                 scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
                 contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 14),
-                contentView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -14),
+                contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -14),
                 contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 12),
                 contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -12),
-                // Pin content width to the scroll view's visible frame width minus
-                // horizontal padding (14 * 2 = 28). Without this, text-based content
-                // views (e.g. AssistantMarkdownContentView for org mode) have no width
-                // reference inside the scroll view's content layout guide and collapse
-                // to their intrinsic content width.
-                contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -28),
             ])
+
+            let viewportWidth = scrollView.frameLayoutGuide.widthAnchor.constraint(
+                equalTo: contentView.widthAnchor,
+                constant: 28
+            )
+            if allowsHorizontalOverflow {
+                // LaTeX keeps its natural width. The content guide grows beyond
+                // the viewport when needed, creating real two-axis overflow.
+                contentView.widthAnchor.constraint(
+                    greaterThanOrEqualTo: scrollView.frameLayoutGuide.widthAnchor,
+                    constant: -28
+                ).isActive = true
+            } else {
+                // Text-based Org rendering still needs a viewport width reference.
+                viewportWidth.isActive = true
+            }
         }
     }
 
@@ -2268,21 +2283,34 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
 
     private func makeLatexView(text: String) -> UIView {
         let config = RenderConfiguration(
-            fontSize: 20 * readerPreferences.textScale,
+            fontSize: UIFont.preferredFont(forTextStyle: .title1).pointSize * readerPreferences.textScale,
             maxWidth: 800,
             theme: themeID.palette.renderTheme,
             displayMode: .document
         )
         let multiLayout = DocumentRenderPipeline.layoutLatexExpressions(text: text, config: config)
+        if let source = multiLayout.exactSourceFallback {
+            return DocumentRenderPipeline.makeLatexSourceFallbackView(
+                source: source,
+                palette: themeID.palette
+            )
+        }
 
         let stack = UIStackView()
         stack.axis = .vertical
         stack.spacing = multiLayout.spacing
         stack.alignment = .leading
+        stack.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: max(multiLayout.totalSize.width, 1)
+        ).isActive = true
 
-        for expr in multiLayout.expressions {
+        for (expr, source) in zip(multiLayout.expressions, multiLayout.sources) {
             let drawView = GraphicalRendererUIView()
-            drawView.configure(size: expr.size, draw: expr.draw)
+            drawView.configure(
+                size: expr.size,
+                draw: expr.draw,
+                accessibilityLabel: FlatSegment.formulaAccessibilityLabel(for: source)
+            )
             drawView.translatesAutoresizingMaskIntoConstraints = false
             drawView.widthAnchor.constraint(equalToConstant: max(expr.size.width, 1)).isActive = true
             drawView.heightAnchor.constraint(equalToConstant: max(expr.size.height, 1)).isActive = true

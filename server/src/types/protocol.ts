@@ -379,6 +379,11 @@ export type AppEventMessage =
       reason?: string;
     });
 
+export type AssistantMessageContentPart =
+  | { kind: "text" | "thinking"; content: string; contentIndex: number }
+  | { kind: "tool"; contentIndex: number; toolCallId?: string }
+  | { kind: "boundary"; contentIndex: number };
+
 // Server → Client
 export type ServerMessage = // ── Connection ──
   (
@@ -396,7 +401,14 @@ export type ServerMessage = // ── Connection ──
     | { type: "agent_start" }
     | { type: "agent_end" }
     | { type: "agent_settled" }
-    | { type: "message_end"; role: "user" | "assistant"; content: string }
+    | {
+        type: "message_end";
+        role: "user" | "assistant";
+        /** Complete text projection retained for older clients. */
+        content: string;
+        /** Ordered assistant structure for clients that can render split content. */
+        assistantContent?: AssistantMessageContentPart[];
+      }
     | {
         /** Experimental live-only projection, emitted only while Pi's showCacheMissNotices is enabled. */
         type: "cache_miss";
@@ -404,7 +416,7 @@ export type ServerMessage = // ── Connection ──
         message: string;
       }
     // ── Streaming ──
-    | { type: "text_delta"; delta: string }
+    | { type: "text_delta"; delta: string; contentIndex?: number }
     | { type: "thinking_delta"; delta: string; contentIndex?: number }
     | {
         type: "audio_stream";

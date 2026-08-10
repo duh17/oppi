@@ -317,6 +317,87 @@ struct AssistantMarkdownLayoutTests {
         window.resignKey()
     }
 
+    /// Display math settles asynchronously from source fallback to a natural-size
+    /// horizontal viewport. Detached readers must keep the following row at the
+    /// same screen position while that height change invalidates the timeline.
+    @Test func asyncLatexSettlementPreservesDetachedTimelineAnchor() async throws {
+        NativeLatexBlockView.renderDelayForTesting = .milliseconds(180)
+        defer { NativeLatexBlockView.renderDelayForTesting = nil }
+
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "assistant-latex-detached-settlement",
+            useAnchoredCollectionView: true
+        )
+        let formula = #"""
+        $$
+        \begin{bmatrix}1\\2\\3\\4\\5\\6\\7\\8\end{bmatrix}
+        $$
+        """#
+        let longAnchorRow = (0..<60).map { "Detached anchor line \($0)" }.joined(separator: "\n")
+
+        wh.applyItems(
+            [
+                .assistantMessage(id: "formula", text: formula, timestamp: Date(timeIntervalSince1970: 0)),
+                .assistantMessage(id: "anchor", text: longAnchorRow, timestamp: Date(timeIntervalSince1970: 1)),
+            ],
+            isBusy: false
+        )
+
+        wh.window.layoutIfNeeded()
+        wh.collectionView.layoutIfNeeded()
+
+        let formulaIP = IndexPath(item: 0, section: 0)
+        let followingIP = IndexPath(item: 1, section: 0)
+        let initialFormulaFrame = try #require(
+            wh.collectionView.layoutAttributesForItem(at: formulaIP)?.frame
+        )
+        let initialFollowingFrame = try #require(
+            wh.collectionView.layoutAttributesForItem(at: followingIP)?.frame
+        )
+        wh.collectionView.contentOffset.y = max(
+            -wh.collectionView.adjustedContentInset.top,
+            initialFollowingFrame.minY - 180
+        )
+        wh.collectionView.layoutIfNeeded()
+
+        let anchoredCollection = try #require(wh.collectionView as? AnchoredCollectionView)
+        anchoredCollection.isDetachedFromBottom = true
+        anchoredCollection.captureDetachedAnchor()
+        let initialFollowingScreenY = initialFollowingFrame.minY - anchoredCollection.contentOffset.y
+
+        let formulaSettled = await waitForTimelineCondition(timeoutMs: 1_800) {
+            await MainActor.run {
+                wh.window.layoutIfNeeded()
+                wh.collectionView.layoutIfNeeded()
+                guard let settledFormulaFrame = wh.collectionView.layoutAttributesForItem(at: formulaIP)?.frame,
+                      let settledFollowingFrame = wh.collectionView.layoutAttributesForItem(at: followingIP)?.frame,
+                      let cell = wh.collectionView.cellForItem(at: formulaIP),
+                      let latexView = timelineFirstView(ofType: NativeLatexBlockView.self, in: cell.contentView) else {
+                    return false
+                }
+                let formulaGrew = settledFormulaFrame.height > initialFormulaFrame.height + 8
+                let rowsDoNotOverlap = settledFollowingFrame.minY >= settledFormulaFrame.maxY - 0.5
+                return formulaGrew
+                    && rowsDoNotOverlap
+                    && latexView.isAccessibilityElement
+                    && latexView.accessibilityTraits.contains(.button)
+            }
+        }
+        #expect(formulaSettled, "LaTeX formula did not grow and reflow without overlap")
+
+        let finalFormulaFrame = try #require(
+            wh.collectionView.layoutAttributesForItem(at: formulaIP)?.frame
+        )
+        let finalFollowingFrame = try #require(
+            wh.collectionView.layoutAttributesForItem(at: followingIP)?.frame
+        )
+        let finalFollowingScreenY = finalFollowingFrame.minY - anchoredCollection.contentOffset.y
+        #expect(finalFormulaFrame.height > initialFormulaFrame.height + 8)
+        #expect(finalFollowingFrame.minY >= finalFormulaFrame.maxY - 0.5)
+        #expect(abs(finalFollowingScreenY - initialFollowingScreenY) < 1)
+        #expect(anchoredCollection.detachedAnchorIsActive)
+    }
+
     /// Regression: mermaid renders asynchronously after the assistant row is
     /// first measured. If the enclosing collection view layout is not
     /// invalidated when the diagram appears, the row keeps its old height until

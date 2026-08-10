@@ -26,6 +26,7 @@ import {
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolResult,
 } from "./session-attachments.js";
+import { projectAssistantContentRuns } from "./session-protocol.js";
 
 export type TraceViewMode = "context" | "full";
 
@@ -123,6 +124,10 @@ export interface TraceEvent {
   timestamp: string;
   /** For user/assistant/system: the text content */
   text?: string;
+  /** Stable Pi content identity for projected assistant text runs. */
+  contentIndex?: number;
+  /** Zero-based order among text runs in one assistant message. */
+  runOrdinal?: number;
   /** For toolCall: tool name */
   tool?: string;
   /** For toolCall: arguments object */
@@ -664,26 +669,32 @@ function emitMessageEvents(
     }
   } else if (role === "assistant") {
     if (Array.isArray(content)) {
-      let subIdx = 0;
-      for (const block of content) {
-        const b = block as Record<string, unknown>;
-        if (isTextBlock(b)) {
+      let runOrdinal = 0;
+      for (const projected of projectAssistantContentRuns(msg)) {
+        if (projected.kind === "text") {
           events.push({
-            id: `${entry.id}-text-${subIdx++}`,
+            id: `${entry.id}-text-${projected.contentIndex}`,
             type: "assistant",
             timestamp,
-            text: b.text,
+            text: projected.text,
+            contentIndex: projected.contentIndex,
+            runOrdinal: runOrdinal++,
           });
-        } else if (b.type === "thinking" && b.thinking) {
+          continue;
+        }
+
+        const b = projected.block;
+        const subIdx = projected.contentIndex;
+        if (b.type === "thinking" && typeof b.thinking === "string" && b.thinking.length > 0) {
           events.push({
-            id: `${entry.id}-think-${subIdx++}`,
+            id: `${entry.id}-think-${subIdx}`,
             type: "thinking",
             timestamp,
-            thinking: b.thinking as string,
+            thinking: b.thinking,
           });
         } else if (b.type === "toolCall") {
           events.push({
-            id: (b.id as string) || `${entry.id}-tool-${subIdx++}`,
+            id: (b.id as string) || `${entry.id}-tool-${subIdx}`,
             type: "toolCall",
             timestamp,
             tool: (b.name as string) || "unknown",

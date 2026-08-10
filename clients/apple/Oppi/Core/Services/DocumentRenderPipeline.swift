@@ -19,6 +19,52 @@ import UIKit
 /// - ``renderGraphicalToPDF(size:draw:backgroundColor:padding:)``
 enum DocumentRenderPipeline {
 
+    /// Explicit cap for natural-size timeline/inline rasters. Core Graphics
+    /// layout may be arbitrarily wide, but bitmap allocation must stay bounded.
+    struct NaturalRasterBudget: Equatable, Sendable {
+        let maxPointDimension: CGFloat
+        let maxPixelDimension: Int
+        let maxPixelCount: Int
+        let maxBytes: Int
+
+        func permits(pointSize: CGSize, scale: CGFloat) -> Bool {
+            guard pointSize.width.isFinite, pointSize.height.isFinite,
+                  pointSize.width > 0, pointSize.height > 0,
+                  scale.isFinite, scale > 0 else {
+                return false
+            }
+            guard pointSize.width <= maxPointDimension,
+                  pointSize.height <= maxPointDimension else {
+                return false
+            }
+            let pixelWidth = ceil(pointSize.width * scale)
+            let pixelHeight = ceil(pointSize.height * scale)
+            guard pixelWidth <= CGFloat(maxPixelDimension),
+                  pixelHeight <= CGFloat(maxPixelDimension) else {
+                return false
+            }
+            let pixels = pixelWidth * pixelHeight
+            guard pixels <= CGFloat(maxPixelCount) else { return false }
+            return pixels * 4 <= CGFloat(maxBytes)
+        }
+    }
+
+    static let naturalRasterBudget = NaturalRasterBudget(
+        maxPointDimension: 2_048,
+        maxPixelDimension: 4_096,
+        maxPixelCount: 12_582_912,
+        maxBytes: 48 * 1_024 * 1_024
+    )
+
+    /// File/share exports may be larger than timeline rasters, but every bitmap
+    /// allocation still has an explicit point, pixel, and byte ceiling.
+    static let exportRasterBudget = NaturalRasterBudget(
+        maxPointDimension: 4_096,
+        maxPixelDimension: 8_192,
+        maxPixelCount: 16_777_216,
+        maxBytes: 64 * 1_024 * 1_024
+    )
+
     // MARK: - Graphical Layout
 
     /// Result of a graphical parse → layout pass. Contains everything
@@ -59,7 +105,9 @@ enum DocumentRenderPipeline {
             text: text,
             config: config
         )
-        guard layout.size.width > 0, layout.size.height > 0 else { return nil }
+        guard naturalRasterBudget.permits(pointSize: layout.size, scale: scale) else {
+            return nil
+        }
 
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
@@ -68,6 +116,32 @@ enum DocumentRenderPipeline {
             layout.draw(ctx.cgContext, .zero)
         }
         return (image: image, size: layout.size)
+    }
+
+    /// Validate and rasterize one natural-size display formula. Unsupported or
+    /// recovered TeX and formulas beyond the bitmap budget return nil so callers
+    /// can show exact source deterministically.
+    static func renderLatexGraphicalImage(
+        text: String,
+        config: RenderConfiguration,
+        scale: CGFloat = 2.0
+    ) -> (image: UIImage, size: CGSize)? {
+        let parser = TeXMathParser()
+        let parsed = parser.parseValidated(text)
+        guard parsed.isRenderable else { return nil }
+
+        let renderer = MathCoreGraphicsRenderer()
+        let layoutResult = renderer.layout(parsed.nodes, configuration: config)
+        let size = renderer.boundingBox(layoutResult)
+        guard naturalRasterBudget.permits(pointSize: size, scale: scale) else { return nil }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        let imageRenderer = UIGraphicsImageRenderer(size: size, format: format)
+        let image = imageRenderer.image { context in
+            renderer.draw(layoutResult, in: context.cgContext, at: .zero)
+        }
+        return (image: image, size: size)
     }
 
     /// Rasterize one inline formula and preserve its TeX baseline so a text
@@ -79,10 +153,12 @@ enum DocumentRenderPipeline {
         scale: CGFloat = 2.0
     ) -> (image: UIImage, size: CGSize, baseline: CGFloat)? {
         let parser = TeXMathParser()
+        let parsed = parser.parseValidated(text)
+        guard parsed.isRenderable else { return nil }
         let renderer = MathCoreGraphicsRenderer()
-        let layout = renderer.layout(parser.parse(text), configuration: config)
+        let layout = renderer.layout(parsed.nodes, configuration: config)
         let size = renderer.boundingBox(layout)
-        guard size.width > 0, size.height > 0 else { return nil }
+        guard naturalRasterBudget.permits(pointSize: size, scale: scale) else { return nil }
 
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
@@ -98,8 +174,14 @@ enum DocumentRenderPipeline {
     /// Result of laying out multiple LaTeX expressions separated by blank lines.
     struct LatexMultiLayout {
         let expressions: [GraphicalLayout]
+        let sources: [String]
         let totalSize: CGSize
         let spacing: CGFloat
+        /// Exact original source when any expression fails the same validated
+        /// renderer contract used by timeline formulas.
+        let exactSourceFallback: String?
+
+        var isRenderable: Bool { exactSourceFallback == nil }
     }
 
     /// Parse and layout LaTeX text as multiple expressions split by blank lines.
@@ -111,6 +193,16 @@ enum DocumentRenderPipeline {
         config: RenderConfiguration,
         spacing: CGFloat = 16
     ) -> LatexMultiLayout {
+        guard text.utf8.count <= TeXMathLimits.maxSourceUTF8Bytes else {
+            return LatexMultiLayout(
+                expressions: [],
+                sources: [],
+                totalSize: .zero,
+                spacing: spacing,
+                exactSourceFallback: text
+            )
+        }
+
         let sources = text
             .components(separatedBy: "\n\n")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -124,8 +216,17 @@ enum DocumentRenderPipeline {
         var maxWidth: CGFloat = 0
 
         for source in sources {
-            let nodes = parser.parse(source)
-            let layoutResult = renderer.layout(nodes, configuration: config)
+            let parsed = parser.parseValidated(source)
+            guard parsed.isRenderable else {
+                return LatexMultiLayout(
+                    expressions: [],
+                    sources: [],
+                    totalSize: .zero,
+                    spacing: spacing,
+                    exactSourceFallback: text
+                )
+            }
+            let layoutResult = renderer.layout(parsed.nodes, configuration: config)
             let size = renderer.boundingBox(layoutResult)
             let layout = GraphicalLayout(size: size) { ctx, origin in
                 renderer.draw(layoutResult, in: ctx, at: origin)
@@ -139,8 +240,10 @@ enum DocumentRenderPipeline {
 
         return LatexMultiLayout(
             expressions: expressions,
+            sources: sources,
             totalSize: CGSize(width: maxWidth, height: totalHeight),
-            spacing: spacing
+            spacing: spacing,
+            exactSourceFallback: nil
         )
     }
 
@@ -173,7 +276,12 @@ enum DocumentRenderPipeline {
             width: max(size.width + padding * 2, minWidth),
             height: max(size.height + padding * 2, 100)
         )
-        // Center content horizontally when image is wider than content
+        let scale = format?.scale ?? UIGraphicsImageRendererFormat.default().scale
+        guard exportRasterBudget.permits(pointSize: imageSize, scale: scale) else {
+            return placeholderImage()
+        }
+
+        // Center content horizontally when image is wider than content.
         let xOffset = (imageSize.width - size.width) / 2
         let imageRenderer: UIGraphicsImageRenderer
         if let format {
@@ -209,6 +317,26 @@ enum DocumentRenderPipeline {
         }
     }
 
+    /// Build an exact-source fallback for invalid or unsupported LaTeX.
+    @MainActor
+    static func makeLatexSourceFallbackView(
+        source: String,
+        palette: ThemePalette
+    ) -> UIView {
+        let textView = UITextView()
+        textView.backgroundColor = .clear
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        textView.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        textView.textContainer.lineFragmentPadding = 0
+        textView.font = FontPreferences.scaledCodeFont(baseSize: 14, textStyle: .body)
+        textView.textColor = UIColor(palette.fg)
+        textView.text = source
+        textView.accessibilityLabel = source
+        return textView
+    }
+
     /// Render multiple LaTeX expressions to a single image.
     @MainActor
     static func renderLatexExpressionsToImage(
@@ -218,8 +346,35 @@ enum DocumentRenderPipeline {
         minWidth: CGFloat = 100,
         format: UIGraphicsImageRendererFormat? = nil
     ) -> UIImage {
+        if let source = layout.exactSourceFallback {
+            return renderLatexFallbackSourceToImage(
+                source,
+                backgroundColor: backgroundColor,
+                padding: padding,
+                minWidth: minWidth,
+                format: format
+            )
+        }
         guard !layout.expressions.isEmpty else {
             return placeholderImage()
+        }
+
+        let exportSize = CGSize(
+            width: max(layout.totalSize.width + padding * 2, minWidth),
+            height: max(layout.totalSize.height + padding * 2, 100)
+        )
+        let exportScale = format?.scale ?? UIGraphicsImageRendererFormat.default().scale
+        guard exportRasterBudget.permits(pointSize: exportSize, scale: exportScale) else {
+            // A valid formula can still be too wide/tall for a safe bitmap.
+            // Export a bounded source preview rather than attempting the graph
+            // allocation or silently returning an empty document.
+            return renderLatexFallbackSourceToImage(
+                layout.sources.joined(separator: "\n\n"),
+                backgroundColor: backgroundColor,
+                padding: padding,
+                minWidth: minWidth,
+                format: format
+            )
         }
         return renderGraphicalToImage(
             size: layout.totalSize,
@@ -244,6 +399,13 @@ enum DocumentRenderPipeline {
         backgroundColor: UIColor,
         padding: CGFloat = 40
     ) -> Data {
+        if let source = layout.exactSourceFallback {
+            return renderLatexFallbackSourceToPDF(
+                source,
+                backgroundColor: backgroundColor,
+                padding: padding
+            )
+        }
         guard !layout.expressions.isEmpty else {
             return Data()
         }
@@ -261,10 +423,91 @@ enum DocumentRenderPipeline {
         )
     }
 
+    @MainActor
+    private static func renderLatexFallbackSourceToImage(
+        _ source: String,
+        backgroundColor: UIColor,
+        padding: CGFloat,
+        minWidth: CGFloat,
+        format: UIGraphicsImageRendererFormat?
+    ) -> UIImage {
+        let attributed = latexFallbackAttributedSource(boundedLatexSourcePreview(source))
+        let drawWidth: CGFloat = 720
+        let bounds = attributed.boundingRect(
+            with: CGSize(width: drawWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        )
+        return renderGraphicalToImage(
+            size: CGSize(width: ceil(bounds.width), height: ceil(bounds.height)),
+            draw: { _, origin in
+                attributed.draw(
+                    with: CGRect(origin: origin, size: bounds.size),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+                    context: nil
+                )
+            },
+            backgroundColor: backgroundColor,
+            padding: padding,
+            minWidth: minWidth,
+            format: format
+        )
+    }
+
+    @MainActor
+    private static func renderLatexFallbackSourceToPDF(
+        _ source: String,
+        backgroundColor: UIColor,
+        padding: CGFloat
+    ) -> Data {
+        let attributed = latexFallbackAttributedSource(source)
+        let drawWidth: CGFloat = 720
+        let bounds = attributed.boundingRect(
+            with: CGSize(width: drawWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        )
+        return renderGraphicalToPDF(
+            size: CGSize(width: ceil(bounds.width), height: ceil(bounds.height)),
+            draw: { _, origin in
+                attributed.draw(
+                    with: CGRect(origin: origin, size: bounds.size),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+                    context: nil
+                )
+            },
+            backgroundColor: backgroundColor,
+            padding: padding
+        )
+    }
+
+    private static func boundedLatexSourcePreview(_ source: String) -> String {
+        // A single bitmap cannot paginate. Keep a deterministic first page and
+        // make truncation explicit; PDF export remains the exact-source path.
+        let maxCharacters = 3_072
+        guard source.count > maxCharacters else { return source }
+        return String(source.prefix(maxCharacters)) + "\n… (source truncated for image export)"
+    }
+
+    @MainActor
+    private static func latexFallbackAttributedSource(_ source: String) -> NSAttributedString {
+        NSAttributedString(
+            string: source,
+            attributes: [
+                .font: FontPreferences.scaledCodeFont(baseSize: 14, textStyle: .body),
+                .foregroundColor: UIColor.label,
+            ]
+        )
+    }
+
     /// Placeholder image for empty/failed content.
     @MainActor
     static func placeholderImage() -> UIImage {
         let size = CGSize(width: 200, height: 100)
+        let scale = UIGraphicsImageRendererFormat.default().scale
+        guard exportRasterBudget.permits(pointSize: size, scale: scale) else {
+            return UIImage()
+        }
         let renderer = UIGraphicsImageRenderer(size: size)
         return renderer.image { ctx in
             UIColor(white: 0.96, alpha: 1).setFill()
