@@ -15,7 +15,7 @@ enum TimelineOffsetReason: Equatable {
     case programmaticTopAlign
     case navigationViewportRestore
     case detachedFallback
-    case imagePreviewReturn
+    case viewportPreservation
 }
 
 @MainActor
@@ -85,10 +85,9 @@ enum TimelineOffsetController {
             guard !isUserInteracting(with: collectionView) else { return false }
             return true
 
-        case .imagePreviewReturn:
-            // The image dismissal transition has completed before this reason is
-            // issued. Refuse real touch interaction, but supersede any stale
-            // programmatic scroll animation left by timeline re-entry.
+        case .viewportPreservation:
+            // Modal and async-media viewport restorations are immediate ambient
+            // corrections. Never apply them through real touch interaction.
             guard !isUserInteracting(with: collectionView) else { return false }
             return true
         }

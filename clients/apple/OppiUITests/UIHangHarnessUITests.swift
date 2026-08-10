@@ -302,6 +302,64 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 1)
     }
 
+    func testImagePreviewPreservesDetachedVisibleRowY() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+
+        let visualImageButton = app.descendants(matching: .any)["harness.visual.image"]
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+        XCTAssertTrue(visualImageButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        visualImageButton.tap()
+
+        let row = app.descendants(matching: .any)["chat.timeline.row.alpha-visual-user-image"]
+        let thumbnail = app.descendants(matching: .any)["chat.user.thumbnail.0"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "Visual image row did not become visible")
+        XCTAssertTrue(thumbnail.waitForExistence(timeout: 5), "Visual image thumbnail did not become visible")
+
+        // Match the reported reading gesture: move away, reverse direction,
+        // then stop detached with the same stable row still visible.
+        dragTimeline(
+            timeline,
+            from: CGVector(dx: 0.5, dy: 0.72),
+            to: CGVector(dx: 0.5, dy: 0.48)
+        )
+        dragTimeline(
+            timeline,
+            from: CGVector(dx: 0.5, dy: 0.42),
+            to: CGVector(dx: 0.5, dy: 0.54)
+        )
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        XCTAssertTrue(thumbnail.waitForExistence(timeout: 3))
+        let rowYBefore = row.frame.minY
+
+        thumbnail.tap()
+        let dismissButton = app.descendants(matching: .any)["fullscreen-image.dismiss"]
+        XCTAssertTrue(dismissButton.waitForExistence(timeout: 5), "Full-screen image did not present")
+        dismissButton.tap()
+        XCTAssertTrue(waitForElementToDisappear(dismissButton, timeout: 5), "Full-screen image did not dismiss")
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "Stable image row disappeared after preview")
+
+        let rowYAfter = row.frame.minY
+        XCTAssertLessThanOrEqual(
+            abs(rowYAfter - rowYBefore),
+            2,
+            "Image preview moved the stable row from viewport y=\(rowYBefore) to y=\(rowYAfter)"
+        )
+
+        let geometry = XCTAttachment(
+            string: "rowYBefore=\(rowYBefore) rowYAfter=\(rowYAfter) delta=\(rowYAfter - rowYBefore)"
+        )
+        geometry.name = "image-preview-detached-row-geometry"
+        geometry.lifetime = .keepAlways
+        add(geometry)
+
+        let screenshot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = "image-preview-detached-row-preserved"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testExpandedExtensionMarkdownGestureOwnsVerticalScroll() throws {
         launchHarness(noStream: true, includeVisualFixtures: true)
 

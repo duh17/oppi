@@ -460,6 +460,37 @@ struct ChatScrollControllerTests {
         #expect(controller.isCurrentlyNearBottom)
     }
 
+    @Test func imagePreviewFreezesDetachedIntentAcrossPassiveGeometryUpdates() {
+        let controller = makeTestScrollController()
+        controller.updateTimelineItemOrder(["before", "anchor", "after"])
+        controller.detachFromBottomForUserScroll()
+        controller.updateViewportAnchor(itemID: "anchor", relativeY: -24)
+
+        let preservation = controller.beginImagePreviewViewportPreservation(wasAttachedToTail: false)
+        controller.updateNearBottom(true)
+
+        #expect(preservation.snapshot?.anchorItemID == "anchor")
+        #expect(!controller.isCurrentlyNearBottom)
+
+        controller.endImagePreviewViewportPreservation(preservation.token)
+        controller.updateNearBottom(true)
+        #expect(controller.isCurrentlyNearBottom)
+    }
+
+    @Test func realTouchCancelsImagePreviewIntentFreeze() {
+        let controller = makeTestScrollController()
+        controller.updateNearBottom(true)
+        let preservation = controller.beginImagePreviewViewportPreservation(wasAttachedToTail: true)
+        #expect(controller.ownsImagePreviewViewportPreservation(preservation.token))
+
+        controller.setUserInteracting(true)
+        controller.setUserInteracting(false)
+        controller.updateNearBottom(false)
+
+        #expect(!controller.ownsImagePreviewViewportPreservation(preservation.token))
+        #expect(!controller.isCurrentlyNearBottom)
+    }
+
     @Test func handleScrollTargetInvokesCallbackAndResetsTarget() async {
         let controller = makeTestScrollController()
         controller.scrollTargetID = "target-1"

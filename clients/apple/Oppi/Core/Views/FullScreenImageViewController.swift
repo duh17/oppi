@@ -262,6 +262,7 @@ extension FullScreenImageViewController: UIScrollViewDelegate {
 final class ImagePreviewNavigationController: UINavigationController, UIAdaptivePresentationControllerDelegate {
     private var viewportRestoration: TimelineScrollCoordinator.ImagePreviewViewportRestoration?
     private var restorationScheduled = false
+    private var presentationSucceeded = false
 
     func preserveTimelineViewport(from presenter: UIViewController) {
         viewportRestoration = TimelineScrollCoordinator.captureImagePreviewViewport(from: presenter)
@@ -278,6 +279,19 @@ final class ImagePreviewNavigationController: UINavigationController, UIAdaptive
         scheduleViewportRestoration()
     }
 
+    func presentationDidSucceed() {
+        guard !presentationSucceeded, viewportRestoration != nil else { return }
+        presentationSucceeded = true
+        presentationController?.delegate = self
+        viewportRestoration?.restore()
+    }
+
+    func presentationDidAbort() {
+        guard !presentationSucceeded, let viewportRestoration else { return }
+        self.viewportRestoration = nil
+        viewportRestoration.cancel()
+    }
+
     private func scheduleViewportRestoration() {
         guard !restorationScheduled, let viewportRestoration else { return }
         restorationScheduled = true
@@ -285,11 +299,11 @@ final class ImagePreviewNavigationController: UINavigationController, UIAdaptive
 
         if let transitionCoordinator {
             transitionCoordinator.animate(alongsideTransition: nil) { _ in
-                Task { @MainActor in viewportRestoration.restore() }
+                Task { @MainActor in viewportRestoration.finish() }
             }
         } else {
             DispatchQueue.main.async {
-                viewportRestoration.restore()
+                viewportRestoration.finish()
             }
         }
     }
@@ -301,9 +315,37 @@ enum ImagePreviewPresentationCoordinator {
         let navigation = controller as? ImagePreviewNavigationController
         navigation?.preserveTimelineViewport(from: presenter)
         presenter.present(controller, animated: true) {
-            navigation?.presentationController?.delegate = navigation
+            navigation?.presentationDidSucceed()
         }
         navigation?.presentationController?.delegate = navigation
+
+        // UIKit does not guarantee the presentation completion for a rejected
+        // or interrupted attempt. Check the actual ownership relationship on
+        // the next main turn and observe cancellation on a real transition.
+        // Retain the navigation controller through this one-shot decision.
+        // A rejected UIKit presentation may not retain it at all, while its
+        // viewport-restoration token still owns logical freeze cleanup.
+        DispatchQueue.main.async { [navigation] in
+            guard let navigation else { return }
+            let isPresented = navigation.presentingViewController != nil
+                || navigation.viewIfLoaded?.window != nil
+            guard isPresented else {
+                navigation.presentationDidAbort()
+                return
+            }
+
+            guard let transitionCoordinator = navigation.transitionCoordinator else {
+                navigation.presentationDidSucceed()
+                return
+            }
+            transitionCoordinator.animate(alongsideTransition: nil) { context in
+                if context.isCancelled {
+                    navigation.presentationDidAbort()
+                } else {
+                    navigation.presentationDidSucceed()
+                }
+            }
+        }
     }
 }
 

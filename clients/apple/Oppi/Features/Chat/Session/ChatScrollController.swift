@@ -22,6 +22,11 @@ struct TimelineViewportRestoration: Equatable {
     let relativeY: CGFloat
 }
 
+struct TimelineImagePreviewPreservation {
+    let token: UInt
+    let snapshot: TimelineViewportSnapshot?
+}
+
 enum TimelineInitialPlacement: Equatable {
     case bottom(itemID: String)
     case viewport(TimelineViewportRestoration)
@@ -86,6 +91,48 @@ enum TimelineViewportRestorationResolver {
             relativeY: snapshot.anchorRelativeY
         )
     }
+
+    static func resolveRenderedWindow(
+        _ restoration: TimelineViewportRestoration,
+        availableFullTimelineItemIDs: [String],
+        renderedTimelineItemIDs: [String]
+    ) -> TimelineViewportRestoration? {
+        let rendered = Set(renderedTimelineItemIDs)
+        guard !rendered.isEmpty,
+              let targetOrdinal = availableFullTimelineItemIDs.firstIndex(of: restoration.itemID) else {
+            return nil
+        }
+
+        if rendered.contains(restoration.itemID) {
+            return restoration
+        }
+
+        if targetOrdinal + 1 < availableFullTimelineItemIDs.count {
+            for index in (targetOrdinal + 1)..<availableFullTimelineItemIDs.count {
+                let itemID = availableFullTimelineItemIDs[index]
+                if rendered.contains(itemID) {
+                    return TimelineViewportRestoration(
+                        itemID: itemID,
+                        relativeY: restoration.relativeY
+                    )
+                }
+            }
+        }
+
+        if targetOrdinal > 0 {
+            for index in stride(from: targetOrdinal - 1, through: 0, by: -1) {
+                let itemID = availableFullTimelineItemIDs[index]
+                if rendered.contains(itemID) {
+                    return TimelineViewportRestoration(
+                        itemID: itemID,
+                        relativeY: restoration.relativeY
+                    )
+                }
+            }
+        }
+
+        return nil
+    }
 }
 
 /// Manages scroll behavior for the chat timeline.
@@ -120,6 +167,12 @@ final class ChatScrollController: NSObject {
     private var timelineItemOrder: [String] = []
     private var latestViewportSnapshot: TimelineViewportSnapshot?
     private var navigationRestoration: NavigationRestoration?
+    /// Modal image previews freeze the reader's attached/detached intent while
+    /// UIKit presents over the timeline. The preview coordinator owns geometry
+    /// restoration; this guard prevents passive layout callbacks from changing
+    /// that intent while the chat cannot receive touches.
+    private var imagePreviewGeneration: UInt = 0
+    private var activeImagePreviewPreservation: (token: UInt, wasAttachedToTail: Bool)?
 
     // MARK: - Tuning Constants
 
@@ -176,6 +229,13 @@ final class ChatScrollController: NSObject {
     /// Whether the user is currently scrolled to the bottom.
     var isCurrentlyNearBottom: Bool {
         anchor.isNearBottom
+    }
+
+    /// Real touch/deceleration ownership reported by the timeline delegate.
+    /// Ambient restoration must not mutate logical or physical scroll state
+    /// while this is true, even when UIKit's gesture flags have already changed.
+    var isUserInteracting: Bool {
+        anchor.isUserInteracting
     }
 
     /// Item count for heavy-timeline gating. Set before each scroll decision.
@@ -257,6 +317,11 @@ final class ChatScrollController: NSObject {
 
     /// CollectionView backend updates nearBottom from scroll position math.
     func updateNearBottom(_ isNearBottom: Bool) {
+        if let activeImagePreviewPreservation,
+           activeImagePreviewPreservation.wasAttachedToTail != isNearBottom {
+            return
+        }
+
         if !isNearBottom, anchor.isFollowLocked {
             // Preserve follow after an explicit user send/jump-to-latest.
             // Only explicit user upward scroll may detach while locked.
@@ -269,14 +334,17 @@ final class ChatScrollController: NSObject {
 
     /// CollectionView backend marks active user drag/deceleration windows.
     func setUserInteracting(_ isInteracting: Bool) {
-        guard anchor.isUserInteracting != isInteracting else { return }
-        anchor.isUserInteracting = isInteracting
-
         if isInteracting {
+            // Treat every reported touch begin as a new ownership boundary,
+            // even if UIKit repeats the callback while interaction is active.
             navigationRestoration = nil
+            activeImagePreviewPreservation = nil
             scrollTask?.cancel()
             scrollTask = nil
         }
+
+        guard anchor.isUserInteracting != isInteracting else { return }
+        anchor.isUserInteracting = isInteracting
     }
 
     /// User initiated a manual upward scroll. Detach from bottom immediately
@@ -285,6 +353,7 @@ final class ChatScrollController: NSObject {
         anchor.isNearBottom = false
         anchor.isFollowLocked = false
         navigationRestoration = nil
+        activeImagePreviewPreservation = nil
         scrollTask?.cancel()
         scrollTask = nil
     }
@@ -319,6 +388,27 @@ final class ChatScrollController: NSObject {
             anchorRelativeY: relativeY,
             fullTimelineItemIDs: timelineItemOrder
         )
+    }
+
+    func beginImagePreviewViewportPreservation(
+        wasAttachedToTail: Bool
+    ) -> TimelineImagePreviewPreservation {
+        imagePreviewGeneration &+= 1
+        let token = imagePreviewGeneration
+        activeImagePreviewPreservation = (token, wasAttachedToTail)
+        return TimelineImagePreviewPreservation(
+            token: token,
+            snapshot: wasAttachedToTail ? nil : latestViewportSnapshot
+        )
+    }
+
+    func ownsImagePreviewViewportPreservation(_ token: UInt) -> Bool {
+        activeImagePreviewPreservation?.token == token
+    }
+
+    func endImagePreviewViewportPreservation(_ token: UInt) {
+        guard activeImagePreviewPreservation?.token == token else { return }
+        activeImagePreviewPreservation = nil
     }
 
     /// CollectionView backend updates top visible item from scroll position.
@@ -509,6 +599,7 @@ final class ChatScrollController: NSObject {
     /// shifts cannot detach until the user explicitly scrolls up.
     func requestScrollToBottom() {
         navigationRestoration = nil
+        activeImagePreviewPreservation = nil
         anchor.isNearBottom = true
         anchor.isFollowLocked = true
         isJumpToBottomHintVisible = false
@@ -531,6 +622,7 @@ final class ChatScrollController: NSObject {
         timelineItemOrder = []
         latestViewportSnapshot = nil
         navigationRestoration = nil
+        activeImagePreviewPreservation = nil
         isDetachedStreamingHintVisible = false
         isJumpToBottomHintVisible = false
         pendingNavigationHighlightItemID = nil

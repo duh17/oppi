@@ -447,9 +447,9 @@ struct UserTimelineRowContentTests {
         let imageScrollView = try #require(firstSubview(ofType: UIScrollView.self, in: viewer.view))
         imageScrollView.setZoomScale(2, animated: false)
         imageScrollView.contentOffset = CGPoint(x: 18, y: 24)
-        fixture.assertReadingAnchor(anchor)
+        #expect(await fixture.waitForPreviewPresentation())
+        fixture.assertReadingAnchorWithoutDrivingLayout(anchor, phase: "presentation")
 
-        fixture.simulatePreviewReturnLosingDetachedPosition()
         let done = try #require(viewer.navigationItem.leftBarButtonItem)
         _ = UIApplication.shared.sendAction(
             try #require(done.action),
@@ -479,7 +479,8 @@ struct UserTimelineRowContentTests {
         let viewer = try #require(navigation.viewControllers.first as? FullScreenImageDataPreviewViewController)
         viewer.loadViewIfNeeded()
 
-        fixture.simulatePreviewReturnLosingDetachedPosition()
+        #expect(await fixture.waitForPreviewPresentation())
+        fixture.assertReadingAnchorWithoutDrivingLayout(anchor, phase: "data-image presentation")
         let swipeInstaller = try #require(
             viewer.view.gestureRecognizers?.compactMap { $0.delegate as? HorizontalBackSwipeGestureInstaller }.first
         )
@@ -502,11 +503,17 @@ struct UserTimelineRowContentTests {
         FullScreenImageViewController.present(image: makeTestImage(), from: fixture.host)
         _ = try #require(fixture.host.presentedViewController)
 
-        fixture.simulatePreviewReturnLosingDetachedPosition()
+        #expect(await fixture.waitForPreviewPresentation())
+        fixture.assertReadingAnchorWithoutDrivingLayout(anchor, phase: "native-sheet presentation")
+        let remounted = fixture.remountTimelineWhilePreviewIsOpen()
         fixture.host.dismiss(animated: false)
 
         #expect(await fixture.waitForPreviewDismissal())
-        fixture.assertReadingAnchor(anchor)
+        fixture.assertReadingAnchor(
+            anchor,
+            collectionView: remounted.collectionView,
+            coordinator: remounted.coordinator
+        )
     }
 
     @MainActor
@@ -519,11 +526,143 @@ struct UserTimelineRowContentTests {
         FullScreenImageViewController.present(image: makeTestImage(), from: fixture.host)
         _ = try #require(fixture.host.presentedViewController)
 
-        fixture.simulatePreviewReturnLosingAttachedTail()
+        #expect(await fixture.waitForPreviewPresentation())
+        fixture.assertAttachedToTailWithoutDrivingLayout(phase: "presentation")
         fixture.host.dismiss(animated: false)
 
         #expect(await fixture.waitForPreviewDismissal())
         fixture.assertAttachedToTail()
+    }
+
+    @MainActor
+    @Test("queued attached-tail restoration cancels when touch starts after image dismissal")
+    func queuedAttachedTailRestorationCancelsWhenTouchStarts() async throws {
+        let fixture = ImagePreviewTimelineFixture()
+        defer { fixture.teardown() }
+
+        fixture.prepareAttachedTail()
+        await Task.yield()
+        await Task.yield()
+        let restoration = try #require(
+            TimelineScrollCoordinator.captureImagePreviewViewport(from: fixture.host)
+        )
+        restoration.restore()
+
+        fixture.coordinator.scrollViewWillBeginDragging(fixture.collectionView)
+        fixture.scrollController.detachFromBottomForUserScroll()
+        if let anchoredCollectionView = fixture.collectionView as? AnchoredCollectionView {
+            // Real tracking bypasses detached-anchor correction. Unit tests
+            // cannot set UIKit's read-only gesture flags, so mirror that state.
+            anchoredCollectionView.isDetachedFromBottom = false
+            anchoredCollectionView.clearDetachedAnchor()
+            anchoredCollectionView.layoutIfNeeded()
+        }
+        let touchedOffsetY = TimelineOffsetController.clampedOffsetY(
+            fixture.collectionView.contentOffset.y - 180,
+            in: fixture.collectionView
+        )
+        fixture.collectionView.contentOffset.y = touchedOffsetY
+        fixture.coordinator.scrollViewDidEndDragging(
+            fixture.collectionView,
+            willDecelerate: false
+        )
+
+        try? await Task.sleep(for: .milliseconds(80))
+
+        #expect(!fixture.scrollController.isUserInteracting)
+        #expect(!fixture.scrollController.isCurrentlyNearBottom)
+        #expect(
+            abs(fixture.collectionView.contentOffset.y - touchedOffsetY) <= 1,
+            "Every deferred pass from the canceled preview must stay invalid after a completed drag"
+        )
+    }
+
+    @MainActor
+    @Test("failed image presentation releases viewport freeze ownership")
+    func failedImagePresentationReleasesViewportFreezeOwnership() async throws {
+        let rejectingHost = RejectingImagePreviewHostController()
+        let fixture = ImagePreviewTimelineFixture(host: rejectingHost)
+        defer { fixture.teardown() }
+
+        _ = try fixture.exerciseUpThenDownAndCaptureMidHistoryAnchor()
+        let navigation = FullScreenImageViewController.makeSlideDownController(image: makeTestImage())
+        ImagePreviewPresentationCoordinator.present(navigation, from: rejectingHost)
+        await Task.yield()
+        await Task.yield()
+
+        #expect(rejectingHost.rejectedController === navigation)
+        fixture.scrollController.updateNearBottom(true)
+        #expect(
+            fixture.scrollController.isCurrentlyNearBottom,
+            "An aborted presentation must release the detached-intent freeze"
+        )
+    }
+
+    @MainActor
+    @Test("window growth remount maps a full-order image target into the rendered suffix")
+    func windowGrowthRemountMapsFullOrderImageTargetIntoRenderedSuffix() async throws {
+        let originalAllItems = makeImagePreviewTimelineItems(prefix: "original", count: 240)
+        let fixture = ImagePreviewTimelineFixture(
+            items: Array(originalAllItems.suffix(80)),
+            fullTimelineItemIDs: originalAllItems.map(\.id)
+        )
+        defer { fixture.teardown() }
+
+        let originalAnchor = try fixture.exerciseUpThenDownAndCaptureMidHistoryAnchor()
+        FullScreenImageViewController.present(image: makeTestImage(), from: fixture.host)
+        #expect(await fixture.waitForPreviewPresentation())
+
+        let ordinalText = try #require(originalAnchor.itemID.split(separator: "-").last)
+        let ordinal = try #require(Int(ordinalText))
+        let replacementAllItems = makeImagePreviewTimelineItems(prefix: "replacement", count: 300)
+        let remounted = fixture.remountTimelineWhilePreviewIsOpen(
+            items: Array(replacementAllItems.suffix(80)),
+            fullTimelineItemIDs: replacementAllItems.map(\.id)
+        )
+        let fullOrderTargetID = "replacement-\(ordinal)"
+        #expect(!remounted.coordinator.currentIDs.contains(fullOrderTargetID))
+        let renderedFallbackID = try #require(remounted.coordinator.currentIDs.first)
+        #expect(renderedFallbackID == "replacement-220")
+
+        // A remounted suffix can initially settle on its own nearby context.
+        // Restoration must correct from there without jumping to the live tail.
+        remounted.collectionView.scrollToItem(
+            at: IndexPath(item: 12, section: 0),
+            at: .top,
+            animated: false
+        )
+        remounted.collectionView.layoutIfNeeded()
+        fixture.host.dismiss(animated: false)
+
+        #expect(await fixture.waitForPreviewDismissal())
+        fixture.assertReadingAnchor(
+            ImagePreviewTimelineFixture.ReadingAnchor(
+                itemID: renderedFallbackID,
+                viewportRelativeY: originalAnchor.viewportRelativeY
+            ),
+            collectionView: remounted.collectionView,
+            coordinator: remounted.coordinator
+        )
+    }
+
+    @MainActor
+    @Test("interrupted image presentation cleanup releases viewport ownership")
+    func interruptedImagePresentationCleanupReleasesViewportOwnership() throws {
+        let fixture = ImagePreviewTimelineFixture()
+        defer { fixture.teardown() }
+
+        _ = try fixture.exerciseUpThenDownAndCaptureMidHistoryAnchor()
+        let navigation = try #require(
+            FullScreenImageViewController.makeSlideDownController(image: makeTestImage())
+                as? ImagePreviewNavigationController
+        )
+        navigation.preserveTimelineViewport(from: fixture.host)
+
+        // UIKit transition cancellation is routed through this lifecycle seam.
+        navigation.presentationDidAbort()
+
+        fixture.scrollController.updateNearBottom(true)
+        #expect(fixture.scrollController.isCurrentlyNearBottom)
     }
 
     @MainActor
@@ -547,17 +686,29 @@ private final class ImagePreviewTimelineFixture {
     let windowed: WindowedTimelineHarness
     let host: UIViewController
     let sourceView = UIView()
+    let items: [ChatItem]
+    let fullTimelineItemIDs: [String]
 
     var collectionView: UICollectionView { windowed.collectionView }
     var coordinator: ChatTimelineCollectionHost.Controller { windowed.coordinator }
     var scrollController: ChatScrollController { windowed.scrollController }
 
-    init() {
+    init(
+        host: UIViewController = UIViewController(),
+        items: [ChatItem]? = nil,
+        fullTimelineItemIDs: [String]? = nil
+    ) {
+        let resolvedItems = items ?? makeImagePreviewTimelineItems(
+            prefix: "assistant-history",
+            count: 90
+        )
+        self.items = resolvedItems
+        self.fullTimelineItemIDs = fullTimelineItemIDs ?? resolvedItems.map(\.id)
         windowed = makeWindowedTimelineHarness(
             sessionId: "image-preview-return-position-\(UUID().uuidString)",
             useAnchoredCollectionView: true
         )
-        host = UIViewController()
+        self.host = host
         host.loadViewIfNeeded()
         host.view.frame = windowed.window.bounds
 
@@ -573,17 +724,20 @@ private final class ImagePreviewTimelineFixture {
         windowed.window.rootViewController = host
         windowed.window.makeKeyAndVisible()
 
-        let items = (0 ..< 90).map { index in
-            ChatItem.assistantMessage(
-                id: "assistant-history-\(index)",
-                text: Array(
-                    repeating: "Stable assistant history row \(index) with deterministic wrapped text.",
-                    count: 4
-                ).joined(separator: "\n"),
-                timestamp: Date(timeIntervalSince1970: TimeInterval(index))
-            )
-        }
-        windowed.applyItems(items, isBusy: false)
+        let configuration = makeTimelineConfiguration(
+            items: resolvedItems,
+            fullTimelineItemIDs: self.fullTimelineItemIDs,
+            isBusy: false,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            toolSegmentStore: windowed.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer
+        )
+        coordinator.apply(configuration: configuration, to: collectionView)
         settleTimelineLayout(collectionView, passes: 4)
     }
 
@@ -640,18 +794,82 @@ private final class ImagePreviewTimelineFixture {
         scrollController.updateNearBottom(true)
     }
 
-    func simulatePreviewReturnLosingDetachedPosition() {
-        prepareAttachedTail()
+    func remountTimelineWhilePreviewIsOpen(
+        items replacementItems: [ChatItem]? = nil,
+        fullTimelineItemIDs replacementFullTimelineItemIDs: [String]? = nil
+    ) -> (
+        collectionView: UICollectionView,
+        coordinator: ChatTimelineCollectionHost.Controller
+    ) {
+        let replacement = AnchoredCollectionView(
+            frame: host.view.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        replacement.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        replacement.accessibilityIdentifier = "chat.timeline"
+
+        let replacementCoordinator = ChatTimelineCollectionHost.Controller()
+        replacementCoordinator.configureDataSource(collectionView: replacement)
+        replacement.delegate = replacementCoordinator
+        host.view.insertSubview(replacement, belowSubview: sourceView)
+        collectionView.removeFromSuperview()
+
+        let configuration = makeTimelineConfiguration(
+            items: replacementItems ?? items,
+            fullTimelineItemIDs: replacementFullTimelineItemIDs ?? fullTimelineItemIDs,
+            isBusy: false,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            toolSegmentStore: windowed.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer
+        )
+        replacementCoordinator.apply(configuration: configuration, to: replacement)
+        replacement.layoutIfNeeded()
+        return (replacement, replacementCoordinator)
     }
 
-    func simulatePreviewReturnLosingAttachedTail() {
-        collectionView.scrollToItem(
-            at: IndexPath(item: 22, section: 0),
-            at: .top,
-            animated: false
+    func waitForPreviewPresentation() async -> Bool {
+        let presented = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            guard let presented = self.host.presentedViewController else { return false }
+            return presented.viewIfLoaded?.window != nil
+                && presented.transitionCoordinator == nil
+        }
+        await Task.yield()
+        return presented
+    }
+
+    func assertReadingAnchorWithoutDrivingLayout(_ anchor: ReadingAnchor, phase: String) {
+        guard let index = coordinator.currentIDs.firstIndex(of: anchor.itemID),
+              let attributes = collectionView.layoutAttributesForItem(
+                at: IndexPath(item: index, section: 0)
+              ) else {
+            Issue.record("Stable timeline item \(anchor.itemID) disappeared during image preview \(phase)")
+            return
+        }
+
+        let actualY = attributes.frame.minY - collectionView.contentOffset.y
+        #expect(
+            abs(actualY - anchor.viewportRelativeY) <= 1,
+            "Image preview \(phase) moved \(anchor.itemID) from viewport y=\(anchor.viewportRelativeY) to y=\(actualY)"
         )
-        settleTimelineLayout(collectionView, passes: 2)
-        scrollController.detachFromBottomForUserScroll()
+        #expect(!scrollController.isCurrentlyNearBottom)
+    }
+
+    func assertAttachedToTailWithoutDrivingLayout(phase: String) {
+        let insets = collectionView.adjustedContentInset
+        let maxOffsetY = max(
+            -insets.top,
+            collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
+        )
+        #expect(scrollController.isCurrentlyNearBottom)
+        #expect(
+            abs(collectionView.contentOffset.y - maxOffsetY) <= 1,
+            "Image preview \(phase) moved the live tail from y=\(maxOffsetY) to y=\(collectionView.contentOffset.y)"
+        )
     }
 
     func waitForPreviewDismissal() async -> Bool {
@@ -663,17 +881,23 @@ private final class ImagePreviewTimelineFixture {
         return dismissed
     }
 
-    func assertReadingAnchor(_ anchor: ReadingAnchor) {
-        settleTimelineLayout(collectionView, passes: 4)
-        guard let index = coordinator.currentIDs.firstIndex(of: anchor.itemID),
-              let attributes = collectionView.layoutAttributesForItem(
+    func assertReadingAnchor(
+        _ anchor: ReadingAnchor,
+        collectionView: UICollectionView? = nil,
+        coordinator: ChatTimelineCollectionHost.Controller? = nil
+    ) {
+        let targetCollectionView = collectionView ?? self.collectionView
+        let targetCoordinator = coordinator ?? self.coordinator
+        settleTimelineLayout(targetCollectionView, passes: 4)
+        guard let index = targetCoordinator.currentIDs.firstIndex(of: anchor.itemID),
+              let attributes = targetCollectionView.layoutAttributesForItem(
                 at: IndexPath(item: index, section: 0)
               ) else {
             Issue.record("Stable timeline item \(anchor.itemID) disappeared after image preview dismissal")
             return
         }
 
-        let actualY = attributes.frame.minY - collectionView.contentOffset.y
+        let actualY = attributes.frame.minY - targetCollectionView.contentOffset.y
         #expect(
             abs(actualY - anchor.viewportRelativeY) <= 1,
             "Image return moved \(anchor.itemID) from viewport y=\(anchor.viewportRelativeY) to y=\(actualY)"
@@ -696,6 +920,32 @@ private final class ImagePreviewTimelineFixture {
         host.dismiss(animated: false)
         windowed.window.isHidden = true
         windowed.window.rootViewController = nil
+    }
+}
+
+@MainActor
+private final class RejectingImagePreviewHostController: UIViewController {
+    private(set) var rejectedController: UIViewController?
+
+    override func present(
+        _ viewControllerToPresent: UIViewController,
+        animated flag: Bool,
+        completion: (() -> Void)? = nil
+    ) {
+        rejectedController = viewControllerToPresent
+    }
+}
+
+private func makeImagePreviewTimelineItems(prefix: String, count: Int) -> [ChatItem] {
+    (0..<count).map { index in
+        ChatItem.assistantMessage(
+            id: "\(prefix)-\(index)",
+            text: Array(
+                repeating: "Stable assistant history row \(index) with deterministic wrapped text.",
+                count: 4
+            ).joined(separator: "\n"),
+            timestamp: Date(timeIntervalSince1970: TimeInterval(index))
+        )
     }
 }
 

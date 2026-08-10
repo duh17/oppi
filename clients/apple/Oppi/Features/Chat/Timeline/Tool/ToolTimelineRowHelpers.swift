@@ -8,6 +8,103 @@ enum ToolTimelineRowPresentationHelpers {
     static var enclosingLayoutInvalidationHookForTesting: (() -> Void)?
 #endif
 
+    @MainActor
+    private final class DetachedLayoutViewportAnchor {
+        private weak var collectionView: UICollectionView?
+        private weak var controller: ChatTimelineCollectionHost.Controller?
+        private let itemID: String?
+        private let indexPath: IndexPath
+        private let relativeY: CGFloat
+
+        init(
+            collectionView: UICollectionView,
+            controller: ChatTimelineCollectionHost.Controller?,
+            itemID: String?,
+            indexPath: IndexPath,
+            relativeY: CGFloat
+        ) {
+            self.collectionView = collectionView
+            self.controller = controller
+            self.itemID = itemID
+            self.indexPath = indexPath
+            self.relativeY = relativeY
+        }
+
+        func restore() {
+            guard let collectionView,
+                  !ToolTimelineRowPresentationHelpers.isUserInteracting(with: collectionView) else {
+                return
+            }
+
+            let resolvedIndexPath: IndexPath
+            if let controller,
+               let itemID,
+               let index = controller.currentIDs.firstIndex(of: itemID) {
+                resolvedIndexPath = IndexPath(item: index, section: 0)
+            } else {
+                resolvedIndexPath = indexPath
+            }
+
+            guard let attributes = collectionView.layoutAttributesForItem(at: resolvedIndexPath) else {
+                return
+            }
+            _ = TimelineOffsetController.apply(
+                targetOffsetY: attributes.frame.minY - relativeY,
+                reason: .viewportPreservation,
+                collectionView: collectionView,
+                scrollController: controller?.scrollController
+            )
+
+            if let anchoredCollectionView = collectionView as? AnchoredCollectionView {
+                anchoredCollectionView.isDetachedFromBottom = true
+                anchoredCollectionView.captureDetachedAnchor()
+            }
+            controller?.updateScrollState(collectionView, preserveDetachedState: true)
+        }
+    }
+
+    @MainActor
+    private final class AttachedLayoutTail {
+        private weak var collectionView: UICollectionView?
+        private weak var controller: ChatTimelineCollectionHost.Controller?
+
+        init(
+            collectionView: UICollectionView,
+            controller: ChatTimelineCollectionHost.Controller?
+        ) {
+            self.collectionView = collectionView
+            self.controller = controller
+        }
+
+        func restore() {
+            guard let collectionView,
+                  !ToolTimelineRowPresentationHelpers.isUserInteracting(
+                    with: collectionView,
+                    scrollController: controller?.scrollController
+                  ) else {
+                return
+            }
+
+            let insets = collectionView.adjustedContentInset
+            let targetOffsetY = max(
+                -insets.top,
+                collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
+            )
+            let didApply = TimelineOffsetController.apply(
+                targetOffsetY: targetOffsetY,
+                reason: .idleBottomSettle,
+                collectionView: collectionView,
+                scrollController: controller?.scrollController
+            )
+            guard didApply || abs(collectionView.contentOffset.y - targetOffsetY) <= 0.5 else {
+                return
+            }
+
+            controller?.scrollController?.updateNearBottom(true)
+            controller?.updateScrollState(collectionView)
+        }
+    }
+
     static func animateInPlaceReveal(_ view: UIView, shouldAnimate: Bool) {
         guard shouldAnimate else {
             resetRevealAppearance(view)
@@ -198,7 +295,11 @@ enum ToolTimelineRowPresentationHelpers {
                 return
             }
 
-            invalidateCollectionViewLayout(collectionView, allowDetachedAnchorInvalidation: true)
+            invalidateCollectionViewLayout(
+                collectionView,
+                allowDetachedAnchorInvalidation: true,
+                preservingViewportAround: sourceView
+            )
             return
         }
     }
@@ -227,76 +328,121 @@ enum ToolTimelineRowPresentationHelpers {
     private static var pendingInteractionInvalidations: Set<ObjectIdentifier> = []
     private static var pendingForcedInteractionInvalidations: Set<ObjectIdentifier> = []
 
+#if DEBUG
+    // periphery:ignore - deterministic pending-policy coverage in ToolExpandedSurfaceHostTests
+    static func forcedInteractionInvalidationIsPendingForTesting(
+        _ collectionView: UICollectionView
+    ) -> Bool {
+        pendingForcedInteractionInvalidations.contains(ObjectIdentifier(collectionView))
+    }
+#endif
+
     private static func scheduleInvalidationWhenInteractionEnds(for collectionView: UICollectionView) {
         let identifier = ObjectIdentifier(collectionView)
         guard pendingInteractionInvalidations.insert(identifier).inserted else {
             return
         }
-        recheckInteractionAndInvalidateWhenIdle(
+        recheckOrdinaryInteractionAndInvalidateWhenIdle(
             collectionView: collectionView,
             identifier: identifier,
-            retriesRemaining: 180,
-            allowDetachedAnchorInvalidation: false
+            retriesRemaining: 180
         )
     }
 
-    private static func scheduleForcedInvalidationWhenInteractionEnds(for collectionView: UICollectionView) {
-        let identifier = ObjectIdentifier(collectionView)
-        guard pendingForcedInteractionInvalidations.insert(identifier).inserted else {
-            return
-        }
-        recheckInteractionAndInvalidateWhenIdle(
-            collectionView: collectionView,
-            identifier: identifier,
-            retriesRemaining: 180,
-            allowDetachedAnchorInvalidation: true
-        )
-    }
-
-    private static func recheckInteractionAndInvalidateWhenIdle(
+    private static func recheckOrdinaryInteractionAndInvalidateWhenIdle(
         collectionView: UICollectionView,
         identifier: ObjectIdentifier,
-        retriesRemaining: Int,
-        allowDetachedAnchorInvalidation: Bool
+        retriesRemaining: Int
     ) {
         guard retriesRemaining > 0 else {
             pendingInteractionInvalidations.remove(identifier)
-            pendingForcedInteractionInvalidations.remove(identifier)
             return
         }
 
         guard isUserInteracting(with: collectionView) else {
             pendingInteractionInvalidations.remove(identifier)
-            pendingForcedInteractionInvalidations.remove(identifier)
-            invalidateCollectionViewLayout(
-                collectionView,
-                allowDetachedAnchorInvalidation: allowDetachedAnchorInvalidation
-            )
+            invalidateCollectionViewLayout(collectionView)
             return
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak collectionView] in
             guard let collectionView else {
                 pendingInteractionInvalidations.remove(identifier)
-                pendingForcedInteractionInvalidations.remove(identifier)
                 return
             }
-            recheckInteractionAndInvalidateWhenIdle(
+            recheckOrdinaryInteractionAndInvalidateWhenIdle(
                 collectionView: collectionView,
                 identifier: identifier,
-                retriesRemaining: retriesRemaining - 1,
-                allowDetachedAnchorInvalidation: allowDetachedAnchorInvalidation
+                retriesRemaining: retriesRemaining - 1
             )
         }
     }
 
-    private static func isUserInteracting(with collectionView: UICollectionView) -> Bool {
-        collectionView.isTracking || collectionView.isDragging || collectionView.isDecelerating
+    private static func scheduleForcedInvalidationWhenInteractionEnds(
+        for collectionView: UICollectionView
+    ) {
+        let identifier = ObjectIdentifier(collectionView)
+        guard pendingForcedInteractionInvalidations.insert(identifier).inserted else {
+            return
+        }
+        recheckForcedInteractionAndInvalidateWhenIdle(
+            collectionView: collectionView,
+            identifier: identifier,
+            delayMilliseconds: 16
+        )
+    }
+
+    private static func recheckForcedInteractionAndInvalidateWhenIdle(
+        collectionView: UICollectionView,
+        identifier: ObjectIdentifier,
+        delayMilliseconds: Int
+    ) {
+        guard isUserInteracting(with: collectionView) else {
+            pendingForcedInteractionInvalidations.remove(identifier)
+            invalidateCollectionViewLayout(
+                collectionView,
+                allowDetachedAnchorInvalidation: true,
+                preserveCurrentViewport: true
+            )
+            return
+        }
+
+        // Forced media settlement remains pending for the full interaction,
+        // but backs off to four checks per second so a long hold or
+        // deceleration does not create hot unbounded main-queue work.
+        let nextDelayMilliseconds = min(250, delayMilliseconds * 2)
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(delayMilliseconds)
+        ) { [weak collectionView] in
+            guard let collectionView else {
+                pendingForcedInteractionInvalidations.remove(identifier)
+                return
+            }
+            recheckForcedInteractionAndInvalidateWhenIdle(
+                collectionView: collectionView,
+                identifier: identifier,
+                delayMilliseconds: nextDelayMilliseconds
+            )
+        }
+    }
+
+    private static func isUserInteracting(
+        with collectionView: UICollectionView,
+        scrollController: ChatScrollController? = nil
+    ) -> Bool {
+        let resolvedScrollController = scrollController
+            ?? (collectionView.delegate as? ChatTimelineCollectionHost.Controller)?.scrollController
+        return resolvedScrollController?.isUserInteracting == true
+            || collectionView.isTracking
+            || collectionView.isDragging
+            || collectionView.isDecelerating
     }
 
     private static func invalidateCollectionViewLayout(
         _ collectionView: UICollectionView,
-        allowDetachedAnchorInvalidation: Bool = false
+        allowDetachedAnchorInvalidation: Bool = false,
+        preservingViewportAround sourceView: UIView? = nil,
+        preserveCurrentViewport: Bool = false
     ) {
         // Passive snapshot updates skip full invalidation while an anchor is
         // active because the snapshot path already measured the changed cell.
@@ -315,10 +461,102 @@ enum ToolTimelineRowPresentationHelpers {
             }
         }
 
+        let shouldPreserveViewport = preserveCurrentViewport || sourceView != nil
+        let viewportAnchor = shouldPreserveViewport
+            ? captureDetachedLayoutViewportAnchor(in: collectionView, excluding: sourceView)
+            : nil
+        let attachedTail = shouldPreserveViewport
+            ? captureAttachedLayoutTail(in: collectionView)
+            : nil
         UIView.performWithoutAnimation {
             collectionView.collectionViewLayout.invalidateLayout()
             collectionView.layoutIfNeeded()
+            if let viewportAnchor {
+                viewportAnchor.restore()
+            } else {
+                attachedTail?.restore()
+            }
         }
+    }
+
+    private static func captureAttachedLayoutTail(
+        in collectionView: UICollectionView
+    ) -> AttachedLayoutTail? {
+        guard collectionView.window != nil else { return nil }
+        let controller = collectionView.delegate as? ChatTimelineCollectionHost.Controller
+        let isAttached = controller?.scrollController?.isCurrentlyNearBottom
+            ?? !((collectionView as? AnchoredCollectionView)?.isDetachedFromBottom ?? false)
+        guard isAttached,
+              !isUserInteracting(
+                with: collectionView,
+                scrollController: controller?.scrollController
+              ) else {
+            return nil
+        }
+        return AttachedLayoutTail(collectionView: collectionView, controller: controller)
+    }
+
+    private static func captureDetachedLayoutViewportAnchor(
+        in collectionView: UICollectionView,
+        excluding sourceView: UIView?
+    ) -> DetachedLayoutViewportAnchor? {
+        let controller = collectionView.delegate as? ChatTimelineCollectionHost.Controller
+        let isDetached: Bool
+        if let scrollController = controller?.scrollController {
+            isDetached = !scrollController.isCurrentlyNearBottom
+        } else {
+            isDetached = (collectionView as? AnchoredCollectionView)?.isDetachedFromBottom ?? false
+        }
+        guard isDetached,
+              !isUserInteracting(
+                with: collectionView,
+                scrollController: controller?.scrollController
+              ) else {
+            return nil
+        }
+
+        var sourceAncestor: UIView? = sourceView
+        var sourceCell: UICollectionViewCell?
+        while let current = sourceAncestor, current !== collectionView {
+            if let cell = current as? UICollectionViewCell {
+                sourceCell = cell
+                break
+            }
+            sourceAncestor = current.superview
+        }
+        let sourceIndexPath = sourceCell.flatMap { collectionView.indexPath(for: $0) }
+        let visibleRect = CGRect(origin: collectionView.contentOffset, size: collectionView.bounds.size)
+        let candidates = collectionView.indexPathsForVisibleItems.compactMap {
+            indexPath -> (IndexPath, UICollectionViewLayoutAttributes)? in
+            guard indexPath != sourceIndexPath,
+                  let attributes = collectionView.layoutAttributesForItem(at: indexPath),
+                  attributes.frame.intersects(visibleRect) else {
+                return nil
+            }
+            return (indexPath, attributes)
+        }.sorted { $0.1.frame.minY < $1.1.frame.minY }
+
+        let selected: (IndexPath, UICollectionViewLayoutAttributes)?
+        if let sourceIndexPath {
+            selected = candidates.first { $0.0.item > sourceIndexPath.item }
+                ?? candidates.last { $0.0.item < sourceIndexPath.item }
+        } else {
+            selected = candidates.first
+        }
+        guard let selected else { return nil }
+
+        let itemID = controller.flatMap { controller in
+            selected.0.item < controller.currentIDs.count
+                ? controller.currentIDs[selected.0.item]
+                : nil
+        }
+        return DetachedLayoutViewportAnchor(
+            collectionView: collectionView,
+            controller: controller,
+            itemID: itemID,
+            indexPath: selected.0,
+            relativeY: selected.1.frame.minY - collectionView.contentOffset.y
+        )
     }
 }
 

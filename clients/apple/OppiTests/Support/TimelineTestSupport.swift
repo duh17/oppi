@@ -449,6 +449,7 @@ func makeTimelineConfiguration(
             isDone: true
         ),
     ],
+    fullTimelineItemIDs: [String]? = nil,
     hiddenCount: Int = 0,
     renderWindowStep: Int = 50,
     isBusy: Bool = false,
@@ -471,6 +472,7 @@ func makeTimelineConfiguration(
 ) -> ChatTimelineCollectionHost.Configuration {
     ChatTimelineCollectionHost.Configuration(
         items: items,
+        fullTimelineItemIDs: fullTimelineItemIDs,
         hiddenCount: hiddenCount,
         renderWindowStep: renderWindowStep,
         isBusy: isBusy,

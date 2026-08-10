@@ -2,75 +2,64 @@ import UIKit
 
 @MainActor
 enum TimelineScrollCoordinator {
-    /// One-shot reading anchor captured before a modal image preview covers chat.
-    /// Stable item identity makes restoration resilient to row remeasurement and
-    /// timeline growth while the preview is open.
+    /// Reading anchor captured before a modal image preview covers chat.
+    /// Stable item identity and current-window lookup make restoration resilient
+    /// to row remeasurement and timeline remounting while the preview is open.
     @MainActor
     final class ImagePreviewViewportRestoration {
+        private weak var window: UIWindow?
         private weak var collectionView: UICollectionView?
         private weak var controller: ChatTimelineCollectionHost.Controller?
         private weak var scrollController: ChatScrollController?
         private let sessionId: String
-        private let itemID: String?
-        private let viewportRelativeY: CGFloat?
+        private let snapshot: TimelineViewportSnapshot?
         private let wasAttachedToTail: Bool
-        private var didRestore = false
+        private let preservationToken: UInt
+        private var isFinishing = false
+        private var isFinished = false
 
         fileprivate init(
+            window: UIWindow,
             collectionView: UICollectionView,
             controller: ChatTimelineCollectionHost.Controller,
             scrollController: ChatScrollController,
             sessionId: String,
-            itemID: String?,
-            viewportRelativeY: CGFloat?,
-            wasAttachedToTail: Bool
+            snapshot: TimelineViewportSnapshot?,
+            wasAttachedToTail: Bool,
+            preservationToken: UInt
         ) {
+            self.window = window
             self.collectionView = collectionView
             self.controller = controller
             self.scrollController = scrollController
             self.sessionId = sessionId
-            self.itemID = itemID
-            self.viewportRelativeY = viewportRelativeY
+            self.snapshot = snapshot
             self.wasAttachedToTail = wasAttachedToTail
+            self.preservationToken = preservationToken
         }
 
         func restore() {
-            guard !didRestore else { return }
-            didRestore = true
-
-            guard let collectionView,
-                  let controller,
-                  let scrollController,
-                  controller.collectionView === collectionView,
-                  controller.sessionId == sessionId,
-                  collectionView.window != nil else {
+            guard !isFinished,
+                  let resolved = resolveCurrentTimeline() else { return }
+            let (collectionView, controller, scrollController) = resolved
+            guard scrollController.ownsImagePreviewViewportPreservation(
+                preservationToken
+            ) else {
+                return
+            }
+            guard !TimelineScrollCoordinator.isUserInteracting(
+                with: collectionView,
+                scrollController: scrollController
+            ) else {
                 return
             }
 
             collectionView.layoutIfNeeded()
 
             if wasAttachedToTail {
-                if let tailID = controller.currentIDs.last {
-                    _ = TimelineScrollCoordinator.performScroll(
-                        ChatTimelineScrollCommand(
-                            id: tailID,
-                            anchor: .bottom,
-                            animated: false,
-                            nonce: 0
-                        ),
-                        in: collectionView,
-                        currentIDs: controller.currentIDs,
-                        sessionId: sessionId
-                    ) { [weak self, weak collectionView, weak controller, weak scrollController] in
-                        guard let self, let collectionView, let controller, let scrollController else { return }
-                        self.restoreAttachedTail(
-                            collectionView: collectionView,
-                            controller: controller,
-                            scrollController: scrollController,
-                            deferredPasses: 0
-                        )
-                    }
-                }
+                // Use the offset controller directly. `scrollToItem` can commit
+                // its own delayed offset after a dismissal-time touch begins,
+                // bypassing the queued-pass interaction guards below.
                 restoreAttachedTail(
                     collectionView: collectionView,
                     controller: controller,
@@ -80,67 +69,169 @@ enum TimelineScrollCoordinator {
                 return
             }
 
-            guard let itemID,
-                  let viewportRelativeY,
-                  let itemIndex = controller.currentIDs.firstIndex(of: itemID),
+            guard let snapshot,
+                  let fullOrderRestoration = TimelineViewportRestorationResolver.resolve(
+                    snapshot,
+                    availableFullTimelineItemIDs: controller.currentFullTimelineItemIDs
+                  ),
+                  let restoration = TimelineViewportRestorationResolver.resolveRenderedWindow(
+                    fullOrderRestoration,
+                    availableFullTimelineItemIDs: controller.currentFullTimelineItemIDs,
+                    renderedTimelineItemIDs: controller.currentIDs
+                  ),
+                  let itemIndex = controller.currentIDs.firstIndex(of: restoration.itemID),
                   let attributes = collectionView.layoutAttributesForItem(
                     at: IndexPath(item: itemIndex, section: 0)
                   ) else {
                 return
             }
 
-            // Re-entry can temporarily mark the timeline attached. Restore the
-            // captured user intent before the sole outer-offset writer runs.
-            scrollController.detachFromBottomForUserScroll()
+            let anchoredCollectionView = collectionView as? AnchoredCollectionView
+            anchoredCollectionView?.isDetachedFromBottom = false
+            anchoredCollectionView?.clearDetachedAnchor()
             _ = TimelineOffsetController.apply(
-                targetOffsetY: attributes.frame.minY - viewportRelativeY,
-                reason: .imagePreviewReturn,
+                targetOffsetY: attributes.frame.minY - restoration.relativeY,
+                reason: .viewportPreservation,
                 collectionView: collectionView,
                 scrollController: scrollController
             )
+            collectionView.layoutIfNeeded()
 
-            if let anchoredCollectionView = collectionView as? AnchoredCollectionView {
-                anchoredCollectionView.isDetachedFromBottom = true
-                anchoredCollectionView.captureDetachedAnchor()
+            anchoredCollectionView?.isDetachedFromBottom = true
+            anchoredCollectionView?.captureDetachedAnchor()
+            controller.updateScrollState(collectionView, preserveDetachedState: true)
+        }
+
+        func finish() {
+            guard !isFinished, !isFinishing else { return }
+            isFinishing = true
+
+            guard wasAttachedToTail,
+                  let resolved = resolveCurrentTimeline() else {
+                restore()
+                completeFinish()
+                return
             }
-            controller.updateScrollState(collectionView)
-            scrollController.detachFromBottomForUserScroll()
+            let (collectionView, controller, scrollController) = resolved
+            guard scrollController.ownsImagePreviewViewportPreservation(
+                preservationToken
+            ) else {
+                completeFinish()
+                return
+            }
+
+            restoreAttachedTail(
+                collectionView: collectionView,
+                controller: controller,
+                scrollController: scrollController,
+                deferredPasses: 2,
+                completion: { [weak self] in self?.completeFinish() }
+            )
+        }
+
+        func cancel() {
+            guard !isFinished else { return }
+            isFinishing = false
+            isFinished = true
+            scrollController?.endImagePreviewViewportPreservation(preservationToken)
+        }
+
+        private func completeFinish() {
+            guard !isFinished else { return }
+            isFinishing = false
+            isFinished = true
+            scrollController?.endImagePreviewViewportPreservation(preservationToken)
+        }
+
+        private func resolveCurrentTimeline() -> (
+            UICollectionView,
+            ChatTimelineCollectionHost.Controller,
+            ChatScrollController
+        )? {
+            if let collectionView,
+               let controller,
+               let scrollController,
+               controller.collectionView === collectionView,
+               controller.sessionId == sessionId,
+               collectionView.window != nil {
+                return (collectionView, controller, scrollController)
+            }
+
+            guard let window,
+                  let collectionView = TimelineScrollCoordinator.visibleTimelineCollectionView(in: window),
+                  let controller = collectionView.delegate as? ChatTimelineCollectionHost.Controller,
+                  let scrollController = controller.scrollController,
+                  controller.sessionId == sessionId else {
+                return nil
+            }
+            self.collectionView = collectionView
+            self.controller = controller
+            self.scrollController = scrollController
+            return (collectionView, controller, scrollController)
         }
 
         private func restoreAttachedTail(
             collectionView: UICollectionView,
             controller: ChatTimelineCollectionHost.Controller,
             scrollController: ChatScrollController,
-            deferredPasses: Int
+            deferredPasses: Int,
+            completion: (@MainActor () -> Void)? = nil
         ) {
-            guard controller.collectionView === collectionView,
+            guard scrollController.ownsImagePreviewViewportPreservation(
+                preservationToken
+            ),
+                  controller.collectionView === collectionView,
                   controller.sessionId == sessionId,
-                  collectionView.window != nil else {
+                  collectionView.window != nil,
+                  !TimelineScrollCoordinator.isUserInteracting(
+                    with: collectionView,
+                    scrollController: scrollController
+                  ) else {
+                completion?()
                 return
             }
 
             collectionView.layoutIfNeeded()
-            scrollController.updateNearBottom(true)
             let insets = collectionView.adjustedContentInset
-            _ = TimelineOffsetController.apply(
-                targetOffsetY: max(
-                    -insets.top,
-                    collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
-                ),
-                reason: .imagePreviewReturn,
+            let targetOffsetY = max(
+                -insets.top,
+                collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
+            )
+            let didApply = TimelineOffsetController.apply(
+                targetOffsetY: targetOffsetY,
+                reason: .viewportPreservation,
                 collectionView: collectionView,
                 scrollController: scrollController
             )
+            guard scrollController.ownsImagePreviewViewportPreservation(
+                preservationToken
+            ),
+                  !TimelineScrollCoordinator.isUserInteracting(
+                    with: collectionView,
+                    scrollController: scrollController
+                  ),
+                  didApply || abs(collectionView.contentOffset.y - targetOffsetY) <= 0.5 else {
+                completion?()
+                return
+            }
+            scrollController.updateNearBottom(true)
             controller.updateScrollState(collectionView)
 
-            guard deferredPasses > 0 else { return }
+            guard deferredPasses > 0 else {
+                completion?()
+                return
+            }
             DispatchQueue.main.async { [weak self, weak collectionView, weak controller, weak scrollController] in
-                guard let self, let collectionView, let controller, let scrollController else { return }
+                guard let self, let collectionView, let controller, let scrollController else {
+                    completion?()
+                    return
+                }
                 self.restoreAttachedTail(
                     collectionView: collectionView,
                     controller: controller,
                     scrollController: scrollController,
-                    deferredPasses: deferredPasses - 1
+                    deferredPasses: deferredPasses - 1,
+                    completion: completion
                 )
             }
         }
@@ -158,23 +249,35 @@ enum TimelineScrollCoordinator {
         }
 
         collectionView.layoutIfNeeded()
+        controller.updateScrollState(collectionView, preserveDetachedState: true)
         let wasAttachedToTail = scrollController.isCurrentlyNearBottom
-        let anchor = wasAttachedToTail
-            ? nil
-            : firstStableVisibleAnchor(in: collectionView, currentIDs: controller.currentIDs)
+        let preservation = scrollController.beginImagePreviewViewportPreservation(
+            wasAttachedToTail: wasAttachedToTail
+        )
 
         return ImagePreviewViewportRestoration(
+            window: window,
             collectionView: collectionView,
             controller: controller,
             scrollController: scrollController,
             sessionId: controller.sessionId,
-            itemID: anchor?.itemID,
-            viewportRelativeY: anchor?.viewportRelativeY,
-            wasAttachedToTail: wasAttachedToTail
+            snapshot: preservation.snapshot,
+            wasAttachedToTail: wasAttachedToTail,
+            preservationToken: preservation.token
         )
     }
 
-    private static func visibleTimelineCollectionView(in root: UIView) -> UICollectionView? {
+    private static func isUserInteracting(
+        with collectionView: UICollectionView,
+        scrollController: ChatScrollController?
+    ) -> Bool {
+        scrollController?.isUserInteracting == true
+            || collectionView.isTracking
+            || collectionView.isDragging
+            || collectionView.isDecelerating
+    }
+
+    fileprivate static func visibleTimelineCollectionView(in root: UIView) -> UICollectionView? {
         if let collectionView = root as? UICollectionView,
            collectionView.accessibilityIdentifier == "chat.timeline",
            collectionView.window != nil,
@@ -187,33 +290,6 @@ enum TimelineScrollCoordinator {
             if let collectionView = visibleTimelineCollectionView(in: child) {
                 return collectionView
             }
-        }
-        return nil
-    }
-
-    private static func firstStableVisibleAnchor(
-        in collectionView: UICollectionView,
-        currentIDs: [String]
-    ) -> (itemID: String, viewportRelativeY: CGFloat)? {
-        let sortedVisible = collectionView.indexPathsForVisibleItems.sorted { lhs, rhs in
-            let lhsY = collectionView.layoutAttributesForItem(at: lhs)?.frame.minY
-                ?? .greatestFiniteMagnitude
-            let rhsY = collectionView.layoutAttributesForItem(at: rhs)?.frame.minY
-                ?? .greatestFiniteMagnitude
-            return lhsY < rhsY
-        }
-
-        for indexPath in sortedVisible where indexPath.item < currentIDs.count {
-            let itemID = currentIDs[indexPath.item]
-            guard itemID != ChatTimelineCollectionHost.loadMoreID,
-                  itemID != ChatTimelineCollectionHost.workingIndicatorID,
-                  let attributes = collectionView.layoutAttributesForItem(at: indexPath) else {
-                continue
-            }
-            return (
-                itemID,
-                attributes.frame.minY - collectionView.contentOffset.y
-            )
         }
         return nil
     }

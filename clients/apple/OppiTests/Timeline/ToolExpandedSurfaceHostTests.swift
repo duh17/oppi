@@ -545,9 +545,12 @@ struct ToolExpandedSurfaceHostTests {
                 cell.contentConfiguration = configuration
             } else {
                 cell.contentConfiguration = makeTimelineToolConfiguration(
-                    title: "read /tmp/after.txt",
+                    title: "read /tmp/\(itemID).txt",
                     expandedContent: .text(
-                        text: "This row must move down after the image grows while detached.",
+                        text: Array(
+                            repeating: "Stable trailing timeline context for \(itemID).",
+                            count: 5
+                        ).joined(separator: "\n"),
                         language: nil
                     ),
                     toolNamePrefix: "read",
@@ -563,14 +566,26 @@ struct ToolExpandedSurfaceHostTests {
 
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
-        snapshot.appendItems(["tool-image", "tool-after"])
+        snapshot.appendItems(
+            ["tool-image", "tool-stable"] + (0..<8).map { "tool-tail-\($0)" }
+        )
         await dataSource.apply(snapshot, animatingDifferences: false)
         hostController.view.layoutIfNeeded()
         collectionView.layoutIfNeeded()
 
         let firstIP = IndexPath(item: 0, section: 0)
+        let stableIP = IndexPath(item: 1, section: 0)
         let initialFirstHeight = try #require(
             collectionView.layoutAttributesForItem(at: firstIP)?.frame.height
+        )
+        let stableViewportYBefore = try #require(
+            collectionView.layoutAttributesForItem(at: stableIP)?.frame.minY
+        ) - collectionView.contentOffset.y
+        #expect(
+            collectionView.bounds.contains(
+                CGPoint(x: collectionView.bounds.midX, y: stableViewportYBefore)
+            ),
+            "Stable row after the image must begin visible before gated decode"
         )
 
         collectionView.isDetachedFromBottom = true
@@ -622,6 +637,179 @@ struct ToolExpandedSurfaceHostTests {
         #expect(
             reflowed,
             "Detached read-tool image stayed cut off after decode; initialRow=\(initialFirstHeight), finalRow=\(finalFirstHeight), previewHeight=\(finalPreviewHeight)"
+        )
+        let stableViewportYAfter = try #require(
+            collectionView.layoutAttributesForItem(at: stableIP)?.frame.minY
+        ) - collectionView.contentOffset.y
+        #expect(
+            abs(stableViewportYAfter - stableViewportYBefore) <= 1,
+            "Gated read-image growth moved stable row from viewport y=\(stableViewportYBefore) to y=\(stableViewportYAfter)"
+        )
+    }
+
+    @Test func readMediaImageGrowthKeepsAttachedReaderOnActualTail() async throws {
+        let hostSize = CGSize(width: 390, height: 700)
+        let imageData = try #require(
+            makeReadToolTestImage(size: CGSize(width: 80, height: 320)).pngData()
+        )
+        let attachmentID = "att-attached-tail-\(UUID().uuidString)"
+        let gate = AttachmentFetchGate(data: imageData)
+        let attachment = ToolPresentationBuilder.ToolMediaAttachment(
+            kind: "image",
+            id: attachmentID,
+            mimeType: "image/png",
+            fileName: "attached-tail.png",
+            sizeBytes: imageData.count,
+            width: nil,
+            height: nil
+        )
+        let imageConfiguration = makeTimelineToolConfiguration(
+            title: "read /tmp/attached-tail.png",
+            expandedContent: .readMedia(
+                output: "",
+                filePath: "/tmp/attached-tail.png",
+                startLine: 1,
+                attachments: [attachment]
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        ).withSessionAttachmentFetcher { id in
+            #expect(id == attachmentID)
+            return await gate.fetch()
+        }
+        let stableConfiguration = makeTimelineToolConfiguration(
+            title: "read /tmp/context.txt",
+            expandedContent: .text(
+                text: Array(repeating: "Stable attached-tail context.", count: 6).joined(separator: "\n"),
+                language: nil
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+
+        let collectionView = AnchoredCollectionView(
+            frame: CGRect(origin: .zero, size: hostSize),
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        let hostController = UIViewController()
+        hostController.view.frame = CGRect(origin: .zero, size: hostSize)
+        hostController.view.addSubview(collectionView)
+        collectionView.frame = hostController.view.bounds
+        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let ids = (0..<6).map { "tool-context-\($0)" } + ["tool-image", "tool-after"]
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        let scrollController = ChatScrollController()
+        coordinator.collectionView = collectionView
+        coordinator.currentIDs = ids
+        coordinator.scrollController = scrollController
+        coordinator.sessionId = "attached-image-growth"
+        coordinator.isTimelineBusy = true
+        collectionView.delegate = coordinator
+
+        let registration = UICollectionView.CellRegistration<SafeSizingCell, String> { cell, _, itemID in
+            cell.contentConfiguration = itemID == "tool-image"
+                ? imageConfiguration
+                : stableConfiguration
+        }
+        let dataSource = UICollectionViewDiffableDataSource<Int, String>(collectionView: collectionView) {
+            cv, indexPath, itemID in
+            cv.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: itemID)
+        }
+        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems(ids)
+        await dataSource.apply(snapshot, animatingDifferences: false)
+        hostController.view.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+        collectionView.scrollToItem(
+            at: IndexPath(item: ids.count - 1, section: 0),
+            at: .bottom,
+            animated: false
+        )
+        collectionView.layoutIfNeeded()
+        scrollController.updateNearBottom(true)
+
+        let imageIndexPath = IndexPath(item: ids.count - 2, section: 0)
+        let initialImageHeight = try #require(
+            collectionView.layoutAttributesForItem(at: imageIndexPath)?.frame.height
+        )
+        let fetchStarted = await waitForTimelineCondition(timeoutMs: 1_200) {
+            await gate.fetchCount >= 1
+        }
+        #expect(fetchStarted)
+        await gate.release()
+
+        let stayedAtTail = await waitForTimelineCondition(timeoutMs: 2_400) { @MainActor in
+            guard let imageHeight = collectionView.layoutAttributesForItem(at: imageIndexPath)?.frame.height,
+                  imageHeight > initialImageHeight + 80 else {
+                return false
+            }
+            let maxOffsetY = TimelineOffsetController.clampedOffsetY(
+                .greatestFiniteMagnitude,
+                in: collectionView
+            )
+            return scrollController.isCurrentlyNearBottom
+                && abs(collectionView.contentOffset.y - maxOffsetY) <= 1
+        }
+
+        #expect(
+            stayedAtTail,
+            "Near-tail image growth must settle the attached reader on the actual live tail"
+        )
+    }
+
+    @Test func forcedImageInvalidationAggregatesTwoSourcesAcrossRecycleAndLongInteraction() async throws {
+        let layout = ToolInvalidationCountingLayout()
+        let collectionView = ToolInteractionTrackingCollectionView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 700),
+            collectionViewLayout: layout
+        )
+        var firstSource: UIView? = UIView(frame: CGRect(x: 0, y: 0, width: 40, height: 40))
+        weak var recycledFirstSource = firstSource
+        let secondSource = UIView(frame: CGRect(x: 0, y: 50, width: 40, height: 40))
+        collectionView.addSubview(try #require(firstSource))
+        collectionView.addSubview(secondSource)
+        collectionView.layoutIfNeeded()
+        await Task.yield()
+
+        collectionView.testIsTracking = true
+        let baselineInvalidations = layout.invalidationCount
+        ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(
+            startingAt: try #require(firstSource)
+        )
+        ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(
+            startingAt: secondSource
+        )
+        firstSource?.removeFromSuperview()
+        firstSource = nil
+        await Task.yield()
+        #expect(recycledFirstSource == nil)
+
+        try? await Task.sleep(for: .seconds(5))
+        #expect(
+            ToolTimelineRowPresentationHelpers.forcedInteractionInvalidationIsPendingForTesting(
+                collectionView
+            ),
+            "The collection-level reflow must outlive its first recycled source and the old retry window"
+        )
+        collectionView.testIsTracking = false
+
+        let invalidatedAfterInteraction = await waitForTimelineCondition(timeoutMs: 600) { @MainActor in
+            layout.invalidationCount > baselineInvalidations
+        }
+        #expect(
+            invalidatedAfterInteraction,
+            "One eventual full invalidation must cover both decoded rows after the long interaction"
+        )
+        let settledInvalidationCount = layout.invalidationCount
+        try? await Task.sleep(for: .milliseconds(350))
+        #expect(
+            layout.invalidationCount == settledInvalidationCount,
+            "The aggregated forced request must settle once without a hot loop"
         )
     }
 
@@ -1580,4 +1768,21 @@ struct ToolExpandedSurfaceHostTests {
   <text x="692" y="398" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="14" fill="#6b7280">May03</text>
 </svg>
 """#
+}
+
+@MainActor
+private final class ToolInvalidationCountingLayout: UICollectionViewFlowLayout {
+    private(set) var invalidationCount = 0
+
+    override func invalidateLayout() {
+        invalidationCount += 1
+        super.invalidateLayout()
+    }
+}
+
+@MainActor
+private final class ToolInteractionTrackingCollectionView: UICollectionView {
+    var testIsTracking = false
+
+    override var isTracking: Bool { testIsTracking }
 }

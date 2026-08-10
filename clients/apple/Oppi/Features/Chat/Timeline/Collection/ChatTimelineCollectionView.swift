@@ -303,6 +303,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let detachedProgrammaticCorrectionMaxDelta: CGFloat = 100
 
         var currentIDs: [String] = []
+        /// Complete stable timeline order, including rows outside the rendered
+        /// suffix window. Viewport fallback ordinals must use this coordinate space.
+        private(set) var currentFullTimelineItemIDs: [String] = []
         var currentItemByID: [String: ChatItem] = [:]
         private var previousItemByID: [String: ChatItem] = [:]
         private var previousStreamingAssistantID: String?
@@ -582,6 +585,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             context.apply(configuration: configuration)
             self.collectionView = collectionView
+            currentFullTimelineItemIDs = configuration.fullTimelineItemIDs
             scrollController?.updateTimelineItemOrder(configuration.fullTimelineItemIDs)
             onBackSwipe = configuration.onBackSwipe
             bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
