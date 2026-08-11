@@ -341,8 +341,6 @@ describe("oppi help", () => {
       "resume",
       "fork",
       "delete",
-      "changes",
-      "diff",
       "tool-output",
       "trace-page",
       "trace-outline",
@@ -352,8 +350,26 @@ describe("oppi help", () => {
     expect(text).toContain("Inspect history progressively");
     expect(text).toContain("--view outline");
     expect(text).not.toContain("messages <id>");
+    expect(text).not.toContain("changes <id>");
+    expect(text).not.toContain("diff <id>");
     expect(text).not.toContain("Not implemented in the CLI yet");
   });
+
+  it.each(["changes", "diff"] as const)(
+    "does not advertise or execute removed session %s command",
+    (command) => {
+      const nestedHelp = run(["session", command, "--help"]);
+      expect(nestedHelp.exitCode).toBe(1);
+      expect(nestedHelp.stdout).toContain(`No help topic for session ${command}`);
+
+      const execution = run(["session", command, "sess-1", "--json"]);
+      expect(execution.exitCode).toBe(1);
+      expect(JSON.parse(execution.stdout)).toMatchObject({
+        ok: false,
+        error: { message: expect.stringMatching(/^Usage: oppi session /) },
+      });
+    },
+  );
 
   it("documents the implemented saved Agent commands", () => {
     const { stdout, exitCode } = run(["agent", "help"]);
@@ -583,14 +599,6 @@ describe("oppi help", () => {
       {
         args: ["session", "delete", "--help"],
         expected: ["Usage: oppi session delete <id>", "--json"],
-      },
-      {
-        args: ["session", "changes", "--help"],
-        expected: ["Usage: oppi session changes <id>", "changed by a session"],
-      },
-      {
-        args: ["session", "diff", "--help"],
-        expected: ["Usage: oppi session diff <id>", "--path <path>"],
       },
       {
         args: ["session", "tool-output", "--help"],
@@ -1319,14 +1327,6 @@ describe("oppi local API commands", () => {
           json({ ok: true, deleted: true });
           return;
         }
-        if (method === "GET" && url.pathname === "/workspaces/ws-1/sessions/sess-1/changes") {
-          json({ files: [{ path: "server/src/cli.ts", status: "modified" }] });
-          return;
-        }
-        if (method === "GET" && url.pathname === "/workspaces/ws-1/sessions/sess-1/diff") {
-          json({ path: url.searchParams.get("path"), hunks: [] });
-          return;
-        }
         if (
           method === "GET" &&
           url.pathname === "/workspaces/ws-1/sessions/sess-1/tool-output/tool-1"
@@ -1658,24 +1658,6 @@ describe("oppi local API commands", () => {
         {
           args: ["session", "delete", "sess-1", "--json"],
           expected: ["GET /sessions/sess-1", "DELETE /workspaces/ws-1/sessions/sess-1"],
-        },
-        {
-          args: ["session", "changes", "sess-1", "--json"],
-          expected: ["GET /sessions/sess-1", "GET /workspaces/ws-1/sessions/sess-1/changes"],
-        },
-        {
-          args: ["session", "diff", "sess-1", "--path", "server/src/cli.ts", "--json"],
-          expected: [
-            "GET /sessions/sess-1",
-            "GET /workspaces/ws-1/sessions/sess-1/diff?path=server%2Fsrc%2Fcli.ts",
-          ],
-        },
-        {
-          args: ["session", "diff", "sess-1", "--json", "--", "server/src/cli.ts"],
-          expected: [
-            "GET /sessions/sess-1",
-            "GET /workspaces/ws-1/sessions/sess-1/diff?path=server%2Fsrc%2Fcli.ts",
-          ],
         },
         {
           args: ["session", "tool-output", "sess-1", "tool-1", "--json"],

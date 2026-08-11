@@ -175,6 +175,10 @@ describe("centralized nested-help dispatch", () => {
     expect(lifecycle.installService, args.join(" ")).not.toHaveBeenCalled();
   });
 
+  it.each(["changes", "diff"] as const)("does not discover removed session %s help", (command) => {
+    expect(resolveHelpTopic(["session", command])).toBeUndefined();
+  });
+
   it("handles unknown help topics deterministically without dispatch", async () => {
     const roots = listCliHelpTopicPaths().filter((path) => path.length === 1);
 
@@ -256,8 +260,8 @@ describe("centralized nested-help dispatch", () => {
       }
     }
 
-    expect(allPaths.length).toBe(84);
-    expect(paths.length).toBe(83);
+    expect(allPaths.length).toBe(82);
+    expect(paths.length).toBe(81);
     expect(app.runCli).not.toHaveBeenCalled();
     expect(lifecycle.installService).not.toHaveBeenCalled();
     expect(lifecycle.restartService).not.toHaveBeenCalled();

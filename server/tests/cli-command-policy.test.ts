@@ -66,6 +66,22 @@ describe("CLI agent access policy", () => {
     expect(classifyCliAgentCommand(args)).toMatchObject({ ok: false, access: "denied" });
   });
 
+  it.each(["changes", "diff"] as const)(
+    "does not expose removed session %s to agents",
+    (command) => {
+      expect(classifyCliAgentCommand(["session", command, "sess-1"])).toMatchObject({
+        ok: false,
+        access: "denied",
+        path: ["session", command],
+      });
+      expect(classifyCliAgentCommand(["session", command, "--help"])).toMatchObject({
+        ok: false,
+        access: "denied",
+        path: ["session", command],
+      });
+    },
+  );
+
   it("exposes one classification for every allowlisted command policy", () => {
     const policies = listCliAgentCommandPolicies().filter(({ access }) => access !== "denied");
 

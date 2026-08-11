@@ -743,6 +743,28 @@ describe("CLI app-state API boundary", () => {
     );
   });
 
+  it.each(["changes", "diff"] as const)(
+    "rejects removed session %s before making a local API request",
+    async (command) => {
+      await withOrchApi(
+        (res) => sendJson(res, { error: "removed command must not reach the API" }, 500),
+        async ({ dataDir, requests }) => {
+          const { stdout, code } = await runCliResult(
+            ["session", command, "sess-1", "--json"],
+            dataDir,
+          );
+
+          expect(code).toBe(1);
+          expect(JSON.parse(stdout)).toMatchObject({
+            ok: false,
+            error: { message: expect.stringMatching(/^Usage: oppi session /) },
+          });
+          expect(requests).toEqual([]);
+        },
+      );
+    },
+  );
+
   it.each([
     ["get", ["get", "caller-1"]],
     ["send", ["send", "caller-1"]],
@@ -759,8 +781,6 @@ describe("CLI app-state API boundary", () => {
     ["delete", ["delete", "caller-1"]],
     ["resume", ["resume", "caller-1"]],
     ["fork", ["fork", "caller-1"]],
-    ["changes", ["changes", "caller-1"]],
-    ["diff", ["diff", "caller-1"]],
     ["tool-output", ["tool-output", "caller-1"]],
     ["trace-page", ["trace-page", "caller-1"]],
     ["trace-outline", ["trace-outline", "caller-1"]],

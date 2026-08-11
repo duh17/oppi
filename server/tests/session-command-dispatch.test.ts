@@ -87,12 +87,6 @@ describe("session command dispatch and output boundaries", () => {
 
   it.each([
     {
-      action: "diff",
-      positional: ["s", "file.ts"],
-      flags: { path: "other.ts", json: "true" },
-      message: "Conflicting path inputs",
-    },
-    {
       action: "inspect",
       positional: ["s"],
       flags: { turn: "1", turns: "2", json: "true" },

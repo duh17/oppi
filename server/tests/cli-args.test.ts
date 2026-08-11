@@ -3,10 +3,10 @@ import { isHelpFlag, parseCliArgs } from "../src/cli/args.js";
 
 describe("parseCliArgs", () => {
   it("treats arguments after -- as positional", () => {
-    expect(parseCliArgs(["session", "diff", "sess-1", "--json", "--", "--odd-path"])).toEqual({
+    expect(parseCliArgs(["session", "read", "sess-1", "--json", "--", "--odd-path"])).toEqual({
       command: "session",
       flags: { json: "true" },
-      positional: ["diff", "sess-1", "--odd-path"],
+      positional: ["read", "sess-1", "--odd-path"],
     });
   });
 

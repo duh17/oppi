@@ -433,48 +433,6 @@ export async function cmdSession(
       return;
     }
 
-    if (mode === "changes") {
-      const id = requirePositional(positional, "session id is required");
-      const workspaceId = await resolveSessionWorkspaceId(id, call);
-      const result = await call<Record<string, unknown>>(
-        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/changes`,
-      );
-      output(result, () => {
-        const files = Array.isArray(result.files)
-          ? (result.files as Array<{ path?: string; status?: string }>)
-          : [];
-        printList(
-          `Changed files for ${id} (${files.length})`,
-          files.map((file) => ({ status: file.status ?? "", title: file.path ?? "(unknown)" })),
-          { empty: "No changed files returned." },
-        );
-      });
-      return;
-    }
-
-    if (mode === "diff") {
-      const id = requirePositional(positional, "session id is required");
-      const positionalPath = positional[1]?.trim();
-      if (flags.path && positionalPath) {
-        throw new Error("Conflicting path inputs: use --path or -- <path>, not both");
-      }
-      const path = flags.path?.trim() || positionalPath;
-      if (!path) throw new Error("--path or -- <path> is required");
-      const workspaceId = await resolveSessionWorkspaceId(id, call);
-      const params = new URLSearchParams();
-      params.set("path", path);
-      const result = await call<Record<string, unknown>>(
-        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/diff${querySuffix(params)}`,
-      );
-      output(result, () => {
-        printDetails("Session diff", [
-          ["Session", codeValue(id)],
-          ["Path", codeValue(path)],
-        ]);
-      });
-      return;
-    }
-
     if (mode === "tool-output") {
       const id = requirePositional(positional, "session id is required");
       const toolCallId = positional[1]?.trim();
@@ -516,7 +474,7 @@ export async function cmdSession(
     }
 
     throw new Error(
-      "Usage: oppi session list|get|create|send|abort|dialogs|respond|watch|wait|read|events|trace|search|inspect|stop|resume|fork|delete|changes|diff|tool-output|trace-page|trace-outline",
+      "Usage: oppi session list|get|create|send|abort|dialogs|respond|watch|wait|read|events|trace|search|inspect|stop|resume|fork|delete|tool-output|trace-page|trace-outline",
     );
   } catch (err: unknown) {
     handleModelResolvingCliError(err, jsonOutput);
@@ -635,8 +593,6 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
   delete: ["json"],
   resume: ["json"],
   fork: ["entry", "json", "name"],
-  changes: ["json"],
-  diff: ["json", "path"],
   "tool-output": ["json"],
   "trace-page": ["around-entry", "cursor", "json", "preview-bytes", "target-events"],
   "trace-outline": ["json"],
@@ -694,8 +650,6 @@ function sessionTargetsForMode(mode: string, positional: string[]): string[] {
       "delete",
       "resume",
       "fork",
-      "changes",
-      "diff",
       "tool-output",
       "trace-page",
       "trace-outline",
