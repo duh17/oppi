@@ -45,6 +45,8 @@ final class AssistantMarkdownContentView: UIView {
         /// Path of the source markdown file in the workspace (e.g. "docs/readme.md").
         /// Used to resolve relative image paths against the file's directory.
         let sourceFilePath: String?
+        /// Optional source line focus used by full-screen anchored file readers.
+        let lineAnchor: SourceLineAnchor?
 
         /// Directory containing the source file, derived from `sourceFilePath`.
         /// e.g. "docs/readme.md" → "docs", "readme.md" → nil
@@ -77,6 +79,7 @@ final class AssistantMarkdownContentView: UIView {
             sessionID: String? = nil,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
+            lineAnchor: SourceLineAnchor? = nil,
             readerPreferences: FullScreenReaderPreferences? = nil,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live
@@ -92,6 +95,7 @@ final class AssistantMarkdownContentView: UIView {
             self.sessionID = sessionID
             self.serverBaseURL = serverBaseURL
             self.sourceFilePath = sourceFilePath
+            self.lineAnchor = lineAnchor
             self.readerPreferences = readerPreferences
             self.perfSurface = perfSurface
             self.renderingMode = renderingMode
@@ -109,6 +113,7 @@ final class AssistantMarkdownContentView: UIView {
             sessionID: String? = nil,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
+            lineAnchor: SourceLineAnchor? = nil,
             readerPreferences: FullScreenReaderPreferences? = nil,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live
@@ -125,6 +130,7 @@ final class AssistantMarkdownContentView: UIView {
                 sessionID: sessionID,
                 serverBaseURL: serverBaseURL,
                 sourceFilePath: sourceFilePath,
+                lineAnchor: lineAnchor,
                 readerPreferences: readerPreferences,
                 perfSurface: perfSurface,
                 renderingMode: renderingMode
@@ -143,6 +149,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.sessionID == rhs.sessionID
                 && lhs.serverBaseURL == rhs.serverBaseURL
                 && lhs.sourceFilePath == rhs.sourceFilePath
+                && lhs.lineAnchor == rhs.lineAnchor
                 && lhs.readerPreferences == rhs.readerPreferences
                 && lhs.perfSurface == rhs.perfSurface
                 && lhs.renderingMode == rhs.renderingMode

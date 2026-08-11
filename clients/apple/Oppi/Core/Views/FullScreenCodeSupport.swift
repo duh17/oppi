@@ -629,6 +629,180 @@ private final class FullScreenTextSelectionHighlightOverlayView: UIView {
     }
 }
 
+final class FullScreenLineAnchorHighlightOverlayView: UIView {
+    var rects: [CGRect] = [] {
+        didSet { setNeedsDisplay() }
+    }
+
+    var fillColor: UIColor = .systemBlue.withAlphaComponent(0.18) {
+        didSet { setNeedsDisplay() }
+    }
+
+    var strokeColor: UIColor = .systemBlue.withAlphaComponent(0.8) {
+        didSet { setNeedsDisplay() }
+    }
+
+    var stripeColor: UIColor = .systemBlue {
+        didSet { setNeedsDisplay() }
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext(),
+              let firstRect = rects.first else { return }
+
+        // A wrapped source line may produce several TextKit fragments. They
+        // are still one logical anchor, so union every fragment before drawing
+        // anything. This also keeps a rendered Markdown range to one enclosure
+        // when its highlighted blocks are laid out in separate cells.
+        let enclosureRect = rects.dropFirst().reduce(firstRect) { partial, next in
+            partial.union(next)
+        }
+        guard enclosureRect.intersects(rect) else { return }
+
+        let path = UIBezierPath(
+            roundedRect: enclosureRect,
+            cornerRadius: min(6, max(0, enclosureRect.height / 2))
+        )
+        context.setFillColor(fillColor.cgColor)
+        context.addPath(path.cgPath)
+        context.fillPath()
+        context.setStrokeColor(strokeColor.cgColor)
+        context.setLineWidth(2)
+        context.setLineJoin(.round)
+        context.addPath(path.cgPath)
+        context.strokePath()
+
+        // The rail and outline remain visible even when the translucent fill is
+        // subtle, providing a non-color-only focus cue without repeating it for
+        // every logical line or rendered block.
+        let stripeRect = CGRect(
+            x: enclosureRect.minX,
+            y: enclosureRect.minY + 1,
+            width: min(6, enclosureRect.width),
+            height: max(0, enclosureRect.height - 2)
+        )
+        context.setFillColor(stripeColor.cgColor)
+        context.fill(stripeRect)
+    }
+}
+
+struct FullScreenLineAnchorLayoutResult {
+    let visibleRects: [CGRect]
+    let contentRects: [CGRect]
+    let firstVisibleRect: CGRect?
+
+    var firstContentRect: CGRect? { contentRects.first }
+}
+
+enum FullScreenLineAnchorLayout {
+    static func layout(
+        for textView: UITextView,
+        sourceLineRange: ClosedRange<Int>,
+        startLine: Int
+    ) -> FullScreenLineAnchorLayoutResult {
+        let source = textView.textStorage.string as NSString
+        let lineRanges = SourceLineMetrics.logicalLineContentRanges(in: source)
+        guard !lineRanges.isEmpty else {
+            return FullScreenLineAnchorLayoutResult(
+                visibleRects: [],
+                contentRects: [],
+                firstVisibleRect: nil
+            )
+        }
+
+        let layoutManager = textView.layoutManager
+        layoutManager.ensureLayout(for: textView.textContainer)
+        let font = textView.font ?? FullScreenCodeTypography.codeFont
+        let viewportWidth = max(
+            1,
+            textView.bounds.width - textView.textContainerInset.left - textView.textContainerInset.right
+        )
+        var contentRects: [CGRect] = []
+        contentRects.reserveCapacity(sourceLineRange.count)
+        var fallbackY = textView.textContainerInset.top
+
+        for sourceLine in sourceLineRange {
+            let localIndex = sourceLine - startLine
+            guard lineRanges.indices.contains(localIndex) else { continue }
+            let characterRange = lineRanges[localIndex]
+            let glyphRange = layoutManager.glyphRange(
+                forCharacterRange: characterRange,
+                actualCharacterRange: nil
+            )
+
+            var fragmentRects: [CGRect] = []
+            if glyphRange.length > 0 {
+                layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, lineGlyphRange, _ in
+                    guard NSIntersectionRange(glyphRange, lineGlyphRange).length > 0 else { return }
+                    fragmentRects.append(usedRect)
+                }
+            } else if textView.textStorage.length > 0 {
+                if characterRange.location < textView.textStorage.length {
+                    let resolvedGlyphIndex = layoutManager.glyphIndexForCharacter(at: characterRange.location)
+                    if resolvedGlyphIndex < layoutManager.numberOfGlyphs {
+                        fragmentRects.append(
+                            layoutManager.lineFragmentRect(forGlyphAt: resolvedGlyphIndex, effectiveRange: nil)
+                        )
+                    }
+                } else if layoutManager.numberOfGlyphs > 0 {
+                    let lastGlyphRect = layoutManager.lineFragmentRect(
+                        forGlyphAt: layoutManager.numberOfGlyphs - 1,
+                        effectiveRange: nil
+                    )
+                    fragmentRects.append(CGRect(
+                        x: 0,
+                        y: lastGlyphRect.maxY,
+                        width: viewportWidth,
+                        height: font.lineHeight
+                    ))
+                }
+            }
+
+            if fragmentRects.isEmpty {
+                fragmentRects = [CGRect(
+                    x: 0,
+                    y: max(0, fallbackY - textView.textContainerInset.top),
+                    width: viewportWidth,
+                    height: font.lineHeight
+                )]
+            }
+
+            for fragmentRect in fragmentRects {
+                var contentRect = fragmentRect
+                contentRect.origin.x += textView.textContainerInset.left
+                contentRect.origin.y += textView.textContainerInset.top
+                contentRect.size.width = max(contentRect.width, viewportWidth)
+                contentRect.size.height = max(contentRect.height, font.lineHeight)
+                contentRects.append(contentRect.integral)
+                fallbackY = max(fallbackY, contentRect.maxY)
+            }
+        }
+
+        let firstVisibleRect = contentRects.first?.offsetBy(
+            dx: -textView.contentOffset.x,
+            dy: -textView.contentOffset.y
+        ).integral
+        let visibleRects: [CGRect]
+        if var enclosureRect = contentRects.first {
+            for contentRect in contentRects.dropFirst() {
+                enclosureRect = enclosureRect.union(contentRect)
+            }
+            visibleRects = [enclosureRect.offsetBy(
+                dx: -textView.contentOffset.x,
+                dy: -textView.contentOffset.y
+            ).integral]
+        } else {
+            visibleRects = []
+        }
+        return FullScreenLineAnchorLayoutResult(
+            visibleRects: visibleRects,
+            contentRects: contentRects,
+            firstVisibleRect: firstVisibleRect
+        )
+    }
+
+}
+
 /// UITextView variant that carries review-comment routing context.
 ///
 /// The owning `UITextViewDelegate` builds the menu when UIKit asks for it.
@@ -648,6 +822,8 @@ final class FullScreenReviewCommentTextView: UITextView {
     private static let reviewSelectionTipReservedHeight = FeatureEducationTipBannerView.preferredHeight + 18
 
     private let selectionHighlightOverlay = FullScreenTextSelectionHighlightOverlayView()
+    private let lineAnchorHighlightOverlay = FullScreenLineAnchorHighlightOverlayView()
+    private var lineAnchorFocusRect: CGRect?
     private let reviewSelectionTipPresentationOwnerID = UUID()
     private var reviewSelectionTipView: FeatureEducationTipBannerView?
     private var reviewSelectionTipBaseTextContainerInset: UIEdgeInsets?
@@ -661,6 +837,7 @@ final class FullScreenReviewCommentTextView: UITextView {
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
         addInteraction(reviewCommentEditMenuInteraction)
+        installLineAnchorHighlightOverlay()
         installSelectionHighlightOverlay()
     }
 
@@ -679,7 +856,56 @@ final class FullScreenReviewCommentTextView: UITextView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        lineAnchorHighlightOverlay.frame = bounds
         updateSelectionHighlightOverlay()
+    }
+
+#if DEBUG
+    var debugLineAnchorHighlightRectCountForTesting: Int {
+        lineAnchorHighlightOverlay.rects.isEmpty ? 0 : 1
+    }
+
+    var debugLineAnchorFirstHighlightRectForTesting: CGRect? {
+        lineAnchorFocusRect ?? lineAnchorHighlightOverlay.rects.first
+    }
+
+    var debugLineAnchorHighlightEnclosureRectForTesting: CGRect? {
+        lineAnchorHighlightOverlay.rects.first
+    }
+
+    var debugLineAnchorHighlightContainsFirstTargetForTesting: Bool {
+        guard let enclosure = lineAnchorHighlightOverlay.rects.first,
+              let firstTarget = lineAnchorFocusRect,
+              enclosure.width > 0,
+              enclosure.height > 0 else {
+            return false
+        }
+        return enclosure.insetBy(dx: -1, dy: -1).contains(firstTarget)
+    }
+
+    var debugLineAnchorHighlightHasVisibleGeometryForTesting: Bool {
+        guard debugLineAnchorHighlightContainsFirstTargetForTesting,
+              let rect = lineAnchorHighlightOverlay.rects.first,
+              !rect.intersection(bounds).isEmpty else {
+            return false
+        }
+        return true
+    }
+#endif
+
+    func setLineAnchorHighlight(
+        rects: [CGRect],
+        firstRect: CGRect? = nil,
+        fillColor: UIColor,
+        strokeColor: UIColor,
+        stripeColor: UIColor
+    ) {
+        lineAnchorHighlightOverlay.frame = bounds
+        lineAnchorHighlightOverlay.fillColor = fillColor
+        lineAnchorHighlightOverlay.strokeColor = strokeColor
+        lineAnchorHighlightOverlay.stripeColor = stripeColor
+        lineAnchorFocusRect = firstRect
+        lineAnchorHighlightOverlay.rects = rects
     }
 
     func reviewCommentSelectionDidChange() {
@@ -808,6 +1034,13 @@ final class FullScreenReviewCommentTextView: UITextView {
         updateSelectionHighlightOverlay()
     }
 
+    private func installLineAnchorHighlightOverlay() {
+        lineAnchorHighlightOverlay.isUserInteractionEnabled = false
+        lineAnchorHighlightOverlay.backgroundColor = .clear
+        lineAnchorHighlightOverlay.isOpaque = false
+        insertSubview(lineAnchorHighlightOverlay, at: 0)
+    }
+
     private func installSelectionHighlightOverlay() {
         selectionHighlightOverlay.isUserInteractionEnabled = false
         selectionHighlightOverlay.backgroundColor = .clear
@@ -816,6 +1049,7 @@ final class FullScreenReviewCommentTextView: UITextView {
     }
 
     private func updateSelectionHighlightOverlay() {
+        bringSubviewToFront(lineAnchorHighlightOverlay)
         bringSubviewToFront(selectionHighlightOverlay)
         if let reviewSelectionTipView {
             bringSubviewToFront(reviewSelectionTipView)

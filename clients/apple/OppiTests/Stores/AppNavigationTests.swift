@@ -604,6 +604,50 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
+    @Test func linkedFileTargetCarriesLineAnchorThroughNavigation() throws {
+        let anchor = try #require(SourceLineAnchor.parse("#L12-L18"))
+        let target = WorkspaceLinkedFileNavTarget.workspaceFile(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            path: "Sources/App.swift",
+            lineAnchor: anchor
+        )
+        let navigation = AppNavigation()
+        navigation.openWorkspaceLinkedFile(target)
+
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackDiagnosticContext.workspaceId == "workspace-1")
+        #expect(target.lineAnchor == anchor)
+
+        let differentAnchor = try #require(SourceLineAnchor.parse("#L13-L18"))
+        let differentTarget = WorkspaceLinkedFileNavTarget.workspaceFile(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            path: "Sources/App.swift",
+            lineAnchor: differentAnchor
+        )
+        #expect(target != differentTarget)
+    }
+
+    @Test func linkedFileSplitSelectionPreservesLineAnchorThroughProductionRoute() throws {
+        let anchor = try #require(SourceLineAnchor.parse("#L12-L18"))
+        let target = WorkspaceLinkedFileNavTarget.workspaceFile(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            path: "Sources/App.swift",
+            lineAnchor: anchor
+        )
+        let navigation = AppNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openWorkspaceLinkedFile(target)
+
+        #expect(navigation.splitDetailTarget == .linkedFile(target))
+
+        navigation.setWorkspaceNavigationPresentation(.stack)
+        #expect(navigation.workspacePath.count == 1)
+    }
+
     @Test func linkedFileAppendsInStackPresentationToPreserveBackNavigation() {
         let navigation = AppNavigation()
         let firstTarget = WorkspaceLinkedFileNavTarget(

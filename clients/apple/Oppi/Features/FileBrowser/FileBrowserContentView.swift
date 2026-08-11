@@ -57,6 +57,8 @@ struct FileBrowserContentView: View {
     var navigationContext: FileBrowserNavigationContext?
     var onNavigationSelectionChange: ((FileBrowserSelection) -> Void)?
     var onBackNavigation: (() -> Void)?
+    var lineAnchor: SourceLineAnchor?
+    var onLineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
 
     @Environment(\.apiClient) private var apiClient
     @Environment(\.dismiss) private var dismiss
@@ -174,6 +176,8 @@ struct FileBrowserContentView: View {
             if shouldUseEmbeddedFileViewer {
                 EmbeddedFileViewerView(
                     content: fullScreenContent(text: text),
+                    lineAnchor: activeSelection == nil ? lineAnchor : nil,
+                    lineAnchorNotice: onLineAnchorNotice,
                     showsNavigationChrome: shouldShowEmbeddedNavigationChrome,
                     backSwipeAction: navigateBackToFileList
                 )

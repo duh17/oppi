@@ -9,6 +9,8 @@ private final class CodeLineNumberGutterView: UIView {
         let text: String
         let y: CGFloat
         let height: CGFloat
+        let isHighlighted: Bool
+        let showsHighlightMarker: Bool
     }
 
     var font: UIFont = FullScreenCodeTypography.codeFont {
@@ -49,6 +51,24 @@ private final class CodeLineNumberGutterView: UIView {
         for row in rows {
             let rowRect = CGRect(x: 0, y: row.y, width: bounds.width, height: row.height)
             guard rowRect.intersects(rect) else { continue }
+            if row.isHighlighted && row.showsHighlightMarker {
+                let markerRect = CGRect(
+                    x: 1,
+                    y: row.y + max(0, (row.height - font.lineHeight) / 2),
+                    width: min(8, bounds.width),
+                    height: font.lineHeight
+                )
+                let markerAttributes: [NSAttributedString.Key: Any] = [
+                    .font: font,
+                    .foregroundColor: textColor,
+                ]
+                ("▸" as NSString).draw(
+                    with: markerRect,
+                    options: [.usesLineFragmentOrigin],
+                    attributes: markerAttributes,
+                    context: nil
+                )
+            }
             (row.text as NSString).draw(
                 with: rowRect,
                 options: [.usesLineFragmentOrigin],
@@ -70,6 +90,8 @@ final class NativeFullScreenCodeBody: UIView {
     private let startLine: Int
     private let lineCount: Int
     private let palette: ThemePalette
+    private let lineAnchor: SourceLineAnchor?
+    private let lineAnchorResolution: SourceLineAnchorResolution?
     private let alwaysBounceVertical: Bool
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
@@ -79,6 +101,8 @@ final class NativeFullScreenCodeBody: UIView {
     private var highlightedSourceText: NSAttributedString?
     private var lastGutterLayoutSignature: GutterLayoutSignature?
     private var highlightTask: Task<Void, Never>?
+    private var lineAnchorFocusTask: Task<Void, Never>?
+    private var lineAnchorFocusPending = false
 
     private struct GutterLayoutSignature: Equatable {
         let wrapsText: Bool
@@ -95,20 +119,29 @@ final class NativeFullScreenCodeBody: UIView {
         alwaysBounceVertical: Bool = true,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.code.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
-        reviewCommentSourceContext: ReviewCommentSourceContext?
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
+        lineAnchor: SourceLineAnchor? = nil,
+        focusLineAnchor: Bool = true
     ) {
-        let lineCount = content.split(separator: "\n", omittingEmptySubsequences: false).count
+        let actualLineCount = SourceLineMetrics.count(content)
+        let lineCount = max(1, actualLineCount)
         self.content = content
         self.language = language
         self.startLine = startLine
         self.lineCount = lineCount
         self.palette = palette
+        self.lineAnchor = lineAnchor
+        self.lineAnchorResolution = lineAnchor?.resolution(
+            fileContent: content,
+            firstFileLine: startLine
+        )
         self.alwaysBounceVertical = alwaysBounceVertical
         self.readerPreferences = readerPreferences
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext?.withLineRange(
             startLine...(startLine + lineCount - 1)
         )
+        self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
         super.init(frame: .zero)
         setup()
         loadHighlighting()
@@ -117,13 +150,18 @@ final class NativeFullScreenCodeBody: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit { highlightTask?.cancel() }
+    deinit {
+        highlightTask?.cancel()
+        lineAnchorFocusTask?.cancel()
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         scrollView.layoutIfNeeded()
         contentContainer.layoutIfNeeded()
         updateGutterForCurrentLayout()
+        updateLineAnchorHighlight()
+        scheduleLineAnchorFocusIfNeeded()
     }
 
     private func setup() {
@@ -146,11 +184,12 @@ final class NativeFullScreenCodeBody: UIView {
         gutterView.textColor = UIColor(palette.comment)
         contentContainer.addSubview(gutterView)
 
-        let (_, gutterWidth) = lineNumberInfo(
+        let (_, baseGutterWidth) = lineNumberInfo(
             lineCount: lineCount,
             startLine: startLine,
             font: codeFont
         )
+        let gutterWidth = baseGutterWidth + (lineAnchor == nil ? 0 : 10)
 
         // Separator
         separatorView.translatesAutoresizingMaskIntoConstraints = false
@@ -174,6 +213,10 @@ final class NativeFullScreenCodeBody: UIView {
             router: reviewCommentSelectionRouter,
             sourceContext: reviewCommentSourceContext
         )
+        if let lineAnchorResolution {
+            codeTextView.accessibilityLabel = "Source code"
+            codeTextView.accessibilityValue = lineAnchorResolution.accessibilityLabel
+        }
         contentContainer.addSubview(codeTextView)
 
         let gutterWidthConstraint = gutterView.widthAnchor.constraint(equalToConstant: gutterWidth)
@@ -248,12 +291,12 @@ final class NativeFullScreenCodeBody: UIView {
         gutterView.font = font
         codeTextView.font = font
 
-        let (_, gutterWidth) = lineNumberInfo(
+        let (_, baseGutterWidth) = lineNumberInfo(
             lineCount: lineCount,
             startLine: startLine,
             font: font
         )
-        gutterWidthConstraint?.constant = gutterWidth
+        gutterWidthConstraint?.constant = baseGutterWidth + (lineAnchor == nil ? 0 : 10)
 
         if let attributedText = highlightedSourceText ?? codeTextView.attributedText,
            attributedText.length > 0 {
@@ -303,6 +346,95 @@ final class NativeFullScreenCodeBody: UIView {
         gutterView.rows = lineNumberRowsForCurrentLayout()
     }
 
+    private func updateLineAnchorHighlight() {
+        guard let resolution = lineAnchorResolution,
+              let existingRange = resolution.existingRange else {
+            codeTextView.setLineAnchorHighlight(
+                rects: [],
+                fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
+                strokeColor: UIColor(palette.blue).withAlphaComponent(0.75),
+                stripeColor: UIColor(palette.cyan)
+            )
+            return
+        }
+
+        let layout = FullScreenLineAnchorLayout.layout(
+            for: codeTextView,
+            sourceLineRange: existingRange,
+            startLine: startLine
+        )
+        codeTextView.setLineAnchorHighlight(
+            rects: layout.visibleRects,
+            firstRect: layout.firstVisibleRect,
+            fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
+            strokeColor: UIColor(palette.blue).withAlphaComponent(0.75),
+            stripeColor: UIColor(palette.cyan)
+        )
+    }
+
+    private func scheduleLineAnchorFocusIfNeeded() {
+        guard lineAnchorFocusPending, lineAnchorFocusTask == nil else { return }
+        lineAnchorFocusTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, !Task.isCancelled else { return }
+            self.lineAnchorFocusTask = nil
+            guard self.scrollView.bounds.height > 0 else {
+                self.lineAnchorFocusPending = true
+                return
+            }
+            self.lineAnchorFocusPending = false
+            self.scrollLineAnchorIntoUpperThird()
+        }
+    }
+
+    private func scrollLineAnchorIntoUpperThird() {
+        guard lineAnchorResolution != nil, scrollView.bounds.height > 0 else { return }
+        scrollView.layoutIfNeeded()
+        contentContainer.layoutIfNeeded()
+
+        let targetY: CGFloat
+        if let existingRange = lineAnchorResolution?.existingRange {
+            let layout = FullScreenLineAnchorLayout.layout(
+                for: codeTextView,
+                sourceLineRange: existingRange,
+                startLine: startLine
+            )
+            if let firstRect = layout.firstContentRect {
+                let rectInContainer = firstRect.offsetBy(
+                    dx: codeTextView.frame.minX,
+                    dy: codeTextView.frame.minY
+                )
+                targetY = rectInContainer.minY - scrollView.bounds.height / 3
+            } else {
+                targetY = scrollView.contentSize.height
+            }
+        } else {
+            targetY = scrollView.contentSize.height
+        }
+
+        let minimumY = -scrollView.adjustedContentInset.top
+        let maximumY = max(
+            minimumY,
+            scrollView.contentSize.height
+                - scrollView.bounds.height
+                + scrollView.adjustedContentInset.bottom
+        )
+        let clampedY = min(max(targetY, minimumY), maximumY)
+        guard clampedY.isFinite else { return }
+        scrollView.setContentOffset(
+            CGPoint(x: scrollView.contentOffset.x, y: clampedY),
+            animated: false
+        )
+        updateLineAnchorHighlight()
+        if let resolution = lineAnchorResolution {
+            UIAccessibility.post(
+                notification: .layoutChanged,
+                argument: codeTextView
+            )
+            codeTextView.accessibilityValue = resolution.accessibilityLabel
+        }
+    }
+
     private func prepareCodeTextContainerForCurrentWidth() {
         let insets = codeTextView.textContainerInset
         let textContainerWidth = max(1, codeTextView.bounds.width - insets.left - insets.right)
@@ -318,9 +450,12 @@ final class NativeFullScreenCodeBody: UIView {
         layoutManager.ensureLayout(for: codeTextView.textContainer)
 
         let source = content as NSString
-        let lineRanges = logicalLineContentRanges(in: source)
+        let lineRanges = SourceLineMetrics.logicalLineContentRanges(in: source)
         var rows: [CodeLineNumberGutterView.Row] = []
         rows.reserveCapacity(lineRanges.count)
+        // The enclosure and rail carry the continuous range; keep one gutter
+        // glyph at its first existing line instead of repeating ▸ per row.
+        let highlightMarkerLine = lineAnchorResolution?.existingRange?.lowerBound
 
         var fallbackY: CGFloat = 0
         for (offset, range) in lineRanges.enumerated() {
@@ -331,10 +466,13 @@ final class NativeFullScreenCodeBody: UIView {
             )
             fallbackY = fragmentRect.maxY
 
+            let sourceLine = startLine + offset
             rows.append(CodeLineNumberGutterView.Row(
-                text: String(startLine + offset),
+                text: String(sourceLine),
                 y: codeTextView.textContainerInset.top + fragmentRect.minY,
-                height: max(codeFont.lineHeight, fragmentRect.height)
+                height: max(codeFont.lineHeight, fragmentRect.height),
+                isHighlighted: lineAnchorResolution?.existingRange?.contains(sourceLine) == true,
+                showsHighlightMarker: sourceLine == highlightMarkerLine
             ))
         }
 
@@ -375,37 +513,57 @@ final class NativeFullScreenCodeBody: UIView {
         )
     }
 
-    private func logicalLineContentRanges(in source: NSString) -> [NSRange] {
-        guard source.length > 0 else { return [NSRange(location: 0, length: 0)] }
-
-        var ranges: [NSRange] = []
-        var location = 0
-        while location < source.length {
-            var lineEnd = 0
-            var contentsEnd = 0
-            source.getLineStart(
-                nil,
-                end: &lineEnd,
-                contentsEnd: &contentsEnd,
-                for: NSRange(location: location, length: 0)
-            )
-            ranges.append(NSRange(location: location, length: max(0, contentsEnd - location)))
-            guard lineEnd > location else { break }
-            location = lineEnd
-        }
-
-        if source.length > 0, Self.isNewline(source.character(at: source.length - 1)) {
-            ranges.append(NSRange(location: source.length, length: 0))
-        }
-
-        return ranges
-    }
-
-    private static func isNewline(_ value: unichar) -> Bool {
-        value == 10 || value == 13
-    }
-
 #if DEBUG
+    var debugLineAnchorRequestedRangeForTesting: ClosedRange<Int>? {
+        lineAnchorResolution?.requestedRange
+    }
+
+    var debugLineAnchorExistingRangeForTesting: ClosedRange<Int>? {
+        lineAnchorResolution?.existingRange
+    }
+
+    var debugLineAnchorHighlightRectCountForTesting: Int {
+        codeTextView.debugLineAnchorHighlightRectCountForTesting
+    }
+
+    var debugLineAnchorFirstHighlightRectForTesting: CGRect? {
+        codeTextView.debugLineAnchorFirstHighlightRectForTesting
+    }
+
+    var debugLineAnchorHighlightEnclosureRectForTesting: CGRect? {
+        codeTextView.debugLineAnchorHighlightEnclosureRectForTesting
+    }
+
+    var debugLineAnchorHighlightHasVisibleGeometryForTesting: Bool {
+        guard codeTextView.debugLineAnchorHighlightContainsFirstTargetForTesting,
+              let rect = debugLineAnchorHighlightEnclosureRectForTesting,
+              rect.width > 0,
+              rect.height > 0 else {
+            return false
+        }
+        let rectInBody = codeTextView.convert(rect, to: self)
+        let viewportInBody = scrollView.convert(scrollView.bounds, to: self)
+        return !rectInBody.intersection(viewportInBody).isEmpty
+    }
+
+    var debugLineAnchorGutterMarkerCountForTesting: Int {
+        layoutIfNeeded()
+        updateGutterForCurrentLayout()
+        return gutterView.rows.filter(\.showsHighlightMarker).count
+    }
+
+    var debugLineAnchorScrollOffsetForTesting: CGPoint {
+        scrollView.contentOffset
+    }
+
+    var debugLineAnchorViewportHeightForTesting: CGFloat {
+        scrollView.bounds.height
+    }
+
+    var debugLineAnchorContentHeightForTesting: CGFloat {
+        scrollView.contentSize.height
+    }
+
     struct CodeGutterAlignmentDiagnostics: Equatable {
         let rowCount: Int
         let maxRowDelta: CGFloat
@@ -1302,6 +1460,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         stack.translatesAutoresizingMaskIntoConstraints = false
         return stack
     }()
+    private var stackLeadingConstraint: NSLayoutConstraint?
 
     private lazy var segmentApplier = AssistantMarkdownSegmentApplier(
         stackView: stackView,
@@ -1333,8 +1492,10 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         stackView.setContentCompressionResistancePriority(.required, for: .vertical)
         contentView.addGestureRecognizer(doubleTapRecognizer)
         contentView.addSubview(stackView)
+        let stackLeadingConstraint = stackView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor)
+        self.stackLeadingConstraint = stackLeadingConstraint
         NSLayoutConstraint.activate([
-            stackView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            stackLeadingConstraint,
             stackView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             stackView.topAnchor.constraint(equalTo: contentView.topAnchor),
             stackView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor),
@@ -1343,6 +1504,10 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+    }
 
     override func prepareForReuse() {
         super.prepareForReuse()
@@ -1355,11 +1520,17 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         segment: FlatSegment,
         config: AssistantMarkdownContentView.Configuration,
         sourceLineRange: ClosedRange<Int>?,
+        lineAnchorModeEnabled: Bool,
+        palette: ThemePalette,
         textViewDelegate: any UITextViewDelegate,
         doubleTapActivation: (() -> Void)?,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
     ) {
+        // Reserve a Dynamic-Type-safe gutter for the marker and accent rail.
+        // Apply it to every cell in anchored Reader mode so focus does not
+        // change the relative alignment of otherwise-unhighlighted blocks.
+        stackLeadingConstraint?.constant = lineAnchorModeEnabled ? 28 : 0
         self.textViewDelegate = textViewDelegate
         self.doubleTapActivation = doubleTapActivation
         segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile
@@ -1485,6 +1656,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private static let deferredInitialRenderDelayMs = 750
 
     private let collectionView: UICollectionView
+    private let lineAnchorHighlightView = FullScreenLineAnchorHighlightOverlayView()
     private let segmentSource = AssistantMarkdownSegmentSource()
     private let stream: ThinkingTraceStream?
     private let themeID: ThemeID
@@ -1495,6 +1667,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private let sessionID: String?
     private let serverBaseURL: URL?
     private let sourceFilePath: String?
+    private let lineAnchor: SourceLineAnchor?
+    private let lineAnchorResolution: SourceLineAnchorResolution?
     private let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
     private let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
     private var readerPreferences: FullScreenReaderPreferences
@@ -1510,6 +1684,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var currentConfig: AssistantMarkdownContentView.Configuration?
     private var viewportDoubleTapActivation: (() -> Void)?
     private var streamObserverID: UUID?
+    private var lineAnchorFocusTask: Task<Void, Never>?
+    private var lineAnchorFocusPending = false
 
     private struct AsyncMarkdownBuild: Sendable {
         let segments: [FlatSegment]
@@ -1539,6 +1715,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
         sourceFilePath: String? = nil,
+        lineAnchor: SourceLineAnchor? = nil,
+        focusLineAnchor: Bool = true,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.markdown.defaultPreferences,
         perfSurface: MarkdownStreamingPerf.Surface? = nil,
         allowsVerticalBounce: Bool = true,
@@ -1556,9 +1734,13 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.sessionID = sessionID
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
+        self.lineAnchor = lineAnchor
+        let initialText = stream?.snapshot.text ?? content
+        self.lineAnchorResolution = lineAnchor?.resolution(fileContent: initialText)
         self.readerPreferences = readerPreferences
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
+        self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
         let initialSnapshot = stream?.snapshot
             ?? ThinkingTraceStream.Snapshot(text: content, isDone: !isStreaming)
         latestSnapshot = initialSnapshot
@@ -1587,14 +1769,30 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             FullScreenMarkdownSegmentCell.self,
             forCellWithReuseIdentifier: FullScreenMarkdownSegmentCell.reuseIdentifier
         )
+        if let lineAnchorResolution {
+            collectionView.accessibilityLabel = "Rendered Markdown"
+            collectionView.accessibilityValue = lineAnchorResolution.accessibilityLabel
+        }
 
         addSubview(collectionView)
+
+        lineAnchorHighlightView.translatesAutoresizingMaskIntoConstraints = false
+        lineAnchorHighlightView.isUserInteractionEnabled = false
+        lineAnchorHighlightView.isHidden = true
+        lineAnchorHighlightView.backgroundColor = .clear
+        lineAnchorHighlightView.isOpaque = false
+        addSubview(lineAnchorHighlightView)
 
         NSLayoutConstraint.activate([
             collectionView.leadingAnchor.constraint(equalTo: leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: trailingAnchor),
             collectionView.topAnchor.constraint(equalTo: topAnchor),
             collectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            lineAnchorHighlightView.leadingAnchor.constraint(equalTo: collectionView.leadingAnchor),
+            lineAnchorHighlightView.trailingAnchor.constraint(equalTo: collectionView.trailingAnchor),
+            lineAnchorHighlightView.topAnchor.constraint(equalTo: collectionView.topAnchor),
+            lineAnchorHighlightView.bottomAnchor.constraint(equalTo: collectionView.bottomAnchor),
         ])
 
         if Self.shouldDeferInitialRender(snapshot: initialSnapshot, stream: stream) {
@@ -1622,6 +1820,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     deinit {
         deferredInitialRenderTask?.cancel()
         asyncRenderTask?.cancel()
+        lineAnchorFocusTask?.cancel()
         if let streamObserverID {
             let stream = stream
             Task { @MainActor in
@@ -1632,6 +1831,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        updateLineAnchorHighlight()
+        scheduleLineAnchorFocusIfNeeded()
         tailFollowCoordinator.onLayoutPass()
     }
 
@@ -1752,19 +1953,24 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
+            lineAnchor: lineAnchor,
             readerPreferences: readerPreferences,
             perfSurface: perfSurface
         )
 
         let cycleStart = MarkdownStreamingPerf.timestampNs()
         currentConfig = config
-        let shouldResolveFileLines = !config.isStreaming && config.reviewCommentSourceContext?.filePath != nil
+        let shouldResolveFileLines = !config.isStreaming
+            && (config.reviewCommentSourceContext?.filePath != nil || config.lineAnchor != nil)
         if shouldRenderLargeCompletedSnapshotAsync(config: config, shouldResolveFileLines: shouldResolveFileLines) {
             renderLargeCompletedSnapshotAsync(snapshot: snapshot, config: config, cycleStart: cycleStart)
             return
         }
         if shouldResolveFileLines {
-            let build = segmentSource.buildSegmentsWithSourceLineRanges(config)
+            let build = segmentSource.buildSegmentsWithSourceLineRanges(
+                config,
+                mergeAdjacentTextSegments: false
+            )
             renderedSegments = build.segments
             renderedSegmentLineRanges = build.sourceLineRanges
         } else {
@@ -1872,6 +2078,115 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
     }
 
+    private func lineAnchorOverlaps(_ sourceLineRange: ClosedRange<Int>?) -> Bool {
+        guard let sourceLineRange,
+              let existingRange = lineAnchorResolution?.existingRange else { return false }
+        return sourceLineRange.lowerBound <= existingRange.upperBound
+            && existingRange.lowerBound <= sourceLineRange.upperBound
+    }
+
+    private func visibleLineAnchorTargetFrames() -> [CGRect] {
+        collectionView.visibleCells.compactMap { cell -> CGRect? in
+            guard let indexPath = collectionView.indexPath(for: cell),
+                  renderedSegmentLineRanges.indices.contains(indexPath.item),
+                  lineAnchorOverlaps(renderedSegmentLineRanges[indexPath.item]) else {
+                return nil
+            }
+            return cell.convert(cell.bounds, to: lineAnchorHighlightView)
+        }
+    }
+
+    private func visibleLineAnchorTargetEnclosure() -> CGRect? {
+        let frames = visibleLineAnchorTargetFrames()
+        guard let firstFrame = frames.first else { return nil }
+        return frames.dropFirst().reduce(firstFrame) { partial, next in
+            partial.union(next)
+        }
+    }
+
+    private func updateLineAnchorHighlight() {
+        guard lineAnchorResolution?.existingRange != nil else {
+            lineAnchorHighlightView.isHidden = true
+            lineAnchorHighlightView.rects = []
+            return
+        }
+
+        guard let enclosure = visibleLineAnchorTargetEnclosure() else {
+            lineAnchorHighlightView.isHidden = true
+            lineAnchorHighlightView.rects = []
+            return
+        }
+
+        lineAnchorHighlightView.isHidden = false
+        lineAnchorHighlightView.fillColor = UIColor(themeID.palette.blue).withAlphaComponent(0.08)
+        lineAnchorHighlightView.strokeColor = UIColor(themeID.palette.blue).withAlphaComponent(0.75)
+        lineAnchorHighlightView.stripeColor = UIColor(themeID.palette.cyan)
+        lineAnchorHighlightView.rects = [enclosure.insetBy(dx: 1, dy: 1).integral]
+        bringSubviewToFront(lineAnchorHighlightView)
+    }
+
+    private func scheduleLineAnchorFocusIfNeeded() {
+        guard lineAnchorFocusPending, lineAnchorFocusTask == nil else { return }
+        lineAnchorFocusTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, !Task.isCancelled else { return }
+            self.lineAnchorFocusTask = nil
+            guard self.collectionView.bounds.height > 0 else {
+                self.lineAnchorFocusPending = true
+                return
+            }
+            self.lineAnchorFocusPending = false
+            self.scrollLineAnchorIntoUpperThird()
+        }
+    }
+
+    private func scrollLineAnchorIntoUpperThird() {
+        guard lineAnchorResolution != nil, collectionView.bounds.height > 0 else { return }
+        collectionView.layoutIfNeeded()
+
+        let targetY: CGFloat
+        if let existingRange = lineAnchorResolution?.existingRange,
+           let index = renderedSegmentLineRanges.firstIndex(where: { sourceRange in
+               guard let sourceRange else { return false }
+               return sourceRange.lowerBound <= existingRange.upperBound
+                   && existingRange.lowerBound <= sourceRange.upperBound
+           }),
+           let attributes = collectionView.collectionViewLayout.layoutAttributesForItem(
+               at: IndexPath(item: index, section: 0)
+           ) {
+            targetY = attributes.frame.minY - collectionView.bounds.height / 3
+        } else {
+            targetY = collectionView.contentSize.height
+        }
+
+        let minimumY = -collectionView.adjustedContentInset.top
+        let maximumY = max(
+            minimumY,
+            collectionView.contentSize.height
+                - collectionView.bounds.height
+                + collectionView.adjustedContentInset.bottom
+        )
+        let clampedY = min(max(targetY, minimumY), maximumY)
+        guard clampedY.isFinite else { return }
+        collectionView.setContentOffset(
+            CGPoint(x: collectionView.contentOffset.x, y: clampedY),
+            animated: false
+        )
+        collectionView.layoutIfNeeded()
+        updateLineAnchorHighlight()
+        if let existingRange = lineAnchorResolution?.existingRange,
+           let index = renderedSegmentLineRanges.firstIndex(where: { sourceRange in
+               guard let sourceRange else { return false }
+               return sourceRange.lowerBound <= existingRange.upperBound
+                   && existingRange.lowerBound <= sourceRange.upperBound
+           }),
+           let cell = collectionView.cellForItem(at: IndexPath(item: index, section: 0)) {
+            UIAccessibility.post(notification: .layoutChanged, argument: cell)
+        } else {
+            UIAccessibility.post(notification: .layoutChanged, argument: collectionView)
+        }
+    }
+
     nonisolated private static func countNewlines(_ string: String) -> Int {
         var count = 0
         for byte in string.utf8 where byte == UInt8(ascii: "\n") {
@@ -1901,6 +2216,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             segment: renderedSegments[indexPath.item],
             config: config,
             sourceLineRange: renderedSegmentLineRanges.indices.contains(indexPath.item) ? renderedSegmentLineRanges[indexPath.item] : nil,
+            lineAnchorModeEnabled: lineAnchor != nil,
+            palette: themeID.palette,
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
@@ -1914,6 +2231,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateLineAnchorHighlight()
         tailFollowCoordinator.handleDidScroll(
             isUserDriven: scrollView.isDragging || scrollView.isDecelerating,
             isStreaming: !latestSnapshot.isDone
@@ -1951,9 +2269,107 @@ extension NativeFullScreenMarkdownBody {
     var debugRenderedSegmentCountForTesting: Int { renderedSegments.count }
     var debugVisibleCellCountForTesting: Int { collectionView.visibleCells.count }
     var debugSourceTextForTesting: String { latestSnapshot.text }
+    var debugLineAnchorRequestedRangeForTesting: ClosedRange<Int>? {
+        lineAnchorResolution?.requestedRange
+    }
+    var debugLineAnchorExistingRangeForTesting: ClosedRange<Int>? {
+        lineAnchorResolution?.existingRange
+    }
+    var debugLineAnchorHighlightedSegmentCountForTesting: Int {
+        renderedSegmentLineRanges.reduce(into: 0) { count, sourceRange in
+            guard let sourceRange, lineAnchorOverlaps(sourceRange) else { return }
+            count += 1
+        }
+    }
+    var debugLineAnchorVisibleHighlightedCellCountForTesting: Int {
+        collectionView.visibleCells.reduce(into: 0) { count, cell in
+            guard let indexPath = collectionView.indexPath(for: cell),
+                  renderedSegmentLineRanges.indices.contains(indexPath.item),
+                  lineAnchorOverlaps(renderedSegmentLineRanges[indexPath.item]) else {
+                return
+            }
+            count += 1
+        }
+    }
+
+    var debugLineAnchorVisibleHighlightEnclosureCountForTesting: Int {
+        guard !lineAnchorHighlightView.isHidden,
+              !lineAnchorHighlightView.rects.isEmpty else { return 0 }
+        return lineAnchorHighlightView.rects.contains { rect in
+            !rect.intersection(lineAnchorHighlightView.bounds).isEmpty
+        } ? 1 : 0
+    }
+
+    var debugLineAnchorVisibleHighlightAlignedWithTargetForTesting: Bool {
+        guard let highlightRect = lineAnchorHighlightView.rects.first,
+              let targetRect = visibleLineAnchorTargetEnclosure(),
+              highlightRect.width > 0,
+              highlightRect.height > 0,
+              !highlightRect.intersection(lineAnchorHighlightView.bounds).isEmpty else {
+            return false
+        }
+
+        let expectedRect = targetRect.insetBy(dx: 1, dy: 1).integral
+        return abs(highlightRect.minX - expectedRect.minX) <= 1
+            && abs(highlightRect.minY - expectedRect.minY) <= 1
+            && abs(highlightRect.maxX - expectedRect.maxX) <= 1
+            && abs(highlightRect.maxY - expectedRect.maxY) <= 1
+    }
+
+    var debugLineAnchorVisibleHighlightGeometryCountForTesting: Int {
+        guard debugLineAnchorVisibleHighlightEnclosureCountForTesting == 1,
+              debugLineAnchorVisibleHighlightAreaForTesting > 0,
+              debugLineAnchorVisibleHighlightAlignedWithTargetForTesting else {
+            return 0
+        }
+        return 1
+    }
+
+    var debugLineAnchorVisibleHighlightAreaForTesting: CGFloat {
+        guard !lineAnchorHighlightView.isHidden else { return .zero }
+        return lineAnchorHighlightView.rects.reduce(into: CGFloat.zero) { area, rect in
+            let visibleRect = rect.intersection(lineAnchorHighlightView.bounds)
+            guard !visibleRect.isEmpty else { return }
+            area += visibleRect.width * visibleRect.height
+        }
+    }
+
+    var debugLineAnchorVisibleHighlightOverlaysFrontmostForTesting: Bool {
+        guard debugLineAnchorVisibleHighlightEnclosureCountForTesting > 0,
+              let overlayIndex = subviews.firstIndex(where: { $0 === lineAnchorHighlightView }),
+              let collectionIndex = subviews.firstIndex(where: { $0 === collectionView }) else {
+            return false
+        }
+        return overlayIndex > collectionIndex
+    }
+
+    var debugLineAnchorScrollOffsetForTesting: CGPoint {
+        collectionView.contentOffset
+    }
+    var debugLineAnchorViewportHeightForTesting: CGFloat {
+        collectionView.bounds.height
+    }
+    var debugLineAnchorFirstTargetFrameForTesting: CGRect? {
+        guard let existingRange = lineAnchorResolution?.existingRange,
+              let index = renderedSegmentLineRanges.firstIndex(where: { sourceRange in
+                  guard let sourceRange else { return false }
+                  return sourceRange.lowerBound <= existingRange.upperBound
+                      && existingRange.lowerBound <= sourceRange.upperBound
+              }) else { return nil }
+        return collectionView.collectionViewLayout.layoutAttributesForItem(
+            at: IndexPath(item: index, section: 0)
+        )?.frame
+    }
+
+    var debugLineAnchorFirstVisibleTargetMidYForTesting: CGFloat? {
+        guard let frame = debugLineAnchorFirstTargetFrameForTesting else { return nil }
+        return frame.midY - collectionView.contentOffset.y
+    }
 
     func debugLayoutVisibleMarkdownCellsForTesting() {
+        layoutIfNeeded()
         collectionView.layoutIfNeeded()
+        updateLineAnchorHighlight()
     }
 }
 #endif
@@ -2022,8 +2438,13 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
     private let textView = FullScreenReviewCommentTextView()
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
+    private let palette: ThemePalette
+    private let lineAnchor: SourceLineAnchor?
+    private let lineAnchorResolution: SourceLineAnchorResolution?
     private var readerPreferences: FullScreenReaderPreferences
     private var isStreaming: Bool
+    private var lineAnchorFocusTask: Task<Void, Never>?
+    private var lineAnchorFocusPending = false
 
     private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
         scrollView: textView,
@@ -2039,12 +2460,18 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         palette: ThemePalette,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.source.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
-        reviewCommentSourceContext: ReviewCommentSourceContext?
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
+        lineAnchor: SourceLineAnchor? = nil,
+        focusLineAnchor: Bool = true
     ) {
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
+        self.palette = palette
+        self.lineAnchor = lineAnchor
+        self.lineAnchorResolution = lineAnchor?.resolution(fileContent: content)
         self.readerPreferences = readerPreferences
         self.isStreaming = isStreaming
+        self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
         super.init(frame: .zero)
 
         backgroundColor = UIColor(palette.bgDark)
@@ -2064,6 +2491,10 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
             router: reviewCommentSelectionRouter,
             sourceContext: reviewCommentSourceContext
         )
+        if let lineAnchorResolution {
+            textView.accessibilityLabel = "Source text"
+            textView.accessibilityValue = lineAnchorResolution.accessibilityLabel
+        }
         applyWrapMode()
         addSubview(textView)
 
@@ -2078,9 +2509,15 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    deinit {
+        lineAnchorFocusTask?.cancel()
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         applyWrapMode()
+        updateLineAnchorHighlight()
+        scheduleLineAnchorFocusIfNeeded()
         tailFollowCoordinator.onLayoutPass()
     }
 
@@ -2110,6 +2547,11 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        // TextKit rects are expressed in the text view's content coordinates.
+        // Recompute the overlay here so a user scroll moves the enclosure with
+        // the source instead of leaving it at the pre-scroll position. This
+        // only repaints geometry; focus and content offset remain untouched.
+        updateLineAnchorHighlight()
         tailFollowCoordinator.handleDidScroll(
             isUserDriven: scrollView.isDragging || scrollView.isDecelerating,
             isStreaming: isStreaming
@@ -2125,6 +2567,79 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         tailFollowCoordinator.handleDidEndDecelerating(isStreaming: isStreaming)
+    }
+
+    private func updateLineAnchorHighlight() {
+        guard let existingRange = lineAnchorResolution?.existingRange else {
+            textView.setLineAnchorHighlight(
+                rects: [],
+                fillColor: UIColor.systemBlue.withAlphaComponent(0.08),
+                strokeColor: UIColor.systemBlue.withAlphaComponent(0.75),
+                stripeColor: UIColor.systemCyan
+            )
+            return
+        }
+
+        let layout = FullScreenLineAnchorLayout.layout(
+            for: textView,
+            sourceLineRange: existingRange,
+            startLine: 1
+        )
+        textView.setLineAnchorHighlight(
+            rects: layout.visibleRects,
+            firstRect: layout.firstVisibleRect,
+            fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
+            strokeColor: UIColor(palette.blue).withAlphaComponent(0.75),
+            stripeColor: UIColor(palette.cyan)
+        )
+    }
+
+    private func scheduleLineAnchorFocusIfNeeded() {
+        guard lineAnchorFocusPending, lineAnchorFocusTask == nil else { return }
+        lineAnchorFocusTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, !Task.isCancelled else { return }
+            self.lineAnchorFocusTask = nil
+            guard self.textView.bounds.height > 0 else {
+                self.lineAnchorFocusPending = true
+                return
+            }
+            self.lineAnchorFocusPending = false
+            self.scrollLineAnchorIntoUpperThird()
+        }
+    }
+
+    private func scrollLineAnchorIntoUpperThird() {
+        guard lineAnchorResolution != nil, textView.bounds.height > 0 else { return }
+        textView.layoutIfNeeded()
+
+        let targetY: CGFloat
+        if let existingRange = lineAnchorResolution?.existingRange,
+           let firstRect = FullScreenLineAnchorLayout.layout(
+               for: textView,
+               sourceLineRange: existingRange,
+               startLine: 1
+           ).firstContentRect {
+            targetY = firstRect.minY - textView.bounds.height / 3
+        } else {
+            targetY = textView.contentSize.height
+        }
+
+        let minimumY = -textView.adjustedContentInset.top
+        let maximumY = max(
+            minimumY,
+            textView.contentSize.height
+                - textView.bounds.height
+                + textView.adjustedContentInset.bottom
+        )
+        let clampedY = min(max(targetY, minimumY), maximumY)
+        guard clampedY.isFinite else { return }
+        textView.setContentOffset(
+            CGPoint(x: textView.contentOffset.x, y: clampedY),
+            animated: false
+        )
+        updateLineAnchorHighlight()
+        UIAccessibility.post(notification: .layoutChanged, argument: textView)
     }
 
     private func applyTextSize() {
@@ -2174,6 +2689,42 @@ extension NativeFullScreenSourceBody: FullScreenReaderConfigurable {
         setNeedsLayout()
     }
 }
+
+#if DEBUG
+extension NativeFullScreenSourceBody {
+    var debugLineAnchorRequestedRangeForTesting: ClosedRange<Int>? {
+        lineAnchorResolution?.requestedRange
+    }
+
+    var debugLineAnchorExistingRangeForTesting: ClosedRange<Int>? {
+        lineAnchorResolution?.existingRange
+    }
+
+    var debugLineAnchorHighlightRectCountForTesting: Int {
+        textView.debugLineAnchorHighlightRectCountForTesting
+    }
+
+    var debugLineAnchorFirstHighlightRectForTesting: CGRect? {
+        textView.debugLineAnchorFirstHighlightRectForTesting
+    }
+
+    var debugLineAnchorHighlightEnclosureRectForTesting: CGRect? {
+        textView.debugLineAnchorHighlightEnclosureRectForTesting
+    }
+
+    var debugLineAnchorVisibleHighlightGeometryForTesting: Bool {
+        textView.debugLineAnchorHighlightHasVisibleGeometryForTesting
+    }
+
+    var debugLineAnchorVisibleHighlightAlignedWithTargetForTesting: Bool {
+        textView.debugLineAnchorHighlightContainsFirstTargetForTesting
+    }
+
+    var debugLineAnchorScrollOffsetForTesting: CGPoint {
+        textView.contentOffset
+    }
+}
+#endif
 
 // MARK: - Rendered Document Body (Org, LaTeX, Mermaid)
 

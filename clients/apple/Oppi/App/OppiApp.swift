@@ -275,7 +275,10 @@ struct OppiApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if ReviewCommentStashHarnessConfig.isEnabled {
+            if WikiLineAnchorHarnessConfig.isEnabled {
+                WikiLineAnchorHarnessView()
+                    .ignoresSafeArea()
+            } else if ReviewCommentStashHarnessConfig.isEnabled {
                 ReviewCommentStashHarnessView()
             } else if FullScreenReviewCommentHarnessConfig.isEnabled {
                 FullScreenReviewCommentHarnessView()
@@ -533,7 +536,9 @@ struct OppiApp: App {
         guard !ResourceReferenceSelfLinkPolicy.isCurrentSession(reference) else {
             return
         }
-        let sessionMatches = knownSessionMatches(for: reference.target)
+        let sessionMatches = reference.lineAnchor == nil
+            ? knownSessionMatches(for: reference.target)
+            : []
         let fileLookup = await currentWorkspaceFileMatches(for: reference)
         guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
 
@@ -730,7 +735,8 @@ struct OppiApp: App {
                     serverId: file.serverID,
                     workspaceId: file.workspaceID,
                     worktreeId: file.worktreeID,
-                    path: file.path
+                    path: file.path,
+                    lineAnchor: reference.lineAnchor
                 ),
                 workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace)
             )

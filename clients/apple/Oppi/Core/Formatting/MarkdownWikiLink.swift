@@ -1,16 +1,206 @@
 import Foundation
 
+/// A GitHub-style, one-based inclusive source line anchor.
+///
+/// The parser is intentionally strict: a fragment that is not exactly `#L12`
+/// or `#L12-L18` is not an anchor and must remain literal wiki-link text.
+struct SourceLineAnchor: Hashable, Sendable {
+    let range: ClosedRange<Int>
+
+    init?(startLine: Int, endLine: Int) {
+        guard startLine > 0, endLine >= startLine else { return nil }
+        range = (startLine...endLine)
+    }
+
+    init?(range: ClosedRange<Int>) {
+        self.init(startLine: range.lowerBound, endLine: range.upperBound)
+    }
+
+    var fragment: String {
+        if range.lowerBound == range.upperBound {
+            return "#L\(range.lowerBound)"
+        }
+        return "#L\(range.lowerBound)-L\(range.upperBound)"
+    }
+
+    static func parse(_ fragment: String) -> SourceLineAnchor? {
+        guard fragment.first == "#" else { return nil }
+        let body = fragment.dropFirst()
+        let pieces = body.split(separator: "-", omittingEmptySubsequences: false)
+        guard pieces.count == 1 || pieces.count == 2,
+              let startLine = parseLineNumber(pieces[0]) else {
+            return nil
+        }
+
+        let endLine = pieces.count == 2
+            ? parseLineNumber(pieces[1])
+            : startLine
+        guard let endLine else { return nil }
+        return SourceLineAnchor(startLine: startLine, endLine: endLine)
+    }
+
+    func resolution(fileLineCount: Int, firstFileLine: Int = 1) -> SourceLineAnchorResolution {
+        let normalizedLineCount = max(0, fileLineCount)
+        let firstAvailableLine = max(1, firstFileLine)
+        let availableRange: ClosedRange<Int>?
+        if normalizedLineCount > 0 {
+            availableRange = firstAvailableLine...(firstAvailableLine + normalizedLineCount - 1)
+        } else {
+            availableRange = nil
+        }
+
+        let existingRange: ClosedRange<Int>?
+        if let availableRange,
+           range.upperBound >= availableRange.lowerBound,
+           range.lowerBound <= availableRange.upperBound {
+            let lower = max(range.lowerBound, availableRange.lowerBound)
+            let upper = min(range.upperBound, availableRange.upperBound)
+            existingRange = lower...upper
+        } else {
+            existingRange = nil
+        }
+
+        return SourceLineAnchorResolution(
+            requestedRange: range,
+            existingRange: existingRange,
+            fileLineCount: normalizedLineCount,
+            availableRange: availableRange
+        )
+    }
+
+    func resolution(fileContent: String, firstFileLine: Int = 1) -> SourceLineAnchorResolution {
+        resolution(
+            fileLineCount: SourceLineMetrics.count(fileContent),
+            firstFileLine: firstFileLine
+        )
+    }
+
+    private static func parseLineNumber(_ value: Substring) -> Int? {
+        guard value.count >= 2,
+              value.first == "L" else {
+            return nil
+        }
+        let digits = value.dropFirst()
+        guard !digits.isEmpty,
+              digits.allSatisfy({ $0 >= "0" && $0 <= "9" }),
+              let line = Int(digits),
+              line > 0 else {
+            return nil
+        }
+        return line
+    }
+}
+
+struct SourceLineAnchorResolution: Equatable, Sendable {
+    let requestedRange: ClosedRange<Int>
+    let existingRange: ClosedRange<Int>?
+    let fileLineCount: Int
+    let availableRange: ClosedRange<Int>?
+
+    var message: String? {
+        guard let availableRange else {
+            return "Requested lines \(requestedRange.lowerBound)–\(requestedRange.upperBound) are past the end of this empty file. Opened at the end."
+        }
+
+        let startsBeforeFile = requestedRange.lowerBound < availableRange.lowerBound
+        let continuesPastFile = requestedRange.upperBound > availableRange.upperBound
+        guard startsBeforeFile || continuesPastFile else { return nil }
+
+        var details: [String] = []
+        if startsBeforeFile {
+            details.append("starts before line \(availableRange.lowerBound)")
+        }
+        if continuesPastFile {
+            details.append("continues past line \(availableRange.upperBound)")
+        }
+        let detailText = details.joined(separator: " and ")
+        if let existingRange {
+            return "Showing lines \(existingRange.lowerBound)–\(existingRange.upperBound). The requested range \(detailText) (\(fileLineCount) lines)."
+        }
+        return "Requested lines \(requestedRange.lowerBound)–\(requestedRange.upperBound) \(detailText) (\(fileLineCount) lines). Opened at the end."
+    }
+
+    var accessibilityLabel: String {
+        if let existingRange {
+            if existingRange.lowerBound == existingRange.upperBound {
+                return "Focused line \(existingRange.lowerBound)"
+            }
+            return "Focused lines \(existingRange.lowerBound) through \(existingRange.upperBound)"
+        }
+        return "No focused lines; opened at the end of the file"
+    }
+}
+
+enum SourceLineMetrics {
+    /// Counts logical source lines, including the empty line after a trailing
+    /// newline. An empty file has zero lines; viewers may still render one
+    /// empty row for layout purposes.
+    static func count(_ source: String) -> Int {
+        guard !source.isEmpty else { return 0 }
+        return logicalLineContentRanges(in: source as NSString).count
+    }
+
+    /// Returns UTF-16 ranges for logical lines without their newline characters.
+    /// TextKit uses the same UTF-16 coordinate space, so these ranges can be
+    /// passed directly to `NSLayoutManager`.
+    static func logicalLineContentRanges(in source: NSString) -> [NSRange] {
+        guard source.length > 0 else { return [NSRange(location: 0, length: 0)] }
+
+        var ranges: [NSRange] = []
+        var location = 0
+        while location < source.length {
+            var lineEnd = 0
+            var contentsEnd = 0
+            source.getLineStart(
+                nil,
+                end: &lineEnd,
+                contentsEnd: &contentsEnd,
+                for: NSRange(location: location, length: 0)
+            )
+            ranges.append(NSRange(location: location, length: max(0, contentsEnd - location)))
+            guard lineEnd > location else { break }
+            location = lineEnd
+        }
+
+        if isNewline(source.character(at: source.length - 1)) {
+            ranges.append(NSRange(location: source.length, length: 0))
+        }
+        return ranges
+    }
+
+    private static func isNewline(_ value: unichar) -> Bool {
+        value == 10 || value == 13
+    }
+}
+
 /// Unresolved `[[target]]` carried through the attributed-link pipeline.
 ///
 /// Resolution stays client-local and happens only when the user taps. The
 /// source scope identifies the workspace file candidate without constraining
-/// exact session-ID matches to one server.
+/// exact session-ID matches to one server. Anchored references are file-only.
 struct ResourceReference: Hashable, Sendable {
     let target: String
     let sourceServerID: String?
     let workspaceID: String?
     let sourceSessionID: String?
     let fileCandidatePath: String?
+    let lineAnchor: SourceLineAnchor?
+
+    init(
+        target: String,
+        sourceServerID: String?,
+        workspaceID: String?,
+        sourceSessionID: String?,
+        fileCandidatePath: String?,
+        lineAnchor: SourceLineAnchor? = nil
+    ) {
+        self.target = target
+        self.sourceServerID = sourceServerID
+        self.workspaceID = workspaceID
+        self.sourceSessionID = sourceSessionID
+        self.fileCandidatePath = fileCandidatePath
+        self.lineAnchor = lineAnchor
+    }
 }
 
 struct SessionResourceReference: Hashable, Sendable {
@@ -68,6 +258,7 @@ enum ResourceReferenceMatch: Hashable, Sendable {
     fileprivate func matches(_ reference: ResourceReference) -> Bool {
         switch self {
         case .session(let session):
+            guard reference.lineAnchor == nil else { return false }
             return session.sessionID == reference.target
         case .workspaceFile(let file):
             guard let workspaceID = reference.workspaceID,
@@ -130,7 +321,8 @@ enum ResourceReferenceSelfLinkPolicy {
     /// immutable source scope before any mutable catalog lookup, activation, or
     /// navigation so a current-session wiki link is genuinely inert.
     static func isCurrentSession(_ reference: ResourceReference) -> Bool {
-        guard reference.sourceServerID != nil,
+        guard reference.lineAnchor == nil,
+              reference.sourceServerID != nil,
               let sourceSessionID = reference.sourceSessionID else {
             return false
         }
@@ -227,6 +419,9 @@ enum ResourceReferenceURL {
         if let sourceSessionID = nonEmpty(reference.sourceSessionID) {
             queryItems.append(URLQueryItem(name: "sourceSessionId", value: sourceSessionID))
         }
+        if let lineAnchor = reference.lineAnchor {
+            queryItems.append(URLQueryItem(name: "lineAnchor", value: lineAnchor.fragment))
+        }
 
         var components = URLComponents()
         components.scheme = scheme
@@ -243,12 +438,21 @@ enum ResourceReferenceURL {
             return nil
         }
 
+        let lineAnchor: SourceLineAnchor?
+        if let rawLineAnchor = queryValue("lineAnchor", in: queryItems) {
+            guard let parsedLineAnchor = SourceLineAnchor.parse(rawLineAnchor) else { return nil }
+            lineAnchor = parsedLineAnchor
+        } else {
+            lineAnchor = nil
+        }
+
         return ResourceReference(
             target: target,
             sourceServerID: queryValue("sourceServerId", in: queryItems),
             workspaceID: queryValue("workspaceId", in: queryItems),
             sourceSessionID: queryValue("sourceSessionId", in: queryItems),
-            fileCandidatePath: queryValue("fileCandidate", in: queryItems)
+            fileCandidatePath: queryValue("fileCandidate", in: queryItems),
+            lineAnchor: lineAnchor
         )
     }
 
@@ -298,6 +502,11 @@ enum MarkdownWikiLinkRewriter {
         let end: String.Index
         let separator: String.Index?
         let canProtect: Bool
+    }
+
+    private struct ParsedWikiTarget {
+        let path: String
+        let lineAnchor: SourceLineAnchor?
     }
 
     /// Selects at most eight source-absent, three-byte alphanumeric tokens.
@@ -420,13 +629,11 @@ enum MarkdownWikiLinkRewriter {
     }
 
     private static func isPotentiallySupportedWikiTarget(_ rawTarget: Substring) -> Bool {
-        let target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty else { return false }
+        guard let parsed = parseWikiTarget(String(rawTarget)) else { return false }
 
-        let path = target.replacingOccurrences(of: "\\", with: "/")
+        let path = parsed.path.replacingOccurrences(of: "\\", with: "/")
         return !path.hasPrefix("/")
             && !path.hasPrefix("~")
-            && !path.contains("#")
             && !path.contains("?")
             && !path.contains(":")
     }
@@ -465,12 +672,11 @@ enum MarkdownWikiLinkRewriter {
     }
 
     static func resolvedWorkspacePath(target: String, sourceDirectory: String?) -> String? {
-        let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        guard let parsed = parseWikiTarget(target) else { return nil }
 
-        var path = trimmed.replacingOccurrences(of: "\\", with: "/")
+        var path = parsed.path.replacingOccurrences(of: "\\", with: "/")
         guard !path.hasPrefix("/"), !path.hasPrefix("~") else { return nil }
-        guard !path.contains("#"), !path.contains("?"), !path.contains(":") else { return nil }
+        guard !path.contains("?"), !path.contains(":") else { return nil }
 
         let resolveFromSource = path.hasPrefix("./") || path.hasPrefix("../")
         if resolveFromSource,
@@ -584,7 +790,8 @@ enum MarkdownWikiLinkRewriter {
         guard let rawTarget = pieces.first else { return nil }
 
         let target = String(rawTarget).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let filePath = resolvedWorkspacePath(target: target, sourceDirectory: context.sourceDirectory) else {
+        guard let parsedTarget = parseWikiTarget(target),
+              let filePath = resolvedWorkspacePath(target: target, sourceDirectory: context.sourceDirectory) else {
             return nil
         }
 
@@ -599,12 +806,30 @@ enum MarkdownWikiLinkRewriter {
             sourceServerID: context.serverID,
             workspaceID: hasWorkspaceScope ? workspaceID : nil,
             sourceSessionID: context.sessionID,
-            fileCandidatePath: hasWorkspaceScope ? filePath : nil
+            fileCandidatePath: hasWorkspaceScope ? filePath : nil,
+            lineAnchor: parsedTarget.lineAnchor
         )) else {
             return .text(display)
         }
 
         return .link(children: [.text(display)], destination: url.absoluteString)
+    }
+
+    private static func parseWikiTarget(_ rawTarget: String) -> ParsedWikiTarget? {
+        let target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return nil }
+
+        guard let hash = target.firstIndex(of: "#") else {
+            return ParsedWikiTarget(path: target, lineAnchor: nil)
+        }
+
+        let path = String(target[..<hash]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let fragment = String(target[hash...])
+        guard !path.isEmpty,
+              let lineAnchor = SourceLineAnchor.parse(fragment) else {
+            return nil
+        }
+        return ParsedWikiTarget(path: path, lineAnchor: lineAnchor)
     }
 
     private static func normalizeWorkspacePath(_ path: String) -> String? {

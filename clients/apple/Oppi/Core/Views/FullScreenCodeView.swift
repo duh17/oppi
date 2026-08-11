@@ -381,7 +381,9 @@ extension View {
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         sessionId: String? = nil,
-        sourceLabel: String? = nil
+        sourceLabel: String? = nil,
+        lineAnchor: SourceLineAnchor? = nil,
+        lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil
     ) -> some View {
         modifier(
             FullScreenViewerPresentationModifier(
@@ -390,7 +392,9 @@ extension View {
                 reviewCommentSelectionContext: reviewCommentSelectionContext,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 sessionId: sessionId,
-                sourceLabel: sourceLabel
+                sourceLabel: sourceLabel,
+                lineAnchor: lineAnchor,
+                lineAnchorNotice: lineAnchorNotice
             )
         )
     }
@@ -403,6 +407,8 @@ private struct FullScreenViewerPresentationModifier: ViewModifier {
     let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     let sessionId: String?
     let sourceLabel: String?
+    let lineAnchor: SourceLineAnchor?
+    let lineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -431,7 +437,9 @@ private struct FullScreenViewerPresentationModifier: ViewModifier {
             reviewCommentSelectionContext: reviewCommentSelectionContext,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSessionId: sessionId,
-            reviewCommentSourceLabel: sourceLabel
+            reviewCommentSourceLabel: sourceLabel,
+            lineAnchor: lineAnchor,
+            lineAnchorNotice: lineAnchorNotice
         )
     }
 }
@@ -444,6 +452,8 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     let reviewCommentSessionId: String?
     let reviewCommentSourceLabel: String?
+    let lineAnchor: SourceLineAnchor?
+    let lineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
     var navigationActions: [FullScreenViewerNavigationAction]
 
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
@@ -465,6 +475,8 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         reviewCommentSessionId: String? = nil,
         reviewCommentSourceLabel: String? = nil,
+        lineAnchor: SourceLineAnchor? = nil,
+        lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
         navigationActions: [FullScreenViewerNavigationAction] = []
     ) {
         self.content = content
@@ -472,6 +484,8 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSessionId = reviewCommentSessionId
         self.reviewCommentSourceLabel = reviewCommentSourceLabel
+        self.lineAnchor = lineAnchor
+        self.lineAnchorNotice = lineAnchorNotice
         self.navigationActions = navigationActions
     }
 
@@ -479,6 +493,8 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
         FullScreenCodeViewController(
             content: content,
             reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
+            lineAnchor: lineAnchor,
+            lineAnchorNotice: lineAnchorNotice,
             navigationActions: navigationActions
         )
     }

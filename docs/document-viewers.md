@@ -13,7 +13,30 @@ Assistant messages can reference files in the active workspace with:
 [[path/to/file|Human-readable label]]
 ```
 
-The target is a workspace-relative path. Oppi preserves an explicit extension, adds `.md` to an extensionless target, and resolves `./` or `../` relative to the source Markdown file's directory when that directory is known. Backslashes become `/`. Absolute paths, `~` paths, `file://` URLs, query strings, and fragments are not workspace wiki links.
+The target is a workspace-relative path. Oppi preserves an explicit extension, adds `.md` to an extensionless target, and resolves `./` or `../` relative to the source Markdown file's directory when that directory is known. Backslashes become `/`. Absolute paths, `~` paths, `file://` URLs, and query strings are not workspace wiki links.
+
+### Line anchors
+
+Oppi accepts GitHub-style, one-based, inclusive source line anchors on workspace file links:
+
+```text
+[[Sources/App.swift#L12]]
+[[Sources/App.swift#L12-L18|focused code]]
+```
+
+The fragment must use an uppercase `L`, a positive decimal line number, and an optional `-L<end>` range whose end is not before its start. Anchors are valid only on file links. Oppi removes the fragment before checking the workspace path; an anchored target that looks like a session ID never opens a session.
+
+When the file opens:
+
+- Code and plain-text viewers focus and highlight the exact requested source lines; scrolling keeps the enclosure attached to those lines.
+- Code ranges use one gutter marker for the continuous focus cue (a single-line anchor still has one marker).
+- The rendered Markdown reader highlights every rendered block whose source line range overlaps the anchor inside one translucent continuous rounded enclosure; the blocks keep their normal spacing and remain individually readable.
+- Markdown Source mode keeps the same one-based source range and focuses those exact lines.
+- A labeled link uses the text after `|`; without a label, the target text is displayed.
+
+The range can extend past the file. Oppi clips the highlight to existing lines and opens at the end when no requested line exists. It gives one short out-of-range notice and VoiceOver announcement for that open action. Empty files use the same end-of-file behavior.
+
+Malformed or unsupported fragments remain literal Markdown text and do not become links. Examples include `#Heading`, `#L0`, `#L12-L11`, `#l12`, and `#L12-Lx`. No chooser or file lookup runs for a malformed link.
 
 ### What links can open
 
@@ -51,7 +74,7 @@ Directory listings can show sensitive names, but raw serving blocks `.env` files
 Copy this into a Pi or agent system prompt:
 
 ```text
-When citing a relevant file from the current Oppi workspace, use a workspace-relative wiki link such as [[path/to/file.ext|Short human-readable label]]. Reuse an existing path from the workspace; never fabricate a path or use an absolute, ~, file://, or outside-workspace path. Keep a normal human-readable sentence and brief context around every link so Oppi can render it as a navigable personal-wiki reference. Do not cite secrets, credentials, private runtime state, or sensitive files.
+When citing a relevant file from the current Oppi workspace, use a workspace-relative wiki link such as [[path/to/file.ext|Short human-readable label]]. Add a source focus only when it helps, using [[path/to/file.ext#L12-L18|Short label]]. Reuse an existing path from the workspace; never fabricate a path or use an absolute, ~, file://, or outside-workspace path. Keep a normal human-readable sentence and brief context around every link so Oppi can render it as a navigable personal-wiki reference. Do not cite secrets, credentials, private runtime state, or sensitive files.
 ```
 
 Inline Markdown images support workspace-relative raster paths, source-relative paths when source context is known, and the existing client SVG path for SVG. See [Markdown image resolution](attachment-rendering.md#markdown-image-resolution).
@@ -59,7 +82,7 @@ Inline Markdown images support workspace-relative raster paths, source-relative 
 ### Copyable `AGENTS.md` guidance for other projects
 
 ````markdown
-- When pointing the user to a relevant file in the current workspace for navigation, use a real workspace-relative wiki link such as `[[path/to/file.ext|Short label]]`.
+- When pointing the user to a relevant file in the current workspace for navigation, use a real workspace-relative wiki link such as `[[path/to/file.ext|Short label]]`. Add an uppercase GitHub-style source anchor only when useful, for example `[[path/to/file.ext#L12-L18|Short label]]`.
 - When the image or SVG itself should appear inline, use standard Markdown image syntax such as `![Short description](path/to/image.png)` or `![Diagram](path/to/diagram.svg)`.
 - For both formats, reuse a real existing workspace-relative path; never fabricate a path, use an absolute or outside-workspace path, or expose secrets or private runtime state. Keep normal human-readable context, and use these formats when actually showing or citing content—not for every casual filename mention.
 - For a diagram that should render inline, use a fenced Markdown code block labeled `mermaid` with valid Mermaid source:

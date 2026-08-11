@@ -23,6 +23,347 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
+    @Test func anchoredCodeBodyUsesOneContinuousEnclosureAndScrollsToRequestedLines() async throws {
+        let anchor = try #require(SourceLineAnchor(startLine: 32, endLine: 35))
+        let source = (1...80).map { "let value\($0) = \($0)" }.joined(separator: "\n")
+        let controller = makeController(
+            content: .code(content: source, language: "swift", filePath: "Anchor.swift", startLine: 1),
+            lineAnchor: anchor
+        )
+        let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenCodeBody)
+
+        let focused = await waitForMainActorCondition(timeout: .seconds(2)) {
+            controller.view.layoutIfNeeded()
+            guard let rect = body.debugLineAnchorFirstHighlightRectForTesting else { return false }
+            return body.debugLineAnchorHighlightRectCountForTesting == 1
+                && body.debugLineAnchorGutterMarkerCountForTesting == 1
+                && body.debugLineAnchorHighlightHasVisibleGeometryForTesting
+                && (body.debugLineAnchorScrollOffsetForTesting.y > 0 || rect.midY < body.debugLineAnchorViewportHeightForTesting * 0.5)
+        }
+
+        #expect(focused)
+        #expect(body.debugLineAnchorExistingRangeForTesting == 32...35)
+        #expect(body.debugLineAnchorHighlightRectCountForTesting == 1)
+        #expect(body.debugLineAnchorGutterMarkerCountForTesting == 1)
+        #expect(body.debugLineAnchorHighlightHasVisibleGeometryForTesting)
+        let firstRect = try #require(body.debugLineAnchorFirstHighlightRectForTesting)
+        #expect(
+            body.debugLineAnchorScrollOffsetForTesting.y > 0,
+            "offset=\(body.debugLineAnchorScrollOffsetForTesting.y) viewport=\(body.debugLineAnchorViewportHeightForTesting) content=\(body.debugLineAnchorContentHeightForTesting) rect=\(firstRect)"
+        )
+        let visibleFirstRectMidY = firstRect.midY - body.debugLineAnchorScrollOffsetForTesting.y
+        #expect(
+            visibleFirstRectMidY < body.debugLineAnchorViewportHeightForTesting * 0.5,
+            "offset=\(body.debugLineAnchorScrollOffsetForTesting.y) viewport=\(body.debugLineAnchorViewportHeightForTesting) content=\(body.debugLineAnchorContentHeightForTesting) rect=\(firstRect)"
+        )
+    }
+
+    @Test func anchoredSingleCodeLineUsesOneRoundedEnclosure() async throws {
+        let anchor = try #require(SourceLineAnchor(startLine: 32, endLine: 32))
+        let source = (1...80).map { "let value\($0) = \($0)" }.joined(separator: "\n")
+        let controller = makeController(
+            content: .code(content: source, language: "swift", filePath: "Anchor.swift", startLine: 1),
+            lineAnchor: anchor
+        )
+        let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenCodeBody)
+
+        let ready = await waitForMainActorCondition(timeout: .seconds(2)) {
+            controller.view.layoutIfNeeded()
+            return body.debugLineAnchorHighlightRectCountForTesting == 1
+                && body.debugLineAnchorGutterMarkerCountForTesting == 1
+                && body.debugLineAnchorHighlightHasVisibleGeometryForTesting
+                && body.debugLineAnchorFirstHighlightRectForTesting != nil
+        }
+
+        #expect(ready)
+        #expect(body.debugLineAnchorExistingRangeForTesting == 32...32)
+        #expect(body.debugLineAnchorHighlightRectCountForTesting == 1)
+        #expect(body.debugLineAnchorGutterMarkerCountForTesting == 1)
+        #expect(body.debugLineAnchorHighlightHasVisibleGeometryForTesting)
+    }
+
+    @Test func anchoredMarkdownReaderUsesOneEnclosureForOverlappingBlocks() async throws {
+        let anchor = try #require(SourceLineAnchor(startLine: 6, endLine: 12))
+        let body = NativeFullScreenMarkdownBody(
+            content: "# Intro\n\nBefore\n\n## Focus\n\nFirst focused block\n\nSecond focused block\n\nAfter",
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            sourceFilePath: "Anchor.md",
+            lineAnchor: anchor
+        )
+        let host = attachToHost(body)
+        defer { host.removeFromSuperview() }
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let focused = await waitForMainActorCondition(timeout: .seconds(2)) {
+            body.debugLayoutVisibleMarkdownCellsForTesting()
+            let visibleCellCount = body.debugLineAnchorVisibleHighlightedCellCountForTesting
+            return body.debugLineAnchorHighlightedSegmentCountForTesting >= 2
+                && visibleCellCount >= 2
+                && body.debugLineAnchorVisibleHighlightEnclosureCountForTesting == 1
+                && body.debugLineAnchorVisibleHighlightGeometryCountForTesting == 1
+                && body.debugLineAnchorVisibleHighlightAreaForTesting > 0
+                && body.debugLineAnchorVisibleHighlightAlignedWithTargetForTesting
+                && body.debugLineAnchorVisibleHighlightOverlaysFrontmostForTesting
+        }
+
+        #expect(focused)
+        #expect(body.debugLineAnchorExistingRangeForTesting == 6...11)
+        #expect(body.debugLineAnchorHighlightedSegmentCountForTesting >= 2)
+        #expect(body.debugLineAnchorVisibleHighlightedCellCountForTesting >= 2)
+        #expect(body.debugLineAnchorVisibleHighlightEnclosureCountForTesting == 1)
+        #expect(body.debugLineAnchorVisibleHighlightGeometryCountForTesting == 1)
+        #expect(body.debugLineAnchorVisibleHighlightAreaForTesting > 0)
+        #expect(body.debugLineAnchorVisibleHighlightAlignedWithTargetForTesting)
+        #expect(body.debugLineAnchorVisibleHighlightOverlaysFrontmostForTesting)
+    }
+
+    @Test func anchoredGraphvizBodyCarriesLineAnchorToCodeRenderer() async throws {
+        let anchor = try #require(SourceLineAnchor(startLine: 12, endLine: 14))
+        let source = (1...40).map { "node\($0) -> node\($0 + 1)" }.joined(separator: "\n")
+        let controller = makeController(
+            content: .graphviz(content: source, filePath: "graph.dot"),
+            lineAnchor: anchor
+        )
+        let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenCodeBody)
+
+        let highlighted = await waitForMainActorCondition(timeout: .seconds(2)) {
+            controller.view.layoutIfNeeded()
+            return body.debugLineAnchorExistingRangeForTesting == 12...14
+                && body.debugLineAnchorHighlightRectCountForTesting == 1
+                && body.debugLineAnchorGutterMarkerCountForTesting == 1
+                && body.debugLineAnchorHighlightHasVisibleGeometryForTesting
+        }
+
+        #expect(highlighted)
+        #expect(body.debugLineAnchorExistingRangeForTesting == 12...14)
+        #expect(body.debugLineAnchorGutterMarkerCountForTesting == 1)
+    }
+
+    @Test func markdownSourceTogglePreservesTheExactLineFocus() async throws {
+        let anchor = try #require(SourceLineAnchor(startLine: 10, endLine: 12))
+        let source = (1...30).map { "Source line \($0)" }.joined(separator: "\n")
+        let controller = makeController(
+            content: .markdown(content: source, filePath: "Anchor.md"),
+            lineAnchor: anchor
+        )
+
+        let reader = try #require(controller.installedBodyViewForTesting as? NativeFullScreenMarkdownBody)
+        let readerReady = await waitForMainActorCondition(timeout: .seconds(2)) {
+            controller.view.layoutIfNeeded()
+            return reader.debugLineAnchorHighlightedSegmentCountForTesting > 0
+        }
+        #expect(readerReady)
+
+        controller.toggleSourceForTesting()
+        let sourceBody = await waitForMainActorCondition(timeout: .seconds(2)) {
+            controller.view.layoutIfNeeded()
+            return controller.installedBodyViewForTesting is NativeFullScreenSourceBody
+        }
+        #expect(sourceBody)
+        let sourceView = try #require(controller.installedBodyViewForTesting as? NativeFullScreenSourceBody)
+        let sourceFocused = await waitForMainActorCondition(timeout: .seconds(2)) {
+            controller.view.layoutIfNeeded()
+            return sourceView.debugLineAnchorHighlightRectCountForTesting == 1
+                && sourceView.debugLineAnchorVisibleHighlightGeometryForTesting
+                && sourceView.debugLineAnchorVisibleHighlightAlignedWithTargetForTesting
+        }
+        #expect(sourceFocused)
+        #expect(sourceView.debugLineAnchorExistingRangeForTesting == 10...12)
+        #expect(sourceView.debugLineAnchorVisibleHighlightGeometryForTesting)
+        #expect(sourceView.debugLineAnchorVisibleHighlightAlignedWithTargetForTesting)
+    }
+
+    @Test func outOfRangeLineAnchorNoticeCallbackIsDeliveredOnceAcrossBodyRebuilds() async throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+
+        let anchor = try #require(SourceLineAnchor(startLine: 99, endLine: 100))
+        var notices: [String] = []
+        let controller = FullScreenCodeViewController(
+            content: .code(
+                content: "let onlyLine = true",
+                language: "swift",
+                filePath: "Short.swift",
+                startLine: 1
+            ),
+            lineAnchor: anchor,
+            lineAnchorNotice: { message in
+                notices.append(message)
+            }
+        )
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+
+        let delivered = await waitForMainActorCondition(timeout: .seconds(2)) {
+            controller.lineAnchorNoticeDeliveredForTesting
+        }
+        #expect(delivered)
+        #expect(notices.count == 1)
+        #expect(notices.first?.contains("Opened at the end") == true)
+
+        let rebuiltTheme: ThemeID = ThemeRuntimeState.currentThemeID() == .light ? .dark : .light
+        controller.applyThemeIfNeeded(rebuiltTheme)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(notices.count == 1, "Out-of-range notice must remain one-shot after a body rebuild")
+    }
+
+    @Test func anchoredSourceBodyHighlightsTheEmptyLineAfterATrailingNewline() async throws {
+        let anchor = try #require(SourceLineAnchor(startLine: 2, endLine: 2))
+        let body = NativeFullScreenSourceBody(
+            content: "one\n",
+            isStreaming: false,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            lineAnchor: anchor
+        )
+        let host = attachToHost(body)
+        defer { host.removeFromSuperview() }
+
+        let focused = await waitForMainActorCondition(timeout: .seconds(2)) {
+            body.layoutIfNeeded()
+            return body.debugLineAnchorHighlightRectCountForTesting == 1
+                && body.debugLineAnchorVisibleHighlightGeometryForTesting
+        }
+        #expect(focused)
+        #expect(body.debugLineAnchorVisibleHighlightGeometryForTesting)
+        let rect = try #require(body.debugLineAnchorFirstHighlightRectForTesting)
+        #expect(rect.minY > 20, "The trailing empty line must be below the first source line: \(rect)")
+    }
+
+    @Test func anchoredSourceHighlightStaysAttachedDuringManualScroll() async throws {
+        let anchor = try #require(SourceLineAnchor(startLine: 40, endLine: 43))
+        let content = (1...140).map { "Source line \($0)" }.joined(separator: "\n")
+        let body = NativeFullScreenSourceBody(
+            content: content,
+            isStreaming: false,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            lineAnchor: anchor
+        )
+        let hostController = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        hostController.loadViewIfNeeded()
+        body.translatesAutoresizingMaskIntoConstraints = false
+        hostController.view.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: hostController.view.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: hostController.view.trailingAnchor),
+            body.topAnchor.constraint(equalTo: hostController.view.topAnchor),
+            body.bottomAnchor.constraint(equalTo: hostController.view.bottomAnchor),
+        ])
+        hostController.view.setNeedsLayout()
+        hostController.view.layoutIfNeeded()
+
+        let textView = try #require(timelineAllTextViews(in: body).first as? FullScreenReviewCommentTextView)
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+        let measuredContentHeight = textView.layoutManager.usedRect(for: textView.textContainer).maxY
+            + textView.textContainerInset.bottom
+        // A detached UIKit test host reports the viewport as contentSize even
+        // after TextKit lays out the full source. Seed the measured height so
+        // this exercises a real contentOffset scroll rather than rubber-banding.
+        textView.contentSize = CGSize(
+            width: textView.contentSize.width,
+            height: max(textView.bounds.height + 120, measuredContentHeight)
+        )
+
+        let initiallyFocused = await waitForMainActorCondition(timeout: .seconds(2)) {
+            hostController.view.layoutIfNeeded()
+            body.layoutIfNeeded()
+            return body.debugLineAnchorHighlightRectCountForTesting == 1
+                && body.debugLineAnchorVisibleHighlightGeometryForTesting
+                && body.debugLineAnchorVisibleHighlightAlignedWithTargetForTesting
+        }
+        #expect(initiallyFocused)
+        #expect(body.debugLineAnchorVisibleHighlightAlignedWithTargetForTesting)
+
+        let beforeOffset = textView.contentOffset.y
+        let beforeRect = try #require(body.debugLineAnchorFirstHighlightRectForTesting)
+        let minimumOffset = -textView.adjustedContentInset.top
+        let maximumOffset = max(
+            minimumOffset,
+            textView.contentSize.height
+                - textView.bounds.height
+                + textView.adjustedContentInset.bottom
+        )
+        let manualOffset = min(max(beforeOffset + 36, minimumOffset), maximumOffset)
+        #expect(
+            manualOffset > beforeOffset,
+            "Fixture must leave room for a user scroll: content=\(textView.contentSize) bounds=\(textView.bounds) insets=\(textView.adjustedContentInset)"
+        )
+
+        textView.setContentOffset(CGPoint(x: textView.contentOffset.x, y: manualOffset), animated: false)
+        body.scrollViewDidScroll(textView)
+        body.layoutIfNeeded()
+
+        let afterOffset = textView.contentOffset.y
+        let afterRect = try #require(body.debugLineAnchorFirstHighlightRectForTesting)
+        #expect(abs(afterOffset - manualOffset) <= 0.5)
+        #expect(
+            abs((afterRect.midY - beforeRect.midY) + (afterOffset - beforeOffset)) <= 1,
+            "Highlight must track manual scrolling: before=\(beforeRect) after=\(afterRect) offsets=\(beforeOffset)->\(afterOffset)"
+        )
+        #expect(body.debugLineAnchorHighlightRectCountForTesting == 1)
+        #expect(body.debugLineAnchorVisibleHighlightGeometryForTesting)
+        #expect(body.debugLineAnchorVisibleHighlightAlignedWithTargetForTesting)
+        print(
+            "[line-anchor] source-manual-scroll: offset=\(beforeOffset)->\(afterOffset) "
+                + "firstMidY=\(beforeRect.midY)->\(afterRect.midY) "
+                + "enclosure=\(String(describing: body.debugLineAnchorHighlightEnclosureRectForTesting)) "
+                + "visibleGeometry=\(body.debugLineAnchorVisibleHighlightGeometryForTesting)"
+        )
+
+        // Updating the enclosure must not re-run initial focus or fight the
+        // user's chosen offset.
+        #expect(abs(textView.contentOffset.y - manualOffset) <= 0.5)
+    }
+
+    @Test func anchoredCodeThemeChangePreservesUserViewportWithoutRefocusing() async throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+        ThemeRuntimeState.setThemeID(.dark)
+
+        let anchor = try #require(SourceLineAnchor(startLine: 120, endLine: 125))
+        let content = (1...300).map { "let value\($0) = \($0)" }.joined(separator: "\n")
+        let controller = makeController(
+            content: .code(content: content, language: "swift", filePath: "Theme.swift", startLine: 1),
+            lineAnchor: anchor
+        )
+        let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenCodeBody)
+        let focused = await waitForMainActorCondition(timeout: .seconds(2)) {
+            controller.view.layoutIfNeeded()
+            return body.debugLineAnchorScrollOffsetForTesting.y > 0
+        }
+        #expect(focused)
+
+        let scrollView = try #require(timelineAllScrollViews(in: body).first {
+            !($0 is UITextView) && $0.contentSize.height > $0.bounds.height
+        })
+        scrollView.setContentOffset(CGPoint(x: 0, y: 42), animated: false)
+        let expectedOffset = scrollView.contentOffset.y
+
+        controller.applyThemeIfNeeded(.light)
+        let preserved = await waitForMainActorCondition(timeout: .seconds(2)) {
+            controller.view.layoutIfNeeded()
+            guard let updatedScrollView = timelineAllScrollViews(in: controller.view).first(where: {
+                !($0 is UITextView) && $0.contentSize.height > $0.bounds.height
+            }) else {
+                return false
+            }
+            return abs(updatedScrollView.contentOffset.y - expectedOffset) <= 1
+        }
+        #expect(preserved)
+    }
+
     @Test func codeBodyConfiguresSelectionCommentContext() throws {
         let controller = makeController(
             content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)
@@ -1396,12 +1737,16 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(!textView.shouldPresentFallbackEditMenuForTesting())
     }
 
-    private func makeController(content: FullScreenCodeContent) -> FullScreenCodeViewController {
+    private func makeController(
+        content: FullScreenCodeContent,
+        lineAnchor: SourceLineAnchor? = nil
+    ) -> FullScreenCodeViewController {
         let controller = FullScreenCodeViewController(
             content: content,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter { _ in },
             reviewCommentSessionId: "session-1",
-            reviewCommentSourceLabel: "Full Screen"
+            reviewCommentSourceLabel: "Full Screen",
+            lineAnchor: lineAnchor
         )
         controller.loadViewIfNeeded()
         controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)

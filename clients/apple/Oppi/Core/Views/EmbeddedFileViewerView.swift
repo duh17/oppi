@@ -31,6 +31,8 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     var reviewCommentSessionId: String?
     var reviewCommentSourceLabel: String?
+    var lineAnchor: SourceLineAnchor? = nil
+    var lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil
     var showsNavigationChrome = true
     var backSwipeAction: (@MainActor @Sendable () -> Void)?
     var navigationActions: [FullScreenViewerNavigationAction] = []
@@ -62,6 +64,8 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
             content: content,
             presentationMode: presentationMode,
             reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
+            lineAnchor: lineAnchor,
+            lineAnchorNotice: lineAnchorNotice,
             navigationActions: navigationActions
         )
     }

@@ -97,19 +97,22 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
     let worktreeId: String?
     let kind: WorkspaceLinkedFileKind
     let navigationContext: FileBrowserNavigationContext?
+    let lineAnchor: SourceLineAnchor?
 
     init(
         serverId: String,
         workspaceId: String,
         worktreeId: String? = nil,
         kind: WorkspaceLinkedFileKind,
-        navigationContext: FileBrowserNavigationContext? = nil
+        navigationContext: FileBrowserNavigationContext? = nil,
+        lineAnchor: SourceLineAnchor? = nil
     ) {
         self.serverId = serverId
         self.workspaceId = workspaceId
         self.worktreeId = worktreeId
         self.kind = kind
         self.navigationContext = navigationContext
+        self.lineAnchor = lineAnchor
     }
 
     static func workspaceFile(
@@ -118,7 +121,8 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         worktreeId: String? = nil,
         path: String,
         fileName: String? = nil,
-        navigationContext: FileBrowserNavigationContext? = nil
+        navigationContext: FileBrowserNavigationContext? = nil,
+        lineAnchor: SourceLineAnchor? = nil
     ) -> WorkspaceLinkedFileNavTarget {
         let resolvedFileName: String
         if let fileName, !fileName.isEmpty {
@@ -132,7 +136,8 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
             workspaceId: workspaceId,
             worktreeId: worktreeId,
             kind: .workspaceFile(path: path, fileName: resolvedFileName),
-            navigationContext: navigationContext
+            navigationContext: navigationContext,
+            lineAnchor: lineAnchor
         )
     }
 }
@@ -285,7 +290,9 @@ struct WorkspaceLinkedFileDestinationView: View {
                         worktreeId: target.worktreeId,
                         filePath: path,
                         fileName: fileName,
-                        navigationContext: target.navigationContext
+                        navigationContext: target.navigationContext,
+                        lineAnchor: target.lineAnchor,
+                        onLineAnchorNotice: { connection.extensionToast = $0 }
                     )
                     .withServerScopedEnvironment(connection)
                 }

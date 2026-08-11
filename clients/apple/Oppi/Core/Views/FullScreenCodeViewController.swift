@@ -75,6 +75,9 @@ final class FullScreenCodeViewController: UIViewController {
     private let content: FullScreenCodeContent
     private let presentationMode: PresentationMode
     private let reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    private let lineAnchor: SourceLineAnchor?
+    private let lineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
+    private var lineAnchorNoticeDelivered = false
     private var navigationActions: [FullScreenViewerNavigationAction]
     private var navigationActionPresentation: [FullScreenViewerNavigationAction.Presentation]
     private var showSource = false
@@ -103,6 +106,8 @@ final class FullScreenCodeViewController: UIViewController {
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         reviewCommentSessionId: String? = nil,
         reviewCommentSourceLabel: String? = nil,
+        lineAnchor: SourceLineAnchor? = nil,
+        lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
         navigationActions: [FullScreenViewerNavigationAction] = []
     ) {
         self.content = content
@@ -113,6 +118,8 @@ final class FullScreenCodeViewController: UIViewController {
                 sessionId: reviewCommentSessionId,
                 sourceLabel: reviewCommentSourceLabel
             )
+        self.lineAnchor = lineAnchor
+        self.lineAnchorNotice = lineAnchorNotice
         self.navigationActions = navigationActions
         self.navigationActionPresentation = navigationActions.map(\.presentation)
         super.init(nibName: nil, bundle: nil)
@@ -236,7 +243,11 @@ final class FullScreenCodeViewController: UIViewController {
         let interactionState = installedBodyView.map(captureInteractionState)
         clearLiveSourceBodyReferences()
         let presentation = makePresentation()
-        let themedBody = makeBodyView(for: presentation.bodyContent, themeID: themeID)
+        let themedBody = makeBodyView(
+            for: presentation.bodyContent,
+            themeID: themeID,
+            focusLineAnchor: false
+        )
         installBodyView(themedBody, on: viewController)
         if let interactionState {
             restoreInteractionState(interactionState, in: themedBody, host: viewController.view)
@@ -409,6 +420,60 @@ final class FullScreenCodeViewController: UIViewController {
         if let floatingViewingOptionsButton {
             viewController.view.bringSubviewToFront(floatingViewingOptionsButton)
         }
+        scheduleLineAnchorNotice()
+    }
+
+    private func scheduleLineAnchorNotice() {
+        guard lineAnchor != nil, !lineAnchorNoticeDelivered else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.reportLineAnchorNoticeIfNeeded()
+        }
+    }
+
+    private func reportLineAnchorNoticeIfNeeded() {
+        guard let lineAnchor, !lineAnchorNoticeDelivered else { return }
+        let resolution = lineAnchorResolution(for: currentSemanticContent(), anchor: lineAnchor)
+        guard let message = resolution.message else { return }
+        lineAnchorNoticeDelivered = true
+        lineAnchorNotice?(message)
+        UIAccessibility.post(notification: .announcement, argument: message)
+    }
+
+    private func lineAnchorResolution(
+        for content: FullScreenCodeContent,
+        anchor: SourceLineAnchor?
+    ) -> SourceLineAnchorResolution {
+        guard let anchor else {
+            return SourceLineAnchorResolution(
+                requestedRange: 1...1,
+                existingRange: nil,
+                fileLineCount: 0,
+                availableRange: nil
+            )
+        }
+        let textAndFirstLine: (String, Int)
+        switch content {
+        case .code(let text, _, _, let startLine):
+            textAndFirstLine = (text, startLine)
+        case .plainText(let text, _),
+             .markdown(let text, _, _),
+             .html(let text, _),
+             .latex(let text, _),
+             .orgMode(let text, _),
+             .mermaid(let text, _),
+             .graphviz(let text, _),
+             .thinking(let text, _),
+             .terminal(let text, _, _):
+            textAndFirstLine = (text, 1)
+        case .diff(_, let newText, _, _):
+            textAndFirstLine = (newText, 1)
+        case .liveSource(let snapshot, _):
+            return lineAnchorResolution(for: semanticContent(for: snapshot), anchor: anchor)
+        }
+        return anchor.resolution(
+            fileContent: textAndFirstLine.0,
+            firstFileLine: textAndFirstLine.1
+        )
     }
 
     private func configureNavigation(on viewController: UIViewController, palette: ThemePalette) {
@@ -570,7 +635,11 @@ final class FullScreenCodeViewController: UIViewController {
 
     // MARK: - Body
 
-    private func makeBodyView(for content: FullScreenCodeContent, themeID: ThemeID) -> UIView {
+    private func makeBodyView(
+        for content: FullScreenCodeContent,
+        themeID: ThemeID,
+        focusLineAnchor: Bool = true
+    ) -> UIView {
         let palette = themeID.palette
         switch content {
         case .code(let text, let language, let filePath, let startLine):
@@ -585,7 +654,9 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenCode,
                     filePath: filePath,
                     languageHint: language
-                )
+                ),
+                lineAnchor: lineAnchor,
+                focusLineAnchor: focusLineAnchor
             )
         case .plainText(let text, let filePath):
             return NativeFullScreenSourceBody(
@@ -597,7 +668,9 @@ final class FullScreenCodeViewController: UIViewController {
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenSource,
                     filePath: filePath
-                )
+                ),
+                lineAnchor: lineAnchor,
+                focusLineAnchor: focusLineAnchor
             )
         case .diff(let oldText, let newText, let filePath, let precomputedLines):
             return NativeFullScreenDiffBody(
@@ -628,6 +701,8 @@ final class FullScreenCodeViewController: UIViewController {
                 sessionID: wsContext?.sessionID,
                 serverBaseURL: wsContext?.serverBaseURL,
                 sourceFilePath: filePath,
+                lineAnchor: lineAnchor,
+                focusLineAnchor: focusLineAnchor,
                 readerPreferences: readerPreferences(for: content),
                 perfSurface: .fullScreenMarkdown,
                 fetchWorkspaceFile: wsContext?.fetchWorkspaceFile,
@@ -672,7 +747,11 @@ final class FullScreenCodeViewController: UIViewController {
                 )
             )
         case .liveSource(let snapshot, _):
-            return makeBodyView(for: bodyContent(for: snapshot), themeID: themeID)
+            return makeBodyView(
+                for: bodyContent(for: snapshot),
+                themeID: themeID,
+                focusLineAnchor: focusLineAnchor
+            )
 
         // Document renderers — use rendered views with source toggle
         case .latex(let text, let filePath):
@@ -726,7 +805,9 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenCode,
                     filePath: filePath,
                     languageHint: "dot"
-                )
+                ),
+                lineAnchor: lineAnchor,
+                focusLineAnchor: focusLineAnchor
             )
         }
     }
@@ -1469,18 +1550,30 @@ extension FullScreenCodeViewController {
         content: FullScreenCodeContent,
         presentationMode: PresentationMode = .sheet,
         reviewCommentSelectionContext: ReviewCommentSelectionContext?,
+        lineAnchor: SourceLineAnchor? = nil,
+        lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
         navigationActions: [FullScreenViewerNavigationAction] = []
     ) -> FullScreenCodeViewController {
         FullScreenCodeViewController(
             content: content,
             presentationMode: presentationMode,
             reviewCommentSelectionContext: reviewCommentSelectionContext,
+            lineAnchor: lineAnchor,
+            lineAnchorNotice: lineAnchorNotice,
             navigationActions: navigationActions
         )
     }
 
     var hasFloatingViewingOptionsButtonForTesting: Bool {
         floatingViewingOptionsButton != nil
+    }
+
+    var installedBodyViewForTesting: UIView? {
+        installedBodyView
+    }
+
+    var lineAnchorNoticeDeliveredForTesting: Bool {
+        lineAnchorNoticeDelivered
     }
 
     var floatingViewingOptionsButtonFrameForTesting: CGRect? {
@@ -1520,6 +1613,10 @@ extension FullScreenCodeViewController {
 
     func setReaderTextScaleForTesting(_ scale: CGFloat) {
         setReaderTextScale(scale)
+    }
+
+    func toggleSourceForTesting() {
+        toggleSource()
     }
 }
 #endif

@@ -2,6 +2,18 @@
 import SwiftUI
 import UIKit
 
+enum WikiLineAnchorHarnessConfig {
+    static var isEnabled: Bool {
+#if targetEnvironment(simulator)
+        let processInfo = ProcessInfo.processInfo
+        return processInfo.arguments.contains("--wiki-line-anchor-harness")
+            || processInfo.environment["PI_WIKI_LINE_ANCHOR_HARNESS"] == "1"
+#else
+        return false
+#endif
+    }
+}
+
 enum FullScreenReviewCommentHarnessConfig {
     static var isEnabled: Bool {
 #if targetEnvironment(simulator)
@@ -352,6 +364,332 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
     }
 
     private func setDiagnostic(_ label: UILabel, value: Int) {
+        let text = String(value)
+        label.text = text
+        label.accessibilityValue = text
+    }
+}
+
+struct WikiLineAnchorHarnessView: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> WikiLineAnchorHarnessViewController {
+        WikiLineAnchorHarnessViewController()
+    }
+
+    func updateUIViewController(_ uiViewController: WikiLineAnchorHarnessViewController, context: Context) {
+        uiViewController.updateDiagnostics()
+    }
+}
+
+final class WikiLineAnchorHarnessViewController: UIViewController, UIAdaptivePresentationControllerDelegate {
+    private static let fixtureCode = (1...80)
+        .map { "let fixtureValue\($0) = \($0)" }
+        .joined(separator: "\n")
+
+    private static let fixtureMarkdown = """
+    # Intro
+
+    Before the focused blocks.
+
+    ## Focused heading
+
+    First focused block.
+
+    Second focused block.
+
+    After the focused blocks.
+    """
+
+    private let markdownView = AssistantMarkdownContentView()
+    private let diagnosticsStack = UIStackView()
+    private let readyLabel = makeDiagnosticLabel(id: "harness.ready")
+    private let codeOpenedLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.codeOpened")
+    private let codeHighlightEnclosureCountLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.codeHighlightEnclosureCount")
+    private let codeHighlightGeometryLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.codeHighlightGeometry")
+    private let codeGutterMarkerCountLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.codeGutterMarkerCount")
+    private let codeFocusYLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.codeFocusYHundredths")
+    private let codeUpperThirdLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.codeUpperThird")
+    private let markdownOpenedLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.markdownOpened")
+    private let markdownHighlightCountLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.markdownHighlightCount")
+    private let markdownHighlightEnclosureCountLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.markdownHighlightEnclosureCount")
+    private let markdownHighlightAlignedLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.markdownHighlightAligned")
+    private let markdownVisibleHighlightCountLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.markdownVisibleHighlightCount")
+    private let markdownVisibleHighlightGeometryCountLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.markdownVisibleHighlightGeometryCount")
+    private let markdownHighlightAreaLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.markdownHighlightAreaHundredths")
+    private let markdownHighlightFrontmostLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.markdownHighlightFrontmost")
+    private let markdownFocusYLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.markdownFocusYHundredths")
+    private let markdownUpperThirdLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.markdownUpperThird")
+    private let noticeLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.notice")
+
+    private var resourceObserver: NSObjectProtocol?
+    private var presentedViewer: FullScreenCodeViewController?
+    private var diagnosticsConstraints: [NSLayoutConstraint] = []
+
+    private func installResourceObserver() {
+        guard resourceObserver == nil else { return }
+        resourceObserver = NotificationCenter.default.addObserver(
+            forName: .resourceReferenceTapped,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let reference = notification.object as? ResourceReference else { return }
+            self?.open(reference: reference)
+        }
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.accessibilityIdentifier = "wiki-line-anchor.harness"
+        view.backgroundColor = UIColor(ThemeID.dark.palette.bgDark)
+        installLinkSurface()
+        installDiagnostics()
+        installResourceObserver()
+        updateDiagnostics()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        installResourceObserver()
+        if let presentedViewer, presentedViewer.presentingViewController == nil {
+            moveDiagnostics(to: view)
+            self.presentedViewer = nil
+            updateDiagnostics()
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if let resourceObserver {
+            NotificationCenter.default.removeObserver(resourceObserver)
+            self.resourceObserver = nil
+        }
+    }
+
+    func updateDiagnostics() {
+        setDiagnostic(readyLabel, value: 1)
+        setDiagnostic(codeOpenedLabel, value: 0)
+        setDiagnostic(codeHighlightEnclosureCountLabel, value: 0)
+        setDiagnostic(codeHighlightGeometryLabel, value: 0)
+        setDiagnostic(codeGutterMarkerCountLabel, value: 0)
+        setDiagnostic(codeFocusYLabel, value: -1)
+        setDiagnostic(codeUpperThirdLabel, value: 0)
+        setDiagnostic(markdownOpenedLabel, value: 0)
+        setDiagnostic(markdownHighlightCountLabel, value: 0)
+        setDiagnostic(markdownHighlightEnclosureCountLabel, value: 0)
+        setDiagnostic(markdownHighlightAlignedLabel, value: 0)
+        setDiagnostic(markdownVisibleHighlightCountLabel, value: 0)
+        setDiagnostic(markdownVisibleHighlightGeometryCountLabel, value: 0)
+        setDiagnostic(markdownHighlightAreaLabel, value: 0)
+        setDiagnostic(markdownHighlightFrontmostLabel, value: 0)
+        setDiagnostic(markdownFocusYLabel, value: -1)
+        setDiagnostic(markdownUpperThirdLabel, value: 0)
+
+        guard let viewer = presentedViewer,
+              let body = viewer.installedBodyViewForTesting else { return }
+        if let codeBody = body as? NativeFullScreenCodeBody {
+            setDiagnostic(codeOpenedLabel, value: 1)
+            setDiagnostic(codeHighlightEnclosureCountLabel, value: codeBody.debugLineAnchorHighlightRectCountForTesting)
+            setDiagnostic(codeHighlightGeometryLabel, value: codeBody.debugLineAnchorHighlightHasVisibleGeometryForTesting ? 1 : 0)
+            setDiagnostic(codeGutterMarkerCountLabel, value: codeBody.debugLineAnchorGutterMarkerCountForTesting)
+            if let rect = codeBody.debugLineAnchorFirstHighlightRectForTesting {
+                let visibleY = rect.midY - codeBody.debugLineAnchorScrollOffsetForTesting.y
+                setDiagnostic(codeFocusYLabel, value: Int((visibleY * 100).rounded()))
+                let upperThird = abs(visibleY - codeBody.debugLineAnchorViewportHeightForTesting / 3)
+                    <= codeBody.debugLineAnchorViewportHeightForTesting * 0.18
+                setDiagnostic(codeUpperThirdLabel, value: upperThird ? 1 : 0)
+            }
+        } else if let markdownBody = body as? NativeFullScreenMarkdownBody {
+            setDiagnostic(markdownOpenedLabel, value: 1)
+            setDiagnostic(
+                markdownHighlightCountLabel,
+                value: markdownBody.debugLineAnchorHighlightedSegmentCountForTesting
+            )
+            setDiagnostic(
+                markdownHighlightEnclosureCountLabel,
+                value: markdownBody.debugLineAnchorVisibleHighlightEnclosureCountForTesting
+            )
+            setDiagnostic(
+                markdownHighlightAlignedLabel,
+                value: markdownBody.debugLineAnchorVisibleHighlightAlignedWithTargetForTesting ? 1 : 0
+            )
+            setDiagnostic(
+                markdownVisibleHighlightCountLabel,
+                value: markdownBody.debugLineAnchorVisibleHighlightedCellCountForTesting
+            )
+            setDiagnostic(
+                markdownVisibleHighlightGeometryCountLabel,
+                value: markdownBody.debugLineAnchorVisibleHighlightGeometryCountForTesting
+            )
+            setDiagnostic(
+                markdownHighlightAreaLabel,
+                value: Int((markdownBody.debugLineAnchorVisibleHighlightAreaForTesting * 100).rounded())
+            )
+            setDiagnostic(
+                markdownHighlightFrontmostLabel,
+                value: markdownBody.debugLineAnchorVisibleHighlightOverlaysFrontmostForTesting ? 1 : 0
+            )
+            if let visibleY = markdownBody.debugLineAnchorFirstVisibleTargetMidYForTesting {
+                setDiagnostic(markdownFocusYLabel, value: Int((visibleY * 100).rounded()))
+                let upperThird = abs(visibleY - markdownBody.debugLineAnchorViewportHeightForTesting / 3)
+                    <= markdownBody.debugLineAnchorViewportHeightForTesting * 0.18
+                setDiagnostic(markdownUpperThirdLabel, value: upperThird ? 1 : 0)
+            }
+        }
+    }
+
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        moveDiagnostics(to: view)
+        presentedViewer = nil
+        updateDiagnostics()
+    }
+
+    private func installLinkSurface() {
+        let scrollView = UIScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.accessibilityIdentifier = "wiki-line-anchor.links"
+        view.addSubview(scrollView)
+
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 18
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(stack)
+
+        let title = UILabel()
+        title.text = "Wiki-link line-anchor harness"
+        title.font = .preferredFont(forTextStyle: .title2)
+        title.textColor = UIColor(ThemeID.dark.palette.fg)
+        title.accessibilityIdentifier = "wiki-line-anchor.title"
+        stack.addArrangedSubview(title)
+
+        let instructions = UILabel()
+        instructions.text = "Tap either rendered wiki link to open its anchored document."
+        instructions.numberOfLines = 0
+        instructions.textColor = UIColor(ThemeID.dark.palette.fgDim)
+        stack.addArrangedSubview(instructions)
+
+        markdownView.translatesAutoresizingMaskIntoConstraints = false
+        markdownView.accessibilityIdentifier = "wiki-line-anchor.markdown"
+        markdownView.apply(configuration: .make(
+            content: "Code: [[fixtures/anchor.swift#L32-L35|Open code lines]]\n\nMarkdown: [[fixtures/anchor.md#L6-L11|Open markdown lines]]",
+            isStreaming: false,
+            themeID: .dark,
+            textSelectionEnabled: true,
+            serverID: "wiki-anchor-server",
+            workspaceID: "wiki-anchor-workspace",
+            sessionID: "wiki-anchor-session"
+        ))
+        stack.addArrangedSubview(markdownView)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 20),
+            scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -20),
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            stack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            stack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+        ])
+    }
+
+    private func installDiagnostics() {
+        diagnosticsStack.axis = .vertical
+        diagnosticsStack.spacing = 1
+        diagnosticsStack.translatesAutoresizingMaskIntoConstraints = false
+        diagnosticsStack.isAccessibilityElement = false
+        diagnosticsStack.alpha = 0.02
+        [
+            readyLabel,
+            codeOpenedLabel,
+            codeHighlightEnclosureCountLabel,
+            codeHighlightGeometryLabel,
+            codeGutterMarkerCountLabel,
+            codeFocusYLabel,
+            codeUpperThirdLabel,
+            markdownOpenedLabel,
+            markdownHighlightCountLabel,
+            markdownHighlightEnclosureCountLabel,
+            markdownHighlightAlignedLabel,
+            markdownVisibleHighlightCountLabel,
+            markdownVisibleHighlightGeometryCountLabel,
+            markdownHighlightAreaLabel,
+            markdownHighlightFrontmostLabel,
+            markdownFocusYLabel,
+            markdownUpperThirdLabel,
+            noticeLabel,
+        ].forEach(diagnosticsStack.addArrangedSubview)
+        moveDiagnostics(to: view)
+    }
+
+    private func moveDiagnostics(to host: UIView) {
+        NSLayoutConstraint.deactivate(diagnosticsConstraints)
+        diagnosticsConstraints.removeAll()
+        diagnosticsStack.removeFromSuperview()
+        host.addSubview(diagnosticsStack)
+        diagnosticsConstraints = [
+            diagnosticsStack.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 2),
+            diagnosticsStack.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor, constant: 2),
+        ]
+        NSLayoutConstraint.activate(diagnosticsConstraints)
+    }
+
+    private func open(reference: ResourceReference) {
+        guard let anchor = reference.lineAnchor,
+              let path = reference.fileCandidatePath,
+              presentedViewer == nil else { return }
+
+        let content: FullScreenCodeContent
+        if path.hasSuffix(".md") {
+            content = .markdown(
+                content: Self.fixtureMarkdown,
+                filePath: path
+            )
+        } else {
+            content = .code(
+                content: Self.fixtureCode,
+                language: "swift",
+                filePath: path,
+                startLine: 1
+            )
+        }
+
+        let viewer = FullScreenCodeViewController.makeHarnessController(
+            content: content,
+            presentationMode: .sheet,
+            reviewCommentSelectionContext: nil,
+            lineAnchor: anchor,
+            lineAnchorNotice: { [weak self] _ in
+                self?.setDiagnostic(self?.noticeLabel, value: 1)
+            }
+        )
+        viewer.modalPresentationStyle = .fullScreen
+        presentedViewer = viewer
+        present(viewer, animated: false) { [weak self] in
+            viewer.presentationController?.delegate = self
+            self?.moveDiagnostics(to: viewer.view)
+            self?.updateDiagnostics()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.updateDiagnostics()
+            }
+        }
+    }
+
+    private static func makeDiagnosticLabel(id: String) -> UILabel {
+        let label = UILabel()
+        label.accessibilityIdentifier = id
+        label.isAccessibilityElement = true
+        label.font = .systemFont(ofSize: 1)
+        label.textColor = .white
+        label.backgroundColor = .clear
+        label.text = "0"
+        label.accessibilityLabel = id
+        label.accessibilityValue = "0"
+        return label
+    }
+
+    private func setDiagnostic(_ label: UILabel?, value: Int) {
+        guard let label else { return }
         let text = String(value)
         label.text = text
         label.accessibilityValue = text

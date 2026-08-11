@@ -844,6 +844,129 @@ struct WorkspaceWikiLinkRenderingTests {
     }
 
     @Test(arguments: [
+        ("[[Sources/App.swift#L12]]", 12, 12),
+        ("[[Sources/App.swift#L12-L18|focused code]]", 12, 18),
+        ("[[notes.md#L3-L4|another anchor]]", 3, 4),
+    ])
+    func givenGitHubLineAnchorThenFileCandidateDropsFragment(
+        source: String,
+        expectedStart: Int,
+        expectedEnd: Int
+    ) throws {
+        let segments = FlatSegment.build(
+            from: parseCommonMark("Open \(source)"),
+            themeID: .dark,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-source"
+        )
+        let attributed = try textSegment(from: segments)
+        let url = try firstLink(in: attributed)
+        let parsed = try #require(ResourceReferenceURL.parse(url))
+
+        #expect(parsed.fileCandidatePath == (source.contains("notes") ? "notes.md" : "Sources/App.swift"))
+        #expect(parsed.lineAnchor?.range == expectedStart...expectedEnd)
+    }
+
+    @Test(arguments: [
+        "[[Sources/App.swift#L0]]",
+        "[[Sources/App.swift#L12-L11]]",
+        "[[Sources/App.swift#L12-L]]",
+        "[[Sources/App.swift#L12-Lx]]",
+        "[[Sources/App.swift#l12]]",
+        "[[Sources/App.swift#Heading]]",
+    ])
+    func malformedOrHeadingAnchorRemainsLiteral(source: String) throws {
+        let segments = FlatSegment.build(
+            from: parseCommonMark("Open \(source)"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        )
+        let attributed = try textSegment(from: segments)
+
+        #expect(String(attributed.characters) == "Open \(source)")
+        #expect(attributed.runs.compactMap(\.link).isEmpty)
+    }
+
+    @Test(arguments: [
+        "#L0",
+        "#L4-L3",
+        "#L4-L",
+        "#L4-Lx",
+        "#l12",
+        "#Heading",
+    ])
+    func lineAnchorParserFailsClosed(fragment: String) {
+        #expect(SourceLineAnchor.parse(fragment) == nil)
+    }
+
+    @Test(arguments: [
+        ("#L1", 1, 1),
+        ("#L2-L5", 2, 5),
+        ("#L7-L9", 7, 9),
+    ])
+    func lineAnchorParserAcceptsOneBasedInclusiveRanges(
+        fragment: String,
+        expectedStart: Int,
+        expectedEnd: Int
+    ) throws {
+        let anchor = try #require(SourceLineAnchor.parse(fragment))
+        #expect(anchor.range == expectedStart...expectedEnd)
+    }
+
+    @Test(arguments: [
+        ("", 0),
+        ("one", 1),
+        ("one\n", 2),
+        ("one\n\n", 3),
+        ("one\r", 2),
+        ("one\r\ntwo\r", 3),
+    ])
+    func sourceLineMetricsCountsEmptyAndTrailingLogicalLines(source: String, expectedCount: Int) {
+        #expect(SourceLineMetrics.count(source) == expectedCount)
+    }
+
+    @Test func lineAnchorResolutionReportsMissingLinesBeforeAndAfterExcerpt() throws {
+        let anchor = try #require(SourceLineAnchor(startLine: 1, endLine: 100))
+        let resolution = anchor.resolution(fileLineCount: 3, firstFileLine: 40)
+
+        #expect(resolution.existingRange == 40...42)
+        #expect(resolution.message?.contains("starts before line 40") == true)
+        #expect(resolution.message?.contains("continues past line 42") == true)
+    }
+
+    @Test(arguments: [
+        ("[[notes.md#L2-L9|label]]", "notes.md", 2, 5, true),
+        ("[[notes.md#L10]]", "notes.md", 0, 0, false),
+    ])
+    func lineAnchorResolutionClipsAtFileEnd(
+        source: String,
+        path: String,
+        expectedStart: Int,
+        expectedEnd: Int,
+        hasExistingRange: Bool
+    ) throws {
+        let segments = FlatSegment.build(
+            from: parseCommonMark(source),
+            themeID: .dark,
+            serverID: "server-1",
+            workspaceID: "workspace-1"
+        )
+        let attributed = try textSegment(from: segments)
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        let anchor = try #require(parsed.lineAnchor)
+        let resolution = anchor.resolution(fileLineCount: 5)
+
+        #expect(parsed.fileCandidatePath == path)
+        #expect((resolution.existingRange != nil) == hasExistingRange)
+        if hasExistingRange {
+            #expect(resolution.existingRange?.lowerBound == expectedStart)
+            #expect(resolution.existingRange?.upperBound == expectedEnd)
+        }
+        #expect(resolution.message != nil)
+    }
+
+    @Test(arguments: [
         "| Value |\n| :---: |\n| ``[[note|label]]`` |",
         "> | Value |\n> | ---: |\n> | ``[[note|label]]`` |",
         "- | Value |\n  | :--- |\n  | ``[[note|label]]`` |",
@@ -1184,6 +1307,36 @@ struct ResourceReferenceResolutionTests {
         ))
 
         #expect(ResourceReferenceResolver.resolve(reference, matches: [session]) == .resolved(session))
+    }
+
+    @Test func anchoredReferenceIgnoresSessionMatchesAndResolvesOnlyFiles() throws {
+        let anchoredReference = ResourceReference(
+            target: "RV97TbYj#L12",
+            sourceServerID: "server-source",
+            workspaceID: "workspace-1",
+            sourceSessionID: "session-source",
+            fileCandidatePath: "RV97TbYj.md",
+            lineAnchor: try #require(SourceLineAnchor.parse("#L12"))
+        )
+        let session = ResourceReferenceMatch.session(.init(
+            serverID: "server-source",
+            sessionID: "RV97TbYj#L12",
+            workspaceID: "workspace-1",
+            displayName: "Should not open",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+        let file = ResourceReferenceMatch.workspaceFile(.init(
+            serverID: "server-source",
+            workspaceID: "workspace-1",
+            worktreeID: nil,
+            path: "RV97TbYj.md",
+            workspaceName: "Oppi",
+            serverName: "Mac Studio"
+        ))
+
+        #expect(ResourceReferenceResolver.resolve(anchoredReference, matches: [session]) == .unresolved(anchoredReference.target))
+        #expect(ResourceReferenceResolver.resolve(anchoredReference, matches: [session, file]) == .resolved(file))
     }
 
     @Test func exactlyOneFileMatchResolvesToThatFile() {
