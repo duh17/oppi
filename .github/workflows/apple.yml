@@ -7,6 +7,11 @@ on:
       - clients/apple/**
       - protocol/**
       - server/src/types/protocol.ts
+      - server/src/types/session.ts
+      - server/src/types/icon.ts
+      - server/src/types/git.ts
+      - server/src/types/shared.ts
+      - server/src/thinking-levels.ts
       - .github/workflows/apple.yml
   pull_request:
 
@@ -33,6 +38,11 @@ jobs:
               - 'clients/apple/**'
               - 'protocol/**'
               - 'server/src/types/protocol.ts'
+              - 'server/src/types/session.ts'
+              - 'server/src/types/icon.ts'
+              - 'server/src/types/git.ts'
+              - 'server/src/types/shared.ts'
+              - 'server/src/thinking-levels.ts'
               - '.github/workflows/apple.yml'
 
   coverage:

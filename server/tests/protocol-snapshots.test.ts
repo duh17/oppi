@@ -1,567 +1,79 @@
 /**
- * Protocol snapshot tests — canonical JSON for every ServerMessage type.
+ * Protocol snapshot tests — canonical JSON for every ServerMessage discriminator.
  *
- * Generates `protocol/server-messages.json` with one example of every
- * ServerMessage variant. iOS tests decode this file to verify cross-platform
- * protocol stability. If this test fails, the protocol contract has changed.
- *
- * Run `npm test -- tests/protocol-snapshots.test.ts -- -u` to update snapshots.
+ * Ordinary tests compare the deterministic in-memory canonical bytes with the
+ * committed fixture. They never rewrite tracked JSON. Use the explicit update
+ * command when a deliberate protocol fixture change is intended.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
-import type { ServerMessage, Session, SessionSummary } from "../src/types.js";
+import type { Session } from "../src/types.js";
+import {
+  assertNoOverlappingFixtureKeys,
+  assertProtocolFixtureBytes,
+  buildCanonicalServerMessages,
+  SERVER_MESSAGES_FIXTURE_DESCRIPTION,
+  SERVER_MESSAGES_SNAPSHOT_FILE,
+  serializeProtocolFixture,
+} from "./protocol-fixtures.js";
 
-const PROTOCOL_DIR = resolve(__dirname, "../../protocol");
-const SNAPSHOTS_FILE = join(PROTOCOL_DIR, "server-messages.json");
-
-// ── Canonical test session ──
-
-const TEST_SESSION: Session = {
-  id: "test-session-1",
-  workspaceId: "ws-1",
-  workspaceName: "My Workspace",
-  name: "Test Session",
-  status: "ready",
-  createdAt: 1739750400000, // 2025-02-17T00:00:00Z
-  lastActivity: 1739750460000,
-  model: "anthropic/claude-sonnet-4-20250514",
-  messageCount: 5,
-  tokens: { input: 1500, output: 800, cacheRead: 250, cacheWrite: 100 },
-  cost: 0.012,
-  changeStats: {
-    mutatingToolCalls: 3,
-    filesChanged: 6,
-    changedFiles: ["src/main.ts", "README.md"],
-    changedFilesOverflow: 4,
-    addedLines: 45,
-    removedLines: 12,
-  },
-  contextTokens: 2300,
-  contextWindow: 200000,
-  lastMessage: "I've updated the README with the new API docs.",
-  thinkingLevel: "high",
-  launch: {
-    source: "agent",
-    agentId: "agent-reviewer",
-    agentVersion: 4,
-    agentIcon: { kind: "symbol", name: "checkmark.shield" },
-    status: "accepted",
-    requestedAt: 1739750399000,
-    completedAt: 1739750400000,
-  },
-  piSessionFile: "/tmp/pi-sessions/abc123.jsonl",
-  piSessionFiles: ["/tmp/pi-sessions/abc123.jsonl"],
-  piSessionId: "uuid-abc-123",
-};
-
-const TEST_SESSION_SUMMARY: SessionSummary = {
-  id: TEST_SESSION.id,
-  workspaceId: TEST_SESSION.workspaceId,
-  workspaceName: TEST_SESSION.workspaceName,
-  name: TEST_SESSION.name,
-  status: TEST_SESSION.status,
-  createdAt: TEST_SESSION.createdAt,
-  lastActivity: TEST_SESSION.lastActivity,
-  currentTurnStartedAt: TEST_SESSION.currentTurnStartedAt,
-  model: TEST_SESSION.model,
-  messageCount: TEST_SESSION.messageCount,
-  tokens: TEST_SESSION.tokens,
-  cost: TEST_SESSION.cost,
-  changeStats: TEST_SESSION.changeStats,
-  contextTokens: TEST_SESSION.contextTokens,
-  contextWindow: TEST_SESSION.contextWindow,
-  firstMessage: TEST_SESSION.firstMessage,
-  lastMessage: TEST_SESSION.lastMessage,
-  thinkingLevel: TEST_SESSION.thinkingLevel,
-  agentId: TEST_SESSION.launch?.agentId,
-  agentIcon: TEST_SESSION.launch?.agentIcon,
-  ephemeral: TEST_SESSION.ephemeral,
-};
-
-const TEST_CONTROL_SESSION: Session = {
-  ...TEST_SESSION,
-  id: "control-session-1",
-  workspaceId: undefined,
-  workspaceName: undefined,
-  name: "Oppi Control",
-  control: {
-    domain: "skills",
-    intent: "revise",
-    targetId: "skill-reviewer",
-    targetName: "Reviewer Skill",
-  },
-};
-
-const TEST_CONTROL_SESSION_SUMMARY: SessionSummary = {
-  ...TEST_SESSION_SUMMARY,
-  id: TEST_CONTROL_SESSION.id,
-  workspaceId: undefined,
-  workspaceName: undefined,
-  name: TEST_CONTROL_SESSION.name,
-  control: TEST_CONTROL_SESSION.control,
-};
-
-// ── Every ServerMessage variant ──
-
-function buildCanonicalMessages(): Record<string, ServerMessage> {
-  return {
-    // Connection lifecycle
-    connected: {
-      type: "connected",
-      session: TEST_SESSION,
-      currentSeq: 42,
-    },
-    stream_connected: {
-      type: "stream_connected",
-      userName: "my-server",
-      serverDictationAvailable: true,
-    },
-    state: {
-      type: "state",
-      session: TEST_SESSION,
-    },
-    session_summary: {
-      type: "session_summary",
-      summary: TEST_SESSION_SUMMARY,
-    },
-    state_control: {
-      type: "state",
-      session: TEST_CONTROL_SESSION,
-    },
-    session_summary_control: {
-      type: "session_summary",
-      summary: TEST_CONTROL_SESSION_SUMMARY,
-    },
-    state_icon_default: {
-      type: "state",
-      session: {
-        ...TEST_SESSION,
-        launch: { ...TEST_SESSION.launch, agentIcon: { kind: "default" } },
-      },
-    },
-    state_icon_emoji: {
-      type: "state",
-      session: {
-        ...TEST_SESSION,
-        launch: { ...TEST_SESSION.launch, agentIcon: { kind: "emoji", value: "🧘" } },
-      },
-    },
-    state_icon_genmoji: {
-      type: "state",
-      session: {
-        ...TEST_SESSION,
-        launch: {
-          ...TEST_SESSION.launch,
-          agentIcon: {
-            kind: "genmoji",
-            assetId: `ia_${"A".repeat(43)}`,
-            contentDescription: "A smiling fox",
-          },
-        },
-      },
-    },
-    state_icon_malformed: {
-      type: "state",
-      session: {
-        ...TEST_SESSION,
-        launch: { ...TEST_SESSION.launch, agentIcon: { kind: "emoji", value: "not emoji" } },
-      },
-    } as unknown as ServerMessage,
-    state_icon_future: {
-      type: "state",
-      session: {
-        ...TEST_SESSION,
-        launch: { ...TEST_SESSION.launch, agentIcon: { kind: "animated", version: 2 } },
-      },
-    } as unknown as ServerMessage,
-    session_ended: {
-      type: "session_ended",
-      reason: "Process exited with code 0",
-    },
-    session_deleted: {
-      type: "session_deleted",
-      sessionId: "test-session-id",
-    },
-    stop_requested: {
-      type: "stop_requested",
-      source: "user",
-      reason: "User pressed stop",
-    },
-    stop_confirmed: {
-      type: "stop_confirmed",
-      source: "user",
-      reason: "Session stopped gracefully",
-    },
-    stop_failed: {
-      type: "stop_failed",
-      source: "timeout",
-      reason: "Process did not respond to SIGTERM within 10s",
-    },
-    error: {
-      type: "error",
-      error: "Model API rate limit exceeded",
-      code: "rate_limit",
-      fatal: false,
-    },
-
-    // Agent lifecycle
-    agent_start: { type: "agent_start" },
-    agent_end: { type: "agent_end" },
-    agent_settled: { type: "agent_settled" },
-    message_end: {
-      type: "message_end",
-      role: "assistant",
-      content: "Before\n\nAfter",
-      assistantContent: [
-        { kind: "text", content: "Before", contentIndex: 0 },
-        { kind: "thinking", content: "Check", contentIndex: 1 },
-        { kind: "text", content: "After", contentIndex: 2 },
-      ],
-    },
-    cache_miss: {
-      type: "cache_miss",
-      id: "cache-miss:1739750460000:anthropic/claude-sonnet-4-20250514",
-      message: "Cache miss after 5m idle: 69k tokens re-billed (~$0.79)",
-    },
-
-    // Streaming
-    text_delta: { type: "text_delta", delta: "Hello, ", contentIndex: 0 },
-    thinking_delta: { type: "thinking_delta", delta: "Let me analyze...", contentIndex: 0 },
-    audio_stream: {
-      type: "audio_stream",
-      kind: "audio-stream",
-      id: "audio-001",
-      event: "chunk",
-      mimeType: "audio/pcm; codecs=s16le",
-      sampleRate: 24000,
-      channels: 1,
-      chunkIndex: 0,
-      audioBase64: "AAAA",
-      playbackBehavior: "playNow",
-    },
-
-    // Tool execution
-    tool_start: {
-      type: "tool_start",
-      tool: "bash",
-      args: { command: "npm test" },
-      toolCallId: "tc-001",
-    },
-    tool_start_with_segments: {
-      type: "tool_start",
-      tool: "read",
-      args: { path: "src/main.ts", offset: 1, limit: 50 },
-      toolCallId: "tc-seg-001",
-      callSegments: [
-        { text: "read ", style: "bold" },
-        { text: "src/main.ts", style: "accent" },
-        { text: ":1-50", style: "warning" },
-      ],
-    },
-    tool_update: {
-      type: "tool_update",
-      tool: "write",
-      args: { path: "README.md", content: "hello" },
-      toolCallId: "tc-update-001",
-    },
-    tool_output: {
-      type: "tool_output",
-      output: "All 42 tests passed",
-      isError: false,
-      toolCallId: "tc-001",
-    },
-    tool_output_preview: {
-      type: "tool_output",
-      output: "/path/to/file-180\n/path/to/file-181\n/path/to/file-182",
-      isError: false,
-      toolCallId: "tc-preview-001",
-      mode: "replace",
-      truncated: true,
-      totalBytes: 32768,
-    },
-    tool_end: {
-      type: "tool_end",
-      tool: "bash",
-      toolCallId: "tc-001",
-    },
-    tool_end_with_details: {
-      type: "tool_end",
-      tool: "remember",
-      toolCallId: "tc-ext-001",
-      details: { file: "2026-02-18.md", redacted: false },
-      isError: false,
-      resultSegments: [
-        { text: "✓ Saved", style: "success" },
-        { text: " → 2026-02-18.md", style: "muted" },
-      ],
-    },
-
-    // Message queue
-    queue_state: {
-      type: "queue_state",
-      queue: {
-        version: 3,
-        steering: [
-          {
-            id: "queue-steer-1",
-            message: "Adjust the approach",
-            createdAt: 1739750470000,
-          },
-        ],
-        followUp: [],
-      },
-    },
-    queue_item_started: {
-      type: "queue_item_started",
-      kind: "follow_up",
-      item: {
-        id: "queue-follow-1",
-        message: "Run the tests next",
-        createdAt: 1739750480000,
-      },
-      queueVersion: 4,
-    },
-
-    // Turn delivery
-    turn_ack: {
-      type: "turn_ack",
-      command: "prompt",
-      clientTurnId: "turn-abc-123",
-      stage: "accepted",
-      requestId: "req-001",
-      duplicate: false,
-    },
-
-    // RPC responses
-    command_result_success: {
-      type: "command_result",
-      command: "get_state",
-      requestId: "req-002",
-      success: true,
-      data: { model: { provider: "anthropic", id: "claude-sonnet-4-0" } },
-    },
-    command_result_error: {
-      type: "command_result",
-      command: "set_model",
-      requestId: "req-003",
-      success: false,
-      error: "Model not found",
-    },
-
-    // Compaction
-    compaction_start: {
-      type: "compaction_start",
-      reason: "Context window 85% full",
-    },
-    compaction_end: {
-      type: "compaction_end",
-      aborted: false,
-      willRetry: false,
-      summary: "Compacted 15k tokens to 8k tokens",
-      tokensBefore: 15000,
-    },
-
-    // Retry
-    retry_start: {
-      type: "retry_start",
-      attempt: 1,
-      maxAttempts: 3,
-      delayMs: 5000,
-      errorMessage: "API overloaded",
-    },
-    retry_end: {
-      type: "retry_end",
-      success: true,
-      attempt: 2,
-    },
-
-    // Extension UI
-    extension_ui_request: {
-      type: "extension_ui_request",
-      id: "ui-001",
-      sessionId: "test-session-1",
-      method: "select",
-      title: "Choose a model",
-      options: ["claude-sonnet", "claude-opus"],
-      message: "Select the model for this task",
-      placeholder: "Select...",
-      prefill: "claude-sonnet",
-      timeout: 30000,
-      extensionScopeId: "npm:review-helper",
-      extensionDisplayName: "Review Helper",
-    },
-    extension_ui_notification: {
-      type: "extension_ui_notification",
-      method: "setWidget",
-      message: "Build completed successfully",
-      notifyType: "info",
-      statusKey: "build",
-      statusText: "✅ Build passed",
-      title: "Build status",
-      text: "Act on the review findings",
-      widgetKey: "review",
-      widgetLines: ["Review session active", "Run /end-review when done"],
-      widgetPlacement: "aboveEditor",
-      extensionScopeId: "npm:review-helper",
-      extensionDisplayName: "Review Helper",
-      workingIndicator: {
-        frames: ["●"],
-        intervalMs: 250,
-      },
-      workingVisible: true,
-      hiddenThinkingLabel: "Private reasoning",
-      toolsExpanded: true,
-    },
-    extension_ui_settled: {
-      type: "extension_ui_settled",
-      id: "ui-001",
-      sessionId: "test-session-1",
-    },
-    git_status: {
-      type: "git_status",
-      workspaceId: "ws-1",
-      status: {
-        isGitRepo: true,
-        branch: "main",
-        headSha: "a1b2c3d",
-        ahead: 1,
-        behind: 0,
-        dirtyCount: 1,
-        untrackedCount: 0,
-        stagedCount: 1,
-        files: [
-          { status: "A", path: "src/main.ts", addedLines: 45, removedLines: 0 },
-          { status: "M", path: "README.md", addedLines: 3, removedLines: 1 },
-        ],
-        totalFiles: 2,
-        addedLines: 48,
-        removedLines: 1,
-        stashCount: 0,
-        lastCommitMessage: "Initial commit",
-        lastCommitDate: "2026-02-20T18:00:00.000Z",
-        recentCommits: [
-          { sha: "a1b2c3d", message: "Initial commit", date: "2026-02-20T18:00:00.000Z" },
-        ],
-      },
-    },
-
-    // Dictation
-    dictation_ready: {
-      type: "dictation_ready",
-      sttProvider: "openai-compatible",
-      sttModel: "gpt-4o-transcribe",
-    },
-    dictation_result: {
-      type: "dictation_result",
-      text: "hello wor",
-      committedText: "hello ",
-      activeText: "wor",
-      snap: false,
-    },
-    dictation_final: {
-      type: "dictation_final",
-      text: "hello world",
-      committedText: "hello world",
-      activeText: "",
-    },
-    dictation_error: {
-      type: "dictation_error",
-      error: "STT backend unavailable",
-      fatal: true,
-    },
-  };
-}
-
-// ── Tests ──
+const messages = buildCanonicalServerMessages();
+const expectedSnapshot = serializeProtocolFixture(SERVER_MESSAGES_FIXTURE_DESCRIPTION, messages);
 
 describe("protocol snapshots", () => {
-  const messages = buildCanonicalMessages();
+  it("reports canonical drift without writing tracked fixtures", () => {
+    const tracked = readFileSync(SERVER_MESSAGES_SNAPSHOT_FILE, "utf-8");
+    const drifted = tracked.replace('"type": "connected"', '"type": "connected!"');
 
-  it("generates canonical ServerMessage JSON for all types", () => {
-    if (!existsSync(PROTOCOL_DIR)) {
-      mkdirSync(PROTOCOL_DIR, { recursive: true });
-    }
+    expect(drifted).not.toBe(tracked);
+    expect(() => assertProtocolFixtureBytes("server-messages.json", tracked, drifted)).toThrow(
+      /server-messages\.json at byte \d+/,
+    );
+    expect(readFileSync(SERVER_MESSAGES_SNAPSHOT_FILE, "utf-8")).toBe(tracked);
+  });
 
-    const snapshot = {
-      _meta: {
-        description:
-          "Canonical ServerMessage JSON — generated by server/tests/protocol-snapshots.test.ts",
-        generated: "static",
-        messageCount: Object.keys(messages).length,
-      },
-      messages,
-    };
+  it("matches the committed ServerMessage fixture byte-for-byte", () => {
+    const tracked = readFileSync(SERVER_MESSAGES_SNAPSHOT_FILE, "utf-8");
 
-    writeFileSync(SNAPSHOTS_FILE, JSON.stringify(snapshot, null, 2) + "\n");
+    expect(() =>
+      assertProtocolFixtureBytes("server-messages.json", expectedSnapshot, tracked),
+    ).not.toThrow();
 
-    // Verify the file is valid JSON
-    const parsed = JSON.parse(readFileSync(SNAPSHOTS_FILE, "utf-8"));
+    const parsed = JSON.parse(tracked) as { messages?: Record<string, unknown> };
     expect(parsed.messages).toBeDefined();
-    expect(Object.keys(parsed.messages).length).toBe(Object.keys(messages).length);
+    expect(Object.keys(parsed.messages ?? {})).toHaveLength(Object.keys(messages).length);
   });
 
-  it("covers every ServerMessage type discriminator", () => {
-    // These are all the type values iOS must handle (from types.ts)
-    const expectedTypes = [
-      "connected",
-      "stream_connected",
-      "state",
-      "session_summary",
-      "session_ended",
-      "session_deleted",
-      "stop_requested",
-      "stop_confirmed",
-      "stop_failed",
-      "error",
-      "agent_start",
-      "agent_end",
-      "agent_settled",
-      "message_end",
-      "cache_miss",
-      "text_delta",
-      "thinking_delta",
-      "audio_stream",
-      "tool_start",
-      "tool_output",
-      "tool_end",
-      "queue_state",
-      "queue_item_started",
-      "turn_ack",
-      "command_result",
-      "compaction_start",
-      "compaction_end",
-      "retry_start",
-      "retry_end",
-      "extension_ui_request",
-      "extension_ui_notification",
-      "extension_ui_settled",
-      "git_status",
-      "dictation_ready",
-      "dictation_result",
-      "dictation_final",
-      "dictation_error",
-    ];
-
-    const actualTypes = new Set(Object.values(messages).map((m) => m.type));
-
-    for (const expected of expectedTypes) {
-      expect(actualTypes.has(expected), `Missing snapshot for type: ${expected}`).toBe(true);
+  it("keeps examples typed and rejects temporary compatibility key collisions", () => {
+    for (const [key, message] of Object.entries(messages)) {
+      const type = (message as { type?: unknown }).type;
+      expect(type, `Message "${key}" missing type`).toBeTypeOf("string");
     }
-  });
 
-  it("every message has a type field", () => {
-    for (const [key, msg] of Object.entries(messages)) {
-      expect(msg.type, `Message "${key}" missing type`).toBeTypeOf("string");
+    const temporaryCollisions = [
+      ["server-messages.json", "connected"],
+      ["app-event-messages.json", "app_events_connected"],
+    ] as const;
+    for (const [fixtureName, key] of temporaryCollisions) {
+      expect(() =>
+        assertNoOverlappingFixtureKeys(
+          fixtureName,
+          { [key]: { type: key } },
+          { [key]: { type: key } },
+        ),
+      ).toThrow(
+        `${fixtureName} has compatibility keys that shadow typed canonical keys: ${key}`,
+      );
     }
   });
 
   it("session objects have all required fields", () => {
-    // Verify the test session has the shape iOS expects
-    const sessionMessages = Object.values(messages).filter((m) => "session" in m);
+    const sessionMessages = Object.values(messages).filter(
+      (message): message is { session: Session } =>
+        typeof message === "object" && message !== null && "session" in message,
+    );
 
-    for (const msg of sessionMessages) {
-      const session = (msg as { session: Session }).session;
+    for (const { session } of sessionMessages) {
       expect(session.id).toBeTypeOf("string");
       expect(session.status).toBeTypeOf("string");
       expect(session.createdAt).toBeTypeOf("number");
@@ -577,9 +89,9 @@ describe("protocol snapshots", () => {
   });
 
   it("timestamps are Unix milliseconds (not seconds)", () => {
-    const session = TEST_SESSION;
-    // Unix ms should be > 1e12 (year ~2001)
-    expect(session.createdAt).toBeGreaterThan(1e12);
-    expect(session.lastActivity).toBeGreaterThan(1e12);
+    const connected = messages.connected as { session: Session };
+
+    expect(connected.session.createdAt).toBeGreaterThan(1e12);
+    expect(connected.session.lastActivity).toBeGreaterThan(1e12);
   });
 });

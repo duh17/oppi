@@ -14,15 +14,41 @@ struct AppEventMessageTests {
             .appendingPathComponent("protocol/app-event-messages.json")
     }
 
-    private func decodeSnapshot(_ key: String) throws -> AppEventMessage {
+    private func loadSnapshot() throws -> [String: Any] {
         let data = try Data(contentsOf: snapshotURL)
         let root = try #require(
             JSONSerialization.jsonObject(with: data) as? [String: Any]
         )
-        let messages = try #require(root["messages"] as? [String: Any])
+        return try #require(root["messages"] as? [String: Any])
+    }
+
+    private func decodeSnapshot(_ key: String) throws -> AppEventMessage {
+        let messages = try loadSnapshot()
         let value = try #require(messages[key])
         let messageData = try JSONSerialization.data(withJSONObject: value)
         return try JSONDecoder().decode(AppEventMessage.self, from: messageData)
+    }
+
+    @Test func decodesEveryCommittedCanonicalAppEvent() throws {
+        let messages = try loadSnapshot()
+        var failures: [String] = []
+
+        for (key, value) in messages {
+            do {
+                let messageData = try JSONSerialization.data(withJSONObject: value)
+                let event = try JSONDecoder().decode(AppEventMessage.self, from: messageData)
+                if case .ignored(let type) = event {
+                    failures.append("\(key): decoded as .ignored(\(type))")
+                }
+            } catch {
+                failures.append("\(key): \(error.localizedDescription)")
+            }
+        }
+
+        #expect(
+            failures.isEmpty,
+            "Failed to decode \(failures.count) app-event message(s):\n\(failures.joined(separator: "\n"))"
+        )
     }
 
     @Test func decodesConnectionFrame() throws {

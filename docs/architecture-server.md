@@ -266,8 +266,8 @@ When changing protocol messages:
 
 1. Update server protocol types.
 2. Update Apple models: `ClientMessage.swift`, `ServerMessage.swift`, `AppEventMessage.swift`, and stream wrappers.
-3. Update protocol snapshots in `protocol/*.json` when the wire shape changes.
-4. Run server protocol tests and Apple Codable tests.
+3. Update protocol snapshots in `protocol/*.json` when the wire shape changes. Ordinary protocol tests compare deterministic canonical bytes with the committed fixtures without writing tracked files. Deliberate fixture changes use `cd server && npm run protocol:fixtures:update`.
+4. Run server protocol tests, followed by Apple Codable tests.
 
 ## Server boundary rules current code
 

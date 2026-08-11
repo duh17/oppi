@@ -12,7 +12,10 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone 
 - For protocol changes, follow the "Protocol boundary" checklist in `docs/architecture-server.md`. Update these files and add tests on both sides:
   - `server/src/types/protocol.ts`
   - the matching Apple models in `clients/apple/OppiCore/Models/`
+  - directly decoded server type modules required by the changed fixture (for this bundle, `server/src/types/session.ts`, `server/src/types/icon.ts`, `server/src/types/git.ts`, `server/src/types/shared.ts`, and `server/src/thinking-levels.ts`; do not mechanically include every `server/src/types/*` file)
   - the `protocol/*.json` snapshots
+  - ordinary protocol tests, which compare canonical bytes without writing tracked fixtures
+  - the explicit `cd server && npm run protocol:fixtures:update` command when regeneration is intended
 - Generic extension UI must work for every extension. Read display behavior from protocol metadata; never branch on specific tool, extension, status, widget, or display names.
 - Store files by purpose:
   - `.internal/` for lasting private work such as reports, research, and diagrams

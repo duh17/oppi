@@ -1,19 +1,28 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
+import {
+  APP_EVENT_MESSAGES_FIXTURE_DESCRIPTION,
+  APP_EVENT_MESSAGES_SNAPSHOT_FILE,
+  assertProtocolFixtureBytes,
+  buildCanonicalAppEventMessages,
+  serializeProtocolFixture,
+} from "./protocol-fixtures.js";
 import {
   APP_EVENT_ALLOWED_TYPES,
   APP_EVENT_FORBIDDEN_SERVER_MESSAGE_TYPES,
   AppEventStreamMux,
   isAppEventAllowedType,
 } from "../src/app-event-stream.js";
-import type { AppEventMessage, ServerMessage, Session, SessionSummary } from "../src/types.js";
+import type { AppEventMessage, ServerMessage, Session } from "../src/types.js";
 
-const PROTOCOL_DIR = resolve(__dirname, "../../protocol");
-const APP_EVENT_SNAPSHOTS_FILE = join(PROTOCOL_DIR, "app-event-messages.json");
+const canonicalMessages = buildCanonicalAppEventMessages();
+const expectedCanonicalSnapshot = serializeProtocolFixture(
+  APP_EVENT_MESSAGES_FIXTURE_DESCRIPTION,
+  canonicalMessages,
+);
 
 function makeSession(id = "sess-1", workspaceId = "ws-1"): Session {
   return {
@@ -36,151 +45,6 @@ function makeSession(id = "sess-1", workspaceId = "ws-1"): Session {
       agentIcon: { kind: "symbol", name: "checkmark.shield" },
       status: "accepted",
       requestedAt: 1_791_649_999_000,
-    },
-  };
-}
-
-function makeSessionSummary(session = makeSession()): SessionSummary {
-  return {
-    id: session.id,
-    workspaceId: session.workspaceId,
-    workspaceName: session.workspaceName,
-    name: session.name,
-    status: session.status,
-    createdAt: session.createdAt,
-    lastActivity: session.lastActivity,
-    model: session.model,
-    messageCount: session.messageCount,
-    tokens: session.tokens,
-    cost: session.cost,
-    firstMessage: session.firstMessage,
-    agentId: session.launch?.agentId,
-    agentIcon: session.launch?.agentIcon,
-    pendingAskCount: 0,
-  };
-}
-
-function canonicalAppEventMessages(): Record<string, AppEventMessage> {
-  const session = makeSession();
-  const summary = makeSessionSummary(session);
-  const emittedAt = 1_791_650_100_000;
-  const sessionBase = {
-    sessionId: session.id,
-    workspaceId: session.workspaceId,
-    emittedAt,
-  };
-  const controlSummary: SessionSummary = {
-    ...summary,
-    id: "control-session-1",
-    workspaceId: undefined,
-    workspaceName: undefined,
-    name: "Oppi Control",
-    control: {
-      domain: "schedules",
-      intent: "create",
-      targetName: "Nightly review",
-    },
-  };
-
-  return {
-    app_events_connected: {
-      type: "app_events_connected",
-      serverTime: emittedAt,
-      snapshotRequired: true,
-    },
-    session_created: { type: "session_created", ...sessionBase, summary },
-    session_imported: { type: "session_imported", ...sessionBase, summary },
-    session_discovered: { type: "session_discovered", ...sessionBase, summary },
-    session_summary: { type: "session_summary", ...sessionBase, summary },
-    session_summary_control: {
-      type: "session_summary",
-      sessionId: controlSummary.id,
-      emittedAt,
-      summary: controlSummary,
-    },
-    session_summary_icon_default: {
-      type: "session_summary",
-      ...sessionBase,
-      summary: { ...summary, agentIcon: { kind: "default" } },
-    },
-    session_summary_icon_emoji: {
-      type: "session_summary",
-      ...sessionBase,
-      summary: { ...summary, agentIcon: { kind: "emoji", value: "🧘" } },
-    },
-    session_summary_icon_genmoji: {
-      type: "session_summary",
-      ...sessionBase,
-      summary: {
-        ...summary,
-        agentIcon: {
-          kind: "genmoji",
-          assetId: `ia_${"A".repeat(43)}`,
-          contentDescription: "A smiling fox",
-        },
-      },
-    },
-    session_summary_icon_malformed: {
-      type: "session_summary",
-      ...sessionBase,
-      summary: { ...summary, agentIcon: { kind: "emoji", value: "not emoji" } },
-    } as unknown as AppEventMessage,
-    session_summary_icon_future: {
-      type: "session_summary",
-      ...sessionBase,
-      summary: { ...summary, agentIcon: { kind: "animated", version: 2 } },
-    } as unknown as AppEventMessage,
-    session_deleted: { type: "session_deleted", ...sessionBase },
-    session_ended: { type: "session_ended", ...sessionBase, reason: "completed" },
-    stop_requested: { type: "stop_requested", ...sessionBase, source: "user" },
-    stop_confirmed: { type: "stop_confirmed", ...sessionBase, source: "server" },
-    stop_failed: {
-      type: "stop_failed",
-      ...sessionBase,
-      source: "runtime",
-      reason: "timeout",
-    },
-    session_error: {
-      type: "session_error",
-      ...sessionBase,
-      message: "Model API rate limit exceeded",
-      code: "rate_limit",
-      fatal: false,
-    },
-    extension_ui_request: {
-      type: "extension_ui_request",
-      ...sessionBase,
-      id: "ui-1",
-      method: "ask",
-      title: "Approve change",
-      message: "Proceed?",
-      questions: [
-        {
-          id: "q1",
-          question: "Proceed?",
-          options: [{ value: "yes", label: "Yes" }],
-        },
-      ],
-      allowCustom: false,
-      timeout: 30_000,
-      timeoutAt: emittedAt + 30_000,
-    },
-    extension_ui_settled: { type: "extension_ui_settled", ...sessionBase, id: "ui-1" },
-    extension_ui_notification: {
-      type: "extension_ui_notification",
-      ...sessionBase,
-      method: "setStatus",
-      statusKey: "build",
-      statusText: "Build passed",
-      notifyType: "info",
-      message: "Build completed",
-    },
-    workspace_git_changed: {
-      type: "workspace_git_changed",
-      workspaceId: "ws-1",
-      sessionId: session.id,
-      emittedAt,
-      reason: "mutation_tool",
     },
   };
 }
@@ -265,30 +129,32 @@ describe("AppEventMessage protocol", () => {
     }
   });
 
-  it("generates separate canonical app-event snapshots", () => {
-    if (!existsSync(PROTOCOL_DIR)) {
-      mkdirSync(PROTOCOL_DIR, { recursive: true });
-    }
+  it("reports app-event fixture drift without writing tracked fixtures", () => {
+    const tracked = readFileSync(APP_EVENT_MESSAGES_SNAPSHOT_FILE, "utf8");
+    const drifted = tracked.replace('"message": "Build completed"', '"message": "Build changed"');
 
-    const messages = canonicalAppEventMessages();
-    const snapshot = {
-      _meta: {
-        description:
-          "Canonical AppEventMessage JSON — generated by server/tests/app-event-stream.test.ts",
-        generated: "static",
-        messageCount: Object.keys(messages).length,
-      },
-      messages,
-    };
+    expect(drifted).not.toBe(tracked);
+    expect(() => assertProtocolFixtureBytes("app-event-messages.json", tracked, drifted)).toThrow(
+      /app-event-messages\.json at byte \d+/,
+    );
+    expect(readFileSync(APP_EVENT_MESSAGES_SNAPSHOT_FILE, "utf8")).toBe(tracked);
+  });
 
-    writeFileSync(APP_EVENT_SNAPSHOTS_FILE, JSON.stringify(snapshot, null, 2) + "\n");
+  it("matches the committed app-event fixture byte-for-byte", () => {
+    const tracked = readFileSync(APP_EVENT_MESSAGES_SNAPSHOT_FILE, "utf8");
 
-    const parsed = JSON.parse(readFileSync(APP_EVENT_SNAPSHOTS_FILE, "utf8")) as {
-      messages: Record<string, AppEventMessage>;
-    };
-    expect(Object.keys(parsed.messages).sort()).toEqual(Object.keys(messages).sort());
-    for (const message of Object.values(parsed.messages)) {
-      expect(isAppEventAllowedType(message.type), message.type).toBe(true);
+    expect(() =>
+      assertProtocolFixtureBytes("app-event-messages.json", expectedCanonicalSnapshot, tracked),
+    ).not.toThrow();
+
+    const parsed = JSON.parse(tracked) as { messages?: Record<string, unknown> };
+    expect(parsed.messages).toBeDefined();
+    expect(Object.keys(parsed.messages ?? {})).toHaveLength(Object.keys(canonicalMessages).length);
+
+    for (const [key, value] of Object.entries(canonicalMessages)) {
+      const message = value as { type?: unknown; seq?: unknown; currentSeq?: unknown };
+      expect(message.type, key).toBeTypeOf("string");
+      expect(isAppEventAllowedType(message.type as string), key).toBe(true);
       expect("seq" in message).toBe(false);
       expect("currentSeq" in message).toBe(false);
     }

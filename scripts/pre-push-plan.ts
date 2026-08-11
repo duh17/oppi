@@ -101,6 +101,11 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
 
     const protocolBoundary = path.startsWith("protocol/")
       || path === "server/src/types/protocol.ts"
+      || path === "server/src/types/session.ts"
+      || path === "server/src/types/icon.ts"
+      || path === "server/src/types/git.ts"
+      || path === "server/src/types/shared.ts"
+      || path === "server/src/thinking-levels.ts"
       || path.startsWith("clients/apple/OppiCore/Models/");
     if (protocolBoundary) {
       server = "full";
