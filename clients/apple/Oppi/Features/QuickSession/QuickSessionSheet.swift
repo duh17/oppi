@@ -426,7 +426,7 @@ struct QuickSessionSheet: View {
                 onSelect: selectAgent
             )
             .presentationCompactAdaptation(.popover)
-            .presentationBackground(Color.themeSurfaceFill(.popover))
+            .presentationBackground(.themeBgDark)
         }
         .accessibilityLabel(
             selectedAgent.map { "Agent picker, current agent \($0.name)" }
@@ -995,6 +995,13 @@ private struct QuickSessionAgentPillLabel: View {
     }
 }
 
+private enum QuickSessionAgentPickerLayout {
+    // The system popover owns the rounded backdrop and arrow. Extend the
+    // opaque SwiftUI surface through that compositing fringe so the content
+    // behind the presentation cannot show through its edge.
+    static let popoverBackgroundBleed: CGFloat = 16
+}
+
 private struct QuickSessionAgentPicker: View {
     let agents: [AgentDefinitionSummary]
     let selectedAgentId: String?
@@ -1046,6 +1053,11 @@ private struct QuickSessionAgentPicker: View {
             .padding(.vertical, 8)
         }
         .frame(minWidth: 260, idealWidth: 280, maxHeight: 320)
+        .background {
+            Rectangle()
+                .fill(.themeBgDark)
+                .padding(-QuickSessionAgentPickerLayout.popoverBackgroundBleed)
+        }
     }
 
     private func agentRow(
