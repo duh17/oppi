@@ -187,18 +187,22 @@ struct AgentIconProofPreview: View {
 
     private var agentChatView: some View {
         VStack(spacing: 20) {
-            HStack(spacing: 8) {
-                AgentIconView(
-                    value: agent.definition.icon,
-                    size: 20,
-                    frameSize: 24,
-                    isDecorative: false,
-                    visualScale: ChatAgentIconStyle.compactVisualScale
-                )
-                Text(agentSession.displayTitle)
-                    .font(.headline)
-            }
+            ChatSessionTitleView(
+                sessionId: agentSession.id,
+                sessionDisplayName: agentSession.displayTitle,
+                assistantIdentityPresentation: AssistantIdentityPresentation.resolve(
+                    agentId: agentSession.launch?.agentId,
+                    agentIcon: agent.definition.icon
+                ),
+                agentIcon: agent.definition.icon,
+                cost: agentSession.cost,
+                terminalMirrorIndicator: TerminalMirrorIndicatorPresentation(session: agentSession),
+                maxWidth: .infinity,
+                iconIsDecorative: false,
+                iconAccessibilityIdentifier: "agent.proof.chat.titleIdentity.icon"
+            )
             .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(agent.definition.icon.accessibilityDescription), \(agentSession.displayTitle)")
             .accessibilityIdentifier("agent.proof.chat.titleIdentity")
 
             GroupBox("Agent session empty state") {
@@ -308,6 +312,87 @@ struct AgentIconProofPreview: View {
             thinkingLevel: nil,
             launch: launch
         )
+    }
+}
+
+struct AgentIconTitleBarStressPreview: View {
+    private struct StressCase: Identifiable {
+        let id: String
+        let label: String
+        let icon: IconChoice
+    }
+
+    private static let cases = [
+        StressCase(id: "emoji", label: "Emoji", icon: .emoji("🧘")),
+        StressCase(id: "compact", label: "Compact SF Symbol", icon: .symbol("sparkles")),
+        StressCase(id: "tall", label: "Tall SF Symbol", icon: .symbol("rectangle.portrait")),
+        StressCase(id: "wide", label: "Wide SF Symbol", icon: .symbol("arrow.left.and.right")),
+    ]
+
+    @State private var selectedCaseIndex = 0
+
+    private var selectedCase: StressCase {
+        Self.cases[selectedCaseIndex % Self.cases.count]
+    }
+
+    private var nextCase: StressCase {
+        Self.cases[(selectedCaseIndex + 1) % Self.cases.count]
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Focused chat title icon bounds")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+
+                Text("The title above reuses the production ChatSessionTitleView in the navigation bar principal placement. Tap Next to cycle its saved icon while the long title and cost remain constrained.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Showing: \(selectedCase.label)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .accessibilityIdentifier("agent.proof.titlebar.current")
+
+                    Button {
+                        selectedCaseIndex = (selectedCaseIndex + 1) % Self.cases.count
+                    } label: {
+                        Label("Next: \(nextCase.label)", systemImage: "arrow.right.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("agent.proof.titlebar.next")
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color.themeBg.ignoresSafeArea())
+            .navigationTitle("Title Bar Stress")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    ChatSessionTitleView(
+                        sessionId: "title-bar-\(selectedCase.id)",
+                        sessionDisplayName: "A deliberately long focused chat session title",
+                        assistantIdentityPresentation: .agent(AgentIconContent.resolve(selectedCase.icon)),
+                        agentIcon: selectedCase.icon,
+                        cost: 12.34,
+                        terminalMirrorIndicator: nil,
+                        maxWidth: 320,
+                        iconIsDecorative: false,
+                        iconAccessibilityIdentifier: "agent.proof.titlebar.\(selectedCase.id).icon"
+                    )
+                }
+            }
+        }
+        .tint(.themeBlue)
+        .accessibilityIdentifier("screenshot.ready")
     }
 }
 

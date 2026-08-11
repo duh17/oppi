@@ -1085,43 +1085,15 @@ struct ChatView: View {
     }
 
     private var sessionTitleLabel: some View {
-        VStack(spacing: 1) {
-            HStack(spacing: 6) {
-                switch assistantIdentityPresentation {
-                case .agent:
-                    AgentIconView(
-                        value: session?.launch?.agentIcon,
-                        size: 18,
-                        frameSize: 20,
-                        visualScale: ChatAgentIconStyle.compactVisualScale
-                    )
-                case .globalAvatar:
-                    CurrentAssistantAvatarPreview(
-                        sessionId: sessionId,
-                        size: 20
-                    )
-                }
-
-                Text(sessionDisplayName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                if let cost = session?.cost, cost > 0 {
-                    Text(SessionFormatting.costString(cost))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.themeComment)
-                        .fixedSize()
-                }
-
-                if let terminalMirrorIndicator = TerminalMirrorIndicatorPresentation(session: session) {
-                    TerminalMirrorIndicatorView(presentation: terminalMirrorIndicator)
-                }
-            }
-        }
-        .frame(maxWidth: chatPrincipalTitleMaxWidth)
-        .clipped()
+        ChatSessionTitleView(
+            sessionId: sessionId,
+            sessionDisplayName: sessionDisplayName,
+            assistantIdentityPresentation: assistantIdentityPresentation,
+            agentIcon: session?.launch?.agentIcon,
+            cost: session?.cost,
+            terminalMirrorIndicator: TerminalMirrorIndicatorPresentation(session: session),
+            maxWidth: chatPrincipalTitleMaxWidth
+        )
     }
 
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter {
@@ -2157,6 +2129,70 @@ struct ChatView: View {
     }
 }
 
+struct ChatSessionTitleView: View {
+    let sessionId: String
+    let sessionDisplayName: String
+    let assistantIdentityPresentation: AssistantIdentityPresentation
+    let agentIcon: IconChoice?
+    let cost: Double?
+    let terminalMirrorIndicator: TerminalMirrorIndicatorPresentation?
+    let maxWidth: CGFloat
+    var iconIsDecorative = true
+    var iconAccessibilityIdentifier: String?
+
+    var body: some View {
+        VStack(spacing: 1) {
+            HStack(spacing: 6) {
+                switch assistantIdentityPresentation {
+                case .agent:
+                    agentIconView()
+                case .globalAvatar:
+                    CurrentAssistantAvatarPreview(
+                        sessionId: sessionId,
+                        size: 20
+                    )
+                }
+
+                Text(sessionDisplayName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if let cost, cost > 0 {
+                    Text(SessionFormatting.costString(cost))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.themeComment)
+                        .fixedSize()
+                }
+
+                if let terminalMirrorIndicator {
+                    TerminalMirrorIndicatorView(presentation: terminalMirrorIndicator)
+                }
+            }
+        }
+        .frame(maxWidth: maxWidth)
+        .clipped()
+    }
+
+    @ViewBuilder
+    private func agentIconView() -> some View {
+        let icon = AgentIconView(
+            value: agentIcon,
+            size: AgentIconSizingPolicy.titleTextMinimum,
+            isDecorative: iconIsDecorative,
+            renderStyle: .chatTitle
+        )
+
+        if let iconAccessibilityIdentifier {
+            icon
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier(iconAccessibilityIdentifier)
+        } else {
+            icon
+        }
+    }
+}
 
 private extension View {
     @ViewBuilder

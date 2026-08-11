@@ -82,7 +82,21 @@ enum ChatAgentIconStyle {
     static let heroVisualScale: CGFloat = 1.45
 }
 
+enum AgentIconRenderStyle: Equatable {
+    case standard
+    case chatTitle
+}
+
 enum AgentIconSizingPolicy {
+    static let titleSlotSize: CGFloat = 24
+    static let titleVisualEnvelope: CGFloat = 22
+    static let titleTextMinimum: CGFloat = 20
+    static let titleTextMaximum: CGFloat = 21
+
+    static func titleTextSize(for scaledSize: CGFloat) -> CGFloat {
+        min(max(scaledSize, titleTextMinimum), titleTextMaximum)
+    }
+
     static func contentSize(
         baseSize: CGFloat,
         scaledSize: CGFloat,
@@ -122,6 +136,7 @@ struct IconChoiceView: View {
     let isDecorative: Bool
     let assetCache: IconAssetCache?
     let visualScale: CGFloat
+    let renderStyle: AgentIconRenderStyle
 
     @Environment(\.iconAssetCache) private var environmentAssetCache
     @State private var loadedGenmoji: UIImage?
@@ -135,7 +150,8 @@ struct IconChoiceView: View {
         frameSize: CGFloat? = nil,
         isDecorative: Bool = true,
         assetCache: IconAssetCache? = nil,
-        visualScale: CGFloat = 1
+        visualScale: CGFloat = 1,
+        renderStyle: AgentIconRenderStyle = .standard
     ) {
         self.value = value
         self.purpose = purpose
@@ -144,6 +160,7 @@ struct IconChoiceView: View {
         self.isDecorative = isDecorative
         self.assetCache = assetCache
         self.visualScale = visualScale
+        self.renderStyle = renderStyle
         _scaledSize = ScaledMetric(wrappedValue: size, relativeTo: .body)
     }
 
@@ -153,6 +170,37 @@ struct IconChoiceView: View {
             scaledSize: scaledSize,
             frameSize: frameSize
         )
+    }
+
+    private var layoutSize: CGFloat {
+        switch renderStyle {
+        case .standard:
+            return frameSize ?? size
+        case .chatTitle:
+            return AgentIconSizingPolicy.titleSlotSize
+        }
+    }
+
+    private var visualEnvelope: CGFloat {
+        min(AgentIconSizingPolicy.titleVisualEnvelope, layoutSize)
+    }
+
+    private var contentFontSize: CGFloat {
+        switch renderStyle {
+        case .standard:
+            return displaySize
+        case .chatTitle:
+            return AgentIconSizingPolicy.titleTextSize(for: scaledSize)
+        }
+    }
+
+    private var assetRenderSize: CGFloat {
+        switch renderStyle {
+        case .standard:
+            return displaySize
+        case .chatTitle:
+            return visualEnvelope
+        }
     }
 
     private var accessibilityDescription: String {
@@ -170,27 +218,16 @@ struct IconChoiceView: View {
 
     var body: some View {
         Group {
-            switch AgentIconContent.resolve(value) {
-            case .symbol(let name):
-                Image(systemName: name)
-                    .foregroundStyle(.themeBlue)
-            case .text(let text):
-                Text(text)
-            case .genmoji:
-                if let loadedGenmoji {
-                    Image(uiImage: loadedGenmoji)
-                        .resizable()
-                        .scaledToFit()
-                } else {
-                    defaultIcon
-                }
-            case .fallback:
-                defaultIcon
+            if renderStyle == .chatTitle {
+                renderedContent
+                    .frame(width: layoutSize, height: layoutSize)
+                    .clipped()
+            } else {
+                renderedContent
+                    .frame(width: layoutSize, height: layoutSize)
+                    .scaleEffect(visualScale)
             }
         }
-        .font(.system(size: displaySize))
-        .frame(width: frameSize ?? size, height: frameSize ?? size)
-        .scaleEffect(visualScale)
         .accessibilityHidden(isDecorative)
         .accessibilityLabel(isDecorative ? "" : accessibilityDescription)
         .task(id: IconAssetLoadKey(
@@ -210,7 +247,7 @@ struct IconChoiceView: View {
             }
             await loadIconAssetForView(
                 assetId: assetId,
-                size: displaySize * 2,
+                size: assetRenderSize * 2,
                 cache: cache,
                 identity: identity,
                 currentIdentity: { activeLoadIdentity },
@@ -219,9 +256,54 @@ struct IconChoiceView: View {
         }
     }
 
+    private var renderedContent: some View {
+        Group {
+            switch AgentIconContent.resolve(value) {
+            case .symbol(let name):
+                if renderStyle == .chatTitle {
+                    Image(systemName: name)
+                        .resizable()
+                        .scaledToFit()
+                        .font(.system(size: contentFontSize, weight: .medium))
+                        .frame(width: visualEnvelope, height: visualEnvelope)
+                        .foregroundStyle(.themeBlue)
+                } else {
+                    Image(systemName: name)
+                        .foregroundStyle(.themeBlue)
+                }
+            case .text(let text):
+                Text(text)
+            case .genmoji:
+                if let loadedGenmoji {
+                    Image(uiImage: loadedGenmoji)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(
+                            width: renderStyle == .chatTitle ? visualEnvelope : nil,
+                            height: renderStyle == .chatTitle ? visualEnvelope : nil
+                        )
+                } else {
+                    defaultIcon
+                }
+            case .fallback:
+                defaultIcon
+            }
+        }
+        .font(.system(size: contentFontSize))
+    }
+
+    @ViewBuilder
     private var defaultIcon: some View {
-        Image(systemName: purpose.defaultSymbolName)
-            .foregroundStyle(.themeBlue)
+        if renderStyle == .chatTitle {
+            Image(systemName: purpose.defaultSymbolName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: visualEnvelope, height: visualEnvelope)
+                .foregroundStyle(.themeBlue)
+        } else {
+            Image(systemName: purpose.defaultSymbolName)
+                .foregroundStyle(.themeBlue)
+        }
     }
 }
 
@@ -232,6 +314,7 @@ struct AgentIconView: View {
     let isDecorative: Bool
     let assetCache: IconAssetCache?
     let visualScale: CGFloat
+    let renderStyle: AgentIconRenderStyle
 
     init(
         value: IconChoice?,
@@ -239,7 +322,8 @@ struct AgentIconView: View {
         frameSize: CGFloat? = nil,
         isDecorative: Bool = true,
         assetCache: IconAssetCache? = nil,
-        visualScale: CGFloat = 1
+        visualScale: CGFloat = 1,
+        renderStyle: AgentIconRenderStyle = .standard
     ) {
         self.value = value
         self.size = size
@@ -247,6 +331,7 @@ struct AgentIconView: View {
         self.isDecorative = isDecorative
         self.assetCache = assetCache
         self.visualScale = visualScale
+        self.renderStyle = renderStyle
     }
 
     var body: some View {
@@ -257,7 +342,8 @@ struct AgentIconView: View {
             frameSize: frameSize,
             isDecorative: isDecorative,
             assetCache: assetCache,
-            visualScale: visualScale
+            visualScale: visualScale,
+            renderStyle: renderStyle
         )
     }
 }

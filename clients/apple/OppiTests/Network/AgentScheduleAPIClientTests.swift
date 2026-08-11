@@ -1185,6 +1185,18 @@ struct AgentIconPresentationTests {
         #expect(size == 18.72)
     }
 
+    @Test func titleBarContentKeepsItsReadableTargetInsideTheFixedSlot() {
+        #expect(AgentIconSizingPolicy.titleSlotSize == 24)
+        #expect(AgentIconSizingPolicy.titleVisualEnvelope == 22)
+
+        let ordinarySize = AgentIconSizingPolicy.titleTextSize(for: 20)
+        let largeDynamicTypeSize = AgentIconSizingPolicy.titleTextSize(for: 32)
+
+        #expect(ordinarySize >= 20)
+        #expect(ordinarySize <= 21)
+        #expect(largeDynamicTypeSize == 21)
+    }
+
     @Test func ordinaryAndAgentSessionIdentityUseTheCorrectPresentation() {
         #expect(AssistantIdentityPresentation.resolve(agentId: nil, agentIcon: .emoji("🧘")) == .globalAvatar)
         #expect(AssistantIdentityPresentation.resolve(agentId: "", agentIcon: .emoji("🧘")) == .globalAvatar)

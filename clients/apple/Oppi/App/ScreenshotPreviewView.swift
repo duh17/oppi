@@ -41,6 +41,8 @@ struct ScreenshotPreviewView: View {
             ModelProvidersQuotaPreview()
         case "agent-icons":
             AgentIconProofPreview()
+        case "agent-icon-title-bar-stress":
+            AgentIconTitleBarStressPreview()
         case "agent-icons-save-failure":
             AgentIconProofPreview(failsFirstSave: true)
         case "assistant-avatar-picker":

@@ -150,6 +150,68 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "agent-icons-emoji-chat-identities")
     }
 
+    func testAgentIconTitleBarStressPreviewKeepsAllIconsInsideTwentyFourPointSlot() throws {
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "agent-icon-title-bar-stress")
+
+        let navigationBar = app.navigationBars.firstMatch
+        let nextIconButton = app.buttons["agent.proof.titlebar.next"]
+        XCTAssertTrue(navigationBar.waitForExistence(timeout: 5), "Navigation bar not visible")
+        XCTAssertTrue(nextIconButton.waitForExistence(timeout: 5), "Title-bar stress control not visible")
+
+        let title = app.staticTexts.containing(
+            NSPredicate(format: "label CONTAINS %@", "A deliberately long focused chat session title")
+        ).firstMatch
+        let cost = app.staticTexts["$12.34"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "Long title not visible in the principal item")
+        XCTAssertTrue(cost.waitForExistence(timeout: 5), "Cost not visible in the principal item")
+
+        let cases = ["emoji", "compact", "tall", "wide"]
+        for (index, caseID) in cases.enumerated() {
+            let icon = app.descendants(matching: .any)["agent.proof.titlebar.\(caseID).icon"]
+            XCTAssertTrue(icon.waitForExistence(timeout: 5), "Missing \(caseID) title-bar icon")
+            switch caseID {
+            case "emoji":
+                XCTAssertEqual(icon.frame.width, 24, accuracy: 1, "Emoji must retain the fixed title slot")
+                XCTAssertEqual(icon.frame.height, 24, accuracy: 1, "Emoji must retain the fixed title slot")
+            case "compact":
+                XCTAssertGreaterThanOrEqual(icon.frame.width, 18, "Compact symbol became too narrow")
+                XCTAssertGreaterThanOrEqual(icon.frame.height, 18, "Compact symbol became too short")
+                XCTAssertLessThanOrEqual(icon.frame.width, 22.5, "Compact symbol exceeded its visual envelope")
+                XCTAssertLessThanOrEqual(icon.frame.height, 22.5, "Compact symbol exceeded its visual envelope")
+            case "tall":
+                XCTAssertGreaterThanOrEqual(icon.frame.height, 18, "Tall symbol became too short")
+                XCTAssertLessThanOrEqual(icon.frame.width, 22.5, "Tall symbol exceeded its visual envelope")
+                XCTAssertLessThanOrEqual(icon.frame.height, 22.5, "Tall symbol exceeded its visual envelope")
+            case "wide":
+                XCTAssertGreaterThanOrEqual(icon.frame.width, 18, "Wide symbol became too narrow")
+                XCTAssertLessThanOrEqual(icon.frame.width, 22.5, "Wide symbol exceeded its visual envelope")
+                XCTAssertLessThanOrEqual(icon.frame.height, 22.5, "Wide symbol exceeded its visual envelope")
+            default:
+                XCTFail("Unexpected title-bar stress case: \(caseID)")
+            }
+            XCTAssertTrue(
+                navigationBar.frame.contains(icon.frame),
+                "\(caseID) icon must stay inside the actual navigation-bar principal placement"
+            )
+            XCTAssertFalse(title.frame.isEmpty, "Long title disappeared for \(caseID)")
+            XCTAssertFalse(cost.frame.isEmpty, "Cost disappeared for \(caseID)")
+            XCTAssertTrue(
+                navigationBar.frame.contains(title.frame),
+                "Long title escaped the navigation bar for \(caseID)"
+            )
+            XCTAssertTrue(
+                navigationBar.frame.contains(cost.frame),
+                "Cost escaped the navigation bar for \(caseID)"
+            )
+
+            saveScreenshot(name: "agent-icon-title-bar-stress-\(caseID)")
+            if index < cases.count - 1 {
+                nextIconButton.tap()
+            }
+        }
+    }
+
     func testAssistantAvatarCancelAndInvalidEmojiKeepSavedAvatar() throws {
         launchPreview(screen: "assistant-avatar-picker")
 
