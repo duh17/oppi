@@ -10,7 +10,9 @@ APPLE_DIR="$REPO_ROOT/clients/apple"
 BUILD_BASE="$APPLE_DIR/.build"
 LOG_DIR="$BUILD_BASE/logs"
 DEVICE_NAME="${OPPI_CI_SIM_DEVICE_NAME:-iPhone 17 Pro}"
-BOOT_TIMEOUT="${OPPI_CI_SIM_BOOT_TIMEOUT:-240}"
+BOOT_TIMEOUT="${OPPI_CI_SIM_BOOT_TIMEOUT:-150}"
+# Two reboot retries allow three bounded readiness waits without an overall budget.
+BOOT_RETRIES=2
 SILENCE_TIMEOUT="${OPPI_CI_SIM_SILENCE_TIMEOUT:-180}"
 HANG_RETRIES="${OPPI_CI_SIM_HANG_RETRIES:-1}"
 POLL_INTERVAL="${OPPI_CI_SIM_POLL_INTERVAL:-5}"
@@ -20,6 +22,8 @@ RETRY_DEADLINE="${OPPI_CI_SIM_RETRY_DEADLINE:-0}"
 DERIVED_DATA="${OPPI_CI_DERIVED_DATA_PATH:-$BUILD_BASE/ci}"
 SIM_UDID=""
 BOOTED_BY_SCRIPT=0
+BOOT_WAIT_ATTEMPTS=0
+BOOT_READY=0
 COMMAND_PID=""
 ATTEMPT_COMMAND=()
 ATTEMPT_STATUS=0
@@ -37,7 +41,7 @@ Xcode iOS Simulator SDK. It never creates or erases a simulator.
 Environment:
   OPPI_CI_SIM_DEVICE_NAME       Existing device name (default: iPhone 17 Pro)
   OPPI_CI_SIM_RUNTIME           Exact CoreSimulator runtime identifier
-  OPPI_CI_SIM_BOOT_TIMEOUT      Boot-readiness timeout in seconds (default: 240)
+  OPPI_CI_SIM_BOOT_TIMEOUT      Boot-readiness timeout in seconds (default: 150)
   OPPI_CI_SIM_SILENCE_TIMEOUT   Log-silence timeout in seconds (default: 180)
   OPPI_CI_SIM_HANG_RETRIES      Reboot-and-retry count after silence (default: 1)
   OPPI_CI_SIM_POLL_INTERVAL     Seconds between process checks (default: 5)
@@ -228,6 +232,35 @@ except subprocess.CalledProcessError as error:
 PY
 }
 
+wait_for_boot_ready_with_retries() {
+  local udid="$1"
+  local attempt=0
+  local status=0
+  local total_waits=$((BOOT_RETRIES + 1))
+
+  while (( attempt < total_waits )); do
+    attempt=$((attempt + 1))
+    BOOT_WAIT_ATTEMPTS="$attempt"
+    echo "[ci-simulator] Boot-readiness wait ${attempt}/${total_waits} (timeout ${BOOT_TIMEOUT}s)" >&2
+    if wait_for_boot_ready "$udid"; then
+      BOOT_READY=1
+      echo "[ci-simulator] Simulator $udid reached boot-ready state on wait ${attempt}/${total_waits}" >&2
+      return 0
+    else
+      status=$?
+    fi
+
+    if (( attempt < total_waits )); then
+      echo "[ci-simulator] Boot-readiness wait ${attempt}/${total_waits} failed (status ${status}); rebooting existing simulator before wait $((attempt + 1))/${total_waits}" >&2
+      reboot_existing_simulator
+    fi
+  done
+
+  BOOT_READY=0
+  echo "[ci-simulator] Simulator $udid failed boot readiness after ${BOOT_WAIT_ATTEMPTS}/${total_waits} waits of ${BOOT_TIMEOUT}s (last status ${status})" >&2
+  return "$status"
+}
+
 run_self_test() {
   local fixture selected result_bundle self_test_dir=""
   fixture="$(mktemp -t oppi-ci-simulator.XXXXXX.json)"
@@ -331,13 +364,34 @@ SH
   COMMAND_PID=""
 
   local fake_bin xcrun_calls attempt_file argument_log lifecycle_log summary_file
+  local lifecycle_bootstatus_file recovery_root recovery_calls recovery_bootstatus
+  local recovery_attempt recovery_arguments recovery_log recovery_summary
+  local exhausted_root exhausted_calls exhausted_bootstatus exhausted_attempt
+  local exhausted_arguments exhausted_log exhausted_summary exhausted_status
   self_test_dir="$(mktemp -d -t oppi-ci-lifecycle.XXXXXX)"
   fake_bin="$self_test_dir/bin"
   xcrun_calls="$self_test_dir/xcrun.calls"
   attempt_file="$self_test_dir/attempt"
   argument_log="$self_test_dir/arguments.log"
+  lifecycle_bootstatus_file="$self_test_dir/lifecycle.bootstatus"
   lifecycle_log="$self_test_dir/lifecycle.log"
-  mkdir -p "$fake_bin" "$self_test_dir/clients/apple"
+  recovery_root="$self_test_dir/recovery"
+  recovery_calls="$self_test_dir/recovery.xcrun.calls"
+  recovery_bootstatus="$self_test_dir/recovery.bootstatus"
+  recovery_attempt="$self_test_dir/recovery.attempt"
+  recovery_arguments="$self_test_dir/recovery.arguments.log"
+  recovery_log="$self_test_dir/recovery.log"
+  exhausted_root="$self_test_dir/exhausted"
+  exhausted_calls="$self_test_dir/exhausted.xcrun.calls"
+  exhausted_bootstatus="$self_test_dir/exhausted.bootstatus"
+  exhausted_attempt="$self_test_dir/exhausted.attempt"
+  exhausted_arguments="$self_test_dir/exhausted.arguments.log"
+  exhausted_log="$self_test_dir/exhausted.log"
+  mkdir -p \
+    "$fake_bin" \
+    "$self_test_dir/clients/apple" \
+    "$recovery_root/clients/apple" \
+    "$exhausted_root/clients/apple"
 
   cat > "$fake_bin/xcrun" <<'SH'
 #!/usr/bin/env bash
@@ -350,7 +404,20 @@ case "$*" in
   "simctl list devices available -j")
     cat "$OPPI_CI_SELF_TEST_DEVICES_JSON"
     ;;
-  "simctl boot EXPECTED"|"simctl shutdown EXPECTED"|"simctl bootstatus EXPECTED -b")
+  "simctl boot EXPECTED"|"simctl shutdown EXPECTED")
+    ;;
+  "simctl bootstatus EXPECTED -b")
+    bootstatus_attempt=0
+    [[ ! -f "$OPPI_CI_SELF_TEST_BOOTSTATUS_FILE" ]] \
+      || bootstatus_attempt="$(cat "$OPPI_CI_SELF_TEST_BOOTSTATUS_FILE")"
+    bootstatus_attempt=$((bootstatus_attempt + 1))
+    echo "$bootstatus_attempt" > "$OPPI_CI_SELF_TEST_BOOTSTATUS_FILE"
+    echo "bootstatus fixture: wait $bootstatus_attempt"
+    if (( bootstatus_attempt <= OPPI_CI_SELF_TEST_BOOTSTATUS_FAILURES )); then
+      echo "bootstatus fixture: not ready" >&2
+      exit 75
+    fi
+    echo "bootstatus fixture: ready"
     ;;
   *)
     echo "unexpected xcrun call: $*" >&2
@@ -367,7 +434,7 @@ attempt=0
 attempt=$((attempt + 1))
 echo "$attempt" > "$OPPI_CI_SELF_TEST_ATTEMPT_FILE"
 printf '%s\n' "$*" >> "$OPPI_CI_SELF_TEST_ARGUMENT_LOG"
-if (( attempt == 1 )); then
+if [[ "${OPPI_CI_SELF_TEST_HANG_FIRST:-1}" == "1" && "$attempt" == "1" ]]; then
   trap '' TERM
   while :; do sleep 1; done
 fi
@@ -376,19 +443,133 @@ echo "** TEST SUCCEEDED **"
 SH
   chmod +x "$fake_bin/xcrun" "$fake_bin/xcodebuild"
 
-  PATH="$fake_bin:$PATH" \
-  OPPI_ROOT="$self_test_dir" \
-  OPPI_CI_SELF_TEST_XCRUN_CALLS="$xcrun_calls" \
-  OPPI_CI_SELF_TEST_DEVICES_JSON="$fixture" \
-  OPPI_CI_SELF_TEST_ATTEMPT_FILE="$attempt_file" \
-  OPPI_CI_SELF_TEST_ARGUMENT_LOG="$argument_log" \
-  OPPI_CI_SIM_SILENCE_TIMEOUT=1 \
-  OPPI_CI_SIM_POLL_INTERVAL=1 \
-  OPPI_CI_SIM_TERMINATION_GRACE=1 \
-  OPPI_CI_SIM_HANG_RETRIES=1 \
-    "$SCRIPT_DIR/ci-simulator.sh" run -- "$fake_bin/xcodebuild" test \
-      -resultBundlePath "$self_test_dir/OppiTests.xcresult" \
-      > "$lifecycle_log" 2>&1 \
+  export PATH="$fake_bin:$PATH"
+  export OPPI_CI_SIM_RUNTIME="com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+  export OPPI_CI_SIM_BOOT_TIMEOUT=1 OPPI_CI_SIM_CONTROL_TIMEOUT=1
+  export OPPI_CI_SIM_SILENCE_TIMEOUT=1 OPPI_CI_SIM_POLL_INTERVAL=1
+  export OPPI_CI_SIM_TERMINATION_GRACE=1
+
+  assert_xcrun_calls() {
+    local calls_file="$1"
+    shift
+    local actual expected
+    actual="$(cat "$calls_file")"
+    expected="$(printf '%s\n' "$@")"
+    [[ "$actual" == "$expected" ]] || {
+      printf 'actual simulator calls: %s\nexpected simulator calls: %s\n' "$actual" "$expected" >&2
+      return 1
+    }
+  }
+
+  assert_no_simulator_mutation() {
+    local calls_file="$1"
+    if grep -Eq 'simctl (create|erase)' "$calls_file"; then
+      die "self-test: simulator lifecycle created or erased a simulator"
+    fi
+  }
+
+  run_fake_runner() {
+    local root="$1" calls_file="$2" bootstatus_file="$3" bootstatus_failures="$4"
+    local attempt_file_path="$5" argument_log_path="$6" log_file="$7"
+    local hang_first="$8" hang_retries="$9"
+
+    OPPI_ROOT="$root" \
+    OPPI_CI_SELF_TEST_XCRUN_CALLS="$calls_file" \
+    OPPI_CI_SELF_TEST_DEVICES_JSON="$fixture" \
+    OPPI_CI_SELF_TEST_BOOTSTATUS_FILE="$bootstatus_file" \
+    OPPI_CI_SELF_TEST_BOOTSTATUS_FAILURES="$bootstatus_failures" \
+    OPPI_CI_SELF_TEST_ATTEMPT_FILE="$attempt_file_path" \
+    OPPI_CI_SELF_TEST_ARGUMENT_LOG="$argument_log_path" \
+    OPPI_CI_SELF_TEST_HANG_FIRST="$hang_first" \
+    OPPI_CI_SIM_HANG_RETRIES="$hang_retries" \
+      "$SCRIPT_DIR/ci-simulator.sh" run -- "$fake_bin/xcodebuild" test \
+        -resultBundlePath "$root/OppiTests.xcresult" > "$log_file" 2>&1
+  }
+
+  assert_summary() {
+    local summary_path="$1" phase="$2" waits="$3" ready="$4" exit_mode="$5"
+    python3 - "$summary_path" "$phase" "$waits" "$ready" "$exit_mode" <<'PY'
+import json
+import os
+import sys
+
+path, phase, waits, ready, exit_mode = sys.argv[1:]
+with open(path, encoding="utf-8") as file:
+    summary = json.load(file)
+assert summary["simulator_udid"] == "EXPECTED"
+assert summary["runtime"] == "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+assert summary["initial_state"] == "Shutdown"
+assert summary["boot_wait_attempts"] == int(waits)
+assert summary["boot_wait_timeout_seconds"] == 1
+assert summary["boot_ready"] == (ready == "true")
+assert summary["phase"] == phase
+assert summary["xcodebuild_started"] == (phase == "xcodebuild")
+assert summary["started_at_epoch"] <= summary["ended_at_epoch"]
+assert summary["elapsed_seconds"] >= 0
+if exit_mode == "success":
+    assert summary["exit_code"] == 0
+    assert summary["attempt_count"] == 1
+else:
+    assert summary["exit_code"] != 0
+    assert summary["attempt_count"] == 0
+    assert summary["hang_detected"] is False
+    assert summary["log_path"].endswith("-boot-readiness.log")
+    assert os.path.isfile(summary["log_path"])
+    assert os.path.getsize(summary["log_path"]) == 0
+PY
+  }
+
+  run_fake_runner \
+    "$recovery_root" "$recovery_calls" "$recovery_bootstatus" 1 \
+    "$recovery_attempt" "$recovery_arguments" "$recovery_log" 0 0 \
+    || { cat "$recovery_log" >&2; die "self-test: top-level boot recovery failed"; }
+  assert_xcrun_calls "$recovery_calls" \
+    "simctl list devices available -j" "simctl boot EXPECTED" \
+    "simctl bootstatus EXPECTED -b" "simctl shutdown EXPECTED" \
+    "simctl boot EXPECTED" "simctl bootstatus EXPECTED -b" \
+    "simctl shutdown EXPECTED" \
+    || die "self-test: top-level recovery simulator operation order/count changed"
+  assert_no_simulator_mutation "$recovery_calls"
+  [[ "$(cat "$recovery_attempt")" == "1" ]] \
+    || die "self-test: top-level recovery did not proceed to xcodebuild"
+  recovery_summary="$(printf '%s\n' "$recovery_root"/clients/apple/.build/logs/*.summary.json)"
+  assert_summary "$recovery_summary" xcodebuild 2 true success \
+    || die "self-test: top-level recovery summary was incomplete"
+
+  if run_fake_runner \
+    "$exhausted_root" "$exhausted_calls" "$exhausted_bootstatus" 3 \
+    "$exhausted_attempt" "$exhausted_arguments" "$exhausted_log" 0 0; then
+    die "self-test: exhausted top-level boot readiness unexpectedly succeeded"
+  else
+    exhausted_status=$?
+  fi
+  [[ "$exhausted_status" -ne 0 ]] \
+    || die "self-test: exhausted top-level boot readiness returned success"
+  [[ ! -e "$exhausted_attempt" && ! -e "$exhausted_arguments" ]] \
+    || die "self-test: exhausted boot readiness started xcodebuild"
+  assert_xcrun_calls "$exhausted_calls" \
+    "simctl list devices available -j" "simctl boot EXPECTED" \
+    "simctl bootstatus EXPECTED -b" "simctl shutdown EXPECTED" \
+    "simctl boot EXPECTED" "simctl bootstatus EXPECTED -b" \
+    "simctl shutdown EXPECTED" "simctl boot EXPECTED" \
+    "simctl bootstatus EXPECTED -b" "simctl shutdown EXPECTED" \
+    || die "self-test: exhausted boot readiness simulator operation order/count changed"
+  assert_no_simulator_mutation "$exhausted_calls"
+  grep -q 'Boot-readiness wait 3/3' "$exhausted_log" \
+    || die "self-test: exhausted boot diagnostics omitted the final wait"
+  grep -q 'bootstatus fixture: not ready' "$exhausted_log" \
+    || die "self-test: exhausted boot diagnostics omitted bootstatus output"
+  grep -q 'failed boot readiness after 3/3 waits of 1s' "$exhausted_log" \
+    || die "self-test: exhausted boot diagnostics omitted the bounded failure"
+  grep -q 'Summary:' "$exhausted_log" \
+    || die "self-test: exhausted boot diagnostics omitted the summary path"
+  exhausted_summary="$(printf '%s\n' "$exhausted_root"/clients/apple/.build/logs/*.summary.json)"
+  assert_summary "$exhausted_summary" boot-readiness 3 false failure \
+    || die "self-test: exhausted boot summary was incomplete"
+
+  run_fake_runner \
+    "$self_test_dir" "$xcrun_calls" "$lifecycle_bootstatus_file" 0 \
+    "$attempt_file" "$argument_log" "$lifecycle_log" 1 1 \
     || { cat "$lifecycle_log" >&2; die "self-test: bounded hang retry failed"; }
 
   [[ "$(cat "$attempt_file")" == "2" ]] \
@@ -398,6 +579,10 @@ SH
   if grep -Eq 'simctl (create|erase)' "$xcrun_calls"; then
     die "self-test: lifecycle created or erased a simulator"
   fi
+  grep -q 'bootstatus fixture: ready' "$lifecycle_log" \
+    || die "self-test: bootstatus output was not preserved"
+  grep -q 'Boot readiness: 1/3 waits, 1s each, ready=1' "$lifecycle_log" \
+    || die "self-test: boot readiness summary was not reviewable"
   [[ "$(grep -c '^simctl boot EXPECTED$' "$xcrun_calls")" == "2" ]] \
     || die "self-test: lifecycle did not boot the same simulator twice"
   [[ "$(grep -c '^simctl shutdown EXPECTED$' "$xcrun_calls")" == "2" ]] \
@@ -412,6 +597,9 @@ with open(sys.argv[1], encoding="utf-8") as file:
 assert summary["simulator_udid"] == "EXPECTED"
 assert summary["attempt_count"] == 2
 assert summary["hang_detected"] is True
+assert summary["boot_wait_attempts"] == 1
+assert summary["boot_wait_timeout_seconds"] == 1
+assert summary["boot_ready"] is True
 assert summary["exit_code"] == 0
 PY
 
@@ -532,12 +720,16 @@ run_command_attempt() {
   COMMAND_PID=""
 }
 
-restart_existing_simulator() {
+reboot_existing_simulator() {
   echo "[ci-simulator] Rebooting existing simulator $SIM_UDID without erasing it" >&2
   run_simctl_bounded "$CONTROL_TIMEOUT" shutdown "$SIM_UDID" >/dev/null 2>&1 \
     || die "existing simulator $SIM_UDID failed to shut down within ${CONTROL_TIMEOUT}s"
   run_simctl_bounded "$CONTROL_TIMEOUT" boot "$SIM_UDID" >/dev/null 2>&1 \
     || die "existing simulator $SIM_UDID failed to start reboot within ${CONTROL_TIMEOUT}s"
+}
+
+restart_existing_simulator() {
+  reboot_existing_simulator
   wait_for_boot_ready "$SIM_UDID" \
     || die "existing simulator $SIM_UDID failed to reboot within ${BOOT_TIMEOUT}s"
 }
@@ -562,10 +754,14 @@ write_summary() {
   local exit_code="$7"
   local attempt_count="$8"
   local hang_detected="$9"
+  local boot_wait_attempts="${10}"
+  local boot_wait_timeout="${11}"
+  local boot_ready="${12}"
+  local phase="${13}"
 
   python3 - "$path" "$runtime" "$DEVICE_NAME" "$SIM_UDID" "$state" \
     "$DERIVED_DATA" "$log_file" "$started_at" "$ended_at" "$exit_code" \
-    "$attempt_count" "$hang_detected" <<'PY'
+    "$attempt_count" "$hang_detected" "$boot_wait_attempts" "$boot_wait_timeout" "$boot_ready" "$phase" <<'PY'
 import json
 import sys
 
@@ -582,6 +778,10 @@ import sys
     exit_code,
     attempt_count,
     hang_detected,
+    boot_wait_attempts,
+    boot_wait_timeout,
+    boot_ready,
+    phase,
 ) = sys.argv[1:]
 
 payload = {
@@ -597,6 +797,11 @@ payload = {
     "elapsed_seconds": int(ended_at) - int(started_at),
     "attempt_count": int(attempt_count),
     "hang_detected": hang_detected == "1",
+    "boot_wait_attempts": int(boot_wait_attempts),
+    "boot_wait_timeout_seconds": int(boot_wait_timeout),
+    "boot_ready": boot_ready == "1",
+    "phase": phase,
+    "xcodebuild_started": phase == "xcodebuild",
     "exit_code": int(exit_code),
 }
 with open(path, "w", encoding="utf-8") as file:
@@ -671,6 +876,17 @@ fi
 IFS=$'\t' read -r SIM_UDID INITIAL_STATE <<< "$SELECTION"
 echo "[ci-simulator] Using existing $DEVICE_NAME on $RUNTIME ($SIM_UDID, $INITIAL_STATE)" >&2
 
+mkdir -p "$LOG_DIR" "$DERIVED_DATA"
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+BASE_LOG_FILE="$LOG_DIR/ci-$TIMESTAMP.log"
+SUMMARY_FILE="$LOG_DIR/ci-$TIMESTAMP.summary.json"
+LOG_FILE="${BASE_LOG_FILE%.log}-boot-readiness.log"
+: > "$LOG_FILE"
+STARTED_AT="$(date +%s)"
+ATTEMPT=0
+COMMAND_STATUS=0
+FINAL_HUNG=0
+
 case "$INITIAL_STATE" in
   Booted|Booting)
     ;;
@@ -683,18 +899,20 @@ case "$INITIAL_STATE" in
     die "existing simulator $SIM_UDID has unsupported state '$INITIAL_STATE'"
     ;;
 esac
-if ! wait_for_boot_ready "$SIM_UDID"; then
-  die "existing simulator $SIM_UDID failed to reach boot-ready state within ${BOOT_TIMEOUT}s"
+if wait_for_boot_ready_with_retries "$SIM_UDID"; then
+  :
+else
+  COMMAND_STATUS=$?
+  ENDED_AT="$(date +%s)"
+  write_summary \
+    "$SUMMARY_FILE" "$RUNTIME" "$INITIAL_STATE" "$LOG_FILE" \
+    "$STARTED_AT" "$ENDED_AT" "$COMMAND_STATUS" 0 0 \
+    "$BOOT_WAIT_ATTEMPTS" "$BOOT_TIMEOUT" "$BOOT_READY" "boot-readiness"
+  echo "[ci-simulator] Summary: $SUMMARY_FILE" >&2
+  echo "[ci-simulator] Boot readiness: ${BOOT_WAIT_ATTEMPTS}/$((BOOT_RETRIES + 1)) waits, ${BOOT_TIMEOUT}s each, ready=${BOOT_READY}" >&2
+  echo "[ci-simulator] Boot readiness failed before xcodebuild started; empty log: $LOG_FILE" >&2
+  die "existing simulator $SIM_UDID failed to reach boot-ready state after ${BOOT_WAIT_ATTEMPTS}/$((BOOT_RETRIES + 1)) readiness waits of ${BOOT_TIMEOUT}s"
 fi
-
-mkdir -p "$LOG_DIR" "$DERIVED_DATA"
-TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-BASE_LOG_FILE="$LOG_DIR/ci-$TIMESTAMP.log"
-SUMMARY_FILE="$LOG_DIR/ci-$TIMESTAMP.summary.json"
-STARTED_AT="$(date +%s)"
-ATTEMPT=0
-COMMAND_STATUS=0
-FINAL_HUNG=0
 
 echo "[ci-simulator] DerivedData: $DERIVED_DATA" >&2
 
@@ -728,9 +946,11 @@ done
 ENDED_AT="$(date +%s)"
 write_summary \
   "$SUMMARY_FILE" "$RUNTIME" "$INITIAL_STATE" "$LOG_FILE" \
-  "$STARTED_AT" "$ENDED_AT" "$COMMAND_STATUS" "$((ATTEMPT + 1))" "$FINAL_HUNG"
+  "$STARTED_AT" "$ENDED_AT" "$COMMAND_STATUS" "$((ATTEMPT + 1))" "$FINAL_HUNG" \
+  "$BOOT_WAIT_ATTEMPTS" "$BOOT_TIMEOUT" "$BOOT_READY" "xcodebuild"
 
 echo "[ci-simulator] Summary: $SUMMARY_FILE" >&2
+echo "[ci-simulator] Boot readiness: ${BOOT_WAIT_ATTEMPTS}/$((BOOT_RETRIES + 1)) waits, ${BOOT_TIMEOUT}s each, ready=${BOOT_READY}" >&2
 if [[ "$COMMAND_STATUS" -eq 0 ]]; then
   echo "========== CI BUILD SUCCEEDED =========="
   grep -E '^\*\* (TEST|TEST BUILD) SUCCEEDED \*\*|Test run with [0-9]+ tests' "$LOG_FILE" \
