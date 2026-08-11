@@ -82,6 +82,69 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(body.debugLineAnchorHighlightHasVisibleGeometryForTesting)
     }
 
+    @Test("Line-anchor enclosure keeps text visible without a left rail")
+    func lineAnchorEnclosureUsesFaintFillWithoutLeftRail() {
+        struct Pixel {
+            let red: CGFloat
+            let green: CGFloat
+            let blue: CGFloat
+        }
+
+        let overlay = FullScreenLineAnchorHighlightOverlayView(
+            frame: CGRect(x: 0, y: 0, width: 120, height: 60)
+        )
+        let background = UIColor(red: 0.12, green: 0.14, blue: 0.18, alpha: 1)
+        overlay.backgroundColor = background
+        overlay.fillColor = UIColor(red: 0.20, green: 0.50, blue: 1.0, alpha: 0.08)
+        overlay.strokeColor = .clear
+        overlay.rects = [CGRect(x: 10, y: 10, width: 100, height: 40)]
+        overlay.layoutIfNeeded()
+
+        var pixels = [UInt8](repeating: 0, count: 120 * 60 * 4)
+        pixels.withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress,
+                  let context = CGContext(
+                      data: baseAddress,
+                      width: 120,
+                      height: 60,
+                      bitsPerComponent: 8,
+                      bytesPerRow: 120 * 4,
+                      space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else {
+                return
+            }
+            overlay.layer.render(in: context)
+        }
+
+        func pixel(x: Int, y: Int) -> Pixel {
+            let index = (y * 120 + x) * 4
+            return Pixel(
+                red: CGFloat(pixels[index]) / 255,
+                green: CGFloat(pixels[index + 1]) / 255,
+                blue: CGFloat(pixels[index + 2]) / 255
+            )
+        }
+
+        let outside = pixel(x: 4, y: 30)
+        let leftEdge = pixel(x: 13, y: 30)
+        let center = pixel(x: 60, y: 30)
+        let leftEdgeDifference = max(
+            abs(leftEdge.red - center.red),
+            abs(leftEdge.green - center.green),
+            abs(leftEdge.blue - center.blue)
+        )
+        let fillDifference = max(
+            abs(center.red - outside.red),
+            abs(center.green - outside.green),
+            abs(center.blue - outside.blue)
+        )
+
+        #expect(leftEdgeDifference < 0.03, "The enclosure must not paint a separate left rail")
+        #expect(fillDifference < 0.15, "The anchor fill must remain faint enough to preserve text colors")
+        #expect(center.blue > outside.blue + 0.02, "The rounded enclosure must retain a visible blue fill")
+    }
+
     @Test func anchoredMarkdownReaderUsesOneEnclosureForOverlappingBlocks() async throws {
         let anchor = try #require(SourceLineAnchor(startLine: 6, endLine: 12))
         let body = NativeFullScreenMarkdownBody(

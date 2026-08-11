@@ -642,10 +642,6 @@ final class FullScreenLineAnchorHighlightOverlayView: UIView {
         didSet { setNeedsDisplay() }
     }
 
-    var stripeColor: UIColor = .systemBlue {
-        didSet { setNeedsDisplay() }
-    }
-
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext(),
               let firstRect = rects.first else { return }
@@ -672,17 +668,6 @@ final class FullScreenLineAnchorHighlightOverlayView: UIView {
         context.addPath(path.cgPath)
         context.strokePath()
 
-        // The rail and outline remain visible even when the translucent fill is
-        // subtle, providing a non-color-only focus cue without repeating it for
-        // every logical line or rendered block.
-        let stripeRect = CGRect(
-            x: enclosureRect.minX,
-            y: enclosureRect.minY + 1,
-            width: min(6, enclosureRect.width),
-            height: max(0, enclosureRect.height - 2)
-        )
-        context.setFillColor(stripeColor.cgColor)
-        context.fill(stripeRect)
     }
 }
 
@@ -897,13 +882,11 @@ final class FullScreenReviewCommentTextView: UITextView {
         rects: [CGRect],
         firstRect: CGRect? = nil,
         fillColor: UIColor,
-        strokeColor: UIColor,
-        stripeColor: UIColor
+        strokeColor: UIColor
     ) {
         lineAnchorHighlightOverlay.frame = bounds
         lineAnchorHighlightOverlay.fillColor = fillColor
         lineAnchorHighlightOverlay.strokeColor = strokeColor
-        lineAnchorHighlightOverlay.stripeColor = stripeColor
         lineAnchorFocusRect = firstRect
         lineAnchorHighlightOverlay.rects = rects
     }

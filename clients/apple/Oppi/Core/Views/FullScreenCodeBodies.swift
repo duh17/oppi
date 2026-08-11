@@ -352,8 +352,7 @@ final class NativeFullScreenCodeBody: UIView {
             codeTextView.setLineAnchorHighlight(
                 rects: [],
                 fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
-                strokeColor: UIColor(palette.blue).withAlphaComponent(0.75),
-                stripeColor: UIColor(palette.cyan)
+                strokeColor: UIColor(palette.blue).withAlphaComponent(0.75)
             )
             return
         }
@@ -367,8 +366,7 @@ final class NativeFullScreenCodeBody: UIView {
             rects: layout.visibleRects,
             firstRect: layout.firstVisibleRect,
             fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
-            strokeColor: UIColor(palette.blue).withAlphaComponent(0.75),
-            stripeColor: UIColor(palette.cyan)
+            strokeColor: UIColor(palette.blue).withAlphaComponent(0.75)
         )
     }
 
@@ -453,8 +451,8 @@ final class NativeFullScreenCodeBody: UIView {
         let lineRanges = SourceLineMetrics.logicalLineContentRanges(in: source)
         var rows: [CodeLineNumberGutterView.Row] = []
         rows.reserveCapacity(lineRanges.count)
-        // The enclosure and rail carry the continuous range; keep one gutter
-        // glyph at its first existing line instead of repeating ▸ per row.
+        // The enclosure carries the continuous range; keep one gutter glyph at
+        // its first existing line instead of repeating ▸ per row.
         let highlightMarkerLine = lineAnchorResolution?.existingRange?.lowerBound
 
         var fallbackY: CGFloat = 0
@@ -1527,9 +1525,8 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
     ) {
-        // Reserve a Dynamic-Type-safe gutter for the marker and accent rail.
-        // Apply it to every cell in anchored Reader mode so focus does not
-        // change the relative alignment of otherwise-unhighlighted blocks.
+        // Reserve a Dynamic-Type-safe leading gutter in anchored Reader mode so
+        // focus does not change the relative alignment of otherwise-unhighlighted blocks.
         stackLeadingConstraint?.constant = lineAnchorModeEnabled ? 28 : 0
         self.textViewDelegate = textViewDelegate
         self.doubleTapActivation = doubleTapActivation
@@ -2120,7 +2117,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         lineAnchorHighlightView.isHidden = false
         lineAnchorHighlightView.fillColor = UIColor(themeID.palette.blue).withAlphaComponent(0.08)
         lineAnchorHighlightView.strokeColor = UIColor(themeID.palette.blue).withAlphaComponent(0.75)
-        lineAnchorHighlightView.stripeColor = UIColor(themeID.palette.cyan)
         lineAnchorHighlightView.rects = [enclosure.insetBy(dx: 1, dy: 1).integral]
         bringSubviewToFront(lineAnchorHighlightView)
     }
@@ -2574,8 +2570,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
             textView.setLineAnchorHighlight(
                 rects: [],
                 fillColor: UIColor.systemBlue.withAlphaComponent(0.08),
-                strokeColor: UIColor.systemBlue.withAlphaComponent(0.75),
-                stripeColor: UIColor.systemCyan
+                strokeColor: UIColor.systemBlue.withAlphaComponent(0.75)
             )
             return
         }
@@ -2589,8 +2584,7 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
             rects: layout.visibleRects,
             firstRect: layout.firstVisibleRect,
             fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
-            strokeColor: UIColor(palette.blue).withAlphaComponent(0.75),
-            stripeColor: UIColor(palette.cyan)
+            strokeColor: UIColor(palette.blue).withAlphaComponent(0.75)
         )
     }
 
