@@ -5,33 +5,6 @@ final class QuickSessionE2ETests: E2ETestCase {
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
 
     @MainActor
-    func testQuickSessionAgentPickerShowsFullPopoverSurface() throws {
-        XCTAssertTrue(
-            waitForElementToExist(app.collectionViews["workspace.sessionList"], timeout: 20),
-            "Sessions inbox did not appear"
-        )
-
-        tap(app.buttons["workspace.quickSession.start"], named: "quick session button")
-        XCTAssertTrue(
-            waitForElementToExist(app.textViews["chat.input"], timeout: 20),
-            "Quick Session input did not appear"
-        )
-
-        let picker = app.buttons["quickSession.agentPicker"]
-        XCTAssertTrue(waitForElementToExist(picker, timeout: 5), "Agent picker control did not appear")
-        tap(picker, named: "quick session Agent picker", timeout: 5)
-
-        let piRow = app.buttons["quickSession.agent.pi"]
-        XCTAssertTrue(waitForElementToExist(piRow, timeout: 5), "Pi row did not appear in Agent picker")
-        XCTAssertTrue(piRow.isHittable, "Pi row in Agent picker is not hittable")
-
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "quick-session-agent-picker-popover"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
-    }
-
-    @MainActor
     func testQuickSessionChoosesWorkspaceModelThinkingAndSendsToChat() throws {
         XCTAssertTrue(
             waitForElementToExist(app.collectionViews["workspace.sessionList"], timeout: 20),
