@@ -800,6 +800,76 @@ describe("skills module", () => {
     }
   });
 
+  it("reads full skill content from a symlinked skill root", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-skill-route-symlink-root-"));
+    const cwd = join(root, "workspace");
+    const agentDir = join(root, "agent");
+    const actualSkillDir = join(root, "shared-skills", "linked-route-skill");
+    const linkedSkillDir = join(agentDir, "skills", "linked-route-skill");
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(actualSkillDir, { recursive: true });
+    mkdirSync(join(agentDir, "skills"), { recursive: true });
+    writeFileSync(
+      join(actualSkillDir, "SKILL.md"),
+      [
+        "---",
+        "name: linked-route-skill",
+        "description: Skill loaded through a symlinked root.",
+        "---",
+        "Full instructions from the linked skill root.",
+      ].join("\n"),
+    );
+    writeFileSync(join(actualSkillDir, "reference.md"), "Linked reference content.");
+    symlinkSync(actualSkillDir, linkedSkillDir);
+
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    try {
+      const dispatch = createSkillRoutes(
+        { skillRegistry: { list: vi.fn(() => []) } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+
+      const detailRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/skills/linked-route-skill",
+        url: new URL(
+          `http://localhost/skills/linked-route-skill?cwd=${encodeURIComponent(cwd)}`,
+        ),
+        req: {} as never,
+        res: detailRes as never,
+      });
+
+      expect(detailRes.statusCode).toBe(200);
+      const detail = JSON.parse(detailRes.body) as { content: string; files: string[] };
+      expect(detail.content).toContain("Full instructions from the linked skill root.");
+      expect(detail.files).toContain("reference.md");
+
+      const fileRes = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/skills/linked-route-skill/file",
+        url: new URL(
+          `http://localhost/skills/linked-route-skill/file?cwd=${encodeURIComponent(cwd)}&path=reference.md`,
+        ),
+        req: {} as never,
+        res: fileRes as never,
+      });
+
+      expect(fileRes.statusCode).toBe(200);
+      expect(JSON.parse(fileRes.body)).toEqual({ content: "Linked reference content." });
+    } finally {
+      if (previousAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not list or read cwd-local skill files through symlinks", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-skill-route-symlink-"));
     const skillDir = join(cwd, ".pi", "skills", "safe-route-skill");

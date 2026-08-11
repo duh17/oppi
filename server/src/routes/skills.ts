@@ -152,10 +152,11 @@ function isWithinDirectory(path: string, baseDir: string): boolean {
 
 function safeRealSkillBase(skillPath: string): string | undefined {
   try {
-    if (!lstatSync(skillPath).isDirectory()) {
+    const realBase = realpathSync(skillPath);
+    if (!statSync(realBase).isDirectory()) {
       return undefined;
     }
-    return realpathSync(skillPath);
+    return realBase;
   } catch {
     return undefined;
   }
