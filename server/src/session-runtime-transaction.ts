@@ -3,9 +3,9 @@
  *
  * Shared permits cover model-turn admission only: caller-visible projection and
  * Pi preflight acceptance happen while lifecycle replacement is excluded.
- * Exclusive permits serialize reload, session-file replacement, queue CAS,
- * abort/stop, and dispose. Waiting exclusive work blocks later shared permits
- * so reload/stop cannot be starved by new turns.
+ * Exclusive permits serialize managed model mutations, reload, session-file
+ * replacement, queue CAS, abort/stop, and dispose. Waiting exclusive work
+ * blocks later shared permits so reload/stop cannot be starved by new turns.
  */
 
 export type SessionRuntimeTransactionMode = "shared" | "exclusive";

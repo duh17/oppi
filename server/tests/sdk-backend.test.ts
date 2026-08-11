@@ -1581,7 +1581,7 @@ describe("SdkBackend.setModel", () => {
     expect(piSession.setModel).not.toHaveBeenCalled();
   });
 
-  it("refreshes the runtime model registry before resolving a requested model", async () => {
+  it("resolves requested models from the cached registry without refreshing", async () => {
     const model = {
       provider: "omlx",
       id: "gemma-4-31b-bf16",
@@ -1593,11 +1593,43 @@ describe("SdkBackend.setModel", () => {
 
     await backend.setModel("omlx/gemma-4-31b-bf16");
 
-    expect(modelRuntime.refresh).toHaveBeenCalledTimes(1);
+    expect(modelRuntime.refresh).not.toHaveBeenCalled();
     expect(modelRuntime.getAvailableSnapshot).toHaveBeenCalled();
-    expect(modelRuntime.refresh.mock.invocationCallOrder[0]).toBeLessThan(
-      modelRuntime.getAvailableSnapshot.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+  });
+
+  it("blocks prompt admission while a managed model mutation is active", async () => {
+    const model = {
+      provider: "omlx",
+      id: "gemma-4-31b-bf16",
+      name: "Gemma 4 31B",
+      contextWindow: 262_144,
+    };
+    const { backend, modelRuntime, piSession } = makeSetModelHarness({ models: [model] });
+    piSession.model = model;
+
+    let releaseSetModel!: () => void;
+    const setModelReleased = new Promise<void>((resolve) => {
+      releaseSetModel = resolve;
+    });
+    let setModelEntered!: () => void;
+    const setModelStarted = new Promise<void>((resolve) => {
+      setModelEntered = resolve;
+    });
+    piSession.setModel.mockImplementation(async () => {
+      setModelEntered();
+      await setModelReleased;
+    });
+
+    const setModelTask = backend.setModel("omlx/gemma-4-31b-bf16");
+    await setModelStarted;
+
+    await expect(backend.withModelTurnAdmission("prompt", async () => undefined)).rejects.toThrow(
+      "prompt cannot start while the session runtime lifecycle is changing",
     );
+
+    releaseSetModel();
+    await expect(setModelTask).resolves.toMatchObject({ success: true });
+    expect(modelRuntime.refresh).not.toHaveBeenCalled();
   });
 
   it("sets exact models resolved from ModelRegistry (including custom providers)", async () => {

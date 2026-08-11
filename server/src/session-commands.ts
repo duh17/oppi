@@ -413,7 +413,13 @@ export class SessionCommandCoordinator {
       },
     ],
 
-    ["cycle_model", (backend, cmd) => backend.session.cycleModel(cmd.direction as never)],
+    [
+      "cycle_model",
+      (backend, cmd) =>
+        backend.withRuntimeLifecycleTransaction("cycle_model", async () =>
+          backend.session.cycleModel(cmd.direction as never),
+        ),
+    ],
 
     [
       "set_thinking_level",

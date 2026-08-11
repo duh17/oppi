@@ -507,6 +507,17 @@ struct ServerConnectionStreamTests {
         var sentTypes: [String] = []
         conn._sendMessageForTesting = { message in
             sentTypes.append(message.typeLabel)
+            guard case .setModel(_, _, let requestId) = message,
+                  let requestId else {
+                return
+            }
+            _ = conn.commands.resolveCommandResult(
+                command: "set_model",
+                requestId: requestId,
+                success: true,
+                data: ["provider": "openai", "id": "gpt-5.4"],
+                error: nil
+            )
         }
 
         let stream = await conn.sessionStreamCoordinator.streamSession(

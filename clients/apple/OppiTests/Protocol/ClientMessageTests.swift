@@ -136,6 +136,17 @@ struct ClientMessageTests {
         #expect(json["modelId"] as? String == "claude-sonnet-4")
     }
 
+    @Test func encodesSetModelRequestId() throws {
+        let msg = ClientMessage.setModel(
+            provider: "anthropic",
+            modelId: "claude-sonnet-4",
+            requestId: "model-request-1"
+        )
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "set_model")
+        #expect(json["requestId"] as? String == "model-request-1")
+    }
+
     @Test func encodesCycleModel() throws {
         let json = try decode(ClientMessage.cycleModel())
         #expect(json["type"] as? String == "cycle_model")

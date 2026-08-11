@@ -12,19 +12,55 @@ struct ServerConnectionModelCommandsTests {
         let sink = CapturedClientMessages()
         connection._sendMessageForTesting = { message in
             await sink.append(message)
+            guard case .setModel(_, _, let requestId) = message,
+                  let requestId else {
+                return
+            }
+            _ = connection.commands.resolveCommandResult(
+                command: "set_model",
+                requestId: requestId,
+                success: true,
+                data: ["provider": "anthropic", "id": "claude-sonnet-4"],
+                error: nil
+            )
         }
 
         try await connection.setModel(provider: "anthropic", modelId: "claude-sonnet-4")
 
         let messages = await sink.messages
-        let modelMessages = messages.compactMap { message -> (String, String)? in
-            guard case .setModel(let provider, let modelId, _) = message else { return nil }
-            return (provider, modelId)
+        let modelMessages = messages.compactMap { message -> (String, String, String)? in
+            guard case .setModel(let provider, let modelId, let requestId) = message,
+                  let requestId else { return nil }
+            return (provider, modelId, requestId)
         }
         #expect(modelMessages.count == 1)
-        let (provider, modelId) = try #require(modelMessages.first)
+        let (provider, modelId, requestId) = try #require(modelMessages.first)
         #expect(provider == "anthropic")
         #expect(modelId == "claude-sonnet-4")
+        #expect(!requestId.isEmpty)
+    }
+
+    @Test func setModelSurfacesAuthoritativeRejection() async throws {
+        let (connection, _) = makeTestConnection()
+        await markFocusedSessionFullySubscribed(connection)
+        defer { connection.streamConsumptionTask?.cancel() }
+        connection._sendMessageForTesting = { message in
+            guard case .setModel(_, _, let requestId) = message,
+                  let requestId else {
+                return
+            }
+            _ = connection.commands.resolveCommandResult(
+                command: "set_model",
+                requestId: requestId,
+                success: false,
+                data: nil,
+                error: "model unavailable"
+            )
+        }
+
+        await #expect(throws: CommandRequestError.self) {
+            try await connection.setModel(provider: "anthropic", modelId: "missing")
+        }
     }
 
     @Test func thinkingCommandsSendCorrectClientMessages() async throws {

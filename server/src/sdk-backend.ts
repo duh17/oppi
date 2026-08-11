@@ -1752,31 +1752,34 @@ export class SdkBackend {
     thinkingLevel?: string;
     error?: string;
   }> {
-    await this.modelRegistry.refresh();
-    const candidates = modelCandidatesFromRegistry(
-      this.modelRegistry,
-      this.runtime.services.settingsManager.getEnabledModels(),
-    );
-    const resolution = resolveModelRequest(modelId, candidates);
-    if (!resolution) {
-      return { success: false, error: modelUnavailableMessage(modelId, candidates) };
-    }
+    return this.withRuntimeLifecycleTransaction("set_model", async () => {
+      // Interactive model changes use the runtime's cached availability snapshot;
+      // network refreshes must not block command or prompt admission.
+      const candidates = modelCandidatesFromRegistry(
+        this.modelRegistry,
+        this.runtime.services.settingsManager.getEnabledModels(),
+      );
+      const resolution = resolveModelRequest(modelId, candidates);
+      if (!resolution) {
+        return { success: false, error: modelUnavailableMessage(modelId, candidates) };
+      }
 
-    try {
-      await this.piSession.setModel(resolution.candidate.model);
+      try {
+        await this.piSession.setModel(resolution.candidate.model);
 
-      const activeModel = this.piSession.model;
-      return {
-        success: true,
-        provider: activeModel?.provider,
-        id: activeModel?.id,
-        name: activeModel?.name,
-        thinkingLevel: this.piSession.thinkingLevel,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { success: false, error: message };
-    }
+        const activeModel = this.piSession.model;
+        return {
+          success: true,
+          provider: activeModel?.provider,
+          id: activeModel?.id,
+          name: activeModel?.name,
+          thinkingLevel: this.piSession.thinkingLevel,
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { success: false, error: message };
+      }
+    });
   }
 
   /** Full state snapshot for client command responses. */

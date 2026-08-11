@@ -21,20 +21,11 @@ final class ChatActionHandler {
     private(set) var reconnectFailureMessage: String?
     private var sendStageClearTask: Task<Void, Never>?
     private var forceStopTask: Task<Void, Never>?
-    private var sendRecoveryText: String?
 
     private static let sendStageDisplayDuration: Duration = .seconds(1.2)
-    private static let reconnectRecoveryTimeout: Duration = .seconds(8)
-    private static let reconnectRecoveryPollInterval: Duration = .milliseconds(150)
 
     /// Test seam: shorten send-stage display retention.
     var _sendStageDisplayDurationForTesting: Duration?
-
-    /// Test seam: shorten reconnect recovery timeout.
-    var _reconnectRecoveryTimeoutForTesting: Duration?
-
-    /// Test seam: shorten reconnect recovery poll interval.
-    var _reconnectRecoveryPollIntervalForTesting: Duration?
 
     /// Test seam: override async task launch to simulate scheduling races.
     var _launchTaskForTesting: (((@escaping @MainActor () async -> Void)) -> Void)?
@@ -47,9 +38,6 @@ final class ChatActionHandler {
 
     /// Test seam: override force-stop transport.
     var _sendStopSessionForTesting: ((ServerConnection) async throws -> Void)?
-
-    /// Test seam: override stopped-session recovery resume transport.
-    var _resumeStoppedSessionForTesting: ((String) async throws -> Session)?
 
     private var autoTitleTasksBySessionId: [String: Task<Void, Never>] = [:]
     private var autoTitleAttemptedSessionIds: Set<String> = []
@@ -89,10 +77,6 @@ final class ChatActionHandler {
             case .started:
                 return "Started…"
             }
-        }
-
-        if let sendRecoveryText {
-            return sendRecoveryText
         }
 
         return isSending ? "Sending…" : nil
@@ -234,6 +218,7 @@ final class ChatActionHandler {
             }
         } else {
             AppHaptics.impact(style: .light)
+            let promptTurnId = UUID().uuidString
 
             launchTask { @MainActor in
                 self.beginSendTracking()
@@ -251,7 +236,7 @@ final class ChatActionHandler {
                 }
                 do {
                     let promptAttachments = attachments.isEmpty ? nil : attachments
-                    try await connection.sendPrompt(trimmed, attachments: promptAttachments, sessionIdOverride: sessionId, onAckStage: { stage in
+                    try await connection.sendPrompt(trimmed, attachments: promptAttachments, clientTurnId: promptTurnId, sessionIdOverride: sessionId, onAckStage: { stage in
                         self.updateSendAckStage(stage)
                     })
                     onSendSucceeded?()
@@ -262,26 +247,6 @@ final class ChatActionHandler {
                         sessionStore: sessionStore
                     )
                 } catch {
-                    if let sessionManager,
-                       Self.isReconnectableSendError(error) {
-                        await self.recoverPromptSendAfterReconnect(
-                            text: text,
-                            trimmedText: trimmed,
-                            attachments: attachments,
-                            messageId: messageId,
-                            connection: connection,
-                            reducer: reducer,
-                            sessionStore: sessionStore,
-                            sessionManager: sessionManager,
-                            sessionId: sessionId,
-                            onSendSucceeded: onSendSucceeded,
-                            onAsyncFailure: onAsyncFailure,
-                            onNeedsReconnect: onNeedsReconnect
-                        )
-                        self.isSending = false
-                        return
-                    }
-
                     self.clearSendStageNow()
                     log.error("SEND prompt FAILED: \(error.localizedDescription, privacy: .public)")
                     ClientLog.error(
@@ -524,7 +489,6 @@ final class ChatActionHandler {
         isForceStopInFlight = false
         forceStopTask?.cancel()
         forceStopTask = nil
-        sendRecoveryText = nil
         reconnectFailureMessage = nil
         clearSendStageNow()
     }
@@ -733,294 +697,6 @@ final class ChatActionHandler {
         }
     }
 
-    private func recoverPromptSendAfterReconnect(
-        text: String,
-        trimmedText: String,
-        attachments: [ChatAttachmentRef],
-        messageId: ChatItem.ID?,
-        connection: ServerConnection,
-        reducer: TimelineReducer,
-        sessionStore: SessionStore?,
-        sessionManager: ChatSessionManager,
-        sessionId: String,
-        onSendSucceeded: (() -> Void)?,
-        onAsyncFailure: ((_ text: String, _ attachments: [ChatAttachmentRef]) -> Void)?,
-        onNeedsReconnect: (() -> Void)?
-    ) async {
-        clearSendStageNow()
-        reconnectFailureMessage = nil
-
-        let timeout = _reconnectRecoveryTimeoutForTesting ?? Self.reconnectRecoveryTimeout
-        let pollInterval = _reconnectRecoveryPollIntervalForTesting ?? Self.reconnectRecoveryPollInterval
-        let startedAt = ContinuousClock.now
-        var lastRecoveryError: Error?
-        var didRequestReconnect = false
-        var didAttemptStoppedResume = false
-
-        func requestReconnectIfNeeded() {
-            didRequestReconnect = true
-            onNeedsReconnect?()
-        }
-
-        requestReconnectIfNeeded()
-
-        while ContinuousClock.now - startedAt < timeout {
-            if Task.isCancelled {
-                return
-            }
-
-            sendRecoveryText = Self.recoveryStatusText(
-                sessionManager: sessionManager,
-                connection: connection,
-                sessionStore: sessionStore,
-                sessionId: sessionId
-            )
-
-            if Self.didSessionStop(sessionStore: sessionStore, sessionId: sessionId) {
-                if !didAttemptStoppedResume {
-                    didAttemptStoppedResume = true
-                    if await resumeStoppedSessionDuringRecovery(
-                        connection: connection,
-                        sessionStore: sessionStore,
-                        sessionId: sessionId
-                    ) {
-                        requestReconnectIfNeeded()
-                        try? await Task.sleep(for: pollInterval)
-                        continue
-                    }
-                }
-
-                let message = "Couldn't restore live session — it ended while reconnecting. Tap Resume to continue."
-                completeRecoveredPromptFailure(
-                    message: message,
-                    originalText: text,
-                    originalAttachments: attachments,
-                    messageId: messageId,
-                    reducer: reducer,
-                    sessionId: sessionId,
-                    onAsyncFailure: onAsyncFailure
-                )
-                return
-            }
-
-            if Self.canRetryRecoveredPrompt(
-                sessionManager: sessionManager,
-                connection: connection,
-                sessionId: sessionId
-            ) {
-                do {
-                    let promptAttachments = attachments.isEmpty ? nil : attachments
-                    try await connection.sendPrompt(trimmedText, attachments: promptAttachments, sessionIdOverride: sessionId, onAckStage: { stage in
-                        self.updateSendAckStage(stage)
-                    })
-                    sendRecoveryText = nil
-                    reconnectFailureMessage = nil
-                    onSendSucceeded?()
-                    scheduleSendStageClear()
-                    scheduleAutoSessionTitleIfNeeded(
-                        sessionId: sessionId,
-                        connection: connection,
-                        sessionStore: sessionStore
-                    )
-                    return
-                } catch {
-                    lastRecoveryError = error
-                    if Self.isReconnectableSendError(error) {
-                        requestReconnectIfNeeded()
-                        try? await Task.sleep(for: pollInterval)
-                        continue
-                    }
-
-                    let message = Self.reconnectFailureMessage(
-                        sessionManager: sessionManager,
-                        connection: connection,
-                        sessionStore: sessionStore,
-                        sessionId: sessionId,
-                        error: error,
-                        reconnectWasRequested: didRequestReconnect
-                    )
-                    completeRecoveredPromptFailure(
-                        message: message,
-                        originalText: text,
-                        originalAttachments: attachments,
-                        messageId: messageId,
-                        reducer: reducer,
-                        sessionId: sessionId,
-                        onAsyncFailure: onAsyncFailure
-                    )
-                    return
-                }
-            }
-
-            try? await Task.sleep(for: pollInterval)
-        }
-
-        let message = Self.reconnectFailureMessage(
-            sessionManager: sessionManager,
-            connection: connection,
-            sessionStore: sessionStore,
-            sessionId: sessionId,
-            error: lastRecoveryError,
-            reconnectWasRequested: didRequestReconnect
-        )
-        completeRecoveredPromptFailure(
-            message: message,
-            originalText: text,
-            originalAttachments: attachments,
-            messageId: messageId,
-            reducer: reducer,
-            sessionId: sessionId,
-            onAsyncFailure: onAsyncFailure
-        )
-    }
-
-    private func resumeStoppedSessionDuringRecovery(
-        connection: ServerConnection,
-        sessionStore: SessionStore?,
-        sessionId: String
-    ) async -> Bool {
-        do {
-            let updated: Session
-            if let resumeStoppedSessionForTesting = _resumeStoppedSessionForTesting {
-                updated = try await resumeStoppedSessionForTesting(sessionId)
-            } else {
-                guard let api = connection.apiClient,
-                      let routeScope = sessionStore?.routeScope(for: sessionId) else {
-                    return false
-                }
-                updated = try await api.resumeSession(
-                    scope: routeScope,
-                    sessionId: sessionId
-                )
-            }
-
-            sessionStore?.upsert(updated)
-            return updated.status != .stopped
-        } catch {
-            log.warning("Stopped-session recovery resume failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return false
-        }
-    }
-
-    private func completeRecoveredPromptFailure(
-        message: String,
-        originalText: String,
-        originalAttachments: [ChatAttachmentRef],
-        messageId: ChatItem.ID?,
-        reducer: TimelineReducer,
-        sessionId: String,
-        onAsyncFailure: ((_ text: String, _ attachments: [ChatAttachmentRef]) -> Void)?
-    ) {
-        clearSendStageNow()
-        sendRecoveryText = nil
-        reconnectFailureMessage = message
-
-        log.error("SEND prompt recovery FAILED: \(message, privacy: .public)")
-        ClientLog.error(
-            "Action",
-            "SEND prompt recovery FAILED",
-            metadata: ["sessionId": sessionId, "reason": message]
-        )
-
-        onAsyncFailure?(originalText, originalAttachments)
-        if let messageId {
-            reducer.removeItem(id: messageId)
-        }
-    }
-
-    private static func canRetryRecoveredPrompt(
-        sessionManager: ChatSessionManager,
-        connection: ServerConnection,
-        sessionId: String
-    ) -> Bool {
-        guard connection.wsClient?.status == .connected else { return false }
-        guard connection.isFocusedSession(sessionId) else { return false }
-        guard sessionManager.entryState == .streaming else { return false }
-        return true
-    }
-
-    private static func didSessionStop(
-        sessionStore: SessionStore?,
-        sessionId: String
-    ) -> Bool {
-        sessionStore?.sessions.first(where: { $0.id == sessionId })?.status == .stopped
-    }
-
-    private static func recoveryStatusText(
-        sessionManager: ChatSessionManager,
-        connection: ServerConnection,
-        sessionStore: SessionStore?,
-        sessionId: String
-    ) -> String {
-        if didSessionStop(sessionStore: sessionStore, sessionId: sessionId) {
-            return "Session ended"
-        }
-
-        if connection.wsClient?.status != .connected {
-            return "Reconnecting…"
-        }
-
-        switch sessionManager.entryState {
-        case .awaitingConnected:
-            return "Restoring session…"
-        case .idle, .loadingCache:
-            return "Restoring session…"
-        case .disconnected:
-            return "Restoring session…"
-        case .stopped:
-            return "Session ended"
-        case .streaming:
-            return "Restoring session…"
-        }
-    }
-
-    private static func reconnectFailureMessage(
-        sessionManager: ChatSessionManager,
-        connection: ServerConnection,
-        sessionStore: SessionStore?,
-        sessionId: String,
-        error: Error?,
-        reconnectWasRequested: Bool
-    ) -> String {
-        if didSessionStop(sessionStore: sessionStore, sessionId: sessionId) {
-            return "Couldn't restore live session — it ended while reconnecting. Tap Resume to continue."
-        }
-
-        if let wsError = error as? WebSocketError {
-            switch wsError {
-            case .sendTimeout:
-                return "Couldn't restore live session — the server took too long to respond."
-            case .notConnected, .encodingFailed:
-                break
-            }
-        }
-
-        if let ackError = error as? SendAckError,
-           case .timeout = ackError {
-            return "Couldn't restore live session — the server did not acknowledge the retried send in time."
-        }
-
-        if connection.wsClient?.status != .connected {
-            return reconnectWasRequested
-                ? "Couldn't reconnect to the server — the connection kept dropping while we retried."
-                : "Couldn't reconnect to the server."
-        }
-
-        switch sessionManager.entryState {
-        case .awaitingConnected, .idle, .loadingCache:
-            return "Couldn't restore live session — waking the session took too long."
-        case .disconnected:
-            return "Couldn't restore live session — the session stream closed again while reconnecting."
-        case .stopped:
-            return "Couldn't restore live session — it ended while reconnecting. Tap Resume to continue."
-        case .streaming:
-            if let error {
-                return "Couldn't send after reconnect — \(error.localizedDescription)"
-            }
-            return "Couldn't send after reconnect."
-        }
-    }
-
     private func generateSessionTitle(from firstMessage: String) async -> String? {
         if let hook = _generateSessionTitleForTesting {
             let candidate = await hook(firstMessage)
@@ -1101,7 +777,6 @@ final class ChatActionHandler {
         sendStageClearTask?.cancel()
         sendStageClearTask = nil
         sendAckStage = nil
-        sendRecoveryText = nil
         reconnectFailureMessage = nil
         isSending = true
     }
@@ -1157,8 +832,8 @@ final class ChatActionHandler {
 
         if let ackError = error as? SendAckError {
             switch ackError {
-            case .timeout:
-                return true
+            case .timeout(let command):
+                return command != "prompt"
             case .rejected:
                 return false
             }
@@ -1181,7 +856,6 @@ final class ChatActionHandler {
         // autoTitleAttemptedSessionIds guard was lost, causing the next send
         // to re-trigger title generation from a later (wrong) message.
 
-        sendRecoveryText = nil
         reconnectFailureMessage = nil
         clearSendStageNow()
         isSending = false

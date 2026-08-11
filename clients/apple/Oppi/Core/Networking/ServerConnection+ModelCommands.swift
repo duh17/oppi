@@ -58,7 +58,9 @@ extension ServerConnection {
 
     func setModel(provider: String, modelId: String) async throws {
         try await waitForFocusedFullSubscriptionIfNeeded()
-        try await send(.setModel(provider: provider, modelId: modelId))
+        _ = try await sendCommandAwaitingResult(command: "set_model") { requestId in
+            .setModel(provider: provider, modelId: modelId, requestId: requestId)
+        }
     }
 
     // periphery:ignore - API surface for model cycling

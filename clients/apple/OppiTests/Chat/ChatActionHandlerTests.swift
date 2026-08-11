@@ -1364,6 +1364,68 @@ struct ChatActionHandlerTests {
         #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Fix Timeline Bug")
     }
 
+    // MARK: - Model
+
+    @Test func setModelFailureRollsBackAndSurfacesError() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let sessionId = "s1"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, model: "anthropic/old-model"))
+
+        connection.wsClient?._setStatusForTesting(.connected)
+        connection.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
+        connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        _ = await connection.sessionStreamCoordinator.streamSession(
+            connection: connection,
+            sessionId: sessionId,
+            routeScope: .workspace("w1")
+        )
+        defer { connection.streamConsumptionTask?.cancel() }
+
+        connection._sendMessageForTesting = { message in
+            guard case .setModel(_, _, let requestId) = message,
+                  let requestId else {
+                return
+            }
+            _ = connection.commands.resolveCommandResult(
+                command: "set_model",
+                requestId: requestId,
+                success: false,
+                data: nil,
+                error: "model unavailable"
+            )
+        }
+
+        let requestedModel = ModelInfo(
+            id: "new-model",
+            name: "New model",
+            provider: "anthropic",
+            contextWindow: 200_000
+        )
+        handler.setModel(
+            requestedModel,
+            connection: connection,
+            reducer: reducer,
+            sessionStore: sessionStore,
+            sessionId: sessionId
+        )
+
+        #expect(sessionStore.sessions.first(where: { $0.id == sessionId })?.model == "anthropic/new-model")
+        #expect(await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run {
+                sessionStore.sessions.first(where: { $0.id == sessionId })?.model == "anthropic/old-model"
+            }
+        })
+
+        let hasModelError = reducer.items.contains { item in
+            guard case .error(_, let message) = item else { return false }
+            return message.contains("Failed to set model") && message.contains("model unavailable")
+        }
+        #expect(hasModelError)
+    }
+
     // MARK: - Rename
 
     @Test func renameTrimsInputAndSendsSetSessionName() async {
