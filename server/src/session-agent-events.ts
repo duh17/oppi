@@ -26,6 +26,7 @@ import {
 import { hasToolMediaDetails, materializeAgentEventMedia } from "./session-agent-event-media.js";
 import type { EventProcessorSessionState, SessionEventProcessor } from "./session-events.js";
 import type { SdkBackend } from "./sdk-backend.js";
+import type { ResourceUsageService } from "./resource-usage-service.js";
 import type { SessionStopCoordinator } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import { materializeToolMediaDetails } from "./session-attachments.js";
@@ -61,6 +62,7 @@ export interface SessionAgentEventCoordinatorDeps {
   resumeQueuedCompactions?: (key: string) => void;
   dataDir?: string;
   trustedAttachmentSourceRoots?: string[];
+  resourceUsage?: Pick<ResourceUsageService, "captureToolInvocation">;
 }
 
 export class SessionAgentEventCoordinator {
@@ -143,6 +145,29 @@ export class SessionAgentEventCoordinator {
       this.handleExtensionAudioStream(key, data);
       this.deps.resetIdleTimer(key);
       return;
+    }
+
+    if (data.type === "tool_execution_start") {
+      try {
+        this.deps.resourceUsage?.captureToolInvocation({
+          session: active.session,
+          runtime: active.sdkBackend ? "oppi" : "pi-tui",
+          toolName: data.toolName,
+          toolCallId:
+            typeof data.toolCallId === "string" && data.toolCallId.length > 0
+              ? data.toolCallId
+              : undefined,
+          // Mirror events are omitted until the bridge supplies trustworthy live
+          // identity and ownership evidence.
+          evidence: active.sdkBackend?.resourceUsageToolEvidence(data.toolName),
+        });
+      } catch (error) {
+        // Measurement is strictly best-effort and must never interrupt tool execution.
+        log.warn("session_agent_events.resource_usage_capture_failed", {
+          sessionId: active.session.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     let event = materializeAgentEventMedia({

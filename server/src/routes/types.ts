@@ -11,6 +11,7 @@ import type { ProviderQuotasStatus } from "../provider-quota.js";
 import type { AppEventEmitter } from "../app-event-stream.js";
 import type { SessionRuntimes } from "../runtime-router.js";
 import type { ServerResourceService } from "../server-resource-service.js";
+import type { ResourceUsageService } from "../resource-usage-service.js";
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {
@@ -19,6 +20,7 @@ export interface RouteContext {
   sessionRuntimes: SessionRuntimes;
   skillRegistry: SkillRegistry;
   serverResources: ServerResourceService;
+  resourceUsage?: ResourceUsageService;
   providerAuth: ProviderAuthManager;
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;

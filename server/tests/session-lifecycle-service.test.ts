@@ -56,6 +56,7 @@ function makeService(
     dataDir?: string;
     agentDefinitionStore?: AgentDefinitionStore;
     onStartSession?: () => void;
+    deleteResourceUsageSession?: () => Promise<unknown> | unknown;
   } = {},
 ): {
   service: SessionLifecycleService;
@@ -145,6 +146,7 @@ function makeService(
       contextWindow: session.contextWindow ?? 200_000,
     }),
     deleteSearchIndexSession,
+    deleteResourceUsageSession: options.deleteResourceUsageSession,
   };
 
   return {
@@ -248,9 +250,15 @@ describe("SessionLifecycleService", () => {
         "created-1",
         expect.objectContaining({ id: "ws-1" }),
       );
-      expect(sendPrompt).toHaveBeenCalledWith("created-1", "Tell me about TypeScript", {
-        attachments: [expect.objectContaining({ id: "att-1" })],
-      });
+      expect(sendPrompt).toHaveBeenCalledWith(
+        "created-1",
+        "Tell me about TypeScript",
+        expect.objectContaining({
+          attachments: [expect.objectContaining({ id: "att-1" })],
+          clientTurnId: "agent-launch:created-1",
+          requestId: "agent-launch:created-1",
+        }),
+      );
       expect(saveSession).toHaveBeenCalledTimes(2);
       expect(saveSession.mock.calls[1]![0]).toMatchObject({
         id: "created-1",
@@ -351,7 +359,10 @@ describe("SessionLifecycleService", () => {
         prompt: "hello",
       });
 
-      expect(sendPrompt).toHaveBeenCalledWith("created-1", "hello", {});
+      expect(sendPrompt).toHaveBeenCalledWith("created-1", "hello", {
+        clientTurnId: "agent-launch:created-1",
+        requestId: "agent-launch:created-1",
+      });
       expect(saveSession).toHaveBeenCalledTimes(2);
       expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
         id: "created-1",
@@ -1028,10 +1039,12 @@ describe("SessionLifecycleService", () => {
       expect(createSession).not.toHaveBeenCalled();
     });
 
-    it("cleans up the created fork if the Pi fork command fails", async () => {
+    it("cleans up the created fork and its usage if the Pi fork command fails", async () => {
       const sourceSession = makeSession({ id: "source-1", piSessionFile: "/tmp/current.jsonl" });
+      const deleteResourceUsageSession = vi.fn(async () => ({ status: "purged" }));
       const { service, deleteSession, stopSession } = makeService({
         runCommandError: new Error("fork command failed"),
+        deleteResourceUsageSession,
       });
 
       await expect(
@@ -1044,6 +1057,7 @@ describe("SessionLifecycleService", () => {
 
       expect(stopSession).toHaveBeenCalledWith("fork-1");
       expect(deleteSession).toHaveBeenCalledWith("fork-1");
+      expect(deleteResourceUsageSession).toHaveBeenCalledWith("fork-1");
     });
   });
 
@@ -1154,16 +1168,19 @@ describe("SessionLifecycleService", () => {
       }
     });
 
-    it("stops active runtimes and deletes session metadata/search rows", async () => {
+    it("keeps deletion available while durable usage purge retry is pending", async () => {
       const session = makeSession({ id: "delete-1", workspaceId: "ws-1" });
-      const { service, stopSessionIfActive, deleteSession, deleteSearchIndexSession } =
-        makeService();
+      const deleteResourceUsageSession = vi.fn(async () => ({ status: "pending" }));
+      const { service, stopSessionIfActive, deleteSession, deleteSearchIndexSession } = makeService(
+        { deleteResourceUsageSession },
+      );
 
       const result = await service.deleteSession(session);
 
       expect(stopSessionIfActive).toHaveBeenCalledWith("delete-1");
       expect(deleteSession).toHaveBeenCalledWith("delete-1");
       expect(deleteSearchIndexSession).toHaveBeenCalledWith("delete-1");
+      expect(deleteResourceUsageSession).toHaveBeenCalledWith("delete-1");
       expect(result).toEqual({
         session,
         deleted: {

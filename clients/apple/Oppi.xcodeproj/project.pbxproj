@@ -650,6 +650,7 @@
 		8BDB30B5388351BBE6B58596 /* BrowserPreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD74BFB51E36F2963ECEA270 /* BrowserPreferencesTests.swift */; };
 		8C0F85B6B0C111D934081BA1 /* ImagePreviewSecurityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26839E456B2B562BFC5550F3 /* ImagePreviewSecurityTests.swift */; };
 		8C1BCA78F7C15B5CA5E29BFE /* SessionStatus+Color.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD7CE46B558C2418C9D441C8 /* SessionStatus+Color.swift */; };
+		8C240D7614EDB2535C2B4134 /* ResourceUsageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB35EAF40360A5C3C5B5DD7C /* ResourceUsageView.swift */; };
 		8C4A621BA9D2078AD13EDFBE /* MarkdownBlockSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A144C9943326D5DE892E25D1 /* MarkdownBlockSerializer.swift */; };
 		8C6D4A0D132778DD7A6672D8 /* ClientLogUploadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE307A1359C5D657CE364440 /* ClientLogUploadModels.swift */; };
 		8C7060E59F8062EFC5726D6A /* MacRemoteServerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B694256F58FDBF89051A0C /* MacRemoteServerStore.swift */; };
@@ -1978,6 +1979,7 @@
 		AA44BADB091396872515F65B /* AttributedStringNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributedStringNormalizer.swift; sourceTree = "<group>"; };
 		AA8604515621F88D03E89F6A /* RenderThemeMappingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderThemeMappingTests.swift; sourceTree = "<group>"; };
 		AACEB6B71CABF21B0B2784DC /* AskSilenceWatchdogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskSilenceWatchdogTests.swift; sourceTree = "<group>"; };
+		AB35EAF40360A5C3C5B5DD7C /* ResourceUsageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResourceUsageView.swift; sourceTree = "<group>"; };
 		AB95BCF05CB917DBA9BB3567 /* UIHangHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIHangHarnessView.swift; sourceTree = "<group>"; };
 		ABC2199EAE0D4B77383AC97C /* SessionListPerfBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListPerfBench.swift; sourceTree = "<group>"; };
 		AC07DC076BD473A1B1276EAA /* MacWorkspaceClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWorkspaceClientTests.swift; sourceTree = "<group>"; };
@@ -4299,6 +4301,7 @@
 				09AE7A4DECD96D8C38F51E1A /* DailyCostChartView.swift */,
 				B6EAFA671AFD6EEB1DCBDAA5 /* DailyDetailView.swift */,
 				B9530409019751A3DD7A15F2 /* ModelBreakdownSection.swift */,
+				AB35EAF40360A5C3C5B5DD7C /* ResourceUsageView.swift */,
 				DDDA57A23B0C7E6707CB47D6 /* ServerHealthSection.swift */,
 				4C976B172E11C921BD3A8880 /* ServerSelection.swift */,
 				FA8FF514F0D5A1C6C3DCD7FF /* ServerView.swift */,
@@ -5764,6 +5767,7 @@
 				82280F6E55C11E2BC53FE322 /* RemoteTheme.swift in Sources */,
 				BC33B93C132C402988F79C6F /* RenderableDocumentView.swift in Sources */,
 				21F40122EC6963C085B2AF46 /* RenderableDocumentWrapper.swift in Sources */,
+				8C240D7614EDB2535C2B4134 /* ResourceUsageView.swift in Sources */,
 				87EF26B456383F620E376A7B /* RestorationState.swift in Sources */,
 				EA90D33A5A209A78982A96A5 /* ReviewCommentInlineDraftPresenter.swift in Sources */,
 				AEF1691754003E7327466CEA /* ReviewCommentSelection.swift in Sources */,

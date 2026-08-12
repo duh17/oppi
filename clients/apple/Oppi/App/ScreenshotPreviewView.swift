@@ -13,6 +13,11 @@ enum ScreenshotPreviewConfig {
     static var screen: String {
         ProcessInfo.processInfo.environment["SCREENSHOT_SCREEN"] ?? "workspace-edit"
     }
+
+    static var themeID: ThemeID {
+        ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" ? .light : .dark
+    }
+
 }
 
 // MARK: - Root Preview View
@@ -28,15 +33,27 @@ struct ScreenshotPreviewView: View {
         case "whats-new-build45-dark":
             WhatsNewScreenshotPreview(themeID: .dark)
         case "server-resources-skills":
-            ServerResourcesScreenshotPreview(screen: .skills)
+            ServerResourcesScreenshotPreview(screen: .skills, themeID: ScreenshotPreviewConfig.themeID)
         case "server-resources-extensions":
-            ServerResourcesScreenshotPreview(screen: .extensions)
+            ServerResourcesScreenshotPreview(screen: .extensions, themeID: ScreenshotPreviewConfig.themeID)
         case "server-resources-cached-offline":
-            ServerResourcesScreenshotPreview(screen: .cachedOffline)
+            ServerResourcesScreenshotPreview(screen: .cachedOffline, themeID: ScreenshotPreviewConfig.themeID)
         case "server-resources-oppi":
-            ServerResourcesScreenshotPreview(screen: .oppi)
+            ServerResourcesScreenshotPreview(screen: .oppi, themeID: ScreenshotPreviewConfig.themeID)
         case "server-resources-oppi-pending":
-            ServerResourcesScreenshotPreview(screen: .oppiPending)
+            ServerResourcesScreenshotPreview(screen: .oppiPending, themeID: ScreenshotPreviewConfig.themeID)
+        case "server-resources-skill-detail":
+            ServerResourcesScreenshotPreview(screen: .skillDetail, themeID: ScreenshotPreviewConfig.themeID)
+        case "server-resources-extension-detail":
+            ServerResourcesScreenshotPreview(screen: .extensionDetail, themeID: ScreenshotPreviewConfig.themeID)
+        case "server-resources-oppi-detail":
+            ServerResourcesScreenshotPreview(screen: .oppiDetail, themeID: ScreenshotPreviewConfig.themeID)
+        case "server-resources-usage-states":
+            ServerResourcesScreenshotPreview(screen: .usageStates, themeID: ScreenshotPreviewConfig.themeID)
+        case "server-resources-tool-activity":
+            ServerResourcesScreenshotPreview(screen: .toolActivity, themeID: ScreenshotPreviewConfig.themeID)
+        case "server-resources-theme-switch":
+            ServerResourcesScreenshotPreview(screen: .themeSwitch, themeID: ScreenshotPreviewConfig.themeID)
         case "model-providers-quota-inline":
             ModelProvidersQuotaPreview()
         case "agent-icons":

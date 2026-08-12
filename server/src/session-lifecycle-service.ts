@@ -132,6 +132,7 @@ export interface SessionLifecycleServiceDeps {
   >;
   ensureSessionContextWindow: (session: Session) => Session;
   deleteSearchIndexSession?: (sessionId: string) => void;
+  deleteResourceUsageSession?: (sessionId: string) => Promise<unknown> | unknown;
 }
 
 /**
@@ -648,6 +649,7 @@ export class SessionLifecycleService {
     } catch (error: unknown) {
       await this.deps.sessions.stopSession(forkSession.id).catch(() => {});
       this.deps.storage.deleteSession(forkSession.id);
+      await this.deps.deleteResourceUsageSession?.(forkSession.id);
       throw error;
     }
 
@@ -735,6 +737,7 @@ export class SessionLifecycleService {
 
     const deletedSqliteMetadata = this.deps.storage.deleteSession(session.id);
     this.deps.deleteSearchIndexSession?.(session.id);
+    await this.deps.deleteResourceUsageSession?.(session.id);
     const deletedGeneratedMediaAttachments = deleteSessionAttachments(
       this.deps.storage.getDataDir(),
       session.id,

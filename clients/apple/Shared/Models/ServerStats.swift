@@ -223,6 +223,248 @@ struct ServerStats: Codable, Sendable {
     let totals: StatsTotals
 }
 
+// MARK: - Resource usage
+
+enum ResourceUsageRange: Int, CaseIterable, Codable, Sendable, Equatable, Identifiable {
+    case sevenDays = 7
+    case thirtyDays = 30
+    case ninetyDays = 90
+
+    var id: Int { rawValue }
+    var shortLabel: String { "\(rawValue)d" }
+}
+
+struct ResourceUsageSubject: Codable, Sendable, Equatable, Hashable {
+    enum Kind: String, Codable, Sendable, Equatable, Hashable {
+        case skill
+        case `extension`
+        case tools
+    }
+
+    let kind: Kind
+    let id: String?
+}
+
+/// Identity of one server-scoped usage request. The server ID is not returned
+/// in the usage payload, so it remains part of the client-side request key.
+struct ResourceUsageRequestKey: Hashable, Sendable, Equatable {
+    let serverId: String
+    let subject: ResourceUsageSubject
+}
+
+enum ResourceUsageSignal: String, Codable, Sendable, Equatable {
+    case agentLoad = "agent_load"
+    case explicitActivation = "explicit_activation"
+    case toolInvocation = "tool_invocation"
+    case commandInvocation = "command_invocation"
+}
+
+enum ResourceUsageOwnerKind: String, Codable, Sendable, Equatable {
+    case skill
+    case `extension`
+    case builtIn = "builtin"
+}
+
+struct ResourceUsageDailyRow: Codable, Sendable, Equatable, Identifiable {
+    let date: String
+    let actions: Int
+    let sessions: Int
+
+    var id: String { date }
+}
+
+struct ResourceUsageBreakdownRow: Codable, Sendable, Equatable, Identifiable {
+    let signal: ResourceUsageSignal
+    let name: String
+    let ownerKind: ResourceUsageOwnerKind
+    let ownerId: String
+    let actions: Int
+    let sessions: Int
+
+    var id: String { "\(signal.rawValue)|\(ownerKind.rawValue)|\(ownerId)|\(name)" }
+}
+
+struct ResourceUsageCaptureStatus: Codable, Sendable, Equatable {
+    enum Status: String, Codable, Sendable, Equatable {
+        case active
+        case degraded
+    }
+
+    let status: Status
+    let failedWrites: Int
+    let droppedEvents: Int
+    let lastCapturedAt: Int64?
+}
+
+struct ResourceUsageRetainedHistory: Codable, Sendable, Equatable {
+    let retentionDays: Int
+    let oldestRecordedAt: Int64?
+    let lastRecordedAt: Int64?
+}
+
+struct ResourceUsageResponse: Codable, Sendable, Equatable {
+    let subject: ResourceUsageSubject
+    let rangeDays: ResourceUsageRange
+    let timezone: String
+    let recordingStartedAt: Int64
+    let recordedActions: Int
+    let distinctSessions: Int
+    let activeDays: Int
+    let lastRecordedAt: Int64?
+    let retainedHistory: ResourceUsageRetainedHistory
+    let daily: [ResourceUsageDailyRow]
+    let breakdown: [ResourceUsageBreakdownRow]
+    let capture: ResourceUsageCaptureStatus
+
+    var range: ResourceUsageRange { rangeDays }
+
+    func matches(
+        requestKey: ResourceUsageRequestKey,
+        range: ResourceUsageRange,
+        timezone: String
+    ) -> Bool {
+        requestKey.subject == subject
+            && rangeDays == range
+            && self.timezone == timezone
+    }
+
+    var coverage: ResourceUsageCoveragePresentation {
+        ResourceUsageCoveragePresentation(capture: capture)
+    }
+}
+
+struct ResourceUsageCoveragePresentation: Sendable, Equatable {
+    let capture: ResourceUsageCaptureStatus
+
+    var isPartial: Bool { capture.status == .degraded }
+}
+
+enum ResourceUsagePresentationState: Sendable, Equatable {
+    case loading
+    case empty
+    case content
+    case failure(String)
+
+    static func resolve(
+        isLoading: Bool,
+        response: ResourceUsageResponse?,
+        error: String?
+    ) -> Self {
+        if let response {
+            return response.recordedActions == 0 ? .empty : .content
+        }
+        if isLoading { return .loading }
+        if let error { return .failure(error) }
+        return .loading
+    }
+}
+
+struct ResourceUsageToolGroup: Sendable, Equatable, Identifiable {
+    enum Kind: Int, Sendable, Equatable, Identifiable {
+        case builtIn
+        case extensions
+
+        var id: Int { rawValue }
+
+        var title: String {
+            switch self {
+            case .builtIn: "Built-in Tools"
+            case .extensions: "Extension Tools"
+            }
+        }
+    }
+
+    let kind: Kind
+    let rows: [ResourceUsageBreakdownRow]
+
+    var id: Kind { kind }
+}
+
+enum ResourceUsagePresentation {
+    static func response(
+        _ response: ResourceUsageResponse?,
+        responseKey: ResourceUsageRequestKey?,
+        requestKey: ResourceUsageRequestKey,
+        range: ResourceUsageRange,
+        timezone: String
+    ) -> ResourceUsageResponse? {
+        guard let response,
+              responseKey == requestKey,
+              response.matches(requestKey: requestKey, range: range, timezone: timezone) else {
+            return nil
+        }
+        return response
+    }
+
+    static func error(
+        _ error: String?,
+        errorRequestID: String?,
+        requestID: String
+    ) -> String? {
+        guard errorRequestID == requestID else { return nil }
+        return error
+    }
+
+    static func emptyMessage(for range: ResourceUsageRange) -> String {
+        "No recorded activity in the last \(range.rawValue) days."
+    }
+
+    static func toolGroups(
+        from rows: [ResourceUsageBreakdownRow]
+    ) -> [ResourceUsageToolGroup] {
+        let definitions: [(ResourceUsageToolGroup.Kind, ResourceUsageOwnerKind)] = [
+            (.builtIn, .builtIn),
+            (.extensions, .extension),
+        ]
+        return definitions.compactMap { kind, ownerKind in
+            let matches = rows.filter { $0.ownerKind == ownerKind }
+            return matches.isEmpty ? nil : ResourceUsageToolGroup(kind: kind, rows: matches)
+        }
+    }
+
+    static func signalLabel(_ signal: ResourceUsageSignal) -> String {
+        switch signal {
+        case .agentLoad: "Agent load"
+        case .explicitActivation: "Explicit activation"
+        case .toolInvocation: "Tool invocation"
+        case .commandInvocation: "Command invocation"
+        }
+    }
+
+    static func summaryAccessibilityLabel(_ usage: ResourceUsageResponse) -> String {
+        "Observed usage for the last \(usage.range.rawValue) days: "
+            + "\(usage.recordedActions) recorded actions, "
+            + "\(usage.distinctSessions) sessions, \(usage.activeDays) active days."
+    }
+
+    static func breakdownAccessibilityLabel(_ row: ResourceUsageBreakdownRow) -> String {
+        "\(row.name), \(signalLabel(row.signal).lowercased()), "
+            + "\(row.actions) recorded actions, \(row.sessions) sessions."
+    }
+
+    static func recordingStartedLabel(_ usage: ResourceUsageResponse) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        formatter.timeZone = TimeZone(identifier: usage.timezone)
+        let date = Date(timeIntervalSince1970: Double(usage.recordingStartedAt) / 1_000)
+        return "Recorded by this server since \(formatter.string(from: date))"
+    }
+
+    static func coverageAccessibilityLabel(_ usage: ResourceUsageResponse) -> String {
+        let capture = usage.capture.status == .active
+            ? "Live capture is current."
+            : "Live capture is partial."
+        return "Coverage: \(recordingStartedLabel(usage)). \(capture) "
+            + "Recorded activity is retained for up to \(usage.retainedHistory.retentionDays) days."
+    }
+
+    static func dailyActivityAccessibilityLabel(_ usage: ResourceUsageResponse) -> String {
+        "Daily activity: \(usage.recordedActions) recorded actions across "
+            + "\(usage.activeDays) active days in the last \(usage.range.rawValue) days."
+    }
+}
+
 // MARK: - Helpers
 
 extension StatsActiveSession {

@@ -46,6 +46,7 @@ import { updateSearchIndexForSessionEvent } from "./session-search-indexing.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 import { SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS } from "./sdk-backend.js";
 import type { SessionStopTimers } from "./session-stop.js";
+import type { ResourceUsageService } from "./resource-usage-service.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -101,7 +102,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private readonly agentEventCoordinator: SessionCoordinatorBundle["agentEventCoordinator"];
   private readonly stopFlowCoordinator: SessionCoordinatorBundle["stopFlowCoordinator"];
 
-  constructor(storage: Storage, metrics?: ServerMetricCollector, stopTimers?: SessionStopTimers) {
+  constructor(
+    storage: Storage,
+    metrics?: ServerMetricCollector,
+    stopTimers?: SessionStopTimers,
+    resourceUsage?: ResourceUsageService,
+  ) {
     super();
     this.storage = storage;
     if (metrics) this.opsMetrics = metrics;
@@ -139,6 +145,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       stopSession: (sessionId) => this.stopSession(sessionId),
       onFirstMessage: (session) => this.onFirstMessage?.(session),
       metrics: this.opsMetrics ?? undefined,
+      resourceUsage,
     });
 
     this.broadcaster = bundle.broadcaster;

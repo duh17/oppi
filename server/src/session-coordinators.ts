@@ -4,6 +4,7 @@ import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ResourceUsageService } from "./resource-usage-service.js";
 import {
   SessionActivationCoordinator,
   type SessionActivationActiveSession,
@@ -94,6 +95,7 @@ export interface SessionCoordinatorBundleDeps {
   onFirstMessage?: (session: Session) => void;
   /** Operational metrics collector for session lifecycle timing. */
   metrics?: ServerMetricCollector;
+  resourceUsage?: ResourceUsageService;
 }
 
 export function createSessionCoordinatorBundle(
@@ -158,6 +160,7 @@ export function createSessionCoordinatorBundle(
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
     bootstrapSessionState: (key) => deps.bootstrapSessionState(key),
     metrics: deps.metrics,
+    resourceUsage: deps.resourceUsage,
   });
 
   const activationCoordinator = new SessionActivationCoordinator({
@@ -228,6 +231,7 @@ export function createSessionCoordinatorBundle(
     resolveWorkspaceRoot,
     onFirstMessage: deps.onFirstMessage,
     assertModelTurnAdmissionAllowed: (key) => queueCoordinator.assertModelTurnAdmissionAllowed(key),
+    resourceUsage: deps.resourceUsage,
   });
 
   const agentEventCoordinator = new SessionAgentEventCoordinator({
@@ -244,6 +248,7 @@ export function createSessionCoordinatorBundle(
     resumeQueuedCompactions: (key) => commandCoordinator.resumeQueuedCompactions(key),
     dataDir: deps.storage.getDataDir(),
     trustedAttachmentSourceRoots: trustedSessionAttachmentSourceRoots(),
+    resourceUsage: deps.resourceUsage,
   });
 
   const stopFlowCoordinator = new SessionStopFlowCoordinator(

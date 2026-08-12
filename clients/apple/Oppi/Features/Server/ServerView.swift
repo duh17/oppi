@@ -167,6 +167,8 @@ struct ServerView: View {
             .padding(.bottom, 24)
         }
         .themedScrollSurface()
+        .foregroundStyle(.themeFg)
+        .tint(.themeBlue)
         .task(id: metadataTaskIdentity) {
             clearServerState()
             async let i: () = loadServerInfo()
@@ -322,6 +324,20 @@ struct ServerView: View {
         ModelBreakdownSection(breakdown: stats.modelBreakdown, metric: selectedMetric)
 
         WorkspaceBreakdownSection(workspaces: stats.workspaceBreakdown)
+
+        ToolActivitySection(
+            requestKey: ResourceUsageRequestKey(
+                serverId: selectedServer?.id ?? "unknown",
+                subject: ResourceUsageSubject(kind: .tools, id: nil)
+            )
+        ) { range, timezone in
+            guard let server = selectedServer,
+                  let client = await apiClient(for: server) else {
+                throw ResourceUsageLoadError.notConnected
+            }
+            return try await client.getToolActivity(range: range, timezone: timezone)
+        }
+        .id(selectedServer?.id)
 
         if let serverInfo {
             ServerHealthSection(

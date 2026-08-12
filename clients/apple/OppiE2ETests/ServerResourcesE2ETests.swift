@@ -89,7 +89,7 @@ final class ServerResourcesE2ETests: E2ETestCase {
             return
         }
         XCTAssertTrue(saved.label.hasPrefix("Saved on "))
-        XCTAssertTrue(saved.label.contains("New sessions use this setting. Reload an active session to apply it now."))
+        XCTAssertFalse(saved.label.contains("New sessions use this setting"))
         try saveLabScreenshot(name: "iphone-server-resources-oppi-read-only-e2e")
     }
 

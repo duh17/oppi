@@ -8,6 +8,10 @@ import {
   type UploadStoreConfigResolved,
 } from "./uploads/local-upload-store.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
+import type {
+  ResourceUsagePromptEvidence,
+  ResourceUsageService,
+} from "./resource-usage-service.js";
 
 export interface SessionInputSessionState extends TurnSessionState {
   session: Session;
@@ -19,6 +23,7 @@ export interface SessionInputSessionState extends TurnSessionState {
       commandType: string,
       operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
     ): Promise<T>;
+    resourceUsagePromptEvidence?(message: string): ResourceUsagePromptEvidence | undefined;
   };
 }
 
@@ -110,6 +115,7 @@ export interface SessionInputCoordinatorDeps {
   resolveWorkspaceRoot?: (session: Session) => string | null;
   onFirstMessage?: (session: Session) => void;
   assertModelTurnAdmissionAllowed?: (key: string) => void;
+  resourceUsage?: Pick<ResourceUsageService, "captureAcceptedPrompt">;
 }
 
 export class SessionInputCoordinator {
@@ -250,6 +256,7 @@ export class SessionInputCoordinator {
     });
     const dispatchImages = prepared.images;
     const dispatchMessage = prepared.message;
+    const actionId = opts?.clientTurnId ?? opts?.requestId;
     let acceptedTurn: { clientTurnId?: string; duplicate: boolean } | undefined;
     let turnDispatched = false;
     const acceptPreflight = (): void => {
@@ -267,6 +274,7 @@ export class SessionInputCoordinator {
         throw new Error("Prompt turn became duplicate during serialized preflight admission");
       }
 
+      this.captureAcceptedPromptUsage(active, message, actionId, opts?.timestamp ?? Date.now());
       if (shouldRecordPromptLocally(active.session)) {
         const capturedFirst = appendSessionMessage(active.session, {
           role: "user",
@@ -436,6 +444,7 @@ export class SessionInputCoordinator {
     });
     const dispatchImages = prepared.images;
     const dispatchMessage = prepared.message;
+    const actionId = opts?.clientTurnId ?? opts?.requestId;
     let acceptedTurn: { clientTurnId?: string; duplicate: boolean } | undefined;
     let turnDispatched = false;
     const acceptPreflight = (): void => {
@@ -452,6 +461,7 @@ export class SessionInputCoordinator {
       if (acceptedTurn.duplicate) {
         throw new Error("Streaming turn became duplicate during serialized preflight admission");
       }
+      this.captureAcceptedPromptUsage(active, message, actionId, Date.now());
     };
     const dispatchAcceptedTurn = (): { clientTurnId?: string; duplicate: boolean } => {
       const turn = requireAcceptedTurn(acceptedTurn);
@@ -505,6 +515,29 @@ export class SessionInputCoordinator {
     );
 
     return { duplicate: false };
+  }
+
+  private captureAcceptedPromptUsage(
+    active: SessionInputSessionState,
+    message: string,
+    producerId: string | undefined,
+    occurredAt: number,
+  ): void {
+    try {
+      this.deps.resourceUsage?.captureAcceptedPrompt({
+        session: active.session,
+        runtime: active.sdkBackend ? "oppi" : "pi-tui",
+        evidence: active.sdkBackend?.resourceUsagePromptEvidence?.(message),
+        producerId,
+        occurredAt,
+      });
+    } catch (error) {
+      // Accepted input must proceed even when measurement is unavailable.
+      log.warn("session_input.resource_usage_capture_failed", {
+        sessionId: active.session.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private assertPreflightOwnerActive(key: string, active: SessionInputSessionState): void {

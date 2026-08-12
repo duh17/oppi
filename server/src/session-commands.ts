@@ -768,6 +768,12 @@ export class SessionCommandCoordinator {
         const options = {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
           streamingBehavior: command.streamingBehavior as "steer" | "followUp" | undefined,
+          resourceUsageProducerId:
+            typeof command.clientTurnId === "string"
+              ? command.clientTurnId
+              : typeof command.requestId === "string"
+                ? command.requestId
+                : undefined,
           ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
         };
         return permit
@@ -778,6 +784,12 @@ export class SessionCommandCoordinator {
         const options = {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
           streamingBehavior: "steer" as const,
+          resourceUsageProducerId:
+            typeof command.clientTurnId === "string"
+              ? command.clientTurnId
+              : typeof command.requestId === "string"
+                ? command.requestId
+                : undefined,
           ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
         };
         return permit
@@ -788,6 +800,12 @@ export class SessionCommandCoordinator {
         const options = {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
           streamingBehavior: "followUp" as const,
+          resourceUsageProducerId:
+            typeof command.clientTurnId === "string"
+              ? command.clientTurnId
+              : typeof command.requestId === "string"
+                ? command.requestId
+                : undefined,
           ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
         };
         return permit

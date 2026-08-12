@@ -296,7 +296,14 @@ describe("schedule routes", () => {
 
     expect(errors).toEqual([]);
     expect(startSession).toHaveBeenCalledTimes(1);
-    expect(sendPrompt).toHaveBeenCalledWith(expect.any(String), "Review the branch", {});
+    expect(sendPrompt).toHaveBeenCalledWith(
+      expect.any(String),
+      "Review the branch",
+      expect.objectContaining({
+        clientTurnId: expect.stringMatching(/^agent-launch:schedule:/),
+        requestId: expect.stringMatching(/^agent-launch:schedule:/),
+      }),
+    );
     expect(sessions[0]).toMatchObject({
       model: "agent-model",
       thinkingLevel: "max",

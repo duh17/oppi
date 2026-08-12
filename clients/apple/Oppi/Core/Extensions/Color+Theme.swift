@@ -325,6 +325,18 @@ private struct ThemedSurfaceModifier<S: Shape>: ViewModifier {
     }
 }
 
+private struct ThemedListRowBackgroundModifier: ViewModifier {
+    // Keep the list-row modifier tied to the live environment. The ShapeStyle
+    // below resolves the actual fill when each mounted row is rendered.
+    @Environment(\.themeID) private var themeID
+
+    func body(content: Content) -> some View {
+        let _ = themeID
+        return content
+            .listRowBackground(Rectangle().fill(.themeBg))
+    }
+}
+
 private struct ThemedListSurfaceModifier: ViewModifier {
     @Environment(\.theme) private var theme
 
@@ -336,10 +348,15 @@ private struct ThemedListSurfaceModifier: ViewModifier {
 }
 
 private struct ThemedScrollSurfaceModifier: ViewModifier {
-    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
 
     func body(content: Content) -> some View {
-        content.background(theme.bg.primary.ignoresSafeArea())
+        let _ = themeID
+        return content.background {
+            Rectangle()
+                .fill(.themeBg)
+                .ignoresSafeArea()
+        }
     }
 }
 
@@ -372,6 +389,12 @@ extension View {
     /// panel fill behind content — roles resolve opacity in one place.
     func themedSurface<S: Shape>(_ role: ThemeSurfaceRole, in shape: S) -> some View {
         modifier(ThemedSurfaceModifier(role: role, shape: shape))
+    }
+
+    /// Apply the live theme to a List row or grouped Section instead of
+    /// allowing the system white/card fill to leak into a themed surface.
+    func themedListRowBackground() -> some View {
+        modifier(ThemedListRowBackgroundModifier())
     }
 
     /// Use for List/Form screens. Replaces native list chrome with theme background.

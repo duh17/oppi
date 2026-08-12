@@ -394,6 +394,7 @@ async function handleDeleteStoppedSessionsFixture(
   for (const sessionId of sessionIds) {
     if (ctx.storage.deleteSession(sessionId)) {
       deletedCount += 1;
+      void ctx.resourceUsage?.deleteSession(sessionId);
       e2eStoppedSessionFixtureIds.delete(sessionId);
     }
   }

@@ -910,6 +910,26 @@ describe("AgentLaunchService", () => {
     expect(sendPrompt).not.toHaveBeenCalled();
   });
 
+  it("assigns a stable accepted-turn identity to a new launch prompt", async () => {
+    const { service, sendPrompt } = makeService();
+
+    await service.launch({
+      agent: { name: "test" },
+      target: { workspace: makeWorkspace() },
+      prompt: "/skill:testing run focused tests",
+      idempotencyKey: "launch-skill",
+    });
+
+    expect(sendPrompt).toHaveBeenCalledWith(
+      expect.any(String),
+      "/skill:testing run focused tests",
+      expect.objectContaining({
+        clientTurnId: "agent-launch:launch-skill",
+        requestId: "agent-launch:launch-skill",
+      }),
+    );
+  });
+
   it("reports prompt dispatch as delivered or not_sent", async () => {
     const delivered = makeService();
     const deliveredResult = await delivered.service.launch({
@@ -969,7 +989,14 @@ describe("AgentLaunchService", () => {
     });
     expect(createSession).not.toHaveBeenCalled();
     expect(startSession).toHaveBeenCalledWith("launching-1", makeWorkspace());
-    expect(sendPrompt).toHaveBeenCalledWith("launching-1", "recover prompt", {});
+    expect(sendPrompt).toHaveBeenCalledWith(
+      "launching-1",
+      "recover prompt",
+      expect.objectContaining({
+        clientTurnId: "agent-launch:launch-1",
+        requestId: "agent-launch:launch-1",
+      }),
+    );
   });
 
   it("does not recover an expired launch when the retry target differs", async () => {
@@ -1119,6 +1146,13 @@ describe("AgentLaunchService", () => {
       result.kind === "existing" ? result.session.launch?.promptError : undefined,
     ).toBeUndefined();
     expect(createSession).not.toHaveBeenCalled();
-    expect(sendPrompt).toHaveBeenCalledWith("failed-1", "retry prompt", {});
+    expect(sendPrompt).toHaveBeenCalledWith(
+      "failed-1",
+      "retry prompt",
+      expect.objectContaining({
+        clientTurnId: "agent-launch:launch-1",
+        requestId: "agent-launch:launch-1",
+      }),
+    );
   });
 });

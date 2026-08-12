@@ -104,7 +104,7 @@ struct ServerExtensionListPresentationTests {
         #expect(OppiApprovalPolicyPresentation(.confirmDestructiveOnly).consequence == "Reads run immediately. Create, update, send, stop, resume, fork, run, and pause actions run without approval. Delete, remove, and archive actions require explicit approval.")
         #expect(OppiApprovalPolicyPresentation(.confirmAllChanges).consequence == "Reads run immediately. Every mutation requires explicit approval.")
         #expect(OppiApprovalPolicyPresentation(.readOnly).consequence == "Only allowlisted read commands are available. Mutation requests fail with a read-only error and do not open an approval prompt.")
-        #expect(OppiApprovalPolicyPresentation.savedMessage(serverName: "mac-studio") == "Saved on mac-studio. New sessions use this setting. Reload an active session to apply it now.")
+        #expect(OppiApprovalPolicyPresentation.savedMessage(serverName: "mac-studio") == "Saved on mac-studio.")
     }
 
     @Test func rowAccessibilityIncludesNameProvenanceAndState() {

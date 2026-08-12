@@ -49,6 +49,8 @@ import {
 import { SkillRegistry } from "./skills.js";
 import { isDeclaredControlSession } from "./control-session.js";
 import { ServerResourceService } from "./server-resource-service.js";
+import { ResourceUsageService } from "./resource-usage-service.js";
+import { ResourceUsageStore } from "./storage/resource-usage-store.js";
 
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 
@@ -414,6 +416,7 @@ export class Server {
   private sessions: SessionManager;
   private skillRegistry: SkillRegistry;
   private readonly serverResources: ServerResourceService;
+  private readonly resourceUsage?: ResourceUsageService;
   private skillsInitialized = false;
   private reportedMissingWorkspaceSkills = new Set<string>();
   private push: PushClient;
@@ -492,6 +495,19 @@ export class Server {
         getLoadError: () => this.storage.getOppiExtensionSettingsLoadError(),
       },
     });
+    try {
+      const resourceUsageStore = new ResourceUsageStore(dataDir);
+      try {
+        this.resourceUsage = new ResourceUsageService(resourceUsageStore);
+      } catch (error) {
+        resourceUsageStore.close();
+        throw error;
+      }
+    } catch (error) {
+      // Usage measurement is optional. A damaged or unavailable measurement
+      // database must not prevent the authoritative server from starting.
+      log.warn("resource_usage.initialization_failed", { error: safeErrorMessage(error) });
+    }
     // Server operational metrics collector (event-driven latencies, counts).
     this.opsMetrics = new ServerMetricCollector(
       new JsonlMetricWriter(join(dataDir, "diagnostics", "telemetry")),
@@ -505,7 +521,7 @@ export class Server {
     this.push = createPushClient(apnsConfig, this.opsMetrics);
     this.liveActivity = new LiveActivityBridge(this.push, this.storage);
     this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage);
-    this.sessions = new SessionManager(storage, this.opsMetrics);
+    this.sessions = new SessionManager(storage, this.opsMetrics, undefined, this.resourceUsage);
     this.sessions.contextWindowResolver = (modelId: string) =>
       this.models.getContextWindow(modelId);
     this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);
@@ -769,6 +785,7 @@ export class Server {
       sessionRuntimes: this.sessionRuntimes,
       skillRegistry: this.skillRegistry,
       serverResources: this.serverResources,
+      resourceUsage: this.resourceUsage,
       providerAuth: this.providerAuth,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
@@ -1038,6 +1055,7 @@ export class Server {
       this.liveActivity.shutdown();
       this.push.shutdown();
       this.searchIndex?.close();
+      await this.resourceUsage?.close();
       await this.closeWebSocketServer();
     } catch (error: unknown) {
       shutdownError = error;

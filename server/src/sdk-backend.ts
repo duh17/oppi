@@ -5,6 +5,8 @@
  * from subscribe() match the ServerMessage contract consumed by iOS.
  */
 
+import { createHash } from "node:crypto";
+
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { isDeclaredControlSession } from "./control-session.js";
@@ -68,6 +70,12 @@ import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
+import type {
+  ResourceUsagePromptEvidence,
+  ResourceUsageSkillLoadEvidence,
+  ResourceUsageToolEvidence,
+} from "./resource-usage-service.js";
+import { canonicalServerResourcePath, serverResourceId } from "./server-resource-id.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
@@ -305,6 +313,10 @@ function assertSelectedAgentExtensionsLoaded(
       `Selected Agent Extension could not be loaded: ${unavailableExtensions.join(", ")}`,
     );
   }
+}
+
+function skillResourceIdentityPath(skill: Skill): string {
+  return skill.sourceInfo.path || skill.filePath;
 }
 
 function isPathWithin(parent: string, child: string): boolean {
@@ -568,6 +580,17 @@ function syncSessionIdentityFromManager(session: Session, manager: PiSessionMana
  *   backend.dispose();
  */
 export class SdkBackend {
+  onResourceUsageCommandInvoked:
+    | ((input: { evidence: ResourceUsagePromptEvidence; producerId: string }) => void)
+    | undefined;
+  onResourceUsageSkillsLoaded:
+    | ((load: {
+        skills: ResourceUsageSkillLoadEvidence[];
+        runtimeInstanceId: string;
+        generation: number;
+      }) => void)
+    | undefined;
+
   private static readonly DEFAULT_STEERING_MODE = "all" as const;
   private static readonly DEFAULT_FOLLOW_UP_MODE = "one-at-a-time" as const;
   /** Maximum graceful cleanup time within the documented stop bound. */
@@ -590,10 +613,22 @@ export class SdkBackend {
   private readonly assertSelectedResourcesAvailableBeforeReload?: () => void;
   private readonly consumeSelectedResourceReloadError?: () => Error | undefined;
   private selectedResourceInvariantError?: string;
+  private resourceUsageRuntimeInstanceId = "unassigned";
+  private resourceUsageLoadGeneration = 1;
   private runtimeTransaction = new SessionRuntimeTransaction();
   private requestedExclusiveOperations: Array<{ name: string }> = [];
   private queueReconciliationRequired = false;
   private queueAuthorityGeneration = 0;
+  private resourceUsagePromptProducerId: string | undefined;
+  private resourceUsageEvidenceCache:
+    | {
+        manifestRevision: string;
+        skills: Array<{ id: string; name: string }>;
+        skillIdsByName: Map<string, string>;
+        toolOwners: Map<string, { ownerKind: "builtin" | "extension"; ownerId: string }>;
+        commandOwners: Map<string, { ownerKind: "builtin" | "extension"; ownerId: string }>;
+      }
+    | undefined;
   private disposed = false;
   private localCleanupFailures: string[] = [];
 
@@ -857,11 +892,14 @@ export class SdkBackend {
           createLifecycleJournalExtension(sessionManager),
           ...(controlToolRuntime
             ? [
-                createDefaultAgentExtensionFactory({
-                  dataDir: config.dataDir,
-                  callerSessionId: session.id,
-                  policySnapshot: controlPolicySnapshot,
-                }),
+                {
+                  name: "oppi",
+                  factory: createDefaultAgentExtensionFactory({
+                    dataDir: config.dataDir,
+                    callerSessionId: session.id,
+                    policySnapshot: controlPolicySnapshot,
+                  }),
+                },
               ]
             : ordinaryOppiExtension
               ? [ordinaryOppiExtension]
@@ -1237,6 +1275,204 @@ export class SdkBackend {
     return this.modelRegistry;
   }
 
+  resourceUsageSkillLoadEvidence(): ResourceUsageSkillLoadEvidence[] {
+    const evidence = this.resourceUsageEvidence();
+    const model = this.resourceUsageModelEvidence();
+    return evidence.skills.map((skill) => ({
+      ...skill,
+      ...model,
+      manifestRevision: evidence.manifestRevision,
+    }));
+  }
+
+  configureResourceUsageSkillLoads(
+    runtimeInstanceId: string,
+    capture: NonNullable<SdkBackend["onResourceUsageSkillsLoaded"]>,
+  ): void {
+    this.resourceUsageRuntimeInstanceId = runtimeInstanceId;
+    this.onResourceUsageSkillsLoaded = capture;
+    this.notifyResourceUsageSkillsLoaded();
+  }
+
+  private notifyResourceUsageSkillsLoaded(): void {
+    try {
+      this.onResourceUsageSkillsLoaded?.({
+        skills: this.resourceUsageSkillLoadEvidence(),
+        runtimeInstanceId: this.resourceUsageRuntimeInstanceId,
+        generation: this.resourceUsageLoadGeneration,
+      });
+    } catch (error) {
+      log.warn("sdk.resource_usage_skill_load_capture_failed", {
+        sessionId: this.oppiSessionId,
+        error: safeErrorMessage(error),
+      });
+    }
+  }
+
+  resourceUsageToolEvidence(toolName: string): ResourceUsageToolEvidence {
+    const evidence = this.resourceUsageEvidence();
+    return {
+      ...(evidence.toolOwners.get(toolName) ?? { ownerKind: "builtin", ownerId: "builtin" }),
+      ...this.resourceUsageModelEvidence(),
+      manifestRevision: evidence.manifestRevision,
+    };
+  }
+
+  resourceUsagePromptEvidence(message: string): ResourceUsagePromptEvidence | undefined {
+    const command = message.trimStart().match(/^\/([^\s]+)/)?.[1];
+    if (!command) return undefined;
+    const evidence = this.resourceUsageEvidence();
+    const model = this.resourceUsageModelEvidence();
+    if (command.startsWith("skill:")) {
+      const skillName = command.slice("skill:".length);
+      const ownerId = evidence.skillIdsByName.get(skillName);
+      if (!ownerId) return undefined;
+      return {
+        signal: "explicit_activation",
+        itemName: skillName,
+        ownerKind: "skill",
+        ownerId,
+        ...model,
+        manifestRevision: evidence.manifestRevision,
+      };
+    }
+
+    return undefined;
+  }
+
+  private resourceUsageCommandEvidence(command: string): ResourceUsagePromptEvidence | undefined {
+    const evidence = this.resourceUsageEvidence();
+    const owner = evidence.commandOwners.get(command);
+    if (!owner || owner.ownerKind !== "extension") return undefined;
+    return {
+      signal: "command_invocation",
+      itemName: command,
+      ...owner,
+      ...this.resourceUsageModelEvidence(),
+      manifestRevision: evidence.manifestRevision,
+    };
+  }
+
+  private wrapExtensionCommandUsageCapture(): void {
+    const session = this.piSession as Partial<
+      Pick<AgentSession, "resourceLoader" | "extensionRunner">
+    >;
+    if (!session.resourceLoader || !session.extensionRunner) return;
+    for (const extension of session.resourceLoader.getExtensions().extensions) {
+      for (const [name, command] of extension.commands) {
+        const invocationName = session.extensionRunner
+          .getRegisteredCommands()
+          .find(
+            (registered) =>
+              registered.name === name && registered.sourceInfo.path === command.sourceInfo.path,
+          )?.invocationName;
+        if (!invocationName) continue;
+        const current = command.handler as typeof command.handler & {
+          __oppiResourceUsageWrapped?: true;
+        };
+        if (current.__oppiResourceUsageWrapped) continue;
+        const original = current.bind(command);
+        const wrapped: typeof command.handler & { __oppiResourceUsageWrapped?: true } = async (
+          args,
+          context,
+        ) => {
+          const producerId = this.resourceUsagePromptProducerId;
+          const evidence = this.resourceUsageCommandEvidence(invocationName);
+          if (producerId && evidence) {
+            try {
+              this.onResourceUsageCommandInvoked?.({ evidence, producerId });
+            } catch (error) {
+              log.warn("sdk.resource_usage_command_capture_failed", {
+                sessionId: this.oppiSessionId,
+                error: safeErrorMessage(error),
+              });
+            }
+          }
+          await original(args, context);
+        };
+        wrapped.__oppiResourceUsageWrapped = true;
+        command.handler = wrapped;
+      }
+    }
+  }
+
+  private resourceUsageModelEvidence(): { provider?: string; model?: string } {
+    const model = this.piSession.model;
+    return model ? { provider: model.provider, model: model.id } : {};
+  }
+
+  private resourceUsageOwnerForSource(path: string | undefined): {
+    ownerKind: "builtin" | "extension";
+    ownerId: string;
+  } {
+    if (!path || (path.startsWith("<inline:") && path !== "<inline:oppi>")) {
+      return { ownerKind: "builtin", ownerId: "builtin" };
+    }
+    if (path === "<inline:oppi>") {
+      return { ownerKind: "extension", ownerId: "oppi" };
+    }
+    return {
+      ownerKind: "extension",
+      ownerId: serverResourceId("extension", canonicalServerResourcePath(path)),
+    };
+  }
+
+  private resourceUsageEvidence(): NonNullable<SdkBackend["resourceUsageEvidenceCache"]> {
+    if (this.resourceUsageEvidenceCache) return this.resourceUsageEvidenceCache;
+
+    const loadedSkills = this.piSession.resourceLoader.getSkills().skills;
+    const skills = loadedSkills.map((skill) => ({
+      id: serverResourceId("skill", canonicalServerResourcePath(skillResourceIdentityPath(skill))),
+      name: skill.name,
+    }));
+    const loadedExtensions = this.piSession.resourceLoader.getExtensions().extensions;
+    const registeredTools = this.piSession.extensionRunner.getAllRegisteredTools();
+    const toolOwners = new Map<string, { ownerKind: "builtin" | "extension"; ownerId: string }>();
+    for (const registered of registeredTools) {
+      const toolName = registered.definition.name;
+      const extension = loadedExtensions.find(
+        (candidate) => candidate.tools.get(toolName) === registered,
+      );
+      toolOwners.set(
+        toolName,
+        this.resourceUsageOwnerForSource(extension?.path ?? registered.sourceInfo.path),
+      );
+    }
+    const commandOwners = new Map<
+      string,
+      { ownerKind: "builtin" | "extension"; ownerId: string }
+    >();
+    for (const registered of this.piSession.extensionRunner.getRegisteredCommands()) {
+      const extension = loadedExtensions.find((candidate) =>
+        [...candidate.commands.values()].some(
+          (commandEntry) => commandEntry.sourceInfo.path === registered.sourceInfo.path,
+        ),
+      );
+      commandOwners.set(
+        registered.invocationName,
+        this.resourceUsageOwnerForSource(extension?.path ?? registered.sourceInfo.path),
+      );
+    }
+    const resources = [
+      ...skills.map((skill) => skill.id),
+      ...loadedExtensions.map((extension) =>
+        extension.path === "<inline:oppi>"
+          ? "oppi"
+          : extension.path.startsWith("<inline:")
+            ? `builtin:${extension.path}`
+            : serverResourceId("extension", canonicalServerResourcePath(extension.path)),
+      ),
+    ].sort();
+    this.resourceUsageEvidenceCache = {
+      manifestRevision: createHash("sha256").update(resources.join("\0")).digest("hex"),
+      skills,
+      skillIdsByName: new Map(skills.map((skill) => [skill.name, skill.id])),
+      toolOwners,
+      commandOwners,
+    };
+    return this.resourceUsageEvidenceCache;
+  }
+
   private subscribeToCurrentSession(): void {
     this.unsub?.();
     this.unsub = this.piSession.subscribe((event: AgentSessionEvent) => {
@@ -1264,6 +1500,8 @@ export class SdkBackend {
       },
     });
     this.installSessionAttachmentToolHelpers();
+    this.wrapExtensionCommandUsageCapture();
+    this.resourceUsageEvidenceCache = undefined;
   }
 
   private installSessionAttachmentToolHelpers(): void {
@@ -1336,6 +1574,8 @@ export class SdkBackend {
   private async refreshRuntimeSessionBindings(): Promise<void> {
     this.subscribeToCurrentSession();
     await this.bindCurrentSessionExtensions();
+    this.resourceUsageLoadGeneration += 1;
+    this.notifyResourceUsageSkillsLoaded();
   }
 
   private static applyDefaultQueueModes(session: AgentSession): void {
@@ -1401,6 +1641,10 @@ export class SdkBackend {
       this.selectedResourceInvariantError = undefined;
       SdkBackend.applyDefaultQueueModes(this.piSession);
       this.installSessionAttachmentToolHelpers();
+      this.wrapExtensionCommandUsageCapture();
+      this.resourceUsageEvidenceCache = undefined;
+      this.resourceUsageLoadGeneration += 1;
+      this.notifyResourceUsageSkillsLoaded();
       return { success: true };
     });
   }
@@ -1557,6 +1801,7 @@ export class SdkBackend {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       streamingBehavior?: "steer" | "followUp";
       onPreflightAccepted?: () => void;
+      resourceUsageProducerId?: string;
     },
     permit?: SessionRuntimeTransactionPermit,
   ): Promise<void> {
@@ -1715,6 +1960,7 @@ export class SdkBackend {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       streamingBehavior?: "steer" | "followUp";
       onPreflightAccepted?: () => void;
+      resourceUsageProducerId?: string;
     },
   ): Promise<void> {
     const images: ImageContent[] | undefined = opts?.images?.map((img) => ({
@@ -1743,23 +1989,37 @@ export class SdkBackend {
       }
       resolvePreflight();
     };
-    const completion = Promise.resolve(
-      this.piSession.prompt(message, {
+    this.resourceUsagePromptProducerId = opts?.resourceUsageProducerId;
+    const clearResourceUsageProducer = (): void => {
+      if (this.resourceUsagePromptProducerId === opts?.resourceUsageProducerId) {
+        this.resourceUsagePromptProducerId = undefined;
+      }
+    };
+    let promptResult: void | Promise<void>;
+    try {
+      promptResult = this.piSession.prompt(message, {
         images,
         streamingBehavior: opts?.streamingBehavior,
         preflightResult: (success) => {
           preflightSettled = true;
           accepted = success && !this.disposed;
           if (success) acceptPreflight();
+          clearResourceUsageProducer();
         },
-      }),
-    );
+      });
+    } catch (error) {
+      clearResourceUsageProducer();
+      throw error;
+    }
+    const completion = Promise.resolve(promptResult);
     completion.then(
       () => {
         if (!preflightSettled) acceptPreflight();
         else if (!accepted) rejectPreflight(new Error("Pi prompt preflight rejected"));
+        clearResourceUsageProducer();
       },
       (error: unknown) => {
+        clearResourceUsageProducer();
         if (!accepted) {
           rejectPreflight(error);
           return;
