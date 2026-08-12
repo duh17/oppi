@@ -62,7 +62,13 @@ describe("OppiExtensionSettingsStore", () => {
     ["invalid JSON", "{"],
     [
       "wrong version",
-      JSON.stringify({ version: 2, revision: 4, enabled: true, approvalPolicy: "readOnly" }),
+      JSON.stringify({
+        version: 3,
+        revision: 4,
+        enabled: true,
+        approvalPolicy: "readOnly",
+        mobileOutputGuideEnabled: true,
+      }),
     ],
     [
       "unknown field",
@@ -95,6 +101,28 @@ describe("OppiExtensionSettingsStore", () => {
     expect(readFileSync(settingsPath(root), "utf8")).toBe(contents);
   });
 
+  it("decodes v1 records as guide-off without rewriting them on load", () => {
+    const root = makeRoot();
+    const contents = JSON.stringify({
+      version: 1,
+      revision: 4,
+      enabled: true,
+      approvalPolicy: "readOnly",
+    });
+    mkdirSync(join(root, "extensions"), { recursive: true });
+    writeFileSync(settingsPath(root), contents);
+
+    const store = new OppiExtensionSettingsStore(root);
+
+    expect(store.get()).toEqual({
+      enabled: true,
+      approvalPolicy: "readOnly",
+      mobileOutputGuideEnabled: false,
+      revision: 4,
+    });
+    expect(readFileSync(settingsPath(root), "utf8")).toBe(contents);
+  });
+
   it("performs full-snapshot CAS replacement with one winner and owner-only modes", async () => {
     const root = makeRoot();
     const store = new OppiExtensionSettingsStore(root);
@@ -118,7 +146,7 @@ describe("OppiExtensionSettingsStore", () => {
     expect(statSync(join(root, "extensions")).mode & 0o777).toBe(0o700);
     expect(statSync(settingsPath(root)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(settingsPath(root), "utf8"))).toEqual({
-      version: 1,
+      version: 2,
       ...current,
     });
   });
@@ -133,7 +161,12 @@ describe("OppiExtensionSettingsStore", () => {
 
     expect(result).toEqual({
       ok: true,
-      current: { enabled: true, approvalPolicy: "readOnly", revision: 1 },
+      current: {
+        enabled: true,
+        approvalPolicy: "readOnly",
+        mobileOutputGuideEnabled: false,
+        revision: 1,
+      },
     });
     expect(store.getLoadError()).toBeUndefined();
   });
@@ -146,6 +179,7 @@ describe("OppiExtensionSettingsStore", () => {
       const baselineResult = baselineStore.replace(0, {
         enabled: true,
         approvalPolicy: "confirmAllChanges",
+        mobileOutputGuideEnabled: true,
       });
       expect(baselineResult.ok).toBe(true);
       const before = readFileSync(settingsPath(root), "utf8");
@@ -180,12 +214,18 @@ describe("OppiExtensionSettingsStore", () => {
       }),
     ).toEqual({
       ok: true,
-      current: { enabled: true, approvalPolicy: "confirmAllChanges", revision: 1 },
+      current: {
+        enabled: true,
+        approvalPolicy: "confirmAllChanges",
+        mobileOutputGuideEnabled: false,
+        revision: 1,
+      },
     });
     expect(storage.getConfig()).not.toHaveProperty("oppiExtensionSettings");
     expect(new Storage(root).getOppiExtensionSettings()).toEqual({
       enabled: true,
       approvalPolicy: "confirmAllChanges",
+      mobileOutputGuideEnabled: false,
       revision: 1,
     });
   });

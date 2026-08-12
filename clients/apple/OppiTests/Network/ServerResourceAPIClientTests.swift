@@ -148,21 +148,24 @@ struct ServerResourceAPIClientTests {
             let body = try JSONDecoder().decode(OppiConfigurationRequest.self, from: requestBodyData(request))
             #expect(body.enabled)
             #expect(body.approvalPolicy == .confirmAllChanges)
+            #expect(body.mobileOutputGuideEnabled == true)
             #expect(body.baseRevision == 7)
             return mockResponse(json: """
-            {"enabled":true,"approvalPolicy":"confirmAllChanges","revision":8}
+            {"enabled":true,"approvalPolicy":"confirmAllChanges","mobileOutputGuideEnabled":true,"revision":8}
             """)
         }
 
         let configuration = try await client.setOppiExtensionConfiguration(
             enabled: true,
             approvalPolicy: .confirmAllChanges,
+            mobileOutputGuideEnabled: true,
             baseRevision: 7
         )
 
         #expect(configuration == OppiExtensionConfiguration(
             enabled: true,
             approvalPolicy: .confirmAllChanges,
+            mobileOutputGuideEnabled: true,
             revision: 8
         ))
     }
@@ -197,6 +200,7 @@ struct ServerResourceAPIClientTests {
             _ = try await client.setOppiExtensionConfiguration(
                 enabled: true,
                 approvalPolicy: .confirmAllChanges,
+                mobileOutputGuideEnabled: false,
                 baseRevision: 7
             )
             Issue.record("Expected revision conflict")
@@ -213,6 +217,7 @@ struct ServerResourceAPIClientTests {
     private struct OppiConfigurationRequest: Decodable {
         let enabled: Bool
         let approvalPolicy: OppiApprovalPolicy
+        let mobileOutputGuideEnabled: Bool?
         let baseRevision: Int
     }
 

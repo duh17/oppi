@@ -26,7 +26,7 @@ Use the server's **Skills** and **Extensions** destinations to inspect and chang
 
 The catalog is intentionally global and has no `cwd` parameter. It lists Pi-native user candidates from `~/.pi/agent`, `~/.agents/skills`, configured user settings, and configured packages. It does not install packages while listing. Provenance and enabled state come from Pi. Normal resource IDs are opaque path-derived identifiers, so a moved resource can receive a new ID.
 
-Extensions list **Oppi** first. Its row has stable id `oppi`, built-in provenance, no filesystem `path`, and no removal action. It starts disabled. Its full server configuration contains enablement, approval policy, and a revision; updates use that revision to prevent stale client writes.
+Extensions list **Oppi** first. Its row has stable id `oppi`, built-in provenance, no filesystem `path`, and no removal action. It starts disabled. Its server-scoped configuration contains the Oppi tool availability, approval policy, a mobile output guide toggle, and a revision; updates use that revision to prevent stale client writes. The mobile output guide is independent of tool availability and is off by default.
 
 ### Oppi approval policies
 
@@ -40,9 +40,15 @@ Unknown commands, unsupported subcommands, and file- or stdin-backed mutation bo
 
 The CLI produces both outputs for an allowlisted Oppi call: its redacted JSON envelope is model-facing content, and its complete ANSI human output is the expanded terminal result. The tool wrapper places the complete shell-quoted invocation before that result, so the expanded row reads like a normal terminal transcript without shortening inline prompts or other arguments.
 
+### Mobile output guide
+
+Enable **Mobile Output Guide** under **Extensions → Oppi** to tell agents which links and rich content Oppi can render in new and explicitly reloaded Oppi-managed host and sandbox sessions. The capability guide covers real workspace wiki links with uppercase one-based anchors, inline workspace images and SVG, Mermaid, supported LaTeX, and wiki links to recognized workspace documents and media such as images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, and Graphviz files. It does not prescribe response style, fabricate paths, or expose secrets. Oppi does not send viewport dimensions, and active sessions are not reloaded automatically.
+
+The setting does not affect terminal-owned Mirror sessions or isolated Oppi control/default-Agent sessions. Saved Agent and workspace instructions remain in their existing precedence order. Non-text wiki-link icons are not part of this setting.
+
 ### When a change takes effect
 
-New ordinary Oppi-managed sessions use the latest saved Oppi configuration. An active managed session keeps its existing extension runtime until `/reload` rebuilds it through Pi's full `AgentSession.reload()` lifecycle; reload applies the current enablement and policy before the next turn. A disabled configuration registers no `oppi` tool.
+New ordinary Oppi-managed sessions use the latest saved Oppi configuration. An active managed session keeps its existing extension runtime until `/reload` rebuilds it through Pi's full `AgentSession.reload()` lifecycle; reload applies the current enablement, policy, and mobile output guide before the next turn. A disabled configuration registers no `oppi` tool.
 
 The built-in setting does not modify standalone Pi or terminal-owned mirrored sessions. A stopped disconnected mirror session evaluates the current setting only if it is explicitly promoted to Oppi-managed ownership. The dedicated Oppi control identity remains separate, always receives the tool, and uses the saved approval policy regardless of the ordinary-session enablement setting.
 

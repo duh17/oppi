@@ -1,4 +1,5 @@
-export const OPPI_EXTENSION_SETTINGS_VERSION = 1 as const;
+export const OPPI_EXTENSION_SETTINGS_VERSION = 2 as const;
+const PREVIOUS_OPPI_EXTENSION_SETTINGS_VERSION = 1 as const;
 export const OPPI_EXTENSION_SETTINGS_MAX_ERROR_LENGTH = 2048;
 
 export type OppiApprovalPolicy = "confirmDestructiveOnly" | "confirmAllChanges" | "readOnly";
@@ -6,6 +7,7 @@ export type OppiApprovalPolicy = "confirmDestructiveOnly" | "confirmAllChanges" 
 export interface OppiExtensionSettingsSnapshot {
   readonly enabled: boolean;
   readonly approvalPolicy: OppiApprovalPolicy;
+  readonly mobileOutputGuideEnabled: boolean;
   readonly revision: number;
 }
 
@@ -16,6 +18,8 @@ export interface OppiExtensionSettingsRecord extends OppiExtensionSettingsSnapsh
 export interface OppiExtensionSettingsReplacement {
   readonly enabled: boolean;
   readonly approvalPolicy: OppiApprovalPolicy;
+  /** Optional so older Apple clients can keep using the full-CAS route. */
+  readonly mobileOutputGuideEnabled?: boolean;
 }
 
 export interface OppiExtensionSettingsReader {
@@ -26,6 +30,7 @@ export interface OppiExtensionSettingsReader {
 export const DEFAULT_OPPI_EXTENSION_SETTINGS: OppiExtensionSettingsSnapshot = Object.freeze({
   enabled: false,
   approvalPolicy: "confirmDestructiveOnly",
+  mobileOutputGuideEnabled: false,
   revision: 0,
 });
 
@@ -64,12 +69,23 @@ export function validateOppiExtensionSettingsRecord(value: unknown): OppiExtensi
   if (!isRecord(value)) {
     throw new OppiExtensionSettingsValidationError("settings: expected an object");
   }
-  if (!hasExactKeys(value, ["version", "revision", "enabled", "approvalPolicy"])) {
+
+  const isPreviousVersion = value.version === PREVIOUS_OPPI_EXTENSION_SETTINGS_VERSION;
+  if (
+    !hasExactKeys(
+      value,
+      isPreviousVersion
+        ? ["version", "revision", "enabled", "approvalPolicy"]
+        : ["version", "revision", "enabled", "approvalPolicy", "mobileOutputGuideEnabled"],
+    )
+  ) {
     throw new OppiExtensionSettingsValidationError(
-      "settings: expected exactly version, revision, enabled, and approvalPolicy",
+      isPreviousVersion
+        ? "settings: expected exactly version, revision, enabled, and approvalPolicy"
+        : "settings: expected exactly version, revision, enabled, approvalPolicy, and mobileOutputGuideEnabled",
     );
   }
-  if (value.version !== OPPI_EXTENSION_SETTINGS_VERSION) {
+  if (!isPreviousVersion && value.version !== OPPI_EXTENSION_SETTINGS_VERSION) {
     throw new OppiExtensionSettingsValidationError(
       `version: expected ${OPPI_EXTENSION_SETTINGS_VERSION}`,
     );
@@ -83,12 +99,19 @@ export function validateOppiExtensionSettingsRecord(value: unknown): OppiExtensi
       "approvalPolicy: expected confirmDestructiveOnly, confirmAllChanges, or readOnly",
     );
   }
+  if (!isPreviousVersion && typeof value.mobileOutputGuideEnabled !== "boolean") {
+    throw new OppiExtensionSettingsValidationError("mobileOutputGuideEnabled: expected boolean");
+  }
 
   return Object.freeze({
     version: OPPI_EXTENSION_SETTINGS_VERSION,
     revision: value.revision,
     enabled: value.enabled,
     approvalPolicy: value.approvalPolicy,
+    // Existing v1 records migrate in memory with the guide disabled.
+    mobileOutputGuideEnabled: isPreviousVersion
+      ? false
+      : (value.mobileOutputGuideEnabled as boolean),
   });
 }
 
@@ -98,9 +121,19 @@ export function validateOppiExtensionSettingsReplacement(
   if (!isRecord(value)) {
     throw new OppiExtensionSettingsValidationError("replacement: expected an object");
   }
-  if (!hasExactKeys(value, ["enabled", "approvalPolicy"])) {
+  const hasGuide = Object.prototype.hasOwnProperty.call(value, "mobileOutputGuideEnabled");
+  if (
+    !hasExactKeys(
+      value,
+      hasGuide
+        ? ["enabled", "approvalPolicy", "mobileOutputGuideEnabled"]
+        : ["enabled", "approvalPolicy"],
+    )
+  ) {
     throw new OppiExtensionSettingsValidationError(
-      "replacement: expected exactly enabled and approvalPolicy",
+      hasGuide
+        ? "replacement: expected exactly enabled, approvalPolicy, and mobileOutputGuideEnabled"
+        : "replacement: expected exactly enabled and approvalPolicy",
     );
   }
   if (typeof value.enabled !== "boolean") {
@@ -111,7 +144,14 @@ export function validateOppiExtensionSettingsReplacement(
       "approvalPolicy: expected confirmDestructiveOnly, confirmAllChanges, or readOnly",
     );
   }
-  return Object.freeze({ enabled: value.enabled, approvalPolicy: value.approvalPolicy });
+  if (hasGuide && typeof value.mobileOutputGuideEnabled !== "boolean") {
+    throw new OppiExtensionSettingsValidationError("mobileOutputGuideEnabled: expected boolean");
+  }
+  return Object.freeze({
+    enabled: value.enabled,
+    approvalPolicy: value.approvalPolicy,
+    ...(hasGuide ? { mobileOutputGuideEnabled: value.mobileOutputGuideEnabled as boolean } : {}),
+  });
 }
 
 export function validateOppiExtensionSettingsBaseRevision(value: unknown): number {
@@ -125,6 +165,7 @@ export function freezeOppiExtensionSettingsSnapshot(
   return Object.freeze({
     enabled: value.enabled,
     approvalPolicy: value.approvalPolicy,
+    mobileOutputGuideEnabled: value.mobileOutputGuideEnabled ?? false,
     revision: value.revision,
   });
 }

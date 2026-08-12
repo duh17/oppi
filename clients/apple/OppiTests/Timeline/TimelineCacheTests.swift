@@ -145,6 +145,7 @@ struct TimelineCacheTests {
             oppiConfiguration: OppiExtensionConfiguration(
                 enabled: true,
                 approvalPolicy: .confirmAllChanges,
+                mobileOutputGuideEnabled: false,
                 revision: 4
             ),
             savedAt: Date(timeIntervalSince1970: 1_700_000_000)
@@ -155,6 +156,7 @@ struct TimelineCacheTests {
             oppiConfiguration: OppiExtensionConfiguration(
                 enabled: false,
                 approvalPolicy: .readOnly,
+                mobileOutputGuideEnabled: false,
                 revision: 9
             ),
             savedAt: Date(timeIntervalSince1970: 1_700_000_001)
@@ -214,6 +216,7 @@ struct TimelineCacheTests {
             oppiConfiguration: OppiExtensionConfiguration(
                 enabled: false,
                 approvalPolicy: .confirmDestructiveOnly,
+                mobileOutputGuideEnabled: false,
                 revision: 5
             ),
             savedAt: savedAt,
@@ -248,6 +251,7 @@ struct TimelineCacheTests {
             oppiConfiguration: OppiExtensionConfiguration(
                 enabled: false,
                 approvalPolicy: .confirmDestructiveOnly,
+                mobileOutputGuideEnabled: false,
                 revision: 3
             ),
             savedAt: savedAt

@@ -69,6 +69,7 @@ extension APIClient {
     func setOppiExtensionConfiguration(
         enabled: Bool,
         approvalPolicy: OppiApprovalPolicy,
+        mobileOutputGuideEnabled: Bool? = nil,
         baseRevision: Int
     ) async throws -> OppiExtensionConfiguration {
         let data = try await put(
@@ -76,6 +77,7 @@ extension APIClient {
             body: OppiConfigurationRequest(
                 enabled: enabled,
                 approvalPolicy: approvalPolicy,
+                mobileOutputGuideEnabled: mobileOutputGuideEnabled,
                 baseRevision: baseRevision
             )
         )
@@ -103,6 +105,22 @@ extension APIClient {
     private struct OppiConfigurationRequest: Encodable {
         let enabled: Bool
         let approvalPolicy: OppiApprovalPolicy
+        let mobileOutputGuideEnabled: Bool?
         let baseRevision: Int
+
+        private enum CodingKeys: String, CodingKey {
+            case enabled
+            case approvalPolicy
+            case mobileOutputGuideEnabled
+            case baseRevision
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(enabled, forKey: .enabled)
+            try container.encode(approvalPolicy, forKey: .approvalPolicy)
+            try container.encodeIfPresent(mobileOutputGuideEnabled, forKey: .mobileOutputGuideEnabled)
+            try container.encode(baseRevision, forKey: .baseRevision)
+        }
     }
 }

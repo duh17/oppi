@@ -57,6 +57,7 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
       (): OppiExtensionSettingsSnapshot => ({
         enabled: false,
         approvalPolicy: "confirmDestructiveOnly",
+        mobileOutputGuideEnabled: false,
         revision: 0,
       }),
     ),
@@ -121,6 +122,7 @@ describe("SessionStartCoordinator status persistence", () => {
     const latest: OppiExtensionSettingsSnapshot = {
       enabled: true,
       approvalPolicy: "readOnly",
+      mobileOutputGuideEnabled: false,
       revision: 8,
     };
     const getOppiExtensionSettings = vi.fn(() => latest);

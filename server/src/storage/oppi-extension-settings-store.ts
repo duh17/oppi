@@ -104,6 +104,8 @@ export class OppiExtensionSettingsStore implements OppiExtensionSettingsReader {
     const next = freezeOppiExtensionSettingsSnapshot({
       enabled: replacement.enabled,
       approvalPolicy: replacement.approvalPolicy,
+      mobileOutputGuideEnabled:
+        replacement.mobileOutputGuideEnabled ?? this.snapshot.mobileOutputGuideEnabled,
       revision: this.snapshot.revision + 1,
     });
     this.persist(next);
@@ -161,6 +163,7 @@ export class OppiExtensionSettingsStore implements OppiExtensionSettingsReader {
         revision: next.revision,
         enabled: next.enabled,
         approvalPolicy: next.approvalPolicy,
+        mobileOutputGuideEnabled: next.mobileOutputGuideEnabled,
       };
       this.operations.write(fd, `${JSON.stringify(record, null, 2)}\n`);
       this.operations.fsync(fd);

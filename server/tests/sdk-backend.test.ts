@@ -31,6 +31,7 @@ import type { AgentDefinition } from "../src/agent-launch-service.js";
 import { DEFAULT_AGENT_DEFINITION, DEFAULT_AGENT_ID } from "../src/default-agent.js";
 import type { OppiExtensionSettingsSnapshot } from "../src/oppi-extension-settings.js";
 import { OPPI_EXTENSION_READ_ONLY_ERROR } from "../src/oppi-tool-extension.js";
+import { buildMobileOutputGuide } from "../src/oppi-docs.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
 
 afterEach(() => {
@@ -193,6 +194,7 @@ describe("SdkBackend control sessions", () => {
     let snapshot: OppiExtensionSettingsSnapshot = {
       enabled: false,
       approvalPolicy: "readOnly",
+      mobileOutputGuideEnabled: false,
       revision: 1,
     };
     const getOppiExtensionSettings = vi.fn(() => snapshot);
@@ -219,7 +221,12 @@ describe("SdkBackend control sessions", () => {
         ),
       ).rejects.toThrow(OPPI_EXTENSION_READ_ONLY_ERROR);
 
-      snapshot = { enabled: false, approvalPolicy: "confirmAllChanges", revision: 2 };
+      snapshot = {
+        enabled: false,
+        approvalPolicy: "confirmAllChanges",
+        mobileOutputGuideEnabled: false,
+        revision: 2,
+      };
       await backend.reloadResources();
       const confirm = vi.fn(async () => false);
       const secondTool = backend.session.getToolDefinition("oppi");
@@ -251,6 +258,7 @@ describe("SdkBackend control sessions", () => {
     const getOppiExtensionSettings = vi.fn(() => ({
       enabled: false,
       approvalPolicy: "readOnly" as const,
+      mobileOutputGuideEnabled: false,
       revision: 1,
     }));
 
@@ -359,10 +367,14 @@ describe("SdkBackend sandbox", () => {
         getOppiExtensionSettings: vi.fn(() => ({
           enabled: true,
           approvalPolicy: "confirmDestructiveOnly",
+          mobileOutputGuideEnabled: true,
           revision: 7,
         })),
       });
 
+      expect(backend.session.resourceLoader.getAppendSystemPrompt()).toContain(
+        buildMobileOutputGuide(),
+      );
       expect(manager.ensureWorkspaceVm).toHaveBeenCalled();
       expect(manager.ensureWorkspaceVm.mock.calls[0][2]).toEqual({});
       expect(manager.ensureWorkspaceVm.mock.calls[0][3]).toEqual(
@@ -540,6 +552,7 @@ describe("SdkBackend sandbox", () => {
       (): OppiExtensionSettingsSnapshot => ({
         enabled: true,
         approvalPolicy: "confirmDestructiveOnly",
+        mobileOutputGuideEnabled: false,
         revision: 9,
       }),
     );
@@ -563,12 +576,15 @@ describe("SdkBackend sandbox", () => {
         onEnd: vi.fn(),
       });
 
-      expect(getOppiExtensionSettings).not.toHaveBeenCalled();
+      expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
       expect(
         backend.session.resourceLoader
           .getExtensions()
           .extensions.some((extension) => extension.path === "<inline:oppi>"),
       ).toBe(false);
+      expect(backend.session.resourceLoader.getAppendSystemPrompt()).not.toContain(
+        buildMobileOutputGuide(),
+      );
       expect(backend.session.getActiveToolNames()).not.toContain("oppi");
     } finally {
       await backend?.dispose();
@@ -596,6 +612,7 @@ describe("SdkBackend host extensions", () => {
       (): OppiExtensionSettingsSnapshot => ({
         enabled: false,
         approvalPolicy: "confirmDestructiveOnly",
+        mobileOutputGuideEnabled: false,
         revision: 0,
       }),
     );
@@ -627,6 +644,7 @@ describe("SdkBackend host extensions", () => {
       (): OppiExtensionSettingsSnapshot => ({
         enabled: true,
         approvalPolicy: "confirmDestructiveOnly",
+        mobileOutputGuideEnabled: false,
         revision: 1,
       }),
     );
@@ -687,6 +705,7 @@ describe("SdkBackend host extensions", () => {
       getOppiExtensionSettings: () => ({
         enabled: true,
         approvalPolicy: "confirmDestructiveOnly",
+        mobileOutputGuideEnabled: false,
         revision: 2,
       }),
       onEvent: vi.fn(),
@@ -703,11 +722,52 @@ describe("SdkBackend host extensions", () => {
     }
   });
 
+  it("reloads the mobile guide with live settings independently of Oppi tool enablement", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-mobile-guide-reload-"));
+    let snapshot: OppiExtensionSettingsSnapshot = {
+      enabled: false,
+      approvalPolicy: "confirmDestructiveOnly",
+      mobileOutputGuideEnabled: false,
+      revision: 0,
+    };
+    const getOppiExtensionSettings = vi.fn(() => snapshot);
+    const backend = await SdkBackend.create({
+      session: makeSession({ ephemeral: true }),
+      workspace: { id: "w1", name: "Mobile Guide Reload", runtime: "host", hostMount: cwd } as Workspace,
+      getOppiExtensionSettings,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      const loader = (
+        backend as unknown as {
+          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
+        }
+      ).runtime.services.resourceLoader;
+      expect(loader.getAppendSystemPrompt()).not.toContain(buildMobileOutputGuide());
+      expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
+
+      snapshot = { ...snapshot, mobileOutputGuideEnabled: true, revision: 1 };
+      await backend.reloadResources();
+      expect(loader.getAppendSystemPrompt()).toContain(buildMobileOutputGuide());
+      expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
+
+      snapshot = { ...snapshot, mobileOutputGuideEnabled: false, revision: 2 };
+      await backend.reloadResources();
+      expect(loader.getAppendSystemPrompt()).not.toContain(buildMobileOutputGuide());
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("applies enablement and immutable policy snapshots across Pi reloads", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-settings-reload-"));
     let snapshot: OppiExtensionSettingsSnapshot = {
       enabled: false,
       approvalPolicy: "confirmDestructiveOnly",
+      mobileOutputGuideEnabled: false,
       revision: 0,
     };
     const getOppiExtensionSettings = vi.fn(() => snapshot);
@@ -727,12 +787,22 @@ describe("SdkBackend host extensions", () => {
     try {
       expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
 
-      snapshot = { enabled: true, approvalPolicy: "confirmAllChanges", revision: 1 };
+      snapshot = {
+        enabled: true,
+        approvalPolicy: "confirmAllChanges",
+        mobileOutputGuideEnabled: false,
+        revision: 1,
+      };
       await backend.reloadResources();
       const oldTool = backend.session.getToolDefinition("oppi");
       expect(oldTool).toBeDefined();
 
-      snapshot = { enabled: true, approvalPolicy: "readOnly", revision: 2 };
+      snapshot = {
+        enabled: true,
+        approvalPolicy: "readOnly",
+        mobileOutputGuideEnabled: false,
+        revision: 2,
+      };
       await backend.reloadResources();
       const newTool = backend.session.getToolDefinition("oppi");
       expect(newTool).toBeDefined();
@@ -761,7 +831,12 @@ describe("SdkBackend host extensions", () => {
       ).rejects.toThrow(OPPI_EXTENSION_READ_ONLY_ERROR);
       expect(newConfirm).not.toHaveBeenCalled();
 
-      snapshot = { enabled: false, approvalPolicy: "readOnly", revision: 3 };
+      snapshot = {
+        enabled: false,
+        approvalPolicy: "readOnly",
+        mobileOutputGuideEnabled: false,
+        revision: 3,
+      };
       await backend.reloadResources();
       expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
       expect(
@@ -781,6 +856,7 @@ describe("SdkBackend host extensions", () => {
     const initial: OppiExtensionSettingsSnapshot = {
       enabled: true,
       approvalPolicy: "confirmAllChanges",
+      mobileOutputGuideEnabled: false,
       revision: 1,
     };
     let snapshot = initial;
@@ -805,7 +881,12 @@ describe("SdkBackend host extensions", () => {
       expect(backend.session.getToolDefinition("oppi")).toBeDefined();
 
       readFailure = undefined;
-      snapshot = { enabled: true, approvalPolicy: "readOnly", revision: 2 };
+      snapshot = {
+        enabled: true,
+        approvalPolicy: "readOnly",
+        mobileOutputGuideEnabled: false,
+        revision: 2,
+      };
       reload.mockRejectedValueOnce(new Error("Pi loader failed"));
       await expect(backend.reloadResources()).rejects.toThrow("Pi loader failed");
       expect(
@@ -1209,6 +1290,7 @@ describe("SdkBackend saved Agent definitions", () => {
     const getOppiExtensionSettings = vi.fn(() => ({
       enabled: false,
       approvalPolicy: "readOnly" as const,
+      mobileOutputGuideEnabled: false,
       revision: 99,
     }));
     const backend = await SdkBackend.create({

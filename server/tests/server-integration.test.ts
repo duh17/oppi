@@ -1147,13 +1147,19 @@ describe("server resource API", () => {
     expect(extensions.status).toBe(200);
     const body = (await extensions.json()) as {
       extensions: Array<{ id: string; kind: string; path?: string }>;
-      oppiConfiguration: { enabled: boolean; approvalPolicy: string; revision: number };
+      oppiConfiguration: {
+        enabled: boolean;
+        approvalPolicy: string;
+        mobileOutputGuideEnabled: boolean;
+        revision: number;
+      };
     };
     expect(body.extensions[0]).toMatchObject({ id: "oppi", kind: "builtIn" });
     expect(body.extensions[0]).not.toHaveProperty("path");
     expect(body.oppiConfiguration).toEqual({
       enabled: false,
       approvalPolicy: "confirmDestructiveOnly",
+      mobileOutputGuideEnabled: false,
       revision: 0,
     });
   });
@@ -1172,6 +1178,7 @@ describe("server resource API", () => {
     expect(await updated.json()).toEqual({
       enabled: true,
       approvalPolicy: "readOnly",
+      mobileOutputGuideEnabled: false,
       revision: before.revision + 1,
     });
 
@@ -1184,7 +1191,12 @@ describe("server resource API", () => {
     expect(await stale.json()).toEqual({
       error: "Oppi extension configuration changed",
       code: "revision_conflict",
-      current: { enabled: true, approvalPolicy: "readOnly", revision: before.revision + 1 },
+      current: {
+        enabled: true,
+        approvalPolicy: "readOnly",
+        mobileOutputGuideEnabled: false,
+        revision: before.revision + 1,
+      },
     });
   });
 

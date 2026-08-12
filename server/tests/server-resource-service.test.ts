@@ -221,6 +221,7 @@ describe("ServerResourceService catalogs", () => {
     expect(extensionsResult.oppiConfiguration).toEqual({
       enabled: false,
       approvalPolicy: "confirmDestructiveOnly",
+      mobileOutputGuideEnabled: false,
       revision: 0,
     });
     expect(

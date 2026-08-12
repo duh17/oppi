@@ -131,6 +131,7 @@ enum ServerResourceMutationKey: Hashable, Sendable {
     case normalExtension(String)
     case oppiEnabled
     case oppiApprovalPolicy
+    case oppiMobileOutputGuide
 }
 
 /// Independent, server-scoped state for global Pi Skills and Extensions.
@@ -144,7 +145,9 @@ final class ServerResourceStore {
     typealias ExtensionsRequest = @MainActor () async throws -> ServerExtensionCatalog
     typealias SkillMutationRequest = @MainActor (String, Bool) async throws -> ServerSkillSummary
     typealias ExtensionMutationRequest = @MainActor (String, Bool) async throws -> ServerExtensionSummary
-    typealias OppiMutationRequest = @MainActor (Bool, OppiApprovalPolicy, Int) async throws -> OppiExtensionConfiguration
+    /// Writes one complete Oppi configuration snapshot. A nil guide means the
+    /// server does not advertise this capability, so APIClient omits that field.
+    typealias OppiMutationRequest = @MainActor (Bool, OppiApprovalPolicy, Bool?, Int) async throws -> OppiExtensionConfiguration
     typealias OppiConfigurationRequest = @MainActor () async throws -> OppiExtensionConfiguration
 
     private struct Partition {
@@ -171,6 +174,10 @@ final class ServerResourceStore {
         /// Full-CAS intent and settlement ordering; refresh never advances this version.
         var oppiOrderingVersion: UInt64 = 0
         var oppiWriteInFlight = false
+        /// One writer owns an entire drain, so later interleaved setting
+        /// changes cannot switch the closure used by a recursive write.
+        var oppiWriteRequest: OppiMutationRequest?
+        var oppiFetchAuthoritative: OppiConfigurationRequest?
         /// A 409 made the retained revision untrustworthy and the authoritative refetch failed.
         var oppiRequiresAuthoritativeRefresh = false
     }
@@ -359,6 +366,7 @@ final class ServerResourceStore {
                         $0.oppiRequiresAuthoritativeRefresh = false
                         $0.errors.removeValue(forKey: .oppiEnabled)
                         $0.errors.removeValue(forKey: .oppiApprovalPolicy)
+                        $0.errors.removeValue(forKey: .oppiMobileOutputGuide)
                     }
                     if $0.oppiRequiresAuthoritativeRefresh {
                         $0.extensionsSync.markSyncFailed()
@@ -499,6 +507,7 @@ final class ServerResourceStore {
             OppiExtensionConfiguration(
                 enabled: enabled,
                 approvalPolicy: configuration.approvalPolicy,
+                mobileOutputGuideEnabled: configuration.mobileOutputGuideEnabled,
                 revision: configuration.revision
             )
         }
@@ -508,10 +517,11 @@ final class ServerResourceStore {
         await setOppiEnabled(
             enabled,
             serverId: serverId,
-            request: { enabled, policy, revision in
+            request: { enabled, policy, guide, revision in
                 try await api.setOppiExtensionConfiguration(
                     enabled: enabled,
                     approvalPolicy: policy,
+                    mobileOutputGuideEnabled: guide,
                     baseRevision: revision
                 )
             },
@@ -534,6 +544,7 @@ final class ServerResourceStore {
             OppiExtensionConfiguration(
                 enabled: configuration.enabled,
                 approvalPolicy: policy,
+                mobileOutputGuideEnabled: configuration.mobileOutputGuideEnabled,
                 revision: configuration.revision
             )
         }
@@ -543,10 +554,48 @@ final class ServerResourceStore {
         await setOppiApprovalPolicy(
             policy,
             serverId: serverId,
-            request: { enabled, policy, revision in
+            request: { enabled, policy, guide, revision in
                 try await api.setOppiExtensionConfiguration(
                     enabled: enabled,
                     approvalPolicy: policy,
+                    mobileOutputGuideEnabled: guide,
+                    baseRevision: revision
+                )
+            },
+            fetchAuthoritative: { try await api.getOppiExtensionConfiguration() }
+        )
+    }
+
+    func setOppiMobileOutputGuide(
+        _ enabled: Bool,
+        serverId: String,
+        request: @escaping OppiMutationRequest,
+        fetchAuthoritative: @escaping OppiConfigurationRequest
+    ) async {
+        await queueOppiChange(
+            key: .oppiMobileOutputGuide,
+            serverId: serverId,
+            request: request,
+            fetchAuthoritative: fetchAuthoritative
+        ) { configuration in
+            OppiExtensionConfiguration(
+                enabled: configuration.enabled,
+                approvalPolicy: configuration.approvalPolicy,
+                mobileOutputGuideEnabled: enabled,
+                revision: configuration.revision
+            )
+        }
+    }
+
+    func setOppiMobileOutputGuide(_ enabled: Bool, serverId: String, api: APIClient) async {
+        await setOppiMobileOutputGuide(
+            enabled,
+            serverId: serverId,
+            request: { enabled, policy, guide, revision in
+                try await api.setOppiExtensionConfiguration(
+                    enabled: enabled,
+                    approvalPolicy: policy,
+                    mobileOutputGuideEnabled: guide,
                     baseRevision: revision
                 )
             },
@@ -784,30 +833,36 @@ final class ServerResourceStore {
             $0.pendingMutations.insert(key)
             $0.errors.removeValue(forKey: key)
             $0.oppiOrderingVersion &+= 1
+            // Keep one canonical writer for the whole drain. Later setting
+            // changes must not make recursive writes use a partial closure.
+            $0.oppiWriteRequest = $0.oppiWriteRequest ?? request
+            $0.oppiFetchAuthoritative = $0.oppiFetchAuthoritative ?? fetchAuthoritative
             Self.applyOppiState(to: &$0)
         }
-        await drainOppiWriteQueue(
-            serverId: serverId,
-            request: request,
-            fetchAuthoritative: fetchAuthoritative
-        )
+        await drainOppiWriteQueue(serverId: serverId)
     }
 
-    private func drainOppiWriteQueue(
-        serverId: String,
-        request: @escaping OppiMutationRequest,
-        fetchAuthoritative: @escaping OppiConfigurationRequest
-    ) async {
+    private func drainOppiWriteQueue(serverId: String) async {
         guard let partition = partitions[serverId], !partition.oppiWriteInFlight,
               let authoritative = partition.authoritativeOppiConfiguration,
               let desired = partition.desiredOppiConfiguration,
+              let request = partition.oppiWriteRequest,
+              let fetchAuthoritative = partition.oppiFetchAuthoritative,
               !Self.sameOppiValues(desired, authoritative) else {
             return
         }
 
         update(serverId) { $0.oppiWriteInFlight = true }
         let result = await Self.capture {
-            try await request(desired.enabled, desired.approvalPolicy, authoritative.revision)
+            // Every drain step uses this same full-snapshot writer. In
+            // particular, a guide-only or policy-only write must preserve all
+            // current desired fields while an earlier write is in flight.
+            try await request(
+                desired.enabled,
+                desired.approvalPolicy,
+                desired.mobileOutputGuideEnabled,
+                authoritative.revision
+            )
         }
 
         switch result {
@@ -825,9 +880,15 @@ final class ServerResourceStore {
                     partition.pendingMutations.remove(.oppiApprovalPolicy)
                     partition.errors.removeValue(forKey: .oppiApprovalPolicy)
                 }
+                if partition.desiredOppiConfiguration?.mobileOutputGuideEnabled == response.mobileOutputGuideEnabled {
+                    partition.pendingMutations.remove(.oppiMobileOutputGuide)
+                    partition.errors.removeValue(forKey: .oppiMobileOutputGuide)
+                }
                 if let desired = partition.desiredOppiConfiguration,
                    Self.sameOppiValues(desired, response) {
                     partition.desiredOppiConfiguration = response
+                    partition.oppiWriteRequest = nil
+                    partition.oppiFetchAuthoritative = nil
                 } else {
                     shouldContinue = true
                 }
@@ -835,11 +896,7 @@ final class ServerResourceStore {
             }
             await saveCacheSnapshot(serverId: serverId)
             if shouldContinue {
-                await drainOppiWriteQueue(
-                    serverId: serverId,
-                    request: request,
-                    fetchAuthoritative: fetchAuthoritative
-                )
+                await drainOppiWriteQueue(serverId: serverId)
             }
 
         case .failure(let error):
@@ -847,7 +904,7 @@ final class ServerResourceStore {
                 let refreshed = await Self.capture(fetchAuthoritative)
                 update(serverId) { partition in
                     partition.oppiWriteInFlight = false
-                    let pending = partition.pendingMutations.intersection([.oppiEnabled, .oppiApprovalPolicy])
+                    let pending = partition.pendingMutations.intersection([.oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide])
                     let errorMessage: String
                     switch refreshed {
                     case .success(let configuration):
@@ -862,10 +919,12 @@ final class ServerResourceStore {
                         errorMessage = "Oppi setting changed elsewhere on the server. Couldn’t refresh the current setting: \(Self.errorText(refreshError))"
                     }
                     partition.oppiOrderingVersion &+= 1
-                    partition.pendingMutations.subtract([.oppiEnabled, .oppiApprovalPolicy])
+                    partition.pendingMutations.subtract([.oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide])
                     for key in pending {
                         partition.errors[key] = errorMessage
                     }
+                    partition.oppiWriteRequest = nil
+                    partition.oppiFetchAuthoritative = nil
                     Self.applyOppiState(to: &partition)
                 }
                 await saveCacheSnapshot(serverId: serverId)
@@ -876,11 +935,13 @@ final class ServerResourceStore {
                 partition.oppiWriteInFlight = false
                 partition.desiredOppiConfiguration = partition.authoritativeOppiConfiguration
                 partition.oppiOrderingVersion &+= 1
-                let pending = partition.pendingMutations.intersection([.oppiEnabled, .oppiApprovalPolicy])
-                partition.pendingMutations.subtract([.oppiEnabled, .oppiApprovalPolicy])
+                let pending = partition.pendingMutations.intersection([.oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide])
+                partition.pendingMutations.subtract([.oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide])
                 for key in pending {
                     partition.errors[key] = Self.errorText(error)
                 }
+                partition.oppiWriteRequest = nil
+                partition.oppiFetchAuthoritative = nil
                 Self.applyOppiState(to: &partition)
             }
             await saveCacheSnapshot(serverId: serverId)
@@ -1046,7 +1107,7 @@ final class ServerResourceStore {
         startVersion: UInt64
     ) -> Bool {
         partition.oppiWriteInFlight
-            || !partition.pendingMutations.isDisjoint(with: [.oppiEnabled, .oppiApprovalPolicy])
+            || !partition.pendingMutations.isDisjoint(with: [.oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide])
             || partition.oppiOrderingVersion != startVersion
     }
 
@@ -1105,7 +1166,9 @@ final class ServerResourceStore {
         _ lhs: OppiExtensionConfiguration,
         _ rhs: OppiExtensionConfiguration
     ) -> Bool {
-        lhs.enabled == rhs.enabled && lhs.approvalPolicy == rhs.approvalPolicy
+        lhs.enabled == rhs.enabled
+            && lhs.approvalPolicy == rhs.approvalPolicy
+            && lhs.mobileOutputGuideEnabled == rhs.mobileOutputGuideEnabled
     }
 
     private static func errorText(_ error: Error) -> String {

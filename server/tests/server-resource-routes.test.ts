@@ -77,6 +77,7 @@ function makeRoutes() {
       oppiConfiguration: {
         enabled: false,
         approvalPolicy: "confirmDestructiveOnly" as const,
+        mobileOutputGuideEnabled: false,
         revision: 0,
       },
     })),
@@ -91,11 +92,17 @@ function makeRoutes() {
     getOppiExtensionSettings: vi.fn(() => ({
       enabled: false,
       approvalPolicy: "confirmDestructiveOnly" as const,
+      mobileOutputGuideEnabled: false,
       revision: 0,
     })),
     replaceOppiExtensionSettings: vi.fn(() => ({
       ok: true as const,
-      current: { enabled: true, approvalPolicy: "readOnly" as const, revision: 1 },
+      current: {
+        enabled: true,
+        approvalPolicy: "readOnly" as const,
+        mobileOutputGuideEnabled: false,
+        revision: 1,
+      },
     })),
   };
   return {
@@ -469,6 +476,7 @@ describe("server resource routes", () => {
     expect(JSON.parse(get.body)).toEqual({
       enabled: false,
       approvalPolicy: "confirmDestructiveOnly",
+      mobileOutputGuideEnabled: false,
       revision: 0,
     });
 
@@ -482,6 +490,7 @@ describe("server resource routes", () => {
     expect(JSON.parse(put.body)).toEqual({
       enabled: true,
       approvalPolicy: "readOnly",
+      mobileOutputGuideEnabled: false,
       revision: 1,
     });
     expect(storage.replaceOppiExtensionSettings).toHaveBeenCalledWith(0, {
@@ -490,21 +499,64 @@ describe("server resource routes", () => {
     });
 
     storage.replaceOppiExtensionSettings.mockReturnValueOnce({
+      ok: true,
+      current: {
+        enabled: true,
+        approvalPolicy: "readOnly",
+        mobileOutputGuideEnabled: true,
+        revision: 2,
+      },
+    });
+    const guidePut = await dispatch(
+      routes,
+      "PUT",
+      "/server/extensions/oppi/config",
+      jsonRequest({
+        enabled: true,
+        approvalPolicy: "readOnly",
+        mobileOutputGuideEnabled: true,
+        baseRevision: 1,
+      }),
+    );
+    expect(guidePut.statusCode).toBe(200);
+    expect(JSON.parse(guidePut.body)).toEqual({
+      enabled: true,
+      approvalPolicy: "readOnly",
+      mobileOutputGuideEnabled: true,
+      revision: 2,
+    });
+    expect(storage.replaceOppiExtensionSettings).toHaveBeenCalledWith(1, {
+      enabled: true,
+      approvalPolicy: "readOnly",
+      mobileOutputGuideEnabled: true,
+    });
+
+    storage.replaceOppiExtensionSettings.mockReturnValueOnce({
       ok: false,
       reason: "revision_conflict",
-      current: { enabled: false, approvalPolicy: "readOnly", revision: 2 },
+      current: {
+        enabled: false,
+        approvalPolicy: "readOnly",
+        mobileOutputGuideEnabled: false,
+        revision: 3,
+      },
     });
     const conflict = await dispatch(
       routes,
       "PUT",
       "/server/extensions/oppi/config",
-      jsonRequest({ enabled: true, approvalPolicy: "readOnly", baseRevision: 1 }),
+      jsonRequest({ enabled: true, approvalPolicy: "readOnly", baseRevision: 2 }),
     );
     expect(conflict.statusCode).toBe(409);
     expect(JSON.parse(conflict.body)).toEqual({
       error: "Oppi extension configuration changed",
       code: "revision_conflict",
-      current: { enabled: false, approvalPolicy: "readOnly", revision: 2 },
+      current: {
+        enabled: false,
+        approvalPolicy: "readOnly",
+        mobileOutputGuideEnabled: false,
+        revision: 3,
+      },
     });
   });
 

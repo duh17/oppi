@@ -387,9 +387,9 @@ struct ServerResourceStoreTests {
         await store.setOppiApprovalPolicy(
             .readOnly,
             serverId: "server-a",
-            request: { _, _, _ in
+            request: { _, _, _, _ in
                 requestCount += 1
-                return OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, revision: 2)
+                return OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, mobileOutputGuideEnabled: false, revision: 2)
             },
             fetchAuthoritative: { self.disabledOppi }
         )
@@ -687,7 +687,7 @@ struct ServerResourceStoreTests {
         await store.setOppiApprovalPolicy(
             .confirmDestructiveOnly,
             serverId: "server-a",
-            request: { _, _, _ in
+            request: { _, _, _, _ in
                 requestCount += 1
                 return self.disabledOppi
             },
@@ -702,8 +702,8 @@ struct ServerResourceStoreTests {
 
     @Test func rapidOppiChangesSerializeFullSnapshotsAndAdvanceRevision() async {
         let gate = OppiWriteGate(responses: [
-            OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmDestructiveOnly, revision: 2),
-            OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmAllChanges, revision: 3),
+            OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmDestructiveOnly, mobileOutputGuideEnabled: false, revision: 2),
+            OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmAllChanges, mobileOutputGuideEnabled: false, revision: 3),
         ])
         let store = configuredOppiStore()
 
@@ -711,8 +711,8 @@ struct ServerResourceStoreTests {
             await store.setOppiEnabled(
                 true,
                 serverId: "server-a",
-                request: { enabled, policy, revision in
-                    try await gate.write(enabled: enabled, policy: policy, revision: revision)
+                request: { enabled, policy, guide, revision in
+                    try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
                 },
                 fetchAuthoritative: { try await gate.fetchAuthoritative() }
             )
@@ -722,8 +722,8 @@ struct ServerResourceStoreTests {
         await store.setOppiApprovalPolicy(
             .confirmAllChanges,
             serverId: "server-a",
-            request: { enabled, policy, revision in
-                try await gate.write(enabled: enabled, policy: policy, revision: revision)
+            request: { enabled, policy, guide, revision in
+                try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
             },
             fetchAuthoritative: { try await gate.fetchAuthoritative() }
         )
@@ -735,22 +735,71 @@ struct ServerResourceStoreTests {
         await first.value
 
         #expect(await gate.calls() == [
-            .init(enabled: true, policy: .confirmDestructiveOnly, revision: 1),
-            .init(enabled: true, policy: .confirmAllChanges, revision: 2),
+            .init(enabled: true, policy: .confirmDestructiveOnly, guide: false, revision: 1),
+            .init(enabled: true, policy: .confirmAllChanges, guide: false, revision: 2),
         ])
         #expect(store.oppiConfiguration(forServer: "server-a") == OppiExtensionConfiguration(
             enabled: true,
             approvalPolicy: .confirmAllChanges,
+            mobileOutputGuideEnabled: false,
             revision: 3
         ))
         #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
         #expect(!store.isMutationPending(.oppiApprovalPolicy, serverId: "server-a"))
     }
 
+    @Test func rapidEnableThenGuideChangesSerializeOneFullSnapshotWriter() async {
+        await runRapidMixedOppiChange(guideFirst: false)
+    }
+
+    @Test func rapidGuideThenEnableChangesSerializeOneFullSnapshotWriter() async {
+        await runRapidMixedOppiChange(guideFirst: true)
+    }
+
+    @Test func failedMobileOutputGuideWriteRollsBackToLastAuthoritativeConfiguration() async {
+        let store = configuredOppiStore()
+
+        await store.setOppiMobileOutputGuide(
+            true,
+            serverId: "server-a",
+            request: { _, _, _, _ in
+                throw APIError.server(status: 500, message: "Persistence failed")
+            },
+            fetchAuthoritative: { self.disabledOppi }
+        )
+
+        #expect(store.oppiConfiguration(forServer: "server-a") == disabledOppi)
+        #expect(store.mutationError(for: .oppiMobileOutputGuide, serverId: "server-a") == "Persistence failed")
+        #expect(!store.isMutationPending(.oppiMobileOutputGuide, serverId: "server-a"))
+    }
+
+    @Test func mobileOutputGuideConflictAdoptsAuthoritativeConfiguration() async {
+        let store = configuredOppiStore()
+        let current = OppiExtensionConfiguration(
+            enabled: false,
+            approvalPolicy: .readOnly,
+            mobileOutputGuideEnabled: false,
+            revision: 7
+        )
+
+        await store.setOppiMobileOutputGuide(
+            true,
+            serverId: "server-a",
+            request: { _, _, _, _ in
+                throw APIError.server(status: 409, message: "Oppi extension configuration changed")
+            },
+            fetchAuthoritative: { current }
+        )
+
+        #expect(store.oppiConfiguration(forServer: "server-a") == current)
+        #expect(store.mutationError(for: .oppiMobileOutputGuide, serverId: "server-a")?.contains("changed elsewhere") == true)
+        #expect(!store.isMutationPending(.oppiMobileOutputGuide, serverId: "server-a"))
+    }
+
     @Test func oldRefreshDuringRapidOppiChangesCannotDiscardWriteResponseOrReuseStaleRevision() async {
         let gate = OppiWriteGate(responses: [
-            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmDestructiveOnly, revision: 2)),
-            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmAllChanges, revision: 3)),
+            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmDestructiveOnly, mobileOutputGuideEnabled: false, revision: 2)),
+            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmAllChanges, mobileOutputGuideEnabled: false, revision: 3)),
         ])
         let refreshGate = SuspensionGate()
         let store = configuredOppiStore()
@@ -759,8 +808,8 @@ struct ServerResourceStoreTests {
             await store.setOppiEnabled(
                 true,
                 serverId: "server-a",
-                request: { enabled, policy, revision in
-                    try await gate.write(enabled: enabled, policy: policy, revision: revision)
+                request: { enabled, policy, guide, revision in
+                    try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
                 },
                 fetchAuthoritative: { try await gate.fetchAuthoritative() }
             )
@@ -769,8 +818,8 @@ struct ServerResourceStoreTests {
         await store.setOppiApprovalPolicy(
             .confirmAllChanges,
             serverId: "server-a",
-            request: { enabled, policy, revision in
-                try await gate.write(enabled: enabled, policy: policy, revision: revision)
+            request: { enabled, policy, guide, revision in
+                try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
             },
             fetchAuthoritative: { try await gate.fetchAuthoritative() }
         )
@@ -792,12 +841,13 @@ struct ServerResourceStoreTests {
         await enable.value
 
         #expect(await gate.calls() == [
-            .init(enabled: true, policy: .confirmDestructiveOnly, revision: 1),
-            .init(enabled: true, policy: .confirmAllChanges, revision: 2),
+            .init(enabled: true, policy: .confirmDestructiveOnly, guide: false, revision: 1),
+            .init(enabled: true, policy: .confirmAllChanges, guide: false, revision: 2),
         ])
         #expect(store.oppiConfiguration(forServer: "server-a") == OppiExtensionConfiguration(
             enabled: true,
             approvalPolicy: .confirmAllChanges,
+            mobileOutputGuideEnabled: false,
             revision: 3
         ))
         #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
@@ -808,8 +858,8 @@ struct ServerResourceStoreTests {
 
     @Test func newValueRefreshDuringRapidOppiChangesCannotAdvanceCASBasePastWriteResponse() async {
         let gate = OppiWriteGate(responses: [
-            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmDestructiveOnly, revision: 3)),
-            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmAllChanges, revision: 4)),
+            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmDestructiveOnly, mobileOutputGuideEnabled: false, revision: 3)),
+            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmAllChanges, mobileOutputGuideEnabled: false, revision: 4)),
         ])
         let refreshGate = SuspensionGate()
         let store = configuredOppiStore()
@@ -818,8 +868,8 @@ struct ServerResourceStoreTests {
             await store.setOppiEnabled(
                 true,
                 serverId: "server-a",
-                request: { enabled, policy, revision in
-                    try await gate.write(enabled: enabled, policy: policy, revision: revision)
+                request: { enabled, policy, guide, revision in
+                    try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
                 },
                 fetchAuthoritative: { try await gate.fetchAuthoritative() }
             )
@@ -828,8 +878,8 @@ struct ServerResourceStoreTests {
         await store.setOppiApprovalPolicy(
             .confirmAllChanges,
             serverId: "server-a",
-            request: { enabled, policy, revision in
-                try await gate.write(enabled: enabled, policy: policy, revision: revision)
+            request: { enabled, policy, guide, revision in
+                try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
             },
             fetchAuthoritative: { try await gate.fetchAuthoritative() }
         )
@@ -870,8 +920,8 @@ struct ServerResourceStoreTests {
             await store.setOppiEnabled(
                 true,
                 serverId: "server-a",
-                request: { enabled, policy, revision in
-                    try await gate.write(enabled: enabled, policy: policy, revision: revision)
+                request: { enabled, policy, guide, revision in
+                    try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
                 },
                 fetchAuthoritative: { try await gate.fetchAuthoritative() }
             )
@@ -880,8 +930,8 @@ struct ServerResourceStoreTests {
         await store.setOppiApprovalPolicy(
             .confirmAllChanges,
             serverId: "server-a",
-            request: { enabled, policy, revision in
-                try await gate.write(enabled: enabled, policy: policy, revision: revision)
+            request: { enabled, policy, guide, revision in
+                try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
             },
             fetchAuthoritative: { try await gate.fetchAuthoritative() }
         )
@@ -915,7 +965,7 @@ struct ServerResourceStoreTests {
     }
 
     @Test func refreshDuringConflictingRapidOppiChangeAdoptsConflictFetchWithoutDuplicatePut() async {
-        let conflict = OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, revision: 7)
+        let conflict = OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, mobileOutputGuideEnabled: false, revision: 7)
         let gate = OppiWriteGate(
             responses: [.failure(status: 409, message: "Oppi extension configuration changed")],
             authoritative: conflict
@@ -927,8 +977,8 @@ struct ServerResourceStoreTests {
             await store.setOppiEnabled(
                 true,
                 serverId: "server-a",
-                request: { enabled, policy, revision in
-                    try await gate.write(enabled: enabled, policy: policy, revision: revision)
+                request: { enabled, policy, guide, revision in
+                    try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
                 },
                 fetchAuthoritative: { try await gate.fetchAuthoritative() }
             )
@@ -937,8 +987,8 @@ struct ServerResourceStoreTests {
         await store.setOppiApprovalPolicy(
             .confirmAllChanges,
             serverId: "server-a",
-            request: { enabled, policy, revision in
-                try await gate.write(enabled: enabled, policy: policy, revision: revision)
+            request: { enabled, policy, guide, revision in
+                try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
             },
             fetchAuthoritative: { try await gate.fetchAuthoritative() }
         )
@@ -980,7 +1030,7 @@ struct ServerResourceStoreTests {
         await store.setOppiEnabled(
             true,
             serverId: "server-a",
-            request: { _, _, _ in authoritative },
+            request: { _, _, _, _ in authoritative },
             fetchAuthoritative: { authoritative }
         )
 
@@ -1001,7 +1051,7 @@ struct ServerResourceStoreTests {
         await store.setOppiEnabled(
             true,
             serverId: "server-a",
-            request: { _, _, _ in throw APIError.server(status: 500, message: "Persistence failed") },
+            request: { _, _, _, _ in throw APIError.server(status: 500, message: "Persistence failed") },
             fetchAuthoritative: { disabledOppi }
         )
 
@@ -1012,12 +1062,12 @@ struct ServerResourceStoreTests {
 
     @Test func conflictAdoptsAuthoritativeConfigurationAndClearsQueuedIntent() async {
         let store = configuredOppiStore()
-        let current = OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, revision: 7)
+        let current = OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, mobileOutputGuideEnabled: false, revision: 7)
 
         await store.setOppiEnabled(
             true,
             serverId: "server-a",
-            request: { _, _, _ in throw APIError.server(status: 409, message: "Oppi extension configuration changed") },
+            request: { _, _, _, _ in throw APIError.server(status: 409, message: "Oppi extension configuration changed") },
             fetchAuthoritative: { current }
         )
 
@@ -1035,7 +1085,7 @@ struct ServerResourceStoreTests {
             await store.setOppiEnabled(
                 true,
                 serverId: "server-a",
-                request: { _, _, revision in
+                request: { _, _, _, revision in
                     writeRevisions.append(revision)
                     await writeGate.suspend()
                     throw APIError.server(status: 409, message: "Oppi extension configuration changed")
@@ -1050,7 +1100,7 @@ struct ServerResourceStoreTests {
         await store.setOppiApprovalPolicy(
             .confirmAllChanges,
             serverId: "server-a",
-            request: { _, _, revision in
+            request: { _, _, _, revision in
                 writeRevisions.append(revision)
                 return self.disabledOppi
             },
@@ -1070,7 +1120,7 @@ struct ServerResourceStoreTests {
         #expect(store.mutationError(for: .oppiApprovalPolicy, serverId: "server-a")?.contains("changed elsewhere") == true)
         #expect(store.mutationError(for: .oppiApprovalPolicy, serverId: "server-a")?.contains("Authoritative refetch unavailable") == true)
 
-        let recovered = OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, revision: 8)
+        let recovered = OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, mobileOutputGuideEnabled: false, revision: 8)
         await store.load(
             serverId: "server-a",
             fetchSkills: { [] },
@@ -1097,7 +1147,7 @@ struct ServerResourceStoreTests {
         await store.setOppiEnabled(
             true,
             serverId: "server-a",
-            request: { _, _, _ in
+            request: { _, _, _, _ in
                 throw APIError.server(status: 409, message: "Oppi extension configuration changed")
             },
             fetchAuthoritative: {
@@ -1144,7 +1194,7 @@ struct ServerResourceStoreTests {
         await relaunched.setOppiEnabled(
             true,
             serverId: "server-a",
-            request: { _, _, _ in
+            request: { _, _, _, _ in
                 mutationRequests += 1
                 return self.disabledOppi
             },
@@ -1153,7 +1203,7 @@ struct ServerResourceStoreTests {
         await relaunched.setOppiApprovalPolicy(
             .readOnly,
             serverId: "server-a",
-            request: { _, _, _ in
+            request: { _, _, _, _ in
                 mutationRequests += 1
                 return self.disabledOppi
             },
@@ -1253,7 +1303,7 @@ struct ServerResourceStoreTests {
             await store.setOppiEnabled(
                 true,
                 serverId: "server-a",
-                request: { _, _, _ in
+                request: { _, _, _, _ in
                     throw APIError.server(status: 409, message: "Oppi extension configuration changed")
                 },
                 fetchAuthoritative: {
@@ -1307,7 +1357,7 @@ struct ServerResourceStoreTests {
         await store.setOppiEnabled(
             true,
             serverId: "server-a",
-            request: { _, _, _ in
+            request: { _, _, _, _ in
                 throw APIError.server(status: 409, message: "Oppi extension configuration changed")
             },
             fetchAuthoritative: {
@@ -1323,7 +1373,7 @@ struct ServerResourceStoreTests {
         #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
     }
 
-    @Test func oppiAvailabilityNativeSwitchIsTheOnlyAccessible44PointControl() throws {
+    @Test func oppiSettingsUseTwoAccessibleNativeSwitchesWith44PointTargets() throws {
         let store = configuredOppiStore()
         let controller = UIHostingController(rootView:
             NavigationStack {
@@ -1343,13 +1393,119 @@ struct ServerResourceStoreTests {
         controller.view.layoutIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
 
-        let nativeSwitch = try #require(firstSubview(ofType: UISwitch.self, in: controller.view))
-        #expect(nativeSwitch.accessibilityIdentifier == "extensions.oppi.enabled")
-        #expect(nativeSwitch.isAccessibilityElement)
-        #expect(nativeSwitch.accessibilityFrame.height >= 44)
-        #expect(nativeSwitch.superview is UIControl)
-        #expect(nativeSwitch.superview?.bounds.height ?? 0 >= 44)
-        #expect(accessibleSubviews(in: controller.view).filter { $0 is UISwitch }.count == 1)
+        let switches = accessibleSubviews(in: controller.view).compactMap { $0 as? UISwitch }
+        #expect(switches.count == 2)
+        #expect(Set(switches.compactMap(\.accessibilityIdentifier)) == [
+            "extensions.oppi.enabled",
+            "extensions.oppi.mobileOutputGuide",
+        ])
+        for nativeSwitch in switches {
+            #expect(nativeSwitch.isAccessibilityElement)
+            #expect(nativeSwitch.accessibilityFrame.height >= 44)
+            #expect(nativeSwitch.superview is UIControl)
+            #expect(nativeSwitch.superview?.bounds.height ?? 0 >= 44)
+        }
+    }
+
+    private func runRapidMixedOppiChange(guideFirst: Bool) async {
+        let firstResponse = guideFirst
+            ? OppiExtensionConfiguration(
+                enabled: false,
+                approvalPolicy: .confirmDestructiveOnly,
+                mobileOutputGuideEnabled: true,
+                revision: 2
+            )
+            : OppiExtensionConfiguration(
+                enabled: true,
+                approvalPolicy: .confirmDestructiveOnly,
+                mobileOutputGuideEnabled: false,
+                revision: 2
+            )
+        let finalResponse = OppiExtensionConfiguration(
+            enabled: true,
+            approvalPolicy: .confirmDestructiveOnly,
+            mobileOutputGuideEnabled: true,
+            revision: 3
+        )
+        let gate = OppiWriteGate(responses: [firstResponse, finalResponse])
+        let store = configuredOppiStore()
+        let first = Task { @MainActor in
+            if guideFirst {
+                await store.setOppiMobileOutputGuide(
+                    true,
+                    serverId: "server-a",
+                    request: { enabled, policy, guide, revision in
+                        try await gate.write(
+                            enabled: enabled,
+                            policy: policy,
+                            guide: guide,
+                            revision: revision
+                        )
+                    },
+                    fetchAuthoritative: { try await gate.fetchAuthoritative() }
+                )
+            } else {
+                await store.setOppiEnabled(
+                    true,
+                    serverId: "server-a",
+                    request: { enabled, policy, guide, revision in
+                        try await gate.write(
+                            enabled: enabled,
+                            policy: policy,
+                            guide: guide,
+                            revision: revision
+                        )
+                    },
+                    fetchAuthoritative: { try await gate.fetchAuthoritative() }
+                )
+            }
+        }
+        await gate.waitForFirstWrite()
+
+        if guideFirst {
+            await store.setOppiEnabled(
+                true,
+                serverId: "server-a",
+                request: { enabled, policy, guide, revision in
+                    try await gate.write(
+                        enabled: enabled,
+                        policy: policy,
+                        guide: guide,
+                        revision: revision
+                    )
+                },
+                fetchAuthoritative: { try await gate.fetchAuthoritative() }
+            )
+        } else {
+            await store.setOppiMobileOutputGuide(
+                true,
+                serverId: "server-a",
+                request: { enabled, policy, guide, revision in
+                    try await gate.write(
+                        enabled: enabled,
+                        policy: policy,
+                        guide: guide,
+                        revision: revision
+                    )
+                },
+                fetchAuthoritative: { try await gate.fetchAuthoritative() }
+            )
+        }
+        await gate.releaseFirstWrite()
+        await first.value
+
+        #expect(await gate.calls() == [
+            .init(
+                enabled: !guideFirst,
+                policy: .confirmDestructiveOnly,
+                guide: guideFirst,
+                revision: 1
+            ),
+            .init(enabled: true, policy: .confirmDestructiveOnly, guide: true, revision: 2),
+        ])
+        #expect(store.oppiConfiguration(forServer: "server-a") == finalResponse)
+        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
+        #expect(!store.isMutationPending(.oppiMobileOutputGuide, serverId: "server-a"))
     }
 
     private var fixedNow: Date {
@@ -1357,7 +1513,7 @@ struct ServerResourceStoreTests {
     }
 
     private var disabledOppi: OppiExtensionConfiguration {
-        OppiExtensionConfiguration(enabled: false, approvalPolicy: .confirmDestructiveOnly, revision: 1)
+        OppiExtensionConfiguration(enabled: false, approvalPolicy: .confirmDestructiveOnly, mobileOutputGuideEnabled: false, revision: 1)
     }
 
     private func configuredOppiStore(cache: TimelineCache? = nil) -> ServerResourceStore {
@@ -1589,6 +1745,7 @@ private actor OppiWriteGate {
     struct Call: Equatable, Sendable {
         let enabled: Bool
         let policy: OppiApprovalPolicy
+        let guide: Bool?
         let revision: Int
     }
 
@@ -1626,9 +1783,10 @@ private actor OppiWriteGate {
     func write(
         enabled: Bool,
         policy: OppiApprovalPolicy,
+        guide: Bool?,
         revision: Int
     ) async throws -> OppiExtensionConfiguration {
-        recordedCalls.append(Call(enabled: enabled, policy: policy, revision: revision))
+        recordedCalls.append(Call(enabled: enabled, policy: policy, guide: guide, revision: revision))
         if recordedCalls.count == 1 {
             let waiters = firstWriteWaiters
             firstWriteWaiters.removeAll()

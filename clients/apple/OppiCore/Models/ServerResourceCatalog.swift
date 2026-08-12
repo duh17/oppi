@@ -226,7 +226,36 @@ enum OppiApprovalPolicy: String, Codable, Sendable, Equatable {
 struct OppiExtensionConfiguration: Codable, Sendable, Equatable {
     let enabled: Bool
     let approvalPolicy: OppiApprovalPolicy
+    /// Nil means the connected server does not advertise the mobile output guide capability.
+    let mobileOutputGuideEnabled: Bool?
     let revision: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+        case approvalPolicy
+        case mobileOutputGuideEnabled
+        case revision
+    }
+
+    init(
+        enabled: Bool,
+        approvalPolicy: OppiApprovalPolicy,
+        mobileOutputGuideEnabled: Bool? = nil,
+        revision: Int
+    ) {
+        self.enabled = enabled
+        self.approvalPolicy = approvalPolicy
+        self.mobileOutputGuideEnabled = mobileOutputGuideEnabled
+        self.revision = revision
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.enabled = try container.decode(Bool.self, forKey: .enabled)
+        self.approvalPolicy = try container.decode(OppiApprovalPolicy.self, forKey: .approvalPolicy)
+        self.mobileOutputGuideEnabled = try container.decodeIfPresent(Bool.self, forKey: .mobileOutputGuideEnabled)
+        self.revision = try container.decode(Int.self, forKey: .revision)
+    }
 }
 
 struct ServerExtensionCatalog: Codable, Sendable, Equatable {

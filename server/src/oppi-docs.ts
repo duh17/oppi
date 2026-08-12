@@ -12,6 +12,26 @@ const OPPI_DOCS_HINT_PREFIX =
   "Oppi documentation (read only when asked about Oppi mobile/runtime behavior):";
 const OLD_OPPI_DOCS_HINT_PREFIX = "Oppi documentation for mobile-compatible Pi extensions:";
 
+export const MOBILE_OUTPUT_GUIDE = [
+  "You are running in Oppi.",
+  "",
+  "Oppi rendering capabilities:",
+  "- Existing workspace files can be opened from workspace-relative wiki links such as [[path/to/file.ext|Label]]. Uppercase, one-based anchors focus exact source lines: [[path/to/file.ext#L12-L18|Label]].",
+  "- Workspace images and SVG can appear inline with standard Markdown image syntax: ![Description](path/to/image.svg).",
+  "- Fenced Mermaid blocks render as diagrams:",
+  "```mermaid",
+  "flowchart TD",
+  "  A[Start] --> B[Done]",
+  "```",
+  "- LaTeX math renders inline with $x^2$ or \\(x^2\\), and as display math with $$x^2 + y^2 = z^2$$, \\[x^2 + y^2 = z^2\\], or a fenced latex block.",
+  "- Wiki links to recognized workspace documents and media open in their corresponding viewers, including images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, and Graphviz files.",
+  "- File targets must be real workspace-relative paths. Absolute, outside-workspace, secret, credential, and private runtime paths are not supported.",
+].join("\n");
+
+export function buildMobileOutputGuide(): string {
+  return MOBILE_OUTPUT_GUIDE;
+}
+
 function moduleDir(): string {
   return dirname(fileURLToPath(import.meta.url));
 }

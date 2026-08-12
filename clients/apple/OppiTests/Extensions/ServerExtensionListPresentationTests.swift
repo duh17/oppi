@@ -68,10 +68,15 @@ struct ServerExtensionListPresentationTests {
         #expect(filtered.isFilteredNoResults)
     }
 
-    @Test func offlineOppiApprovalChoicesAreUnavailableEvenWhenOppiIsEnabled() {
+    @Test func offlineOrPendingOppiApprovalChoicesAreUnavailable() {
         #expect(!oppiApprovalPolicyChoicesAreAvailable(
             oppiIsEnabled: true,
             extensionsMutationsAllowed: false
+        ))
+        #expect(!oppiApprovalPolicyChoicesAreAvailable(
+            oppiIsEnabled: true,
+            extensionsMutationsAllowed: true,
+            anySettingPending: true
         ))
         #expect(!oppiApprovalPolicyChoicesAreAvailable(
             oppiIsEnabled: false,
@@ -80,6 +85,17 @@ struct ServerExtensionListPresentationTests {
         #expect(oppiApprovalPolicyChoicesAreAvailable(
             oppiIsEnabled: true,
             extensionsMutationsAllowed: true
+        ))
+    }
+
+    @Test func allOppiSettingControlsDisableWhileAnySettingWriteIsPending() {
+        #expect(!oppiSettingsControlsAreAvailable(
+            extensionsMutationsAllowed: true,
+            anySettingPending: true
+        ))
+        #expect(oppiSettingsControlsAreAvailable(
+            extensionsMutationsAllowed: true,
+            anySettingPending: false
         ))
     }
 

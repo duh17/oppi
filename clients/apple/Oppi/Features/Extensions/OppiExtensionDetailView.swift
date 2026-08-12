@@ -3,9 +3,19 @@ import UIKit
 
 func oppiApprovalPolicyChoicesAreAvailable(
     oppiIsEnabled: Bool,
-    extensionsMutationsAllowed: Bool
+    extensionsMutationsAllowed: Bool,
+    anySettingPending: Bool = false
 ) -> Bool {
-    oppiIsEnabled && extensionsMutationsAllowed
+    oppiIsEnabled
+        && extensionsMutationsAllowed
+        && !anySettingPending
+}
+
+func oppiSettingsControlsAreAvailable(
+    extensionsMutationsAllowed: Bool,
+    anySettingPending: Bool
+) -> Bool {
+    extensionsMutationsAllowed && !anySettingPending
 }
 
 func oppiDetailShouldRefresh(
@@ -48,12 +58,31 @@ struct OppiExtensionDetailView: View {
         store.isMutationPending(.oppiApprovalPolicy, serverId: target.serverId)
     }
 
+    private var mobileOutputGuidePending: Bool {
+        store.isMutationPending(.oppiMobileOutputGuide, serverId: target.serverId)
+    }
+
+    private var anySettingPending: Bool {
+        enabledPending || policyPending || mobileOutputGuidePending
+    }
+
+    private var settingsControlsAvailable: Bool {
+        oppiSettingsControlsAreAvailable(
+            extensionsMutationsAllowed: store.mutationsAllowed(
+                for: .extensions,
+                serverId: target.serverId
+            ),
+            anySettingPending: anySettingPending
+        )
+    }
+
     var body: some View {
         List {
             identitySection
 
             if let configuration {
                 availabilitySection(configuration)
+                mobileOutputGuideSection(configuration)
                 approvalSection(configuration)
                 includedSection
 
@@ -151,9 +180,9 @@ struct OppiExtensionDetailView: View {
                             Task { await setEnabled(enabled) }
                         }
                     ),
-                    isEnabled: !enabledPending
-                        && store.mutationsAllowed(for: .extensions, serverId: target.serverId),
-                    accessibilityLabel: "Enable Oppi extension on \(serverName)"
+                    isEnabled: settingsControlsAvailable,
+                    accessibilityLabel: "Enable Oppi extension on \(serverName)",
+                    accessibilityIdentifier: "extensions.oppi.enabled"
                 )
 
                 if enabledPending {
@@ -164,7 +193,7 @@ struct OppiExtensionDetailView: View {
             }
             .listRowBackground(theme.bg.primary)
 
-            Text("Adds the oppi tool to new non-sandbox Pi sessions managed by this server. It does not change sandbox, standalone, or terminal-owned Pi sessions.")
+            Text("Adds the oppi tool to new non-sandbox Pi sessions managed by this server. It does not change sandbox, standalone, or terminal-owned Pi sessions. The Mobile Output Guide is a separate setting and works independently of this tool.")
                 .font(.footnote)
                 .foregroundStyle(.themeComment)
                 .fixedSize(horizontal: false, vertical: true)
@@ -179,6 +208,56 @@ struct OppiExtensionDetailView: View {
                 .foregroundStyle(.themeOrange)
                 .accessibilityIdentifier("extensions.oppi.enabled.error")
                 .listRowBackground(theme.bg.primary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func mobileOutputGuideSection(_ configuration: OppiExtensionConfiguration) -> some View {
+        if configuration.mobileOutputGuideEnabled != nil {
+            Section("Mobile Output") {
+                HStack(spacing: 10) {
+                    Text("Mobile Output Guide")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityHidden(true)
+
+                    OppiAvailabilitySwitch(
+                        isOn: Binding(
+                            get: { configuration.mobileOutputGuideEnabled == true },
+                            set: { enabled in
+                                savedMessage = nil
+                                Task { await setMobileOutputGuide(enabled) }
+                            }
+                        ),
+                        isEnabled: settingsControlsAvailable,
+                        accessibilityLabel: "Enable mobile output guide on \(serverName)",
+                        accessibilityIdentifier: "extensions.oppi.mobileOutputGuide"
+                    )
+
+                    if mobileOutputGuidePending {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Saving mobile output guide")
+                    }
+                }
+                .listRowBackground(theme.bg.primary)
+
+                Text("Tells agents which links and rich content Oppi can render in new and explicitly reloaded host and sandbox sessions. It does not prescribe a response style. It is independent of Oppi tool availability, does not reload active sessions, and does not affect terminal-owned Mirror sessions.")
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .listRowBackground(theme.bg.primary)
+
+                if let error = store.mutationError(for: .oppiMobileOutputGuide, serverId: target.serverId) {
+                    Label(
+                        "Couldn’t change the mobile output guide on \(serverName). \(error)",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.themeOrange)
+                    .accessibilityIdentifier("extensions.oppi.mobileOutputGuide.error")
+                    .listRowBackground(theme.bg.primary)
+                }
             }
         }
     }
@@ -201,7 +280,8 @@ struct OppiExtensionDetailView: View {
                         extensionsMutationsAllowed: store.mutationsAllowed(
                             for: .extensions,
                             serverId: target.serverId
-                        )
+                        ),
+                        anySettingPending: anySettingPending
                     )
                 )
                 .listRowBackground(theme.bg.primary)
@@ -236,7 +316,7 @@ struct OppiExtensionDetailView: View {
         selected: Bool,
         enabled: Bool
     ) -> some View {
-        let isSelectable = enabled && !policyPending
+        let isSelectable = enabled
         return Button {
             guard !selected, isSelectable else { return }
             savedMessage = nil
@@ -300,11 +380,20 @@ struct OppiExtensionDetailView: View {
         publishSavedMessageIfSettled()
     }
 
+    private func setMobileOutputGuide(_ enabled: Bool) async {
+        guard store.mutationsAllowed(for: .extensions, serverId: target.serverId),
+              let apiClient else { return }
+        await store.setOppiMobileOutputGuide(enabled, serverId: target.serverId, api: apiClient)
+        publishSavedMessageIfSettled()
+    }
+
     private func publishSavedMessageIfSettled() {
         guard !enabledPending,
               !policyPending,
+              !mobileOutputGuidePending,
               store.mutationError(for: .oppiEnabled, serverId: target.serverId) == nil,
-              store.mutationError(for: .oppiApprovalPolicy, serverId: target.serverId) == nil else {
+              store.mutationError(for: .oppiApprovalPolicy, serverId: target.serverId) == nil,
+              store.mutationError(for: .oppiMobileOutputGuide, serverId: target.serverId) == nil else {
             return
         }
         savedMessage = OppiApprovalPolicyPresentation.savedMessage(serverName: serverName)
@@ -324,6 +413,7 @@ private struct OppiAvailabilitySwitch: UIViewRepresentable {
     @Binding var isOn: Bool
     let isEnabled: Bool
     let accessibilityLabel: String
+    let accessibilityIdentifier: String
 
     func makeCoordinator() -> Coordinator {
         Coordinator { isOn = $0 }
@@ -331,6 +421,7 @@ private struct OppiAvailabilitySwitch: UIViewRepresentable {
 
     func makeUIView(context: Context) -> MinimumHitTargetSwitchContainer {
         let control = MinimumHitTargetSwitchContainer()
+        control.nativeSwitch.accessibilityIdentifier = accessibilityIdentifier
         control.nativeSwitch.addTarget(
             context.coordinator,
             action: #selector(Coordinator.valueChanged(_:)),
@@ -345,6 +436,7 @@ private struct OppiAvailabilitySwitch: UIViewRepresentable {
         control.isEnabled = isEnabled
         control.nativeSwitch.isEnabled = isEnabled
         control.nativeSwitch.accessibilityLabel = accessibilityLabel
+        control.nativeSwitch.accessibilityIdentifier = accessibilityIdentifier
     }
 
     @MainActor

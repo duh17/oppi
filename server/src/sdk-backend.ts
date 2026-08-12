@@ -71,7 +71,11 @@ import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
-import { buildOppiSystemPromptAppend, getOppiDocsPath } from "./oppi-docs.js";
+import {
+  buildMobileOutputGuide,
+  buildOppiSystemPromptAppend,
+  getOppiDocsPath,
+} from "./oppi-docs.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
@@ -371,7 +375,11 @@ export function isOppiCliPromptEnabled(
 
 function buildSdkAppendSystemPrompt(
   workspace: Workspace | undefined,
-  options: { includeOppiDocsHint: boolean; includeOppiCliHint: boolean },
+  options: {
+    includeOppiDocsHint: boolean;
+    includeOppiCliHint: boolean;
+    includeMobileOutputGuide: boolean;
+  },
 ): string[] | undefined {
   const prompts: string[] = [];
 
@@ -380,6 +388,9 @@ function buildSdkAppendSystemPrompt(
   const oppiDocsHint = options.includeOppiDocsHint ? buildOppiSystemPromptAppend() : undefined;
   if (oppiDocsHint) {
     prompts.push(oppiDocsHint);
+  }
+  if (options.includeMobileOutputGuide) {
+    prompts.push(buildMobileOutputGuide());
   }
   if (options.includeOppiCliHint) {
     prompts.push(OPPI_CLI_SYSTEM_PROMPT_HINT);
@@ -691,9 +702,10 @@ export class SdkBackend {
     const isDefaultAgentSession = isDefaultAgentId(session.launch?.agentId ?? "");
     const isolatedControlRuntime = isDeclaredControlSession(session) || isDefaultAgentSession;
     const controlToolRuntime = isolatedControlRuntime && !sandboxMode;
-    const ordinaryManagedRuntime =
-      !sandboxMode && !isolatedControlRuntime && (session.runtime ?? "oppi") !== "pi-tui";
-    const settingsManagedRuntime = ordinaryManagedRuntime || controlToolRuntime;
+    const isOppiOwnedSession = (session.runtime ?? "oppi") !== "pi-tui";
+    const ordinaryManagedRuntime = !sandboxMode && isOppiOwnedSession && !isolatedControlRuntime;
+    const ordinaryManagedSession = isOppiOwnedSession && !isolatedControlRuntime;
+    const settingsManagedRuntime = ordinaryManagedSession || controlToolRuntime;
     const getOppiExtensionSettings =
       config.getOppiExtensionSettings ?? (() => DEFAULT_OPPI_EXTENSION_SETTINGS);
     const oppiSettingsHolder: OppiExtensionSettingsHolder = {
@@ -759,15 +771,57 @@ export class SdkBackend {
       // Resource loader: follow Pi's normal cwd/settings/package discovery.
       // Oppi no longer applies a workspace-level skills/extensions policy for
       // host sessions. Project/user Pi settings remain the source of truth.
-      const isOppiOwnedHostSession = !sandboxMode && (session.runtime ?? "oppi") !== "pi-tui";
-      const baseAppendSystemPrompt = buildSdkAppendSystemPrompt(workspace, {
+      //
+      // The resource loader is reused by AgentSession.reload(). Build the
+      // append list through a callback so the guide follows the frozen live
+      // Oppi settings snapshot on every reload, rather than the snapshot that
+      // happened to exist when this loader was constructed.
+      const staticAppendSystemPrompt = buildSdkAppendSystemPrompt(workspace, {
         // Control sessions embed the docs pointer in their minimal system prompt.
         includeOppiDocsHint:
-          isOppiOwnedHostSession &&
-          !controlToolRuntime &&
-          isOppiDocsPromptEnabled(config.serverConfig),
-        includeOppiCliHint: isOppiOwnedHostSession && isOppiCliPromptEnabled(config.serverConfig),
+          !sandboxMode && ordinaryManagedSession && isOppiDocsPromptEnabled(config.serverConfig),
+        includeOppiCliHint:
+          !sandboxMode && ordinaryManagedSession && isOppiCliPromptEnabled(config.serverConfig),
+        includeMobileOutputGuide: false,
       });
+      const buildCurrentAppendSystemPrompt = (base: string[]): string[] => {
+        // A saved-Agent replacement remains authoritative over this optional
+        // capability guide. Preserve the append resources Pi/Oppi already
+        // supplied before this feature, but never add the guide after replace.
+        if (agentDefinition?.instructions?.mode === "replace") {
+          return staticAppendSystemPrompt ? [...staticAppendSystemPrompt] : [...base];
+        }
+
+        // When Oppi supplies the base list, rebuild it on every reload so the
+        // live settings snapshot controls guide inclusion. Otherwise retain
+        // Pi's discovered append-prompt file and add the guide after it.
+        const prompts = staticAppendSystemPrompt
+          ? (buildSdkAppendSystemPrompt(workspace, {
+              includeOppiDocsHint:
+                !sandboxMode &&
+                ordinaryManagedSession &&
+                isOppiDocsPromptEnabled(config.serverConfig),
+              includeOppiCliHint:
+                !sandboxMode &&
+                ordinaryManagedSession &&
+                isOppiCliPromptEnabled(config.serverConfig),
+              includeMobileOutputGuide:
+                ordinaryManagedSession &&
+                oppiSettingsHolder.snapshot.mobileOutputGuideEnabled === true,
+            }) ?? [])
+          : [...base];
+        if (
+          !staticAppendSystemPrompt &&
+          ordinaryManagedSession &&
+          oppiSettingsHolder.snapshot.mobileOutputGuideEnabled === true
+        ) {
+          prompts.push(buildMobileOutputGuide());
+        }
+        if (agentDefinition?.instructions?.mode === "append") {
+          prompts.push(agentDefinition.instructions.text);
+        }
+        return prompts;
+      };
       const normalizedSelectedAgentSkillPaths = selectedAgentSkillPaths?.map((path) =>
         isAbsolute(path) ? path : resolvePath(hostCwd, path),
       );
@@ -797,7 +851,8 @@ export class SdkBackend {
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
         settingsManager,
-        appendSystemPrompt: baseAppendSystemPrompt,
+        ...(staticAppendSystemPrompt ? { appendSystemPrompt: staticAppendSystemPrompt } : {}),
+        appendSystemPromptOverride: (base) => buildCurrentAppendSystemPrompt(base),
         extensionFactories: [
           createLifecycleJournalExtension(sessionManager),
           ...(controlToolRuntime
@@ -861,14 +916,6 @@ export class SdkBackend {
           : {}),
         ...(agentDefinition?.instructions?.mode === "replace"
           ? { systemPromptOverride: () => agentDefinition.instructions?.text }
-          : {}),
-        ...(agentDefinition?.instructions?.mode === "append"
-          ? {
-              appendSystemPromptOverride: (base: string[]) =>
-                [...base, agentDefinition.instructions?.text ?? ""].filter(
-                  (prompt) => prompt.length > 0,
-                ),
-            }
           : {}),
         ...(sandboxMode
           ? {

@@ -192,6 +192,7 @@ describe("SessionMessageQueueCoordinator reload quiescing", () => {
       return {
         enabled: true,
         approvalPolicy: "readOnly" as const,
+        mobileOutputGuideEnabled: false,
         revision: 2,
       };
     });
@@ -200,6 +201,7 @@ describe("SessionMessageQueueCoordinator reload quiescing", () => {
         snapshot: {
           enabled: true,
           approvalPolicy: "confirmDestructiveOnly" as const,
+          mobileOutputGuideEnabled: false,
           revision: 1,
         },
       },

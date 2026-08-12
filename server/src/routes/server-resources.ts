@@ -118,6 +118,10 @@ function isApprovalPolicy(value: unknown): value is OppiApprovalPolicy {
   );
 }
 
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
+}
+
 function isBaseRevision(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
@@ -435,7 +439,21 @@ export function createServerResourceRoutes(
   ): Promise<void> {
     let body: Record<string, unknown> | undefined;
     try {
-      body = await parseJsonObject(req, helpers, ["enabled", "approvalPolicy", "baseRevision"]);
+      if (acceptsJson(req)) {
+        const parsed = await helpers.parseBody<unknown>(req, { maxBytes: MAX_REQUEST_BODY_BYTES });
+        if (
+          isRecord(parsed) &&
+          (hasExactKeys(parsed, ["enabled", "approvalPolicy", "baseRevision"]) ||
+            hasExactKeys(parsed, [
+              "enabled",
+              "approvalPolicy",
+              "baseRevision",
+              "mobileOutputGuideEnabled",
+            ]))
+        ) {
+          body = parsed;
+        }
+      }
     } catch {
       logRouteRejected("oppi_persistence", "oppi_configuration", "validation");
       error(res, helpers, "Request body must be valid JSON within 16 KiB");
@@ -445,7 +463,8 @@ export function createServerResourceRoutes(
       !body ||
       typeof body.enabled !== "boolean" ||
       !isApprovalPolicy(body.approvalPolicy) ||
-      !isBaseRevision(body.baseRevision)
+      !isBaseRevision(body.baseRevision) ||
+      !isOptionalBoolean(body.mobileOutputGuideEnabled)
     ) {
       logRouteRejected("oppi_persistence", "oppi_configuration", "validation");
       error(
@@ -460,6 +479,9 @@ export function createServerResourceRoutes(
       const result = ctx.storage.replaceOppiExtensionSettings(body.baseRevision, {
         enabled: body.enabled,
         approvalPolicy: body.approvalPolicy,
+        ...(body.mobileOutputGuideEnabled !== undefined
+          ? { mobileOutputGuideEnabled: body.mobileOutputGuideEnabled }
+          : {}),
       });
       if (!result.ok) {
         logRouteRejected("oppi_persistence", "oppi_configuration", "conflict");
