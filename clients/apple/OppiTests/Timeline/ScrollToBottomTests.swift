@@ -46,6 +46,98 @@ struct ScrollToBottomTests {
     }
 
     @MainActor
+    @Test func dragStartDetachesBeforeActiveTurnCanFollow() {
+        let harness = makeTimelineHarness(sessionId: "session-reading-active-turn")
+        let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        metricsView.testContentSize = CGSize(width: 390, height: 3_000)
+        metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
+        metricsView.contentOffset = CGPoint(
+            x: 0,
+            y: timelineOffsetY(forDistanceFromBottom: 800, in: metricsView)
+        )
+
+        harness.scrollController.requestScrollToBottom()
+        // Passive geometry cannot break the send/jump follow lock.
+        harness.scrollController.updateNearBottom(false)
+        #expect(harness.scrollController.isCurrentlyNearBottom)
+
+        metricsView.testIsTracking = true
+        harness.coordinator.scrollViewWillBeginDragging(metricsView)
+
+        #expect(
+            !harness.scrollController.isCurrentlyNearBottom,
+            "a user drag while browsing older messages must override the follow lock before active updates arrive"
+        )
+    }
+
+    @MainActor
+    @Test func activeTurnUpdatesPreserveViewportAfterDragStartDetaches() {
+        let windowed = makeWindowedTimelineHarness(
+            sessionId: "session-reading-active-turn-updates",
+            useAnchoredCollectionView: true
+        )
+        var items = (0..<40).map { index in
+            ChatItem.assistantMessage(
+                id: "history-\(index)",
+                text: String(repeating: "History \(index). ", count: 12),
+                timestamp: Date()
+            )
+        }
+        items.append(.assistantMessage(id: "streaming", text: "Working…", timestamp: Date()))
+
+        windowed.applyItems(items, isBusy: true, streamingID: "streaming")
+        windowed.collectionView.layoutIfNeeded()
+        let maxOffsetY = timelineMaxOffsetY(windowed.collectionView)
+        windowed.collectionView.contentOffset.y = maxOffsetY
+        windowed.collectionView.layoutIfNeeded()
+        windowed.scrollController.updateNearBottom(true)
+
+        setTimelineUserScrollOffsetY(windowed.collectionView, maxOffsetY * 0.45)
+        windowed.coordinator.scrollViewWillBeginDragging(windowed.collectionView)
+        let readingOffsetY = windowed.collectionView.contentOffset.y
+
+        items[items.count - 1] = .assistantMessage(
+            id: "streaming",
+            text: String(repeating: "Still working. ", count: 80),
+            timestamp: Date()
+        )
+        items.append(.toolCall(
+            id: "tool-new",
+            tool: "read",
+            argsSummary: "clients/apple/Oppi/Features/Chat/ChatView.swift",
+            outputPreview: "Reading",
+            outputByteCount: 128,
+            isError: false,
+            isDone: false
+        ))
+        windowed.applyItems(items, isBusy: true, streamingID: "streaming")
+
+        #expect(abs(windowed.collectionView.contentOffset.y - readingOffsetY) < 2)
+        #expect(!windowed.scrollController.isCurrentlyNearBottom)
+    }
+
+    @MainActor
+    @Test func dragStartNearLiveEdgeKeepsFollowAttached() {
+        let harness = makeTimelineHarness(sessionId: "session-near-live-edge")
+        let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        metricsView.testContentSize = CGSize(width: 390, height: 3_000)
+        metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
+        metricsView.contentOffset = CGPoint(
+            x: 0,
+            y: timelineOffsetY(forDistanceFromBottom: 80, in: metricsView)
+        )
+
+        harness.scrollController.updateNearBottom(true)
+        metricsView.testIsTracking = true
+        harness.coordinator.scrollViewWillBeginDragging(metricsView)
+
+        #expect(
+            harness.scrollController.isCurrentlyNearBottom,
+            "dragging inside the bottom comfort band should preserve live follow"
+        )
+    }
+
+    @MainActor
     @Test func hintHidesWhenNotFarEnough() {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))

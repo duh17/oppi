@@ -6,6 +6,26 @@ extension ChatTimelineCollectionHost.Controller {
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         scrollController?.setUserInteracting(true)
         lastObservedContentOffsetY = scrollView.contentOffset.y
+
+        guard let collectionView = scrollView as? UICollectionView else { return }
+        // A real drag owns follow state immediately. Sample the live geometry
+        // before the first movement callback so an already-detached reader is
+        // not pulled back to the tail by an active turn while browsing. This
+        // mirrors Pi fullscreen's explicit `followingEnd` state: user scrolling
+        // away clears follow until they reach the live edge again.
+        updateLastDistanceFromBottom(collectionView)
+        if lastDistanceFromBottom > nearBottomExitThreshold {
+            // Explicit user ownership must override the temporary follow lock
+            // installed by send/jump-to-bottom. Passive layout updates still
+            // cannot detach that lock.
+            scrollController?.detachFromBottomForUserScroll()
+            updateScrollState(collectionView, preserveDetachedState: true)
+            (collectionView as? AnchoredCollectionView)?.isDetachedFromBottom = true
+            (collectionView as? AnchoredCollectionView)?.captureDetachedAnchor()
+        } else {
+            updateScrollState(collectionView)
+        }
+        updateDetachedStreamingHintVisibility()
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
