@@ -6,6 +6,7 @@ import type { ServerConfig } from "../types.js";
 export type LocalApiRequestOptions = {
   method?: string;
   body?: Record<string, unknown>;
+  signal?: AbortSignal;
 };
 
 export interface LocalApiError extends Error {
@@ -26,6 +27,7 @@ export async function localApiRequest<T>(
   path: string,
   options: LocalApiRequestOptions = {},
 ): Promise<T> {
+  throwIfAborted(options.signal);
   const token = storage.getToken();
   if (!token) {
     throw new Error("No owner bearer token configured. Run 'oppi init' or 'oppi pair' first.");
@@ -41,7 +43,12 @@ export async function localApiRequest<T>(
   };
 
   const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
-    const requestOptions = { method: options.method ?? "GET", headers, agent: false as const };
+    const requestOptions = {
+      method: options.method ?? "GET",
+      headers,
+      agent: false as const,
+      ...(options.signal ? { signal: options.signal } : {}),
+    };
     const handleResponse = (res: IncomingMessage): void => {
       let responseBody = "";
       res.setEncoding("utf-8");
@@ -64,6 +71,8 @@ export async function localApiRequest<T>(
     req.end();
   });
 
+  throwIfAborted(options.signal);
+
   let payload: unknown;
   try {
     payload = parseJsonPayload(response.body);
@@ -84,6 +93,18 @@ export async function localApiRequest<T>(
     throw error;
   }
   return payload as T;
+}
+
+export function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw createAbortError(signal);
+}
+
+export function createAbortError(signal?: AbortSignal): Error {
+  const reason = signal?.reason;
+  if (reason instanceof Error && reason.name === "AbortError") return reason;
+  const error = new Error("Operation aborted");
+  error.name = "AbortError";
+  return error;
 }
 
 function parseJsonPayload(raw: string): unknown {

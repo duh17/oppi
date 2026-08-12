@@ -111,6 +111,43 @@ describe("Oppi agent Oppi tool", () => {
     expect(confirm).not.toHaveBeenCalled();
     expect(canonicalRun).toHaveBeenCalledOnce();
   });
+
+  it("settles an aborted in-flight Oppi command as one tool cancellation", async () => {
+    canonicalRun.mockImplementation(async (_args, options) => {
+      await new Promise<never>((_resolve, reject) => {
+        const onAbort = (): void => {
+          reject(Object.assign(new Error("Operation aborted"), { name: "AbortError" }));
+        };
+        options?.signal?.addEventListener("abort", onAbort, { once: true });
+        if (options?.signal?.aborted) onAbort();
+      });
+      throw new Error("unreachable");
+    });
+    const tools = registeredTools();
+    const oppi = tools.get("oppi");
+    if (!oppi) throw new Error("Oppi tool was not registered");
+    const controller = new AbortController();
+
+    const resultPromise = oppi.execute(
+      "control-wait",
+      { args: ["session", "wait", "sess-1", "--for", "either", "--timeout", "1h"] },
+      controller.signal,
+      undefined,
+      { hasUI: false, ui: {} },
+    );
+
+    await vi.waitFor(() => expect(canonicalRun).toHaveBeenCalledOnce());
+    expect(canonicalRun).toHaveBeenCalledWith(
+      ["session", "wait", "sess-1", "--for", "either", "--timeout", "1h"],
+      expect.objectContaining({ signal: controller.signal }),
+    );
+    controller.abort();
+
+    await expect(resultPromise).resolves.toMatchObject({
+      content: [{ text: "Oppi command cancelled." }],
+      details: { outcome: "cancelled", cancelled: true, reason: "aborted" },
+    });
+  });
 });
 
 describe("Oppi agent managed ask tool", () => {

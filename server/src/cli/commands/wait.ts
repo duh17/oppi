@@ -1,6 +1,11 @@
 /* eslint-disable no-console */
 import * as c from "../../ansi.js";
-import { localApiRequest, type LocalApiConnection } from "../local-api-client.js";
+import {
+  createAbortError,
+  localApiRequest,
+  throwIfAborted,
+  type LocalApiConnection,
+} from "../local-api-client.js";
 import { codeValue, printDetails, setCapturedCliExitCode, writeJsonEnvelope } from "../output.js";
 import { apiStatus } from "../resources.js";
 import { assertNotSelfTargetingSession } from "../../session-caller-identity.js";
@@ -16,6 +21,7 @@ export async function cmdWait(
   target: string | undefined,
   positional: string[],
   flags: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<void> {
   const jsonOutput = flags.json === "true";
 
@@ -33,14 +39,18 @@ export async function cmdWait(
     const pollMs = parseDurationMs(flags.poll ?? "1s");
     if (pollMs < 1) throw new Error("--poll must be a positive duration");
     const deadline = Date.now() + timeoutMs;
+    throwIfAborted(signal);
 
     for (;;) {
+      throwIfAborted(signal);
       const result = await localApiRequest<{ session?: WaitSession }>(
         storage,
         `/sessions/${encodeURIComponent(sessionId)}`,
+        signal ? { signal } : undefined,
       );
       const session = result.session;
       if (session && sessionMatchesStatus(session, expectedStatus)) {
+        throwIfAborted(signal);
         if (jsonOutput) {
           writeJsonEnvelope({ ok: true, data: { session, matchedStatus: expectedStatus } });
         } else {
@@ -55,9 +65,10 @@ export async function cmdWait(
       if (Date.now() >= deadline) {
         throw new Error(`Timed out waiting for session ${sessionId} to become ${expectedStatus}`);
       }
-      await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+      await sleepWithSignal(Math.min(pollMs, Math.max(0, deadline - Date.now())), signal);
     }
   } catch (error: unknown) {
+    if (signal?.aborted) throw createAbortError(signal);
     const message = error instanceof Error ? error.message : String(error);
     const status = apiStatus(error);
     if (jsonOutput) {
@@ -103,6 +114,31 @@ export function parseDurationMs(value: string): number {
   return durationMs;
 }
 
-async function sleep(ms: number): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+export async function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  if (ms <= 0) return;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(createAbortError(signal));
+    };
+    const onTimer = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(onTimer, ms);
+    if (signal?.aborted) onAbort();
+  });
 }

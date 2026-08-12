@@ -1,8 +1,12 @@
 /* eslint-disable no-console */
 import * as c from "../../ansi.js";
-import type { LocalApiRequestOptions } from "../local-api-client.js";
+import {
+  createAbortError,
+  throwIfAborted,
+  type LocalApiRequestOptions,
+} from "../local-api-client.js";
 import { apiStatus } from "../resources.js";
-import { parseDurationMs } from "./wait.js";
+import { parseDurationMs, sleepWithSignal } from "./wait.js";
 
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
 
@@ -70,6 +74,7 @@ interface WatchOptions {
   requireAll: boolean;
   intervalMs: number;
   timeoutMs: number;
+  signal?: AbortSignal;
 }
 
 class SessionWatchTimeout extends Error {
@@ -105,6 +110,7 @@ async function observeSession(
   state: WatchSessionState,
   needDialogs: boolean,
   call: SessionListApiCall,
+  signal?: AbortSignal,
 ): Promise<{ activityChanged: boolean; stateChanged: boolean }> {
   const prevStatus = state.status;
   const prevPending = state.pendingDialogs;
@@ -119,7 +125,10 @@ async function observeSession(
       session?: { status?: string; messageCount?: number; lastMessage?: string };
       events?: Array<Record<string, unknown>>;
       currentSeq?: number;
-    }>(`/sessions/${encodeURIComponent(id)}/events?since=${state.sinceSeq}`);
+    }>(
+      `/sessions/${encodeURIComponent(id)}/events?since=${state.sinceSeq}`,
+      signal ? { signal } : undefined,
+    );
     status = events.session?.status;
     if (typeof events.session?.messageCount === "number") {
       state.messageCount = events.session.messageCount;
@@ -141,10 +150,11 @@ async function observeSession(
       recordAssistantOutput(state, events.session.lastMessage);
     }
   } catch (err) {
+    throwIfAborted(signal);
     if (apiStatus(err) === 404) {
       const snapshot = await call<{
         session?: { status?: string; messageCount?: number; lastMessage?: string };
-      }>(`/sessions/${encodeURIComponent(id)}`);
+      }>(`/sessions/${encodeURIComponent(id)}`, signal ? { signal } : undefined);
       status = snapshot.session?.status;
       if (typeof snapshot.session?.messageCount === "number") {
         state.messageCount = snapshot.session.messageCount;
@@ -157,9 +167,13 @@ async function observeSession(
     }
   }
 
+  throwIfAborted(signal);
   state.status = status;
   if (needDialogs) {
-    const list = await call<{ dialogs?: unknown[] }>(`/sessions/${encodeURIComponent(id)}/dialogs`);
+    const list = await call<{ dialogs?: unknown[] }>(
+      `/sessions/${encodeURIComponent(id)}/dialogs`,
+      signal ? { signal } : undefined,
+    );
     state.pendingDialogs = Array.isArray(list.dialogs) ? list.dialogs.length : 0;
   }
 
@@ -258,6 +272,7 @@ export async function runSessionWatch(
 ): Promise<WatchOutcome> {
   if (options.intervalMs < 1) throw new Error("--interval must be a positive duration");
   if (options.timeoutMs < 1) throw new Error("--timeout must be a positive duration");
+  throwIfAborted(options.signal);
   const needDialogs = options.condition !== "idle";
   const states = new Map<string, WatchSessionState>();
   for (const id of ids) {
@@ -274,10 +289,17 @@ export async function runSessionWatch(
 
   for (;;) {
     for (const id of ids) {
+      throwIfAborted(options.signal);
       const state = states.get(id);
       if (!state) continue;
       const prevStatus = state.status;
-      const { activityChanged, stateChanged } = await observeSession(id, state, needDialogs, call);
+      const { activityChanged, stateChanged } = await observeSession(
+        id,
+        state,
+        needDialogs,
+        call,
+        options.signal,
+      );
       const isBaseline = !state.seenBaseline;
       if (isBaseline) state.outputDelta = "";
       state.seenBaseline = true;
@@ -287,6 +309,7 @@ export async function runSessionWatch(
           ? state.met || reason !== undefined
           : reason !== undefined;
       if (reason && !options.requireAll) {
+        throwIfAborted(options.signal);
         emit(buildWatchTransition(id, state, "resolved", prevStatus, reason));
         const outputDelta = resolvedOutputDelta(state);
         return {
@@ -309,6 +332,7 @@ export async function runSessionWatch(
     }
 
     if (options.requireAll && ids.every((id) => states.get(id)?.met)) {
+      throwIfAborted(options.signal);
       return {
         kind: "all",
         condition: options.condition,
@@ -326,12 +350,16 @@ export async function runSessionWatch(
     }
 
     if (Date.now() >= deadline) {
+      throwIfAborted(options.signal);
       throw new SessionWatchTimeout(
         options.condition,
         ids.filter((id) => !states.get(id)?.met),
       );
     }
-    await sleep(Math.min(options.intervalMs, Math.max(0, deadline - Date.now())));
+    await sleepWithSignal(
+      Math.min(options.intervalMs, Math.max(0, deadline - Date.now())),
+      options.signal,
+    );
   }
 }
 
@@ -397,6 +425,7 @@ export async function watchSessions(
   flags: Record<string, string>,
   jsonOutput: boolean,
   call: SessionListApiCall,
+  signal?: AbortSignal,
 ): Promise<void> {
   const ids = positional.map((value) => value.trim()).filter(Boolean);
   if (ids.length === 0) throw new Error("at least one session id is required");
@@ -418,15 +447,18 @@ export async function watchSessions(
         requireAll: flags.all === "true",
         intervalMs: parseDurationMs(flags.interval ?? "2s"),
         timeoutMs: parseDurationMs(flags.timeout ?? "30m"),
+        ...(signal ? { signal } : {}),
       },
       call,
       emit,
     );
+    throwIfAborted(signal);
     if (outcome.kind === "all") {
       if (jsonOutput) process.stdout.write(`${JSON.stringify(watchResolvedJson(outcome))}\n`);
       else console.log(formatWatchResolved(outcome));
     }
   } catch (err) {
+    if (signal?.aborted) throw createAbortError(signal);
     if (err instanceof SessionWatchTimeout) {
       if (jsonOutput) {
         process.stdout.write(
@@ -449,8 +481,4 @@ export async function watchSessions(
     }
     throw err;
   }
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }

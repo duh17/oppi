@@ -98,6 +98,7 @@ export async function executePreparedOppiCommand(options: {
   prepared: PreparedOppiCommand;
   dataDir?: string;
   cwd?: string;
+  signal?: AbortSignal;
 }): Promise<OppiToolCommandResult> {
   if (!authenticPreparedCommands.has(options.prepared)) {
     throw new Error("Unrecognized prepared Oppi command");
@@ -112,6 +113,7 @@ export async function executePreparedOppiCommand(options: {
       : {}),
     captureHuman: true,
     forceJson: true,
+    ...(options.signal ? { signal: options.signal } : {}),
   });
 }
 
@@ -122,7 +124,7 @@ export async function applyOppiToolPolicy(options: {
   signal?: AbortSignal;
   approvalMessage?: string;
   approve?: (message: string) => Promise<boolean>;
-  execute?: (prepared: PreparedOppiCommand) => Promise<OppiToolCommandResult>;
+  execute?: (prepared: PreparedOppiCommand, signal?: AbortSignal) => Promise<OppiToolCommandResult>;
 }): Promise<OppiToolPolicyResult> {
   const startedAt = Date.now();
   const { prepared } = options;
@@ -169,12 +171,21 @@ export async function applyOppiToolPolicy(options: {
   }
 
   const execute =
-    options.execute ?? ((command) => executePreparedOppiCommand({ prepared: command }));
+    options.execute ??
+    ((command, signal) => executePreparedOppiCommand({ prepared: command, signal }));
   try {
-    const result = await execute(prepared);
+    const result = await execute(prepared, options.signal);
+    if (options.signal?.aborted) {
+      auditPrepared(options, "aborted", "denied", startedAt);
+      return { kind: "cancelled", reason: "aborted" };
+    }
     auditPrepared(options, approvalOutcome, result.ok ? "success" : "error", startedAt);
     return { kind: "executed", result };
   } catch (error) {
+    if (options.signal?.aborted) {
+      auditPrepared(options, "aborted", "denied", startedAt);
+      return { kind: "cancelled", reason: "aborted" };
+    }
     auditPrepared(options, approvalOutcome, "error", startedAt);
     throw error;
   }
@@ -253,11 +264,12 @@ export function createOppiToolExtensionFactory(options: {
           ...(signal ? { signal } : {}),
           ...(approvalRequired ? { approvalMessage: approvalMessage(prepared) } : {}),
           ...(confirm ? { approve: confirm } : {}),
-          execute: async (approvedCommand) =>
+          execute: async (approvedCommand, approvedSignal) =>
             executePreparedOppiCommand({
               prepared: approvedCommand,
               ...(dataDir !== undefined ? { dataDir } : {}),
               ...(typeof ctx.cwd === "string" ? { cwd: ctx.cwd } : {}),
+              ...(approvedSignal ? { signal: approvedSignal } : {}),
             }),
         });
 

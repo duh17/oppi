@@ -5,6 +5,7 @@ import {
   runSessionWatch,
   watchSessions,
 } from "../src/cli/commands/session-watch.js";
+import { sleepWithSignal } from "../src/cli/commands/wait.js";
 import type { LocalApiRequestOptions } from "../src/cli/local-api-client.js";
 
 type ApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
@@ -320,6 +321,18 @@ describe("session watch command contract", () => {
     await expect(
       runSessionWatch(["s"], options, async <T>() => ({}) as T, vi.fn()),
     ).rejects.toThrow(message);
+  });
+
+  it("clears a pending polling delay when the signal aborts", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const promise = sleepWithSignal(60_000, controller.signal);
+
+    expect(vi.getTimerCount()).toBe(1);
+    controller.abort();
+
+    await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("writes one parseable JSON error and sets a nonzero exit code on disconnect", async () => {

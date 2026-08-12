@@ -85,6 +85,31 @@ describe("local API Unix socket client", () => {
     );
   });
 
+  it("aborts an in-flight Unix-socket request", async () => {
+    const dataDir = makeDataDir();
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    const server = createHttpServer((req, res) => {
+      resolveStarted();
+      const closeResponse = (): void => res.end();
+      req.once("aborted", closeResponse);
+      req.once("close", closeResponse);
+    });
+    servers.push(server);
+    await listenOnLocalApiFixture(server, dataDir);
+
+    const controller = new AbortController();
+    const pending = localApiRequest(makeConnection(dataDir), "/pending", {
+      signal: controller.signal,
+    });
+    await started;
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("preserves validated structured API error fields", async () => {
     const dataDir = makeDataDir();
     const server = createHttpServer((_req, res) => {

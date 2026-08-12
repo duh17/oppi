@@ -7,6 +7,7 @@ import { cmdSchedule } from "./commands/schedule.js";
 import { cmdSession } from "./commands/session.js";
 import { cmdSkill } from "./commands/skill.js";
 import { cmdWait } from "./commands/wait.js";
+import { createAbortError, throwIfAborted } from "./local-api-client.js";
 import { cmdWorkspace } from "./commands/workspace.js";
 import { cmdWorktree } from "./commands/worktree.js";
 import { createCliConfigStorage, createCliConnectionConfig } from "./connection-config.js";
@@ -27,6 +28,7 @@ export type CliRunOptions = Readonly<{
   callerSessionId?: string;
   captureHuman?: boolean;
   forceJson?: boolean;
+  signal?: AbortSignal;
 }>;
 
 export type CliRunResult = Readonly<{
@@ -42,9 +44,11 @@ export async function runCli(
   args: readonly string[],
   options: CliRunOptions = {},
 ): Promise<CliRunResult> {
+  throwIfAborted(options.signal);
   const invocationArgs = options.forceJson ? ensureJsonFlag(args) : [...args];
   if (!options.captureHuman) {
     await executeCliCommand(invocationArgs, options);
+    throwIfAborted(options.signal);
     return { ok: true, exitCode: 0, stdout: "", humanOutput: "" };
   }
 
@@ -52,7 +56,9 @@ export async function runCli(
     async () => {
       try {
         await executeCliCommand(invocationArgs, options);
+        throwIfAborted(options.signal);
       } catch (error: unknown) {
+        if (options.signal?.aborted) throw createAbortError(options.signal);
         const message = safeErrorMessage(error);
         writeJsonEnvelope({ ok: false, error: { message } });
         setCapturedCliExitCode(1);
@@ -124,7 +130,12 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
         positional.slice(1),
         flags,
         options.cwd ?? process.cwd(),
-        options.callerSessionId ? { callerSessionId: options.callerSessionId } : undefined,
+        options.callerSessionId || options.signal
+          ? {
+              ...(options.callerSessionId ? { callerSessionId: options.callerSessionId } : {}),
+              ...(options.signal ? { signal: options.signal } : {}),
+            }
+          : undefined,
       );
       return;
     case "schedule":
@@ -134,7 +145,7 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
       await cmdSkill(connection, positional[0], positional.slice(1), flags);
       return;
     case "wait":
-      await cmdWait(connection, positional[0], positional.slice(1), flags);
+      await cmdWait(connection, positional[0], positional.slice(1), flags, options.signal);
       return;
     case "config":
       cmdConfig(createCliConfigStorage(dataDir), positional[0], positional.slice(1), flags);

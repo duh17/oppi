@@ -118,4 +118,61 @@ describe("canonical CLI runner", () => {
       exit.mockRestore();
     }
   });
+
+  it("rejects an in-flight session wait promptly when its AbortSignal is triggered", async () => {
+    const controller = new AbortController();
+    let resolveInFlight!: (value: unknown) => void;
+    let rejectInFlight!: (reason?: unknown) => void;
+    const inFlight = new Promise<unknown>((resolve, reject) => {
+      resolveInFlight = resolve;
+      rejectInFlight = reject;
+    });
+    request.mockImplementation(async (_storage, _path, options) => {
+      const onAbort = (): void => {
+        rejectInFlight(Object.assign(new Error("Operation aborted"), { name: "AbortError" }));
+      };
+      options?.signal?.addEventListener("abort", onAbort, { once: true });
+      try {
+        return (await inFlight) as never;
+      } finally {
+        options?.signal?.removeEventListener("abort", onAbort);
+      }
+    });
+
+    const cliPromise = runCli(
+      ["session", "wait", "sess-1", "--for", "idle", "--poll", "1h", "--timeout", "1h"],
+      {
+        dataDir: "/tmp/oppi-runner-cancellation-test",
+        captureHuman: true,
+        forceJson: true,
+        signal: controller.signal,
+      },
+    );
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+    controller.abort();
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // Red before the fix: the signal never reached the pending API call, so this race returned
+      // "pending" instead of the single AbortError rejection asserted below.
+      const settled = await Promise.race([
+        cliPromise.then(
+          () => ({ state: "resolved" as const }),
+          (error: unknown) => ({ state: "rejected" as const, error }),
+        ),
+        new Promise<"pending">((resolve) => {
+          timeout = setTimeout(() => resolve("pending"), 100);
+        }),
+      ]);
+      expect(settled).toEqual({
+        state: "rejected",
+        error: expect.objectContaining({ name: "AbortError" }),
+      });
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+      resolveInFlight({ session: { status: "ready" }, events: [], currentSeq: 1 });
+      await cliPromise.catch(() => undefined);
+    }
+  });
 });

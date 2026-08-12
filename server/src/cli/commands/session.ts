@@ -4,6 +4,7 @@ import * as c from "../../ansi.js";
 import type { Session } from "../../types.js";
 import {
   localApiRequest,
+  throwIfAborted,
   type LocalApiConnection,
   type LocalApiRequestOptions,
 } from "../local-api-client.js";
@@ -58,6 +59,8 @@ type SessionCliOutput = (data: Record<string, unknown>, human: () => void) => vo
 export interface SessionCliCallerContext {
   /** Immutable for one in-process command; shell callers continue using the environment fallback. */
   callerSessionId?: string;
+  /** Cancels long-running in-process session commands such as wait/watch polling. */
+  signal?: AbortSignal;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -76,7 +79,7 @@ export async function cmdSession(
   const mode = requestedMode === "start" ? "create" : requestedMode;
   const jsonOutput = flags.json === "true";
 
-  const { call, output } = createLocalApiCommandContext(storage, jsonOutput);
+  const { call, output } = createLocalApiCommandContext(storage, jsonOutput, callerContext.signal);
 
   try {
     flags = normalizeSessionFlagAliases(mode, flags);
@@ -206,7 +209,7 @@ export async function cmdSession(
     }
 
     if (mode === "watch") {
-      await watchSessions(positional, flags, jsonOutput, call);
+      await watchSessions(positional, flags, jsonOutput, call, callerContext.signal);
       return;
     }
 
@@ -223,10 +226,12 @@ export async function cmdSession(
           requireAll: false,
           intervalMs: parseDurationMs(flags.poll ?? "1s"),
           timeoutMs: parseDurationMs(flags.timeout ?? "10m"),
+          ...(callerContext.signal ? { signal: callerContext.signal } : {}),
         },
         call,
         () => {},
       );
+      throwIfAborted(callerContext.signal);
       const status = outcome.kind === "session" ? (outcome.status ?? null) : null;
       const reason = outcome.kind === "session" ? outcome.reason : condition;
       const pendingDialogs = outcome.kind === "session" ? outcome.pendingDialogs : undefined;
@@ -477,6 +482,7 @@ export async function cmdSession(
       "Usage: oppi session list|get|create|send|abort|dialogs|respond|watch|wait|read|events|trace|search|inspect|stop|resume|fork|delete|tool-output|trace-page|trace-outline",
     );
   } catch (err: unknown) {
+    if (callerContext.signal?.aborted) throw err;
     handleModelResolvingCliError(err, jsonOutput);
   }
 }
