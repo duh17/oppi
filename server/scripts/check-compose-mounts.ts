@@ -8,7 +8,7 @@
 // Deliberate writable binds are allowlisted below with a reason.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -228,7 +228,9 @@ function run(): void {
   const violations: MountViolation[] = [];
 
   for (const file of listTrackedFiles(repoRoot, ["*compose*.yml", "*compose*.yaml"])) {
-    const content = readFileSync(path.join(repoRoot, file), "utf8");
+    const absolutePath = path.join(repoRoot, file);
+    if (!existsSync(absolutePath)) continue;
+    const content = readFileSync(absolutePath, "utf8");
     violations.push(...findComposeMountViolations(file, content));
   }
 
@@ -237,7 +239,9 @@ function run(): void {
       file !== selfPath && !/(^|\/)tests?\//.test(file) && !/\.(test|spec)\.[cm]?ts$/.test(file),
   );
   for (const file of scriptFiles) {
-    const content = readFileSync(path.join(repoRoot, file), "utf8");
+    const absolutePath = path.join(repoRoot, file);
+    if (!existsSync(absolutePath)) continue;
+    const content = readFileSync(absolutePath, "utf8");
     violations.push(...findScriptMountViolations(file, content));
   }
 

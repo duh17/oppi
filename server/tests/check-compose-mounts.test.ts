@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -135,7 +135,9 @@ describe("repository invariant", () => {
     expect(files.length).toBeGreaterThan(0);
 
     for (const file of files) {
-      const content = readFileSync(join(repoRoot, file), "utf8");
+      const absolutePath = join(repoRoot, file);
+      if (!existsSync(absolutePath)) continue;
+      const content = readFileSync(absolutePath, "utf8");
       expect(findComposeMountViolations(file, content)).toEqual([]);
     }
   });
