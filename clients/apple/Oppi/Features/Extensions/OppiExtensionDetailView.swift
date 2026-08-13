@@ -267,13 +267,13 @@ struct OppiExtensionDetailView: View {
                             .accessibilityLabel("Saving mobile output guide")
                     }
                 }
-                .listRowBackground(theme.bg.primary)
+                .themedListRowBackground()
 
                 Text("Tells agents which links and rich content Oppi can render in new and explicitly reloaded host and sandbox sessions. It does not prescribe a response style. It is independent of Oppi tool availability, does not reload active sessions, and does not affect terminal-owned Mirror sessions.")
                     .font(.footnote)
                     .foregroundStyle(.themeComment)
                     .fixedSize(horizontal: false, vertical: true)
-                    .listRowBackground(theme.bg.primary)
+                    .themedListRowBackground()
 
                 if let error = store.mutationError(for: .oppiMobileOutputGuide, serverId: target.serverId) {
                     Label(
@@ -283,7 +283,7 @@ struct OppiExtensionDetailView: View {
                     .font(.footnote)
                     .foregroundStyle(.themeOrange)
                     .accessibilityIdentifier("extensions.oppi.mobileOutputGuide.error")
-                    .listRowBackground(theme.bg.primary)
+                    .themedListRowBackground()
                 }
             }
         }
