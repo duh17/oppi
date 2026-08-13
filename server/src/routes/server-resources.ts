@@ -1,19 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
-  ServerResourceConflictError,
   ServerResourceNotFoundError,
-  ServerResourceReadOnlyError,
   ServerResourceServiceError,
   ServerResourceValidationError,
 } from "../server-resource-service.js";
-import { MAX_SKILL_FILE_BYTES } from "../skill-files.js";
 import { createLogger } from "../logger.js";
 import type { OppiApprovalPolicy } from "../oppi-extension-settings.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
-const MAX_SKILL_WRITE_REQUEST_BODY_BYTES = MAX_SKILL_FILE_BYTES * 6 + MAX_REQUEST_BODY_BYTES;
 const MAX_CAUSAL_MESSAGE_CHARS = 512;
 const SKILL_ID = /^skill_[a-f0-9]{64}$/;
 const EXTENSION_ID = /^extension_[a-f0-9]{64}$/;
@@ -29,7 +25,6 @@ type ErrorCategory =
   | "not_found"
   | "permission_denied"
   | "rename_failed"
-  | "stale_content"
   | "unknown"
   | "validation"
   | "write_failed";
@@ -47,7 +42,6 @@ const ERROR_DIAGNOSTICS: Record<ErrorCategory, ErrorDiagnostic> = {
   not_found: { category: "not_found", message: "resource was not found" },
   permission_denied: { category: "permission_denied", message: "filesystem access denied" },
   rename_failed: { category: "rename_failed", message: "settings rename failed" },
-  stale_content: { category: "stale_content", message: "skill file revision conflict" },
   unknown: { category: "unknown", message: "server resource operation failed" },
   validation: { category: "validation", message: "request body validation failed" },
   write_failed: { category: "write_failed", message: "settings write failed" },
@@ -134,19 +128,9 @@ function errorForResource(
   cause: unknown,
 ): void {
   const resourceKind = resource.toLowerCase() as Extract<ResourceKind, "skill" | "extension">;
-  if (cause instanceof ServerResourceConflictError) {
-    logRouteRejected(operation, resourceKind, "stale_content");
-    helpers.error(res, 409, "Skill file changed since it was read");
-    return;
-  }
   if (cause instanceof ServerResourceNotFoundError) {
     logRouteRejected(operation, resourceKind, "not_found");
     helpers.error(res, 404, `${resource} not found`);
-    return;
-  }
-  if (cause instanceof ServerResourceReadOnlyError) {
-    logRouteRejected(operation, resourceKind, "permission_denied");
-    helpers.error(res, 403, "Skill is read-only");
     return;
   }
   if (cause instanceof ServerResourceValidationError) {
@@ -181,10 +165,7 @@ function logRouteFailure(
 function logRouteRejected(
   operation: ResourceOperation,
   resourceKind: ResourceKind,
-  category: Extract<
-    ErrorCategory,
-    "conflict" | "not_found" | "permission_denied" | "stale_content" | "validation"
-  >,
+  category: Extract<ErrorCategory, "conflict" | "not_found" | "permission_denied" | "validation">,
 ): void {
   const diagnostic = ERROR_DIAGNOSTICS[category];
   log.info("server_resources.route_rejected", {
@@ -287,57 +268,6 @@ export function createServerResourceRoutes(
       helpers.json(res, await ctx.serverResources.readSkillFileSnapshot(id, filePath));
     } catch (cause: unknown) {
       errorForResource(res, helpers, "Skill", "file", cause);
-    }
-  }
-
-  async function updateSkillFile(
-    id: string,
-    url: URL,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const filePath = hasExactQuery(url, "path");
-    if (!filePath) {
-      error(res, helpers, "path query parameter required");
-      return;
-    }
-
-    let body: Record<string, unknown> | undefined;
-    try {
-      body = await parseJsonObject(
-        req,
-        helpers,
-        ["baseRevision", "content"],
-        MAX_SKILL_WRITE_REQUEST_BODY_BYTES,
-      );
-    } catch {
-      logRouteRejected("mutation", "skill", "validation");
-      error(res, helpers, "Request body must be valid JSON within the skill file size limit");
-      return;
-    }
-    if (
-      !body ||
-      typeof body.content !== "string" ||
-      typeof body.baseRevision !== "string" ||
-      !/^[a-f0-9]{64}$/.test(body.baseRevision) ||
-      Buffer.byteLength(body.content, "utf8") > MAX_SKILL_FILE_BYTES
-    ) {
-      logRouteRejected("mutation", "skill", "validation");
-      error(
-        res,
-        helpers,
-        "Request body must contain content and a valid baseRevision within 1 MiB",
-      );
-      return;
-    }
-
-    try {
-      helpers.json(
-        res,
-        await ctx.serverResources.updateSkillFile(id, filePath, body.content, body.baseRevision),
-      );
-    } catch (cause: unknown) {
-      errorForResource(res, helpers, "Skill", "mutation", cause);
     }
   }
 
@@ -520,11 +450,10 @@ export function createServerResourceRoutes(
     }
 
     const skillFileMatch = path.match(/^\/server\/resources\/skills\/([^/]+)\/file$/);
-    if (skillFileMatch && (method === "GET" || method === "PUT")) {
+    if (skillFileMatch && method === "GET") {
       const id = decodeSegment(skillFileMatch[1]);
       if (!id || !SKILL_ID.test(id)) error(res, helpers, "Invalid skill identifier");
-      else if (method === "GET") await skillFile(id, url, res);
-      else await updateSkillFile(id, url, req, res);
+      else await skillFile(id, url, res);
       return true;
     }
     const skillEnabledMatch = path.match(/^\/server\/resources\/skills\/([^/]+)\/enabled$/);

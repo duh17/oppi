@@ -141,7 +141,6 @@ const KNOWN_COMMANDS = new Set([
   "serve",
   "server",
   "session",
-  "skill",
   "start",
   "status",
   "token",
@@ -192,7 +191,6 @@ const KNOWN_ACTIONS = new Set([
   "trace-page",
   "uninstall",
   "update",
-  "update-file",
   "validate",
   "wait",
   "watch",
@@ -221,7 +219,6 @@ const MUTATING_ACTIONS = new Set([
   "stop",
   "uninstall",
   "update",
-  "update-file",
 ]);
 const READ_ACTIONS = new Set([
   "changes",

@@ -84,12 +84,22 @@ describe("canonical Oppi command preparation", () => {
     ["session", "send", "sess-1", "--text", "@-"],
     ["agent", "update", "agent-1", "--definition", "agent.json"],
     ["schedule", "update", "sch-1", "--definition", "schedule.json"],
-    ["skill", "update-file", "skill-1", "--content-json", "@-"],
   ])("rejects mutable mutation body input %s", (...args) => {
     expect(prepareOppiCommand(args)).toMatchObject({
       ok: false,
       reason: expect.stringMatching(/inline|stdin|file/i),
     });
+  });
+
+  it("rejects the removed Skill command family", () => {
+    for (const args of [
+      ["skill", "list"],
+      ["skill", "get", "skill-1"],
+      ["skill", "file", "skill-1", "--path", "SKILL.md"],
+      ["skill", "update-file", "skill-1", "--path", "SKILL.md"],
+    ]) {
+      expect(prepareOppiCommand(args)).toMatchObject({ ok: false });
+    }
   });
 
   it("rejects NUL characters that cannot exist in shell arguments", () => {

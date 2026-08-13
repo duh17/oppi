@@ -33,11 +33,6 @@ import {
   listSkillFiles,
   readSkillFile as readContainedSkillFile,
   readSkillFileSnapshot as readContainedSkillFileSnapshot,
-  SkillFileConflictError,
-  SkillFileInvalidTextError,
-  SkillFileNotFoundError,
-  SkillFileTooLargeError,
-  writeSkillFile as writeContainedSkillFile,
 } from "./skill-files.js";
 
 const MAX_MESSAGE_LENGTH = 2048;
@@ -150,24 +145,10 @@ export class ServerResourceNotFoundError extends ServerResourceServiceError {
   }
 }
 
-export class ServerResourceReadOnlyError extends ServerResourceServiceError {
-  constructor() {
-    super("Skill is read-only");
-    this.name = "ServerResourceReadOnlyError";
-  }
-}
-
 export class ServerResourceValidationError extends ServerResourceServiceError {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ServerResourceValidationError";
-  }
-}
-
-export class ServerResourceConflictError extends ServerResourceServiceError {
-  constructor(options?: ErrorOptions) {
-    super("Skill file changed since it was read", options);
-    this.name = "ServerResourceConflictError";
   }
 }
 
@@ -240,39 +221,6 @@ export class ServerResourceService {
     } catch {
       throw new ServerResourceNotFoundError("skill file");
     }
-  }
-
-  async updateSkillFile(
-    id: string,
-    path: string,
-    content: string,
-    baseRevision: string,
-  ): Promise<{ content: string; revision: string }> {
-    return this.withMutationLock(async () => {
-      const entry = (await this.buildSkillCatalog(await this.resolveContext())).find(
-        (candidate) => candidate.summary.id === id,
-      );
-      if (!entry) throw new ServerResourceNotFoundError("skill");
-      if (!entry.summary.editable || entry.resource.metadata.origin !== "top-level") {
-        throw new ServerResourceReadOnlyError();
-      }
-      try {
-        return writeContainedSkillFile(entry.baseDir, path, content, baseRevision);
-      } catch (error: unknown) {
-        if (error instanceof SkillFileNotFoundError) {
-          throw new ServerResourceNotFoundError("skill file");
-        }
-        if (error instanceof SkillFileConflictError) {
-          throw new ServerResourceConflictError({ cause: error });
-        }
-        if (error instanceof SkillFileTooLargeError || error instanceof SkillFileInvalidTextError) {
-          throw new ServerResourceValidationError(error.message, { cause: error });
-        }
-        throw new ServerResourceServiceError(`Skill file write failed: ${messageFrom(error)}`, {
-          cause: error,
-        });
-      }
-    });
   }
 
   async getExtensionDetail(id: string): Promise<ServerExtensionDetail> {

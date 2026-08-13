@@ -27,16 +27,16 @@ function makeDataDir(): string {
 }
 
 describe("shipped Oppi agent definition", () => {
-  it("ships the managed Oppi, ask, and read tools with a minimal prompt", async () => {
+  it("ships exactly Oppi, ask, and Pi's stock read/edit tools with a minimal prompt", async () => {
     const { buildDefaultAgentSystemPrompt } = await import("../src/default-agent.js");
-    expect(DEFAULT_AGENT_TOOL_NAMES).toEqual(["oppi", "ask", "read"]);
+    expect(DEFAULT_AGENT_TOOL_NAMES).toEqual(["oppi", "ask", "read", "edit"]);
     expect(DEFAULT_AGENT_DEFINITION).toMatchObject({
       name: "Oppi",
       description:
         "Manage Oppi workspaces, Agents, Skills, schedules, and sessions through the built-in oppi tool. Destructive actions need approval.",
       sessionDefaults: {
         noTools: "builtin",
-        tools: ["oppi", "ask", "read"],
+        tools: ["oppi", "ask", "read", "edit"],
       },
     });
     const prompt = buildDefaultAgentSystemPrompt({ docsPath: "/tmp/oppi-docs" });
@@ -44,6 +44,8 @@ describe("shipped Oppi agent definition", () => {
     expect(prompt).toContain("You are Oppi, the control agent");
     expect(prompt).toContain("oppi help");
     expect(prompt).toContain("- read:");
+    expect(prompt).toContain("- edit:");
+    expect(prompt).not.toContain("packaged Oppi docs only");
     expect(prompt).not.toContain("OPERATING RULES");
     expect(prompt.length).toBeLessThan(1500);
   });
@@ -76,7 +78,7 @@ describe("shipped Oppi agent definition", () => {
           model: "openai-codex/gpt-5.5",
           thinkingLevel: "high",
           noTools: "builtin",
-          tools: ["oppi", "ask", "read"],
+          tools: ["oppi", "ask", "read", "edit"],
         },
       },
     });
@@ -115,13 +117,13 @@ describe("shipped Oppi agent definition", () => {
             model: "openai-codex/gpt-5.5",
             thinkingLevel: "high",
             noTools: "builtin",
-            tools: ["oppi", "ask", "read"],
+            tools: ["oppi", "ask", "read", "edit"],
           },
         },
       });
       expect(store.getAgentVersion(DEFAULT_AGENT_ID, 3)?.definition.sessionDefaults).toEqual({
         noTools: "builtin",
-        tools: ["oppi", "ask", "read"],
+        tools: ["oppi", "ask", "read", "edit"],
         model: "openai-codex/gpt-5.5",
         thinkingLevel: "high",
       });

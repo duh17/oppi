@@ -208,7 +208,7 @@ describe("SessionStartCoordinator status persistence", () => {
       expect.objectContaining({
         agentDefinition: expect.objectContaining({
           resources: { noContextFiles: true },
-          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask", "read"] },
+          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask", "read", "edit"] },
         }),
       }),
     );

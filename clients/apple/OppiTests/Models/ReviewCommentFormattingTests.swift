@@ -118,6 +118,46 @@ struct ReviewCommentFormattingTests {
         #expect(!block.contains("*** Update File"))
     }
 
+    @Test func reviewBlockKeepsOrdinaryWorkspacePathNormalizationUnlessVerbatimIsRequested() {
+        let absolutePath = "/Users/chenda/workspace/oppi/.pi/skills/review/references/checklist.md"
+        let comment = ReviewComment(
+            id: "c1",
+            workspaceId: "w1",
+            sessionId: "s1",
+            turnId: nil,
+            author: .human,
+            status: .staged,
+            severity: nil,
+            body: "Tighten this checklist.",
+            attachments: nil,
+            reference: ReviewCommentReference(
+                source: .file,
+                label: nil,
+                path: absolutePath,
+                side: nil,
+                startLine: 8,
+                endLine: 8,
+                selectedText: "Run focused checks.",
+                toolCallId: nil,
+                timelineItemId: nil,
+                url: nil
+            ),
+            createdAt: 1,
+            updatedAt: 1,
+            sentAt: nil
+        )
+
+        let ordinaryBlock = ReviewCommentStore.reviewBlock(for: [comment])
+        let skillBlock = ReviewCommentStore.reviewBlock(
+            for: [comment],
+            pathFormatting: .verbatim
+        )
+
+        #expect(ordinaryBlock.contains("**Where:** `.pi/skills/review/references/checklist.md`:8 (file)"))
+        #expect(!ordinaryBlock.contains("`\(absolutePath)`:8"))
+        #expect(skillBlock.contains("**Where:** `\(absolutePath)`:8 (file)"))
+    }
+
     @Test func reviewBlockIgnoresAlreadySentComments() {
         let sent = ReviewComment(
             id: "c1",

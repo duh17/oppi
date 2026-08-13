@@ -409,7 +409,7 @@ describe("SessionLifecycleService", () => {
           agentId: "oppi-default-agent",
           agentVersion: 1,
           target: { server: true, displayCwd: "Oppi Control" },
-          tools: { allowed: ["oppi", "ask", "read"], noTools: "builtin" },
+          tools: { allowed: ["oppi", "ask", "read", "edit"], noTools: "builtin" },
         },
       });
       expect(startSession).toHaveBeenCalledWith("control-1", undefined);

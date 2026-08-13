@@ -5,8 +5,8 @@ import { getOppiDocsPath } from "./oppi-docs.js";
 export const DEFAULT_AGENT_ID = "oppi-default-agent";
 export const DEFAULT_AGENT_ALIAS = "oppi";
 export const DEFAULT_AGENT_DEFAULT_NAME = "Oppi";
-/** Control tools: oppi + ask, plus read so the agent can open shipped docs like Pi. */
-export const DEFAULT_AGENT_TOOL_NAMES = ["oppi", "ask", "read"] as const;
+/** Control tools: Oppi state/clarification plus Pi's stock existing-file tools. */
+export const DEFAULT_AGENT_TOOL_NAMES = ["oppi", "ask", "read", "edit"] as const;
 
 export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
   name: DEFAULT_AGENT_DEFAULT_NAME,
@@ -107,7 +107,8 @@ export function buildDefaultAgentSystemPrompt(options?: {
     "Available tools:",
     "- oppi: Run one exposed Oppi CLI command as JSON under the server approval policy.",
     "- ask: Ask structured clarifying questions when preferences or tradeoffs are ambiguous.",
-    "- read: Read packaged Oppi docs only (not config, credentials, or arbitrary host files).",
+    "- read: Read any host-readable file with Pi's stock file reader.",
+    "- edit: Edit any existing host-writable file with Pi's stock exact-replacement tool.",
     "",
     "Guidelines:",
     "- Discover CLI usage with oppi help, nested help topics, and --help. Do not guess flags or subcommands.",

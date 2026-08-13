@@ -72,8 +72,8 @@ describe("Oppi agent Oppi tool", () => {
 
   it("always registers oppi and ask and uses the saved read-only policy", async () => {
     const tools = registeredTools("readOnly");
-    // Control identity registers oppi, docs-only read, and ask (no host builtins).
-    expect([...tools.keys()]).toEqual(["oppi", "read", "ask"]);
+    // Stock read/edit are created by the SDK; this factory registers only Oppi and ask.
+    expect([...tools.keys()]).toEqual(["oppi", "ask"]);
 
     const confirm = vi.fn(async () => true);
     const oppi = tools.get("oppi");

@@ -3,7 +3,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -14,7 +13,7 @@ import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ServerResourceService } from "../src/server-resource-service.js";
-import { readSkillFileSnapshot, writeSkillFile } from "../src/skill-files.js";
+import { readSkillFileSnapshot } from "../src/skill-files.js";
 import { OppiExtensionSettingsStore } from "../src/storage/oppi-extension-settings-store.js";
 
 interface Fixture {
@@ -97,23 +96,6 @@ describe("contained Skill file race safety", () => {
     expect(readFileSync(outside, "utf8")).toBe("secret\n");
   });
 
-  it("propagates directory durability failures instead of reporting success", () => {
-    const fixture = makeFixture();
-    const skillDir = writeSkill(join(fixture.agentDir, "skills"), "sync-failure");
-    const notesPath = join(skillDir, "notes.md");
-    writeFileSync(notesPath, "first\n");
-    const snapshot = readSkillFileSnapshot(skillDir, "notes.md");
-
-    expect(() =>
-      writeSkillFile(skillDir, "notes.md", "session edit\n", snapshot.revision, {
-        beforeDirectorySync: () => {
-          throw new Error("simulated directory fsync failure");
-        },
-      }),
-    ).toThrow(/directory fsync failure/i);
-    expect(readFileSync(notesPath, "utf8")).toBe("session edit\n");
-  });
-
   it("rejects an intermediate parent symlink substituted before descriptor open", () => {
     const fixture = makeFixture();
     const skillDir = writeSkill(join(fixture.agentDir, "skills"), "parent-race");
@@ -132,40 +114,6 @@ describe("contained Skill file race safety", () => {
         },
       }),
     ).toThrow(/not found/i);
-  });
-
-  it("detects an atomic local replacement immediately before its final replace check", () => {
-    const fixture = makeFixture();
-    const skillDir = writeSkill(join(fixture.agentDir, "skills"), "atomic-race");
-    const notesPath = join(skillDir, "notes.md");
-    const localTempPath = join(skillDir, ".local-notes.tmp");
-    writeFileSync(notesPath, "first\n");
-    const snapshot = readSkillFileSnapshot(skillDir, "notes.md");
-
-    expect(() =>
-      writeSkillFile(skillDir, "notes.md", "session edit\n", snapshot.revision, {
-        beforeAtomicReplace: () => {
-          writeFileSync(localTempPath, "local atomic edit\n");
-          renameSync(localTempPath, notesPath);
-        },
-      }),
-    ).toThrow(/changed since it was read/i);
-    expect(readFileSync(notesPath, "utf8")).toBe("local atomic edit\n");
-  });
-
-  it("detects an edit made after the replacement temp file is fsynced", () => {
-    const fixture = makeFixture();
-    const skillDir = writeSkill(join(fixture.agentDir, "skills"), "write-race");
-    const notesPath = join(skillDir, "notes.md");
-    writeFileSync(notesPath, "first\n");
-    const snapshot = readSkillFileSnapshot(skillDir, "notes.md");
-
-    expect(() =>
-      writeSkillFile(skillDir, "notes.md", "session edit\n", snapshot.revision, {
-        beforeRenameValidation: () => writeFileSync(notesPath, "local edit\n"),
-      }),
-    ).toThrow(/changed since it was read/i);
-    expect(readFileSync(notesPath, "utf8")).toBe("local edit\n");
   });
 });
 
@@ -490,10 +438,9 @@ describe("ServerResourceService mutations and skill details", () => {
     await expect(service.readSkillFile(summary!.id, "../secret.txt")).rejects.toThrow(/not found/i);
   });
 
-  it("marks only top-level skills editable and safely replaces existing skill files", async () => {
+  it("marks only top-level non-package Skills editable", async () => {
     const fixture = makeFixture();
-    const localSkillDir = writeSkill(join(fixture.agentDir, "skills"), "editable-skill");
-    writeFileSync(join(localSkillDir, "notes.md"), "before\n");
+    writeSkill(join(fixture.agentDir, "skills"), "editable-skill");
 
     const packageDir = join(fixture.root, "resource-package");
     writeSkill(join(packageDir, "skills"), "package-skill");
@@ -510,61 +457,12 @@ describe("ServerResourceService mutations and skill details", () => {
       JSON.stringify({ packages: [packageDir] }),
     );
 
-    const service = makeService(fixture);
-    const catalog = await service.listSkills();
-    const local = catalog.skills.find((skill) => skill.name === "editable-skill");
-    const packaged = catalog.skills.find((skill) => skill.name === "package-skill");
-
-    expect(local?.editable).toBe(true);
-    expect(packaged?.editable).toBe(false);
-    const localSnapshot = await service.readSkillFileSnapshot(local!.id, "notes.md");
-    await expect(
-      service.updateSkillFile(local!.id, "notes.md", "after\n", localSnapshot.revision),
-    ).resolves.toEqual({
-      content: "after\n",
-      revision: expect.stringMatching(/^[a-f0-9]{64}$/),
-    });
-    expect(readFileSync(join(localSkillDir, "notes.md"), "utf8")).toBe("after\n");
-    await expect(
-      service.updateSkillFile(local!.id, "../outside.md", "bad", localSnapshot.revision),
-    ).rejects.toThrow(/not found/i);
-    await expect(
-      service.updateSkillFile(packaged!.id, "SKILL.md", "bad", localSnapshot.revision),
-    ).rejects.toThrow(/read-only/i);
+    const skills = (await makeService(fixture).listSkills()).skills;
+    expect(skills.find((skill) => skill.name === "editable-skill")?.editable).toBe(true);
+    expect(skills.find((skill) => skill.name === "package-skill")?.editable).toBe(false);
   });
 
-  it("refuses symlink targets and oversized or invalid UTF-8 skill file replacements", async () => {
-    const fixture = makeFixture();
-    const skillDir = writeSkill(join(fixture.agentDir, "skills"), "safe-write");
-    const outside = join(fixture.root, "outside.md");
-    writeFileSync(outside, "outside\n");
-    symlinkSync(outside, join(skillDir, "linked.md"));
-
-    const service = makeService(fixture);
-    const summary = (await service.listSkills()).skills.find(
-      (skill) => skill.name === "safe-write",
-    );
-    expect(summary).toBeDefined();
-
-    const snapshot = await service.readSkillFileSnapshot(summary!.id, "SKILL.md");
-    await expect(
-      service.updateSkillFile(summary!.id, "linked.md", "bad", snapshot.revision),
-    ).rejects.toThrow(/not found/i);
-    await expect(
-      service.updateSkillFile(
-        summary!.id,
-        "SKILL.md",
-        "x".repeat(1024 * 1024 + 1),
-        snapshot.revision,
-      ),
-    ).rejects.toThrow(/too large/i);
-    await expect(
-      service.updateSkillFile(summary!.id, "SKILL.md", "\ud800", snapshot.revision),
-    ).rejects.toThrow(/valid Unicode/i);
-    expect(readFileSync(outside, "utf8")).toBe("outside\n");
-  });
-
-  it("keeps a package Skill read-only when a top-level symlink aliases the same canonical path", async () => {
+  it("keeps package Skill metadata read-only when a top-level symlink aliases it", async () => {
     const fixture = makeFixture();
     const packageDir = join(fixture.root, "aliased-package");
     const packagedSkill = writeSkill(join(packageDir, "skills"), "package-skill");
@@ -584,17 +482,12 @@ describe("ServerResourceService mutations and skill details", () => {
     mkdirSync(agentSkills, { recursive: true });
     symlinkSync(packagedSkill, join(agentSkills, "package-alias"));
 
-    const service = makeService(fixture);
-    const matching = (await service.listSkills()).skills.filter(
+    const matching = (await makeService(fixture).listSkills()).skills.filter(
       (skill) => skill.name === "package-skill",
     );
 
     expect(matching).toHaveLength(1);
     expect(matching[0]).toMatchObject({ editable: false, provenance: { kind: "package" } });
-    const snapshot = await service.readSkillFileSnapshot(matching[0]!.id, "SKILL.md");
-    await expect(
-      service.updateSkillFile(matching[0]!.id, "SKILL.md", "# Bypass\n", snapshot.revision),
-    ).rejects.toThrow(/read-only/i);
   });
 
   it("deduplicates a package Extension when a top-level symlink aliases its canonical path", async () => {
@@ -625,25 +518,6 @@ describe("ServerResourceService mutations and skill details", () => {
 
     expect(listed).toHaveLength(1);
     expect(listed[0]?.id).toMatch(/^extension_[a-f0-9]{64}$/);
-  });
-
-  it("rejects a stale file revision instead of overwriting an intervening local edit", async () => {
-    const fixture = makeFixture();
-    const skillDir = writeSkill(join(fixture.agentDir, "skills"), "conflict-skill");
-    const notesPath = join(skillDir, "notes.md");
-    writeFileSync(notesPath, "first\n");
-
-    const service = makeService(fixture);
-    const summary = (await service.listSkills()).skills.find(
-      (skill) => skill.name === "conflict-skill",
-    );
-    const stale = await service.readSkillFileSnapshot(summary!.id, "notes.md");
-    writeFileSync(notesPath, "local edit\n");
-
-    await expect(
-      service.updateSkillFile(summary!.id, "notes.md", "session edit\n", stale.revision),
-    ).rejects.toThrow(/changed since it was read/i);
-    expect(readFileSync(notesPath, "utf8")).toBe("local edit\n");
   });
 
   it("uses kind plus canonical path for opaque IDs", async () => {

@@ -1455,21 +1455,29 @@ struct ControlSessionStarterPromptTests {
         #expect(prompt.contains("User request:\nCreate a careful release reviewer."))
     }
 
-    @Test func SkillRevisionStarterPromptUsesOnlyRestrictedInlineSkillCommands() {
+    @Test func skillRevisionStarterPromptUsesStockReadEditAndAbsoluteHostPath() {
         let prompt = ControlSessionStarterPrompt.make(
             domain: .skills,
             intent: .revise,
             targetId: "skill_abc",
             targetName: "review",
+            targetPath: "/Users/chen/.pi/agent/skills/review/SKILL.md",
             userRequest: "Apply my staged comments."
         )
 
         #expect(prompt.contains("Canonical target ID: skill_abc"))
-        #expect(prompt.contains("`oppi skill`"))
-        #expect(prompt.contains("`oppi skill update-file --base-revision <revision> --content-json <json-string>`"))
-        #expect(prompt.contains("If a revision conflicts, re-read the file"))
-        #expect(prompt.contains("package Skills are read-only"))
-        #expect(prompt.contains("Do not use filesystem tools or temporary files"))
+        #expect(prompt.contains("Selected existing host file: /Users/chen/.pi/agent/skills/review/SKILL.md"))
+        #expect(prompt.contains("selected launch file"))
+        #expect(prompt.contains("Staged review comments carry absolute source paths"))
+        #expect(prompt.contains("use each comment’s path when it refers to another file"))
+        #expect(prompt.contains("selected launch file or the absolute paths carried by staged review comments"))
+        #expect(prompt.contains("stock `read`"))
+        #expect(prompt.contains("stock `edit`"))
+        #expect(prompt.contains("Do not use `write`, `bash`, or temporary files"))
+        #expect(!prompt.contains("`oppi skill`"))
+        #expect(!prompt.contains("base-revision"))
+        #expect(!prompt.contains("a different path"))
+        #expect(!prompt.contains("Do not use filesystem tools or temporary files"))
     }
 
     @Test func revisionPromptIsDeterministicAndUsesCanonicalDefinitionInput() {
@@ -1494,7 +1502,7 @@ struct ControlSessionStarterPromptTests {
         #expect(first.contains("canonical `provider/model`"))
         #expect(first.contains("ask one focused provider question"))
         #expect(first.contains("do not guess"))
-        #expect(first.contains("Do not use filesystem tools or temporary files"))
+        #expect(first.contains("Do not use filesystem tools or temporary files for this task"))
         #expect(first.contains("native confirmation"))
         #expect(first.contains("Do not ask the user to type approve"))
         #expect(!first.contains("wait for explicit approval"))

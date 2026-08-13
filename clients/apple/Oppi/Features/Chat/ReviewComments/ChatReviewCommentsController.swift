@@ -21,8 +21,11 @@ final class ChatReviewCommentsController {
         store.load(workspaceId: localScopeId, sessionId: sessionId)
     }
 
-    func appendReviewBlock(to text: String) -> String {
-        store.appendReviewBlock(to: text)
+    func appendReviewBlock(
+        to text: String,
+        pathFormatting: ReviewCommentPathFormatting = .normalizedDisplay
+    ) -> String {
+        store.appendReviewBlock(to: text, pathFormatting: pathFormatting)
     }
 
     @discardableResult

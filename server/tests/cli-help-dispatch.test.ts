@@ -77,7 +77,6 @@ const MUTATING_AND_LIFECYCLE_HELP_PATHS = [
   ["agent", "create"],
   ["agent", "update"],
   ["agent", "archive"],
-  ["skill", "update-file"],
 ] as const;
 
 beforeEach(() => {
@@ -175,8 +174,16 @@ describe("centralized nested-help dispatch", () => {
     expect(lifecycle.installService, args.join(" ")).not.toHaveBeenCalled();
   });
 
-  it.each(["changes", "diff"] as const)("does not discover removed session %s help", (command) => {
-    expect(resolveHelpTopic(["session", command])).toBeUndefined();
+  it.each([
+    ["session", "changes"],
+    ["session", "diff"],
+    ["skill"],
+    ["skill", "list"],
+    ["skill", "get"],
+    ["skill", "file"],
+    ["skill", "update-file"],
+  ])("does not discover removed %s help", (path) => {
+    expect(resolveHelpTopic(path)).toBeUndefined();
   });
 
   it("handles unknown help topics deterministically without dispatch", async () => {
@@ -260,8 +267,8 @@ describe("centralized nested-help dispatch", () => {
       }
     }
 
-    expect(allPaths.length).toBe(82);
-    expect(paths.length).toBe(81);
+    expect(allPaths.length).toBe(77);
+    expect(paths.length).toBe(76);
     expect(app.runCli).not.toHaveBeenCalled();
     expect(lifecycle.installService).not.toHaveBeenCalled();
     expect(lifecycle.restartService).not.toHaveBeenCalled();

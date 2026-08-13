@@ -3,6 +3,7 @@ import {
   lstatSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -273,7 +274,32 @@ describe("SdkBackend control sessions", () => {
         onEnd: vi.fn(),
       });
       expect(first.session.sessionManager.getCwd()).toBe(controlCwd);
-      expect(first.session.getActiveToolNames()).toEqual(["oppi", "ask", "read"]);
+      expect(first.session.getActiveToolNames()).toEqual(["oppi", "ask", "read", "edit"]);
+      expect(first.session.getToolDefinition("write")).toBeUndefined();
+      expect(first.session.getToolDefinition("bash")).toBeUndefined();
+
+      const selectedHostFile = join(dataDir, "selected-skill.md");
+      writeFileSync(selectedHostFile, "before\n");
+      const read = first.session.getToolDefinition("read");
+      const edit = first.session.getToolDefinition("edit");
+      const readResult = await read!.execute(
+        "stock-read",
+        { path: selectedHostFile },
+        undefined,
+        undefined,
+        {} as never,
+      );
+      expect(readResult.content).toEqual([
+        expect.objectContaining({ type: "text", text: expect.stringContaining("before") }),
+      ]);
+      await edit!.execute(
+        "stock-edit",
+        { path: selectedHostFile, edits: [{ oldText: "before", newText: "after" }] },
+        undefined,
+        undefined,
+        {} as never,
+      );
+      expect(readFileSync(selectedHostFile, "utf8")).toBe("after\n");
       expect(session.piSessionFile).toBeDefined();
       expect(session.piSessionFile).not.toContain("Oppi Control");
       expect(resolveSdkSessionDisplayCwd(undefined, session, { dataDir })).toBe("Oppi Control");
@@ -733,7 +759,12 @@ describe("SdkBackend host extensions", () => {
     const getOppiExtensionSettings = vi.fn(() => snapshot);
     const backend = await SdkBackend.create({
       session: makeSession({ ephemeral: true }),
-      workspace: { id: "w1", name: "Mobile Guide Reload", runtime: "host", hostMount: cwd } as Workspace,
+      workspace: {
+        id: "w1",
+        name: "Mobile Guide Reload",
+        runtime: "host",
+        hostMount: cwd,
+      } as Workspace,
       getOppiExtensionSettings,
       onEvent: vi.fn(),
       onEnd: vi.fn(),
@@ -1279,7 +1310,7 @@ export default function (pi) {
 });
 
 describe("SdkBackend saved Agent definitions", () => {
-  it("registers only the managed Oppi, ask, and read tools for the Oppi agent runtime", async () => {
+  it("registers only managed Oppi/ask plus stock read/edit for the Oppi agent runtime", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-default-agent-runtime-"));
     mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
     writeFileSync(
@@ -1328,7 +1359,9 @@ describe("SdkBackend saved Agent definitions", () => {
         ),
       ).toBe(true);
       expect(extensions.some((ext) => ext.tools.has("extra_tool"))).toBe(false);
-      expect(backend.session.getActiveToolNames()).toEqual(["oppi", "ask", "read"]);
+      expect(backend.session.getActiveToolNames()).toEqual(["oppi", "ask", "read", "edit"]);
+      expect(backend.session.getToolDefinition("write")).toBeUndefined();
+      expect(backend.session.getToolDefinition("bash")).toBeUndefined();
       expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
 
       const confirm = vi.fn(async () => false);

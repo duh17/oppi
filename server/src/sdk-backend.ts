@@ -1090,6 +1090,10 @@ export class SdkBackend {
         }
       }
 
+      const controlTools = controlToolRuntime
+        ? [createReadToolDefinition(sessionCwd), createEditToolDefinition(sessionCwd)]
+        : undefined;
+
       // Sandbox mode: create tools backed by Gondolin micro-VM
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let sandboxTools: any[] | undefined;
@@ -1182,7 +1186,7 @@ export class SdkBackend {
         settingsManager,
         resourceLoader: loader,
         sessionStartEvent,
-        ...(sandboxTools ? { customTools: sandboxTools } : {}),
+        ...(controlTools || sandboxTools ? { customTools: controlTools ?? sandboxTools } : {}),
         ...(effectiveToolPolicy.noTools ? { noTools: effectiveToolPolicy.noTools } : {}),
         ...(effectiveToolPolicy.allowed ? { tools: effectiveToolPolicy.allowed } : {}),
         ...(effectiveToolPolicy.excluded ? { excludeTools: effectiveToolPolicy.excluded } : {}),

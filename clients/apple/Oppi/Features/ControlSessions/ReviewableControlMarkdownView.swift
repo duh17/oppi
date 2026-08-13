@@ -267,6 +267,7 @@ struct ReviewableControlMarkdownView: View {
             intent: .revise,
             targetId: targetId,
             targetName: targetName,
+            targetPath: domain == .skills ? sourcePath : nil,
             userRequest: "Inspect the current definition and wait for my staged review comments before proposing changes."
         )
     }

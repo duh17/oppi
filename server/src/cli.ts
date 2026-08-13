@@ -1115,7 +1115,6 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
     case "worktree":
     case "session":
     case "schedule":
-    case "skill":
     case "wait":
       await runCli(invocationArgs);
       break;

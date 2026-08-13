@@ -244,6 +244,16 @@ struct ChatView: View {
         }
     }
 
+    static func reviewCommentPathFormattingPolicy(
+        controlDomain: ControlSessionDomain?
+    ) -> ReviewCommentPathFormatting {
+        controlDomain == .skills ? .verbatim : .normalizedDisplay
+    }
+
+    private var reviewCommentPathFormatting: ReviewCommentPathFormatting {
+        Self.reviewCommentPathFormattingPolicy(controlDomain: session?.control?.domain)
+    }
+
     private var composerDraftKey: ComposerDraftKey? {
         guard let serverID = connection.currentServerId ?? sessionStore.activeServerId,
               let workspaceID = focusedRouteScope?.composerDraftScopeID else {
@@ -1643,7 +1653,10 @@ struct ChatView: View {
         let originalPendingAttachments = pendingAttachments
         let originalPendingRepoPointers = composerDraftController.repoPointers
         let submission = composerDraftController.beginSubmission()
-        let reviewText = reviewComments.appendReviewBlock(to: originalInputText)
+        let reviewText = reviewComments.appendReviewBlock(
+            to: originalInputText,
+            pathFormatting: reviewCommentPathFormatting
+        )
         let text = PendingFileReference.appendReferenceBlock(to: reviewText, files: originalPendingRepoPointers)
         let stagedReviewCommentIds = reviewComments.stagedCommentIds
         let sessionManagerRef = sessionManager

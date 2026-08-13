@@ -50,11 +50,6 @@ const COMMAND_POLICIES: readonly CliCommandPolicy[] = [
   { path: ["agent", "update"], access: "mutation" },
   { path: ["agent", "archive"], access: "destructive" },
 
-  { path: ["skill", "list"], access: "read" },
-  { path: ["skill", "get"], access: "read" },
-  { path: ["skill", "file"], access: "read" },
-  { path: ["skill", "update-file"], access: "mutation" },
-
   { path: ["session", "list"], access: "read" },
   { path: ["session", "get"], access: "read" },
   { path: ["session", "trace-outline"], access: "read" },
@@ -110,7 +105,6 @@ const COMMAND_POLICIES: readonly CliCommandPolicy[] = [
 const POLICY_BY_KEY = new Map(COMMAND_POLICIES.map((policy) => [pathKey(policy.path), policy]));
 const MUTABLE_BODY_FLAGS = new Set([
   "answers",
-  "content-json",
   "definition-json",
   "prompt",
   "system-prompt",

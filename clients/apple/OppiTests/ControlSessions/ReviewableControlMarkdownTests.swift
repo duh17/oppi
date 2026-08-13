@@ -8,6 +8,93 @@ struct ReviewableControlMarkdownTests {
     private enum RetryFailure: Error {
         case simulatedNetworkFailure
     }
+
+    private struct SkillPathCase {
+        let resourcePath: String
+        let selectedPath: String
+        let expected: String
+    }
+
+    @Test func skillFilePresentationResolvesDirectoryTopLevelAndNestedFiles() {
+        let cases = [
+            SkillPathCase(
+                resourcePath: "/Users/chen/.pi/agent/skills/review/SKILL.md",
+                selectedPath: "SKILL.md",
+                expected: "/Users/chen/.pi/agent/skills/review/SKILL.md"
+            ),
+            SkillPathCase(
+                resourcePath: "/Users/chen/.pi/agent/skills/review.md",
+                selectedPath: "review.md",
+                expected: "/Users/chen/.pi/agent/skills/review.md"
+            ),
+            SkillPathCase(
+                resourcePath: "/Users/chen/.pi/agent/skills/review/SKILL.md",
+                selectedPath: "references/checklist.md",
+                expected: "/Users/chen/.pi/agent/skills/review/references/checklist.md"
+            ),
+        ]
+
+        for testCase in cases {
+            #expect(
+                ServerSkillFilePresentation.resolve(
+                    editable: true,
+                    resourcePath: testCase.resourcePath,
+                    selectedFilePath: testCase.selectedPath
+                ) == .editable(hostPath: testCase.expected)
+            )
+        }
+    }
+
+    @Test func skillFilePresentationNormalizesResourcePathsAndRejectsInvalidFilePaths() {
+        #expect(
+            ServerSkillFilePresentation.resolve(
+                editable: true,
+                resourcePath: "/Users/chen/.pi/agent/skills/./review/SKILL.md",
+                selectedFilePath: "references/checklist.md"
+            ) == .editable(
+                hostPath: "/Users/chen/.pi/agent/skills/review/references/checklist.md"
+            )
+        )
+
+        for (resourcePath, selectedPath) in [
+            ("/Users/chen/.pi/agent/skills/review/SKILL.md", "../outside.md"),
+            ("/Users/chen/.pi/agent/skills/review/SKILL.md", "references/../outside.md"),
+            ("/Users/chen/.pi/agent/skills/review/SKILL.md", "/outside.md"),
+            ("/Users/chen/.pi/agent/skills/review/SKILL.md", "refs\\outside.md"),
+            ("relative/review/SKILL.md", "SKILL.md"),
+            ("/Users/chen/.pi/agent/skills/review.md", "other.md"),
+        ] {
+            guard case .editingUnavailable = ServerSkillFilePresentation.resolve(
+                editable: true,
+                resourcePath: resourcePath,
+                selectedFilePath: selectedPath
+            ) else {
+                Issue.record("Expected editing to be unavailable for \(selectedPath)")
+                continue
+            }
+        }
+    }
+
+    @Test func skillFilePresentationExplainsMissingEditablePathButKeepsReadOnlySkillsOrdinary() {
+        let missingPath = ServerSkillFilePresentation.resolve(
+            editable: true,
+            resourcePath: nil,
+            selectedFilePath: "SKILL.md"
+        )
+        guard case .editingUnavailable(let reason) = missingPath else {
+            Issue.record("An editable pathless Skill must explain why editing is unavailable")
+            return
+        }
+        #expect(reason.contains("server did not provide"))
+        #expect(
+            ServerSkillFilePresentation.resolve(
+                editable: false,
+                resourcePath: nil,
+                selectedFilePath: "SKILL.md"
+            ) == .readOnly
+        )
+    }
+
     @Test func targetDraftKeysAreSeparatedByServerDomainAndCanonicalTarget() {
         let firstServer = ReviewableControlMarkdownDraftKey.make(
             serverId: "server-1",
@@ -104,6 +191,78 @@ struct ReviewableControlMarkdownTests {
             sessionId: "control-session-1"
         )
         #expect(destination.stagedComments.map(\.id) == [saved.id])
+    }
+
+    @Test func skillCommentHandoffPreservesAbsolutePathsAndFormatsEveryFileVerbatim() throws {
+        let suiteName = "ReviewableControlMarkdownTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let prefix = "test.skillHandoff"
+        let store = ReviewCommentStore(defaults: defaults, keyPrefix: prefix)
+        let draftSessionId = ReviewableControlMarkdownDraftKey.make(
+            serverId: "server-1",
+            fallbackServerId: nil,
+            domain: .skills,
+            targetId: "skill-review"
+        )
+        let launchPath = "/Users/chenda/workspace/oppi/.pi/skills/review/SKILL.md"
+        let checklistPath = "/Users/chenda/workspace/oppi/.pi/skills/review/references/checklist.md"
+        store.load(workspaceId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
+        for (path, body) in [
+            (launchPath, "Clarify the entry point."),
+            (checklistPath, "Tighten this checklist."),
+        ] {
+            _ = try store.create(
+                workspaceId: ReviewCommentLocalScope.controlDraft,
+                sessionId: draftSessionId,
+                body: body,
+                reference: ReviewCommentReference(
+                    source: .file,
+                    label: nil,
+                    path: path,
+                    side: nil,
+                    startLine: 1,
+                    endLine: 1,
+                    selectedText: "Selected text",
+                    languageHint: "markdown",
+                    toolCallId: nil,
+                    timelineItemId: nil,
+                    url: nil
+                )
+            )
+        }
+
+        let moved = try ControlRevisionCommentTransfer.moveStagedComments(
+            serverId: "server-1",
+            fallbackServerId: nil,
+            domain: .skills,
+            targetId: "skill-review",
+            toSessionId: "control-session-1",
+            comments: ChatReviewCommentsController(store: store)
+        )
+
+        let destinationStore = ReviewCommentStore(defaults: defaults, keyPrefix: prefix)
+        let destination = ChatReviewCommentsController(store: destinationStore)
+        destination.load(
+            localScopeId: SessionRouteScope.control.composerDraftScopeID,
+            sessionId: "control-session-1"
+        )
+        let block = destination.appendReviewBlock(to: "", pathFormatting: .verbatim)
+
+        #expect(moved == 2)
+        #expect(Set(destination.stagedComments.compactMap(\.reference.path)) == Set([
+            launchPath,
+            checklistPath,
+        ]))
+        #expect(block.contains("`\(launchPath)`:1 (file)"))
+        #expect(block.contains("`\(checklistPath)`:1 (file)"))
+        #expect(ChatView.reviewCommentPathFormattingPolicy(controlDomain: .skills) == .verbatim)
+        for domain in [ControlSessionDomain.agents, .schedules, .workspaces] {
+            #expect(ChatView.reviewCommentPathFormattingPolicy(controlDomain: domain) == .normalizedDisplay)
+        }
+        #expect(ChatView.reviewCommentPathFormattingPolicy(controlDomain: nil) == .normalizedDisplay)
     }
 
     @Test func missingServerNavigationKeepsTargetDraftComments() throws {

@@ -22,6 +22,11 @@ enum ReviewCommentLocalScope {
     static let controlDraft = "__oppi_control_draft__"
 }
 
+enum ReviewCommentPathFormatting: Equatable {
+    case normalizedDisplay
+    case verbatim
+}
+
 struct ReviewCommentMoveJournal: Codable, Equatable {
     let sourceKey: String
     let destinationKey: String
@@ -218,8 +223,11 @@ final class ReviewCommentStore {
         return staged.count
     }
 
-    func appendReviewBlock(to text: String) -> String {
-        let block = Self.reviewBlock(for: stagedComments)
+    func appendReviewBlock(
+        to text: String,
+        pathFormatting: ReviewCommentPathFormatting = .normalizedDisplay
+    ) -> String {
+        let block = Self.reviewBlock(for: stagedComments, pathFormatting: pathFormatting)
         guard !block.isEmpty else { return text }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -301,7 +309,10 @@ final class ReviewCommentStore {
         "\(prefix).moveJournal.v1"
     }
 
-    static func reviewBlock(for comments: [ReviewComment]) -> String {
+    static func reviewBlock(
+        for comments: [ReviewComment],
+        pathFormatting: ReviewCommentPathFormatting = .normalizedDisplay
+    ) -> String {
         let staged = comments
             .filter { $0.status == .staged }
             .sorted { $0.createdAt < $1.createdAt }
@@ -317,7 +328,11 @@ final class ReviewCommentStore {
         for (index, comment) in staged.enumerated() {
             lines.append("### Comment \(index + 1)")
             lines.append("")
-            lines.append("**Where:** \(referenceTitle(comment.reference))")
+            let title = referenceTitle(
+                comment.reference,
+                pathFormatting: pathFormatting
+            )
+            lines.append("**Where:** \(title)")
 
             if let selectedText = comment.reference.selectedText,
                !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -344,9 +359,16 @@ final class ReviewCommentStore {
         return lines.joined(separator: "\n")
     }
 
-    private static func referenceTitle(_ reference: ReviewCommentReference) -> String {
+    private static func referenceTitle(
+        _ reference: ReviewCommentReference,
+        pathFormatting: ReviewCommentPathFormatting
+    ) -> String {
         let source = sourceDisplayName(reference.source)
-        if let path = reference.displayPath, !path.isEmpty {
+        let path = switch pathFormatting {
+        case .normalizedDisplay: reference.displayPath
+        case .verbatim: reference.path
+        }
+        if let path, !path.isEmpty {
             var title = "`\(path)`"
             if let start = reference.startLine {
                 if let end = reference.endLine, end != start {

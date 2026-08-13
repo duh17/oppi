@@ -901,7 +901,7 @@ describe("agent routes", () => {
           name: "Oppi",
           description: expect.stringContaining("Manage Oppi"),
           resources: { noContextFiles: true },
-          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask", "read"] },
+          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask", "read", "edit"] },
         },
       });
 
@@ -935,7 +935,7 @@ describe("agent routes", () => {
             model: "openai-codex/gpt-5.5",
             thinkingLevel: "high",
             noTools: "builtin",
-            tools: ["oppi", "ask", "read"],
+            tools: ["oppi", "ask", "read", "edit"],
           },
         },
       });
@@ -984,7 +984,7 @@ describe("agent routes", () => {
         definition: {
           name: "Oppi",
           resources: { noContextFiles: true },
-          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask", "read"] },
+          sessionDefaults: { noTools: "builtin", tools: ["oppi", "ask", "read", "edit"] },
         },
       });
     } finally {
@@ -1026,7 +1026,7 @@ describe("agent routes", () => {
             model: "openai/gpt-5.6",
             thinkingLevel: "high",
             noTools: "builtin",
-            tools: ["oppi", "ask", "read"],
+            tools: ["oppi", "ask", "read", "edit"],
           },
         },
       });

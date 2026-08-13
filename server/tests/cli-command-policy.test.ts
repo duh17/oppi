@@ -14,8 +14,6 @@ describe("CLI agent access policy", () => {
     ["agent get", "read"],
     ["agent update", "mutation"],
     ["agent archive", "destructive"],
-    ["skill file", "read"],
-    ["skill update-file", "mutation"],
     ["session wait", "read"],
     ["session send", "mutation"],
     ["session respond", "alwaysApprove"],
@@ -66,21 +64,25 @@ describe("CLI agent access policy", () => {
     expect(classifyCliAgentCommand(args)).toMatchObject({ ok: false, access: "denied" });
   });
 
-  it.each(["changes", "diff"] as const)(
-    "does not expose removed session %s to agents",
-    (command) => {
-      expect(classifyCliAgentCommand(["session", command, "sess-1"])).toMatchObject({
-        ok: false,
-        access: "denied",
-        path: ["session", command],
-      });
-      expect(classifyCliAgentCommand(["session", command, "--help"])).toMatchObject({
-        ok: false,
-        access: "denied",
-        path: ["session", command],
-      });
-    },
-  );
+  it.each([
+    ["session", "changes", "sess-1"],
+    ["session", "diff", "sess-1"],
+    ["skill", "list"],
+    ["skill", "get", "skill-1"],
+    ["skill", "file", "skill-1", "--path", "SKILL.md"],
+    ["skill", "update-file", "skill-1", "--path", "SKILL.md"],
+  ])("does not expose removed command %s", (...args) => {
+    expect(classifyCliAgentCommand(args)).toMatchObject({
+      ok: false,
+      access: "denied",
+      path: args.slice(0, 2),
+    });
+    expect(classifyCliAgentCommand([...args.slice(0, 2), "--help"])).toMatchObject({
+      ok: false,
+      access: "denied",
+      path: args.slice(0, 2),
+    });
+  });
 
   it("exposes one classification for every allowlisted command policy", () => {
     const policies = listCliAgentCommandPolicies().filter(({ access }) => access !== "denied");

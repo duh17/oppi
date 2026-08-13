@@ -90,6 +90,7 @@ enum ControlSessionStarterPrompt {
         intent: ControlSessionIntent,
         targetId: String? = nil,
         targetName: String? = nil,
+        targetPath: String? = nil,
         workspaceId: String? = nil,
         workspaceName: String? = nil,
         userRequest: String? = nil
@@ -106,13 +107,16 @@ enum ControlSessionStarterPrompt {
         let workspace = workspaceId.map {
             "\nCanonical workspace ID: \($0)\nCanonical workspace name: \(workspaceName ?? "unknown")"
         } ?? ""
+        let selectedHostFile = domain == .skills
+            ? "\nSelected existing host file: \(targetPath ?? "unknown")"
+            : ""
         let workflow = switch domain {
         case .agents:
             "Use the `oppi agent` command family to list and inspect existing definitions, then create or update the proposed definition. If Agent behavior is ambiguous, ask focused questions about responsibilities, boundaries, resources, defaults, and success criteria."
         case .schedules:
             "Use the `oppi schedule` command family to list and inspect existing schedules, then create or update the proposed schedule. If schedule behavior or timing is ambiguous, ask focused questions about the task, target workspace or session, cadence, time zone, safety constraints, and expected output. Every model change must use a canonical `provider/model` ID. If the user omits the provider and inspected server state does not identify it, ask one focused provider question before proposing the change; do not guess. Once the provider is known, name the canonical ID and use `oppi schedule update <id> --model <provider/model>` for a model-only update instead of embedding the model in definition JSON."
         case .skills:
-            "Use the restricted `oppi skill` command family to inspect the canonical Skill and read each current file revision. Update only proposed, existing editable files with `oppi skill update-file --base-revision <revision> --content-json <json-string>`; package Skills are read-only. If a revision conflicts, re-read the file and reconcile instead of overwriting it."
+            "Use stock `read` to inspect the selected launch file. Staged review comments carry absolute source paths; use each comment’s path when it refers to another file, and use stock `edit` for precise replacements in those existing files. Do not use `oppi` to read or update Skill files."
         case .workspaces:
             "Use the `oppi workspace` command family to inspect existing workspaces, then create or update the proposed workspace. Ask focused questions about paths, runtime, and access when they are ambiguous."
         }
@@ -129,11 +133,11 @@ enum ControlSessionStarterPrompt {
         let requestBlock = request.flatMap { $0.isEmpty ? nil : "\n\nUser request:\n\($0)" } ?? ""
 
         return """
-        Help the user \(intent == .create ? "create" : "revise") an Oppi \(subject).\(target)\(workspace)
+        Help the user \(intent == .create ? "create" : "revise") an Oppi \(subject).\(target)\(workspace)\(selectedHostFile)
 
-        Act as Oppi. First inspect the current server state using only approved `oppi` commands. \(workflow) Summarize the exact proposed changes, then immediately invoke the appropriate `oppi` command so its existing native confirmation is the sole approval gate. Do not ask the user to type approve before invoking the command.\(definitionRequirement)
+        \(domain == .skills ? "Act as Oppi. " : "Act as Oppi. First inspect the current server state using only approved `oppi` commands. ")\(workflow)\(domain == .skills ? " Summarize the exact proposed changes before editing." : " Summarize the exact proposed changes, then immediately invoke the appropriate `oppi` command so its existing native confirmation is the sole approval gate. Do not ask the user to type approve before invoking the command.")\(definitionRequirement)
 
-        Do not use filesystem tools or temporary files for this task.\(requestBlock)
+        \(domain == .skills ? "Do not use `write`, `bash`, or temporary files for this task. Do not edit paths other than the selected launch file or the absolute paths carried by staged review comments." : "Do not use filesystem tools or temporary files for this task.")\(requestBlock)
         """
     }
 }
