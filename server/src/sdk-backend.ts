@@ -71,6 +71,7 @@ import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
 import type {
+  ResourceUsageHistoryMarker,
   ResourceUsagePromptEvidence,
   ResourceUsageSkillLoadEvidence,
   ResourceUsageToolEvidence,
@@ -581,7 +582,10 @@ function syncSessionIdentityFromManager(session: Session, manager: PiSessionMana
  */
 export class SdkBackend {
   onResourceUsageCommandInvoked:
-    | ((input: { evidence: ResourceUsagePromptEvidence; producerId: string }) => void)
+    | ((input: {
+        evidence: ResourceUsagePromptEvidence;
+        producerId: string;
+      }) => ResourceUsageHistoryMarker | undefined)
     | undefined;
   onResourceUsageSkillsLoaded:
     | ((load: {
@@ -1322,6 +1326,36 @@ export class SdkBackend {
     };
   }
 
+  resourceUsageEntryIds(): ReadonlySet<string> {
+    return new Set(this.piSession.sessionManager.getEntries().map((entry) => entry.id));
+  }
+
+  appendResourceUsageHistoryMarker(
+    marker: ResourceUsageHistoryMarker | undefined,
+    priorEntryIds?: ReadonlySet<string>,
+  ): void {
+    if (!marker) return;
+    // Persist beside Pi's accepted user entry and record that generated identity.
+    // Replay can then reconcile marker + message without assuming client IDs are
+    // Pi entry IDs or collapsing two identical accepted commands.
+    const knownEntryIds =
+      priorEntryIds ?? new Set(this.piSession.sessionManager.getEntries().map((entry) => entry.id));
+    queueMicrotask(() => {
+      const message = this.piSession.sessionManager
+        .getEntries()
+        .find(
+          (entry) =>
+            !knownEntryIds.has(entry.id) &&
+            entry.type === "message" &&
+            entry.message.role === "user",
+        );
+      this.piSession.sessionManager.appendCustomEntry("oppi-resource-usage", {
+        ...marker,
+        ...(message ? { messageEntryId: message.id } : {}),
+      });
+    });
+  }
+
   resourceUsagePromptEvidence(message: string): ResourceUsagePromptEvidence | undefined {
     const command = message.trimStart().match(/^\/([^\s]+)/)?.[1];
     if (!command) return undefined;
@@ -1384,7 +1418,9 @@ export class SdkBackend {
           const evidence = this.resourceUsageCommandEvidence(invocationName);
           if (producerId && evidence) {
             try {
-              this.onResourceUsageCommandInvoked?.({ evidence, producerId });
+              this.appendResourceUsageHistoryMarker(
+                this.onResourceUsageCommandInvoked?.({ evidence, producerId }),
+              );
             } catch (error) {
               log.warn("sdk.resource_usage_command_capture_failed", {
                 sessionId: this.oppiSessionId,

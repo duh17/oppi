@@ -230,12 +230,15 @@ struct ObservedUsageSection: View {
 
 struct ToolActivitySection: View {
     typealias Request = (ResourceUsageRange, String) async throws -> ResourceUsageResponse
+    typealias BackfillRequest = () async throws -> ResourceUsageBackfillStatus
 
     let requestKey: ResourceUsageRequestKey
     let timezone: String
     let startsExpanded: Bool
     let initialRange: ResourceUsageRange
     let request: Request
+    let backfillStatusRequest: BackfillRequest
+    let startBackfillRequest: BackfillRequest
 
     @State private var selectedRange: ResourceUsageRange
     @State private var response: ResourceUsageResponse?
@@ -245,19 +248,26 @@ struct ToolActivitySection: View {
     @State private var errorRequestID: String?
     @State private var isExpanded: Bool
     @State private var retryGeneration = 0
+    @State private var backfillStatus: ResourceUsageBackfillStatus?
+    @State private var backfillError: String?
+    @State private var isStartingBackfill = false
 
     init(
         requestKey: ResourceUsageRequestKey,
         timezone: String = TimeZone.current.identifier,
         startsExpanded: Bool = false,
         initialRange: ResourceUsageRange = .thirtyDays,
-        request: @escaping Request
+        request: @escaping Request,
+        backfillStatusRequest: @escaping BackfillRequest,
+        startBackfillRequest: @escaping BackfillRequest
     ) {
         self.requestKey = requestKey
         self.timezone = timezone
         self.startsExpanded = startsExpanded
         self.initialRange = initialRange
         self.request = request
+        self.backfillStatusRequest = backfillStatusRequest
+        self.startBackfillRequest = startBackfillRequest
         _selectedRange = State(initialValue: initialRange)
         _isExpanded = State(initialValue: startsExpanded)
     }
@@ -302,6 +312,8 @@ struct ToolActivitySection: View {
                 }
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Tool activity range")
+
+                backfillControl
 
                 if let currentResponse {
                     if currentResponse.recordedActions == 0 {
@@ -351,10 +363,77 @@ struct ToolActivitySection: View {
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .task(id: requestID) {
             guard isExpanded else { return }
-            await load()
+            async let usageLoad: Void = load()
+            async let backfillLoad: Void = loadBackfillStatus()
+            _ = await (usageLoad, backfillLoad)
         }
         .onChange(of: requestKey) { _, _ in resetForNewRequest() }
         .onChange(of: timezone) { _, _ in resetForNewRequest() }
+    }
+
+    @ViewBuilder
+    private var backfillControl: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            switch ResourceUsageBackfillControlPresentation.resolve(
+                status: backfillStatus,
+                error: backfillError,
+                isLoading: backfillStatus == nil && backfillError == nil
+            ) {
+            case .loading:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading usage history status…")
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
+                }
+            case .failure(let message):
+                Label("Unable to load usage history status", systemImage: "exclamationmark.triangle")
+                    .font(.footnote.weight(.medium))
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
+                Button("Retry status") {
+                    Task { await loadBackfillStatus() }
+                }
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("toolActivity.backfill.retryStatus")
+            case .status(let status):
+                if status.status == .running {
+                    ProgressView(
+                        value: Double(status.processedSources),
+                        total: Double(max(status.totalSources, 1))
+                    )
+                    Text("Scanned \(status.processedSources) of \(status.totalSources) sources · \(status.historicalEvents) historical events retained")
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.themeComment)
+                } else if status.status == .partial {
+                    Text(status.lastError ?? "Some sources were not fully indexed.")
+                        .font(.footnote)
+                        .foregroundStyle(.themeOrange)
+                } else if status.status == .complete {
+                    Label("Usage history backfill complete", systemImage: "checkmark.circle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.themeGreen)
+                }
+
+                if status.canStart {
+                    Button(status.actionTitle) {
+                        Task { await startBackfill() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isStartingBackfill)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("toolActivity.backfill.start")
+                }
+                if status.status == .available {
+                    Text("Scans the complete server history snapshot available when started, including imported, discovered, and Mirror traces. Live capture continues for later activity.")
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .accessibilityIdentifier("toolActivity.backfill.status")
     }
 
     private func resetForNewRequest() {
@@ -363,6 +442,45 @@ struct ToolActivitySection: View {
         error = nil
         errorRequestID = nil
         isLoading = false
+        backfillStatus = nil
+        backfillError = nil
+        isStartingBackfill = false
+    }
+
+    private func loadBackfillStatus(initial: ResourceUsageBackfillStatus? = nil) async {
+        backfillError = nil
+        do {
+            var observedRunning = false
+            let terminal = try await ResourceUsageBackfillPolling.poll(
+                initial: initial,
+                request: backfillStatusRequest,
+                onUpdate: { status in
+                    observedRunning = observedRunning || status.status == .running
+                    backfillStatus = status
+                }
+            )
+            if observedRunning, terminal.status != .running { retryGeneration &+= 1 }
+        } catch is CancellationError {
+            return
+        } catch {
+            backfillError = error.localizedDescription
+        }
+    }
+
+    private func startBackfill() async {
+        guard !isStartingBackfill else { return }
+        isStartingBackfill = true
+        defer { isStartingBackfill = false }
+        do {
+            let started = try await startBackfillRequest()
+            backfillStatus = started
+            backfillError = nil
+            if started.status == .running {
+                await loadBackfillStatus(initial: started)
+            }
+        } catch {
+            backfillError = error.localizedDescription
+        }
     }
 
     private func load() async {
@@ -594,6 +712,8 @@ private struct ResourceUsageDetailContent: View {
                 .foregroundStyle(.themeFg)
             Text(ResourceUsagePresentation.recordingStartedLabel(usage))
             Text(usage.capture.status == .active ? "Live capture: Current" : "Live capture: Partial")
+            Text(ResourceUsagePresentation.historyCoverageLabel(usage))
+            Text("Exact actions: \(usage.attribution.exactActions) · Inferred: \(usage.attribution.inferredActions)")
             Text("Retained history: Up to \(usage.retainedHistory.retentionDays) days")
         }
         .font(.caption)

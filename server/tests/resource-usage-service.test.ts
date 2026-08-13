@@ -253,6 +253,29 @@ describe("ResourceUsageService exact live capture", () => {
     await service.close();
   });
 
+  it("returns after shutdown timeout but closes the owned store when the scan settles", async () => {
+    vi.useFakeTimers();
+    const dir = tempDir();
+    const store = new ResourceUsageStore(dir);
+    const service = new ResourceUsageService(store);
+    let settleScan!: () => void;
+    const scanGate = new Promise<void>((resolve) => {
+      settleScan = resolve;
+    });
+    const closeStore = vi.spyOn(store, "close");
+    (service as unknown as { backfillTail: Promise<void> }).backfillTail = scanGate;
+
+    const closing = service.close();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(closing).resolves.toBeUndefined();
+    expect(closeStore).not.toHaveBeenCalled();
+
+    settleScan();
+    await vi.runAllTimersAsync();
+    expect(closeStore).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
   it("persists one recording start timestamp across service restarts", async () => {
     const dir = tempDir();
     const firstNow = Date.UTC(2026, 6, 27, 12);

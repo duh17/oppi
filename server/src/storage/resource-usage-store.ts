@@ -13,6 +13,8 @@ export type ResourceUsageSignal =
   | "command_invocation";
 export type ResourceUsageOwnerKind = "skill" | "extension" | "builtin";
 export type ResourceUsageRuntime = "oppi" | "pi-tui";
+export type ResourceUsageAttribution = "exact" | "inferred";
+export type ResourceUsageOrigin = "live" | "history";
 
 export interface ResourceUsageEvent {
   actionId: string;
@@ -27,6 +29,16 @@ export interface ResourceUsageEvent {
   provider?: string;
   model?: string;
   manifestRevision?: string;
+  attribution?: ResourceUsageAttribution;
+  origin?: ResourceUsageOrigin;
+  /** Opaque SHA-256 identity. Filesystem paths must never enter this store. */
+  sourceKey?: string;
+  /** Transient replay identity removed when an exact persisted marker reconciles inference. */
+  reconcilesActionId?: string;
+  /** Exact marker arrived before Pi's message; persist a source-scoped FIFO reconciliation. */
+  reconcilesFutureInference?: boolean;
+  /** Matching Pi message consumed this exact marker's durable reconciliation. */
+  consumesFutureInferenceReconciliation?: boolean;
 }
 
 export type ResourceUsageSubject =
@@ -51,6 +63,10 @@ export interface ResourceUsageAggregateBreakdown {
 export interface ResourceUsageAggregate {
   actions: number;
   sessions: number;
+  exactActions: number;
+  inferredActions: number;
+  historicalActions: number;
+  liveActions: number;
   lastRecordedAt?: number;
   breakdown: ResourceUsageAggregateBreakdown[];
 }
@@ -68,6 +84,9 @@ interface EventRow {
   provider: string | null;
   model: string | null;
   manifest_revision: string | null;
+  attribution: ResourceUsageAttribution;
+  origin: ResourceUsageOrigin;
+  source_key: string | null;
 }
 
 interface BoundsRow {
@@ -78,6 +97,10 @@ interface BoundsRow {
 interface AggregateSummaryRow {
   actions: number;
   sessions: number;
+  exact_actions: number;
+  inferred_actions: number;
+  historical_actions: number;
+  live_actions: number;
   last_recorded_at: number | null;
 }
 
@@ -97,6 +120,42 @@ interface AggregateDailyRow {
   last_recorded_at: number | null;
 }
 
+export interface ResourceUsageBackfillCheckpoint {
+  sourceKey: string;
+  offset: number;
+  size: number;
+  fingerprint: string;
+  completedAt?: number;
+  corruptLines: number;
+  oversizedLines: number;
+  lines: number;
+}
+
+export interface ResourceUsageBackfillSourceRecord {
+  sourceKey: string;
+  sessionId: string;
+  workspaceId?: string;
+  runtime: ResourceUsageRuntime;
+  traceIdHash?: string;
+}
+
+export interface ResourceUsageBackfillEnrollment {
+  sourceKey: string;
+  generation: number;
+}
+
+export interface ResourceUsageBackfillFlush {
+  enrollment: ResourceUsageBackfillEnrollment;
+  events: readonly ResourceUsageEvent[];
+  checkpoint: ResourceUsageBackfillCheckpoint;
+  nowMs?: number;
+}
+
+export interface ResourceUsageBackfillFlushResult {
+  accepted: boolean;
+  retainedHistoricalEvents: number;
+}
+
 export interface ResourceUsagePendingPurge {
   kind: "session" | "workspace";
   targetId: string;
@@ -106,6 +165,23 @@ export interface ResourceUsagePendingPurge {
 export interface ResourceUsagePurgeAttempt {
   completed: boolean;
   records: number;
+}
+
+export interface ResourceUsageBackfillState {
+  status: "available" | "running" | "complete" | "partial";
+  totalSources: number;
+  processedSources: number;
+  completedSources: number;
+  failedSources: number;
+  processedBytes: number;
+  processedLines: number;
+  historicalEvents: number;
+  corruptLines: number;
+  oversizedLines: number;
+  startedAt?: number;
+  updatedAt: number;
+  lastCompletedAt?: number;
+  lastError?: string;
 }
 
 export interface ResourceUsageStoreOptions {
@@ -133,8 +209,23 @@ export class ResourceUsageStore {
     this.insertStatement = this.db.prepare(`
       INSERT OR IGNORE INTO resource_usage_events (
         action_id, occurred_at, signal, session_id, workspace_id, runtime,
-        owner_kind, owner_id, item_name, provider, model, manifest_revision
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        owner_kind, owner_id, item_name, provider, model, manifest_revision,
+        attribution, origin, source_key
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(action_id) DO UPDATE SET
+        occurred_at = CASE WHEN excluded.origin = 'live' AND resource_usage_events.origin = 'history' THEN excluded.occurred_at ELSE resource_usage_events.occurred_at END,
+        session_id = CASE WHEN excluded.origin = 'live' AND resource_usage_events.origin = 'history' THEN excluded.session_id ELSE resource_usage_events.session_id END,
+        workspace_id = CASE WHEN excluded.origin = 'live' AND resource_usage_events.origin = 'history' THEN excluded.workspace_id ELSE resource_usage_events.workspace_id END,
+        runtime = CASE WHEN excluded.origin = 'live' AND resource_usage_events.origin = 'history' THEN excluded.runtime ELSE resource_usage_events.runtime END,
+        owner_kind = CASE WHEN excluded.attribution = 'exact' AND resource_usage_events.attribution = 'inferred' THEN excluded.owner_kind ELSE resource_usage_events.owner_kind END,
+        owner_id = CASE WHEN excluded.attribution = 'exact' AND resource_usage_events.attribution = 'inferred' THEN excluded.owner_id ELSE resource_usage_events.owner_id END,
+        item_name = CASE WHEN excluded.attribution = 'exact' AND resource_usage_events.attribution = 'inferred' THEN excluded.item_name ELSE resource_usage_events.item_name END,
+        provider = COALESCE(resource_usage_events.provider, excluded.provider),
+        model = COALESCE(resource_usage_events.model, excluded.model),
+        manifest_revision = COALESCE(resource_usage_events.manifest_revision, excluded.manifest_revision),
+        attribution = CASE WHEN resource_usage_events.attribution = 'exact' OR excluded.attribution = 'exact' THEN 'exact' ELSE 'inferred' END,
+        origin = CASE WHEN resource_usage_events.origin = 'live' OR excluded.origin = 'live' THEN 'live' ELSE 'history' END,
+        source_key = CASE WHEN resource_usage_events.origin = 'live' OR excluded.origin = 'live' THEN NULL ELSE COALESCE(resource_usage_events.source_key, excluded.source_key) END
     `);
     this.deleteExpired(this.now());
   }
@@ -146,27 +237,30 @@ export class ResourceUsageStore {
   recordBatch(events: readonly ResourceUsageEvent[], nowMs = this.now()): void {
     this.retryPendingPurges();
     const transaction = this.db.transaction(() => {
-      const cutoff = nowMs - RETENTION_MS;
-      for (const event of events) {
-        if (event.occurredAt < cutoff) continue;
-        this.insertStatement.run(
-          event.actionId,
-          event.occurredAt,
-          event.signal,
-          event.sessionId,
-          event.workspaceId ?? null,
-          event.runtime,
-          event.ownerKind,
-          event.ownerId,
-          event.itemName ?? null,
-          event.provider ?? null,
-          event.model ?? null,
-          event.manifestRevision ?? null,
-        );
-      }
-      this.db.prepare("DELETE FROM resource_usage_events WHERE occurred_at < ?").run(cutoff);
+      this.insertEvents(events, nowMs, { honorPurges: true });
     });
     transaction();
+  }
+
+  /** Atomically verifies scan ownership, writes history, and advances its checkpoint. */
+  recordBackfillBatch(input: ResourceUsageBackfillFlush): ResourceUsageBackfillFlushResult {
+    const transaction = this.db.transaction((): ResourceUsageBackfillFlushResult => {
+      const enrolled = this.db
+        .prepare(
+          `SELECT session_id, workspace_id FROM resource_usage_backfill_sources
+           WHERE source_key = ? AND generation = ?`,
+        )
+        .get(input.enrollment.sourceKey, input.enrollment.generation) as
+        | { session_id: string; workspace_id: string | null }
+        | undefined;
+      if (!enrolled || this.isPurged(enrolled.session_id, enrolled.workspace_id ?? undefined)) {
+        return { accepted: false, retainedHistoricalEvents: this.countHistoricalEvents() };
+      }
+      this.insertEvents(input.events, input.nowMs ?? this.now(), { honorPurges: true });
+      this.saveBackfillCheckpointUnchecked(input.checkpoint);
+      return { accepted: true, retainedHistoricalEvents: this.countHistoricalEvents() };
+    });
+    return transaction();
   }
 
   deleteExpired(nowMs = this.now()): number {
@@ -178,9 +272,32 @@ export class ResourceUsageStore {
   }
 
   deleteSession(sessionId: string): number {
-    return changesFrom(
-      this.db.prepare("DELETE FROM resource_usage_events WHERE session_id = ?").run(sessionId),
-    );
+    const transaction = this.db.transaction(() => {
+      const records = changesFrom(
+        this.db.prepare("DELETE FROM resource_usage_events WHERE session_id = ?").run(sessionId),
+      );
+      const keys = this.db
+        .prepare("SELECT source_key FROM resource_usage_backfill_sources WHERE session_id = ?")
+        .all(sessionId) as Array<{ source_key: string }>;
+      for (const row of keys) {
+        this.db
+          .prepare("DELETE FROM resource_usage_backfill_checkpoints WHERE source_key = ?")
+          .run(row.source_key);
+      }
+      this.db
+        .prepare(
+          `DELETE FROM resource_usage_backfill_reconciliations
+           WHERE source_key IN (
+             SELECT source_key FROM resource_usage_backfill_sources WHERE session_id = ?
+           )`,
+        )
+        .run(sessionId);
+      this.db
+        .prepare("DELETE FROM resource_usage_backfill_sources WHERE session_id = ?")
+        .run(sessionId);
+      return records;
+    });
+    return transaction();
   }
 
   deleteResource(ownerKind: ResourceUsageOwnerKind, ownerId: string): number {
@@ -192,9 +309,125 @@ export class ResourceUsageStore {
   }
 
   deleteWorkspace(workspaceId: string): number {
-    return changesFrom(
-      this.db.prepare("DELETE FROM resource_usage_events WHERE workspace_id = ?").run(workspaceId),
-    );
+    const transaction = this.db.transaction(() => {
+      const records = changesFrom(
+        this.db
+          .prepare("DELETE FROM resource_usage_events WHERE workspace_id = ?")
+          .run(workspaceId),
+      );
+      const keys = this.db
+        .prepare("SELECT source_key FROM resource_usage_backfill_sources WHERE workspace_id = ?")
+        .all(workspaceId) as Array<{ source_key: string }>;
+      for (const row of keys) {
+        this.db
+          .prepare("DELETE FROM resource_usage_backfill_checkpoints WHERE source_key = ?")
+          .run(row.source_key);
+      }
+      this.db
+        .prepare(
+          `DELETE FROM resource_usage_backfill_reconciliations
+           WHERE source_key IN (
+             SELECT source_key FROM resource_usage_backfill_sources WHERE workspace_id = ?
+           )`,
+        )
+        .run(workspaceId);
+      this.db
+        .prepare("DELETE FROM resource_usage_backfill_sources WHERE workspace_id = ?")
+        .run(workspaceId);
+      return records;
+    });
+    return transaction();
+  }
+
+  enrollBackfillSource(
+    source: ResourceUsageBackfillSourceRecord,
+  ): ResourceUsageBackfillEnrollment | undefined {
+    const transaction = this.db.transaction(() => {
+      if (this.isPurged(source.sessionId, source.workspaceId)) return undefined;
+      this.db
+        .prepare(
+          `INSERT INTO resource_usage_backfill_sources (
+             source_key, session_id, workspace_id, runtime, trace_id_hash, enrolled_at, generation
+           ) VALUES (?, ?, ?, ?, ?, ?, 1)
+           ON CONFLICT(source_key) DO UPDATE SET
+             session_id = excluded.session_id,
+             workspace_id = excluded.workspace_id,
+             runtime = excluded.runtime,
+             trace_id_hash = COALESCE(excluded.trace_id_hash, resource_usage_backfill_sources.trace_id_hash),
+             generation = resource_usage_backfill_sources.generation + 1`,
+        )
+        .run(
+          source.sourceKey,
+          source.sessionId,
+          source.workspaceId ?? null,
+          source.runtime,
+          source.traceIdHash ?? null,
+          this.now(),
+        );
+      const row = this.db
+        .prepare("SELECT generation FROM resource_usage_backfill_sources WHERE source_key = ?")
+        .get(source.sourceKey) as { generation: number };
+      return { sourceKey: source.sourceKey, generation: row.generation };
+    });
+    return transaction();
+  }
+
+  getBackfillCheckpoint(sourceKey: string): ResourceUsageBackfillCheckpoint | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT source_key, offset_bytes, size_bytes, fingerprint, completed_at,
+                corrupt_lines, oversized_lines, line_count
+         FROM resource_usage_backfill_checkpoints WHERE source_key = ?`,
+      )
+      .get(sourceKey) as
+      | {
+          source_key: string;
+          offset_bytes: number;
+          size_bytes: number;
+          fingerprint: string;
+          completed_at: number | null;
+          corrupt_lines: number;
+          oversized_lines: number;
+          line_count: number;
+        }
+      | undefined;
+    if (!row) return undefined;
+    return {
+      sourceKey: row.source_key,
+      offset: row.offset_bytes,
+      size: row.size_bytes,
+      fingerprint: row.fingerprint,
+      ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
+      corruptLines: row.corrupt_lines,
+      oversizedLines: row.oversized_lines,
+      lines: row.line_count,
+    };
+  }
+
+  saveBackfillCheckpoint(checkpoint: ResourceUsageBackfillCheckpoint): void {
+    this.saveBackfillCheckpointUnchecked(checkpoint);
+  }
+
+  countHistoricalEvents(): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS count FROM resource_usage_events WHERE origin = 'history'")
+      .get() as { count: number };
+    return numberValue(row.count);
+  }
+
+  resetBackfillSource(sourceKey: string): void {
+    const transaction = this.db.transaction(() => {
+      this.db
+        .prepare("DELETE FROM resource_usage_events WHERE source_key = ? AND origin = 'history'")
+        .run(sourceKey);
+      this.db
+        .prepare("DELETE FROM resource_usage_backfill_checkpoints WHERE source_key = ?")
+        .run(sourceKey);
+      this.db
+        .prepare("DELETE FROM resource_usage_backfill_reconciliations WHERE source_key = ?")
+        .run(sourceKey);
+    });
+    transaction();
   }
 
   requestSessionPurge(sessionId: string): ResourceUsagePurgeAttempt {
@@ -243,6 +476,10 @@ export class ResourceUsageStore {
       .prepare(
         `SELECT COUNT(*) AS actions,
                 COUNT(DISTINCT session_id) AS sessions,
+                SUM(CASE WHEN attribution = 'exact' THEN 1 ELSE 0 END) AS exact_actions,
+                SUM(CASE WHEN attribution = 'inferred' THEN 1 ELSE 0 END) AS inferred_actions,
+                SUM(CASE WHEN origin = 'history' THEN 1 ELSE 0 END) AS historical_actions,
+                SUM(CASE WHEN origin = 'live' THEN 1 ELSE 0 END) AS live_actions,
                 MAX(occurred_at) AS last_recorded_at
          FROM resource_usage_events
          WHERE occurred_at >= ? AND occurred_at <= ? AND ${clause}`,
@@ -266,6 +503,10 @@ export class ResourceUsageStore {
     return {
       actions: numberValue(summary?.actions),
       sessions: numberValue(summary?.sessions),
+      exactActions: numberValue(summary?.exact_actions),
+      inferredActions: numberValue(summary?.inferred_actions),
+      historicalActions: numberValue(summary?.historical_actions),
+      liveActions: numberValue(summary?.live_actions),
       ...(summary?.last_recorded_at !== null && summary?.last_recorded_at !== undefined
         ? { lastRecordedAt: summary.last_recorded_at }
         : {}),
@@ -314,6 +555,10 @@ export class ResourceUsageStore {
             {
               actions: numberValue(row.actions),
               sessions: numberValue(row.sessions),
+              exactActions: 0,
+              inferredActions: 0,
+              historicalActions: 0,
+              liveActions: 0,
               ...(row.last_recorded_at !== null && row.last_recorded_at !== undefined
                 ? { lastRecordedAt: row.last_recorded_at }
                 : {}),
@@ -335,7 +580,8 @@ export class ResourceUsageStore {
     const rows = this.db
       .prepare(
         `SELECT action_id, occurred_at, signal, session_id, workspace_id, runtime,
-                owner_kind, owner_id, item_name, provider, model, manifest_revision
+                owner_kind, owner_id, item_name, provider, model, manifest_revision,
+                attribution, origin, source_key
          FROM resource_usage_events
          WHERE occurred_at >= ? AND occurred_at <= ? AND ${clause}
          ORDER BY occurred_at ASC, action_id ASC`,
@@ -379,6 +625,175 @@ export class ResourceUsageStore {
       .run(key, value);
   }
 
+  getBackfillState(): ResourceUsageBackfillState {
+    const raw = this.getMetadata("manual_backfill_state_v1");
+    if (!raw) return emptyBackfillState(this.now());
+    try {
+      const value = JSON.parse(raw) as Partial<ResourceUsageBackfillState>;
+      const status = value.status === "running" ? "partial" : value.status;
+      if (status !== "available" && status !== "complete" && status !== "partial") {
+        return emptyBackfillState(this.now());
+      }
+      return {
+        status,
+        totalSources: nonNegative(value.totalSources),
+        processedSources: nonNegative(value.processedSources),
+        completedSources: nonNegative(value.completedSources),
+        failedSources: nonNegative(value.failedSources),
+        processedBytes: nonNegative(value.processedBytes),
+        processedLines: nonNegative(value.processedLines),
+        historicalEvents: this.countHistoricalEvents(),
+        corruptLines: nonNegative(value.corruptLines),
+        oversizedLines: nonNegative(value.oversizedLines),
+        ...(positive(value.startedAt) ? { startedAt: value.startedAt } : {}),
+        updatedAt: positive(value.updatedAt) ? value.updatedAt : this.now(),
+        ...(positive(value.lastCompletedAt) ? { lastCompletedAt: value.lastCompletedAt } : {}),
+        ...(typeof value.lastError === "string" && value.lastError
+          ? { lastError: value.lastError }
+          : status === "partial" && value.status === "running"
+            ? { lastError: "Server restarted before the backfill finished" }
+            : {}),
+      };
+    } catch {
+      return {
+        ...emptyBackfillState(this.now()),
+        status: "partial",
+        lastError: "Backfill state was unreadable",
+      };
+    }
+  }
+
+  setBackfillState(state: ResourceUsageBackfillState): void {
+    this.setMetadata("manual_backfill_state_v1", JSON.stringify(state));
+  }
+
+  private insertEvents(
+    events: readonly ResourceUsageEvent[],
+    nowMs: number,
+    options: { honorPurges: boolean },
+  ): void {
+    const cutoff = nowMs - RETENTION_MS;
+    for (const event of events) {
+      if (event.occurredAt < cutoff) continue;
+      if (options.honorPurges && this.isPurged(event.sessionId, event.workspaceId)) continue;
+      if (event.attribution === "inferred" && event.sourceKey) {
+        const pending = this.db
+          .prepare(
+            `SELECT action_id FROM resource_usage_backfill_reconciliations
+             WHERE source_key = ? AND signal = ? AND owner_kind = ? AND owner_id = ?
+               AND item_name = ?
+             ORDER BY sequence ASC LIMIT 1`,
+          )
+          .get(
+            event.sourceKey,
+            event.signal,
+            event.ownerKind,
+            event.ownerId,
+            event.itemName ?? "",
+          ) as { action_id: string } | undefined;
+        if (pending) {
+          this.db
+            .prepare("DELETE FROM resource_usage_backfill_reconciliations WHERE action_id = ?")
+            .run(pending.action_id);
+          continue;
+        }
+      }
+      if (event.consumesFutureInferenceReconciliation && event.sourceKey) {
+        this.db
+          .prepare(
+            `DELETE FROM resource_usage_backfill_reconciliations
+             WHERE action_id = ? AND source_key = ?`,
+          )
+          .run(event.actionId, event.sourceKey);
+      }
+      if (event.reconcilesFutureInference && event.sourceKey) {
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO resource_usage_backfill_reconciliations (
+               action_id, source_key, signal, owner_kind, owner_id, item_name, sequence
+             ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            event.actionId,
+            event.sourceKey,
+            event.signal,
+            event.ownerKind,
+            event.ownerId,
+            event.itemName ?? "",
+            event.occurredAt,
+          );
+      }
+      if (event.reconcilesActionId && event.reconcilesActionId !== event.actionId) {
+        this.db
+          .prepare(
+            `DELETE FROM resource_usage_events
+             WHERE action_id = ? AND attribution = 'inferred'`,
+          )
+          .run(event.reconcilesActionId);
+      }
+      this.insertStatement.run(
+        event.actionId,
+        event.occurredAt,
+        event.signal,
+        event.sessionId,
+        event.workspaceId ?? null,
+        event.runtime,
+        event.ownerKind,
+        event.ownerId,
+        event.itemName ?? null,
+        event.provider ?? null,
+        event.model ?? null,
+        event.manifestRevision ?? null,
+        event.attribution ?? "exact",
+        event.origin ?? "live",
+        event.sourceKey ?? null,
+      );
+    }
+    this.db.prepare("DELETE FROM resource_usage_events WHERE occurred_at < ?").run(cutoff);
+  }
+
+  private saveBackfillCheckpointUnchecked(checkpoint: ResourceUsageBackfillCheckpoint): void {
+    this.db
+      .prepare(
+        `INSERT INTO resource_usage_backfill_checkpoints (
+           source_key, offset_bytes, size_bytes, fingerprint, completed_at,
+           corrupt_lines, oversized_lines, line_count, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(source_key) DO UPDATE SET
+           offset_bytes = excluded.offset_bytes,
+           size_bytes = excluded.size_bytes,
+           fingerprint = excluded.fingerprint,
+           completed_at = excluded.completed_at,
+           corrupt_lines = excluded.corrupt_lines,
+           oversized_lines = excluded.oversized_lines,
+           line_count = excluded.line_count,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        checkpoint.sourceKey,
+        checkpoint.offset,
+        checkpoint.size,
+        checkpoint.fingerprint,
+        checkpoint.completedAt ?? null,
+        checkpoint.corruptLines,
+        checkpoint.oversizedLines,
+        checkpoint.lines,
+        this.now(),
+      );
+  }
+
+  private isPurged(sessionId: string, workspaceId?: string): boolean {
+    const blocked = this.db
+      .prepare(
+        `SELECT 1 AS blocked FROM resource_usage_purges
+         WHERE (kind = 'session' AND target_id = ?)
+            OR (kind = 'workspace' AND target_id = ?)
+         LIMIT 1`,
+      )
+      .get(sessionId, workspaceId ?? "") as { blocked: number } | undefined;
+    return blocked !== undefined;
+  }
+
   private requestPurge(
     kind: ResourceUsagePendingPurge["kind"],
     targetId: string,
@@ -386,6 +801,12 @@ export class ResourceUsageStore {
     this.db
       .prepare(
         `INSERT OR IGNORE INTO resource_usage_pending_purges (kind, target_id, requested_at)
+         VALUES (?, ?, ?)`,
+      )
+      .run(kind, targetId, this.now());
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO resource_usage_purges (kind, target_id, requested_at)
          VALUES (?, ?, ?)`,
       )
       .run(kind, targetId, this.now());
@@ -416,20 +837,21 @@ export class ResourceUsageStore {
   }
 
   private ensureSchema(): void {
+    scrubPathBearingUsageSchema(this.db);
     const existingColumns = tableColumns(this.db, "resource_usage_events");
     const exactLiveSchema =
       existingColumns.length > 0 && metadataValue(this.db, "exact_live_schema") === "1";
     if (existingColumns.length > 0 && !exactLiveSchema) {
+      // Pre-release history drafts could contain raw source paths. Drop only their
+      // path-bearing enrollment state; keep privacy-minimized event rows.
       this.db.exec(`
-        DROP TABLE IF EXISTS resource_usage_events;
-        DROP TABLE IF EXISTS resource_usage_metadata;
+        DROP TABLE IF EXISTS resource_usage_backfill_checkpoints;
+        DROP TABLE IF EXISTS resource_usage_backfill_sources;
+        DROP TABLE IF EXISTS resource_usage_purges;
       `);
     }
 
     this.db.exec(`
-      DROP TABLE IF EXISTS resource_usage_backfill_checkpoints;
-      DROP TABLE IF EXISTS resource_usage_backfill_sources;
-      DROP TABLE IF EXISTS resource_usage_purges;
       CREATE TABLE IF NOT EXISTS resource_usage_events (
         action_id TEXT PRIMARY KEY,
         occurred_at INTEGER NOT NULL,
@@ -444,7 +866,10 @@ export class ResourceUsageStore {
         item_name TEXT,
         provider TEXT,
         model TEXT,
-        manifest_revision TEXT
+        manifest_revision TEXT,
+        attribution TEXT NOT NULL DEFAULT 'exact' CHECK(attribution IN ('exact', 'inferred')),
+        origin TEXT NOT NULL DEFAULT 'live' CHECK(origin IN ('live', 'history')),
+        source_key TEXT
       );
       CREATE TABLE IF NOT EXISTS resource_usage_metadata (
         key TEXT PRIMARY KEY,
@@ -456,6 +881,41 @@ export class ResourceUsageStore {
         requested_at INTEGER NOT NULL,
         PRIMARY KEY(kind, target_id)
       );
+      CREATE TABLE IF NOT EXISTS resource_usage_backfill_sources (
+        source_key TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        workspace_id TEXT,
+        runtime TEXT NOT NULL CHECK(runtime IN ('oppi', 'pi-tui')),
+        trace_id_hash TEXT,
+        enrolled_at INTEGER NOT NULL,
+        generation INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE TABLE IF NOT EXISTS resource_usage_backfill_checkpoints (
+        source_key TEXT PRIMARY KEY REFERENCES resource_usage_backfill_sources(source_key) ON DELETE CASCADE,
+        offset_bytes INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        fingerprint TEXT NOT NULL,
+        completed_at INTEGER,
+        corrupt_lines INTEGER NOT NULL DEFAULT 0,
+        oversized_lines INTEGER NOT NULL DEFAULT 0,
+        line_count INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS resource_usage_purges (
+        kind TEXT NOT NULL CHECK(kind IN ('session', 'workspace')),
+        target_id TEXT NOT NULL,
+        requested_at INTEGER NOT NULL,
+        PRIMARY KEY(kind, target_id)
+      );
+      CREATE TABLE IF NOT EXISTS resource_usage_backfill_reconciliations (
+        action_id TEXT PRIMARY KEY,
+        source_key TEXT NOT NULL,
+        signal TEXT NOT NULL,
+        owner_kind TEXT NOT NULL,
+        owner_id TEXT NOT NULL,
+        item_name TEXT NOT NULL,
+        sequence INTEGER NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS resource_usage_events_time_idx
         ON resource_usage_events(occurred_at);
       CREATE INDEX IF NOT EXISTS resource_usage_events_owner_time_idx
@@ -466,9 +926,153 @@ export class ResourceUsageStore {
         ON resource_usage_events(session_id);
       CREATE INDEX IF NOT EXISTS resource_usage_events_workspace_idx
         ON resource_usage_events(workspace_id);
+      CREATE INDEX IF NOT EXISTS resource_usage_backfill_sources_session_idx
+        ON resource_usage_backfill_sources(session_id);
+      CREATE INDEX IF NOT EXISTS resource_usage_backfill_sources_workspace_idx
+        ON resource_usage_backfill_sources(workspace_id);
+      CREATE INDEX IF NOT EXISTS resource_usage_backfill_reconciliations_match_idx
+        ON resource_usage_backfill_reconciliations(
+          source_key, signal, owner_kind, owner_id, item_name, sequence
+        );
       INSERT OR IGNORE INTO resource_usage_metadata (key, value)
         VALUES ('exact_live_schema', '1');
     `);
+
+    const sourceColumns = tableColumns(this.db, "resource_usage_backfill_sources");
+    if (!sourceColumns.includes("generation")) {
+      this.db.exec(
+        "ALTER TABLE resource_usage_backfill_sources ADD COLUMN generation INTEGER NOT NULL DEFAULT 1",
+      );
+    }
+
+    const migratedColumns = tableColumns(this.db, "resource_usage_events");
+    if (!migratedColumns.includes("attribution")) {
+      this.db.exec(
+        "ALTER TABLE resource_usage_events ADD COLUMN attribution TEXT NOT NULL DEFAULT 'exact'",
+      );
+    }
+    if (!migratedColumns.includes("origin")) {
+      this.db.exec(
+        "ALTER TABLE resource_usage_events ADD COLUMN origin TEXT NOT NULL DEFAULT 'live'",
+      );
+    }
+    if (!migratedColumns.includes("source_key")) {
+      this.db.exec("ALTER TABLE resource_usage_events ADD COLUMN source_key TEXT");
+    }
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS resource_usage_events_source_idx
+        ON resource_usage_events(source_key);
+    `);
+  }
+}
+
+function scrubPathBearingUsageSchema(db: SqliteDatabase): void {
+  const expectedColumns = new Map<string, Set<string>>([
+    [
+      "resource_usage_events",
+      new Set([
+        "action_id",
+        "occurred_at",
+        "signal",
+        "session_id",
+        "workspace_id",
+        "runtime",
+        "owner_kind",
+        "owner_id",
+        "item_name",
+        "provider",
+        "model",
+        "manifest_revision",
+        "attribution",
+        "origin",
+        "source_key",
+      ]),
+    ],
+    ["resource_usage_metadata", new Set(["key", "value"])],
+    ["resource_usage_pending_purges", new Set(["kind", "target_id", "requested_at"])],
+    [
+      "resource_usage_backfill_sources",
+      new Set([
+        "source_key",
+        "session_id",
+        "workspace_id",
+        "runtime",
+        "trace_id_hash",
+        "enrolled_at",
+        "generation",
+      ]),
+    ],
+    [
+      "resource_usage_backfill_checkpoints",
+      new Set([
+        "source_key",
+        "offset_bytes",
+        "size_bytes",
+        "fingerprint",
+        "completed_at",
+        "corrupt_lines",
+        "oversized_lines",
+        "line_count",
+        "updated_at",
+      ]),
+    ],
+    ["resource_usage_purges", new Set(["kind", "target_id", "requested_at"])],
+    [
+      "resource_usage_backfill_reconciliations",
+      new Set([
+        "action_id",
+        "source_key",
+        "signal",
+        "owner_kind",
+        "owner_id",
+        "item_name",
+        "sequence",
+      ]),
+    ],
+  ]);
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'resource_usage_%'")
+    .all() as Array<{ name: string }>;
+  for (const { name } of tables) {
+    const expected = expectedColumns.get(name);
+    const columns = tableColumns(db, name);
+    const suspicious = columns.some((column) =>
+      /(^|_)(path|file|cwd|directory|dir)($|_)/i.test(column),
+    );
+    if (!expected || suspicious) {
+      if (name === "resource_usage_events" && expected) {
+        const preserved = columns.filter((column) => expected.has(column));
+        if (preserved.length === 0) {
+          db.exec(`DROP TABLE IF EXISTS ${name}`);
+          continue;
+        }
+        db.exec(`ALTER TABLE ${name} RENAME TO resource_usage_events_path_scrub`);
+        db.exec(`
+          CREATE TABLE resource_usage_events (
+            action_id TEXT PRIMARY KEY,
+            occurred_at INTEGER NOT NULL,
+            signal TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            workspace_id TEXT,
+            runtime TEXT NOT NULL,
+            owner_kind TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            item_name TEXT,
+            provider TEXT,
+            model TEXT,
+            manifest_revision TEXT,
+            attribution TEXT NOT NULL DEFAULT 'exact',
+            origin TEXT NOT NULL DEFAULT 'live',
+            source_key TEXT
+          );
+          INSERT INTO resource_usage_events (${preserved.join(", ")})
+            SELECT ${preserved.join(", ")} FROM resource_usage_events_path_scrub;
+          DROP TABLE resource_usage_events_path_scrub;
+        `);
+      } else {
+        db.exec(`DROP TABLE IF EXISTS ${name}`);
+      }
+    }
   }
 }
 
@@ -516,7 +1120,35 @@ function eventFromRow(row: EventRow): ResourceUsageEvent {
     ...(row.provider ? { provider: row.provider } : {}),
     ...(row.model ? { model: row.model } : {}),
     ...(row.manifest_revision ? { manifestRevision: row.manifest_revision } : {}),
+    attribution: row.attribution,
+    origin: row.origin,
+    ...(row.source_key ? { sourceKey: row.source_key } : {}),
   };
+}
+
+function emptyBackfillState(nowMs: number): ResourceUsageBackfillState {
+  return {
+    status: "available",
+    totalSources: 0,
+    processedSources: 0,
+    completedSources: 0,
+    failedSources: 0,
+    processedBytes: 0,
+    processedLines: 0,
+    historicalEvents: 0,
+    corruptLines: 0,
+    oversizedLines: 0,
+    updatedAt: nowMs,
+  };
+}
+
+function nonNegative(value: unknown): number {
+  const number = numberValue(value);
+  return number >= 0 ? number : 0;
+}
+
+function positive(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 function numberValue(value: unknown): number {

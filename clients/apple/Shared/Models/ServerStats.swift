@@ -296,6 +296,83 @@ struct ResourceUsageCaptureStatus: Codable, Sendable, Equatable {
     let lastCapturedAt: Int64?
 }
 
+struct ResourceUsageBackfillStatus: Codable, Sendable, Equatable {
+    enum Status: String, Codable, Sendable, Equatable {
+        case available
+        case running
+        case complete
+        case partial
+    }
+
+    let status: Status
+    let totalSources: Int
+    let processedSources: Int
+    let completedSources: Int
+    let failedSources: Int
+    let processedBytes: Int64
+    let processedLines: Int
+    let historicalEvents: Int
+    let corruptLines: Int
+    let oversizedLines: Int
+    let startedAt: Int64?
+    let updatedAt: Int64
+    let lastCompletedAt: Int64?
+    let lastError: String?
+    let canStart: Bool
+
+    var actionTitle: String {
+        status == .partial ? "Retry usage history backfill" : "Backfill usage history"
+    }
+}
+
+enum ResourceUsageBackfillControlPresentation: Sendable, Equatable {
+    case loading
+    case status(ResourceUsageBackfillStatus)
+    case failure(String)
+
+    static func resolve(
+        status: ResourceUsageBackfillStatus?,
+        error: String?,
+        isLoading: Bool
+    ) -> Self {
+        if let status { return .status(status) }
+        if let error { return .failure(error) }
+        return .loading
+    }
+}
+
+@MainActor
+enum ResourceUsageBackfillPolling {
+    static func poll(
+        initial: ResourceUsageBackfillStatus? = nil,
+        request: () async throws -> ResourceUsageBackfillStatus,
+        wait: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
+        onUpdate: (ResourceUsageBackfillStatus) -> Void
+    ) async throws -> ResourceUsageBackfillStatus {
+        var status: ResourceUsageBackfillStatus
+        if let initial {
+            status = initial
+        } else {
+            status = try await request()
+        }
+        onUpdate(status)
+        while status.status == .running {
+            try await wait()
+            try Task.checkCancellation()
+            status = try await request()
+            onUpdate(status)
+        }
+        return status
+    }
+}
+
+struct ResourceUsageAttribution: Codable, Sendable, Equatable {
+    let exactActions: Int
+    let inferredActions: Int
+    let historicalActions: Int
+    let liveActions: Int
+}
+
 struct ResourceUsageRetainedHistory: Codable, Sendable, Equatable {
     let retentionDays: Int
     let oldestRecordedAt: Int64?
@@ -308,6 +385,7 @@ struct ResourceUsageResponse: Codable, Sendable, Equatable {
     let timezone: String
     let recordingStartedAt: Int64
     let recordedActions: Int
+    let attribution: ResourceUsageAttribution
     let distinctSessions: Int
     let activeDays: Int
     let lastRecordedAt: Int64?
@@ -315,6 +393,7 @@ struct ResourceUsageResponse: Codable, Sendable, Equatable {
     let daily: [ResourceUsageDailyRow]
     let breakdown: [ResourceUsageBreakdownRow]
     let capture: ResourceUsageCaptureStatus
+    let backfill: ResourceUsageBackfillStatus
 
     var range: ResourceUsageRange { rangeDays }
 
@@ -451,11 +530,27 @@ enum ResourceUsagePresentation {
         return "Recorded by this server since \(formatter.string(from: date))"
     }
 
+    static func historyCoverageLabel(_ usage: ResourceUsageResponse) -> String {
+        let status = usage.backfill
+        switch status.status {
+        case .available:
+            return "History backfill: Available"
+        case .running:
+            return "History backfill: \(status.processedSources) of \(status.totalSources) sources scanned"
+        case .complete:
+            return "History backfill: Complete"
+        case .partial:
+            return "History backfill: Partial — retry available"
+        }
+    }
+
     static func coverageAccessibilityLabel(_ usage: ResourceUsageResponse) -> String {
         let capture = usage.capture.status == .active
             ? "Live capture is current."
             : "Live capture is partial."
         return "Coverage: \(recordingStartedLabel(usage)). \(capture) "
+            + "\(historyCoverageLabel(usage)). "
+            + "\(usage.attribution.exactActions) exact and \(usage.attribution.inferredActions) inferred actions. "
             + "Recorded activity is retained for up to \(usage.retainedHistory.retentionDays) days."
     }
 

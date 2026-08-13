@@ -140,7 +140,7 @@ describe("ResourceUsageStore", () => {
     store.close();
   });
 
-  it("initializes only the exact-live schema with deletion indexes", () => {
+  it("initializes privacy-minimized history schema with deletion indexes", () => {
     const store = makeStore();
     const db = openDatabase(join(dirs.at(-1)!, "resource-usage.db"));
     const columns = (
@@ -168,10 +168,13 @@ describe("ResourceUsageStore", () => {
       "provider",
       "model",
       "manifest_revision",
+      "attribution",
+      "origin",
+      "source_key",
     ]);
-    expect(tables).toContain("resource_usage_pending_purges");
-    expect(tables).not.toEqual(
+    expect(tables).toEqual(
       expect.arrayContaining([
+        "resource_usage_pending_purges",
         "resource_usage_backfill_checkpoints",
         "resource_usage_backfill_sources",
         "resource_usage_purges",
@@ -187,7 +190,63 @@ describe("ResourceUsageStore", () => {
     store.close();
   });
 
-  it("drops obsolete inferred draft rows and recording timestamps instead of importing them", () => {
+  it("scrubs path-bearing columns and tables even when exact_live_schema is already set", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-resource-usage-exact-paths-"));
+    dirs.push(dir);
+    const dbPath = join(dir, "resource-usage.db");
+    const initial = new ResourceUsageStore(dir, { now: () => 5_000 });
+    initial.recordBatch([event({ actionId: "preserved-exact-event", occurredAt: 4_000 })]);
+    initial.close();
+
+    const contaminated = openDatabase(dbPath);
+    const tables = (
+      contaminated
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'resource_usage_%'",
+        )
+        .all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    for (const table of tables) {
+      contaminated.exec(`ALTER TABLE ${table} ADD COLUMN source_path TEXT`);
+      contaminated.exec(`UPDATE ${table} SET source_path = '/Users/private/trace.jsonl'`);
+    }
+    contaminated.exec(`
+      CREATE TABLE resource_usage_abandoned_paths (
+        id TEXT PRIMARY KEY,
+        trace_path TEXT NOT NULL
+      );
+      INSERT INTO resource_usage_abandoned_paths VALUES ('old', '/Users/private/old.jsonl');
+    `);
+    contaminated.close();
+
+    const repaired = new ResourceUsageStore(dir, { now: () => 5_000 });
+    expect(
+      repaired.queryEvents({ subject: { kind: "tools" }, sinceMs: 0, untilMs: Infinity }),
+    ).toEqual([expect.objectContaining({ actionId: "preserved-exact-event" })]);
+    repaired.close();
+
+    const audited = openDatabase(dbPath);
+    const auditedTables = (
+      audited
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'resource_usage_%'",
+        )
+        .all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    expect(auditedTables).not.toContain("resource_usage_abandoned_paths");
+    for (const table of auditedTables) {
+      const columns = (
+        audited.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+      ).map((row) => row.name);
+      expect(columns).not.toContain("source_path");
+      expect(JSON.stringify(audited.prepare(`SELECT * FROM ${table}`).all())).not.toContain(
+        "/Users/private",
+      );
+    }
+    audited.close();
+  });
+
+  it("keeps privacy-minimized draft events but drops path-bearing enrollment state", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-resource-usage-draft-"));
     dirs.push(dir);
     const dbPath = join(dir, "resource-usage.db");
@@ -221,8 +280,8 @@ describe("ResourceUsageStore", () => {
     const store = new ResourceUsageStore(dir, { now: () => 5_000 });
     expect(
       store.queryEvents({ subject: { kind: "tools" }, sinceMs: 0, untilMs: Infinity }),
-    ).toEqual([]);
-    expect(store.getMetadata("recording_started_at_v1")).toBeUndefined();
+    ).toEqual([expect.objectContaining({ actionId: "imported", attribution: "exact" })]);
+    expect(store.getMetadata("recording_started_at_v1")).toBe("1");
     expect(store.getMetadata("exact_live_schema")).toBe("1");
     const reopened = openDatabase(dbPath);
     const tables = (
@@ -230,9 +289,46 @@ describe("ResourceUsageStore", () => {
         name: string;
       }>
     ).map((row) => row.name);
-    expect(tables).not.toContain("resource_usage_backfill_sources");
+    expect(tables).toContain("resource_usage_backfill_sources");
+    const sourceColumns = (
+      reopened.prepare("PRAGMA table_info(resource_usage_backfill_sources)").all() as Array<{
+        name: string;
+      }>
+    ).map((row) => row.name);
+    expect(sourceColumns).not.toContain("path");
     reopened.close();
     store.close();
+  });
+
+  it("restores interrupted durable backfill state as partial and retryable", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-resource-usage-backfill-restart-"));
+    dirs.push(dir);
+    const first = new ResourceUsageStore(dir, { now: () => 10_000 });
+    first.setBackfillState({
+      status: "running",
+      totalSources: 10,
+      processedSources: 4,
+      completedSources: 4,
+      failedSources: 0,
+      processedBytes: 1_024,
+      processedLines: 20,
+      historicalEvents: 0,
+      corruptLines: 0,
+      oversizedLines: 0,
+      startedAt: 9_000,
+      updatedAt: 9_500,
+    });
+    first.close();
+
+    const second = new ResourceUsageStore(dir, { now: () => 10_000 });
+    expect(second.getBackfillState()).toMatchObject({
+      status: "partial",
+      totalSources: 10,
+      processedSources: 4,
+      completedSources: 4,
+      lastError: expect.stringContaining("restarted"),
+    });
+    second.close();
   });
 
   it("allocates runtime-instance identities monotonically across store recreation", () => {
@@ -266,6 +362,33 @@ describe("ResourceUsageStore", () => {
       second.queryEvents({ subject: { kind: "tools" }, sinceMs: 0, untilMs: Infinity }),
     ).toEqual([]);
     second.close();
+  });
+
+  it.each([
+    ["session", () => event({ actionId: "late-session", sessionId: "deleted-session" })],
+    [
+      "workspace",
+      () =>
+        event({
+          actionId: "late-workspace",
+          sessionId: "other-session",
+          workspaceId: "deleted-workspace",
+        }),
+    ],
+  ] as const)("rejects delayed live writes after a durable %s purge", (kind, lateEvent) => {
+    const store = makeStore();
+    if (kind === "session") {
+      expect(store.requestSessionPurge("deleted-session").completed).toBe(true);
+    } else {
+      expect(store.requestWorkspacePurge("deleted-workspace").completed).toBe(true);
+    }
+
+    store.recordBatch([lateEvent()]);
+
+    expect(
+      store.queryEvents({ subject: { kind: "tools" }, sinceMs: 0, untilMs: Infinity }),
+    ).toEqual([]);
+    store.close();
   });
 
   it("persists failed purges and retries them on the next write", () => {

@@ -4,10 +4,15 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  ResourceUsageBackfill,
+  opaqueResourceUsageSourceKey,
+} from "../src/resource-usage-backfill.js";
 import { SessionAgentEventCoordinator } from "../src/session-agent-events.js";
 import { SessionInputCoordinator } from "../src/session-input.js";
 import type { ResourceUsagePromptEvidence } from "../src/resource-usage-service.js";
 import { SdkBackend } from "../src/sdk-backend.js";
+import { ResourceUsageStore } from "../src/storage/resource-usage-store.js";
 import { serverResourceId } from "../src/server-resource-id.js";
 
 function session() {
@@ -139,6 +144,113 @@ describe("resource usage runtime capture", () => {
           ownerKind: "extension",
         }),
       });
+    } finally {
+      await backend.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("persists two identical accepted commands through the coordinator and SDK", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-resource-repeat-production-"));
+    const extensionDir = join(cwd, ".pi", "extensions");
+    mkdirSync(extensionDir, { recursive: true });
+    writeFileSync(
+      join(extensionDir, "repeat-command.ts"),
+      [
+        "export default function (pi) {",
+        "  pi.registerCommand('repeat-command', {",
+        "    description: 'Repeatable',",
+        "    handler: async () => {},",
+        "  });",
+        "}",
+      ].join("\n"),
+    );
+    const backend = await SdkBackend.create({
+      session: { ...session(), ephemeral: false },
+      workspace: { id: "workspace-opaque", name: "Repeat", hostMount: cwd } as never,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+    const captureAcceptedPrompt = vi.fn();
+    backend.onResourceUsageCommandInvoked = ({ producerId, evidence }) => ({
+      version: 2,
+      actionId: producerId === "turn-1" ? "a".repeat(64) : "b".repeat(64),
+      producerId,
+      ...evidence,
+    });
+    const active = {
+      session: session(),
+      sdkBackend: backend,
+      currentTurnClientId: undefined,
+      clientTurnFingerprints: new Map(),
+      pendingTurnIntents: new Map(),
+    };
+    const coordinator = new SessionInputCoordinator({
+      config: { dataDir: cwd } as never,
+      getActiveSession: () => active as never,
+      turnCoordinator: {
+        isDuplicateTurnIntent: () => false,
+        beginTurnIntent: (_key, _active, _kind, _payload, clientTurnId) => ({
+          duplicate: false,
+          clientTurnId,
+        }),
+        markTurnDispatched: () => {},
+      },
+      sendCommand: (_key, command, _permit, onPreflightAccepted) =>
+        backend.prompt(command.message as string, {
+          resourceUsageProducerId: command.clientTurnId as string,
+          onPreflightAccepted,
+        }),
+      resourceUsage: { captureAcceptedPrompt } as never,
+    });
+
+    try {
+      await coordinator.sendPrompt("session-1", "/repeat-command", { clientTurnId: "turn-1" });
+      await coordinator.sendPrompt("session-1", "/repeat-command", { clientTurnId: "turn-2" });
+      await new Promise((resolve) => setImmediate(resolve));
+      const entries = backend.session.sessionManager.getEntries() as unknown as Array<
+        Record<string, unknown>
+      >;
+      const markers = entries.filter(
+        (entry) => entry.type === "custom" && entry.customType === "oppi-resource-usage",
+      );
+      expect(markers).toHaveLength(2);
+      expect(markers.map((entry) => (entry.data as { producerId: string }).producerId)).toEqual([
+        "turn-1",
+        "turn-2",
+      ]);
+      expect(markers.map((entry) => (entry.data as { actionId: string }).actionId)).toEqual([
+        "a".repeat(64),
+        "b".repeat(64),
+      ]);
+
+      const trace = backend.session.exportToJsonl(join(cwd, "accepted-commands.jsonl"));
+      const store = new ResourceUsageStore(cwd, {
+        dbPath: join(cwd, "accepted-commands.db"),
+      });
+      await new ResourceUsageBackfill(store).run(
+        [
+          {
+            sourceKey: opaqueResourceUsageSourceKey(trace),
+            path: trace,
+            sessionId: "session-1",
+            workspaceId: "workspace-opaque",
+            runtime: "oppi",
+          },
+        ],
+        { skills: new Map(), commands: new Map(), tools: new Map(), builtInTools: new Set() },
+      );
+      expect(
+        store.queryEvents({
+          subject: {
+            kind: "extension",
+            id: (markers[0]?.data as { ownerId: string }).ownerId,
+          },
+          sinceMs: 0,
+          untilMs: Infinity,
+        }),
+      ).toHaveLength(2);
+      store.close();
     } finally {
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });
@@ -279,11 +391,17 @@ describe("resource usage runtime capture", () => {
       ownerKind: "skill",
       ownerId: "skill_testing",
     };
-    const captureAcceptedPrompt = vi.fn();
+    const captureAcceptedPrompt = vi.fn().mockReturnValue({
+      version: 2,
+      producerId: "turn-1",
+      actionId: "a".repeat(64),
+      ...evidence,
+    });
     const active = {
       session: session(),
       sdkBackend: {
         resourceUsagePromptEvidence: () => evidence,
+        appendResourceUsageHistoryMarker: vi.fn(),
       },
       currentTurnClientId: undefined,
       clientTurnFingerprints: new Map(),
@@ -315,5 +433,6 @@ describe("resource usage runtime capture", () => {
       producerId: "turn-1",
       occurredAt: expect.any(Number),
     });
+    expect(active.sdkBackend.appendResourceUsageHistoryMarker).toHaveBeenCalledOnce();
   });
 });

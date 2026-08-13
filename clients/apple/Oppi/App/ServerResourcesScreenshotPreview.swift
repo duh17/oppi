@@ -363,6 +363,23 @@ private struct OppiConfigurationPreview: View {
 }
 
 enum ResourceUsagePreviewFixtures {
+    static let backfillStatus = ResourceUsageBackfillStatus(
+        status: .complete,
+        totalSources: 42,
+        processedSources: 42,
+        completedSources: 42,
+        failedSources: 0,
+        processedBytes: 1_048_576,
+        processedLines: 1_000,
+        historicalEvents: 15,
+        corruptLines: 0,
+        oversizedLines: 0,
+        startedAt: 1_771_180_300_000,
+        updatedAt: 1_771_180_400_000,
+        lastCompletedAt: 1_771_180_400_000,
+        lastError: nil,
+        canStart: false
+    )
     static let serverId = "preview-server"
 
     static func key(
@@ -403,6 +420,12 @@ enum ResourceUsagePreviewFixtures {
             timezone: "UTC",
             recordingStartedAt: 1_765_843_200_000,
             recordedActions: recordedActions,
+            attribution: ResourceUsageAttribution(
+                exactActions: recordedActions,
+                inferredActions: 0,
+                historicalActions: 0,
+                liveActions: recordedActions
+            ),
             distinctSessions: source.distinctSessionCount,
             activeDays: daily.filter { $0.actions > 0 }.count,
             lastRecordedAt: recordedActions == 0 ? nil : 1_771_180_400_000,
@@ -418,7 +441,8 @@ enum ResourceUsagePreviewFixtures {
                 failedWrites: partial ? 1 : 0,
                 droppedEvents: 0,
                 lastCapturedAt: recordedActions == 0 ? nil : 1_771_180_400_000
-            )
+            ),
+            backfill: backfillStatus
         )
     }
 
@@ -874,6 +898,10 @@ private struct ToolActivityPreview: View {
                             recordedActions: 15,
                             dailyCount: 90
                         )
+                    } backfillStatusRequest: {
+                        ResourceUsagePreviewFixtures.backfillStatus
+                    } startBackfillRequest: {
+                        ResourceUsagePreviewFixtures.backfillStatus
                     }
                     .themedListRowBackground()
                 }

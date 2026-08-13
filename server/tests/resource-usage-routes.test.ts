@@ -1,9 +1,25 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import fs, { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const promiseFilesystemCalls = vi.hoisted(() => ({ stat: vi.fn(), realpath: vi.fn() }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...original,
+    stat: (...args: Parameters<typeof original.stat>) => {
+      promiseFilesystemCalls.stat(...args);
+      return original.stat(...args);
+    },
+    realpath: (...args: Parameters<typeof original.realpath>) => {
+      promiseFilesystemCalls.realpath(...args);
+      return original.realpath(...args);
+    },
+  };
+});
 
 import { ResourceUsageService } from "../src/resource-usage-service.js";
 import { ResourceUsageStore } from "../src/storage/resource-usage-store.js";
@@ -31,7 +47,10 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function harness(getUsage = vi.fn().mockResolvedValue({ recordedActions: 0 })) {
+function harness(
+  getUsage = vi.fn().mockResolvedValue({ recordedActions: 0 }),
+  overrides: Record<string, unknown> = {},
+) {
   const helpers = {
     parseBody: vi.fn(),
     json: (res: ReturnType<typeof response>, data: unknown, status = 200) => {
@@ -45,10 +64,27 @@ function harness(getUsage = vi.fn().mockResolvedValue({ recordedActions: 0 })) {
     },
   };
   const dispatch = createResourceUsageRoutes(
-    { resourceUsage: { getUsage } } as never,
+    { resourceUsage: { getUsage, ...overrides } } as never,
     helpers as never,
   );
   return { dispatch, getUsage };
+}
+
+async function dispatchRequest(
+  dispatch: ReturnType<typeof createResourceUsageRoutes>,
+  method: string,
+  path: string,
+  query = "",
+) {
+  const res = response();
+  await dispatch({
+    method,
+    path,
+    url: new URL(`http://localhost${path}${query}`),
+    req: new EventEmitter() as never,
+    res: res as never,
+  });
+  return res;
 }
 
 async function get(
@@ -56,15 +92,7 @@ async function get(
   path: string,
   query: string,
 ) {
-  const res = response();
-  await dispatch({
-    method: "GET",
-    path,
-    url: new URL(`http://localhost${path}${query}`),
-    req: new EventEmitter() as never,
-    res: res as never,
-  });
-  return res;
+  return dispatchRequest(dispatch, "GET", path, query);
 }
 
 describe("resource usage routes", () => {
@@ -110,13 +138,60 @@ describe("resource usage routes", () => {
     expect(getUsage).not.toHaveBeenCalled();
   });
 
+  it("starts manual backfill asynchronously and makes concurrent triggers idempotent", async () => {
+    const running = {
+      status: "running",
+      totalSources: 2,
+      processedSources: 0,
+      completedSources: 0,
+      failedSources: 0,
+      processedBytes: 0,
+      processedLines: 0,
+      historicalEvents: 0,
+      corruptLines: 0,
+      oversizedLines: 0,
+      updatedAt: 1,
+      canStart: false,
+    };
+    let first = true;
+    const triggerBackfill = vi.fn(() => ({ accepted: first ? ((first = false), true) : false, status: running }));
+    const getBackfillStatus = vi.fn(() => running);
+    const { dispatch } = harness(undefined, { triggerBackfill, getBackfillStatus });
+
+    const started = await dispatchRequest(
+      dispatch,
+      "POST",
+      "/server/stats/tool-activity/backfill",
+    );
+    const duplicate = await dispatchRequest(
+      dispatch,
+      "POST",
+      "/server/stats/tool-activity/backfill",
+    );
+    const status = await get(dispatch, "/server/stats/tool-activity/backfill", "");
+
+    expect(started.statusCode).toBe(202);
+    expect(duplicate.statusCode).toBe(200);
+    expect(status.payload).toEqual(running);
+    expect(triggerBackfill).toHaveBeenCalledTimes(2);
+  });
+
   it("does not read the real trace/filesystem boundary on a GET", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-resource-usage-route-"));
     dirs.push(dir);
     const store = new ResourceUsageStore(dir);
     const service = new ResourceUsageService(store);
     const { dispatch } = harness(service.getUsage.bind(service) as never);
+    const denied = [
+      vi.spyOn(fs, "openSync"),
+      vi.spyOn(fs, "statSync"),
+      vi.spyOn(fs, "createReadStream"),
+      vi.spyOn(fs, "fstatSync"),
+      vi.spyOn(fs, "readSync"),
+    ];
 
+    promiseFilesystemCalls.stat.mockClear();
+    promiseFilesystemCalls.realpath.mockClear();
     const res = await get(
       dispatch,
       `/server/resources/skills/${SKILL_ID}/usage`,
@@ -128,8 +203,12 @@ describe("resource usage routes", () => {
       recordedActions: 0,
       recordingStartedAt: expect.any(Number),
       capture: { status: "active" },
+      backfill: { status: "available" },
       retainedHistory: { retentionDays: 120 },
     });
+    for (const boundary of denied) expect(boundary).not.toHaveBeenCalled();
+    expect(promiseFilesystemCalls.stat).not.toHaveBeenCalled();
+    expect(promiseFilesystemCalls.realpath).not.toHaveBeenCalled();
     await service.close();
   });
 });

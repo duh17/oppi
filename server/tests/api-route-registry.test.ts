@@ -110,6 +110,8 @@ const settingsOperationIds = [
   "getServerStats",
   "getDailyServerStats",
   "getToolActivityUsage",
+  "getToolActivityBackfillStatus",
+  "startToolActivityBackfill",
   "getAutoTitleConfig",
   "setAutoTitleConfig",
   "listServerSkills",
@@ -264,6 +266,9 @@ describe("api route registry", () => {
     ).toBe("/server/resources/skills/:skillId/usage");
     expect(normalizeRegisteredPathPattern("/server/stats/tool-activity")).toBe(
       "/server/stats/tool-activity",
+    );
+    expect(normalizeRegisteredPathPattern("/server/stats/tool-activity/backfill")).toBe(
+      "/server/stats/tool-activity/backfill",
     );
   });
 

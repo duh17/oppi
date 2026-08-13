@@ -845,6 +845,9 @@ struct ServerStatsTests {
             .toolInvocation,
         ])
         #expect(usage.capture.status == .degraded)
+        #expect(usage.attribution.exactActions == 5)
+        #expect(usage.attribution.inferredActions == 1)
+        #expect(usage.backfill.status == .complete)
     }
 
     @Test func screenshotPreviewUsageFixturesReconcileOneEventSource() {
@@ -1021,6 +1024,34 @@ struct ServerStatsTests {
         ) == .failure("Network unavailable"))
     }
 
+    @Test @MainActor func backfillPollingContinuesUntilTerminalAndInitialErrorIsPresentable() async throws {
+        let running = try decode(runningBackfillJSON, as: ResourceUsageBackfillStatus.self)
+        let complete = try decode(completeBackfillJSON, as: ResourceUsageBackfillStatus.self)
+        var responses = [running, running, complete]
+        var updates: [ResourceUsageBackfillStatus.Status] = []
+        var waits = 0
+
+        let terminal = try await ResourceUsageBackfillPolling.poll(
+            request: { responses.removeFirst() },
+            wait: { waits += 1 },
+            onUpdate: { status in updates.append(status.status) }
+        )
+
+        #expect(terminal.status == .complete)
+        #expect(updates == [.running, .running, .complete])
+        #expect(waits == 2)
+        #expect(ResourceUsageBackfillControlPresentation.resolve(
+            status: nil,
+            error: "Network unavailable",
+            isLoading: false
+        ) == .failure("Network unavailable"))
+        #expect(ResourceUsageBackfillControlPresentation.resolve(
+            status: nil,
+            error: nil,
+            isLoading: true
+        ) == .loading)
+    }
+
     @Test func usageAccessibilityLabelsStateCountsAndCoverageWithoutColorMeaning() throws {
         let usage = try decode(resourceUsageJSON, as: ResourceUsageResponse.self)
         let extensionRow = try #require(usage.breakdown.first { $0.ownerKind == .extension })
@@ -1030,7 +1061,7 @@ struct ServerStatsTests {
         #expect(ResourceUsagePresentation.breakdownAccessibilityLabel(extensionRow)
             == "search, tool invocation, 4 recorded actions, 3 sessions.")
         #expect(ResourceUsagePresentation.coverageAccessibilityLabel(usage)
-            == "Coverage: Recorded by this server since Dec 15, 2025. Live capture is partial. Recorded activity is retained for up to 120 days.")
+            == "Coverage: Recorded by this server since Dec 15, 2025. Live capture is partial. History backfill: Complete. 5 exact and 1 inferred actions. Recorded activity is retained for up to 120 days.")
         #expect(ResourceUsagePresentation.dailyActivityAccessibilityLabel(usage)
             == "Daily activity: 6 recorded actions across 2 active days in the last 30 days.")
     }
@@ -1265,6 +1296,18 @@ struct ServerStatsTests {
         }
     }
 
+    private var runningBackfillJSON: String {
+        """
+        {"status":"running","totalSources":10,"processedSources":2,"completedSources":2,"failedSources":0,"processedBytes":100,"processedLines":20,"historicalEvents":5,"corruptLines":0,"oversizedLines":0,"updatedAt":1771180300000,"canStart":false}
+        """
+    }
+
+    private var completeBackfillJSON: String {
+        """
+        {"status":"complete","totalSources":10,"processedSources":10,"completedSources":10,"failedSources":0,"processedBytes":1000,"processedLines":200,"historicalEvents":50,"corruptLines":0,"oversizedLines":0,"updatedAt":1771180400000,"lastCompletedAt":1771180400000,"canStart":false}
+        """
+    }
+
     private var resourceUsageJSON: String {
         """
         {
@@ -1273,6 +1316,7 @@ struct ServerStatsTests {
           "timezone":"America/Los_Angeles",
           "recordingStartedAt":1765843200000,
           "recordedActions":6,
+          "attribution":{"exactActions":5,"inferredActions":1,"historicalActions":4,"liveActions":2},
           "distinctSessions":3,
           "activeDays":2,
           "lastRecordedAt":1771180400000,
@@ -1285,7 +1329,8 @@ struct ServerStatsTests {
             {"signal":"tool_invocation","name":"read","ownerKind":"builtin","ownerId":"builtin","actions":2,"sessions":1},
             {"signal":"tool_invocation","name":"search","ownerKind":"extension","ownerId":"extension_opaque","actions":4,"sessions":3}
           ],
-          "capture":{"status":"degraded","failedWrites":1,"droppedEvents":0,"lastCapturedAt":1771180400000}
+          "capture":{"status":"degraded","failedWrites":1,"droppedEvents":0,"lastCapturedAt":1771180400000},
+          "backfill":{"status":"complete","totalSources":42,"processedSources":42,"completedSources":42,"failedSources":0,"processedBytes":1048576,"processedLines":1000,"historicalEvents":4,"corruptLines":0,"oversizedLines":0,"startedAt":1771180300000,"updatedAt":1771180400000,"lastCompletedAt":1771180400000,"canStart":false}
         }
         """
     }
@@ -1298,12 +1343,14 @@ struct ServerStatsTests {
           "timezone":"UTC",
           "recordingStartedAt":1765843200000,
           "recordedActions":0,
+          "attribution":{"exactActions":0,"inferredActions":0,"historicalActions":0,"liveActions":0},
           "distinctSessions":0,
           "activeDays":0,
           "retainedHistory":{"retentionDays":120},
           "daily":[],
           "breakdown":[],
-          "capture":{"status":"active","failedWrites":0,"droppedEvents":0}
+          "capture":{"status":"active","failedWrites":0,"droppedEvents":0},
+          "backfill":{"status":"available","totalSources":0,"processedSources":0,"completedSources":0,"failedSources":0,"processedBytes":0,"processedLines":0,"historicalEvents":0,"corruptLines":0,"oversizedLines":0,"updatedAt":1765843200000,"canStart":true}
         }
         """
     }

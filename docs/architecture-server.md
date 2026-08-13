@@ -155,6 +155,7 @@ The private loopback is an adapter, not a second API. Iroh transport code must n
 - `routes/agents.ts` — saved Agent definitions and saved-Agent session launches.
 - `routes/schedules.ts` — schedule CRUD, manual runs, run history, and pause/resume/archive/restore.
 - `routes/server-resources.ts` — server-global Skill/extension catalogs, server-authored capabilities, contained Skill file reads, enable/disable, and Oppi extension configuration.
+- `routes/resource-usage.ts` — indexed 7/30/90-day Resource Usage reads plus the authenticated server-wide manual history-backfill trigger/status boundary. The trigger snapshots all authoritative registered, imported/discovered, and Mirror trace sources at that moment, returns immediately, and resumes from durable checkpoints after partial failure or restart. Live capture owns activity after the snapshot; there is intentionally no post-trigger automatic enrollment for the one-time operation.
 - `routes/uploads.ts` — chat attachment upload records and content.
 - `routes/workspace-files.ts` — workspace path, directory, and raw-file routes.
 - `routes/themes.ts`, `routes/skills.ts`, `routes/provider-auth.ts`, `routes/telemetry.ts`, and E2E harness routes.

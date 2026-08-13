@@ -77,14 +77,13 @@ export class SessionStartCoordinator {
               this.deps.resourceUsage?.captureSkillLoads({ session, runtime: "oppi", ...load });
             });
           }
-          sdkBackend.onResourceUsageCommandInvoked = ({ evidence, producerId }) => {
+          sdkBackend.onResourceUsageCommandInvoked = ({ evidence, producerId }) =>
             this.deps.resourceUsage?.captureAcceptedPrompt({
               session,
               runtime: "oppi",
               evidence,
               producerId,
             });
-          };
         } catch {
           // Runtime creation remains authoritative when optional measurement fails.
         }

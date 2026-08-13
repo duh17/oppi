@@ -11,8 +11,43 @@ export function createResourceUsageRoutes(
   helpers: RouteHelpers,
 ): RouteDispatcher {
   return async ({ method, path, url, res }) => {
-    if (method !== "GET") return false;
+    if (path === "/server/stats/tool-activity/backfill") {
+      const usage = ctx.resourceUsage;
+      if (!usage) {
+        helpers.error(res, 503, "Resource usage statistics are unavailable");
+        return true;
+      }
+      if (method === "GET") {
+        if ([...url.searchParams.keys()].length > 0) {
+          helpers.error(res, 400, "query is not supported");
+        } else {
+          helpers.json(res, usage.getBackfillStatus());
+        }
+        return true;
+      }
+      if (method === "POST") {
+        if ([...url.searchParams.keys()].length > 0) {
+          helpers.error(res, 400, "query is not supported");
+          return true;
+        }
+        try {
+          const result = usage.triggerBackfill();
+          helpers.json(res, result.status, result.accepted ? 202 : 200);
+        } catch (error) {
+          helpers.error(
+            res,
+            503,
+            error instanceof Error
+              ? error.message
+              : "Resource usage history backfill is unavailable",
+          );
+        }
+        return true;
+      }
+      return false;
+    }
 
+    if (method !== "GET") return false;
     const subject = subjectForPath(path);
     if (!subject) return false;
     const usage = ctx.resourceUsage;

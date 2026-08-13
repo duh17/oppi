@@ -24,6 +24,11 @@ export interface SessionInputSessionState extends TurnSessionState {
       operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
     ): Promise<T>;
     resourceUsagePromptEvidence?(message: string): ResourceUsagePromptEvidence | undefined;
+    resourceUsageEntryIds?(): ReadonlySet<string>;
+    appendResourceUsageHistoryMarker?(
+      marker: ReturnType<ResourceUsageService["captureAcceptedPrompt"]>,
+      priorEntryIds?: ReadonlySet<string>,
+    ): void;
   };
 }
 
@@ -524,13 +529,15 @@ export class SessionInputCoordinator {
     occurredAt: number,
   ): void {
     try {
-      this.deps.resourceUsage?.captureAcceptedPrompt({
+      const priorEntryIds = active.sdkBackend?.resourceUsageEntryIds?.();
+      const marker = this.deps.resourceUsage?.captureAcceptedPrompt({
         session: active.session,
         runtime: active.sdkBackend ? "oppi" : "pi-tui",
         evidence: active.sdkBackend?.resourceUsagePromptEvidence?.(message),
         producerId,
         occurredAt,
       });
+      active.sdkBackend?.appendResourceUsageHistoryMarker?.(marker, priorEntryIds);
     } catch (error) {
       // Accepted input must proceed even when measurement is unavailable.
       log.warn("session_input.resource_usage_capture_failed", {

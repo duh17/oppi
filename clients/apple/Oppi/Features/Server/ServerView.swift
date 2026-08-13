@@ -336,6 +336,18 @@ struct ServerView: View {
                 throw ResourceUsageLoadError.notConnected
             }
             return try await client.getToolActivity(range: range, timezone: timezone)
+        } backfillStatusRequest: {
+            guard let server = selectedServer,
+                  let client = await apiClient(for: server) else {
+                throw ResourceUsageLoadError.notConnected
+            }
+            return try await client.getToolActivityBackfillStatus()
+        } startBackfillRequest: {
+            guard let server = selectedServer,
+                  let client = await apiClient(for: server) else {
+                throw ResourceUsageLoadError.notConnected
+            }
+            return try await client.startToolActivityBackfill()
         }
         .id(selectedServer?.id)
 

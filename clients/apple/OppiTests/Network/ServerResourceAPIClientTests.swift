@@ -99,6 +99,26 @@ struct ServerResourceAPIClientTests {
         ])
     }
 
+    @Test func manualBackfillUsesSharedStatusAndNonblockingPostRoutes() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+        var methods: [String] = []
+
+        TestURLProtocol.handler = { request in
+            methods.append(request.httpMethod ?? "")
+            #expect(request.url?.path == "/server/stats/tool-activity/backfill")
+            return mockResponse(json: Self.backfillStatusJSON)
+        }
+
+        let available = try await client.getToolActivityBackfillStatus()
+        let started = try await client.startToolActivityBackfill()
+
+        #expect(methods == ["GET", "POST"])
+        #expect(available.status == .available)
+        #expect(started.canStart)
+        #expect(started.actionTitle == "Backfill usage history")
+    }
+
     @Test func normalEnablePutsBooleanAndDecodesAuthoritativeSummaries() async throws {
         let client = makeClient()
         defer { TestURLProtocol.handler = nil }
@@ -261,13 +281,19 @@ struct ServerResourceAPIClientTests {
       "timezone":"UTC",
       "recordingStartedAt":1765843200000,
       "recordedActions":0,
+      "attribution":{"exactActions":0,"inferredActions":0,"historicalActions":0,"liveActions":0},
       "distinctSessions":0,
       "activeDays":0,
       "retainedHistory":{"retentionDays":120},
       "daily":[],
       "breakdown":[],
-      "capture":{"status":"active","failedWrites":0,"droppedEvents":0}
+      "capture":{"status":"active","failedWrites":0,"droppedEvents":0},
+      "backfill":{"status":"available","totalSources":0,"processedSources":0,"completedSources":0,"failedSources":0,"processedBytes":0,"processedLines":0,"historicalEvents":0,"corruptLines":0,"oversizedLines":0,"updatedAt":1765843200000,"canStart":true}
     }
+    """
+
+    private static let backfillStatusJSON = """
+    {"status":"available","totalSources":0,"processedSources":0,"completedSources":0,"failedSources":0,"processedBytes":0,"processedLines":0,"historicalEvents":0,"corruptLines":0,"oversizedLines":0,"updatedAt":1765843200000,"canStart":true}
     """
 
     private struct EnabledRequest: Decodable {

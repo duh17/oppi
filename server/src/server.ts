@@ -49,8 +49,17 @@ import {
 import { SkillRegistry } from "./skills.js";
 import { isDeclaredControlSession } from "./control-session.js";
 import { ServerResourceService } from "./server-resource-service.js";
-import { ResourceUsageService } from "./resource-usage-service.js";
+import {
+  ResourceUsageService,
+  type ResourceUsageBackfillSnapshot,
+} from "./resource-usage-service.js";
+import {
+  localResourceUsageSource,
+  resolveRegisteredResourceUsageSources,
+  type ResourceUsageBackfillCatalog,
+} from "./resource-usage-backfill.js";
 import { ResourceUsageStore } from "./storage/resource-usage-store.js";
+import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "./local-sessions.js";
 
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 
@@ -823,6 +832,9 @@ export class Server {
     }
 
     await this.initializeModelServices();
+    this.resourceUsage?.configureBackfillSnapshotProvider(() =>
+      this.snapshotResourceUsageBackfill(),
+    );
 
     // Prime model catalog so first picker open is fast.
     await this.models.refresh();
@@ -931,6 +943,42 @@ export class Server {
       this.releaseLocalApiBinding();
       throw error;
     }
+  }
+
+  private async snapshotResourceUsageBackfill(): Promise<ResourceUsageBackfillSnapshot> {
+    const sessions = this.storage.listSessions();
+    const known = collectKnownLocalSessionIdentities(sessions);
+    const [localSessions, skillsResult, extensionsResult] = await Promise.all([
+      discoverLocalSessions(known, { dataDir: this.storage.getDataDir() }),
+      this.serverResources.listSkills(),
+      this.serverResources.listExtensions(),
+    ]);
+    const catalog: ResourceUsageBackfillCatalog = {
+      skills: uniqueResourceOwners(skillsResult.skills.map((skill) => [skill.name, skill.id])),
+      commands: uniqueResourceOwners(
+        extensionsResult.extensions.flatMap((extension) =>
+          (extension.contributedCommands ?? []).map(
+            (command) =>
+              [command, { ownerKind: "extension" as const, ownerId: extension.id }] as const,
+          ),
+        ),
+      ),
+      tools: uniqueResourceOwners(
+        extensionsResult.extensions.flatMap((extension) =>
+          (extension.contributedTools ?? []).map(
+            (tool) => [tool, { ownerKind: "extension" as const, ownerId: extension.id }] as const,
+          ),
+        ),
+      ),
+      builtInTools: new Set(extensionsResult.builtInTools.map((tool) => tool.name)),
+    };
+    return {
+      sources: uniqueResourceUsageSources([
+        ...resolveRegisteredResourceUsageSources(sessions),
+        ...localSessions.map((session) => localResourceUsageSource(session)),
+      ]),
+      catalog,
+    };
   }
 
   /** Actual listening port (may differ from config when config.port is 0). */
@@ -1539,4 +1587,23 @@ export class Server {
       ws.close(1008, "Unsupported WebSocket endpoint");
     });
   }
+}
+
+function uniqueResourceUsageSources<T extends { sourceKey: string }>(sources: readonly T[]): T[] {
+  return [...new Map(sources.map((source) => [source.sourceKey, source])).values()];
+}
+
+function uniqueResourceOwners<T>(entries: readonly (readonly [string, T])[]): Map<string, T> {
+  const unique = new Map<string, T>();
+  const ambiguous = new Set<string>();
+  for (const [name, owner] of entries) {
+    if (ambiguous.has(name)) continue;
+    if (unique.has(name)) {
+      unique.delete(name);
+      ambiguous.add(name);
+      continue;
+    }
+    unique.set(name, owner);
+  }
+  return unique;
 }

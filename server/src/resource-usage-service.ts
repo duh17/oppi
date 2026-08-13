@@ -12,7 +12,13 @@ import {
   type ResourceUsageSignal,
   type ResourceUsageStore,
   type ResourceUsageSubject,
+  type ResourceUsageBackfillState,
 } from "./storage/resource-usage-store.js";
+import type {
+  ResourceUsageBackfillCatalog,
+  ResourceUsageBackfillResult,
+  ResourceUsageBackfillSource,
+} from "./resource-usage-backfill.js";
 import type { Session } from "./types.js";
 
 const log = createLogger({ base: { component: "resource_usage" } });
@@ -41,6 +47,12 @@ export interface ResourceUsagePromptEvidence
   itemName: string;
 }
 
+export interface ResourceUsageHistoryMarker extends ResourceUsagePromptEvidence {
+  version: 2;
+  actionId: string;
+  producerId: string;
+}
+
 export interface ResourceUsageSkillLoadEvidence extends ResourceUsageModelEvidence {
   id: string;
   name: string;
@@ -51,6 +63,34 @@ export interface ResourceUsageCaptureStatus {
   failedWrites: number;
   droppedEvents: number;
   lastCapturedAt?: number;
+}
+
+export interface ResourceUsageBackfillStatus {
+  status: "available" | "running" | "complete" | "partial";
+  totalSources: number;
+  processedSources: number;
+  completedSources: number;
+  failedSources: number;
+  processedBytes: number;
+  processedLines: number;
+  historicalEvents: number;
+  corruptLines: number;
+  oversizedLines: number;
+  startedAt?: number;
+  updatedAt: number;
+  lastCompletedAt?: number;
+  lastError?: string;
+  canStart: boolean;
+}
+
+export interface ResourceUsageBackfillSnapshot {
+  sources: readonly ResourceUsageBackfillSource[];
+  catalog: ResourceUsageBackfillCatalog;
+}
+
+export interface ResourceUsageBackfillTriggerResult {
+  accepted: boolean;
+  status: ResourceUsageBackfillStatus;
 }
 
 export interface ResourceUsageDailyRow {
@@ -74,6 +114,12 @@ export interface ResourceUsageResponse {
   timezone: string;
   recordingStartedAt: number;
   recordedActions: number;
+  attribution: {
+    exactActions: number;
+    inferredActions: number;
+    historicalActions: number;
+    liveActions: number;
+  };
   distinctSessions: number;
   activeDays: number;
   lastRecordedAt?: number;
@@ -85,6 +131,7 @@ export interface ResourceUsageResponse {
   daily: ResourceUsageDailyRow[];
   breakdown: ResourceUsageBreakdownRow[];
   capture: ResourceUsageCaptureStatus;
+  backfill: ResourceUsageBackfillStatus;
 }
 
 export interface ResourceUsageServiceOptions {
@@ -107,6 +154,7 @@ export interface AggregateResourceUsageInput {
   nowMs: number;
   recordingStartedAt: number;
   capture: ResourceUsageCaptureStatus;
+  backfill?: ResourceUsageBackfillStatus;
 }
 
 /** Application service for best-effort exact live capture and indexed reads. */
@@ -123,6 +171,11 @@ export class ResourceUsageService {
     failedWrites: 0,
     droppedEvents: 0,
   };
+  private backfillState: ResourceUsageBackfillState;
+  private backfillSnapshotProvider?: () => Promise<ResourceUsageBackfillSnapshot>;
+  private backfillAbort?: AbortController;
+  private backfillTail: Promise<void> = Promise.resolve();
+  private closeTail?: Promise<void>;
 
   constructor(
     private readonly store: ResourceUsageStore,
@@ -132,6 +185,7 @@ export class ResourceUsageService {
     this.maxPendingEvents = options.maxPendingEvents ?? MAX_PENDING_EVENTS;
     this.batchSize = options.batchSize ?? MAX_BATCH_EVENTS;
     this.recordingStartedAt = recordingStartedAt(store, this.now());
+    this.backfillState = store.getBackfillState();
   }
 
   capture(event: ResourceUsageEvent): void {
@@ -191,17 +245,18 @@ export class ResourceUsageService {
     evidence?: ResourceUsagePromptEvidence;
     producerId?: string;
     occurredAt?: number;
-  }): void {
+  }): ResourceUsageHistoryMarker | undefined {
     const producerId = input.producerId?.trim();
-    if (!input.evidence || !producerId) return;
+    if (!input.evidence || !producerId) return undefined;
     const sessionModel = splitModel(input.session.model);
+    const actionId = resourceUsageActionId(
+      input.runtime,
+      input.session.piSessionId ?? input.session.id,
+      input.evidence.signal,
+      producerId,
+    );
     this.capture({
-      actionId: resourceUsageActionId(
-        input.runtime,
-        input.session.piSessionId ?? input.session.id,
-        input.evidence.signal,
-        producerId,
-      ),
+      actionId,
       occurredAt: input.occurredAt ?? this.now(),
       signal: input.evidence.signal,
       sessionId: input.session.id,
@@ -214,6 +269,7 @@ export class ResourceUsageService {
       model: input.evidence.model ?? sessionModel.model,
       manifestRevision: input.evidence.manifestRevision,
     });
+    return { version: 2, actionId, producerId, ...input.evidence };
   }
 
   createRuntimeInstanceId(): string {
@@ -270,6 +326,87 @@ export class ResourceUsageService {
     await this.flushTail;
   }
 
+  configureBackfillSnapshotProvider(provider: () => Promise<ResourceUsageBackfillSnapshot>): void {
+    this.backfillSnapshotProvider = provider;
+  }
+
+  getBackfillStatus(): ResourceUsageBackfillStatus {
+    return statusFromBackfillState(this.backfillState);
+  }
+
+  triggerBackfill(): ResourceUsageBackfillTriggerResult {
+    if (this.backfillState.status === "running" || this.backfillState.status === "complete") {
+      return { accepted: false, status: this.getBackfillStatus() };
+    }
+    if (!this.backfillSnapshotProvider) {
+      throw new Error("Resource usage history discovery is unavailable");
+    }
+    const startedAt = this.now();
+    this.setBackfillState({
+      status: "running",
+      totalSources: 0,
+      processedSources: 0,
+      completedSources: 0,
+      failedSources: 0,
+      processedBytes: 0,
+      processedLines: 0,
+      historicalEvents: this.store.countHistoricalEvents(),
+      corruptLines: 0,
+      oversizedLines: 0,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    const controller = new AbortController();
+    this.backfillAbort = controller;
+    const run = async (): Promise<void> => {
+      try {
+        const snapshot = await this.backfillSnapshotProvider?.();
+        if (!snapshot) throw new Error("Resource usage history discovery is unavailable");
+        const { ResourceUsageBackfill } = await import("./resource-usage-backfill.js");
+        const result = await new ResourceUsageBackfill(this.store, {
+          now: this.now,
+          signal: controller.signal,
+          onProgress: (progress) => {
+            this.setBackfillState({
+              status: "running",
+              totalSources: progress.totalSources,
+              processedSources: progress.sources,
+              completedSources: progress.completedSources,
+              failedSources: progress.failedSources,
+              processedBytes: progress.bytes,
+              processedLines: progress.lines,
+              historicalEvents: progress.events,
+              corruptLines: progress.corruptLines,
+              oversizedLines: progress.oversizedLines,
+              startedAt,
+              updatedAt: this.now(),
+            });
+          },
+        }).run(snapshot.sources, snapshot.catalog);
+        this.noteBackfillResult(result, startedAt);
+      } catch (error) {
+        this.setBackfillState({
+          ...this.backfillState,
+          status: "partial",
+          historicalEvents: this.store.countHistoricalEvents(),
+          updatedAt: this.now(),
+          lastError: safeErrorMessage(error),
+        });
+        log.warn("resource_usage.backfill_failed", { error: safeErrorMessage(error) });
+      } finally {
+        if (this.backfillAbort === controller) this.backfillAbort = undefined;
+      }
+    };
+    this.backfillTail = new Promise<void>((resolve) => {
+      setImmediate(() => void run().finally(resolve));
+    });
+    return { accepted: true, status: this.getBackfillStatus() };
+  }
+
+  async waitForBackfill(): Promise<void> {
+    await this.backfillTail;
+  }
+
   async getUsage(
     subject: ResourceUsageSubject,
     rangeDays: 7 | 30 | 90,
@@ -303,6 +440,7 @@ export class ResourceUsageService {
         overall,
         daily,
         capture: { ...this.captureStatus },
+        backfill: this.getBackfillStatus(),
       });
     } catch (error) {
       this.noteWriteFailure(error);
@@ -337,8 +475,69 @@ export class ResourceUsageService {
   }
 
   async close(): Promise<void> {
-    await this.flush();
-    this.store.close();
+    this.backfillAbort?.abort();
+    if (!this.closeTail) {
+      const finalize = async (): Promise<void> => {
+        await this.flush();
+        this.store.close();
+      };
+      this.closeTail = this.backfillTail.then(finalize, finalize);
+    }
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const boundedWait = new Promise<void>((resolve) => {
+      timeout = setTimeout(() => {
+        // The timeout callback still owns an open store: the close tail cannot
+        // run concurrently on this event-loop turn. It keeps ownership and
+        // closes exactly once after the scanner settles.
+        this.setBackfillState({
+          ...this.backfillState,
+          status: "partial",
+          updatedAt: this.now(),
+          lastError: "Server shutdown interrupted the backfill; retry resumes from checkpoints",
+        });
+        log.warn("resource_usage.backfill_shutdown_timeout");
+        resolve();
+      }, 5_000);
+    });
+    await Promise.race([this.closeTail, boundedWait]);
+    if (timeout) clearTimeout(timeout);
+  }
+
+  private noteBackfillResult(result: ResourceUsageBackfillResult, startedAt: number): void {
+    const complete =
+      !result.cancelled &&
+      result.sources === result.totalSources &&
+      result.failedSources === 0 &&
+      result.corruptLines === 0 &&
+      result.oversizedLines === 0;
+    const nowMs = this.now();
+    this.setBackfillState({
+      status: complete ? "complete" : "partial",
+      totalSources: result.totalSources,
+      processedSources: result.sources,
+      completedSources: result.completedSources,
+      failedSources: result.failedSources,
+      processedBytes: result.bytes,
+      processedLines: result.lines,
+      historicalEvents: this.store.countHistoricalEvents(),
+      corruptLines: result.corruptLines,
+      oversizedLines: result.oversizedLines,
+      startedAt,
+      updatedAt: nowMs,
+      ...(complete ? { lastCompletedAt: nowMs } : {}),
+      ...(!complete
+        ? {
+            lastError: result.cancelled
+              ? "Backfill was interrupted; retry resumes from checkpoints"
+              : "Some history sources could not be fully indexed; retry resumes from checkpoints",
+          }
+        : {}),
+    });
+  }
+
+  private setBackfillState(state: ResourceUsageBackfillState): void {
+    this.backfillState = state;
+    this.store.setBackfillState(state);
   }
 
   private scheduleFlush(): void {
@@ -412,6 +611,12 @@ export function aggregateResourceUsage(input: AggregateResourceUsageInput): Reso
     timezone: input.timezone,
     recordingStartedAt: input.recordingStartedAt,
     recordedActions,
+    attribution: {
+      exactActions: input.events.filter((event) => event.attribution !== "inferred").length,
+      inferredActions: input.events.filter((event) => event.attribution === "inferred").length,
+      historicalActions: input.events.filter((event) => event.origin === "history").length,
+      liveActions: input.events.filter((event) => event.origin !== "history").length,
+    },
     distinctSessions: sessions.size,
     activeDays: activeDates.size,
     ...(input.retainedBounds.lastRecordedAt !== undefined
@@ -429,6 +634,7 @@ export function aggregateResourceUsage(input: AggregateResourceUsageInput): Reso
       .map((row) => ({ ...row, sessions: row.sessions.size }))
       .sort((left, right) => right.actions - left.actions || left.name.localeCompare(right.name)),
     capture: input.capture,
+    backfill: input.backfill ?? emptyBackfillStatus(),
   };
 }
 
@@ -498,6 +704,7 @@ function responseFromAggregates(input: {
   overall: ResourceUsageAggregate;
   daily: Array<{ date: string; aggregate: ResourceUsageAggregate }>;
   capture: ResourceUsageCaptureStatus;
+  backfill: ResourceUsageBackfillStatus;
 }): ResourceUsageResponse {
   return {
     subject: input.subject,
@@ -505,6 +712,12 @@ function responseFromAggregates(input: {
     timezone: input.timezone,
     recordingStartedAt: input.recordingStartedAt,
     recordedActions: input.overall.actions,
+    attribution: {
+      exactActions: input.overall.exactActions,
+      inferredActions: input.overall.inferredActions,
+      historicalActions: input.overall.historicalActions,
+      liveActions: input.overall.liveActions,
+    },
     distinctSessions: input.overall.sessions,
     activeDays: input.daily.filter((row) => row.aggregate.actions > 0).length,
     ...(input.retainedBounds.lastRecordedAt !== undefined
@@ -521,11 +734,44 @@ function responseFromAggregates(input: {
     })),
     breakdown: input.overall.breakdown,
     capture: input.capture,
+    backfill: input.backfill,
   };
 }
 
 function emptyUsageAggregate(): ResourceUsageAggregate {
-  return { actions: 0, sessions: 0, breakdown: [] };
+  return {
+    actions: 0,
+    sessions: 0,
+    exactActions: 0,
+    inferredActions: 0,
+    historicalActions: 0,
+    liveActions: 0,
+    breakdown: [],
+  };
+}
+
+function emptyBackfillStatus(): ResourceUsageBackfillStatus {
+  return {
+    status: "available",
+    totalSources: 0,
+    processedSources: 0,
+    completedSources: 0,
+    failedSources: 0,
+    processedBytes: 0,
+    processedLines: 0,
+    historicalEvents: 0,
+    corruptLines: 0,
+    oversizedLines: 0,
+    updatedAt: 0,
+    canStart: true,
+  };
+}
+
+function statusFromBackfillState(state: ResourceUsageBackfillState): ResourceUsageBackfillStatus {
+  return {
+    ...state,
+    canStart: state.status === "available" || state.status === "partial",
+  };
 }
 
 function splitModel(value: string | undefined): { provider?: string; model?: string } {
