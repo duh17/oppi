@@ -332,6 +332,7 @@ struct FileLinkPayload: Equatable {
 
 enum LinkAction: Equatable {
     case deepLink(URL)
+    case inAppSessionLink(InAppDeepLinkIntent)
     case webLink(URL)
     case resourceReference(ResourceReference)
     case fileLink(FileLinkPayload)
@@ -350,6 +351,12 @@ enum MarkdownLinkInteractionSupport {
             return .systemDefault
         }
         if scheme == "oppi" {
+            if InAppSessionLink.parse(normalizedURL) != nil {
+                return .inAppSessionLink(InAppDeepLinkIntent(
+                    url: normalizedURL,
+                    sourceServerID: serverID
+                ))
+            }
             return .deepLink(normalizedURL)
         }
         if scheme == "http" || scheme == "https" {
@@ -381,6 +388,23 @@ enum MarkdownLinkInteractionSupport {
         case .deepLink(let normalizedURL):
             return UIAction { _ in
                 NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
+            }
+        case .inAppSessionLink(let intent):
+            return UIAction { _ in
+                let post = { @MainActor in
+                    NotificationCenter.default.post(
+                        name: .inAppDeepLinkTapped,
+                        object: intent.url,
+                        userInfo: intent.sourceServerID.map {
+                            [Notification.Name.inAppDeepLinkSourceServerIDKey: $0]
+                        }
+                    )
+                }
+                if Thread.isMainThread {
+                    post()
+                } else {
+                    DispatchQueue.main.async(execute: post)
+                }
             }
         case .webLink(let normalizedURL):
             return UIAction { _ in

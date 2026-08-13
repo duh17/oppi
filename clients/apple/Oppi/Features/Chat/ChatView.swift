@@ -56,6 +56,7 @@ struct ChatView: View {
     }
 
     let sessionId: String
+    private let serverIdHint: String?
     private let workspaceIdHint: String?
     private let routeScope: SessionRouteScope?
     private let ownsWorkspacePathBackNavigation: Bool
@@ -124,6 +125,7 @@ struct ChatView: View {
 
     init(
         sessionId: String,
+        serverIdHint: String? = nil,
         workspaceIdHint: String? = nil,
         routeScope: SessionRouteScope? = nil,
         initialInputText: String = "",
@@ -131,6 +133,7 @@ struct ChatView: View {
         ownsWorkspacePathBackNavigation: Bool = false
     ) {
         self.sessionId = sessionId
+        self.serverIdHint = serverIdHint
         self.workspaceIdHint = workspaceIdHint
         self.routeScope = routeScope
             ?? workspaceIdHint.map(SessionRouteScope.workspace)
@@ -447,6 +450,7 @@ struct ChatView: View {
     private var chatTimeline: some View {
         ChatTimelineView(
             sessionId: sessionId,
+            serverId: serverIdHint ?? connection.currentServerId ?? sessionStore.activeServerId,
             workspaceId: timelineWorkspaceId,
             agentId: session?.launch?.agentId,
             agentIcon: session?.launch?.agentIcon,

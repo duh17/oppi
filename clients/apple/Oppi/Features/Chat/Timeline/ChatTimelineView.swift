@@ -47,6 +47,7 @@ struct ChatTimelineView: View {
     private static let renderWindowStep = TimelineRenderWindowPolicy.renderWindowStep
 
     let sessionId: String
+    let serverId: String?
     let workspaceId: String?
     var agentId: String? = nil
     var agentIcon: IconChoice? = nil
@@ -141,6 +142,7 @@ struct ChatTimelineView: View {
                 showsWorkingIndicator: showsWorkingIndicator,
                 streamingAssistantID: reducer.streamingAssistantID,
                 sessionId: sessionId,
+                serverId: serverId,
                 workspaceId: workspaceId,
                 agentId: agentId,
                 agentIcon: agentIcon,

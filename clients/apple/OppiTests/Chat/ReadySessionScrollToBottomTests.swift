@@ -157,6 +157,7 @@ struct ReadySessionScrollToBottomTests {
         let root = AnyView(
             ChatTimelineView(
                 sessionId: sessionManager.sessionId,
+                serverId: "server-test",
                 workspaceId: "ws-test",
                 isBusy: isBusy,
                 extensionWorkingState: nil,

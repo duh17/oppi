@@ -1207,7 +1207,7 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func interceptsInviteLinksAndRoutesInternally() throws {
+    @Test func interceptsInviteLinksAndRoutesThroughTheAppGlobalHandler() throws {
         let markdownView = makeMarkdownView()
         let url = try #require(URL(string: "oppi://connect?v=3&invite=test-payload"))
 
@@ -1323,11 +1323,49 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func explicitSessionDeepLinkStillRoutesInternally() throws {
+    @Test func explicitSessionDeepLinkIsClassifiedAsAnInAppHyperlink() throws {
         let markdownView = makeMarkdownView()
         let url = try #require(URL(string: "oppi://session/RV97TbYj"))
 
-        #expect(markdownView.classifyLink(url) == .deepLink(url))
+        #expect(markdownView.classifyLink(url) == .inAppSessionLink(InAppDeepLinkIntent(
+            url: url,
+            sourceServerID: nil
+        )))
+    }
+
+    @MainActor
+    @Test func inAppSessionHyperlinkPostsSourceServerScopedNavigationIntent() async throws {
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.apply(configuration: .make(
+            content: "[Open](oppi://session/RV97TbYj)",
+            isStreaming: false,
+            themeID: .light,
+            serverID: "server-source",
+            sessionID: "session-source"
+        ))
+        let url = try #require(URL(string: "oppi://session/RV97TbYj"))
+        var receivedURL: URL?
+        var receivedSourceServerID: String?
+        let observer = NotificationCenter.default.addObserver(
+            forName: .inAppDeepLinkTapped,
+            object: nil,
+            queue: .main
+        ) { notification in
+            receivedURL = notification.object as? URL
+            receivedSourceServerID = notification.userInfo?[
+                Notification.Name.inAppDeepLinkSourceServerIDKey
+            ] as? String
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let action = try #require(MarkdownLinkInteractionSupport.primaryAction(
+            for: markdownView.classifyLink(url),
+            defaultAction: UIAction { _ in }
+        ))
+        action.performWithSender(nil, target: nil)
+
+        #expect(receivedURL == url)
+        #expect(receivedSourceServerID == "server-source")
     }
 
     @MainActor

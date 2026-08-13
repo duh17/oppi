@@ -96,6 +96,55 @@ private struct ThemeColorSchemeSyncView: View {
     }
 }
 
+struct InAppDeepLinkIntent: Equatable, Sendable {
+    let url: URL
+    let sourceServerID: String?
+}
+
+enum InAppSessionServerResolution {
+    static func resolve(
+        sourceServerID: String?,
+        sourceServerHasMatch: Bool,
+        matchingServerIDs: [String]
+    ) -> String? {
+        if let sourceServerID {
+            return sourceServerHasMatch ? sourceServerID : nil
+        }
+        let uniqueMatches = Set(matchingServerIDs)
+        return uniqueMatches.count == 1 ? uniqueMatches.first : nil
+    }
+}
+
+struct InAppSessionLink: Equatable, Sendable {
+    let sessionId: String
+
+    static func parse(_ url: URL) -> Self? {
+        guard url.scheme?.lowercased() == "oppi",
+              url.host?.lowercased() == "session" else {
+            return nil
+        }
+        let pathParts = url.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard pathParts.count == 1,
+              let rawId = pathParts.first,
+              !rawId.isEmpty else {
+            return nil
+        }
+        let sessionId = rawId.removingPercentEncoding ?? rawId
+        guard !sessionId.isEmpty else { return nil }
+        return Self(sessionId: sessionId)
+    }
+}
+
+enum MissingSessionDeepLinkNavigationPolicy {
+    @MainActor
+    static func showWorkspaceRoot(in navigation: AppNavigation) {
+        navigation.selectedTab = .workspaces
+        navigation.clearWorkspaceSelections()
+    }
+}
+
 enum WorkspaceDeepLink {
     struct Payload: Equatable, Sendable {
         let path: String
@@ -344,8 +393,8 @@ struct OppiApp: App {
             .onChange(of: navigation.workspaceStackDiagnosticContext) { _, _ in
                 recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "stack_destination")
             }
-            .onChange(of: navigation.splitDetailTarget) { _, _ in
-                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "split_detail")
+            .onChange(of: navigation.visibleSplitDiagnosticContext) { _, _ in
+                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "split_destination")
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                 handleMemoryWarning()
@@ -357,6 +406,18 @@ struct OppiApp: App {
             .onReceive(NotificationCenter.default.publisher(for: .inviteDeepLinkTapped)) { notification in
                 guard let url = notification.object as? URL else { return }
                 Task { @MainActor in await handleIncomingURL(url) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .inAppDeepLinkTapped)) { notification in
+                guard let url = notification.object as? URL else { return }
+                let sourceServerID = notification.userInfo?[
+                    Notification.Name.inAppDeepLinkSourceServerIDKey
+                ] as? String
+                Task { @MainActor in
+                    await handleInAppURL(InAppDeepLinkIntent(
+                        url: url,
+                        sourceServerID: sourceServerID
+                    ))
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .webLinkTapped)) { notification in
                 guard let url = notification.object as? URL else { return }
@@ -486,6 +547,32 @@ struct OppiApp: App {
         return url
     }
 #endif
+
+    @MainActor
+    private func handleInAppURL(_ intent: InAppDeepLinkIntent) async {
+        guard let link = InAppSessionLink.parse(intent.url) else {
+            await handleIncomingURL(intent.url)
+            return
+        }
+        let matches = coordinator.connections.compactMap { serverID, connection in
+            connection.sessionStore.sessions.contains(where: { $0.id == link.sessionId })
+                ? serverID
+                : nil
+        }
+        guard let serverID = InAppSessionServerResolution.resolve(
+            sourceServerID: intent.sourceServerID,
+            sourceServerHasMatch: intent.sourceServerID.map(matches.contains) ?? false,
+            matchingServerIDs: matches
+        ), let connection = coordinator.connection(for: serverID) else {
+            return
+        }
+        await openWorkspaceSession(
+            serverId: serverID,
+            sessionId: link.sessionId,
+            connection: connection,
+            source: .inAppHyperlink
+        )
+    }
 
     @MainActor
     private func handleIncomingURL(_ url: URL) async {
@@ -787,7 +874,7 @@ struct OppiApp: App {
         )
     }
 
-    /// Handle `oppi://session/<sessionId>` deep links from Live Activity taps.
+    /// Handle external `oppi://session/<sessionId>` URLs, including Live Activity taps.
     @MainActor
     private func handleIncomingSessionURL(_ url: URL) async -> Bool {
         guard url.scheme?.lowercased() == "oppi" else {
@@ -796,15 +883,12 @@ struct OppiApp: App {
         guard url.host?.lowercased() == "session" else {
             return false
         }
-        let pathParts = url.path
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-        guard let rawId = pathParts.first, !rawId.isEmpty else {
+        guard let link = InAppSessionLink.parse(url) else {
             return false
         }
-        let sessionId = rawId.removingPercentEncoding ?? rawId
+        let sessionId = link.sessionId
 
-        if await openSessionDeepLinkIfAvailable(sessionId) {
+        if await openSessionDeepLinkIfAvailable(sessionId, source: .externalURL) {
             return true
         }
 
@@ -823,16 +907,24 @@ struct OppiApp: App {
     private func consumePendingSessionDeepLinkIfNeeded() async {
         guard let sessionId = pendingSessionDeepLinkId else { return }
         pendingSessionDeepLinkId = nil
-        if !(await openSessionDeepLinkIfAvailable(sessionId)) {
+        if !(await openSessionDeepLinkIfAvailable(sessionId, source: .externalURL)) {
             showWorkspaceRootForMissingSessionDeepLink()
         }
     }
 
     @MainActor
-    private func openSessionDeepLinkIfAvailable(_ sessionId: String) async -> Bool {
+    private func openSessionDeepLinkIfAvailable(
+        _ sessionId: String,
+        source: SessionNavigationSource
+    ) async -> Bool {
         for (serverId, conn) in coordinator.connections
             where conn.sessionStore.sessions.contains(where: { $0.id == sessionId }) {
-            await openWorkspaceSession(serverId: serverId, sessionId: sessionId, connection: conn)
+            await openWorkspaceSession(
+                serverId: serverId,
+                sessionId: sessionId,
+                connection: conn,
+                source: source
+            )
             return true
         }
         return false
@@ -840,8 +932,7 @@ struct OppiApp: App {
 
     @MainActor
     private func showWorkspaceRootForMissingSessionDeepLink() {
-        navigation.selectedTab = .workspaces
-        navigation.workspacePath = NavigationPath()
+        MissingSessionDeepLinkNavigationPolicy.showWorkspaceRoot(in: navigation)
     }
 
     /// Handle `oppi://workspace?path=<path>&name=<name>[&server=<fingerprint>]` deep links.
@@ -885,14 +976,23 @@ struct OppiApp: App {
     private func openWorkspaceSession(
         serverId: String,
         sessionId: String,
-        connection: ServerConnection
+        connection: ServerConnection,
+        source: SessionNavigationSource = .externalURL
     ) async {
         guard await coordinator.switchToServerReady(serverId) else { return }
         let workspaceId = connection.sessionReentryWorkspaceId(for: sessionId)
         connection.sessionStore.activeSessionId = sessionId
         connection.prepareForSessionReentry(sessionId, workspaceIdHint: workspaceId)
         navigation.selectedTab = .workspaces
-        navigation.setWorkspaceSessionPath(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId)
+        navigation.openSession(
+            WorkspaceSessionNavTarget(
+                serverId: serverId,
+                sessionId: sessionId,
+                workspaceId: workspaceId,
+                routeScope: connection.sessionStore.routeScope(for: sessionId)
+            ),
+            source: source
+        )
     }
 
     @MainActor
@@ -1042,10 +1142,7 @@ struct OppiApp: App {
     private func diagnosticVisibleSessionId() -> String? {
         switch navigation.workspaceNavigationPresentation {
         case .split:
-            if case .session(let target) = navigation.splitDetailTarget {
-                return target.sessionId
-            }
-            return nil
+            return navigation.visibleSplitDiagnosticContext.sessionId
         case .stack:
             return navigation.workspaceStackDiagnosticContext.sessionId
         }
@@ -1055,19 +1152,7 @@ struct OppiApp: App {
     private func diagnosticVisibleWorkspaceId() -> String? {
         switch navigation.workspaceNavigationPresentation {
         case .split:
-            switch navigation.splitDetailTarget {
-            case .session(let target):
-                return target.workspaceId ?? navigation.splitSelectedWorkspace?.workspace.id
-            case .fileBrowser(let target):
-                return target.workspaceId
-            case .linkedFile(let target):
-                return target.workspaceId
-            case .workspaceConfiguration(let target):
-                return target.workspace.id
-            case .utility, nil:
-                return navigation.splitSelectedWorkspace?.workspace.id
-                    ?? navigation.selectedWorkspaceFilter?.workspace.id
-            }
+            return navigation.visibleSplitDiagnosticContext.workspaceId
         case .stack:
             return navigation.workspaceStackDiagnosticContext.workspaceId
         }
@@ -1083,33 +1168,7 @@ struct OppiApp: App {
         case .stack:
             return navigation.workspaceStackDiagnosticContext.screen
         case .split:
-            switch navigation.splitDetailTarget {
-            case .session:
-                return "chat"
-            case .fileBrowser:
-                return "file_browser"
-            case .linkedFile:
-                return "linked_file"
-            case .workspaceConfiguration:
-                return "workspace_configuration"
-            case .utility(let target):
-                return "utility_\(diagnosticUtilityLabel(target))"
-            case nil:
-                return navigation.splitSelectedWorkspace == nil
-                    ? "workspace_split_inbox_all"
-                    : "workspace_split_inbox_filtered"
-            }
-        }
-    }
-
-    private func diagnosticUtilityLabel(_ target: WorkspaceUtilityNavTarget) -> String {
-        switch target {
-        case .schedules: "schedules"
-        case .agents: "agents"
-        case .skills: "skills"
-        case .extensions: "extensions"
-        case .manageServers: "manage_servers"
-        case .appSettings: "app_settings"
+            return navigation.visibleSplitDiagnosticContext.screen
         }
     }
 
@@ -1375,8 +1434,7 @@ struct OppiApp: App {
                         connection: found.connection
                     )
                 } else {
-                    navigation.selectedTab = .workspaces
-                    navigation.workspacePath = NavigationPath()
+                    MissingSessionDeepLinkNavigationPolicy.showWorkspaceRoot(in: navigation)
                 }
             }
         }

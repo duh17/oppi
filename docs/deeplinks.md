@@ -93,9 +93,12 @@ Encoding:
 
 The chat timeline handles links before UIKit opens them:
 
-- `oppi://` becomes an internal deep link.
+- `oppi://session/<id>` pushes the known target session in the current navigation hierarchy. Back and swipe-back return to the originating chat.
+- Other `oppi://` links use the app-level deep-link handler. Pairing and workspace links keep their normal global behavior.
 - `http://` and `https://` follow the Browser link-opening setting: Oppi's in-app browser or the external browser.
 - Other schemes fall back to the system default behavior.
+
+Session URLs received from outside the app, including Live Activity taps and cold-launch URLs, keep the external deep-link contract and replace the visible session route.
 
 An agent can print a link like this in a message:
 

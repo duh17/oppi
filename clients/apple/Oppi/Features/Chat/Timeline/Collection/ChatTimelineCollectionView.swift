@@ -31,6 +31,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let showsWorkingIndicator: Bool
         let streamingAssistantID: String?
         let sessionId: String
+        let serverId: String?
         let workspaceId: String?
         let agentId: String?
         let agentIcon: IconChoice?
@@ -65,6 +66,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             showsWorkingIndicator: Bool? = nil,
             streamingAssistantID: String?,
             sessionId: String,
+            serverId: String? = nil,
             workspaceId: String?,
             agentId: String? = nil,
             agentIcon: IconChoice? = nil,
@@ -98,6 +100,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.showsWorkingIndicator = showsWorkingIndicator ?? isBusy
             self.streamingAssistantID = streamingAssistantID
             self.sessionId = sessionId
+            self.serverId = serverId
             self.workspaceId = workspaceId
             self.agentId = agentId
             self.agentIcon = agentIcon
@@ -204,6 +207,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             get { context.sessionId }
             set { context.sessionId = newValue }
         }
+
+        var serverId: String? { context.serverId }
 
         var workspaceId: String? {
             get { context.workspaceId }

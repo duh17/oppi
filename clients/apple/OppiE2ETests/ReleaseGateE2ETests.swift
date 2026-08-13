@@ -168,6 +168,63 @@ final class ReleaseGateE2ETests: E2ETestCase {
     }
 
     @MainActor
+    func testMarkdownSessionHyperlinkPushesTargetAndBackReturnsToOrigin() throws {
+        createSession()
+        waitForRequiredSplitStreamCapabilities()
+        waitForWebSocketConnected()
+        let sourceSessionID = waitForFocusedSessionId(timeout: 20)
+
+        navigateBackToWorkspace()
+        createSession()
+        let targetSessionID = waitForFocusedSessionId(excluding: sourceSessionID, timeout: 20)
+
+        navigateBackToWorkspace()
+        enterSession(id: sourceSessionID)
+        waitForWebSocketConnected()
+        try clearE2EHarnessResponses(sessionId: sourceSessionID)
+        try sendE2EHarnessMessage(sessionId: sourceSessionID, ["type": "agent_start"])
+        let markdown = "[Open target session](oppi://session/\(targetSessionID))"
+        try sendE2EHarnessMessage(sessionId: sourceSessionID, [
+            "type": "text_delta",
+            "delta": markdown,
+        ])
+        try sendE2EHarnessMessage(sessionId: sourceSessionID, [
+            "type": "message_end",
+            "role": "assistant",
+            "content": markdown,
+            "persist": true,
+        ])
+        try sendE2EHarnessMessage(sessionId: sourceSessionID, ["type": "agent_end"])
+
+        XCTAssertTrue(
+            waitForTimelineTextContaining("Open target session", timeout: 20),
+            "Assistant markdown session-link text did not render"
+        )
+        tap(
+            renderedLink(label: "Open target session"),
+            named: "markdown session hyperlink",
+            timeout: 5
+        )
+        XCTAssertEqual(waitForFocusedSessionId(targetSessionID, timeout: 20), targetSessionID)
+
+        app.swipeRight()
+        XCTAssertEqual(
+            waitForFocusedSessionId(sourceSessionID, timeout: 20),
+            sourceSessionID,
+            "Swipe Back from the linked session must return to the originating chat"
+        )
+
+        tap(linkAfterReturning(label: "Open target session"), named: "markdown session hyperlink after swipe back", timeout: 5)
+        XCTAssertEqual(waitForFocusedSessionId(targetSessionID, timeout: 20), targetSessionID)
+        tap(app.buttons["chat.toolbar.back"], named: "linked session back button", timeout: 5)
+        XCTAssertEqual(
+            waitForFocusedSessionId(sourceSessionID, timeout: 20),
+            sourceSessionID,
+            "Back from the linked session must return to the originating chat"
+        )
+    }
+
+    @MainActor
     func testRenderedSessionWikiLinkOpensReferencedChat() throws {
         createSession()
         let sourceSessionID = waitForFocusedSessionId(timeout: 20)
@@ -237,6 +294,26 @@ final class ReleaseGateE2ETests: E2ETestCase {
         waitForDesiredSubscription(sessionId: sessionA, level: "full")
         waitForAckedSubscription(sessionId: sessionA, level: "full")
         waitForNoDesiredSubscription(sessionId: sessionB)
+    }
+
+    @MainActor
+    private func linkAfterReturning(label: String) -> XCUIElement {
+        XCTAssertTrue(
+            waitForTimelineTextContaining(label, timeout: 20),
+            "Originating markdown-link text did not return"
+        )
+        return renderedLink(label: label)
+    }
+
+    @MainActor
+    private func renderedLink(label: String) -> XCUIElement {
+        let links = app.links.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
+        guard let link = links.last else {
+            XCTFail("Assistant markdown did not render the oppi session hyperlink")
+            return app.links.matching(NSPredicate(format: "label == %@", label)).firstMatch
+        }
+        XCTAssertTrue(waitForElementToExist(link, timeout: 20), "Assistant markdown link did not exist")
+        return link
     }
 
     @MainActor

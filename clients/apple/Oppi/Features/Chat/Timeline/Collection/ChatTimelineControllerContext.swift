@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class ChatTimelineControllerContext {
     var sessionId = ""
+    var serverId: String?
     var workspaceId: String?
     var agentId: String?
     var agentIcon: IconChoice?
@@ -24,6 +25,7 @@ final class ChatTimelineControllerContext {
 
     func didChangeSessionScope(for configuration: ChatTimelineCollectionHost.Configuration) -> Bool {
         sessionId != configuration.sessionId
+            || serverId != configuration.serverId
             || workspaceId != configuration.workspaceId
             || routeScope != configuration.routeScope
     }
@@ -36,6 +38,7 @@ final class ChatTimelineControllerContext {
 
     func apply(configuration: ChatTimelineCollectionHost.Configuration) {
         sessionId = configuration.sessionId
+        serverId = configuration.serverId
         workspaceId = configuration.workspaceId
         agentId = configuration.agentId
         agentIcon = configuration.agentIcon

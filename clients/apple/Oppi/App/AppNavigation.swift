@@ -35,6 +35,13 @@ enum WorkspaceNavigationPresentation: Sendable, Equatable {
     case split
 }
 
+enum SessionNavigationSource: Sendable, Equatable {
+    /// Incoming app URL, Live Activity, or notification: replace the visible route.
+    case externalURL
+    /// User tapped a session hyperlink inside the app: preserve the current back stack.
+    case inAppHyperlink
+}
+
 enum ServerResourceDetailKind: Hashable, Sendable {
     case skill
     case `extension`
@@ -214,6 +221,38 @@ final class AppNavigation {
         workspaceStackDiagnosticContexts.last ?? .inboxAll
     }
 
+    var visibleSplitDiagnosticContext: WorkspaceStackDiagnosticContext {
+        if let top = splitDetailPathElements.last {
+            return Self.diagnosticContext(for: top)
+        }
+
+        switch splitDetailTarget {
+        case .session(let target):
+            return Self.sessionDiagnosticContext(target)
+        case .fileBrowser(let target):
+            return Self.fileBrowserDiagnosticContext(target)
+        case .linkedFile(let target):
+            return Self.linkedFileDiagnosticContext(target)
+        case .workspaceConfiguration(let target):
+            return Self.workspaceConfigurationDiagnosticContext(target)
+        case .utility(let target):
+            return Self.utilityDiagnosticContext(target)
+        case nil:
+            guard let workspace = splitSelectedWorkspace else {
+                return WorkspaceStackDiagnosticContext(
+                    screen: "workspace_split_inbox_all",
+                    sessionId: nil,
+                    workspaceId: nil
+                )
+            }
+            return WorkspaceStackDiagnosticContext(
+                screen: "workspace_split_inbox_filtered",
+                sessionId: nil,
+                workspaceId: workspace.workspace.id
+            )
+        }
+    }
+
     func setWorkspaceNavigationPresentation(_ presentation: WorkspaceNavigationPresentation) {
         guard workspaceNavigationPresentation != presentation else { return }
         let preservedStackState = presentation == .stack ? stackStateForCurrentSplitSelection() : nil
@@ -334,6 +373,21 @@ final class AppNavigation {
             splitDetailTarget = .session(resolvedTarget)
             resetSplitDetailPath()
             splitColumnVisibility = .detailOnly
+        }
+    }
+
+    /// Applies source-aware session navigation without conflating external deep
+    /// links with user-tapped hyperlinks inside the current app hierarchy.
+    func openSession(_ target: WorkspaceSessionNavTarget, source: SessionNavigationSource) {
+        switch source {
+        case .externalURL:
+            setWorkspaceSessionPath(
+                serverId: target.serverId,
+                sessionId: target.sessionId,
+                workspaceId: target.workspaceId
+            )
+        case .inAppHyperlink:
+            openReferencedSession(target)
         }
     }
 
@@ -802,6 +856,21 @@ final class AppNavigation {
             elements.append(
                 contentsOf: repeatElement(fill, count: pathCount - elements.count)
             )
+        }
+    }
+
+    private static func diagnosticContext(
+        for element: WorkspaceSplitDetailPathElement
+    ) -> WorkspaceStackDiagnosticContext {
+        switch element {
+        case .session(let target): sessionDiagnosticContext(target)
+        case .fileBrowser(let target): fileBrowserDiagnosticContext(target)
+        case .linkedFile(let target): linkedFileDiagnosticContext(target)
+        case .serverResourceDetail(let target): serverResourceDetailDiagnosticContext(target)
+        case .serverSkillBrowser: serverSkillBrowserDiagnosticContext
+        case .serverSkillFile: serverSkillFileDiagnosticContext
+        case .serverDetails: serverDetailsDiagnosticContext
+        case .modelProviders: modelProvidersDiagnosticContext
         }
     }
 

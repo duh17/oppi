@@ -223,6 +223,7 @@ struct WorkspaceSessionScopedDestinationView: View {
             if let connection = scopedConnection {
                 ChatView(
                     sessionId: target.sessionId,
+                    serverIdHint: target.serverId,
                     workspaceIdHint: target.workspaceId,
                     routeScope: target.routeScope,
                     ownsWorkspacePathBackNavigation: true

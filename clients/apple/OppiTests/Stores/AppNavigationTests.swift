@@ -119,6 +119,46 @@ struct AppNavigationShellRoutingTests {
         ))
     }
 
+    @Test func inAppSessionLinkParserAcceptsOnlyCanonicalSessionRoute() throws {
+        let canonical = try #require(URL(string: "oppi://session/child%2D1?workspaceId=ignored"))
+        let extraPath = try #require(URL(string: "oppi://session/child/extra"))
+        let workspace = try #require(URL(string: "oppi://workspace?path=/tmp/project"))
+        let web = try #require(URL(string: "https://example.com/session/child-1"))
+
+        #expect(InAppSessionLink.parse(canonical) == InAppSessionLink(sessionId: "child-1"))
+        #expect(InAppSessionLink.parse(extraPath) == nil)
+        #expect(InAppSessionLink.parse(workspace) == nil)
+        #expect(InAppSessionLink.parse(web) == nil)
+    }
+
+    @Test func inAppSessionServerResolutionRequiresSourceOrGlobalUniqueness() {
+        #expect(InAppSessionServerResolution.resolve(
+            sourceServerID: "server-b",
+            sourceServerHasMatch: true,
+            matchingServerIDs: ["server-a", "server-b"]
+        ) == "server-b")
+        #expect(InAppSessionServerResolution.resolve(
+            sourceServerID: "server-c",
+            sourceServerHasMatch: false,
+            matchingServerIDs: ["server-a", "server-b"]
+        ) == nil)
+        #expect(InAppSessionServerResolution.resolve(
+            sourceServerID: "stale-server",
+            sourceServerHasMatch: false,
+            matchingServerIDs: ["server-a"]
+        ) == nil)
+        #expect(InAppSessionServerResolution.resolve(
+            sourceServerID: nil,
+            sourceServerHasMatch: false,
+            matchingServerIDs: ["server-a"]
+        ) == "server-a")
+        #expect(InAppSessionServerResolution.resolve(
+            sourceServerID: nil,
+            sourceServerHasMatch: false,
+            matchingServerIDs: ["server-a", "server-b"]
+        ) == nil)
+    }
+
     @Test func workspaceSessionPathBuilderCreatesSingleDestination() {
         let path = AppNavigation.workspaceSessionPath(serverId: "server-1", sessionId: "session-1")
 
@@ -133,6 +173,68 @@ struct AppNavigationShellRoutingTests {
         navigation.setWorkspaceSessionPath(serverId: "server-1", sessionId: "session-1")
 
         #expect(navigation.workspacePath.count == 1)
+    }
+
+    @Test func externalSessionDeepLinkPolicyReplacesKnownAndRootsUnknownTargets() {
+        let navigation = AppNavigation()
+        let source = WorkspaceSessionNavTarget(
+            serverId: "server-1",
+            sessionId: "source",
+            workspaceId: "workspace-1"
+        )
+        let inAppTarget = WorkspaceSessionNavTarget(
+            serverId: "server-1",
+            sessionId: "in-app-target",
+            workspaceId: "workspace-1"
+        )
+        navigation.openWorkspaceSession(source)
+
+        navigation.openSession(inAppTarget, source: .inAppHyperlink)
+
+        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "in-app-target")
+
+        navigation.openSession(
+            WorkspaceSessionNavTarget(
+                serverId: "server-1",
+                sessionId: "external-target",
+                workspaceId: "workspace-1"
+            ),
+            source: .externalURL
+        )
+
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "external-target")
+
+        for presentation in [
+            WorkspaceNavigationPresentation.stack,
+            WorkspaceNavigationPresentation.split,
+        ] {
+            let missingTargetNavigation = AppNavigation()
+            missingTargetNavigation.setWorkspaceNavigationPresentation(presentation)
+            missingTargetNavigation.openWorkspaceSession(.init(
+                serverId: "server-1",
+                sessionId: "visible-session",
+                workspaceId: "workspace-1"
+            ))
+            if presentation == .split {
+                missingTargetNavigation.openReferencedSession(.init(
+                    serverId: "server-1",
+                    sessionId: "pushed-session",
+                    workspaceId: "workspace-1"
+                ))
+            }
+
+            MissingSessionDeepLinkNavigationPolicy.showWorkspaceRoot(in: missingTargetNavigation)
+
+            #expect(missingTargetNavigation.selectedTab == .workspaces)
+            #expect(missingTargetNavigation.workspacePath.count == 0)
+            #expect(missingTargetNavigation.splitSelectedWorkspace == nil)
+            #expect(missingTargetNavigation.splitDetailTarget == nil)
+            #expect(missingTargetNavigation.splitDetailPath.count == 0)
+            #expect(missingTargetNavigation.workspaceStackDiagnosticContext == .inboxAll)
+            #expect(missingTargetNavigation.visibleSplitDiagnosticContext.screen == "workspace_split_inbox_all")
+        }
     }
 
     @Test func referencedSessionAppendsToCompactChatHistoryAndSelfLinkIsNoOp() {
@@ -178,10 +280,38 @@ struct AppNavigationShellRoutingTests {
 
         #expect(navigation.splitDetailTarget == .session(source))
         #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.visibleSplitDiagnosticContext == WorkspaceStackDiagnosticContext(
+            screen: "chat",
+            sessionId: "target",
+            workspaceId: "workspace-2"
+        ))
         navigation.openReferencedSession(target)
         #expect(navigation.splitDetailPath.count == 1)
         navigation.splitDetailPath.removeLast()
         #expect(navigation.splitDetailTarget == .session(source))
+        #expect(navigation.visibleSplitDiagnosticContext == WorkspaceStackDiagnosticContext(
+            screen: "chat",
+            sessionId: "source",
+            workspaceId: "workspace-1"
+        ))
+    }
+
+    @Test func visibleSplitDiagnosticContextTracksNonSessionPathTop() {
+        let navigation = AppNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceUtility(.skills)
+        navigation.openServerResourceDetail(.init(
+            serverId: "server-1",
+            kind: .skill,
+            resourceId: "skill-1"
+        ))
+
+        #expect(navigation.visibleSplitDiagnosticContext.screen == "server_skill_detail")
+        #expect(navigation.visibleSplitDiagnosticContext.sessionId == nil)
+        #expect(navigation.visibleSplitDiagnosticContext.workspaceId == nil)
+
+        navigation.splitDetailPath.removeLast()
+        #expect(navigation.visibleSplitDiagnosticContext.screen == "utility_skills")
     }
 
     @Test func referencedSessionChainSurvivesCompactToSplitToCompactTransition() {
