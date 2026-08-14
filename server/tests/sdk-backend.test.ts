@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   chmodSync,
   lstatSync,
@@ -402,50 +401,6 @@ describe("SdkBackend sandbox", () => {
       expect(backend.session.resourceLoader.getAppendSystemPrompt()).toContain(
         buildMobileOutputGuide(),
       );
-
-      const bindingSnapshots: Array<{
-        sourcePath: string;
-        bindings: Array<{ bindingToken: string; skillId: string; skillName: string }>;
-      }> = [];
-      backend.configureResourceUsageSandboxSkillBindings((snapshot) =>
-        bindingSnapshots.push(snapshot),
-      );
-      expect(bindingSnapshots).toHaveLength(1);
-      const binding = bindingSnapshots[0]?.bindings.find(
-        (candidate) => candidate.skillName === "sandbox-review",
-      );
-      expect(binding?.bindingToken).toMatch(/^sandbox-binding-v1_[a-f0-9]{64}$/);
-      const dictionaryInputs = [
-        "Sandbox Secrets Test",
-        "sandbox-secrets-test",
-        "sandbox-review",
-        "/workspace/sandbox-secrets-test/.pi/skills/sandbox-review/SKILL.md",
-      ];
-      expect(
-        dictionaryInputs.map((value) => createHash("sha256").update(value).digest("hex")),
-      ).not.toContain(binding?.bindingToken.slice("sandbox-binding-v1_".length));
-
-      const readEvidence = backend.resourceUsageSkillReadEvidence(
-        "/workspace/sandbox-secrets-test/.pi/skills/sandbox-review/SKILL.md",
-      );
-      expect(readEvidence?.bindingToken).toBe(binding?.bindingToken);
-      backend.appendResourceUsageSkillReadMarker({
-        producerId: `tool-occurrence-v1_${"e".repeat(64)}`,
-        bindingToken: readEvidence?.bindingToken,
-      });
-      const marker = backend.session.sessionManager
-        .getEntries()
-        .findLast((entry) => entry.type === "custom" && entry.customType === "oppi-resource-usage");
-      expect(marker).toMatchObject({
-        data: {
-          version: 3,
-          signal: "skill_instruction_read",
-          bindingToken: binding?.bindingToken,
-          producerId: `tool-occurrence-v1_${"e".repeat(64)}`,
-        },
-      });
-      expect(JSON.stringify(marker?.data)).not.toContain("/workspace/");
-
       expect(manager.ensureWorkspaceVm).toHaveBeenCalled();
       expect(manager.ensureWorkspaceVm.mock.calls[0][2]).toEqual({});
       expect(manager.ensureWorkspaceVm.mock.calls[0][3]).toEqual(

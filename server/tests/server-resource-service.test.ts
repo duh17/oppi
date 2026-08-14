@@ -178,19 +178,6 @@ describe("ServerResourceService catalogs", () => {
     expect(existsSync(join(fixture.root, "disabled-executed"))).toBe(false);
     const enabled = extensionsResult.extensions.find((extension) => extension.name === "enabled");
     expect(enabled?.contributedCommands).toEqual(["enabled-command"]);
-
-    const usageCatalog = await service.resourceUsageCatalog();
-    expect(usageCatalog.skills.get("global-skill")).toMatch(/^skill_[a-f0-9]{64}$/);
-    expect([...usageCatalog.skillPrimaryFiles.values()]).toContainEqual(
-      expect.objectContaining({ name: "global-skill" }),
-    );
-    expect(usageCatalog.commands.get("enabled-command")).toEqual(
-      expect.objectContaining({ ownerKind: "extension" }),
-    );
-    expect(usageCatalog.tools.get("enabled_tool")).toEqual(
-      expect.objectContaining({ ownerKind: "extension" }),
-    );
-    expect(usageCatalog.builtInTools).toContain("read");
     expect(enabled?.contributedTools).toEqual(["enabled_tool"]);
     expect(enabled?.contributedToolDetails).toEqual([
       { name: "enabled_tool", description: "Inspect enabled resources" },

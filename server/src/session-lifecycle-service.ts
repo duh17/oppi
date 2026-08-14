@@ -127,13 +127,11 @@ export interface SessionLifecycleServiceDeps {
     | "getSessionSnapshot"
     | "getActiveSession"
     | "refreshSessionState"
-    | "releaseResourceUsageSession"
     | "stopSession"
     | "stopSessionIfActive"
   >;
   ensureSessionContextWindow: (session: Session) => Session;
   deleteSearchIndexSession?: (sessionId: string) => void;
-  deleteResourceUsageSession?: (sessionId: string) => Promise<unknown> | unknown;
 }
 
 /**
@@ -650,7 +648,6 @@ export class SessionLifecycleService {
     } catch (error: unknown) {
       await this.deps.sessions.stopSession(forkSession.id).catch(() => {});
       this.deps.storage.deleteSession(forkSession.id);
-      await this.deps.deleteResourceUsageSession?.(forkSession.id);
       throw error;
     }
 
@@ -736,10 +733,8 @@ export class SessionLifecycleService {
       throw new SessionLifecycleError("Failed to delete session files", 500);
     }
 
-    this.deps.sessionRuntimes.releaseResourceUsageSession?.(session);
     const deletedSqliteMetadata = this.deps.storage.deleteSession(session.id);
     this.deps.deleteSearchIndexSession?.(session.id);
-    await this.deps.deleteResourceUsageSession?.(session.id);
     const deletedGeneratedMediaAttachments = deleteSessionAttachments(
       this.deps.storage.getDataDir(),
       session.id,
@@ -822,7 +817,6 @@ export class SessionLifecycleService {
       return { owner: "pi-tui" };
     }
 
-    this.deps.sessionRuntimes.releaseResourceUsageSession?.(session);
     promoteStoppedMirrorToOppi(session);
     this.deps.storage.saveSession(session);
     return { owner: "oppi" };

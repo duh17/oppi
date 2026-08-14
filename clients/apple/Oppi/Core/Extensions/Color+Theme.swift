@@ -348,15 +348,10 @@ private struct ThemedListSurfaceModifier: ViewModifier {
 }
 
 private struct ThemedScrollSurfaceModifier: ViewModifier {
-    @Environment(\.themeID) private var themeID
+    @Environment(\.theme) private var theme
 
     func body(content: Content) -> some View {
-        let _ = themeID
-        return content.background {
-            Rectangle()
-                .fill(.themeBg)
-                .ignoresSafeArea()
-        }
+        content.background(theme.bg.primary.ignoresSafeArea())
     }
 }
 

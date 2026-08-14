@@ -46,7 +46,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     sessionRuntimes: ctx.sessionRuntimes,
     ensureSessionContextWindow: ctx.ensureSessionContextWindow,
     deleteSearchIndexSession: (sessionId) => ctx.searchIndex?.deleteSession(sessionId),
-    deleteResourceUsageSession: (sessionId) => ctx.resourceUsage?.deleteSession(sessionId),
   });
   const commandHandler = new WsMessageHandler({
     sessions: ctx.sessionRuntimes,

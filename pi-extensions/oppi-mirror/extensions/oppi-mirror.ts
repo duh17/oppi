@@ -9,7 +9,6 @@ import {
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
-import { randomBytes } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { hostname } from "node:os";
@@ -199,7 +198,7 @@ const EVENT_TYPES = [
 const OPPI_LIFECYCLE_CUSTOM_TYPE = "oppi-lifecycle";
 
 type MirrorLifecycleEntryData = {
-  version: 1 | 2;
+  version: 1;
   event:
     | "agent_start"
     | "agent_end"
@@ -212,12 +211,7 @@ type MirrorLifecycleEntryData = {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
-  eventId?: string;
 };
-
-function mirrorResourceUsageEventId(): string {
-  return `trace-event-v1_${randomBytes(32).toString("hex")}`;
-}
 
 function mirrorLifecycleEntryData(
   eventType: (typeof EVENT_TYPES)[number],
@@ -239,19 +233,6 @@ function mirrorLifecycleEntryData(
           : {}),
       };
     case "tool_execution_start":
-      return {
-        version: 2,
-        event: eventType,
-        ...(typeof record.toolCallId === "string"
-          ? { toolCallId: record.toolCallId }
-          : {}),
-        ...(typeof record.toolName === "string"
-          ? { toolName: record.toolName }
-          : {}),
-        ...(typeof record.resourceUsageEventId === "string"
-          ? { eventId: record.resourceUsageEventId }
-          : {}),
-      };
     case "tool_execution_end":
       return {
         version: 1,
@@ -262,7 +243,8 @@ function mirrorLifecycleEntryData(
         ...(typeof record.toolName === "string"
           ? { toolName: record.toolName }
           : {}),
-        ...(typeof record.isError === "boolean"
+        ...(eventType === "tool_execution_end" &&
+        typeof record.isError === "boolean"
           ? { isError: record.isError }
           : {}),
       };
@@ -5064,17 +5046,7 @@ async function createTuiMirrorRuntime(
         `event:${eventType}`,
         (event: unknown, ctx: ExtensionContext) => {
           latestCtx = ctx;
-          const eventWithIdentity =
-            eventType === "tool_execution_start" && isRecord(event)
-              ? {
-                  ...event,
-                  resourceUsageEventId: mirrorResourceUsageEventId(),
-                }
-              : event;
-          const lifecycleEntry = mirrorLifecycleEntryData(
-            eventType,
-            eventWithIdentity,
-          );
+          const lifecycleEntry = mirrorLifecycleEntryData(eventType, event);
           if (ctx.mode === "tui" && lifecycleEntry) {
             pi.appendEntry(OPPI_LIFECYCLE_CUSTOM_TYPE, lifecycleEntry);
           }
@@ -5093,7 +5065,7 @@ async function createTuiMirrorRuntime(
             eventType === "message_end";
           send({
             type: "event",
-            event: mirrorAgentEventPayload(eventType, eventWithIdentity, ctx),
+            event: mirrorAgentEventPayload(eventType, event, ctx),
             ...(includeState ? { state: stateSnapshot(pi, ctx) } : {}),
           });
         },

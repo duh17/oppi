@@ -179,6 +179,6 @@ struct OppiApprovalPolicyPresentation: Sendable, Equatable {
     }
 
     static func savedMessage(serverName: String) -> String {
-        "Saved on \(serverName)."
+        "Saved on \(serverName). New sessions use this setting. Reload an active session to apply it now."
     }
 }

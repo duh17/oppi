@@ -2172,7 +2172,6 @@ function makeLifecycleDeps(
   return {
     getActiveSession: vi.fn(() => active),
     removeActiveSession: vi.fn(),
-    releaseResourceUsageSession: vi.fn(),
     clearPendingStop: vi.fn(() => null),
     broadcast: vi.fn(),
     persistSessionNow: vi.fn(),
@@ -2206,7 +2205,6 @@ describe("SessionLifecycleCoordinator.handleSessionEnd", () => {
     expect(active.sdkBackend.dispose).toHaveBeenCalledTimes(1);
     expect(active.session.status).toBe("stopped");
     expect(deps.persistSessionNow).toHaveBeenCalledWith("key", active.session);
-    expect(deps.releaseResourceUsageSession).toHaveBeenCalledWith(active.session);
     expect(deps.removeActiveSession).toHaveBeenCalledWith("key");
     expect(deps.releaseSession).toHaveBeenCalledWith({
       workspaceId: "ws-1",

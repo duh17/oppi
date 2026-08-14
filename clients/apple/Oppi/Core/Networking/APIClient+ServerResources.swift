@@ -24,18 +24,6 @@ extension APIClient {
         return try JSONDecoder().decode(Response.self, from: data).content
     }
 
-    func getServerSkillUsage(
-        id: String,
-        range: ResourceUsageRange,
-        timezone: String
-    ) async throws -> ResourceUsageResponse {
-        let data = try await get(url: serverResourceURL(
-            pathSegments: ["skills", id, "usage"],
-            queryItems: usageQueryItems(range: range, timezone: timezone)
-        ))
-        return try JSONDecoder().decode(ResourceUsageResponse.self, from: data)
-    }
-
     func setServerSkillEnabled(id: String, enabled: Bool) async throws -> ServerSkillSummary {
         let data = try await put(
             url: serverResourceURL(pathSegments: ["skills", id, "enabled"]),
@@ -64,50 +52,12 @@ extension APIClient {
         return try JSONDecoder().decode(ServerExtensionDetail.self, from: data)
     }
 
-    func getServerExtensionUsage(
-        id: String,
-        range: ResourceUsageRange,
-        timezone: String
-    ) async throws -> ResourceUsageResponse {
-        let data = try await get(url: serverResourceURL(
-            pathSegments: ["extensions", id, "usage"],
-            queryItems: usageQueryItems(range: range, timezone: timezone)
-        ))
-        return try JSONDecoder().decode(ResourceUsageResponse.self, from: data)
-    }
-
     func setServerExtensionEnabled(id: String, enabled: Bool) async throws -> ServerExtensionSummary {
         let data = try await put(
             url: serverResourceURL(pathSegments: ["extensions", id, "enabled"]),
             body: ResourceEnabledRequest(enabled: enabled)
         )
         return try JSONDecoder().decode(ServerExtensionSummary.self, from: data)
-    }
-
-    func getToolActivityBackfillStatus() async throws -> ResourceUsageBackfillStatus {
-        let data = try await get(url: makeURL(
-            pathSegments: ["server", "stats", "tool-activity", "backfill"]
-        ))
-        return try JSONDecoder().decode(ResourceUsageBackfillStatus.self, from: data)
-    }
-
-    func startToolActivityBackfill() async throws -> ResourceUsageBackfillStatus {
-        let data = try await post(
-            "/server/stats/tool-activity/backfill",
-            body: EmptyResourceUsageBackfillRequest()
-        )
-        return try JSONDecoder().decode(ResourceUsageBackfillStatus.self, from: data)
-    }
-
-    func getToolActivity(
-        range: ResourceUsageRange,
-        timezone: String
-    ) async throws -> ResourceUsageResponse {
-        let data = try await get(url: makeURL(
-            pathSegments: ["server", "stats", "tool-activity"],
-            queryItems: usageQueryItems(range: range, timezone: timezone)
-        ))
-        return try JSONDecoder().decode(ResourceUsageResponse.self, from: data)
     }
 
     func getOppiExtensionConfiguration() async throws -> OppiExtensionConfiguration {
@@ -144,21 +94,9 @@ extension APIClient {
         )
     }
 
-    private func usageQueryItems(
-        range: ResourceUsageRange,
-        timezone: String
-    ) -> [URLQueryItem] {
-        [
-            URLQueryItem(name: "range", value: String(range.rawValue)),
-            URLQueryItem(name: "timezone", value: timezone),
-        ]
-    }
-
     private func oppiConfigurationURL() throws -> URL {
         try makeURL(pathSegments: ["server", "extensions", "oppi", "config"])
     }
-
-    private struct EmptyResourceUsageBackfillRequest: Encodable {}
 
     private struct ResourceEnabledRequest: Encodable {
         let enabled: Bool

@@ -105,11 +105,7 @@ export interface AgentLaunchServiceDeps {
     sendPrompt(
       sessionId: string,
       message: string,
-      opts?: {
-        attachments?: ChatAttachmentRef[];
-        clientTurnId?: string;
-        requestId?: string;
-      },
+      opts?: { attachments?: ChatAttachmentRef[] },
     ): Promise<void>;
   };
   ensureSessionContextWindow: (session: Session) => Session;
@@ -215,11 +211,8 @@ export class AgentLaunchService {
 
     try {
       await this.deps.sessions.startSession(session.id, request.target.workspace);
-      const turnId = this.launchTurnId(session);
       await this.deps.sessions.sendPrompt(session.id, prompt, {
         ...(request.attachments ? { attachments: request.attachments } : {}),
-        clientTurnId: turnId,
-        requestId: turnId,
       });
       const startedSession = this.currentSession(session);
       startedSession.firstMessage = prompt.slice(0, 200);
@@ -649,11 +642,8 @@ export class AgentLaunchService {
     try {
       await this.assertSelectedExtensionsAvailable(request, recovered);
       await this.deps.sessions.startSession(recovered.id, request.target.workspace);
-      const turnId = this.launchTurnId(recovered);
       await this.deps.sessions.sendPrompt(recovered.id, prompt, {
         ...(request.attachments ? { attachments: request.attachments } : {}),
-        clientTurnId: turnId,
-        requestId: turnId,
       });
       const startedSession = this.currentSession(recovered);
       startedSession.firstMessage = prompt.slice(0, 200);
@@ -689,10 +679,6 @@ export class AgentLaunchService {
         promptDispatch: "not_sent",
       };
     }
-  }
-
-  private launchTurnId(session: Session): string {
-    return `agent-launch:${session.launch?.idempotencyKey ?? session.id}`;
   }
 
   private findSessionByIdempotencyKey(idempotencyKey: string): Session | undefined {

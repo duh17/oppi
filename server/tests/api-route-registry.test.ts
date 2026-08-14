@@ -109,19 +109,14 @@ const settingsOperationIds = [
   "getProviderQuotas",
   "getServerStats",
   "getDailyServerStats",
-  "getToolActivityUsage",
-  "getToolActivityBackfillStatus",
-  "startToolActivityBackfill",
   "getAutoTitleConfig",
   "setAutoTitleConfig",
   "listServerSkills",
   "getServerSkill",
-  "getServerSkillUsage",
   "getServerSkillFile",
   "setServerSkillEnabled",
   "listServerExtensions",
   "getServerExtension",
-  "getServerExtensionUsage",
   "setServerExtensionEnabled",
   "getOppiExtensionConfig",
   "setOppiExtensionConfig",
@@ -259,17 +254,6 @@ describe("api route registry", () => {
         "/server/resources/extensions/extension_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/enabled",
       ),
     ).toBe("/server/resources/extensions/:extensionId/enabled");
-    expect(
-      normalizeRegisteredPathPattern(
-        "/server/resources/skills/skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/usage",
-      ),
-    ).toBe("/server/resources/skills/:skillId/usage");
-    expect(normalizeRegisteredPathPattern("/server/stats/tool-activity")).toBe(
-      "/server/stats/tool-activity",
-    );
-    expect(normalizeRegisteredPathPattern("/server/stats/tool-activity/backfill")).toBe(
-      "/server/stats/tool-activity/backfill",
-    );
   });
 
   it("tracks native client route uses", () => {

@@ -244,7 +244,12 @@ describe("trace paging", () => {
     });
 
     expect(around.page.staleCursor).toBe(false);
-    expect(around.trace.map((event) => event.id)).toEqual(["a1-text-0", "u2", "tc-1", "result-r1"]);
+    expect(around.trace.map((event) => event.id)).toEqual([
+      "a1-text-0",
+      "u2",
+      "tc-1",
+      "result-r1",
+    ]);
     expect(around.trace.some((event) => event.id === "a3-text-0")).toBe(false);
     expect(around.page.hasOlder).toBe(true);
     expect(around.page.olderCursor).toEqual(expect.any(String));

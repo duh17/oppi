@@ -5,8 +5,6 @@
  * from subscribe() match the ServerMessage contract consumed by iOS.
  */
 
-import { createHash } from "node:crypto";
-
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { isDeclaredControlSession } from "./control-session.js";
@@ -58,10 +56,7 @@ import {
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import { createDefaultAgentExtensionFactory } from "./default-agent-tool.js";
 import { applyPendingProviderRegistrations } from "./extension-model-discovery.js";
-import {
-  createLifecycleJournalExtension,
-  type PersistedLifecycleToolStartIdentity,
-} from "./lifecycle-journal-extension.js";
+import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import {
   DEFAULT_OPPI_EXTENSION_SETTINGS,
   freezeOppiExtensionSettingsSnapshot,
@@ -73,15 +68,6 @@ import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
-import { matchPiReadPath, resolvePiReadPath } from "./pi-read-path.js";
-import type {
-  ResourceUsageHistoryMarker,
-  ResourceUsagePromptEvidence,
-  ResourceUsageSkillInstructionReadEvidence,
-  ResourceUsageSkillLoadEvidence,
-  ResourceUsageToolEvidence,
-} from "./resource-usage-service.js";
-import { canonicalServerResourcePath, serverResourceId } from "./server-resource-id.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
@@ -91,16 +77,8 @@ import {
   getOppiDocsPath,
 } from "./oppi-docs.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
-import type { ResourceUsageBackfillSkillBinding } from "./storage/resource-usage-store.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
-import {
-  createSandboxSkillBindingToken,
-  resolveSandboxGuestCwd,
-  sandboxSkillGuestRoot,
-  sandboxWorkspaceSlug,
-} from "./sandbox-resource-paths.js";
-export { resolveSandboxGuestCwd } from "./sandbox-resource-paths.js";
 import { callerSessionIdentityShellPrefix } from "./session-caller-identity.js";
 import {
   SessionRuntimeTransaction,
@@ -164,6 +142,20 @@ function resolveRegistryModel(
  * producing cwd values like "<server-cwd>/~/workspace/...". Normalize here
  * before passing cwd into SDK components.
  */
+function sandboxWorkspaceSlug(workspace: Workspace): string {
+  return (
+    (workspace.name || workspace.id)
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || workspace.id
+  );
+}
+
+export function resolveSandboxGuestCwd(workspace: Workspace): string {
+  return posix.join("/workspace", sandboxWorkspaceSlug(workspace));
+}
+
 function ensureOwnerOnlyRealDirectory(path: string, errorMessage: string): void {
   try {
     mkdirSync(path, { mode: 0o700 });
@@ -315,10 +307,6 @@ function assertSelectedAgentExtensionsLoaded(
   }
 }
 
-function skillResourceIdentityPath(skill: Skill): string {
-  return skill.sourceInfo.path || skill.filePath;
-}
-
 function isPathWithin(parent: string, child: string): boolean {
   const resolvedParent = resolvePath(parent);
   const resolvedChild = resolvePath(child);
@@ -337,6 +325,16 @@ function hostWorkspacePathToGuest(
 
   const rel = relative(resolvePath(hostCwd), resolvePath(hostPath));
   return rel ? posix.join(guestCwd, rel.split(/[\\/]/).join("/")) : guestCwd;
+}
+
+function safeGuestSegment(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "resource"
+  );
 }
 
 function replaceAllLiteral(value: string, search: string, replacement: string): string {
@@ -545,68 +543,6 @@ function reserveOppiToolPolicy(options: {
 
 const log = createLogger({ base: { component: "sdk_backend" } });
 
-const MAX_PENDING_MANAGED_TOOL_START_IDENTITIES = 1_024;
-
-/**
- * Correlates Pi's copied extension event with the original subscriber event.
- * Pi awaits extension handlers before forwarding each start to subscribers, so
- * each key is FIFO even when different tools interleave or provider IDs repeat.
- * The queue is normally empty or one entry deep. If that serial contract is
- * violated badly enough to overflow, older starts are replay-only while the
- * current persisted identity remains queued. Subscriber delivery is serial too,
- * so one counter can suppress the older prefix without retaining its contents.
- */
-class ManagedToolStartIdentityCorrelation {
-  private readonly pendingByTool = new Map<string, PersistedLifecycleToolStartIdentity[]>();
-  private pendingCount = 0;
-  private suppressedPrefixCount = 0;
-
-  record(identity: PersistedLifecycleToolStartIdentity): boolean {
-    let overflowed = false;
-    if (this.pendingCount >= MAX_PENDING_MANAGED_TOOL_START_IDENTITIES) {
-      this.suppressedPrefixCount += this.pendingCount;
-      this.pendingByTool.clear();
-      this.pendingCount = 0;
-      overflowed = true;
-    }
-    const key = this.key(identity.toolCallId, identity.toolName);
-    const queue = this.pendingByTool.get(key) ?? [];
-    queue.push(identity);
-    this.pendingByTool.set(key, queue);
-    this.pendingCount += 1;
-    return !overflowed;
-  }
-
-  consume(
-    toolCallId: string,
-    toolName: string,
-  ):
-    | { eventId: string; suppressLiveCapture: false }
-    | { reason: "missing" | "overflow"; suppressLiveCapture: true } {
-    if (this.suppressedPrefixCount > 0) {
-      this.suppressedPrefixCount -= 1;
-      return { reason: "overflow", suppressLiveCapture: true };
-    }
-    const key = this.key(toolCallId, toolName);
-    const queue = this.pendingByTool.get(key);
-    const identity = queue?.shift();
-    if (!identity) return { reason: "missing", suppressLiveCapture: true };
-    this.pendingCount -= 1;
-    if (queue?.length === 0) this.pendingByTool.delete(key);
-    return { eventId: identity.eventId, suppressLiveCapture: false };
-  }
-
-  clear(): void {
-    this.pendingByTool.clear();
-    this.pendingCount = 0;
-    this.suppressedPrefixCount = 0;
-  }
-
-  private key(toolCallId: string, toolName: string): string {
-    return JSON.stringify([toolCallId, toolName]);
-  }
-}
-
 function syncSessionIdentityFromManager(session: Session, manager: PiSessionManager): void {
   const sessionFile = manager.getSessionFile();
   if (sessionFile) {
@@ -632,19 +568,6 @@ function syncSessionIdentityFromManager(session: Session, manager: PiSessionMana
  *   backend.dispose();
  */
 export class SdkBackend {
-  onResourceUsageCommandInvoked:
-    | ((input: {
-        evidence: ResourceUsagePromptEvidence;
-        producerId: string;
-      }) => ResourceUsageHistoryMarker | undefined)
-    | undefined;
-  onResourceUsageSkillsLoaded:
-    | ((load: {
-        skills: ResourceUsageSkillLoadEvidence[];
-        runtimeInstanceId: string;
-        generation: number;
-      }) => void)
-    | undefined;
   private static readonly DEFAULT_STEERING_MODE = "all" as const;
   private static readonly DEFAULT_FOLLOW_UP_MODE = "one-at-a-time" as const;
   /** Maximum graceful cleanup time within the documented stop bound. */
@@ -655,7 +578,6 @@ export class SdkBackend {
   private runtime: AgentSessionRuntime;
   private unsub: (() => void) | null = null;
   private readonly emitEvent: (event: SessionBackendEvent) => void;
-  private managedToolStartIdentities: ManagedToolStartIdentityCorrelation;
   private readonly uiBridge: SdkUiBridge;
   private shutdownCleanupPromise: Promise<SdkBackendDisposeResult> | null = null;
   private forcedDisposalResult: SdkBackendDisposeResult | undefined;
@@ -668,34 +590,16 @@ export class SdkBackend {
   private readonly assertSelectedResourcesAvailableBeforeReload?: () => void;
   private readonly consumeSelectedResourceReloadError?: () => Error | undefined;
   private selectedResourceInvariantError?: string;
-  private resourceUsageRuntimeInstanceId = "unassigned";
-  private resourceUsageLoadGeneration = 1;
   private runtimeTransaction = new SessionRuntimeTransaction();
   private requestedExclusiveOperations: Array<{ name: string }> = [];
   private queueReconciliationRequired = false;
   private queueAuthorityGeneration = 0;
-  private resourceUsagePromptProducerId: string | undefined;
-  private resourceUsageSandboxBindingsByPrimaryFile = new Map<string, string>();
-  private onResourceUsageSandboxBindings:
-    | ((input: { sourcePath: string; bindings: ResourceUsageBackfillSkillBinding[] }) => void)
-    | undefined;
-  private resourceUsageEvidenceCache:
-    | {
-        manifestRevision: string;
-        skills: Array<{ id: string; name: string; primaryFile: string }>;
-        skillIdsByName: Map<string, string>;
-        skillsByPrimaryFile: Map<string, { id: string; name: string }>;
-        toolOwners: Map<string, { ownerKind: "builtin" | "extension"; ownerId: string }>;
-        commandOwners: Map<string, { ownerKind: "builtin" | "extension"; ownerId: string }>;
-      }
-    | undefined;
   private disposed = false;
   private localCleanupFailures: string[] = [];
 
   private constructor(
     runtime: AgentSessionRuntime,
     emitEvent: (event: SessionBackendEvent) => void,
-    managedToolStartIdentities: ManagedToolStartIdentityCorrelation,
     oppiSessionId: string,
     dataDir?: string,
     cwdOverrides?: { existsCwd: string; displayCwd?: string },
@@ -708,7 +612,6 @@ export class SdkBackend {
   ) {
     this.runtime = runtime;
     this.emitEvent = emitEvent;
-    this.managedToolStartIdentities = managedToolStartIdentities;
     this.oppiSessionId = oppiSessionId;
     this.dataDir = dataDir;
     this.oppiSettingsHolder = oppiRuntimeSettings?.holder;
@@ -794,7 +697,6 @@ export class SdkBackend {
       cwdExistsOverride,
     );
     syncSessionIdentityFromManager(session, initialSessionManager);
-    const managedToolStartIdentities = new ManagedToolStartIdentityCorrelation();
 
     const agentDefinition = config.agentDefinition;
     const isDefaultAgentSession = isDefaultAgentId(session.launch?.agentId ?? "");
@@ -952,25 +854,14 @@ export class SdkBackend {
         ...(staticAppendSystemPrompt ? { appendSystemPrompt: staticAppendSystemPrompt } : {}),
         appendSystemPromptOverride: (base) => buildCurrentAppendSystemPrompt(base),
         extensionFactories: [
-          createLifecycleJournalExtension(sessionManager, {
-            onToolStartPersisted: (identity) => {
-              if (managedToolStartIdentities.record(identity)) return;
-              log.warn("sdk.resource_usage_tool_identity_overflow", {
-                sessionId: session.id,
-                maximumPending: MAX_PENDING_MANAGED_TOOL_START_IDENTITIES,
-              });
-            },
-          }),
+          createLifecycleJournalExtension(sessionManager),
           ...(controlToolRuntime
             ? [
-                {
-                  name: "oppi",
-                  factory: createDefaultAgentExtensionFactory({
-                    dataDir: config.dataDir,
-                    callerSessionId: session.id,
-                    policySnapshot: controlPolicySnapshot,
-                  }),
-                },
+                createDefaultAgentExtensionFactory({
+                  dataDir: config.dataDir,
+                  callerSessionId: session.id,
+                  policySnapshot: controlPolicySnapshot,
+                }),
               ]
             : ordinaryOppiExtension
               ? [ordinaryOppiExtension]
@@ -1056,7 +947,12 @@ export class SdkBackend {
                 }
                 return {
                   skills: base.skills.map((skill) => {
-                    const guestBaseDir = sandboxSkillGuestRoot(guestCwd, skill.name);
+                    const guestBaseDir = posix.join(
+                      guestCwd,
+                      ".pi",
+                      "skills",
+                      safeGuestSegment(skill.name),
+                    );
                     sandboxReadonlyMounts.set(guestBaseDir, {
                       hostPath: skill.baseDir,
                       guestPath: guestBaseDir,
@@ -1296,7 +1192,6 @@ export class SdkBackend {
     const backend = new SdkBackend(
       runtime,
       onEvent,
-      managedToolStartIdentities,
       session.id,
       config.dataDir,
       sandboxMode
@@ -1346,333 +1241,13 @@ export class SdkBackend {
     return this.modelRegistry;
   }
 
-  resourceUsageSkillLoadEvidence(): ResourceUsageSkillLoadEvidence[] {
-    const evidence = this.resourceUsageEvidence();
-    const model = this.resourceUsageModelEvidence();
-    return evidence.skills.map((skill) => ({
-      ...skill,
-      ...model,
-      manifestRevision: evidence.manifestRevision,
-    }));
-  }
-
-  resourceUsageSandboxSkillBindings():
-    | { sourcePath: string; bindings: ResourceUsageBackfillSkillBinding[] }
-    | undefined {
-    const sourcePath = this.piSession.sessionManager.getSessionFile();
-    if (!this.sessionManagerDisplayCwd || !sourcePath) return undefined;
-    const skills = this.resourceUsageEvidence().skills;
-    if (this.resourceUsageSandboxBindingsByPrimaryFile.size === 0 && skills.length > 0) {
-      this.resourceUsageSandboxBindingsByPrimaryFile = new Map(
-        skills.map((skill) => [skill.primaryFile, createSandboxSkillBindingToken()]),
-      );
-    }
-    return {
-      sourcePath,
-      bindings: skills.flatMap((skill) => {
-        const bindingToken = this.resourceUsageSandboxBindingsByPrimaryFile.get(skill.primaryFile);
-        return bindingToken ? [{ bindingToken, skillId: skill.id, skillName: skill.name }] : [];
-      }),
-    };
-  }
-
-  configureResourceUsageSandboxSkillBindings(
-    capture: NonNullable<SdkBackend["onResourceUsageSandboxBindings"]>,
-  ): void {
-    this.onResourceUsageSandboxBindings = capture;
-    this.rotateResourceUsageSandboxSkillBindings();
-  }
-
-  appendResourceUsageSkillReadMarker(input: { producerId: string; bindingToken?: string }): void {
-    if (!input.bindingToken) return;
-    this.piSession.sessionManager.appendCustomEntry("oppi-resource-usage", {
-      version: 3,
-      signal: "skill_instruction_read",
-      bindingToken: input.bindingToken,
-      producerId: input.producerId,
-    });
-  }
-
-  resourceUsageSkillReadEvidence(
-    path: string,
-  ): ResourceUsageSkillInstructionReadEvidence | undefined {
-    const resolved = canonicalServerResourcePath(
-      resolvePiReadPath(path, this.piSession.sessionManager.getHeader()?.cwd ?? process.cwd()),
-    );
-    const evidence = this.resourceUsageEvidence();
-    const skill = matchPiReadPath(evidence.skillsByPrimaryFile, resolved);
-    if (!skill) return undefined;
-    const primaryFile = evidence.skills.find((candidate) => candidate.id === skill.id)?.primaryFile;
-    const bindingToken = primaryFile
-      ? this.resourceUsageSandboxBindingsByPrimaryFile.get(primaryFile)
-      : undefined;
-    return {
-      ...skill,
-      ...this.resourceUsageModelEvidence(),
-      manifestRevision: evidence.manifestRevision,
-      ...(bindingToken ? { bindingToken } : {}),
-    };
-  }
-
-  private rotateResourceUsageSandboxSkillBindings(): void {
-    if (!this.onResourceUsageSandboxBindings) return;
-    this.resourceUsageSandboxBindingsByPrimaryFile.clear();
-    const snapshot = this.resourceUsageSandboxSkillBindings();
-    if (snapshot) this.onResourceUsageSandboxBindings(snapshot);
-  }
-
-  configureResourceUsageSkillLoads(
-    runtimeInstanceId: string,
-    capture: NonNullable<SdkBackend["onResourceUsageSkillsLoaded"]>,
-  ): void {
-    this.resourceUsageRuntimeInstanceId = runtimeInstanceId;
-    this.onResourceUsageSkillsLoaded = capture;
-    this.notifyResourceUsageSkillsLoaded();
-  }
-
-  private notifyResourceUsageSkillsLoaded(): void {
-    try {
-      this.onResourceUsageSkillsLoaded?.({
-        skills: this.resourceUsageSkillLoadEvidence(),
-        runtimeInstanceId: this.resourceUsageRuntimeInstanceId,
-        generation: this.resourceUsageLoadGeneration,
-      });
-    } catch (error) {
-      log.warn("sdk.resource_usage_skill_load_capture_failed", {
-        sessionId: this.oppiSessionId,
-        error: safeErrorMessage(error),
-      });
-    }
-  }
-
-  resourceUsageToolEvidence(toolName: string): ResourceUsageToolEvidence {
-    const evidence = this.resourceUsageEvidence();
-    return {
-      ...(evidence.toolOwners.get(toolName) ?? { ownerKind: "builtin", ownerId: "builtin" }),
-      ...this.resourceUsageModelEvidence(),
-      manifestRevision: evidence.manifestRevision,
-    };
-  }
-
-  resourceUsageEntryIds(): ReadonlySet<string> {
-    return new Set(this.piSession.sessionManager.getEntries().map((entry) => entry.id));
-  }
-
-  appendResourceUsageHistoryMarker(
-    marker: ResourceUsageHistoryMarker | undefined,
-    priorEntryIds?: ReadonlySet<string>,
-  ): void {
-    if (!marker) return;
-    // Persist beside Pi's accepted user entry and record that generated identity.
-    // Replay can then reconcile marker + message without assuming client IDs are
-    // Pi entry IDs or collapsing two identical accepted commands.
-    const knownEntryIds =
-      priorEntryIds ?? new Set(this.piSession.sessionManager.getEntries().map((entry) => entry.id));
-    queueMicrotask(() => {
-      const message = this.piSession.sessionManager
-        .getEntries()
-        .find(
-          (entry) =>
-            !knownEntryIds.has(entry.id) &&
-            entry.type === "message" &&
-            entry.message.role === "user",
-        );
-      this.piSession.sessionManager.appendCustomEntry("oppi-resource-usage", {
-        ...marker,
-        ...(message ? { messageEntryId: message.id } : {}),
-      });
-    });
-  }
-
-  resourceUsagePromptEvidence(message: string): ResourceUsagePromptEvidence | undefined {
-    const command = message.trimStart().match(/^\/([^\s]+)/)?.[1];
-    if (!command) return undefined;
-    const evidence = this.resourceUsageEvidence();
-    const model = this.resourceUsageModelEvidence();
-    if (command.startsWith("skill:")) {
-      const skillName = command.slice("skill:".length);
-      const ownerId = evidence.skillIdsByName.get(skillName);
-      if (!ownerId) return undefined;
-      return {
-        signal: "explicit_activation",
-        itemName: skillName,
-        ownerKind: "skill",
-        ownerId,
-        ...model,
-        manifestRevision: evidence.manifestRevision,
-      };
-    }
-
-    return undefined;
-  }
-
-  private resourceUsageCommandEvidence(command: string): ResourceUsagePromptEvidence | undefined {
-    const evidence = this.resourceUsageEvidence();
-    const owner = evidence.commandOwners.get(command);
-    if (!owner || owner.ownerKind !== "extension") return undefined;
-    return {
-      signal: "command_invocation",
-      itemName: command,
-      ...owner,
-      ...this.resourceUsageModelEvidence(),
-      manifestRevision: evidence.manifestRevision,
-    };
-  }
-
-  private wrapExtensionCommandUsageCapture(): void {
-    const session = this.piSession as Partial<
-      Pick<AgentSession, "resourceLoader" | "extensionRunner">
-    >;
-    if (!session.resourceLoader || !session.extensionRunner) return;
-    for (const extension of session.resourceLoader.getExtensions().extensions) {
-      for (const [name, command] of extension.commands) {
-        const invocationName = session.extensionRunner
-          .getRegisteredCommands()
-          .find(
-            (registered) =>
-              registered.name === name && registered.sourceInfo.path === command.sourceInfo.path,
-          )?.invocationName;
-        if (!invocationName) continue;
-        const current = command.handler as typeof command.handler & {
-          __oppiResourceUsageWrapped?: true;
-        };
-        if (current.__oppiResourceUsageWrapped) continue;
-        const original = current.bind(command);
-        const wrapped: typeof command.handler & { __oppiResourceUsageWrapped?: true } = async (
-          args,
-          context,
-        ) => {
-          const producerId = this.resourceUsagePromptProducerId;
-          const evidence = this.resourceUsageCommandEvidence(invocationName);
-          if (producerId && evidence) {
-            try {
-              this.appendResourceUsageHistoryMarker(
-                this.onResourceUsageCommandInvoked?.({ evidence, producerId }),
-              );
-            } catch (error) {
-              log.warn("sdk.resource_usage_command_capture_failed", {
-                sessionId: this.oppiSessionId,
-                error: safeErrorMessage(error),
-              });
-            }
-          }
-          await original(args, context);
-        };
-        wrapped.__oppiResourceUsageWrapped = true;
-        command.handler = wrapped;
-      }
-    }
-  }
-
-  private resourceUsageModelEvidence(): { provider?: string; model?: string } {
-    const model = this.piSession.model;
-    return model ? { provider: model.provider, model: model.id } : {};
-  }
-
-  private resourceUsageOwnerForSource(path: string | undefined): {
-    ownerKind: "builtin" | "extension";
-    ownerId: string;
-  } {
-    if (!path || (path.startsWith("<inline:") && path !== "<inline:oppi>")) {
-      return { ownerKind: "builtin", ownerId: "builtin" };
-    }
-    if (path === "<inline:oppi>") {
-      return { ownerKind: "extension", ownerId: "oppi" };
-    }
-    return {
-      ownerKind: "extension",
-      ownerId: serverResourceId("extension", canonicalServerResourcePath(path)),
-    };
-  }
-
-  private resourceUsageEvidence(): NonNullable<SdkBackend["resourceUsageEvidenceCache"]> {
-    if (this.resourceUsageEvidenceCache) return this.resourceUsageEvidenceCache;
-
-    const loadedSkills = this.piSession.resourceLoader.getSkills().skills;
-    const skills = loadedSkills.map((skill) => ({
-      id: serverResourceId("skill", canonicalServerResourcePath(skillResourceIdentityPath(skill))),
-      name: skill.name,
-      primaryFile: canonicalServerResourcePath(skill.filePath),
-    }));
-    const loadedExtensions = this.piSession.resourceLoader.getExtensions().extensions;
-    const registeredTools = this.piSession.extensionRunner.getAllRegisteredTools();
-    const toolOwners = new Map<string, { ownerKind: "builtin" | "extension"; ownerId: string }>();
-    for (const registered of registeredTools) {
-      const toolName = registered.definition.name;
-      const extension = loadedExtensions.find(
-        (candidate) => candidate.tools.get(toolName) === registered,
-      );
-      toolOwners.set(
-        toolName,
-        this.resourceUsageOwnerForSource(extension?.path ?? registered.sourceInfo.path),
-      );
-    }
-    const commandOwners = new Map<
-      string,
-      { ownerKind: "builtin" | "extension"; ownerId: string }
-    >();
-    for (const registered of this.piSession.extensionRunner.getRegisteredCommands()) {
-      const extension = loadedExtensions.find((candidate) =>
-        [...candidate.commands.values()].some(
-          (commandEntry) => commandEntry.sourceInfo.path === registered.sourceInfo.path,
-        ),
-      );
-      commandOwners.set(
-        registered.invocationName,
-        this.resourceUsageOwnerForSource(extension?.path ?? registered.sourceInfo.path),
-      );
-    }
-    const resources = [
-      ...skills.map((skill) => skill.id),
-      ...loadedExtensions.map((extension) =>
-        extension.path === "<inline:oppi>"
-          ? "oppi"
-          : extension.path.startsWith("<inline:")
-            ? `builtin:${extension.path}`
-            : serverResourceId("extension", canonicalServerResourcePath(extension.path)),
-      ),
-    ].sort();
-    this.resourceUsageEvidenceCache = {
-      manifestRevision: createHash("sha256").update(resources.join("\0")).digest("hex"),
-      skills,
-      skillIdsByName: new Map(skills.map((skill) => [skill.name, skill.id])),
-      skillsByPrimaryFile: new Map(
-        skills.map((skill) => [skill.primaryFile, { id: skill.id, name: skill.name }]),
-      ),
-      toolOwners,
-      commandOwners,
-    };
-    return this.resourceUsageEvidenceCache;
-  }
-
   private subscribeToCurrentSession(): void {
     this.unsub?.();
-    const identities = (this.managedToolStartIdentities ??=
-      new ManagedToolStartIdentityCorrelation());
-    identities.clear();
     this.unsub = this.piSession.subscribe((event: AgentSessionEvent) => {
       if (event.type === "queue_update") {
         this.queueAuthorityGeneration = (this.queueAuthorityGeneration ?? 0) + 1;
       }
-      if (event.type !== "tool_execution_start") {
-        this.emitEvent(event);
-        return;
-      }
-      const correlation = identities.consume(event.toolCallId, event.toolName);
-      if (correlation.suppressLiveCapture) {
-        if (correlation.reason === "missing") {
-          log.warn("sdk.resource_usage_tool_identity_missing", {
-            sessionId: this.oppiSessionId,
-            toolName: event.toolName,
-          });
-        }
-        this.emitEvent({ ...event, resourceUsageSkipLiveCapture: true } as SessionBackendEvent);
-        return;
-      }
-      this.emitEvent({
-        ...event,
-        resourceUsageEventId: correlation.eventId,
-      } as SessionBackendEvent);
+      this.emitEvent(event);
     });
   }
 
@@ -1693,8 +1268,6 @@ export class SdkBackend {
       },
     });
     this.installSessionAttachmentToolHelpers();
-    this.wrapExtensionCommandUsageCapture();
-    this.resourceUsageEvidenceCache = undefined;
   }
 
   private installSessionAttachmentToolHelpers(): void {
@@ -1767,9 +1340,6 @@ export class SdkBackend {
   private async refreshRuntimeSessionBindings(): Promise<void> {
     this.subscribeToCurrentSession();
     await this.bindCurrentSessionExtensions();
-    this.resourceUsageLoadGeneration += 1;
-    this.notifyResourceUsageSkillsLoaded();
-    this.rotateResourceUsageSandboxSkillBindings();
   }
 
   private static applyDefaultQueueModes(session: AgentSession): void {
@@ -1835,11 +1405,6 @@ export class SdkBackend {
       this.selectedResourceInvariantError = undefined;
       SdkBackend.applyDefaultQueueModes(this.piSession);
       this.installSessionAttachmentToolHelpers();
-      this.wrapExtensionCommandUsageCapture();
-      this.resourceUsageEvidenceCache = undefined;
-      this.resourceUsageLoadGeneration += 1;
-      this.notifyResourceUsageSkillsLoaded();
-      this.rotateResourceUsageSandboxSkillBindings();
       return { success: true };
     });
   }
@@ -1996,7 +1561,6 @@ export class SdkBackend {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       streamingBehavior?: "steer" | "followUp";
       onPreflightAccepted?: () => void;
-      resourceUsageProducerId?: string;
     },
     permit?: SessionRuntimeTransactionPermit,
   ): Promise<void> {
@@ -2155,7 +1719,6 @@ export class SdkBackend {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       streamingBehavior?: "steer" | "followUp";
       onPreflightAccepted?: () => void;
-      resourceUsageProducerId?: string;
     },
   ): Promise<void> {
     const images: ImageContent[] | undefined = opts?.images?.map((img) => ({
@@ -2184,37 +1747,23 @@ export class SdkBackend {
       }
       resolvePreflight();
     };
-    this.resourceUsagePromptProducerId = opts?.resourceUsageProducerId;
-    const clearResourceUsageProducer = (): void => {
-      if (this.resourceUsagePromptProducerId === opts?.resourceUsageProducerId) {
-        this.resourceUsagePromptProducerId = undefined;
-      }
-    };
-    let promptResult: void | Promise<void>;
-    try {
-      promptResult = this.piSession.prompt(message, {
+    const completion = Promise.resolve(
+      this.piSession.prompt(message, {
         images,
         streamingBehavior: opts?.streamingBehavior,
         preflightResult: (success) => {
           preflightSettled = true;
           accepted = success && !this.disposed;
           if (success) acceptPreflight();
-          clearResourceUsageProducer();
         },
-      });
-    } catch (error) {
-      clearResourceUsageProducer();
-      throw error;
-    }
-    const completion = Promise.resolve(promptResult);
+      }),
+    );
     completion.then(
       () => {
         if (!preflightSettled) acceptPreflight();
         else if (!accepted) rejectPreflight(new Error("Pi prompt preflight rejected"));
-        clearResourceUsageProducer();
       },
       (error: unknown) => {
-        clearResourceUsageProducer();
         if (!accepted) {
           rejectPreflight(error);
           return;
@@ -2341,7 +1890,6 @@ export class SdkBackend {
   private markLocallyDisposed(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.managedToolStartIdentities?.clear();
 
     try {
       const cleanup = this.uiBridge.dispose();

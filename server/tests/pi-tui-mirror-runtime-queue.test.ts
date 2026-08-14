@@ -7,8 +7,6 @@ import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
 import { PiTuiMirrorRuntime } from "../src/pi-tui-mirror-runtime.js";
-import { ResourceUsageService } from "../src/resource-usage-service.js";
-import { ResourceUsageStore } from "../src/storage/resource-usage-store.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerMessage, Session, Workspace } from "../src/types.js";
 
@@ -58,12 +56,6 @@ function makeRuntime(
     includeDefaultWorkspace?: boolean;
     isOppiSessionActive?: (sessionId: string) => boolean;
     stopOppiSession?: (sessionId: string) => Promise<void>;
-    resourceUsage?: {
-      captureToolInvocation: (...args: never[]) => unknown;
-      captureSkillInstructionRead: (...args: never[]) => unknown;
-    };
-    resolveResourceUsageToolEvidence?: (toolName: string) => unknown;
-    resolveResourceUsageSkillRead?: (path: string, cwd: string) => unknown;
   } = {},
 ) {
   const defaultWorkspace: Workspace = {
@@ -146,10 +138,7 @@ function makeRuntime(
     runtime: new PiTuiMirrorRuntime(storage, {
       isOppiSessionActive: options.isOppiSessionActive,
       stopOppiSession: options.stopOppiSession,
-      resourceUsage: options.resourceUsage,
-      resolveResourceUsageToolEvidence: options.resolveResourceUsageToolEvidence,
-      resolveResourceUsageSkillRead: options.resolveResourceUsageSkillRead,
-    } as never),
+    }),
     sessions,
     workspaces,
   };
@@ -899,243 +888,6 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
         content: "done",
       }),
     );
-  });
-
-  it("captures successful live Mirror Skill reads and distinct reused read Tool Activity", async () => {
-    const captureToolInvocation = vi.fn();
-    const captureSkillInstructionRead = vi.fn();
-    const skills = new Map([
-      ["/tmp/oppi-mirror-test/alpha/SKILL.md", { id: "skill_alpha", name: "alpha" }],
-      ["/tmp/oppi-mirror-test/beta/SKILL.md", { id: "skill_beta", name: "beta" }],
-      ["/tmp/oppi-mirror-test/gamma/SKILL.md", { id: "skill_gamma", name: "gamma" }],
-      ["/tmp/oppi-mirror-test/delta/SKILL.md", { id: "skill_delta", name: "delta" }],
-    ]);
-    const { runtime } = makeRuntime({
-      resourceUsage: { captureToolInvocation, captureSkillInstructionRead },
-      resolveResourceUsageToolEvidence: () => ({ ownerKind: "builtin", ownerId: "builtin" }),
-      resolveResourceUsageSkillRead: (path) => skills.get(path),
-    });
-    const { ws } = connectBridge(runtime);
-    const eventIds = ["1", "2", "3", "4"].map((value) => `trace-event-v1_${value.repeat(64)}`);
-    let startIndex = 0;
-    const start = (toolCallId: string, path: string) =>
-      ws.receive({
-        type: "event",
-        event: {
-          type: "tool_execution_start",
-          toolCallId,
-          toolName: "read",
-          args: { path },
-          resourceUsageEventId: eventIds[startIndex++],
-        },
-      });
-    const end = (toolCallId: string, isError = false) =>
-      ws.receive({
-        type: "event",
-        event: {
-          type: "tool_execution_end",
-          toolCallId,
-          toolName: "read",
-          result: { content: [] },
-          isError,
-        },
-      });
-
-    start("reused-a", "/tmp/oppi-mirror-test/alpha/SKILL.md");
-    start("reused-b", "/tmp/oppi-mirror-test/beta/SKILL.md");
-    start("reused-a", "/tmp/oppi-mirror-test/gamma/SKILL.md");
-    start("reused-b", "/tmp/oppi-mirror-test/delta/SKILL.md");
-    end("reused-b");
-    end("reused-a");
-    end("reused-b", true);
-    end("reused-a");
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(captureToolInvocation.mock.calls.map(([input]) => input.toolCallId)).toEqual(eventIds);
-    expect(
-      captureSkillInstructionRead.mock.calls.map(([input]) => [input.toolCallId, input.skill.id]),
-    ).toEqual([
-      [eventIds[1], "skill_beta"],
-      [eventIds[0], "skill_alpha"],
-      [eventIds[2], "skill_gamma"],
-    ]);
-  });
-
-  it("keeps reused provider IDs distinct across a full Mirror runtime restart", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "oppi-mirror-resource-restart-"));
-    const store = new ResourceUsageStore(dir, { now: () => 10_000 });
-    const service = new ResourceUsageService(store, { now: () => 10_000 });
-    const eventIds = [`trace-event-v1_${"a".repeat(64)}`, `trace-event-v1_${"b".repeat(64)}`];
-
-    try {
-      for (const eventId of eventIds) {
-        const { runtime } = makeRuntime({
-          resourceUsage: service,
-          resolveResourceUsageToolEvidence: () => ({ ownerKind: "builtin", ownerId: "builtin" }),
-          resolveResourceUsageSkillRead: () => ({ id: "skill_testing", name: "testing" }),
-        });
-        const { ws } = connectBridge(runtime, { piSessionId: "pi-process-restart" });
-        ws.receive({
-          type: "event",
-          event: {
-            type: "tool_execution_start",
-            toolCallId: "provider-reused",
-            toolName: "read",
-            args: { path: "/tmp/oppi-mirror-test/testing/SKILL.md" },
-            resourceUsageEventId: eventId,
-          },
-        });
-        ws.receive({
-          type: "event",
-          event: {
-            type: "tool_execution_end",
-            toolCallId: "provider-reused",
-            toolName: "read",
-            result: { content: [] },
-            isError: false,
-          },
-        });
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-      await service.flush();
-
-      expect(
-        store.queryEvents({
-          subject: { kind: "skill", id: "skill_testing" },
-          sinceMs: 0,
-          untilMs: Infinity,
-        }),
-      ).toHaveLength(2);
-      expect(
-        store.queryEvents({ subject: { kind: "tools" }, sinceMs: 0, untilMs: Infinity }),
-      ).toHaveLength(2);
-    } finally {
-      await service.close();
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps reused provider IDs distinct after an idle Mirror reconnect", async () => {
-    const captureToolInvocation = vi.fn();
-    const { runtime } = makeRuntime({
-      resourceUsage: { captureToolInvocation, captureSkillInstructionRead: vi.fn() },
-      resolveResourceUsageToolEvidence: () => ({ ownerKind: "builtin", ownerId: "builtin" }),
-      resolveResourceUsageSkillRead: () => undefined,
-    });
-    const first = connectBridge(runtime, { bridgeId: "bridge-first", piSessionId: "pi-reused" });
-    const eventIds = [`trace-event-v1_${"5".repeat(64)}`, `trace-event-v1_${"6".repeat(64)}`];
-    let invocationIndex = 0;
-    const invoke = (ws: FakeBridgeWebSocket) => {
-      ws.receive({
-        type: "event",
-        event: {
-          type: "tool_execution_start",
-          toolCallId: "provider-reused",
-          toolName: "bash",
-          args: {},
-          resourceUsageEventId: eventIds[invocationIndex++],
-        },
-      });
-      ws.receive({
-        type: "event",
-        event: {
-          type: "tool_execution_end",
-          toolCallId: "provider-reused",
-          toolName: "bash",
-          result: { content: [] },
-          isError: false,
-        },
-      });
-    };
-
-    invoke(first.ws);
-    first.ws.emit("close", 1006, Buffer.from("network lost"));
-    expect(runtime.getActiveSession(first.sessionId)?.mirror?.status).toBe("disconnected");
-    const second = connectBridge(runtime, {
-      bridgeId: "bridge-second",
-      piSessionId: "pi-reused",
-    });
-    expect(second.sessionId).toBe(first.sessionId);
-    invoke(second.ws);
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(captureToolInvocation.mock.calls.map(([input]) => input.toolCallId)).toEqual(eventIds);
-  });
-
-  it("keeps an in-flight Skill read correlated across a reconnectable Mirror disconnect", async () => {
-    const captureSkillInstructionRead = vi.fn();
-    const { runtime } = makeRuntime({
-      resourceUsage: { captureToolInvocation: vi.fn(), captureSkillInstructionRead },
-      resolveResourceUsageToolEvidence: () => ({ ownerKind: "builtin", ownerId: "builtin" }),
-      resolveResourceUsageSkillRead: () => ({ id: "skill_testing", name: "testing" }),
-    });
-    const first = connectBridge(runtime, { bridgeId: "bridge-first", piSessionId: "pi-pending" });
-    first.ws.receive({
-      type: "event",
-      event: {
-        type: "tool_execution_start",
-        toolCallId: "pending-read",
-        toolName: "read",
-        args: { path: "/tmp/oppi-mirror-test/testing/SKILL.md" },
-        resourceUsageEventId: `trace-event-v1_${"7".repeat(64)}`,
-      },
-    });
-    first.ws.emit("close", 1006, Buffer.from("network lost"));
-    const second = connectBridge(runtime, {
-      bridgeId: "bridge-second",
-      piSessionId: "pi-pending",
-    });
-    second.ws.receive({
-      type: "event",
-      event: {
-        type: "tool_execution_end",
-        toolCallId: "pending-read",
-        toolName: "read",
-        result: { content: [] },
-        isError: false,
-      },
-    });
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(captureSkillInstructionRead).toHaveBeenCalledTimes(1);
-  });
-
-  it("evicts pending Skill correlation when a Mirror trace definitively stops", async () => {
-    const captureSkillInstructionRead = vi.fn();
-    const { runtime } = makeRuntime({
-      resourceUsage: { captureToolInvocation: vi.fn(), captureSkillInstructionRead },
-      resolveResourceUsageToolEvidence: () => ({ ownerKind: "builtin", ownerId: "builtin" }),
-      resolveResourceUsageSkillRead: () => ({ id: "skill_testing", name: "testing" }),
-    });
-    const first = connectBridge(runtime, { bridgeId: "bridge-first", piSessionId: "pi-stopped" });
-    first.ws.receive({
-      type: "event",
-      event: {
-        type: "tool_execution_start",
-        toolCallId: "pending-read",
-        toolName: "read",
-        args: { path: "/tmp/oppi-mirror-test/testing/SKILL.md" },
-        resourceUsageEventId: `trace-event-v1_${"8".repeat(64)}`,
-      },
-    });
-    first.ws.receive({ type: "goodbye", reason: "session_shutdown" });
-    const second = connectBridge(runtime, {
-      bridgeId: "bridge-second",
-      piSessionId: "pi-stopped",
-    });
-    second.ws.receive({
-      type: "event",
-      event: {
-        type: "tool_execution_end",
-        toolCallId: "pending-read",
-        toolName: "read",
-        result: { content: [] },
-        isError: false,
-      },
-    });
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(captureSkillInstructionRead).not.toHaveBeenCalled();
   });
 
   it("broadcasts terminal-origin compaction events", () => {

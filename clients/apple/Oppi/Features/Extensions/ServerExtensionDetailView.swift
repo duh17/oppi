@@ -49,9 +49,6 @@ struct ServerExtensionDetailScopedDestinationView: View {
                 ProgressView("Loading extension…")
             }
         }
-        .foregroundStyle(.themeFg)
-        .tint(.themeBlue)
-        .themedScrollSurface()
         .task(id: target) { await resolve() }
     }
 
@@ -95,6 +92,7 @@ struct ServerExtensionDetailView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(ServerResourceStore.self) private var store
     @Environment(ServerStore.self) private var serverStore
+    @Environment(\.theme) private var theme
 
     let target: ServerResourceDetailNavTarget
 
@@ -147,11 +145,8 @@ struct ServerExtensionDetailView: View {
                         }
                     }
                     .padding(.vertical, 4)
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
                 }
-                .themedListRowBackground()
-
-                observedUsageSection
 
                 Section("Server Default") {
                     HStack(spacing: 10) {
@@ -176,7 +171,7 @@ struct ServerExtensionDetailView: View {
                                 .accessibilityLabel("Saving")
                         }
                     }
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
 
                     if let error = store.mutationError(for: mutationKey, serverId: target.serverId) {
                         Label(
@@ -185,24 +180,22 @@ struct ServerExtensionDetailView: View {
                         )
                         .font(.footnote)
                         .foregroundStyle(.themeOrange)
-                        .themedListRowBackground()
+                        .listRowBackground(theme.bg.primary)
                     }
                 }
-                .themedListRowBackground()
 
                 Section("Source") {
                     if let packageName = summary.packageName {
                         LabeledContent("Package", value: packageName)
-                            .themedListRowBackground()
+                            .listRowBackground(theme.bg.primary)
                     }
                     LabeledContent("Provenance", value: summary.provenance.label)
-                        .themedListRowBackground()
+                        .listRowBackground(theme.bg.primary)
                     LabeledContent("Kind", value: ServerExtensionListPresentation.kindLabel(for: summary.kind))
-                        .themedListRowBackground()
+                        .listRowBackground(theme.bg.primary)
                     LabeledContent("Scope", value: "Server default")
-                        .themedListRowBackground()
+                        .listRowBackground(theme.bg.primary)
                 }
-                .themedListRowBackground()
 
                 Section("Status") {
                     Label(
@@ -211,27 +204,26 @@ struct ServerExtensionDetailView: View {
                             ? "exclamationmark.triangle.fill"
                             : (summary.state == .on ? "checkmark.circle" : "minus.circle")
                     )
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
 
                     if let error = summary.loadError ?? loadError {
                         Text(error)
                             .font(.footnote)
                             .foregroundStyle(.themeOrange)
-                            .themedListRowBackground()
+                            .listRowBackground(theme.bg.primary)
                     }
 
                     ForEach(summary.warnings, id: \.self) { warning in
                         Label(warning, systemImage: "exclamationmark.circle")
                             .font(.footnote)
-                            .themedListRowBackground()
+                            .listRowBackground(theme.bg.primary)
                     }
 
                     if summary.state == .error || loadError != nil {
                         Button("Retry") { startLoad() }
-                            .themedListRowBackground()
+                            .listRowBackground(theme.bg.primary)
                     }
                 }
-                .themedListRowBackground()
 
                 if isLoading && detail == nil {
                     Section {
@@ -241,9 +233,8 @@ struct ServerExtensionDetailView: View {
                             Spacer()
                         }
                         .frame(minHeight: 72)
-                        .themedListRowBackground()
+                        .listRowBackground(theme.bg.primary)
                     }
-                    .themedListRowBackground()
                 }
 
                 if let tools = detail?.contributedTools, !tools.isEmpty {
@@ -253,6 +244,12 @@ struct ServerExtensionDetailView: View {
                     contributionSection("Contributed Commands", values: commands)
                 }
 
+                Section {
+                    Text("New sessions use this setting. Reload an active session to apply it now.")
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
+                        .listRowBackground(theme.bg.primary)
+                }
             } else if isLoading {
                 Section {
                     HStack {
@@ -261,9 +258,8 @@ struct ServerExtensionDetailView: View {
                         Spacer()
                     }
                     .frame(minHeight: 100)
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
                 }
-                .themedListRowBackground()
             } else {
                 Section {
                     ContentUnavailableView {
@@ -274,37 +270,16 @@ struct ServerExtensionDetailView: View {
                         Button("Retry") { startLoad() }
                             .buttonStyle(.borderedProminent)
                     }
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
                 }
-                .themedListRowBackground()
             }
         }
         .listStyle(.insetGrouped)
         .themedListSurface()
-        .foregroundStyle(.themeFg)
-        .tint(.themeBlue)
         .navigationTitle(summary?.name ?? "Extension")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: target) { startLoad() }
         .onDisappear { loader.cancel() }
-    }
-
-    private var observedUsageSection: some View {
-        ObservedUsageSection(
-            requestKey: ResourceUsageRequestKey(
-                serverId: target.serverId,
-                subject: ResourceUsageSubject(kind: .extension, id: target.resourceId)
-            )
-        ) { range, timezone in
-            guard let apiClient else {
-                throw ResourceUsageLoadError.notConnected
-            }
-            return try await apiClient.getServerExtensionUsage(
-                id: target.resourceId,
-                range: range,
-                timezone: timezone
-            )
-        }
     }
 
     private func contributionSection(_ title: String, values: [String]) -> some View {
@@ -312,10 +287,9 @@ struct ServerExtensionDetailView: View {
             ForEach(values, id: \.self) { value in
                 Text(value)
                     .textSelection(.enabled)
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
             }
         }
-        .themedListRowBackground()
     }
 
     private func startLoad() {

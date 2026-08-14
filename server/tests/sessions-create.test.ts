@@ -912,11 +912,7 @@ describe("POST /workspaces/:id/sessions", () => {
 
     expect(mock.sessions.sendPrompt).toHaveBeenCalledTimes(1);
     const promptCall = mock.sessions.sendPrompt.mock.calls[0]!;
-    expect(promptCall[2]).toEqual({
-      attachments,
-      clientTurnId: expect.stringMatching(/^agent-launch:/),
-      requestId: expect.stringMatching(/^agent-launch:/),
-    });
+    expect(promptCall[2]).toEqual({ attachments });
   });
 
   it("persists ephemeral flag for incognito sessions", async () => {

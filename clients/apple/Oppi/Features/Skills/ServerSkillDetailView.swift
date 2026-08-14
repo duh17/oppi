@@ -105,9 +105,6 @@ struct ServerSkillDetailScopedDestinationView: View {
                 ProgressView("Connecting…")
             }
         }
-        .foregroundStyle(.themeFg)
-        .tint(.themeBlue)
-        .themedScrollSurface()
         .task(id: target) { await resolveConnection() }
     }
 
@@ -130,6 +127,7 @@ struct ServerSkillDetailView: View {
     @Environment(ServerResourceStore.self) private var store
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.theme) private var theme
 
     let target: ServerResourceDetailNavTarget
 
@@ -172,7 +170,6 @@ struct ServerSkillDetailView: View {
         List {
             if let summary {
                 identitySection(summary)
-                observedUsageSection
                 globalEnableSection(summary)
                 provenanceSection(summary)
                 validationSection(summary)
@@ -185,9 +182,8 @@ struct ServerSkillDetailView: View {
                             Spacer()
                         }
                         .frame(minHeight: 72)
-                        .themedListRowBackground()
+                        .listRowBackground(theme.bg.primary)
                     }
-                    .themedListRowBackground()
                 }
 
                 if let detail {
@@ -216,11 +212,16 @@ struct ServerSkillDetailView: View {
                         .accessibilityLabel("Browse \(summary.name) files")
                         .accessibilityValue(fileCountLabel(detail.files.count))
                         .accessibilityIdentifier("skills.files.open")
-                        .themedListRowBackground()
+                        .listRowBackground(theme.bg.primary)
                     }
-                    .themedListRowBackground()
                 }
 
+                Section {
+                    Text("New sessions use this setting. Reload an active session to apply it now.")
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
+                        .listRowBackground(theme.bg.primary)
+                }
             } else if isLoading {
                 Section {
                     HStack {
@@ -229,9 +230,8 @@ struct ServerSkillDetailView: View {
                         Spacer()
                     }
                     .frame(minHeight: 100)
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
                 }
-                .themedListRowBackground()
             } else {
                 Section {
                     ContentUnavailableView {
@@ -242,15 +242,12 @@ struct ServerSkillDetailView: View {
                         Button("Retry") { startLoad() }
                             .buttonStyle(.borderedProminent)
                     }
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
                 }
-                .themedListRowBackground()
             }
         }
         .listStyle(.insetGrouped)
         .themedListSurface()
-        .foregroundStyle(.themeFg)
-        .tint(.themeBlue)
         .navigationTitle(summary?.name ?? "Skill")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: target) { startLoad() }
@@ -270,26 +267,7 @@ struct ServerSkillDetailView: View {
                 }
             }
             .padding(.vertical, 4)
-            .themedListRowBackground()
-        }
-        .themedListRowBackground()
-    }
-
-    private var observedUsageSection: some View {
-        ObservedUsageSection(
-            requestKey: ResourceUsageRequestKey(
-                serverId: target.serverId,
-                subject: ResourceUsageSubject(kind: .skill, id: target.resourceId)
-            )
-        ) { range, timezone in
-            guard let apiClient else {
-                throw ResourceUsageLoadError.notConnected
-            }
-            return try await apiClient.getServerSkillUsage(
-                id: target.resourceId,
-                range: range,
-                timezone: timezone
-            )
+            .listRowBackground(theme.bg.primary)
         }
     }
 
@@ -312,7 +290,7 @@ struct ServerSkillDetailView: View {
                         .accessibilityLabel("Saving")
                 }
             }
-            .themedListRowBackground()
+            .listRowBackground(theme.bg.primary)
 
             if let error = store.mutationError(for: mutationKey, serverId: target.serverId) {
                 Label(
@@ -321,26 +299,24 @@ struct ServerSkillDetailView: View {
                 )
                 .font(.footnote)
                 .foregroundStyle(.themeOrange)
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
             }
         }
-        .themedListRowBackground()
     }
 
     private func provenanceSection(_ summary: ServerSkillSummary) -> some View {
         Section("Source") {
             if let packageName = summary.packageName {
                 LabeledContent("Package", value: packageName)
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
             }
             LabeledContent("Provenance", value: summary.provenance.label)
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
             LabeledContent("Scope", value: "Server default")
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
             LabeledContent("Files", value: summary.editable ? "Editable in session" : "Read-only")
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
         }
-        .themedListRowBackground()
     }
 
     private func validationSection(_ summary: ServerSkillSummary) -> some View {
@@ -350,27 +326,26 @@ struct ServerSkillDetailView: View {
                 hasError ? "Error" : "Loaded",
                 systemImage: hasError ? "exclamationmark.triangle.fill" : "checkmark.circle"
             )
-            .themedListRowBackground()
+            .listRowBackground(theme.bg.primary)
 
             if let error = summary.loadError ?? loadError {
                 Text(error)
                     .font(.footnote)
                     .foregroundStyle(.themeOrange)
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
             }
 
             ForEach(summary.warnings, id: \.self) { warning in
                 Label(warning, systemImage: "exclamationmark.circle")
                     .font(.footnote)
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
             }
 
             if hasError || loadError != nil {
                 Button("Retry") { startLoad() }
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
             }
         }
-        .themedListRowBackground()
     }
 
     private func startLoad() {

@@ -4,7 +4,6 @@ import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
-import type { ResourceUsageService } from "./resource-usage-service.js";
 import {
   SessionActivationCoordinator,
   type SessionActivationActiveSession,
@@ -95,7 +94,6 @@ export interface SessionCoordinatorBundleDeps {
   onFirstMessage?: (session: Session) => void;
   /** Operational metrics collector for session lifecycle timing. */
   metrics?: ServerMetricCollector;
-  resourceUsage?: ResourceUsageService;
 }
 
 export function createSessionCoordinatorBundle(
@@ -160,7 +158,6 @@ export function createSessionCoordinatorBundle(
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
     bootstrapSessionState: (key) => deps.bootstrapSessionState(key),
     metrics: deps.metrics,
-    resourceUsage: deps.resourceUsage,
   });
 
   const activationCoordinator = new SessionActivationCoordinator({
@@ -171,11 +168,9 @@ export function createSessionCoordinatorBundle(
       startCoordinator.startSessionInner(key, sessionId, workspace),
   });
 
-  const resourceUsageLifecycle: { release?: (session: Session) => void } = {};
   const lifecycleCoordinator = new SessionLifecycleCoordinator({
     getActiveSession: (key) => deps.active.get(key) as SessionLifecycleSessionState | undefined,
     removeActiveSession: (key) => deps.active.delete(key),
-    releaseResourceUsageSession: (session) => resourceUsageLifecycle.release?.(session),
     clearPendingStop: (active) => stopCoordinator.clearPendingStop(active),
     broadcast: (key, message) => deps.broadcast(key, message),
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
@@ -233,7 +228,6 @@ export function createSessionCoordinatorBundle(
     resolveWorkspaceRoot,
     onFirstMessage: deps.onFirstMessage,
     assertModelTurnAdmissionAllowed: (key) => queueCoordinator.assertModelTurnAdmissionAllowed(key),
-    resourceUsage: deps.resourceUsage,
   });
 
   const agentEventCoordinator = new SessionAgentEventCoordinator({
@@ -250,10 +244,7 @@ export function createSessionCoordinatorBundle(
     resumeQueuedCompactions: (key) => commandCoordinator.resumeQueuedCompactions(key),
     dataDir: deps.storage.getDataDir(),
     trustedAttachmentSourceRoots: trustedSessionAttachmentSourceRoots(),
-    resourceUsage: deps.resourceUsage,
   });
-  resourceUsageLifecycle.release = (session) =>
-    agentEventCoordinator.releaseResourceUsageSession(session);
 
   const stopFlowCoordinator = new SessionStopFlowCoordinator(
     {

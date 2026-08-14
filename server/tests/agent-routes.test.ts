@@ -1222,14 +1222,7 @@ describe("agent routes", () => {
         id: "ws-1",
         name: "Oppi",
       });
-      expect(sendPrompt).toHaveBeenCalledWith(
-        body.receipt.sessionId,
-        "Review this",
-        expect.objectContaining({
-          clientTurnId: "agent-launch:agent-launch-1",
-          requestId: "agent-launch:agent-launch-1",
-        }),
-      );
+      expect(sendPrompt).toHaveBeenCalledWith(body.receipt.sessionId, "Review this", {});
 
       const draftRes = makeResponse();
       await dispatch({

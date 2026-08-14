@@ -16,7 +16,6 @@ export interface SessionLifecycleSessionState extends ExtensionUIState {
 export interface SessionLifecycleCoordinatorDeps {
   getActiveSession: (key: string) => SessionLifecycleSessionState | undefined;
   removeActiveSession: (key: string) => void;
-  releaseResourceUsageSession?: (session: Session) => void;
   clearPendingStop: (active: PendingStopSessionState) => PendingStop | null;
   broadcast: (key: string, message: ServerMessage) => void;
   persistSessionNow: (key: string, session: Session) => void;
@@ -45,7 +44,6 @@ export class SessionLifecycleCoordinator {
       return;
     }
 
-    this.deps.releaseResourceUsageSession?.(active.session);
     const isIdleTimeout = this.pendingIdleTimeoutKeys.delete(key);
     const metricReason = isIdleTimeout ? "idle_timeout" : normalizeEndReason(reason);
     this.deps.metrics?.record("server.session_end", 1, { reason: metricReason });

@@ -316,7 +316,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
   }
 
-  async function handleDeleteWorkspace(wsId: string, res: ServerResponse): Promise<void> {
+  function handleDeleteWorkspace(wsId: string, res: ServerResponse): void {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (workspace) {
       const dataDir = ctx.storage.getDataDir();
@@ -335,7 +335,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       }
     }
 
-    await ctx.resourceUsage?.deleteWorkspace(wsId);
     ctx.storage.deleteWorkspace(wsId);
     helpers.json(res, { ok: true });
   }
@@ -1025,7 +1024,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     } catch (error) {
       await ctx.sessions.stopSession(session.id).catch(() => {});
       ctx.storage.deleteSession(session.id);
-      void ctx.resourceUsage?.deleteSession(session.id);
       throw error;
     }
 
@@ -1071,7 +1069,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       }
 
       if (method === "DELETE") {
-        await handleDeleteWorkspace(wsMatch[1], res);
+        handleDeleteWorkspace(wsMatch[1], res);
         return true;
       }
     }

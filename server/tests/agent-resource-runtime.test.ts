@@ -84,7 +84,6 @@ describe.sequential("saved Agent exact resource selection", () => {
 
     try {
       const loader = resourceLoader(backend);
-      expect(backend.resourceUsageSkillLoadEvidence()).toEqual([]);
       expect(loader.getSkills().skills).toEqual([]);
       expect(
         loader.getExtensions().extensions.flatMap((extension) => [...extension.commands.keys()]),
@@ -133,21 +132,6 @@ describe.sequential("saved Agent exact resource selection", () => {
     });
 
     try {
-      const loads = vi.fn();
-      backend.configureResourceUsageSkillLoads("runtime-selected-skill", loads);
-      const loaded = backend.resourceUsageSkillLoadEvidence();
-      expect(loaded).toEqual([
-        expect.objectContaining({ id: serverResourceId("skill", join(selectedSkill, "SKILL.md")) }),
-      ]);
-      const activeModel = backend.session.model;
-      if (activeModel) {
-        await expect(
-          backend.setModel(`${activeModel.provider}/${activeModel.id}`),
-        ).resolves.toMatchObject({
-          success: true,
-        });
-      }
-      expect(loads).toHaveBeenCalledTimes(1);
       expect(
         resourceLoader(backend)
           .getSkills()
@@ -192,8 +176,6 @@ describe.sequential("saved Agent exact resource selection", () => {
 
     try {
       const reload = vi.spyOn(backend.session, "reload");
-      const captureLoads = vi.fn();
-      backend.configureResourceUsageSkillLoads("runtime-test", captureLoads);
       rmSync(selectedSkill, { recursive: true, force: true });
       await expect(backend.reloadResources()).rejects.toThrow(
         "Selected Agent Skill is unavailable",
@@ -202,7 +184,6 @@ describe.sequential("saved Agent exact resource selection", () => {
         backend.withModelTurnAdmission("prompt", async () => "must not run"),
       ).rejects.toThrow("restore the resource and reload");
       expect(reload).not.toHaveBeenCalled();
-      expect(captureLoads).toHaveBeenCalledTimes(1);
       expect(backend.isDisposed).toBe(false);
       reload.mockRestore();
     } finally {
@@ -242,8 +223,6 @@ describe.sequential("saved Agent exact resource selection", () => {
     });
 
     try {
-      const captureLoads = vi.fn();
-      backend.configureResourceUsageSkillLoads("runtime-test", captureLoads);
       writeFileSync(skillFile, "---\nname: selected-skill\n---\nMissing description.\n");
       await expect(backend.reloadResources()).rejects.toThrow(
         "Selected Agent Skill is unavailable",
@@ -261,8 +240,6 @@ describe.sequential("saved Agent exact resource selection", () => {
 
       writeFileSync(skillFile, validSkill);
       await expect(backend.reloadResources()).resolves.toEqual({ success: true });
-      expect(captureLoads).toHaveBeenCalledTimes(2);
-      expect(captureLoads.mock.calls.map(([load]) => load.generation)).toEqual([1, 2]);
       await expect(backend.withModelTurnAdmission("prompt", async () => "allowed")).resolves.toBe(
         "allowed",
       );

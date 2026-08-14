@@ -29,6 +29,7 @@ struct OppiExtensionDetailView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(ServerResourceStore.self) private var store
     @Environment(ServerStore.self) private var serverStore
+    @Environment(\.theme) private var theme
 
     let target: ServerResourceDetailNavTarget
 
@@ -78,7 +79,6 @@ struct OppiExtensionDetailView: View {
     var body: some View {
         List {
             identitySection
-            observedUsageSection
 
             if let configuration {
                 availabilitySection(configuration)
@@ -86,15 +86,12 @@ struct OppiExtensionDetailView: View {
                 approvalSection(configuration)
                 includedSection
 
-                if let savedMessage {
-                    Section {
-                        Text(savedMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.themeGreen)
-                            .accessibilityIdentifier("extensions.oppi.savedMessage")
-                            .themedListRowBackground()
-                    }
-                    .themedListRowBackground()
+                Section {
+                    Text(savedMessage ?? "New sessions use this setting. Reload an active session to apply it now.")
+                        .font(.footnote)
+                        .foregroundStyle(savedMessage == nil ? .themeComment : .themeGreen)
+                        .accessibilityIdentifier("extensions.oppi.savedMessage")
+                        .listRowBackground(theme.bg.primary)
                 }
             } else {
                 Section {
@@ -104,31 +101,27 @@ struct OppiExtensionDetailView: View {
                         Spacer()
                     }
                     .frame(minHeight: 88)
-                    .themedListRowBackground()
+                    .listRowBackground(theme.bg.primary)
                 }
-                .themedListRowBackground()
             }
 
             if let summary, (summary.state == .error || summary.loadError != nil) {
                 Section("Status") {
                     Label("Error", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.themeOrange)
-                        .themedListRowBackground()
+                        .listRowBackground(theme.bg.primary)
                     if let error = summary.loadError {
                         Text(error)
                             .font(.footnote)
-                            .themedListRowBackground()
+                            .listRowBackground(theme.bg.primary)
                     }
                     Button("Retry") { Task { await refresh() } }
-                        .themedListRowBackground()
+                        .listRowBackground(theme.bg.primary)
                 }
-                .themedListRowBackground()
             }
         }
         .listStyle(.insetGrouped)
         .themedListSurface()
-        .foregroundStyle(.themeFg)
-        .tint(.themeBlue)
         .navigationTitle("Oppi")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: target) {
@@ -167,26 +160,7 @@ struct OppiExtensionDetailView: View {
             }
             .padding(.vertical, 6)
             .accessibilityElement(children: .combine)
-            .themedListRowBackground()
-        }
-        .themedListRowBackground()
-    }
-
-    private var observedUsageSection: some View {
-        ObservedUsageSection(
-            requestKey: ResourceUsageRequestKey(
-                serverId: target.serverId,
-                subject: ResourceUsageSubject(kind: .extension, id: target.resourceId)
-            )
-        ) { range, timezone in
-            guard let apiClient else {
-                throw ResourceUsageLoadError.notConnected
-            }
-            return try await apiClient.getServerExtensionUsage(
-                id: target.resourceId,
-                range: range,
-                timezone: timezone
-            )
+            .listRowBackground(theme.bg.primary)
         }
     }
 
@@ -217,13 +191,13 @@ struct OppiExtensionDetailView: View {
                         .accessibilityLabel("Saving availability")
                 }
             }
-            .themedListRowBackground()
+            .listRowBackground(theme.bg.primary)
 
             Text("Adds the oppi tool to new non-sandbox Pi sessions managed by this server. It does not change sandbox, standalone, or terminal-owned Pi sessions. The Mobile Output Guide is a separate setting and works independently of this tool.")
                 .font(.footnote)
                 .foregroundStyle(.themeComment)
                 .fixedSize(horizontal: false, vertical: true)
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
 
             if let error = store.mutationError(for: .oppiEnabled, serverId: target.serverId) {
                 Label(
@@ -233,10 +207,9 @@ struct OppiExtensionDetailView: View {
                 .font(.footnote)
                 .foregroundStyle(.themeOrange)
                 .accessibilityIdentifier("extensions.oppi.enabled.error")
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
             }
         }
-        .themedListRowBackground()
     }
 
     @ViewBuilder
@@ -311,7 +284,7 @@ struct OppiExtensionDetailView: View {
                         anySettingPending: anySettingPending
                     )
                 )
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
             }
 
             if policyPending {
@@ -322,7 +295,7 @@ struct OppiExtensionDetailView: View {
                 }
                 .font(.footnote)
                 .accessibilityElement(children: .combine)
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
             }
 
             if let error = store.mutationError(for: .oppiApprovalPolicy, serverId: target.serverId) {
@@ -333,10 +306,9 @@ struct OppiExtensionDetailView: View {
                 .font(.footnote)
                 .foregroundStyle(.themeOrange)
                 .accessibilityIdentifier("extensions.oppi.policy.error")
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
             }
         }
-        .themedListRowBackground()
     }
 
     private func approvalChoice(
@@ -387,13 +359,12 @@ struct OppiExtensionDetailView: View {
     private var includedSection: some View {
         Section("Included") {
             LabeledContent("Tool", value: "oppi — Included")
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
             LabeledContent("Structured ask", value: "Not included")
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
             LabeledContent("Scope", value: serverName)
-                .themedListRowBackground()
+                .listRowBackground(theme.bg.primary)
         }
-        .themedListRowBackground()
     }
 
     private func setEnabled(_ enabled: Bool) async {

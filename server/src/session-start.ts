@@ -7,8 +7,6 @@ import {
   type RuntimeSessionStateScaffold,
 } from "./session-runtime-state.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
-import { opaqueResourceUsageSourceKey } from "./resource-usage-backfill.js";
-import type { ResourceUsageService } from "./resource-usage-service.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { Storage } from "./storage.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
@@ -32,13 +30,6 @@ export interface SessionStartCoordinatorDeps {
   resetIdleTimer: (key: string) => void;
   bootstrapSessionState: (key: string) => Promise<void>;
   metrics?: ServerMetricCollector;
-  resourceUsage?: Pick<
-    ResourceUsageService,
-    | "captureAcceptedPrompt"
-    | "captureSkillLoads"
-    | "createRuntimeInstanceId"
-    | "mergeBackfillSkillBindings"
-  >;
 }
 
 export class SessionStartCoordinator {
@@ -74,31 +65,6 @@ export class SessionStartCoordinator {
           serverConfig: this.deps.config,
         });
         this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
-        try {
-          const runtimeInstanceId = this.deps.resourceUsage?.createRuntimeInstanceId();
-          if (runtimeInstanceId) {
-            sdkBackend.configureResourceUsageSkillLoads(runtimeInstanceId, (load) => {
-              this.deps.resourceUsage?.captureSkillLoads({ session, runtime: "oppi", ...load });
-            });
-          }
-          sdkBackend.configureResourceUsageSandboxSkillBindings((sandboxBindings) => {
-            this.deps.resourceUsage?.mergeBackfillSkillBindings({
-              sourceKey: opaqueResourceUsageSourceKey(sandboxBindings.sourcePath),
-              sessionId: session.id,
-              ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
-              bindings: sandboxBindings.bindings,
-            });
-          });
-          sdkBackend.onResourceUsageCommandInvoked = ({ evidence, producerId }) =>
-            this.deps.resourceUsage?.captureAcceptedPrompt({
-              session,
-              runtime: "oppi",
-              evidence,
-              producerId,
-            });
-        } catch {
-          // Runtime creation remains authoritative when optional measurement fails.
-        }
 
         const activeSession: SessionStartActiveSession = {
           ...createRuntimeSessionStateScaffold<SessionMessageQueueStore>(

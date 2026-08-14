@@ -55,70 +55,6 @@ struct ServerResourceAPIClientTests {
         #expect(requestCount == 2)
     }
 
-    @Test func usageRequestsUseSupportedRangeAndIanaTimezoneForEveryRoute() async throws {
-        let client = makeClient()
-        defer { TestURLProtocol.handler = nil }
-        var observed: [(path: String, query: [String: String])] = []
-
-        TestURLProtocol.handler = { request in
-            let url = try #require(request.url)
-            let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
-            observed.append((
-                path: components.path,
-                query: Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
-                    item.value.map { (item.name, $0) }
-                })
-            ))
-            return mockResponse(json: Self.emptyUsageJSON)
-        }
-
-        _ = try await client.getServerSkillUsage(
-            id: "skill_abc",
-            range: .sevenDays,
-            timezone: "America/Los_Angeles"
-        )
-        _ = try await client.getServerExtensionUsage(
-            id: "extension_abc",
-            range: .thirtyDays,
-            timezone: "Asia/Tokyo"
-        )
-        _ = try await client.getToolActivity(
-            range: .ninetyDays,
-            timezone: "Europe/London"
-        )
-
-        #expect(observed.map(\.path) == [
-            "/server/resources/skills/skill_abc/usage",
-            "/server/resources/extensions/extension_abc/usage",
-            "/server/stats/tool-activity",
-        ])
-        #expect(observed.map(\.query) == [
-            ["range": "7", "timezone": "America/Los_Angeles"],
-            ["range": "30", "timezone": "Asia/Tokyo"],
-            ["range": "90", "timezone": "Europe/London"],
-        ])
-    }
-
-    @Test func manualBackfillUsesSharedStatusAndNonblockingPostRoutes() async throws {
-        let client = makeClient()
-        defer { TestURLProtocol.handler = nil }
-        var methods: [String] = []
-
-        TestURLProtocol.handler = { request in
-            methods.append(request.httpMethod ?? "")
-            #expect(request.url?.path == "/server/stats/tool-activity/backfill")
-            return mockResponse(json: Self.backfillStatusJSON)
-        }
-
-        let available = try await client.getToolActivityBackfillStatus()
-        let started = try await client.startToolActivityBackfill()
-
-        #expect(methods == ["GET", "POST"])
-        #expect(available.status == .available)
-        #expect(started.canStart)
-        #expect(started.actionTitle == "Backfill usage history")
-    }
-
     @Test func normalEnablePutsBooleanAndDecodesAuthoritativeSummaries() async throws {
         let client = makeClient()
         defer { TestURLProtocol.handler = nil }
@@ -273,29 +209,6 @@ struct ServerResourceAPIClientTests {
             #expect(message == "Oppi extension configuration changed")
         }
     }
-
-    private static let emptyUsageJSON = """
-    {
-      "subject":{"kind":"tools"},
-      "rangeDays":30,
-      "timezone":"UTC",
-      "recordingStartedAt":1765843200000,
-      "recordedActions":0,
-          "loadedSessionSignal":{"actions":0,"sessions":0},
-      "attribution":{"exactActions":0,"inferredActions":0,"historicalActions":0,"liveActions":0},
-      "distinctSessions":0,
-      "activeDays":0,
-      "retainedHistory":{"retentionDays":120},
-      "daily":[],
-      "breakdown":[],
-      "capture":{"status":"active","failedWrites":0,"droppedEvents":0},
-      "backfill":{"semanticsGeneration":2,"status":"available","totalSources":0,"processedSources":0,"completedSources":0,"failedSources":0,"processedBytes":0,"processedLines":0,"historicalEvents":0,"corruptLines":0,"oversizedLines":0,"updatedAt":1765843200000,"canStart":true}
-    }
-    """
-
-    private static let backfillStatusJSON = """
-    {"semanticsGeneration":2,"status":"available","totalSources":0,"processedSources":0,"completedSources":0,"failedSources":0,"processedBytes":0,"processedLines":0,"historicalEvents":0,"corruptLines":0,"oversizedLines":0,"updatedAt":1765843200000,"canStart":true}
-    """
 
     private struct EnabledRequest: Decodable {
         let enabled: Bool

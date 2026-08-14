@@ -352,33 +352,6 @@ describe("workspaces module", () => {
     }
   });
 
-  it("keeps workspace deletion available while durable usage purge retry is pending", async () => {
-    const deleteWorkspace = vi.fn(() => true);
-    const deleteUsage = vi.fn(async () => ({ status: "pending" }));
-    const ctx = {
-      storage: {
-        getWorkspace: vi.fn(() => undefined),
-        deleteWorkspace,
-      },
-      resourceUsage: { deleteWorkspace: deleteUsage },
-    } as unknown as RouteContext;
-    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
-    const res = makeResponse();
-
-    const handled = await dispatch({
-      method: "DELETE",
-      path: "/workspaces/ws-1",
-      url: new URL("http://localhost/workspaces/ws-1"),
-      req: {} as never,
-      res: res as never,
-    });
-
-    expect(handled).toBe(true);
-    expect(res.statusCode).toBe(200);
-    expect(deleteUsage).toHaveBeenCalledWith("ws-1");
-    expect(deleteWorkspace).toHaveBeenCalledWith("ws-1");
-  });
-
   it("blocks workspace deletion while Oppi-managed worktrees exist", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-worktree-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-worktree-data-"));

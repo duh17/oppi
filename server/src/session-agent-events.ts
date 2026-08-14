@@ -26,13 +26,6 @@ import {
 import { hasToolMediaDetails, materializeAgentEventMedia } from "./session-agent-event-media.js";
 import type { EventProcessorSessionState, SessionEventProcessor } from "./session-events.js";
 import type { SdkBackend } from "./sdk-backend.js";
-import {
-  createResourceUsageTraceEventId,
-  resourceUsageTraceEventId,
-  type ResourceUsageService,
-  type ResourceUsageSkillInstructionReadEvidence,
-  type ResourceUsageToolEvidence,
-} from "./resource-usage-service.js";
 import type { SessionStopCoordinator } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import { materializeToolMediaDetails } from "./session-attachments.js";
@@ -68,36 +61,6 @@ export interface SessionAgentEventCoordinatorDeps {
   resumeQueuedCompactions?: (key: string) => void;
   dataDir?: string;
   trustedAttachmentSourceRoots?: string[];
-  resourceUsage?: Pick<
-    ResourceUsageService,
-    "captureToolInvocation" | "captureSkillInstructionRead"
-  >;
-  resourceUsageToolEvidence?: (
-    active: SessionAgentEventState,
-    toolName: string,
-  ) => ResourceUsageToolEvidence | undefined;
-  resolveResourceUsageSkillRead?: (
-    active: SessionAgentEventState,
-    path: string,
-  ) =>
-    | ResourceUsageSkillInstructionReadEvidence
-    | undefined
-    | Promise<ResourceUsageSkillInstructionReadEvidence | undefined>;
-}
-
-interface PendingResourceUsageRead {
-  producerId: string;
-  skill: Promise<ResourceUsageSkillInstructionReadEvidence | undefined>;
-}
-
-interface ResourceUsageToolCallState {
-  pendingReads: Map<string, PendingResourceUsageRead[]>;
-  inFlightCaptures: number;
-  released: boolean;
-}
-
-function resourceUsagePendingToolKey(toolCallId: string, toolName: string): string {
-  return JSON.stringify([toolCallId, toolName]);
 }
 
 export class SessionAgentEventCoordinator {
@@ -129,9 +92,6 @@ export class SessionAgentEventCoordinator {
   private static readonly CHANGE_SUMMARY_TOOL_NAMES = new Set(["edit", "write"]);
 
   private readonly lastSummaryFingerprintBySession = new Map<string, string>();
-  // Only unresolved read correlation is retained. Exact producer identity is
-  // journaled per physical trace event, so completed provider IDs never remain.
-  private readonly resourceUsageState = new Map<string, ResourceUsageToolCallState>();
 
   constructor(private readonly deps: SessionAgentEventCoordinatorDeps) {}
 
@@ -183,12 +143,6 @@ export class SessionAgentEventCoordinator {
       this.handleExtensionAudioStream(key, data);
       this.deps.resetIdleTimer(key);
       return;
-    }
-
-    if (data.type === "tool_execution_start") {
-      this.captureResourceUsageToolStart(active, data);
-    } else if (data.type === "tool_execution_end") {
-      this.captureResourceUsageToolEnd(active, data);
     }
 
     let event = materializeAgentEventMedia({
@@ -351,147 +305,6 @@ export class SessionAgentEventCoordinator {
     }
 
     this.deps.resetIdleTimer(key);
-  }
-
-  private captureResourceUsageToolStart(
-    active: SessionAgentEventState,
-    event: Extract<AgentSessionEvent, { type: "tool_execution_start" }>,
-  ): void {
-    if (
-      (event as typeof event & { resourceUsageSkipLiveCapture?: unknown })
-        .resourceUsageSkipLiveCapture === true
-    ) {
-      // The lifecycle marker remains authoritative for history. Do not invent a
-      // second live identity when managed correlation deliberately sheds load.
-      return;
-    }
-    const toolCallId =
-      typeof event.toolCallId === "string" && event.toolCallId.length > 0
-        ? event.toolCallId
-        : undefined;
-    if (!toolCallId) return;
-    const producerId = resourceUsageTraceEventId(event) ?? createResourceUsageTraceEventId();
-
-    try {
-      const evidence =
-        active.sdkBackend?.resourceUsageToolEvidence?.(event.toolName) ??
-        this.deps.resourceUsageToolEvidence?.(active, event.toolName);
-      this.deps.resourceUsage?.captureToolInvocation({
-        session: active.session,
-        runtime: active.sdkBackend ? "oppi" : "pi-tui",
-        toolName: event.toolName,
-        toolCallId: producerId,
-        evidence,
-      });
-
-      if (event.toolName === "read") {
-        const state = this.resourceUsageToolCallState(active);
-        const path =
-          event.args && typeof event.args === "object" && "path" in event.args
-            ? (event.args as { path?: unknown }).path
-            : undefined;
-        const resolved =
-          typeof path === "string"
-            ? (active.sdkBackend?.resourceUsageSkillReadEvidence?.(path) ??
-              this.deps.resolveResourceUsageSkillRead?.(active, path))
-            : undefined;
-        const pendingKey = resourceUsagePendingToolKey(toolCallId, event.toolName);
-        const queue = state.pendingReads.get(pendingKey) ?? [];
-        queue.push({ producerId, skill: Promise.resolve(resolved) });
-        state.pendingReads.set(pendingKey, queue);
-      }
-    } catch (error) {
-      const state = this.resourceUsageState.get(this.resourceUsageTraceKey(active));
-      if (state) this.cleanupResourceUsageState(active, state);
-      this.logResourceUsageCaptureFailure(active, error);
-    }
-  }
-
-  private captureResourceUsageToolEnd(
-    active: SessionAgentEventState,
-    event: Extract<AgentSessionEvent, { type: "tool_execution_end" }>,
-  ): void {
-    const toolCallId =
-      typeof event.toolCallId === "string" && event.toolCallId.length > 0
-        ? event.toolCallId
-        : undefined;
-    if (!toolCallId || event.toolName !== "read") return;
-    const state = this.resourceUsageState.get(this.resourceUsageTraceKey(active));
-    const pendingKey = resourceUsagePendingToolKey(toolCallId, event.toolName);
-    const queue = state?.pendingReads.get(pendingKey);
-    const pending = queue?.shift();
-    if (queue?.length === 0) state?.pendingReads.delete(pendingKey);
-    if (!state || !pending || event.isError !== false) {
-      if (state) this.cleanupResourceUsageState(active, state);
-      return;
-    }
-
-    state.inFlightCaptures += 1;
-    void pending.skill
-      .then((skill) => {
-        if (!skill || state.released) return;
-        active.sdkBackend?.appendResourceUsageSkillReadMarker?.({
-          producerId: pending.producerId,
-          bindingToken: skill.bindingToken,
-        });
-        this.deps.resourceUsage?.captureSkillInstructionRead({
-          session: active.session,
-          runtime: active.sdkBackend ? "oppi" : "pi-tui",
-          toolCallId: pending.producerId,
-          skill,
-        });
-      })
-      .catch((error: unknown) => this.logResourceUsageCaptureFailure(active, error))
-      .finally(() => {
-        state.inFlightCaptures -= 1;
-        this.cleanupResourceUsageState(active, state);
-      });
-  }
-
-  private resourceUsageToolCallState(active: SessionAgentEventState): ResourceUsageToolCallState {
-    const traceKey = this.resourceUsageTraceKey(active);
-    let state = this.resourceUsageState.get(traceKey);
-    if (!state) {
-      state = { pendingReads: new Map(), inFlightCaptures: 0, released: false };
-      this.resourceUsageState.set(traceKey, state);
-    }
-    return state;
-  }
-
-  releaseResourceUsageSession(
-    session: Pick<SessionAgentEventState["session"], "id" | "piSessionId">,
-  ): void {
-    const traceKey = this.resourceUsageTraceKeyForSession(session);
-    const state = this.resourceUsageState.get(traceKey);
-    if (state) state.released = true;
-    this.resourceUsageState.delete(traceKey);
-  }
-
-  private cleanupResourceUsageState(
-    active: SessionAgentEventState,
-    state: ResourceUsageToolCallState,
-  ): void {
-    if (state.pendingReads.size > 0 || state.inFlightCaptures > 0) return;
-    const traceKey = this.resourceUsageTraceKey(active);
-    if (this.resourceUsageState.get(traceKey) === state) this.resourceUsageState.delete(traceKey);
-  }
-
-  private resourceUsageTraceKey(active: SessionAgentEventState): string {
-    return this.resourceUsageTraceKeyForSession(active.session);
-  }
-
-  private resourceUsageTraceKeyForSession(
-    session: Pick<SessionAgentEventState["session"], "id" | "piSessionId">,
-  ): string {
-    return session.piSessionId ?? session.id;
-  }
-
-  private logResourceUsageCaptureFailure(active: SessionAgentEventState, error: unknown): void {
-    // Measurement is strictly best-effort and must never interrupt tool projection.
-    log.warn("session_agent_events.resource_usage_capture_failed", {
-      sessionId: active.session.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
   }
 
   private shouldBroadcastSessionSummaryAfterUpdate(event: AgentSessionEvent): boolean {

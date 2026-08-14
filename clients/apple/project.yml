@@ -53,12 +53,9 @@ targets:
         type: group
         excludes:
           - "Resources/AppIcon.icon"
-          - "Features/Server/ResourceUsageView.swift"
       - path: Oppi/Resources/AppIcon.icon
         type: file
         buildPhase: resources
-      - path: Oppi/Features/Server/ResourceUsageView.swift
-        type: file
       - path: OppiCore
         type: group
         excludes:

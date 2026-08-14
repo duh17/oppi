@@ -123,26 +123,6 @@ struct ThemeStoreTests {
         #expect(UIColor(background.color(in: oledEnvironment)) == UIColor(ThemePalettes.oled.bg))
     }
 
-    @Test func mountedSurfaceStylesChangeWhenTheEnvironmentThemeChanges() {
-        var environment = EnvironmentValues()
-        let background = ThemeShapeStyle(role: .background)
-        let foreground = ThemeShapeStyle(role: .foreground)
-        let neutralActivity = ThemeShapeStyle(role: .comment)
-
-        environment.theme = .dark
-        let darkBackground = UIColor(background.color(in: environment))
-        let darkForeground = UIColor(foreground.color(in: environment))
-        let darkNeutralActivity = UIColor(neutralActivity.color(in: environment))
-
-        environment.theme = .light
-        #expect(UIColor(background.color(in: environment)) != darkBackground)
-        #expect(UIColor(foreground.color(in: environment)) != darkForeground)
-        #expect(UIColor(neutralActivity.color(in: environment)) != darkNeutralActivity)
-        #expect(UIColor(background.color(in: environment)) == UIColor(ThemePalettes.light.bg))
-        #expect(UIColor(foreground.color(in: environment)) == UIColor(ThemePalettes.light.fg))
-        #expect(UIColor(neutralActivity.color(in: environment)) == UIColor(ThemePalettes.light.comment))
-    }
-
     private func withCleanThemeDefaults(_ body: () -> Void) {
         let originalThemeID = ThemeRuntimeState.currentThemeID()
         let keys = [ThemeID.storageKey, modeKey, lightThemeKey, darkThemeKey]
