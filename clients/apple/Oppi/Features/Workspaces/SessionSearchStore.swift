@@ -30,13 +30,13 @@ final class SessionSearchStore {
     private var searchTask: Task<Void, Never>?
 
     /// Minimum query length before we hit the server.
-    static let minQueryLength = 3
+    static let minQueryLength = SessionListSearchPresentation.minServerQueryLength
 
     /// Debounce interval between keystrokes.
     private static let debounceMs: UInt64 = 200
 
     /// Trigger a server search. Cancels any in-flight request.
-    func search(query: String, workspaceId: String, apiClient: APIClient?) {
+    func search(query: String, workspaceId: String? = nil, apiClient: APIClient?) {
         searchTask?.cancel()
 
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)

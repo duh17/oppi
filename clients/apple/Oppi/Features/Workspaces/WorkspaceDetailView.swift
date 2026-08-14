@@ -169,16 +169,10 @@ struct WorkspaceDetailView: View {
         connection.currentServerId ?? workspaceStore.activeServerId
     }
 
-    private var normalizedSessionSearchQuery: String {
-        sessionSearchText
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-    }
-
     private static let hotStoppedRangeDays = 3
 
     private var hasSessionSearchQuery: Bool {
-        !normalizedSessionSearchQuery.isEmpty
+        SessionListSearchPresentation.hasQuery(sessionSearchText)
     }
 
     private func hotStoppedRange(now: Date = Date()) -> (since: Date, until: Date) {
@@ -219,7 +213,10 @@ struct WorkspaceDetailView: View {
         guard hasSessionSearchQuery else { return localSessions }
 
         return localSessions.filter { local in
-            FuzzyMatch.match(query: normalizedSessionSearchQuery, candidate: local.displayTitle) != nil
+            FuzzyMatch.match(
+                query: SessionListSearchPresentation.normalizedQuery(sessionSearchText),
+                candidate: local.displayTitle
+            ) != nil
         }
     }
 
@@ -230,6 +227,7 @@ struct WorkspaceDetailView: View {
         let workingRoots: [Session]
         let stoppedRoots: [Session]
         let localFiltered: [LocalSession]
+        let searchMatches: [Session]
         let wsEmpty: Bool
     }
 
@@ -356,32 +354,43 @@ struct WorkspaceDetailView: View {
             }
         }
 
-        // Your Turn: apply search, keep user-input priorities, then oldest visible activity first.
-        let yourTurnRoots: [Session] = {
-            let filtered = hasSessionSearchQuery
-                ? yourTurnUnfiltered.filter(matchesSessionSearch)
-                : yourTurnUnfiltered
-            return workspaceYourTurnSorted(
-                filtered,
-                hasAskInQueue: { pendingAskCount(for: $0) > 0 }
+        if let matches = SessionListSearchPresentation.flattenedMatches(
+            localSessions: workspaceSessions,
+            query: sessionSearchText,
+            extraCandidates: { _ in [] },
+            serverResults: searchStore.results,
+            completedServerQuery: searchStore.completedServerQuery,
+            activeServerQuery: searchStore.activeServerQuery,
+            snippetsBySessionId: searchStore.snippetsBySessionId
+        ) {
+            let searchMatches = matches.map(\.session)
+            SessionListPerf.recordViewDataCompute(
+                startNs: startNs,
+                activeCount: searchMatches.count,
+                stoppedCount: 0,
+                workspaceId: workspace.id
             )
-        }()
+            return ViewData(
+                yourTurnRoots: [],
+                workingRoots: [],
+                stoppedRoots: [],
+                localFiltered: filteredLocalSessions,
+                searchMatches: searchMatches,
+                wsEmpty: workspaceSessions.isEmpty && filteredLocalSessions.isEmpty && searchMatches.isEmpty
+            )
+        }
 
-        // Working: apply search, sort newest first
-        let workingRoots: [Session] = {
-            let filtered = hasSessionSearchQuery
-                ? workingUnfiltered.filter(matchesSessionSearch)
-                : workingUnfiltered
-            return SessionListPresentation.sortWorking(filtered)
-        }()
+        // Your Turn: keep user-input priorities, then oldest visible activity first.
+        let yourTurnRoots = workspaceYourTurnSorted(
+            yourTurnUnfiltered,
+            hasAskInQueue: { pendingAskCount(for: $0) > 0 }
+        )
 
-        // Stopped: apply search, most recently stopped first
-        let stoppedRoots: [Session] = {
-            let filtered = hasSessionSearchQuery
-                ? stoppedUnfiltered.filter(matchesSessionSearch)
-                : stoppedUnfiltered
-            return filtered.sorted { $0.lastActivity > $1.lastActivity }
-        }()
+        // Working: sort newest first
+        let workingRoots = SessionListPresentation.sortWorking(workingUnfiltered)
+
+        // Stopped: most recently stopped first
+        let stoppedRoots = stoppedUnfiltered.sorted { $0.lastActivity > $1.lastActivity }
 
         let activeCount = yourTurnRoots.count + workingRoots.count
         SessionListPerf.recordViewDataCompute(
@@ -396,6 +405,7 @@ struct WorkspaceDetailView: View {
             workingRoots: workingRoots,
             stoppedRoots: stoppedRoots,
             localFiltered: filteredLocalSessions,
+            searchMatches: [],
             wsEmpty: workspaceSessions.isEmpty
         )
     }
@@ -404,108 +414,140 @@ struct WorkspaceDetailView: View {
         let data = viewData
 
         List {
-            if !data.yourTurnRoots.isEmpty {
-                Section("Your Turn") {
-                    ForEach(data.yourTurnRoots) { session in
-                        Button {
-                            openSession(session)
-                        } label: {
-                            sessionRow(for: session)
+            if hasSessionSearchQuery {
+                if searchStore.isSearching && data.searchMatches.isEmpty && data.localFiltered.isEmpty {
+                    Section {
+                        HStack {
+                            Spacer()
+                            ProgressView("Searching sessions…")
+                            Spacer()
                         }
-                        .accessibilityIdentifier("session.nav.\(session.id)")
-                        .accessibilityValue(sessionRowAccessibilityValue(for: session))
-                        .buttonStyle(.plain)
+                        .frame(minHeight: 88)
                         .listRowBackground(Color.themeBg)
-                        .swipeActions(edge: .trailing) {
-                            Button {
-                                Task { await stopSession(session) }
-                            } label: {
-                                Label("Stop", systemImage: "stop.fill")
+                    }
+                } else if data.searchMatches.isEmpty && data.localFiltered.isEmpty {
+                    Section {
+                        ContentUnavailableView(
+                            "No Matching Sessions",
+                            systemImage: "magnifyingglass",
+                            description: Text("No sessions match “\(sessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines))”.")
+                        )
+                        .listRowBackground(Color.themeBg)
+                    }
+                } else {
+                    if !data.searchMatches.isEmpty {
+                        Section("Results") {
+                            ForEach(data.searchMatches) { session in
+                                searchResultRow(for: session)
                             }
-                            .accessibilityIdentifier("session.stop.\(session.id)")
-                            .tint(.themeOrange)
+                        }
+                    }
+                    if !data.localFiltered.isEmpty {
+                        Section("Local Sessions") {
+                            ForEach(data.localFiltered) { local in
+                                Button {
+                                    Task { await importAndResumeLocal(local) }
+                                } label: {
+                                    LocalSessionRow(session: local)
+                                }
+                                .accessibilityIdentifier("localSession.nav.\(local.piSessionId)")
+                                .listRowBackground(Color.themeBg)
+                                .disabled(isImportingLocal)
+                            }
                         }
                     }
                 }
-            }
-
-            if !data.workingRoots.isEmpty {
-                Section("Working") {
-                    ForEach(data.workingRoots) { session in
-                        Button {
-                            openSession(session)
-                        } label: {
-                            sessionRow(for: session)
-                        }
-                        .accessibilityIdentifier("session.nav.\(session.id)")
-                        .accessibilityValue(sessionRowAccessibilityValue(for: session))
-                        .buttonStyle(.plain)
-                        .listRowBackground(Color.themeBg)
-                        .swipeActions(edge: .trailing) {
+            } else {
+                if !data.yourTurnRoots.isEmpty {
+                    Section("Your Turn") {
+                        ForEach(data.yourTurnRoots) { session in
                             Button {
-                                Task { await stopSession(session) }
+                                openSession(session)
                             } label: {
-                                Label("Stop", systemImage: "stop.fill")
+                                sessionRow(for: session)
                             }
-                            .accessibilityIdentifier("session.stop.\(session.id)")
-                            .tint(.themeOrange)
+                            .accessibilityIdentifier("session.nav.\(session.id)")
+                            .accessibilityValue(sessionRowAccessibilityValue(for: session))
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.themeBg)
+                            .swipeActions(edge: .trailing) {
+                                Button {
+                                    Task { await stopSession(session) }
+                                } label: {
+                                    Label("Stop", systemImage: "stop.fill")
+                                }
+                                .accessibilityIdentifier("session.stop.\(session.id)")
+                                .tint(.themeOrange)
+                            }
                         }
                     }
                 }
-            }
 
-            WorkspaceStoppedSessionsSection(
-                stoppedSessions: data.stoppedRoots,
-                localSessions: data.localFiltered,
-                hasSearchQuery: hasSessionSearchQuery,
-                isImportingLocal: isImportingLocal,
-                sessionPresentation: { session in
-                    rowPresentation(for: session)
-                },
-                onOpenSession: { session in
-                    openSession(session)
-                },
-                onResumeSession: { session in
-                    Task { await resumeSession(session) }
-                },
-                onDeleteSession: { session in
-                    pendingDeleteSession = session
-                },
-                onImportLocal: { local in
-                    Task { await importAndResumeLocal(local) }
-                },
-                expandedGroupIDs: $expandedStoppedGroupIDs,
-                collapsedGroupIDs: $collapsedStoppedGroupIDs,
-                archiveBuckets: archiveBuckets,
-                archiveStoppedSessions: archiveStoppedSessions(for:),
-                archiveLocalSessions: archiveLocalSessions(for:),
-                loadingArchiveBucketIDs: loadingArchiveBucketIDs,
-                onExpandArchiveBucket: { bucket in
-                    Task { await ensureArchiveBucketLoaded(bucket) }
+                if !data.workingRoots.isEmpty {
+                    Section("Working") {
+                        ForEach(data.workingRoots) { session in
+                            Button {
+                                openSession(session)
+                            } label: {
+                                sessionRow(for: session)
+                            }
+                            .accessibilityIdentifier("session.nav.\(session.id)")
+                            .accessibilityValue(sessionRowAccessibilityValue(for: session))
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.themeBg)
+                            .swipeActions(edge: .trailing) {
+                                Button {
+                                    Task { await stopSession(session) }
+                                } label: {
+                                    Label("Stop", systemImage: "stop.fill")
+                                }
+                                .accessibilityIdentifier("session.stop.\(session.id)")
+                                .tint(.themeOrange)
+                            }
+                        }
+                    }
                 }
-            )
 
-            if data.wsEmpty {
-                Section {
-                    ContentUnavailableView(
-                        "No Sessions",
-                        systemImage: "terminal",
-                        description: Text("Tap the compose button to start a new session in this worktree. Long press for incognito.")
-                    )
-                    .listRowBackground(Color.themeBg)
-                }
-            } else if hasSessionSearchQuery,
-                      data.yourTurnRoots.isEmpty,
-                      data.workingRoots.isEmpty,
-                      data.stoppedRoots.isEmpty,
-                      data.localFiltered.isEmpty {
-                Section {
-                    ContentUnavailableView(
-                        "No Matching Sessions",
-                        systemImage: "magnifyingglass",
-                        description: Text("Try a different session name.")
-                    )
-                    .listRowBackground(Color.themeBg)
+                WorkspaceStoppedSessionsSection(
+                    stoppedSessions: data.stoppedRoots,
+                    localSessions: data.localFiltered,
+                    hasSearchQuery: false,
+                    isImportingLocal: isImportingLocal,
+                    sessionPresentation: { session in
+                        rowPresentation(for: session)
+                    },
+                    onOpenSession: { session in
+                        openSession(session)
+                    },
+                    onResumeSession: { session in
+                        Task { await resumeSession(session) }
+                    },
+                    onDeleteSession: { session in
+                        pendingDeleteSession = session
+                    },
+                    onImportLocal: { local in
+                        Task { await importAndResumeLocal(local) }
+                    },
+                    expandedGroupIDs: $expandedStoppedGroupIDs,
+                    collapsedGroupIDs: $collapsedStoppedGroupIDs,
+                    archiveBuckets: archiveBuckets,
+                    archiveStoppedSessions: archiveStoppedSessions(for:),
+                    archiveLocalSessions: archiveLocalSessions(for:),
+                    loadingArchiveBucketIDs: loadingArchiveBucketIDs,
+                    onExpandArchiveBucket: { bucket in
+                        Task { await ensureArchiveBucketLoaded(bucket) }
+                    }
+                )
+
+                if data.wsEmpty {
+                    Section {
+                        ContentUnavailableView(
+                            "No Sessions",
+                            systemImage: "terminal",
+                            description: Text("Tap the compose button to start a new session in this worktree. Long press for incognito.")
+                        )
+                        .listRowBackground(Color.themeBg)
+                    }
                 }
             }
         }
@@ -552,7 +594,7 @@ struct WorkspaceDetailView: View {
         .onChange(of: workspace.id) { _, _ in
             handleWorkspaceIdentityChanged()
         }
-        .searchable(text: $sessionSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search sessions")
+        .searchable(text: $sessionSearchText, prompt: "Search sessions")
         .onChange(of: sessionSearchText) { _, newValue in
             searchStore.search(
                 query: newValue,
@@ -579,9 +621,13 @@ struct WorkspaceDetailView: View {
                 workspaceConfigurationButton
             }
             if !isNavigatingDeeperInWorkspaceStack {
-                ToolbarItemGroup(placement: .bottomBar) {
+                ToolbarItem(placement: .bottomBar) {
                     workspaceFilesToolbarItem
-                    Spacer()
+                }
+                ToolbarSpacer(.fixed, placement: .bottomBar)
+                DefaultToolbarItem(kind: .search, placement: .bottomBar)
+                ToolbarSpacer(.flexible, placement: .bottomBar)
+                ToolbarItem(placement: .bottomBar) {
                     newSessionToolbarItem
                 }
             }
@@ -627,6 +673,51 @@ struct WorkspaceDetailView: View {
         })
     }
 
+    @ViewBuilder
+    private func searchResultRow(for session: Session) -> some View {
+        Button {
+            openSession(session)
+        } label: {
+            sessionRow(for: session)
+        }
+        .accessibilityIdentifier("session.nav.\(session.id)")
+        .accessibilityValue(sessionRowAccessibilityValue(for: session))
+        .buttonStyle(.plain)
+        .listRowBackground(Color.themeBg)
+        .swipeActions(edge: .trailing) {
+            sessionSwipeActions(for: session)
+        }
+    }
+
+    @ViewBuilder
+    private func sessionSwipeActions(for session: Session) -> some View {
+        if session.status == .stopped {
+            Button {
+                Task { await resumeSession(session) }
+            } label: {
+                Label("Resume", systemImage: "play.fill")
+            }
+            .tint(.themeGreen)
+            .accessibilityIdentifier("session.resume.\(session.id)")
+
+            Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole) {
+                pendingDeleteSession = session
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .tint(.themeRed)
+            .accessibilityIdentifier("session.delete.\(session.id)")
+        } else {
+            Button {
+                Task { await stopSession(session) }
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            .accessibilityIdentifier("session.stop.\(session.id)")
+            .tint(.themeOrange)
+        }
+    }
+
     /// Build a SessionRow with shared presentation inputs for the given session.
     @ViewBuilder
     private func sessionRow(for session: Session) -> some View {
@@ -669,35 +760,6 @@ struct WorkspaceDetailView: View {
             hasPendingAsk: askRequestStore.hasPending(for: sessionId),
             hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
         )
-    }
-
-    /// Whether a session matches the current search.
-    ///
-    /// For short queries (< 3 chars), use local FuzzyMatch on title.
-    /// For server queries (>= 3 chars), use authoritative server results once
-    /// available (including zero-result responses). While a server query is
-    /// in-flight, avoid local fallback to prevent stale or misleading matches.
-    private func matchesSessionSearch(_ session: Session) -> Bool {
-        guard hasSessionSearchQuery else {
-            return true
-        }
-
-        if normalizedSessionSearchQuery.count >= SessionSearchStore.minQueryLength {
-            if searchStore.completedServerQuery == normalizedSessionSearchQuery {
-                return searchStore.matchedSessionIds.contains(session.id)
-            }
-
-            if searchStore.activeServerQuery == normalizedSessionSearchQuery {
-                return false
-            }
-        }
-
-        // Local fallback: fuzzy match on title
-        return FuzzyMatch.match(query: normalizedSessionSearchQuery, candidate: sessionTitle(session)) != nil
-    }
-
-    private func sessionTitle(_ session: Session) -> String {
-        session.displayTitle
     }
 
     @ViewBuilder

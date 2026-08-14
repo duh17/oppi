@@ -76,6 +76,8 @@ private struct SessionInboxViewData {
     let yourTurn: [SessionInboxItem]
     let working: [SessionInboxItem]
     let stoppedGroups: [SessionInboxStoppedGroup]
+    let searchMatches: [SessionInboxItem]
+    let isSearching: Bool
     let isEmpty: Bool
 }
 
@@ -186,6 +188,7 @@ struct SessionInboxView: View {
     let onOpenSidebar: (() -> Void)?
 
     @State private var searchText = ""
+    @State private var searchStore = SessionSearchStore()
     @State private var error: String?
     @State private var isCreating = false
     @State private var pendingDelete: SessionInboxPendingDelete?
@@ -228,12 +231,37 @@ struct SessionInboxView: View {
         return servers.first
     }
 
-    private var normalizedSearchText: String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    private var hasSearchQuery: Bool {
+        SessionListSearchPresentation.hasQuery(searchText)
     }
 
     private var viewData: SessionInboxViewData {
-        let items = sessionItems().filter(matchesSearch)
+        let items = sessionItems()
+        let itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.session.id, $0) })
+        if let matches = SessionListSearchPresentation.flattenedMatches(
+            localSessions: items.map(\.session),
+            query: searchText,
+            extraCandidates: { session in
+                [itemsByID[session.id]?.workspace?.name]
+            },
+            serverResults: searchStore.results,
+            completedServerQuery: searchStore.completedServerQuery,
+            activeServerQuery: searchStore.activeServerQuery,
+            snippetsBySessionId: searchStore.snippetsBySessionId
+        ) {
+            let searchItems = matches.compactMap { match in
+                inboxItem(for: match.session, existing: itemsByID[match.session.id])
+            }
+            return SessionInboxViewData(
+                yourTurn: [],
+                working: [],
+                stoppedGroups: [],
+                searchMatches: searchItems,
+                isSearching: searchStore.isSearching,
+                isEmpty: searchItems.isEmpty && !searchStore.isSearching
+            )
+        }
+
         var yourTurn: [SessionInboxItem] = []
         var working: [SessionInboxItem] = []
         var stopped: [SessionInboxItem] = []
@@ -273,6 +301,8 @@ struct SessionInboxView: View {
             yourTurn: yourTurn,
             working: working,
             stoppedGroups: stoppedGroups,
+            searchMatches: [],
+            isSearching: false,
             isEmpty: yourTurn.isEmpty && working.isEmpty && stoppedGroups.isEmpty
         )
     }
@@ -303,22 +333,47 @@ struct SessionInboxView: View {
                 }
             }
 
-            if !data.yourTurn.isEmpty {
-                sessionSection("Your Turn", items: data.yourTurn)
-            }
-
-            if !data.working.isEmpty {
-                sessionSection("Working", items: data.working)
-            }
-
-            ForEach(data.stoppedGroups) { group in
-                stoppedSessionSection(group)
-            }
-
-            if data.isEmpty {
-                Section {
-                    emptyState
+            if hasSearchQuery {
+                if data.isSearching && data.searchMatches.isEmpty {
+                    Section {
+                        HStack {
+                            Spacer()
+                            ProgressView("Searching sessions…")
+                            Spacer()
+                        }
+                        .frame(minHeight: 88)
                         .listRowBackground(theme.bg.primary)
+                    }
+                } else if data.searchMatches.isEmpty {
+                    Section {
+                        ContentUnavailableView(
+                            "No Matching Sessions",
+                            systemImage: "magnifyingglass",
+                            description: Text("No sessions match “\(searchText.trimmingCharacters(in: .whitespacesAndNewlines))”.")
+                        )
+                        .listRowBackground(theme.bg.primary)
+                    }
+                } else {
+                    sessionSection("Results", items: data.searchMatches)
+                }
+            } else {
+                if !data.yourTurn.isEmpty {
+                    sessionSection("Your Turn", items: data.yourTurn)
+                }
+
+                if !data.working.isEmpty {
+                    sessionSection("Working", items: data.working)
+                }
+
+                ForEach(data.stoppedGroups) { group in
+                    stoppedSessionSection(group)
+                }
+
+                if data.isEmpty {
+                    Section {
+                        emptyState
+                            .listRowBackground(theme.bg.primary)
+                    }
                 }
             }
         }
@@ -328,6 +383,13 @@ struct SessionInboxView: View {
         .navigationTitle(inboxNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search sessions")
+        .onChange(of: searchText) { _, newValue in
+            searchStore.search(
+                query: newValue,
+                workspaceId: selectedWorkspace?.workspace.id,
+                apiClient: activeConnection?.apiClient
+            )
+        }
         .toolbar { toolbarContent }
         .refreshable {
             async let refresh: () = refreshVisibleServer()
@@ -502,11 +564,11 @@ struct SessionInboxView: View {
             ToolbarItem(placement: .bottomBar) {
                 workspaceFilesButton(selectedWorkspace)
             }
+            ToolbarSpacer(.fixed, placement: .bottomBar)
         }
 
-        ToolbarItem(placement: .bottomBar) {
-            Spacer()
-        }
+        DefaultToolbarItem(kind: .search, placement: .bottomBar)
+        ToolbarSpacer(.flexible, placement: .bottomBar)
 
         ToolbarItem(placement: .bottomBar) {
             newSessionButton
@@ -619,6 +681,7 @@ struct SessionInboxView: View {
     private func switchVisibleServer(to server: PairedServer) async {
         guard await coordinator.switchToServerReady(server) else { return }
         searchText = ""
+        searchStore.clear()
         error = nil
         expandedStoppedGroupIDs.removeAll()
         collapsedStoppedGroupIDs.removeAll()
@@ -793,9 +856,6 @@ struct SessionInboxView: View {
     }
 
     private func isStoppedGroupExpanded(_ group: SessionInboxStoppedGroup) -> Bool {
-        if !normalizedSearchText.isEmpty {
-            return true
-        }
         if expandedStoppedGroupIDs.contains(group.id) {
             return true
         }
@@ -876,17 +936,20 @@ struct SessionInboxView: View {
         }
     }
 
-    private func matchesSearch(_ item: SessionInboxItem) -> Bool {
-        guard !normalizedSearchText.isEmpty else { return true }
-        let candidates = [
-            item.session.displayTitle,
-            item.session.workspaceName,
-            item.workspace?.name,
-            item.session.model,
-            item.session.id,
-        ].compactMap { $0?.lowercased() }
-
-        return candidates.contains { $0.localizedStandardContains(normalizedSearchText) }
+    private func inboxItem(for session: Session, existing: SessionInboxItem?) -> SessionInboxItem? {
+        if let existing {
+            return existing
+        }
+        guard let activeServerId, let connection = activeConnection else { return nil }
+        let workspace = session.workspaceId.flatMap { workspaceId in
+            connection.workspaceStore.workspaces.first { $0.id == workspaceId }
+        }
+        return SessionInboxItem(
+            serverId: activeServerId,
+            connection: connection,
+            session: session,
+            workspace: workspace
+        )
     }
 
     private func attentionCounts(for item: SessionInboxItem) -> SessionListAttentionCounts {
@@ -911,7 +974,8 @@ struct SessionInboxView: View {
             pendingAskCount: attention.askCount,
             pendingAsk: item.connection.askRequestStore.pending(for: item.session.id),
             workspaceContext: workspaceContext(for: item),
-            unreadCompletionAt: item.connection.sessionStore.unreadCompletionDate(for: item.session.id)
+            unreadCompletionAt: item.connection.sessionStore.unreadCompletionDate(for: item.session.id),
+            searchSnippet: searchStore.snippetsBySessionId[item.session.id]
         )
     }
 
