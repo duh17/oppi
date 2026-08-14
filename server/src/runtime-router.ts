@@ -55,6 +55,13 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     return this.oppi.getActiveSession(sessionId) ?? stored ?? undefined;
   }
 
+  releaseResourceUsageSession(session: Pick<Session, "id" | "piSessionId">): void {
+    // Runtime ownership may already have changed during promotion. Release both
+    // adapter coordinators; trace identity makes this operation idempotent.
+    this.oppi.releaseResourceUsageSession(session);
+    this.piTui.releaseResourceUsageSession(session);
+  }
+
   async stopSessionIfActive(sessionId: string): Promise<void> {
     const session = this.storage.getSession(sessionId);
     if (this.isPiTui(session)) {

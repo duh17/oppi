@@ -56,10 +56,11 @@ import {
 import {
   localResourceUsageSource,
   resolveRegisteredResourceUsageSources,
-  type ResourceUsageBackfillCatalog,
 } from "./resource-usage-backfill.js";
 import { ResourceUsageStore } from "./storage/resource-usage-store.js";
 import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "./local-sessions.js";
+import { matchPiReadPath, resolvePiReadPath } from "./pi-read-path.js";
+import { canonicalServerResourcePath } from "./server-resource-id.js";
 
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 
@@ -538,6 +539,20 @@ export class Server {
     this.mirrorRuntime = new PiTuiMirrorRuntime(this.storage, {
       isOppiSessionActive: (sessionId) => this.sessions.getActiveSession(sessionId) !== undefined,
       stopOppiSession: (sessionId) => this.sessions.stopSession(sessionId),
+      resourceUsage: this.resourceUsage,
+      resolveResourceUsageToolEvidence: (toolName) =>
+        toolName === "read" ? { ownerKind: "builtin", ownerId: "builtin" } : undefined,
+      resolveResourceUsageSkillRead: async (path, cwd) => {
+        try {
+          const catalog = await this.serverResources.resourceUsageCatalog();
+          return matchPiReadPath(
+            catalog.skillPrimaryFiles,
+            canonicalServerResourcePath(resolvePiReadPath(path, cwd)),
+          );
+        } catch {
+          return undefined;
+        }
+      },
     });
     this.sessionRuntimes = new SessionRuntimes(this.storage, this.sessions, this.mirrorRuntime);
 
@@ -948,33 +963,27 @@ export class Server {
   private async snapshotResourceUsageBackfill(): Promise<ResourceUsageBackfillSnapshot> {
     const sessions = this.storage.listSessions();
     const known = collectKnownLocalSessionIdentities(sessions);
-    const [localSessions, skillsResult, extensionsResult] = await Promise.all([
+    const [localSessions, catalog] = await Promise.all([
       discoverLocalSessions(known, { dataDir: this.storage.getDataDir() }),
-      this.serverResources.listSkills(),
-      this.serverResources.listExtensions(),
+      this.serverResources.resourceUsageCatalog(),
     ]);
-    const catalog: ResourceUsageBackfillCatalog = {
-      skills: uniqueResourceOwners(skillsResult.skills.map((skill) => [skill.name, skill.id])),
-      commands: uniqueResourceOwners(
-        extensionsResult.extensions.flatMap((extension) =>
-          (extension.contributedCommands ?? []).map(
-            (command) =>
-              [command, { ownerKind: "extension" as const, ownerId: extension.id }] as const,
-          ),
-        ),
-      ),
-      tools: uniqueResourceOwners(
-        extensionsResult.extensions.flatMap((extension) =>
-          (extension.contributedTools ?? []).map(
-            (tool) => [tool, { ownerKind: "extension" as const, ownerId: extension.id }] as const,
-          ),
-        ),
-      ),
-      builtInTools: new Set(extensionsResult.builtInTools.map((tool) => tool.name)),
-    };
+    const workspaces = new Map(
+      this.storage.listWorkspaces().map((workspace) => [workspace.id, workspace]),
+    );
+    const registeredSources = resolveRegisteredResourceUsageSources(sessions).map((source) => {
+      const workspace = source.workspaceId ? workspaces.get(source.workspaceId) : undefined;
+      if (workspace?.runtime !== "sandbox") return source;
+      return {
+        ...source,
+        // Existing sandbox traces without a runtime-captured binding map are
+        // intentionally unattributed rather than reconstructed from today's catalog.
+        sandboxSkillBindings:
+          this.resourceUsage?.getBackfillSkillBindings(source.sourceKey) ?? new Map(),
+      };
+    });
     return {
       sources: uniqueResourceUsageSources([
-        ...resolveRegisteredResourceUsageSources(sessions),
+        ...registeredSources,
         ...localSessions.map((session) => localResourceUsageSource(session)),
       ]),
       catalog,
@@ -1591,19 +1600,4 @@ export class Server {
 
 function uniqueResourceUsageSources<T extends { sourceKey: string }>(sources: readonly T[]): T[] {
   return [...new Map(sources.map((source) => [source.sourceKey, source])).values()];
-}
-
-function uniqueResourceOwners<T>(entries: readonly (readonly [string, T])[]): Map<string, T> {
-  const unique = new Map<string, T>();
-  const ambiguous = new Set<string>();
-  for (const [name, owner] of entries) {
-    if (ambiguous.has(name)) continue;
-    if (unique.has(name)) {
-      unique.delete(name);
-      ambiguous.add(name);
-      continue;
-    }
-    unique.set(name, owner);
-  }
-  return unique;
 }

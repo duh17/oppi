@@ -58,7 +58,10 @@ import {
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import { createDefaultAgentExtensionFactory } from "./default-agent-tool.js";
 import { applyPendingProviderRegistrations } from "./extension-model-discovery.js";
-import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
+import {
+  createLifecycleJournalExtension,
+  type PersistedLifecycleToolStartIdentity,
+} from "./lifecycle-journal-extension.js";
 import {
   DEFAULT_OPPI_EXTENSION_SETTINGS,
   freezeOppiExtensionSettingsSnapshot,
@@ -70,9 +73,11 @@ import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
+import { matchPiReadPath, resolvePiReadPath } from "./pi-read-path.js";
 import type {
   ResourceUsageHistoryMarker,
   ResourceUsagePromptEvidence,
+  ResourceUsageSkillInstructionReadEvidence,
   ResourceUsageSkillLoadEvidence,
   ResourceUsageToolEvidence,
 } from "./resource-usage-service.js";
@@ -86,8 +91,16 @@ import {
   getOppiDocsPath,
 } from "./oppi-docs.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
+import type { ResourceUsageBackfillSkillBinding } from "./storage/resource-usage-store.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
+import {
+  createSandboxSkillBindingToken,
+  resolveSandboxGuestCwd,
+  sandboxSkillGuestRoot,
+  sandboxWorkspaceSlug,
+} from "./sandbox-resource-paths.js";
+export { resolveSandboxGuestCwd } from "./sandbox-resource-paths.js";
 import { callerSessionIdentityShellPrefix } from "./session-caller-identity.js";
 import {
   SessionRuntimeTransaction,
@@ -151,20 +164,6 @@ function resolveRegistryModel(
  * producing cwd values like "<server-cwd>/~/workspace/...". Normalize here
  * before passing cwd into SDK components.
  */
-function sandboxWorkspaceSlug(workspace: Workspace): string {
-  return (
-    (workspace.name || workspace.id)
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || workspace.id
-  );
-}
-
-export function resolveSandboxGuestCwd(workspace: Workspace): string {
-  return posix.join("/workspace", sandboxWorkspaceSlug(workspace));
-}
-
 function ensureOwnerOnlyRealDirectory(path: string, errorMessage: string): void {
   try {
     mkdirSync(path, { mode: 0o700 });
@@ -338,16 +337,6 @@ function hostWorkspacePathToGuest(
 
   const rel = relative(resolvePath(hostCwd), resolvePath(hostPath));
   return rel ? posix.join(guestCwd, rel.split(/[\\/]/).join("/")) : guestCwd;
-}
-
-function safeGuestSegment(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || "resource"
-  );
 }
 
 function replaceAllLiteral(value: string, search: string, replacement: string): string {
@@ -556,6 +545,68 @@ function reserveOppiToolPolicy(options: {
 
 const log = createLogger({ base: { component: "sdk_backend" } });
 
+const MAX_PENDING_MANAGED_TOOL_START_IDENTITIES = 1_024;
+
+/**
+ * Correlates Pi's copied extension event with the original subscriber event.
+ * Pi awaits extension handlers before forwarding each start to subscribers, so
+ * each key is FIFO even when different tools interleave or provider IDs repeat.
+ * The queue is normally empty or one entry deep. If that serial contract is
+ * violated badly enough to overflow, older starts are replay-only while the
+ * current persisted identity remains queued. Subscriber delivery is serial too,
+ * so one counter can suppress the older prefix without retaining its contents.
+ */
+class ManagedToolStartIdentityCorrelation {
+  private readonly pendingByTool = new Map<string, PersistedLifecycleToolStartIdentity[]>();
+  private pendingCount = 0;
+  private suppressedPrefixCount = 0;
+
+  record(identity: PersistedLifecycleToolStartIdentity): boolean {
+    let overflowed = false;
+    if (this.pendingCount >= MAX_PENDING_MANAGED_TOOL_START_IDENTITIES) {
+      this.suppressedPrefixCount += this.pendingCount;
+      this.pendingByTool.clear();
+      this.pendingCount = 0;
+      overflowed = true;
+    }
+    const key = this.key(identity.toolCallId, identity.toolName);
+    const queue = this.pendingByTool.get(key) ?? [];
+    queue.push(identity);
+    this.pendingByTool.set(key, queue);
+    this.pendingCount += 1;
+    return !overflowed;
+  }
+
+  consume(
+    toolCallId: string,
+    toolName: string,
+  ):
+    | { eventId: string; suppressLiveCapture: false }
+    | { reason: "missing" | "overflow"; suppressLiveCapture: true } {
+    if (this.suppressedPrefixCount > 0) {
+      this.suppressedPrefixCount -= 1;
+      return { reason: "overflow", suppressLiveCapture: true };
+    }
+    const key = this.key(toolCallId, toolName);
+    const queue = this.pendingByTool.get(key);
+    const identity = queue?.shift();
+    if (!identity) return { reason: "missing", suppressLiveCapture: true };
+    this.pendingCount -= 1;
+    if (queue?.length === 0) this.pendingByTool.delete(key);
+    return { eventId: identity.eventId, suppressLiveCapture: false };
+  }
+
+  clear(): void {
+    this.pendingByTool.clear();
+    this.pendingCount = 0;
+    this.suppressedPrefixCount = 0;
+  }
+
+  private key(toolCallId: string, toolName: string): string {
+    return JSON.stringify([toolCallId, toolName]);
+  }
+}
+
 function syncSessionIdentityFromManager(session: Session, manager: PiSessionManager): void {
   const sessionFile = manager.getSessionFile();
   if (sessionFile) {
@@ -594,7 +645,6 @@ export class SdkBackend {
         generation: number;
       }) => void)
     | undefined;
-
   private static readonly DEFAULT_STEERING_MODE = "all" as const;
   private static readonly DEFAULT_FOLLOW_UP_MODE = "one-at-a-time" as const;
   /** Maximum graceful cleanup time within the documented stop bound. */
@@ -605,6 +655,7 @@ export class SdkBackend {
   private runtime: AgentSessionRuntime;
   private unsub: (() => void) | null = null;
   private readonly emitEvent: (event: SessionBackendEvent) => void;
+  private managedToolStartIdentities: ManagedToolStartIdentityCorrelation;
   private readonly uiBridge: SdkUiBridge;
   private shutdownCleanupPromise: Promise<SdkBackendDisposeResult> | null = null;
   private forcedDisposalResult: SdkBackendDisposeResult | undefined;
@@ -624,11 +675,16 @@ export class SdkBackend {
   private queueReconciliationRequired = false;
   private queueAuthorityGeneration = 0;
   private resourceUsagePromptProducerId: string | undefined;
+  private resourceUsageSandboxBindingsByPrimaryFile = new Map<string, string>();
+  private onResourceUsageSandboxBindings:
+    | ((input: { sourcePath: string; bindings: ResourceUsageBackfillSkillBinding[] }) => void)
+    | undefined;
   private resourceUsageEvidenceCache:
     | {
         manifestRevision: string;
-        skills: Array<{ id: string; name: string }>;
+        skills: Array<{ id: string; name: string; primaryFile: string }>;
         skillIdsByName: Map<string, string>;
+        skillsByPrimaryFile: Map<string, { id: string; name: string }>;
         toolOwners: Map<string, { ownerKind: "builtin" | "extension"; ownerId: string }>;
         commandOwners: Map<string, { ownerKind: "builtin" | "extension"; ownerId: string }>;
       }
@@ -639,6 +695,7 @@ export class SdkBackend {
   private constructor(
     runtime: AgentSessionRuntime,
     emitEvent: (event: SessionBackendEvent) => void,
+    managedToolStartIdentities: ManagedToolStartIdentityCorrelation,
     oppiSessionId: string,
     dataDir?: string,
     cwdOverrides?: { existsCwd: string; displayCwd?: string },
@@ -651,6 +708,7 @@ export class SdkBackend {
   ) {
     this.runtime = runtime;
     this.emitEvent = emitEvent;
+    this.managedToolStartIdentities = managedToolStartIdentities;
     this.oppiSessionId = oppiSessionId;
     this.dataDir = dataDir;
     this.oppiSettingsHolder = oppiRuntimeSettings?.holder;
@@ -736,6 +794,7 @@ export class SdkBackend {
       cwdExistsOverride,
     );
     syncSessionIdentityFromManager(session, initialSessionManager);
+    const managedToolStartIdentities = new ManagedToolStartIdentityCorrelation();
 
     const agentDefinition = config.agentDefinition;
     const isDefaultAgentSession = isDefaultAgentId(session.launch?.agentId ?? "");
@@ -893,7 +952,15 @@ export class SdkBackend {
         ...(staticAppendSystemPrompt ? { appendSystemPrompt: staticAppendSystemPrompt } : {}),
         appendSystemPromptOverride: (base) => buildCurrentAppendSystemPrompt(base),
         extensionFactories: [
-          createLifecycleJournalExtension(sessionManager),
+          createLifecycleJournalExtension(sessionManager, {
+            onToolStartPersisted: (identity) => {
+              if (managedToolStartIdentities.record(identity)) return;
+              log.warn("sdk.resource_usage_tool_identity_overflow", {
+                sessionId: session.id,
+                maximumPending: MAX_PENDING_MANAGED_TOOL_START_IDENTITIES,
+              });
+            },
+          }),
           ...(controlToolRuntime
             ? [
                 {
@@ -989,12 +1056,7 @@ export class SdkBackend {
                 }
                 return {
                   skills: base.skills.map((skill) => {
-                    const guestBaseDir = posix.join(
-                      guestCwd,
-                      ".pi",
-                      "skills",
-                      safeGuestSegment(skill.name),
-                    );
+                    const guestBaseDir = sandboxSkillGuestRoot(guestCwd, skill.name);
                     sandboxReadonlyMounts.set(guestBaseDir, {
                       hostPath: skill.baseDir,
                       guestPath: guestBaseDir,
@@ -1234,6 +1296,7 @@ export class SdkBackend {
     const backend = new SdkBackend(
       runtime,
       onEvent,
+      managedToolStartIdentities,
       session.id,
       config.dataDir,
       sandboxMode
@@ -1291,6 +1354,71 @@ export class SdkBackend {
       ...model,
       manifestRevision: evidence.manifestRevision,
     }));
+  }
+
+  resourceUsageSandboxSkillBindings():
+    | { sourcePath: string; bindings: ResourceUsageBackfillSkillBinding[] }
+    | undefined {
+    const sourcePath = this.piSession.sessionManager.getSessionFile();
+    if (!this.sessionManagerDisplayCwd || !sourcePath) return undefined;
+    const skills = this.resourceUsageEvidence().skills;
+    if (this.resourceUsageSandboxBindingsByPrimaryFile.size === 0 && skills.length > 0) {
+      this.resourceUsageSandboxBindingsByPrimaryFile = new Map(
+        skills.map((skill) => [skill.primaryFile, createSandboxSkillBindingToken()]),
+      );
+    }
+    return {
+      sourcePath,
+      bindings: skills.flatMap((skill) => {
+        const bindingToken = this.resourceUsageSandboxBindingsByPrimaryFile.get(skill.primaryFile);
+        return bindingToken ? [{ bindingToken, skillId: skill.id, skillName: skill.name }] : [];
+      }),
+    };
+  }
+
+  configureResourceUsageSandboxSkillBindings(
+    capture: NonNullable<SdkBackend["onResourceUsageSandboxBindings"]>,
+  ): void {
+    this.onResourceUsageSandboxBindings = capture;
+    this.rotateResourceUsageSandboxSkillBindings();
+  }
+
+  appendResourceUsageSkillReadMarker(input: { producerId: string; bindingToken?: string }): void {
+    if (!input.bindingToken) return;
+    this.piSession.sessionManager.appendCustomEntry("oppi-resource-usage", {
+      version: 3,
+      signal: "skill_instruction_read",
+      bindingToken: input.bindingToken,
+      producerId: input.producerId,
+    });
+  }
+
+  resourceUsageSkillReadEvidence(
+    path: string,
+  ): ResourceUsageSkillInstructionReadEvidence | undefined {
+    const resolved = canonicalServerResourcePath(
+      resolvePiReadPath(path, this.piSession.sessionManager.getHeader()?.cwd ?? process.cwd()),
+    );
+    const evidence = this.resourceUsageEvidence();
+    const skill = matchPiReadPath(evidence.skillsByPrimaryFile, resolved);
+    if (!skill) return undefined;
+    const primaryFile = evidence.skills.find((candidate) => candidate.id === skill.id)?.primaryFile;
+    const bindingToken = primaryFile
+      ? this.resourceUsageSandboxBindingsByPrimaryFile.get(primaryFile)
+      : undefined;
+    return {
+      ...skill,
+      ...this.resourceUsageModelEvidence(),
+      manifestRevision: evidence.manifestRevision,
+      ...(bindingToken ? { bindingToken } : {}),
+    };
+  }
+
+  private rotateResourceUsageSandboxSkillBindings(): void {
+    if (!this.onResourceUsageSandboxBindings) return;
+    this.resourceUsageSandboxBindingsByPrimaryFile.clear();
+    const snapshot = this.resourceUsageSandboxSkillBindings();
+    if (snapshot) this.onResourceUsageSandboxBindings(snapshot);
   }
 
   configureResourceUsageSkillLoads(
@@ -1464,6 +1592,7 @@ export class SdkBackend {
     const skills = loadedSkills.map((skill) => ({
       id: serverResourceId("skill", canonicalServerResourcePath(skillResourceIdentityPath(skill))),
       name: skill.name,
+      primaryFile: canonicalServerResourcePath(skill.filePath),
     }));
     const loadedExtensions = this.piSession.resourceLoader.getExtensions().extensions;
     const registeredTools = this.piSession.extensionRunner.getAllRegisteredTools();
@@ -1507,6 +1636,9 @@ export class SdkBackend {
       manifestRevision: createHash("sha256").update(resources.join("\0")).digest("hex"),
       skills,
       skillIdsByName: new Map(skills.map((skill) => [skill.name, skill.id])),
+      skillsByPrimaryFile: new Map(
+        skills.map((skill) => [skill.primaryFile, { id: skill.id, name: skill.name }]),
+      ),
       toolOwners,
       commandOwners,
     };
@@ -1515,11 +1647,32 @@ export class SdkBackend {
 
   private subscribeToCurrentSession(): void {
     this.unsub?.();
+    const identities = (this.managedToolStartIdentities ??=
+      new ManagedToolStartIdentityCorrelation());
+    identities.clear();
     this.unsub = this.piSession.subscribe((event: AgentSessionEvent) => {
       if (event.type === "queue_update") {
         this.queueAuthorityGeneration = (this.queueAuthorityGeneration ?? 0) + 1;
       }
-      this.emitEvent(event);
+      if (event.type !== "tool_execution_start") {
+        this.emitEvent(event);
+        return;
+      }
+      const correlation = identities.consume(event.toolCallId, event.toolName);
+      if (correlation.suppressLiveCapture) {
+        if (correlation.reason === "missing") {
+          log.warn("sdk.resource_usage_tool_identity_missing", {
+            sessionId: this.oppiSessionId,
+            toolName: event.toolName,
+          });
+        }
+        this.emitEvent({ ...event, resourceUsageSkipLiveCapture: true } as SessionBackendEvent);
+        return;
+      }
+      this.emitEvent({
+        ...event,
+        resourceUsageEventId: correlation.eventId,
+      } as SessionBackendEvent);
     });
   }
 
@@ -1616,6 +1769,7 @@ export class SdkBackend {
     await this.bindCurrentSessionExtensions();
     this.resourceUsageLoadGeneration += 1;
     this.notifyResourceUsageSkillsLoaded();
+    this.rotateResourceUsageSandboxSkillBindings();
   }
 
   private static applyDefaultQueueModes(session: AgentSession): void {
@@ -1685,6 +1839,7 @@ export class SdkBackend {
       this.resourceUsageEvidenceCache = undefined;
       this.resourceUsageLoadGeneration += 1;
       this.notifyResourceUsageSkillsLoaded();
+      this.rotateResourceUsageSandboxSkillBindings();
       return { success: true };
     });
   }
@@ -2186,6 +2341,7 @@ export class SdkBackend {
   private markLocallyDisposed(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.managedToolStartIdentities?.clear();
 
     try {
       const cleanup = this.uiBridge.dispose();

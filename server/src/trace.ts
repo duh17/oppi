@@ -457,7 +457,9 @@ export function buildSessionContext(
 function formatLifecycleEvent(entry: SessionEntry, timestamp: string): TraceLifecycleEvent | null {
   if (entry.customType !== OPPI_LIFECYCLE_CUSTOM_TYPE) return null;
   const data = asRecord(entry.data);
-  if (!data || data.version !== 1 || typeof data.event !== "string") return null;
+  if (!data || (data.version !== 1 && data.version !== 2) || typeof data.event !== "string") {
+    return null;
+  }
 
   const turnIndex = typeof data.turnIndex === "number" ? data.turnIndex : undefined;
   const toolCallId = typeof data.toolCallId === "string" ? data.toolCallId : undefined;

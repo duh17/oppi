@@ -7,6 +7,7 @@ import {
   type RuntimeSessionStateScaffold,
 } from "./session-runtime-state.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
+import { opaqueResourceUsageSourceKey } from "./resource-usage-backfill.js";
 import type { ResourceUsageService } from "./resource-usage-service.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { Storage } from "./storage.js";
@@ -33,7 +34,10 @@ export interface SessionStartCoordinatorDeps {
   metrics?: ServerMetricCollector;
   resourceUsage?: Pick<
     ResourceUsageService,
-    "captureAcceptedPrompt" | "captureSkillLoads" | "createRuntimeInstanceId"
+    | "captureAcceptedPrompt"
+    | "captureSkillLoads"
+    | "createRuntimeInstanceId"
+    | "mergeBackfillSkillBindings"
   >;
 }
 
@@ -77,6 +81,14 @@ export class SessionStartCoordinator {
               this.deps.resourceUsage?.captureSkillLoads({ session, runtime: "oppi", ...load });
             });
           }
+          sdkBackend.configureResourceUsageSandboxSkillBindings((sandboxBindings) => {
+            this.deps.resourceUsage?.mergeBackfillSkillBindings({
+              sourceKey: opaqueResourceUsageSourceKey(sandboxBindings.sourcePath),
+              sessionId: session.id,
+              ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
+              bindings: sandboxBindings.bindings,
+            });
+          });
           sdkBackend.onResourceUsageCommandInvoked = ({ evidence, producerId }) =>
             this.deps.resourceUsage?.captureAcceptedPrompt({
               session,

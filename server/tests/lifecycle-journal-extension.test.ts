@@ -17,7 +17,11 @@ describe("lifecycle journal extension", () => {
     const staleAppendEntry = vi.fn(() => {
       throw new Error("stale extension context");
     });
-    const extension = createLifecycleJournalExtension({ appendCustomEntry });
+    const onToolStartPersisted = vi.fn();
+    const extension = createLifecycleJournalExtension(
+      { appendCustomEntry },
+      { onToolStartPersisted },
+    );
 
     extension.factory({
       appendEntry: staleAppendEntry,
@@ -27,11 +31,12 @@ describe("lifecycle journal extension", () => {
     } as never);
 
     handlers.get("agent_start")?.({});
-    handlers.get("tool_execution_start")?.({
+    const toolStart = {
       toolCallId: "call-1",
       toolName: "bash",
       args: { command: "secret and intentionally not duplicated" },
-    });
+    };
+    handlers.get("tool_execution_start")?.(toolStart);
     handlers.get("tool_execution_end")?.({
       toolCallId: "call-1",
       toolName: "bash",
@@ -51,10 +56,11 @@ describe("lifecycle journal extension", () => {
       [
         OPPI_LIFECYCLE_CUSTOM_TYPE,
         {
-          version: 1,
+          version: 2,
           event: "tool_execution_start",
           toolCallId: "call-1",
           toolName: "bash",
+          eventId: expect.stringMatching(/^trace-event-v1_[a-f0-9]{64}$/),
         },
       ],
       [
@@ -69,6 +75,12 @@ describe("lifecycle journal extension", () => {
       ],
       [OPPI_LIFECYCLE_CUSTOM_TYPE, { version: 1, event: "agent_end" }],
     ]);
+    expect(onToolStartPersisted).toHaveBeenCalledWith({
+      toolCallId: "call-1",
+      toolName: "bash",
+      eventId: appendCustomEntry.mock.calls[1]?.[1].eventId,
+    });
+    expect(toolStart).not.toHaveProperty("resourceUsageEventId");
     expect(staleAppendEntry).not.toHaveBeenCalled();
   });
 

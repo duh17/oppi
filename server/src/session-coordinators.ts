@@ -171,9 +171,11 @@ export function createSessionCoordinatorBundle(
       startCoordinator.startSessionInner(key, sessionId, workspace),
   });
 
+  const resourceUsageLifecycle: { release?: (session: Session) => void } = {};
   const lifecycleCoordinator = new SessionLifecycleCoordinator({
     getActiveSession: (key) => deps.active.get(key) as SessionLifecycleSessionState | undefined,
     removeActiveSession: (key) => deps.active.delete(key),
+    releaseResourceUsageSession: (session) => resourceUsageLifecycle.release?.(session),
     clearPendingStop: (active) => stopCoordinator.clearPendingStop(active),
     broadcast: (key, message) => deps.broadcast(key, message),
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
@@ -250,6 +252,8 @@ export function createSessionCoordinatorBundle(
     trustedAttachmentSourceRoots: trustedSessionAttachmentSourceRoots(),
     resourceUsage: deps.resourceUsage,
   });
+  resourceUsageLifecycle.release = (session) =>
+    agentEventCoordinator.releaseResourceUsageSession(session);
 
   const stopFlowCoordinator = new SessionStopFlowCoordinator(
     {

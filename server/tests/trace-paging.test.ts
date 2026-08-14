@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
+import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "../src/lifecycle-journal-extension.js";
 import { parseJsonl } from "../src/trace.js";
 import {
   readSessionTracePageFromFile,
@@ -243,12 +244,7 @@ describe("trace paging", () => {
     });
 
     expect(around.page.staleCursor).toBe(false);
-    expect(around.trace.map((event) => event.id)).toEqual([
-      "a1-text-0",
-      "u2",
-      "tc-1",
-      "result-r1",
-    ]);
+    expect(around.trace.map((event) => event.id)).toEqual(["a1-text-0", "u2", "tc-1", "result-r1"]);
     expect(around.trace.some((event) => event.id === "a3-text-0")).toBe(false);
     expect(around.page.hasOlder).toBe(true);
     expect(around.page.olderCursor).toEqual(expect.any(String));
@@ -346,6 +342,69 @@ describe("trace paging", () => {
 
     expect(page.trace.some((event) => event.type === "toolResult")).toBe(false);
   });
+
+  it.each([1, 2] as const)(
+    "keeps lifecycle-v2 start and lifecycle-v%s end metadata ordered on a paged tool result",
+    (endVersion) => {
+      const path = tempJsonl([
+        messageEntry("assistant", null, "assistant", [
+          { type: "toolCall", id: "call-v2", name: "read", arguments: { path: "SKILL.md" } },
+        ]),
+        {
+          type: "custom",
+          id: "lifecycle-start",
+          parentId: "assistant",
+          timestamp,
+          customType: OPPI_LIFECYCLE_CUSTOM_TYPE,
+          data: {
+            version: 2,
+            event: "tool_execution_start",
+            toolCallId: "call-v2",
+            toolName: "read",
+            eventId: `trace-event-v1_${"b".repeat(64)}`,
+          },
+        },
+        {
+          type: "custom",
+          id: "lifecycle-end",
+          parentId: "lifecycle-start",
+          timestamp,
+          customType: OPPI_LIFECYCLE_CUSTOM_TYPE,
+          data: {
+            version: endVersion,
+            event: "tool_execution_end",
+            toolCallId: "call-v2",
+            toolName: "read",
+            isError: false,
+          },
+        },
+        messageEntry("result", "lifecycle-end", "toolResult", "done", {
+          toolCallId: "call-v2",
+          toolName: "read",
+          isError: false,
+        }),
+      ]);
+
+      const page = readSessionTracePageFromFile(path, { targetEvents: 1 });
+
+      expect(page.trace.map((event) => event.type)).toEqual(["toolCall", "toolResult"]);
+      expect(page.trace[1]?.lifecycleBefore).toEqual([
+        expect.objectContaining({
+          id: "lifecycle-start",
+          event: "toolStart",
+          toolCallId: "call-v2",
+          toolName: "read",
+        }),
+        expect.objectContaining({
+          id: "lifecycle-end",
+          event: "toolEnd",
+          toolCallId: "call-v2",
+          toolName: "read",
+          isError: false,
+        }),
+      ]);
+    },
+  );
 
   it("keeps ask tool call and answer together", () => {
     const path = tempJsonl([

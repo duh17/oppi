@@ -281,6 +281,7 @@ struct ServerResourceAPIClientTests {
       "timezone":"UTC",
       "recordingStartedAt":1765843200000,
       "recordedActions":0,
+          "loadedSessionSignal":{"actions":0,"sessions":0},
       "attribution":{"exactActions":0,"inferredActions":0,"historicalActions":0,"liveActions":0},
       "distinctSessions":0,
       "activeDays":0,
@@ -288,12 +289,12 @@ struct ServerResourceAPIClientTests {
       "daily":[],
       "breakdown":[],
       "capture":{"status":"active","failedWrites":0,"droppedEvents":0},
-      "backfill":{"status":"available","totalSources":0,"processedSources":0,"completedSources":0,"failedSources":0,"processedBytes":0,"processedLines":0,"historicalEvents":0,"corruptLines":0,"oversizedLines":0,"updatedAt":1765843200000,"canStart":true}
+      "backfill":{"semanticsGeneration":2,"status":"available","totalSources":0,"processedSources":0,"completedSources":0,"failedSources":0,"processedBytes":0,"processedLines":0,"historicalEvents":0,"corruptLines":0,"oversizedLines":0,"updatedAt":1765843200000,"canStart":true}
     }
     """
 
     private static let backfillStatusJSON = """
-    {"status":"available","totalSources":0,"processedSources":0,"completedSources":0,"failedSources":0,"processedBytes":0,"processedLines":0,"historicalEvents":0,"corruptLines":0,"oversizedLines":0,"updatedAt":1765843200000,"canStart":true}
+    {"semanticsGeneration":2,"status":"available","totalSources":0,"processedSources":0,"completedSources":0,"failedSources":0,"processedBytes":0,"processedLines":0,"historicalEvents":0,"corruptLines":0,"oversizedLines":0,"updatedAt":1765843200000,"canStart":true}
     """
 
     private struct EnabledRequest: Decodable {

@@ -560,6 +560,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.active.get(this.sessionKey(sessionId))?.session;
   }
 
+  releaseResourceUsageSession(session: Pick<Session, "id" | "piSessionId">): void {
+    this.agentEventCoordinator.releaseResourceUsageSession(session);
+  }
+
   /** Return replayable extension UI notifications and pending dialogs for stream re-subscribe. */
   getPendingUIRequestMessages(sessionId: string): ServerMessage[] {
     return buildPendingExtensionUIRequestMessages(this.active.get(this.sessionKey(sessionId)));

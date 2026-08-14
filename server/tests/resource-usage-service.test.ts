@@ -4,7 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ResourceUsageService } from "../src/resource-usage-service.js";
+import {
+  ResourceUsageService,
+  resourceUsageActionId,
+  resourceUsageToolOccurrenceId,
+} from "../src/resource-usage-service.js";
 import { ResourceUsageStore } from "../src/storage/resource-usage-store.js";
 
 const dirs: string[] = [];
@@ -20,6 +24,23 @@ afterEach(() => {
 });
 
 describe("ResourceUsageService exact live capture", () => {
+  it("encodes provider tool IDs and ordinals injectively before action hashing", () => {
+    const providerHashLikeId = resourceUsageToolOccurrenceId("call#2", 1);
+    const reusedProviderId = resourceUsageToolOccurrenceId("call", 2);
+
+    expect(providerHashLikeId).toMatch(/^tool-occurrence-v1_[a-f0-9]{64}$/);
+    expect(reusedProviderId).toMatch(/^tool-occurrence-v1_[a-f0-9]{64}$/);
+    expect(providerHashLikeId).not.toBe(reusedProviderId);
+    for (const signal of ["tool_invocation", "skill_instruction_read"] as const) {
+      expect(resourceUsageActionId("oppi", "trace-1", signal, providerHashLikeId)).not.toBe(
+        resourceUsageActionId("oppi", "trace-1", signal, reusedProviderId),
+      );
+      expect(resourceUsageActionId("oppi", "trace-1", signal, providerHashLikeId)).toBe(
+        resourceUsageActionId("pi-tui", "trace-1", signal, providerHashLikeId),
+      );
+    }
+  });
+
   it("isolates bounded write failures from session/tool execution", async () => {
     const now = Date.UTC(2026, 6, 27, 12);
     const store = new ResourceUsageStore(tempDir(), { now: () => now });
@@ -95,7 +116,7 @@ describe("ResourceUsageService exact live capture", () => {
     await service.close();
   });
 
-  it("counts repeated real Skill loads across runtime instances and generations", async () => {
+  it("keeps repeated Skill loads as a separate availability signal, not recorded usage", async () => {
     const now = Date.UTC(2026, 6, 27, 12);
     const store = new ResourceUsageStore(tempDir(), { now: () => now });
     const service = new ResourceUsageService(store, { now: () => now });
@@ -133,10 +154,9 @@ describe("ResourceUsageService exact live capture", () => {
 
     await service.flush();
     const result = await service.getUsage({ kind: "skill", id: "skill-testing" }, 7, "UTC");
-    expect(result.recordedActions).toBe(3);
-    expect(result.breakdown).toEqual([
-      expect.objectContaining({ signal: "agent_load", name: "testing", actions: 3 }),
-    ]);
+    expect(result.recordedActions).toBe(0);
+    expect(result.breakdown).toEqual([]);
+    expect(result.loadedSessionSignal).toMatchObject({ actions: 3, sessions: 1 });
     await service.close();
   });
 

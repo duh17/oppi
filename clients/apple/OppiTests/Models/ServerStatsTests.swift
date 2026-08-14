@@ -834,6 +834,7 @@ struct ServerStatsTests {
         #expect(usage.range == .thirtyDays)
         #expect(usage.timezone == "America/Los_Angeles")
         #expect(usage.recordedActions == 6)
+        #expect(usage.loadedSessionSignal.actions == 0)
         #expect(usage.distinctSessions == 3)
         #expect(usage.activeDays == 2)
         #expect(usage.recordingStartedAt == 1_765_843_200_000)
@@ -848,6 +849,45 @@ struct ServerStatsTests {
         #expect(usage.attribution.exactActions == 5)
         #expect(usage.attribution.inferredActions == 1)
         #expect(usage.backfill.status == .complete)
+    }
+
+    @Test func skillUsageKeepsInstructionReadsAndLoadsSemanticallySeparate() throws {
+        let json = """
+        {
+          "subject":{"kind":"skill","id":"skill_testing"},
+          "rangeDays":30,
+          "timezone":"UTC",
+          "recordingStartedAt":1765843200000,
+          "recordedActions":2,
+          "loadedSessionSignal":{"actions":12,"sessions":4,"lastLoadedAt":1771180300000},
+          "attribution":{"exactActions":2,"inferredActions":0,"historicalActions":2,"liveActions":0},
+          "distinctSessions":2,
+          "activeDays":1,
+          "lastRecordedAt":1771180400000,
+          "retainedHistory":{"retentionDays":120},
+          "daily":[{"date":"2026-02-15","actions":2,"sessions":2}],
+          "breakdown":[
+            {"signal":"skill_instruction_read","name":"testing","ownerKind":"skill","ownerId":"skill_testing","actions":2,"sessions":2},
+            {"signal":"explicit_activation","name":"testing","ownerKind":"skill","ownerId":"skill_testing","actions":1,"sessions":1}
+          ],
+          "capture":{"status":"active","failedWrites":0,"droppedEvents":0},
+          "backfill":{"semanticsGeneration":2,"status":"complete","totalSources":1,"processedSources":1,"completedSources":1,"failedSources":0,"processedBytes":100,"processedLines":2,"historicalEvents":2,"corruptLines":0,"oversizedLines":0,"updatedAt":1771180400000,"canStart":false}
+        }
+        """
+        let usage = try decode(json, as: ResourceUsageResponse.self)
+
+        #expect(usage.recordedActions == 2)
+        #expect(usage.loadedSessionSignal.actions == 12)
+        #expect(usage.breakdown.map(\.signal) == [.skillInstructionRead, .explicitActivation])
+        #expect(ResourceUsagePresentation.signalLabel(.skillInstructionRead) == "Instruction reads")
+        #expect(ResourceUsagePresentation.signalLabel(.explicitActivation) == "Explicit activations")
+        #expect(ResourceUsagePresentation.signalLabel(.agentLoad) == "Loaded into session")
+        #expect(ResourceUsagePresentation.summaryAccessibilityLabel(usage)
+            == "Observed Skill usage for the last 30 days: 2 instruction reads, 1 explicit activation, 12 loads into 4 sessions, 2 read sessions, 1 active day.")
+        let dailyChart = ResourceUsageDailyChartPresentation(usage: usage)
+        #expect(dailyChart.valueLabel == "Instruction reads")
+        #expect(dailyChart.accessibilityLabel
+            == "Daily activity: 2 instruction reads across 1 active day in the last 30 days.")
     }
 
     @Test func screenshotPreviewUsageFixturesReconcileOneEventSource() {
@@ -894,9 +934,17 @@ struct ServerStatsTests {
             )
             let dailyActions = usage.daily.reduce(0) { $0 + $1.actions }
             let breakdownActions = usage.breakdown.reduce(0) { $0 + $1.actions }
+            let instructionReads = usage.breakdown
+                .filter { $0.signal == .skillInstructionRead }
+                .reduce(0) { $0 + $1.actions }
 
             #expect(usage.recordedActions == dailyActions)
-            #expect(usage.recordedActions == breakdownActions)
+            if fixture.subject.kind == .skill {
+                #expect(usage.recordedActions == instructionReads)
+                #expect(breakdownActions >= usage.recordedActions)
+            } else {
+                #expect(usage.recordedActions == breakdownActions)
+            }
             #expect(usage.activeDays == usage.daily.filter { $0.actions > 0 }.count)
             #expect(usage.breakdown.allSatisfy {
                 $0.sessions >= 0
@@ -1062,7 +1110,9 @@ struct ServerStatsTests {
             == "search, tool invocation, 4 recorded actions, 3 sessions.")
         #expect(ResourceUsagePresentation.coverageAccessibilityLabel(usage)
             == "Coverage: Recorded by this server since Dec 15, 2025. Live capture is partial. History backfill: Complete. 5 exact and 1 inferred actions. Recorded activity is retained for up to 120 days.")
-        #expect(ResourceUsagePresentation.dailyActivityAccessibilityLabel(usage)
+        let dailyChart = ResourceUsageDailyChartPresentation(usage: usage)
+        #expect(dailyChart.valueLabel == "Recorded actions")
+        #expect(dailyChart.accessibilityLabel
             == "Daily activity: 6 recorded actions across 2 active days in the last 30 days.")
     }
 
@@ -1298,13 +1348,13 @@ struct ServerStatsTests {
 
     private var runningBackfillJSON: String {
         """
-        {"status":"running","totalSources":10,"processedSources":2,"completedSources":2,"failedSources":0,"processedBytes":100,"processedLines":20,"historicalEvents":5,"corruptLines":0,"oversizedLines":0,"updatedAt":1771180300000,"canStart":false}
+        {"semanticsGeneration":2,"status":"running","totalSources":10,"processedSources":2,"completedSources":2,"failedSources":0,"processedBytes":100,"processedLines":20,"historicalEvents":5,"corruptLines":0,"oversizedLines":0,"updatedAt":1771180300000,"canStart":false}
         """
     }
 
     private var completeBackfillJSON: String {
         """
-        {"status":"complete","totalSources":10,"processedSources":10,"completedSources":10,"failedSources":0,"processedBytes":1000,"processedLines":200,"historicalEvents":50,"corruptLines":0,"oversizedLines":0,"updatedAt":1771180400000,"lastCompletedAt":1771180400000,"canStart":false}
+        {"semanticsGeneration":2,"status":"complete","totalSources":10,"processedSources":10,"completedSources":10,"failedSources":0,"processedBytes":1000,"processedLines":200,"historicalEvents":50,"corruptLines":0,"oversizedLines":0,"updatedAt":1771180400000,"lastCompletedAt":1771180400000,"canStart":false}
         """
     }
 
@@ -1316,6 +1366,7 @@ struct ServerStatsTests {
           "timezone":"America/Los_Angeles",
           "recordingStartedAt":1765843200000,
           "recordedActions":6,
+          "loadedSessionSignal":{"actions":0,"sessions":0},
           "attribution":{"exactActions":5,"inferredActions":1,"historicalActions":4,"liveActions":2},
           "distinctSessions":3,
           "activeDays":2,
@@ -1330,7 +1381,7 @@ struct ServerStatsTests {
             {"signal":"tool_invocation","name":"search","ownerKind":"extension","ownerId":"extension_opaque","actions":4,"sessions":3}
           ],
           "capture":{"status":"degraded","failedWrites":1,"droppedEvents":0,"lastCapturedAt":1771180400000},
-          "backfill":{"status":"complete","totalSources":42,"processedSources":42,"completedSources":42,"failedSources":0,"processedBytes":1048576,"processedLines":1000,"historicalEvents":4,"corruptLines":0,"oversizedLines":0,"startedAt":1771180300000,"updatedAt":1771180400000,"lastCompletedAt":1771180400000,"canStart":false}
+          "backfill":{"semanticsGeneration":2,"status":"complete","totalSources":42,"processedSources":42,"completedSources":42,"failedSources":0,"processedBytes":1048576,"processedLines":1000,"historicalEvents":4,"corruptLines":0,"oversizedLines":0,"startedAt":1771180300000,"updatedAt":1771180400000,"lastCompletedAt":1771180400000,"canStart":false}
         }
         """
     }
@@ -1343,6 +1394,7 @@ struct ServerStatsTests {
           "timezone":"UTC",
           "recordingStartedAt":1765843200000,
           "recordedActions":0,
+          "loadedSessionSignal":{"actions":0,"sessions":0},
           "attribution":{"exactActions":0,"inferredActions":0,"historicalActions":0,"liveActions":0},
           "distinctSessions":0,
           "activeDays":0,
@@ -1350,7 +1402,7 @@ struct ServerStatsTests {
           "daily":[],
           "breakdown":[],
           "capture":{"status":"active","failedWrites":0,"droppedEvents":0},
-          "backfill":{"status":"available","totalSources":0,"processedSources":0,"completedSources":0,"failedSources":0,"processedBytes":0,"processedLines":0,"historicalEvents":0,"corruptLines":0,"oversizedLines":0,"updatedAt":1765843200000,"canStart":true}
+          "backfill":{"semanticsGeneration":2,"status":"available","totalSources":0,"processedSources":0,"completedSources":0,"failedSources":0,"processedBytes":0,"processedLines":0,"historicalEvents":0,"corruptLines":0,"oversizedLines":0,"updatedAt":1765843200000,"canStart":true}
         }
         """
     }

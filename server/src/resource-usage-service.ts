@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import {
+  RESOURCE_USAGE_BACKFILL_SEMANTICS_GENERATION,
   RESOURCE_USAGE_RETENTION_DAYS,
   type ResourceUsageAggregate,
   type ResourceUsageBounds,
@@ -13,6 +14,7 @@ import {
   type ResourceUsageStore,
   type ResourceUsageSubject,
   type ResourceUsageBackfillState,
+  type ResourceUsageBackfillSkillBinding,
 } from "./storage/resource-usage-store.js";
 import type {
   ResourceUsageBackfillCatalog,
@@ -58,6 +60,13 @@ export interface ResourceUsageSkillLoadEvidence extends ResourceUsageModelEviden
   name: string;
 }
 
+export interface ResourceUsageSkillInstructionReadEvidence extends ResourceUsageModelEvidence {
+  id: string;
+  name: string;
+  /** Random sandbox capability journaled without a filesystem path. */
+  bindingToken?: string;
+}
+
 export interface ResourceUsageCaptureStatus {
   status: "active" | "degraded";
   failedWrites: number;
@@ -66,6 +75,7 @@ export interface ResourceUsageCaptureStatus {
 }
 
 export interface ResourceUsageBackfillStatus {
+  semanticsGeneration: number;
   status: "available" | "running" | "complete" | "partial";
   totalSources: number;
   processedSources: number;
@@ -114,6 +124,11 @@ export interface ResourceUsageResponse {
   timezone: string;
   recordingStartedAt: number;
   recordedActions: number;
+  loadedSessionSignal: {
+    actions: number;
+    sessions: number;
+    lastLoadedAt?: number;
+  };
   attribution: {
     exactActions: number;
     inferredActions: number;
@@ -218,10 +233,11 @@ export class ResourceUsageService {
     if (!producerId || !input.evidence) return;
     const occurredAt = input.occurredAt ?? this.now();
     const sessionModel = splitModel(input.session.model);
+    const traceId = input.session.piSessionId ?? input.session.id;
     this.capture({
-      actionId: resourceUsageActionId(
-        input.runtime,
-        input.session.piSessionId ?? input.session.id,
+      actionId: resourceUsageActionId(input.runtime, traceId, "tool_invocation", producerId),
+      supersedesActionIds: resourceUsageRuntimeActionAliases(
+        traceId,
         "tool_invocation",
         producerId,
       ),
@@ -249,14 +265,20 @@ export class ResourceUsageService {
     const producerId = input.producerId?.trim();
     if (!input.evidence || !producerId) return undefined;
     const sessionModel = splitModel(input.session.model);
+    const traceId = input.session.piSessionId ?? input.session.id;
     const actionId = resourceUsageActionId(
       input.runtime,
-      input.session.piSessionId ?? input.session.id,
+      traceId,
       input.evidence.signal,
       producerId,
     );
     this.capture({
       actionId,
+      supersedesActionIds: resourceUsageRuntimeActionAliases(
+        traceId,
+        input.evidence.signal,
+        producerId,
+      ),
       occurredAt: input.occurredAt ?? this.now(),
       signal: input.evidence.signal,
       sessionId: input.session.id,
@@ -274,6 +296,51 @@ export class ResourceUsageService {
 
   createRuntimeInstanceId(): string {
     return this.store.nextRuntimeInstanceId();
+  }
+
+  mergeBackfillSkillBindings(input: {
+    sourceKey: string;
+    sessionId: string;
+    workspaceId?: string;
+    bindings: readonly ResourceUsageBackfillSkillBinding[];
+  }): void {
+    this.store.mergeBackfillSkillBindings(input);
+  }
+
+  getBackfillSkillBindings(sourceKey: string): Map<string, { id: string; name: string }> {
+    return this.store.getBackfillSkillBindings(sourceKey);
+  }
+
+  captureSkillInstructionRead(input: {
+    session: Pick<Session, "id" | "piSessionId" | "workspaceId" | "model">;
+    runtime: ResourceUsageRuntime;
+    toolCallId?: string;
+    skill?: ResourceUsageSkillInstructionReadEvidence;
+    occurredAt?: number;
+  }): void {
+    const producerId = input.toolCallId?.trim();
+    if (!producerId || !input.skill) return;
+    const sessionModel = splitModel(input.session.model);
+    const traceId = input.session.piSessionId ?? input.session.id;
+    this.capture({
+      actionId: resourceUsageActionId(input.runtime, traceId, "skill_instruction_read", producerId),
+      supersedesActionIds: resourceUsageRuntimeActionAliases(
+        traceId,
+        "skill_instruction_read",
+        producerId,
+      ),
+      occurredAt: input.occurredAt ?? this.now(),
+      signal: "skill_instruction_read",
+      sessionId: input.session.id,
+      ...(input.session.workspaceId ? { workspaceId: input.session.workspaceId } : {}),
+      runtime: input.runtime,
+      ownerKind: "skill",
+      ownerId: input.skill.id,
+      itemName: input.skill.name,
+      provider: input.skill.provider ?? sessionModel.provider,
+      model: input.skill.model ?? sessionModel.model,
+      manifestRevision: input.skill.manifestRevision,
+    });
   }
 
   captureSkillLoads(input: {
@@ -343,6 +410,7 @@ export class ResourceUsageService {
     }
     const startedAt = this.now();
     this.setBackfillState({
+      semanticsGeneration: RESOURCE_USAGE_BACKFILL_SEMANTICS_GENERATION,
       status: "running",
       totalSources: 0,
       processedSources: 0,
@@ -368,6 +436,7 @@ export class ResourceUsageService {
           signal: controller.signal,
           onProgress: (progress) => {
             this.setBackfillState({
+              semanticsGeneration: RESOURCE_USAGE_BACKFILL_SEMANTICS_GENERATION,
               status: "running",
               totalSources: progress.totalSources,
               processedSources: progress.sources,
@@ -512,6 +581,7 @@ export class ResourceUsageService {
       result.oversizedLines === 0;
     const nowMs = this.now();
     this.setBackfillState({
+      semanticsGeneration: RESOURCE_USAGE_BACKFILL_SEMANTICS_GENERATION,
       status: complete ? "complete" : "partial",
       totalSources: result.totalSources,
       processedSources: result.sources,
@@ -581,11 +651,16 @@ export function aggregateResourceUsage(input: AggregateResourceUsageInput): Reso
     const date = localDate(event.occurredAt, input.timezone);
     const daily = dailyState.get(date);
     if (!daily) continue;
-    recordedActions += 1;
-    daily.actions += 1;
-    daily.sessions.add(event.sessionId);
-    sessions.add(event.sessionId);
-    activeDates.add(date);
+    const isSkill = input.subject.kind === "skill";
+    const isPrimaryAction = !isSkill || event.signal === "skill_instruction_read";
+    if (isSkill && event.signal === "agent_load") continue;
+    if (isPrimaryAction) {
+      recordedActions += 1;
+      daily.actions += 1;
+      daily.sessions.add(event.sessionId);
+      sessions.add(event.sessionId);
+      activeDates.add(date);
+    }
 
     const name = event.itemName ?? event.signal;
     const key = `${event.signal}\0${event.ownerKind}\0${event.ownerId}\0${name}`;
@@ -611,11 +686,41 @@ export function aggregateResourceUsage(input: AggregateResourceUsageInput): Reso
     timezone: input.timezone,
     recordingStartedAt: input.recordingStartedAt,
     recordedActions,
+    loadedSessionSignal: {
+      actions: input.events.filter((event) => event.signal === "agent_load").length,
+      sessions: new Set(
+        input.events
+          .filter((event) => event.signal === "agent_load")
+          .map((event) => event.sessionId),
+      ).size,
+      ...(() => {
+        const values = input.events
+          .filter((event) => event.signal === "agent_load")
+          .map((event) => event.occurredAt);
+        return values.length > 0 ? { lastLoadedAt: Math.max(...values) } : {};
+      })(),
+    },
     attribution: {
-      exactActions: input.events.filter((event) => event.attribution !== "inferred").length,
-      inferredActions: input.events.filter((event) => event.attribution === "inferred").length,
-      historicalActions: input.events.filter((event) => event.origin === "history").length,
-      liveActions: input.events.filter((event) => event.origin !== "history").length,
+      exactActions: input.events.filter(
+        (event) =>
+          (input.subject.kind !== "skill" || event.signal === "skill_instruction_read") &&
+          event.attribution !== "inferred",
+      ).length,
+      inferredActions: input.events.filter(
+        (event) =>
+          (input.subject.kind !== "skill" || event.signal === "skill_instruction_read") &&
+          event.attribution === "inferred",
+      ).length,
+      historicalActions: input.events.filter(
+        (event) =>
+          (input.subject.kind !== "skill" || event.signal === "skill_instruction_read") &&
+          event.origin === "history",
+      ).length,
+      liveActions: input.events.filter(
+        (event) =>
+          (input.subject.kind !== "skill" || event.signal === "skill_instruction_read") &&
+          event.origin !== "history",
+      ).length,
     },
     distinctSessions: sessions.size,
     activeDays: activeDates.size,
@@ -712,6 +817,13 @@ function responseFromAggregates(input: {
     timezone: input.timezone,
     recordingStartedAt: input.recordingStartedAt,
     recordedActions: input.overall.actions,
+    loadedSessionSignal: {
+      actions: input.overall.loadedActions,
+      sessions: input.overall.loadedSessions,
+      ...(input.overall.lastLoadedAt !== undefined
+        ? { lastLoadedAt: input.overall.lastLoadedAt }
+        : {}),
+    },
     attribution: {
       exactActions: input.overall.exactActions,
       inferredActions: input.overall.inferredActions,
@@ -742,6 +854,8 @@ function emptyUsageAggregate(): ResourceUsageAggregate {
   return {
     actions: 0,
     sessions: 0,
+    loadedActions: 0,
+    loadedSessions: 0,
     exactActions: 0,
     inferredActions: 0,
     historicalActions: 0,
@@ -752,6 +866,7 @@ function emptyUsageAggregate(): ResourceUsageAggregate {
 
 function emptyBackfillStatus(): ResourceUsageBackfillStatus {
   return {
+    semanticsGeneration: RESOURCE_USAGE_BACKFILL_SEMANTICS_GENERATION,
     status: "available",
     totalSources: 0,
     processedSources: 0,
@@ -783,15 +898,53 @@ function splitModel(value: string | undefined): { provider?: string; model?: str
     : { model: normalized };
 }
 
+export function createResourceUsageTraceEventId(): string {
+  return `trace-event-v1_${randomBytes(32).toString("hex")}`;
+}
+
+export function isResourceUsageTraceEventId(value: unknown): value is string {
+  return typeof value === "string" && /^trace-event-v1_[a-f0-9]{64}$/.test(value);
+}
+
+export function resourceUsageTraceEventId(event: unknown): string | undefined {
+  if (!event || typeof event !== "object") return undefined;
+  const value = (event as { resourceUsageEventId?: unknown }).resourceUsageEventId;
+  return isResourceUsageTraceEventId(value) ? value : undefined;
+}
+
+export function resourceUsageToolOccurrenceId(toolCallId: string, occurrence: number): string {
+  // Structured, versioned hash input keeps provider IDs such as "call#2"
+  // distinct from later occurrences of "call" and is stable across replay.
+  const payload = JSON.stringify([
+    "oppi-resource-usage-tool-occurrence",
+    1,
+    toolCallId,
+    occurrence,
+  ]);
+  return `tool-occurrence-v1_${createHash("sha256").update(payload).digest("hex")}`;
+}
+
 export function resourceUsageActionId(
-  runtime: ResourceUsageRuntime,
+  _runtime: ResourceUsageRuntime,
   sessionId: string,
   signal: ResourceUsageSignal,
   producerId: string,
 ): string {
+  // Runtime ownership is mutable during Mirror takeover and managed promotion.
+  // The physical trace event, not its current adapter, owns action identity.
   return createHash("sha256")
-    .update(`${runtime}\0${sessionId}\0${signal}\0${producerId}`)
+    .update(JSON.stringify(["oppi-resource-usage-trace-event", 2, sessionId, signal, producerId]))
     .digest("hex");
+}
+
+export function resourceUsageRuntimeActionAliases(
+  sessionId: string,
+  signal: ResourceUsageSignal,
+  producerId: string,
+): string[] {
+  return (["oppi", "pi-tui"] as const).map((runtime) =>
+    createHash("sha256").update(`${runtime}\0${sessionId}\0${signal}\0${producerId}`).digest("hex"),
+  );
 }
 
 function recordingStartedAt(store: ResourceUsageStore, nowMs: number): number {

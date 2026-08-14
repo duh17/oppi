@@ -364,6 +364,7 @@ private struct OppiConfigurationPreview: View {
 
 enum ResourceUsagePreviewFixtures {
     static let backfillStatus = ResourceUsageBackfillStatus(
+        semanticsGeneration: 4,
         status: .complete,
         totalSources: 42,
         processedSources: 42,
@@ -420,6 +421,11 @@ enum ResourceUsagePreviewFixtures {
             timezone: "UTC",
             recordingStartedAt: 1_765_843_200_000,
             recordedActions: recordedActions,
+            loadedSessionSignal: ResourceUsageLoadedSessionSignal(
+                actions: subject.kind == .skill ? 4 : 0,
+                sessions: subject.kind == .skill ? 2 : 0,
+                lastLoadedAt: subject.kind == .skill ? 1_771_180_300_000 : nil
+            ),
             attribution: ResourceUsageAttribution(
                 exactActions: recordedActions,
                 inferredActions: 0,
@@ -466,8 +472,11 @@ enum ResourceUsagePreviewFixtures {
     private struct EventSource: Sendable {
         let events: [Event]
 
-        var count: Int { events.count }
-        var distinctSessionCount: Int { Set(events.map(\.session)).count }
+        var primaryEvents: [Event] {
+            events.filter { $0.signal != .explicitActivation }
+        }
+        var count: Int { primaryEvents.count }
+        var distinctSessionCount: Int { Set(primaryEvents.map(\.session)).count }
     }
 
     private static func eventSource(
@@ -499,7 +508,7 @@ enum ResourceUsagePreviewFixtures {
         case .tools: activeDayCount = min(4, dailyRowCount)
         }
 
-        let events = (0..<recordedActions).map { index -> Event in
+        var events = (0..<recordedActions).map { index -> Event in
             let session: Int
             switch subject.kind {
             case .skill: session = index % 9
@@ -527,6 +536,19 @@ enum ResourceUsagePreviewFixtures {
                 ownerId: identity.ownerId
             )
         }
+        if subject.kind == .skill {
+            let activationCount = max(1, recordedActions / 5)
+            events += (0..<activationCount).map { index in
+                Event(
+                    day: index % activeDayCount,
+                    session: index % min(3, recordedActions),
+                    signal: .explicitActivation,
+                    name: subject.id ?? "skill",
+                    ownerKind: ownerKind,
+                    ownerId: ownerId
+                )
+            }
+        }
         return EventSource(events: events)
     }
 
@@ -538,9 +560,8 @@ enum ResourceUsagePreviewFixtures {
     ) -> Event.Identity {
         switch subject.kind {
         case .skill:
-            let signal: ResourceUsageSignal = index % 5 == 0 ? .explicitActivation : .agentLoad
             return Event.Identity(
-                signal: signal,
+                signal: .skillInstructionRead,
                 name: subject.id ?? "skill",
                 ownerKind: ownerKind,
                 ownerId: ownerId
@@ -587,7 +608,7 @@ enum ResourceUsagePreviewFixtures {
         count: Int
     ) -> [ResourceUsageDailyRow] {
         let rows = (0..<count).map { index in
-            let events = source.events.filter { $0.day == index }
+            let events = source.primaryEvents.filter { $0.day == index }
             return ResourceUsageDailyRow(
                 date: "preview-day-\(index + 1)",
                 actions: events.count,

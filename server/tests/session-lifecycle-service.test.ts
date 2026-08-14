@@ -77,6 +77,7 @@ function makeService(
   getSessionSnapshot: ReturnType<typeof vi.fn>;
   getActiveSession: ReturnType<typeof vi.fn>;
   refreshSessionState: ReturnType<typeof vi.fn>;
+  releaseResourceUsageSession: ReturnType<typeof vi.fn>;
 } {
   const createSession = vi.fn(
     (name?: string, model?: string) =>
@@ -108,6 +109,7 @@ function makeService(
   const getSessionSnapshot = vi.fn(() => options.snapshot);
   const getActiveSession = vi.fn(() => options.active);
   const refreshSessionState = vi.fn(async () => null);
+  const releaseResourceUsageSession = vi.fn();
 
   const deps: SessionLifecycleServiceDeps = {
     storage: {
@@ -138,6 +140,7 @@ function makeService(
       getSessionSnapshot,
       getActiveSession,
       refreshSessionState,
+      releaseResourceUsageSession,
       stopSession,
       stopSessionIfActive,
     },
@@ -168,6 +171,7 @@ function makeService(
     getSessionSnapshot,
     getActiveSession,
     refreshSessionState,
+    releaseResourceUsageSession,
   };
 }
 
@@ -568,7 +572,7 @@ describe("SessionLifecycleService", () => {
       const started = makeSession({ runtime: "oppi", status: "ready" });
       let currentSettings = { enabled: false, approvalPolicy: "confirmDestructiveOnly" as const };
       const settingsReadAtManagedConstruction = vi.fn(() => currentSettings);
-      const { service, startSession, saveSession } = makeService({
+      const { service, startSession, saveSession, releaseResourceUsageSession } = makeService({
         started,
         onStartSession: settingsReadAtManagedConstruction,
       });
@@ -579,6 +583,7 @@ describe("SessionLifecycleService", () => {
         workspace: makeWorkspace(),
       });
 
+      expect(releaseResourceUsageSession).toHaveBeenCalledWith(mirrorSession);
       expect(saveSession).toHaveBeenCalledWith(
         expect.objectContaining({
           id: "sess-1",
@@ -1171,13 +1176,18 @@ describe("SessionLifecycleService", () => {
     it("keeps deletion available while durable usage purge retry is pending", async () => {
       const session = makeSession({ id: "delete-1", workspaceId: "ws-1" });
       const deleteResourceUsageSession = vi.fn(async () => ({ status: "pending" }));
-      const { service, stopSessionIfActive, deleteSession, deleteSearchIndexSession } = makeService(
-        { deleteResourceUsageSession },
-      );
+      const {
+        service,
+        stopSessionIfActive,
+        deleteSession,
+        deleteSearchIndexSession,
+        releaseResourceUsageSession,
+      } = makeService({ deleteResourceUsageSession });
 
       const result = await service.deleteSession(session);
 
       expect(stopSessionIfActive).toHaveBeenCalledWith("delete-1");
+      expect(releaseResourceUsageSession).toHaveBeenCalledWith(session);
       expect(deleteSession).toHaveBeenCalledWith("delete-1");
       expect(deleteSearchIndexSession).toHaveBeenCalledWith("delete-1");
       expect(deleteResourceUsageSession).toHaveBeenCalledWith("delete-1");

@@ -127,6 +127,7 @@ export interface SessionLifecycleServiceDeps {
     | "getSessionSnapshot"
     | "getActiveSession"
     | "refreshSessionState"
+    | "releaseResourceUsageSession"
     | "stopSession"
     | "stopSessionIfActive"
   >;
@@ -735,6 +736,7 @@ export class SessionLifecycleService {
       throw new SessionLifecycleError("Failed to delete session files", 500);
     }
 
+    this.deps.sessionRuntimes.releaseResourceUsageSession?.(session);
     const deletedSqliteMetadata = this.deps.storage.deleteSession(session.id);
     this.deps.deleteSearchIndexSession?.(session.id);
     await this.deps.deleteResourceUsageSession?.(session.id);
@@ -820,6 +822,7 @@ export class SessionLifecycleService {
       return { owner: "pi-tui" };
     }
 
+    this.deps.sessionRuntimes.releaseResourceUsageSession?.(session);
     promoteStoppedMirrorToOppi(session);
     this.deps.storage.saveSession(session);
     return { owner: "oppi" };

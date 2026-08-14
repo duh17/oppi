@@ -254,6 +254,7 @@ struct ResourceUsageRequestKey: Hashable, Sendable, Equatable {
 
 enum ResourceUsageSignal: String, Codable, Sendable, Equatable {
     case agentLoad = "agent_load"
+    case skillInstructionRead = "skill_instruction_read"
     case explicitActivation = "explicit_activation"
     case toolInvocation = "tool_invocation"
     case commandInvocation = "command_invocation"
@@ -304,6 +305,7 @@ struct ResourceUsageBackfillStatus: Codable, Sendable, Equatable {
         case partial
     }
 
+    let semanticsGeneration: Int
     let status: Status
     let totalSources: Int
     let processedSources: Int
@@ -366,6 +368,12 @@ enum ResourceUsageBackfillPolling {
     }
 }
 
+struct ResourceUsageLoadedSessionSignal: Codable, Sendable, Equatable {
+    let actions: Int
+    let sessions: Int
+    let lastLoadedAt: Int64?
+}
+
 struct ResourceUsageAttribution: Codable, Sendable, Equatable {
     let exactActions: Int
     let inferredActions: Int
@@ -385,6 +393,7 @@ struct ResourceUsageResponse: Codable, Sendable, Equatable {
     let timezone: String
     let recordingStartedAt: Int64
     let recordedActions: Int
+    let loadedSessionSignal: ResourceUsageLoadedSessionSignal
     let attribution: ResourceUsageAttribution
     let distinctSessions: Int
     let activeDays: Int
@@ -416,6 +425,16 @@ struct ResourceUsageCoveragePresentation: Sendable, Equatable {
     let capture: ResourceUsageCaptureStatus
 
     var isPartial: Bool { capture.status == .degraded }
+}
+
+struct ResourceUsageDailyChartPresentation: Sendable, Equatable {
+    let valueLabel: String
+    let accessibilityLabel: String
+
+    init(usage: ResourceUsageResponse) {
+        valueLabel = usage.subject.kind == .skill ? "Instruction reads" : "Recorded actions"
+        accessibilityLabel = ResourceUsagePresentation.dailyActivityAccessibilityLabel(usage)
+    }
 }
 
 enum ResourceUsagePresentationState: Sendable, Equatable {
@@ -503,15 +522,27 @@ enum ResourceUsagePresentation {
 
     static func signalLabel(_ signal: ResourceUsageSignal) -> String {
         switch signal {
-        case .agentLoad: "Agent load"
-        case .explicitActivation: "Explicit activation"
+        case .agentLoad: "Loaded into session"
+        case .skillInstructionRead: "Instruction reads"
+        case .explicitActivation: "Explicit activations"
         case .toolInvocation: "Tool invocation"
         case .commandInvocation: "Command invocation"
         }
     }
 
     static func summaryAccessibilityLabel(_ usage: ResourceUsageResponse) -> String {
-        "Observed usage for the last \(usage.range.rawValue) days: "
+        if usage.subject.kind == .skill {
+            let activations = usage.breakdown
+                .filter { $0.signal == .explicitActivation }
+                .reduce(0) { $0 + $1.actions }
+            return "Observed Skill usage for the last \(usage.range.rawValue) days: "
+                + "\(usage.recordedActions) \(pluralized(usage.recordedActions, singular: "instruction read", plural: "instruction reads")), "
+                + "\(activations) \(pluralized(activations, singular: "explicit activation", plural: "explicit activations")), "
+                + "\(usage.loadedSessionSignal.actions) loads into \(usage.loadedSessionSignal.sessions) sessions, "
+                + "\(usage.distinctSessions) read sessions, "
+                + "\(usage.activeDays) \(pluralized(usage.activeDays, singular: "active day", plural: "active days"))."
+        }
+        return "Observed usage for the last \(usage.range.rawValue) days: "
             + "\(usage.recordedActions) recorded actions, "
             + "\(usage.distinctSessions) sessions, \(usage.activeDays) active days."
     }
@@ -555,8 +586,16 @@ enum ResourceUsagePresentation {
     }
 
     static func dailyActivityAccessibilityLabel(_ usage: ResourceUsageResponse) -> String {
-        "Daily activity: \(usage.recordedActions) recorded actions across "
+        if usage.subject.kind == .skill {
+            return "Daily activity: \(usage.recordedActions) instruction reads across "
+                + "\(usage.activeDays) \(pluralized(usage.activeDays, singular: "active day", plural: "active days")) in the last \(usage.range.rawValue) days."
+        }
+        return "Daily activity: \(usage.recordedActions) recorded actions across "
             + "\(usage.activeDays) active days in the last \(usage.range.rawValue) days."
+    }
+
+    private static func pluralized(_ count: Int, singular: String, plural: String) -> String {
+        count == 1 ? singular : plural
     }
 }
 

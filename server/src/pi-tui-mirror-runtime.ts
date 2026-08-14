@@ -46,6 +46,10 @@ import {
   piTuiMirrorUnsupportedRemoteCommandReason,
 } from "./pi-tui-mirror-contract.js";
 import { SessionAgentEventCoordinator } from "./session-agent-events.js";
+import type {
+  ResourceUsageService,
+  ResourceUsageSkillInstructionReadEvidence,
+} from "./resource-usage-service.js";
 import { normalizeCommandError } from "./session-protocol.js";
 import { isPiTuiTaskRecordBridgeState } from "./pi-tui-session-classification.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
@@ -530,6 +534,20 @@ function sleep(ms: number): Promise<void> {
 export interface PiTuiMirrorRuntimeOptions {
   isOppiSessionActive?: (sessionId: string) => boolean;
   stopOppiSession?: (sessionId: string) => Promise<void>;
+  resourceUsage?: Pick<
+    ResourceUsageService,
+    "captureToolInvocation" | "captureSkillInstructionRead"
+  >;
+  resolveResourceUsageToolEvidence?: (
+    toolName: string,
+  ) => { ownerKind: "builtin" | "extension"; ownerId: string } | undefined;
+  resolveResourceUsageSkillRead?: (
+    path: string,
+    cwd: string,
+  ) =>
+    | ResourceUsageSkillInstructionReadEvidence
+    | undefined
+    | Promise<ResourceUsageSkillInstructionReadEvidence | undefined>;
 }
 
 export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTransport {
@@ -591,6 +609,16 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       },
       dataDir: (this.storage as { getDataDir?: () => string }).getDataDir?.(),
       trustedAttachmentSourceRoots: trustedSessionAttachmentSourceRoots(),
+      resourceUsage: this.options.resourceUsage,
+      // Mirror forwards the same live Pi tool start/end evidence as managed
+      // sessions. Keep measurement at this shared projection boundary.
+      resourceUsageToolEvidence: (_active, toolName) =>
+        this.options.resolveResourceUsageToolEvidence?.(toolName),
+      resolveResourceUsageSkillRead: (active, path) =>
+        this.options.resolveResourceUsageSkillRead?.(
+          path,
+          active.session.mirror?.terminal?.cwd ?? process.cwd(),
+        ),
     });
 
     this.inputCoordinator = new SessionInputCoordinator({
@@ -769,6 +797,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
   getActiveSession(sessionId: string): Session | undefined {
     return this.active.get(sessionId)?.session ?? this.storage.getSession(sessionId);
+  }
+
+  releaseResourceUsageSession(session: Pick<Session, "id" | "piSessionId">): void {
+    this.agentEventCoordinator.releaseResourceUsageSession(session);
   }
 
   getSessionTraceState(
@@ -1535,6 +1567,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       terminal,
     };
     if (isTerminalStoppedReason(options.reason)) {
+      this.agentEventCoordinator.releaseResourceUsageSession(active.session);
       active.session.status = "stopped";
       active.session.currentTurnStartedAt = undefined;
       active.session.lastActivity = disconnectedAt;

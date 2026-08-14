@@ -3,6 +3,8 @@ import type {
   SessionManager as PiSessionManager,
 } from "@earendil-works/pi-coding-agent";
 
+import { createResourceUsageTraceEventId } from "./resource-usage-service.js";
+
 /**
  * Versioned Pi custom-entry type used to persist structural lifecycle events.
  *
@@ -23,15 +25,28 @@ export type OppiLifecycleEventType =
   | "tool_execution_end";
 
 export interface OppiLifecycleEntryData {
-  version: 1;
+  version: 1 | 2;
   event: OppiLifecycleEventType;
   turnIndex?: number;
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  /** Stable privacy-safe identity for one physical tool start. */
+  eventId?: string;
 }
 
 type LifecycleJournalSessionManager = Pick<PiSessionManager, "appendCustomEntry">;
+
+export interface PersistedLifecycleToolStartIdentity {
+  toolCallId: string;
+  toolName: string;
+  eventId: string;
+}
+
+export interface LifecycleJournalCallbacks {
+  /** Runs only after the exact tool-start identity has been appended. */
+  onToolStartPersisted?: (identity: PersistedLifecycleToolStartIdentity) => void;
+}
 
 /**
  * Register the lifecycle hooks that must run before Pi notifies normal session
@@ -41,6 +56,7 @@ type LifecycleJournalSessionManager = Pick<PiSessionManager, "appendCustomEntry"
  */
 export function createLifecycleJournalExtension(
   sessionManager: LifecycleJournalSessionManager,
+  callbacks: LifecycleJournalCallbacks = {},
 ): InlineExtension {
   return {
     name: "oppi-lifecycle-journal",
@@ -56,12 +72,17 @@ export function createLifecycleJournalExtension(
         append({ version: 1, event: "agent_end" });
       });
       pi.on("tool_execution_start", (event) => {
-        append({
-          version: 1,
-          event: "tool_execution_start",
+        const identity = {
           toolCallId: event.toolCallId,
           toolName: event.toolName,
+          eventId: createResourceUsageTraceEventId(),
+        };
+        append({
+          version: 2,
+          event: "tool_execution_start",
+          ...identity,
         });
+        callbacks.onToolStartPersisted?.(identity);
       });
       pi.on("tool_execution_end", (event) => {
         append({

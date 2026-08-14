@@ -529,15 +529,34 @@ private struct ResourceUsageSummaryView: View {
         VStack(alignment: .leading, spacing: 10) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 18) {
-                    metric("Recorded Actions", value: usage.recordedActions)
+                    metric(summaryActionTitle, value: usage.recordedActions)
                     metric("Sessions", value: usage.distinctSessions)
                     metric("Active Days", value: usage.activeDays)
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    compactMetric("Recorded Actions", value: usage.recordedActions)
+                    compactMetric(summaryActionTitle, value: usage.recordedActions)
                     compactMetric("Sessions", value: usage.distinctSessions)
                     compactMetric("Active Days", value: usage.activeDays)
                 }
+            }
+
+            if usage.subject.kind == .skill {
+                LabeledContent("Explicit Activations") {
+                    Text(explicitActivations, format: .number)
+                        .monospacedDigit()
+                }
+                .font(.footnote)
+                .foregroundStyle(.themeComment)
+            }
+
+            if usage.subject.kind == .skill, usage.loadedSessionSignal.actions > 0 {
+                LabeledContent("Loaded into Session") {
+                    Text("\(usage.loadedSessionSignal.actions) loads · \(usage.loadedSessionSignal.sessions) sessions")
+                        .multilineTextAlignment(.trailing)
+                        .monospacedDigit()
+                }
+                .font(.footnote)
+                .foregroundStyle(.themeComment)
             }
 
             LabeledContent("Last Recorded Use") {
@@ -551,6 +570,16 @@ private struct ResourceUsageSummaryView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(ResourceUsagePresentation.summaryAccessibilityLabel(usage))
         .accessibilityValue("Last recorded use \(lastRecordedUse)")
+    }
+
+    private var summaryActionTitle: String {
+        usage.subject.kind == .skill ? "Instruction Reads" : "Recorded Actions"
+    }
+
+    private var explicitActivations: Int {
+        usage.breakdown
+            .filter { $0.signal == .explicitActivation }
+            .reduce(0) { $0 + $1.actions }
     }
 
     private func metric(_ title: String, value: Int) -> some View {
@@ -604,7 +633,8 @@ private struct ResourceUsageDetailContent: View {
     }
 
     private var dailyActivity: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let presentation = ResourceUsageDailyChartPresentation(usage: usage)
+        return VStack(alignment: .leading, spacing: 6) {
             Text("Daily Activity")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.themeFg)
@@ -613,10 +643,12 @@ private struct ResourceUsageDetailContent: View {
             Chart(usage.daily) { row in
                 BarMark(
                     x: .value("Date", row.date),
-                    y: .value("Recorded actions", row.actions)
+                    y: .value(presentation.valueLabel, row.actions)
                 )
                 .foregroundStyle(.themeComment)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(presentation.accessibilityLabel)
             .accessibilityIdentifier("resourceUsage.dailyChart")
             .chartLegend(.hidden)
             .chartXAxis(.hidden)

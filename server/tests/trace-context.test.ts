@@ -457,6 +457,63 @@ describe("buildSessionContext", () => {
     expect(result!.isError).toBe(true);
   });
 
+  it.each([1, 2] as const)(
+    "projects a lifecycle-v2 tool start with a lifecycle-v%s end in order",
+    (endVersion) => {
+      const entries = [
+        msg("assistant", null, "assistant", [
+          { type: "toolCall", id: "call-1", name: "read", arguments: { path: "SKILL.md" } },
+        ]),
+        entry("custom", "lifecycle-start", "assistant", {
+          customType: "oppi-lifecycle",
+          data: {
+            version: 2,
+            event: "tool_execution_start",
+            toolCallId: "call-1",
+            toolName: "read",
+            eventId: `trace-event-v1_${"a".repeat(64)}`,
+          },
+        }),
+        entry("custom", "lifecycle-end", "lifecycle-start", {
+          customType: "oppi-lifecycle",
+          data: {
+            version: endVersion,
+            event: "tool_execution_end",
+            toolCallId: "call-1",
+            toolName: "read",
+            isError: false,
+          },
+        }),
+        msg("result", "lifecycle-end", "toolResult", "done", {
+          toolCallId: "call-1",
+          toolName: "read",
+          isError: false,
+        }),
+      ];
+
+      const events = buildSessionContext(entries, { view: "full" });
+
+      expect(events.map((event) => event.type)).toEqual(["toolCall", "toolResult"]);
+      expect(events[1]?.lifecycleBefore).toEqual([
+        {
+          id: "lifecycle-start",
+          event: "toolStart",
+          timestamp: "2025-01-01T00:00:00Z",
+          toolCallId: "call-1",
+          toolName: "read",
+        },
+        {
+          id: "lifecycle-end",
+          event: "toolEnd",
+          timestamp: "2025-01-01T00:00:00Z",
+          toolCallId: "call-1",
+          toolName: "read",
+          isError: false,
+        },
+      ]);
+    },
+  );
+
   it("full view includes pre-compaction messages", () => {
     const entries = [
       msg("1", null, "user", "old message"),

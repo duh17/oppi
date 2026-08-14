@@ -29,6 +29,7 @@ import {
   canonicalServerResourcePath as canonicalPath,
   serverResourceId as resourceId,
 } from "./server-resource-id.js";
+import type { ResourceUsageBackfillCatalog } from "./resource-usage-backfill.js";
 import {
   listSkillFiles,
   readSkillFile as readContainedSkillFile,
@@ -101,6 +102,13 @@ export interface ServerExtensionDetail {
   contributedCommands?: string[];
 }
 
+export interface ServerSkillPrimaryFile {
+  id: string;
+  name: string;
+  /** Transient canonical path; never returned by Resource Usage APIs or persisted there. */
+  path: string;
+}
+
 export interface ServerResourceServiceOptions {
   dataDir: string;
   agentDir: string;
@@ -169,6 +177,59 @@ export class ServerResourceService {
   async listSkills(): Promise<{ skills: ServerSkillSummary[] }> {
     const entries = await this.buildSkillCatalog(await this.resolveContext());
     return { skills: entries.map((entry) => copySkillSummary(entry.summary)) };
+  }
+
+  async listSkillPrimaryFiles(): Promise<ServerSkillPrimaryFile[]> {
+    const entries = await this.buildSkillCatalog(await this.resolveContext());
+    return entries.flatMap((entry) =>
+      entry.skill
+        ? [
+            {
+              id: entry.summary.id,
+              name: entry.summary.name,
+              path: canonicalPath(entry.skill.filePath),
+            },
+          ]
+        : [],
+    );
+  }
+
+  async resourceUsageCatalog(): Promise<ResourceUsageBackfillCatalog> {
+    const context = await this.resolveContext();
+    const skills = await this.buildSkillCatalog(context);
+    const extensions = await this.buildExtensionCatalog(context, this.oppiSettings.get());
+    return {
+      skills: uniqueOwners(skills.map((entry) => [entry.summary.name, entry.summary.id])),
+      skillPrimaryFiles: new Map(
+        skills.flatMap((entry) =>
+          entry.skill
+            ? [
+                [
+                  canonicalPath(entry.skill.filePath),
+                  { id: entry.summary.id, name: entry.summary.name },
+                ] as const,
+              ]
+            : [],
+        ),
+      ),
+      commands: uniqueOwners(
+        extensions.flatMap((entry) =>
+          (entry.summary.contributedCommands ?? []).map(
+            (name) =>
+              [name, { ownerKind: "extension" as const, ownerId: entry.summary.id }] as const,
+          ),
+        ),
+      ),
+      tools: uniqueOwners(
+        extensions.flatMap((entry) =>
+          (entry.summary.contributedTools ?? []).map(
+            (name) =>
+              [name, { ownerKind: "extension" as const, ownerId: entry.summary.id }] as const,
+          ),
+        ),
+      ),
+      builtInTools: new Set(builtInToolSummaries(this.catalogCwd).map((tool) => tool.name)),
+    };
   }
 
   async listExtensions(): Promise<{
@@ -614,6 +675,21 @@ export class ServerResourceService {
       release?.();
     }
   }
+}
+
+function uniqueOwners<T>(entries: readonly (readonly [string, T])[]): Map<string, T> {
+  const unique = new Map<string, T>();
+  const ambiguous = new Set<string>();
+  for (const [name, owner] of entries) {
+    if (ambiguous.has(name)) continue;
+    if (unique.has(name)) {
+      unique.delete(name);
+      ambiguous.add(name);
+      continue;
+    }
+    unique.set(name, owner);
+  }
+  return unique;
 }
 
 function messageFrom(error: unknown): string {
