@@ -348,68 +348,118 @@ describe("trace paging", () => {
     expect(page.trace.some((event) => event.type === "toolResult")).toBe(false);
   });
 
-  it.each([1, 2] as const)(
-    "keeps lifecycle-v2 start and lifecycle-v%s end metadata ordered on a paged tool result",
-    (endVersion) => {
-      const path = tempJsonl([
-        messageEntry("assistant", null, "assistant", [
-          { type: "toolCall", id: "call-v2", name: "read", arguments: { path: "SKILL.md" } },
-        ]),
-        {
-          type: "custom",
-          id: "lifecycle-start",
-          parentId: "assistant",
-          timestamp,
-          customType: OPPI_LIFECYCLE_CUSTOM_TYPE,
-          data: {
-            version: 2,
-            event: "tool_execution_start",
-            toolCallId: "call-v2",
-            toolName: "read",
-            eventId: `trace-event-v1_${"b".repeat(64)}`,
-          },
+  it("keeps lifecycle-v1 start and end metadata ordered on a paged tool result", () => {
+    const path = tempJsonl([
+      messageEntry("assistant", null, "assistant", [
+        { type: "toolCall", id: "call-v1", name: "read", arguments: { path: "SKILL.md" } },
+      ]),
+      {
+        type: "custom",
+        id: "lifecycle-start",
+        parentId: "assistant",
+        timestamp,
+        customType: OPPI_LIFECYCLE_CUSTOM_TYPE,
+        data: {
+          version: 1,
+          event: "tool_execution_start",
+          toolCallId: "call-v1",
+          toolName: "read",
         },
-        {
-          type: "custom",
-          id: "lifecycle-end",
-          parentId: "lifecycle-start",
-          timestamp,
-          customType: OPPI_LIFECYCLE_CUSTOM_TYPE,
-          data: {
-            version: endVersion,
-            event: "tool_execution_end",
-            toolCallId: "call-v2",
-            toolName: "read",
-            isError: false,
-          },
+      },
+      {
+        type: "custom",
+        id: "lifecycle-end",
+        parentId: "lifecycle-start",
+        timestamp,
+        customType: OPPI_LIFECYCLE_CUSTOM_TYPE,
+        data: {
+          version: 1,
+          event: "tool_execution_end",
+          toolCallId: "call-v1",
+          toolName: "read",
+          isError: false,
         },
-        messageEntry("result", "lifecycle-end", "toolResult", "done", {
+      },
+      messageEntry("result", "lifecycle-end", "toolResult", "done", {
+        toolCallId: "call-v1",
+        toolName: "read",
+        isError: false,
+      }),
+    ]);
+
+    const page = readSessionTracePageFromFile(path, { targetEvents: 1 });
+
+    expect(page.trace.map((event) => event.type)).toEqual(["toolCall", "toolResult"]);
+    expect(page.trace[1]?.lifecycleBefore).toEqual([
+      expect.objectContaining({
+        id: "lifecycle-start",
+        event: "toolStart",
+        toolCallId: "call-v1",
+        toolName: "read",
+      }),
+      expect.objectContaining({
+        id: "lifecycle-end",
+        event: "toolEnd",
+        toolCallId: "call-v1",
+        toolName: "read",
+        isError: false,
+      }),
+    ]);
+  });
+
+  it("ignores lifecycle entries that are not version 1 on a paged tool result", () => {
+    const path = tempJsonl([
+      messageEntry("assistant", null, "assistant", [
+        { type: "toolCall", id: "call-v2", name: "read", arguments: { path: "SKILL.md" } },
+      ]),
+      {
+        type: "custom",
+        id: "lifecycle-start",
+        parentId: "assistant",
+        timestamp,
+        customType: OPPI_LIFECYCLE_CUSTOM_TYPE,
+        data: {
+          version: 2,
+          event: "tool_execution_start",
+          toolCallId: "call-v2",
+          toolName: "read",
+          eventId: `trace-event-v1_${"b".repeat(64)}`,
+        },
+      },
+      {
+        type: "custom",
+        id: "lifecycle-end",
+        parentId: "lifecycle-start",
+        timestamp,
+        customType: OPPI_LIFECYCLE_CUSTOM_TYPE,
+        data: {
+          version: 1,
+          event: "tool_execution_end",
           toolCallId: "call-v2",
           toolName: "read",
           isError: false,
-        }),
-      ]);
+        },
+      },
+      messageEntry("result", "lifecycle-end", "toolResult", "done", {
+        toolCallId: "call-v2",
+        toolName: "read",
+        isError: false,
+      }),
+    ]);
 
-      const page = readSessionTracePageFromFile(path, { targetEvents: 1 });
+    const page = readSessionTracePageFromFile(path, { targetEvents: 1 });
 
-      expect(page.trace.map((event) => event.type)).toEqual(["toolCall", "toolResult"]);
-      expect(page.trace[1]?.lifecycleBefore).toEqual([
-        expect.objectContaining({
-          id: "lifecycle-start",
-          event: "toolStart",
-          toolCallId: "call-v2",
-          toolName: "read",
-        }),
-        expect.objectContaining({
-          id: "lifecycle-end",
-          event: "toolEnd",
-          toolCallId: "call-v2",
-          toolName: "read",
-          isError: false,
-        }),
-      ]);
-    },
-  );
+    expect(page.trace.map((event) => event.type)).toEqual(["toolCall", "toolResult"]);
+    expect(page.trace[1]?.lifecycleBefore).toEqual([
+      expect.objectContaining({
+        id: "lifecycle-end",
+        event: "toolEnd",
+        toolCallId: "call-v2",
+        toolName: "read",
+        isError: false,
+      }),
+    ]);
+  });
 
   it("keeps ask tool call and answer together", () => {
     const path = tempJsonl([
