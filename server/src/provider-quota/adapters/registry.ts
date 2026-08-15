@@ -1,5 +1,6 @@
 import type { ProviderQuotaAdapter } from "../types.js";
 import { codexProviderQuotaAdapter } from "./codex.js";
+import { openCodeGoProviderQuotaAdapter } from "./opencode-go.js";
 import { xaiProviderQuotaAdapter } from "./xai.js";
 
 /**
@@ -14,7 +15,8 @@ import { xaiProviderQuotaAdapter } from "./xai.js";
  */
 export const defaultProviderQuotaAdapters: readonly ProviderQuotaAdapter[] = [
   codexProviderQuotaAdapter,
+  openCodeGoProviderQuotaAdapter,
   xaiProviderQuotaAdapter,
 ];
 
-export { codexProviderQuotaAdapter, xaiProviderQuotaAdapter };
+export { codexProviderQuotaAdapter, openCodeGoProviderQuotaAdapter, xaiProviderQuotaAdapter };

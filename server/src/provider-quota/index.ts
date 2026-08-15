@@ -26,6 +26,7 @@ export {
   finalizeProviderQuota,
   makeProviderQuotaWindow,
   normalizeProviderQuotaWindows,
+  parseIsoToUnixSeconds,
   resolveProviderAccessToken,
   UPSTREAM_TIMEOUT_MS,
 } from "./shared.js";
@@ -37,4 +38,5 @@ export {
   xaiProviderQuotaAdapter,
 } from "./adapters/registry.js";
 export { fetchCodexProviderQuota } from "./adapters/codex.js";
+export { fetchOpenCodeGoProviderQuota } from "./adapters/opencode-go.js";
 export { fetchXaiProviderQuota } from "./adapters/xai.js";

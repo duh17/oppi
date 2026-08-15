@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   fetchCodexProviderQuota,
+  fetchOpenCodeGoProviderQuota,
   fetchProviderQuotas,
   fetchXaiProviderQuota,
   normalizeProviderQuotaWindows,
@@ -428,6 +429,209 @@ describe("fetchXaiProviderQuota", () => {
   });
 });
 
+describe("fetchOpenCodeGoProviderQuota", () => {
+  it("returns unauthenticated when no opencode-go credential is stored", async () => {
+    const result = await fetchOpenCodeGoProviderQuota({
+      modelRuntime: { getAuth: vi.fn() },
+      readCredential: vi.fn(() => undefined),
+      fetchImpl: vi.fn() as never,
+      now: () => 20,
+    });
+
+    expect(result).toEqual({
+      providerId: "opencode-go",
+      displayName: "OpenCode Go",
+      authenticated: false,
+      planType: null,
+      windows: [],
+      credits: null,
+      prepaidBalanceCents: null,
+      fetchedAt: 20,
+    });
+  });
+
+  it("maps rolling, weekly, and monthly windows from the usage payload", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            usage: {
+              rolling: { status: "ok", percent: 2, resetsAt: "2026-08-15T12:48:46.948Z" },
+              weekly: { status: "ok", percent: 1, resetsAt: "2026-08-17T00:00:00.948Z" },
+              monthly: { status: "ok", percent: 0, resetsAt: "2026-09-15T07:35:54.948Z" },
+            },
+          }),
+          { status: 200 },
+        ),
+    ) as never;
+
+    const result = await fetchOpenCodeGoProviderQuota({
+      modelRuntime: { getAuth: vi.fn() },
+      readCredential: vi.fn(() => ({ type: "api_key", key: "sk-go-test" }) as const),
+      fetchImpl,
+      now: () => 321,
+    });
+
+    expect(result).toMatchObject({
+      providerId: "opencode-go",
+      displayName: "OpenCode Go",
+      authenticated: true,
+      planType: "Go",
+      windows: [
+        {
+          key: "five_hour",
+          shortLabel: "5h",
+          title: "5-hour",
+          usedPercent: 2,
+          remainingPercent: 98,
+          limitWindowSeconds: 18_000,
+          resetAt: Math.floor(Date.parse("2026-08-15T12:48:46.948Z") / 1000),
+          includeWeekdayInReset: false,
+        },
+        {
+          key: "weekly",
+          shortLabel: "7d",
+          title: "Weekly",
+          usedPercent: 1,
+          remainingPercent: 99,
+          limitWindowSeconds: 604_800,
+          resetAt: Math.floor(Date.parse("2026-08-17T00:00:00.948Z") / 1000),
+          includeWeekdayInReset: true,
+        },
+        {
+          key: "monthly",
+          shortLabel: "30d",
+          title: "Monthly",
+          usedPercent: 0,
+          remainingPercent: 100,
+          limitWindowSeconds: null,
+          resetAt: Math.floor(Date.parse("2026-09-15T07:35:54.948Z") / 1000),
+          includeWeekdayInReset: false,
+        },
+      ],
+      fetchedAt: 321,
+    });
+    expect(result.error).toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://opencode.ai/zen/go/v1/usage",
+      expect.objectContaining({ method: "GET", headers: expect.any(Headers) }),
+    );
+    const [, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { headers: Headers },
+    ];
+    expect(init.headers.get("Authorization")).toBe("Bearer sk-go-test");
+  });
+
+  it("clamps percent above 100 and tolerates unparseable resetsAt", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            usage: {
+              rolling: { status: "rate-limited", percent: 250, resetsAt: "not-a-date" },
+              weekly: { status: "ok" },
+            },
+          }),
+          { status: 200 },
+        ),
+    ) as never;
+
+    const result = await fetchOpenCodeGoProviderQuota({
+      modelRuntime: { getAuth: vi.fn() },
+      readCredential: vi.fn(() => ({ type: "api_key", key: "sk-go-test" }) as const),
+      fetchImpl,
+      now: () => 322,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.windows).toHaveLength(1);
+    expect(result.windows[0]).toMatchObject({
+      key: "five_hour",
+      usedPercent: 100,
+      remainingPercent: 0,
+      resetAt: null,
+    });
+  });
+
+  it("rejects non-api_key credentials with a structured error", async () => {
+    const result = await fetchOpenCodeGoProviderQuota({
+      modelRuntime: { getAuth: vi.fn() },
+      readCredential: vi.fn(
+        () => ({ type: "oauth", access: "a", refresh: "r", expires: 1 }) as const,
+      ),
+      fetchImpl: vi.fn() as never,
+      now: () => 323,
+    });
+
+    expect(result.authenticated).toBe(true);
+    expect(result.windows).toEqual([]);
+    expect(result.error).toContain("unexpected credential type");
+  });
+
+  it("reports a missing API key on an api_key credential", async () => {
+    const result = await fetchOpenCodeGoProviderQuota({
+      modelRuntime: { getAuth: vi.fn() },
+      readCredential: vi.fn(() => ({ type: "api_key" }) as const),
+      fetchImpl: vi.fn() as never,
+      now: () => 324,
+    });
+
+    expect(result.authenticated).toBe(true);
+    expect(result.error).toContain("no API key is available");
+  });
+
+  it("returns an invalid-payload error when usage is missing", async () => {
+    const result = await fetchOpenCodeGoProviderQuota({
+      modelRuntime: { getAuth: vi.fn() },
+      readCredential: vi.fn(() => ({ type: "api_key", key: "sk-go-test" }) as const),
+      fetchImpl: vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })) as never,
+      now: () => 325,
+    });
+
+    expect(result.authenticated).toBe(true);
+    expect(result.error).toBe("OpenCode Go quota fetch failed: invalid response payload.");
+  });
+
+  it("surfaces network failures as structured errors", async () => {
+    const result = await fetchOpenCodeGoProviderQuota({
+      modelRuntime: { getAuth: vi.fn() },
+      readCredential: vi.fn(() => ({ type: "api_key", key: "sk-go-test" }) as const),
+      fetchImpl: vi.fn(async () => {
+        throw new Error("socket hang up");
+      }) as never,
+      now: () => 326,
+    });
+
+    expect(result.authenticated).toBe(true);
+    expect(result.error).toBe("OpenCode Go quota fetch failed: socket hang up");
+  });
+
+  it("returns a structured error on upstream 401 (invalid key)", async () => {
+    const result = await fetchOpenCodeGoProviderQuota({
+      modelRuntime: { getAuth: vi.fn() },
+      readCredential: vi.fn(() => ({ type: "api_key", key: "sk-go-test" }) as const),
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "no active subscription" }), { status: 401 }),
+      ) as never,
+      now: () => 456,
+    });
+
+    expect(result).toEqual({
+      providerId: "opencode-go",
+      displayName: "OpenCode Go",
+      authenticated: true,
+      planType: null,
+      windows: [],
+      credits: null,
+      prepaidBalanceCents: null,
+      fetchedAt: 456,
+      error: "OpenCode Go quota fetch failed (401): no active subscription",
+    });
+  });
+});
+
 describe("normalizeProviderQuotaWindows", () => {
   it("dedupes by key and sorts shortest period first", () => {
     const windows: ProviderQuotaWindow[] = [
@@ -623,10 +827,25 @@ describe("fetchProviderQuotas", () => {
           expires: 1_800_000_000_000,
         } as const;
       }
+      if (providerId === "opencode-go") {
+        return { type: "api_key", key: "sk-go" } as const;
+      }
       return undefined;
     });
 
     const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes("opencode.ai")) {
+        return new Response(
+          JSON.stringify({
+            usage: {
+              rolling: { status: "ok", percent: 5, resetsAt: "2026-08-15T12:00:00Z" },
+              weekly: { status: "ok", percent: 3, resetsAt: "2026-08-17T00:00:00Z" },
+              monthly: { status: "ok", percent: 1, resetsAt: "2026-09-15T00:00:00Z" },
+            },
+          }),
+          { status: 200 },
+        );
+      }
       if (String(url).includes("chatgpt.com")) {
         return new Response(
           JSON.stringify({
@@ -694,9 +913,23 @@ describe("fetchProviderQuotas", () => {
     });
 
     expect(result.fetchedAt).toBe(50);
-    expect(result.providers.map((p) => p.providerId)).toEqual(["openai-codex", "xai"]);
+    expect(result.providers.map((p) => p.providerId)).toEqual([
+      "openai-codex",
+      "opencode-go",
+      "xai",
+    ]);
     expect(result.providers[0]?.windows).toHaveLength(2);
-    expect(result.providers[1]?.planType).toBe("SuperGrok");
-    expect(result.providers[1]?.windows[0]?.remainingPercent).toBe(60);
+    expect(result.providers[1]).toMatchObject({
+      providerId: "opencode-go",
+      planType: "Go",
+      authenticated: true,
+    });
+    expect(result.providers[1]?.windows.map((w) => w.key)).toEqual([
+      "five_hour",
+      "weekly",
+      "monthly",
+    ]);
+    expect(result.providers[2]?.planType).toBe("SuperGrok");
+    expect(result.providers[2]?.windows[0]?.remainingPercent).toBe(60);
   });
 });

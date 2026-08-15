@@ -1,6 +1,5 @@
 import { readStoredCredential } from "@earendil-works/pi-coding-agent";
 import type { AuthResult, Credential } from "@earendil-works/pi-ai";
-
 import { safeErrorMessage } from "../log-utils.js";
 import type {
   FetchProviderQuotasOptions,
@@ -49,6 +48,13 @@ export function extractAccountId(credential: Credential | undefined): string | n
   const record = asRecord(credential);
   if (!record) return null;
   return readString(record.accountId);
+}
+
+/** Parse an ISO timestamp into Unix epoch seconds; null when missing/unparseable. */
+export function parseIsoToUnixSeconds(value: string | null): number | null {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
 }
 
 export function credentialType(credential: Credential | undefined): string | null {

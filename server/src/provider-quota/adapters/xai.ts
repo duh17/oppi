@@ -13,6 +13,7 @@ import {
   finalizeProviderQuota,
   makeProviderQuotaWindow,
   parseMaybeJson,
+  parseIsoToUnixSeconds,
   parseUpstreamErrorMessage,
   readNumber,
   readResponseText,
@@ -40,13 +41,6 @@ function readCentValue(value: unknown): number | null {
   if (!record) return null;
   const nested = readNumber(record.val);
   return nested === null ? null : Math.trunc(nested);
-}
-
-function parseIsoToUnixSeconds(value: string | null): number | null {
-  if (!value) return null;
-  const ms = Date.parse(value);
-  if (!Number.isFinite(ms)) return null;
-  return Math.floor(ms / 1000);
 }
 
 function periodWindowSeconds(startIso: string | null, endIso: string | null): number | null {
