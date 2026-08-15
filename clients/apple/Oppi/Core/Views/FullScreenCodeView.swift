@@ -296,6 +296,7 @@ indirect enum FullScreenCodeContent {
     /// Workspace/session context for resolving image paths in markdown files.
     struct WorkspaceContext: @unchecked Sendable {
         let workspaceID: String
+        let serverID: String?
         let serverBaseURL: URL
         let fetchWorkspaceFile: (_ workspaceID: String, _ path: String) async throws -> Data
         let sessionID: String?
@@ -303,12 +304,14 @@ indirect enum FullScreenCodeContent {
 
         init(
             workspaceID: String,
+            serverID: String? = nil,
             serverBaseURL: URL,
             fetchWorkspaceFile: @escaping (_ workspaceID: String, _ path: String) async throws -> Data,
             sessionID: String? = nil,
             fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
         ) {
             self.workspaceID = workspaceID
+            self.serverID = serverID
             self.serverBaseURL = serverBaseURL
             self.fetchWorkspaceFile = fetchWorkspaceFile
             self.sessionID = sessionID

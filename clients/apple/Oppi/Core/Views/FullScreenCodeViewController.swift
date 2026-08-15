@@ -697,6 +697,7 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenMarkdown,
                     filePath: filePath
                 ),
+                serverID: wsContext?.serverID,
                 workspaceID: wsContext?.workspaceID,
                 sessionID: wsContext?.sessionID,
                 serverBaseURL: wsContext?.serverBaseURL,
@@ -850,6 +851,7 @@ final class FullScreenCodeViewController: UIViewController {
                 surface: .fullScreenMarkdown,
                 filePath: filePath
             ),
+            serverID: workspaceContext?.serverID,
             workspaceID: workspaceContext?.workspaceID,
             sessionID: workspaceContext?.sessionID,
             serverBaseURL: workspaceContext?.serverBaseURL,

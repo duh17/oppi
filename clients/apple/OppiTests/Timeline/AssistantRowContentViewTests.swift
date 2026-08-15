@@ -1280,6 +1280,29 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func givenNoWorkspaceWhenClassifyingHostFileWikiLinkThenItRoutesAsResourceReference() throws {
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.apply(configuration: .make(
+            content: "Open [[/tmp/oppi-debug.log]]",
+            isStreaming: false,
+            themeID: .light,
+            serverID: "server-1",
+            sessionID: "session-source"
+        ))
+        let textView = try #require(timelineFirstTextView(in: markdownView))
+        let url = try #require(textView.attributedText.attribute(
+            .link,
+            at: 5,
+            effectiveRange: nil
+        ) as? URL)
+        let reference = try #require(ResourceReferenceURL.parse(url))
+
+        #expect(reference.kind == .hostFile)
+        #expect(reference.fileCandidatePath == "/tmp/oppi-debug.log")
+        #expect(markdownView.classifyLink(url) == .resourceReference(reference))
+    }
+
+    @MainActor
     @Test func givenDifferentWorkspaceWhenClassifyingWikiLinkThenItUsesSystemDefault() throws {
         let markdownView = AssistantMarkdownContentView()
         markdownView.apply(configuration: .make(

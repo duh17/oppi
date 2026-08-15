@@ -13,7 +13,18 @@ Assistant messages can reference files in the active workspace with:
 [[path/to/file|Human-readable label]]
 ```
 
-The target is a workspace-relative path. Oppi preserves an explicit extension, adds `.md` to an extensionless target, and resolves `./` or `../` relative to the source Markdown file's directory when that directory is known. Backslashes become `/`. Absolute paths, `~` paths, `file://` URLs, and query strings are not workspace wiki links.
+Workspace-relative targets keep the current rules: Oppi preserves an explicit extension, adds `.md` to an extensionless target, and resolves `./` or `../` relative to the source Markdown file's directory when that directory is known. Backslashes become `/`. Query strings and malformed line anchors stay literal text.
+
+Owner wiki links can also name a real host file the Oppi server process can already read:
+
+```text
+[[/tmp/oppi-debug.log]]
+[[~/workspace/kypu/README.md]]
+[[/Users/chenda/workspace/kypu/src/main.go#L12-L18]]
+[[file:///tmp/foo.md]]
+```
+
+Absolute POSIX paths, bare `~` / `~/...`, and local `file://` URLs become host-file links. `~otheruser`, undocumented `file:/...`, non-local `file://` URLs, and query strings stay literal. Opening a host file pushes the existing document or media viewer onto the current stack. It does not switch workspace, attach the file to the workspace browser, or start a session in another checkout.
 
 ### Line anchors
 
@@ -52,7 +63,7 @@ Oppi selects a document or media viewer from the detected file type. An unknown 
 
 ### Resolution, navigation, and limits
 
-Oppi resolves a wiki link when the user taps it. It checks the exact parent directory instead of relying on fuzzy search. One matching session or workspace file opens directly. Multiple matches show a chooser; no match shows an unresolved-file message. A link to the current session remains inert. Opening a file pushes its viewer onto the current navigation stack, and Back returns to the originating chat or file context.
+Oppi resolves a wiki link when the user taps it. Workspace-relative candidates check the exact parent directory instead of relying on fuzzy search. Host-file candidates skip workspace contents and HEAD/GET an authenticated `/files/raw?path=` route on the source server. One matching session, workspace file, or host file opens directly. Multiple matches show a chooser; no match shows an unresolved-file message. A 401/403 host-file response is an auth or server error, not an unresolved file. A link to the current session remains inert. Opening a file pushes its viewer onto the current navigation stack, and Back returns to the originating chat or file context. Host-file viewers show the canonical realpath from `X-Oppi-Resolved-Path` in the navigation title. Oppi does not present a separate path toast or confirmation sheet. Relative `./` and `../` links inside a host Markdown file resolve against that file's directory before host/workspace classification.
 
 Fuzzy discovery uses a deterministic, bounded filesystem walk rather than Git's ignore rules. It includes safe Git-ignored files such as `.internal/**`, but excludes major VCS, dependency, build, generated, and cache directories, root `.pi` runtime state, sensitive files, and symlink aliases. An explicitly named existing file can still be checked by exact lookup; agents must not cite private `.pi` state, session stores, credentials, or configuration.
 
@@ -65,16 +76,18 @@ The server enforces these limits:
 
 ### Workspace and security boundary
 
-Wiki links can open workspace files only. The server canonicalizes the workspace root and requested file with `realpath`, then requires the canonical file to remain inside the canonical workspace root. This rejects `..` traversal, absolute or other path escapes, and symlinks that resolve outside the workspace. Search does not follow symlinks or index aliases.
+The workspace file browser, fuzzy `/paths` index, and workspace `contents`/`raw` routes stay workspace-confined. The server canonicalizes the workspace root and requested file with `realpath`, then requires the canonical file to remain inside the canonical workspace root. This rejects `..` traversal, absolute or other path escapes, and symlinks that resolve outside the workspace. Search does not follow symlinks or index aliases.
 
-Directory listings can show sensitive names, but raw serving blocks `.env` files, private-key and certificate extensions, SSH private-key names, credential files such as `.netrc` and `.npmrc`, and paths under `.git`. A rejected path fails closed instead of falling back to an external or arbitrary host path.
+Owner host-file reads use a separate authenticated GET/HEAD `/files/raw?path=` helper. That route expands only bare `~` / `~/`, requires an absolute post-expansion path, realpaths a regular file, returns the canonical path as percent-encoded `X-Oppi-Resolved-Path`, and never lists directories. Wiki-link parsing accepts local `file://` URLs and rejects undocumented `file:/...`. It does not apply workspace-root confinement or `isSensitivePath` 403s. Pairing/auth is the remote gate. Host HTML and SVG still use the existing fetch → `loadHTMLString` + CSP viewer; WKWebView must not URL-load `/files/raw`.
+
+Directory listings can show sensitive names, and workspace raw serving still blocks `.env` files, private-key and certificate extensions, SSH private-key names, credential files such as `.netrc` and `.npmrc`, and paths under `.git`. An explicit owner tap of a host file may open those names. Agents must not ingest them.
 
 ### Recommended agent instruction
 
 Copy this into a Pi or agent system prompt:
 
 ```text
-When citing a relevant file from the current Oppi workspace, use a workspace-relative wiki link such as [[path/to/file.ext|Short human-readable label]]. Add a source focus only when it helps, using [[path/to/file.ext#L12-L18|Short label]]. Reuse an existing path from the workspace; never fabricate a path or use an absolute, ~, file://, or outside-workspace path. Keep a normal human-readable sentence and brief context around every link so Oppi can render it as a navigable personal-wiki reference. Do not cite secrets, credentials, private runtime state, or sensitive files.
+When citing a relevant file the owner can open, use a real relative, absolute, or ~ wiki link such as [[path/to/file.ext|Short human-readable label]] or [[/tmp/notes.md|Debug log]]. Add a source focus only when it helps, using [[path/to/file.ext#L12-L18|Short label]]. Reuse an existing path; never fabricate one. Keep a normal human-readable sentence and brief context around every link so Oppi can render it as a navigable personal-wiki reference. Do not cite secrets, credentials, private runtime state, or dump credential files into the session. Sandbox sessions should keep using sandbox-visible paths.
 ```
 
 Inline Markdown images support workspace-relative raster paths, source-relative paths when source context is known, and the existing client SVG path for SVG. See [Markdown image resolution](attachment-rendering.md#markdown-image-resolution).
@@ -82,9 +95,9 @@ Inline Markdown images support workspace-relative raster paths, source-relative 
 ### Copyable `AGENTS.md` guidance for other projects
 
 ````markdown
-- When pointing the user to a relevant file in the current workspace for navigation, use a real workspace-relative wiki link such as `[[path/to/file.ext|Short label]]`. Add an uppercase GitHub-style source anchor only when useful, for example `[[path/to/file.ext#L12-L18|Short label]]`.
+- When pointing the user to a relevant file the owner can open, use a real relative, absolute, or `~` wiki link such as `[[path/to/file.ext|Short label]]` or `[[/tmp/notes.md|Debug log]]`. Add an uppercase GitHub-style source anchor only when useful, for example `[[path/to/file.ext#L12-L18|Short label]]`.
 - When the image or SVG itself should appear inline, use standard Markdown image syntax such as `![Short description](path/to/image.png)` or `![Diagram](path/to/diagram.svg)`.
-- For both formats, reuse a real existing workspace-relative path; never fabricate a path, use an absolute or outside-workspace path, or expose secrets or private runtime state. Keep normal human-readable context, and use these formats when actually showing or citing content—not for every casual filename mention.
+- For both formats, reuse a real existing path; never fabricate a path or expose secrets, credentials, or private runtime state. Keep normal human-readable context, and use these formats when actually showing or citing content—not for every casual filename mention. Sandbox sessions should keep using sandbox-visible paths.
 - For a diagram that should render inline, use a fenced Markdown code block labeled `mermaid` with valid Mermaid source:
   ```mermaid
   graph LR

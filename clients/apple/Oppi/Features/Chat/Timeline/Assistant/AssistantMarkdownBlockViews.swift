@@ -1342,8 +1342,11 @@ extension NativeTableBlockView: UITextViewDelegate {
     ) -> UIAction? {
         guard case let .link(url) = textItem.content,
               let reference = ResourceReferenceURL.parse(url),
-              reference.workspaceID == resourceReferenceWorkspaceID,
-              reference.sourceServerID == nil || reference.sourceServerID == resourceReferenceServerID else {
+              ResourceReferenceTapScope.matches(
+                reference,
+                serverID: resourceReferenceServerID,
+                workspaceID: resourceReferenceWorkspaceID
+              ) else {
             return defaultAction
         }
 

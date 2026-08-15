@@ -379,6 +379,7 @@ struct FileBrowserView: View {
             FileBrowserContentView(
                 workspaceId: workspaceId,
                 worktreeId: worktreeId,
+                serverId: serverId,
                 filePath: activeSelection.path,
                 fileName: activeSelection.name,
                 fileSize: activeSelection.size,
@@ -911,6 +912,7 @@ struct FileBrowserView: View {
                 FileBrowserContentView(
                     workspaceId: workspaceId,
                     worktreeId: worktreeId,
+                    serverId: serverId,
                     filePath: path,
                     fileName: name,
                     fileSize: size,

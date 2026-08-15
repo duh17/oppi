@@ -89,6 +89,7 @@ struct WorkspaceSessionNavTarget: Hashable {
 
 enum WorkspaceLinkedFileKind: Hashable {
     case workspaceFile(path: String, fileName: String)
+    case hostFile(path: String, fileName: String)
 }
 
 struct WorkspaceLinkedFileNavTarget: Hashable {
@@ -137,6 +138,28 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
             worktreeId: worktreeId,
             kind: .workspaceFile(path: path, fileName: resolvedFileName),
             navigationContext: navigationContext,
+            lineAnchor: lineAnchor
+        )
+    }
+
+    static func hostFile(
+        serverId: String,
+        workspaceId: String,
+        path: String,
+        fileName: String? = nil,
+        lineAnchor: SourceLineAnchor? = nil
+    ) -> WorkspaceLinkedFileNavTarget {
+        let resolvedFileName: String
+        if let fileName, !fileName.isEmpty {
+            resolvedFileName = fileName
+        } else {
+            resolvedFileName = path.split(separator: "/").last.map(String.init) ?? path
+        }
+
+        return WorkspaceLinkedFileNavTarget(
+            serverId: serverId,
+            workspaceId: workspaceId,
+            kind: .hostFile(path: path, fileName: resolvedFileName),
             lineAnchor: lineAnchor
         )
     }
@@ -289,9 +312,21 @@ struct WorkspaceLinkedFileDestinationView: View {
                     FileBrowserContentView(
                         workspaceId: target.workspaceId,
                         worktreeId: target.worktreeId,
+                        serverId: target.serverId,
                         filePath: path,
                         fileName: fileName,
                         navigationContext: target.navigationContext,
+                        lineAnchor: target.lineAnchor,
+                        onLineAnchorNotice: { connection.extensionToast = $0 }
+                    )
+                    .withServerScopedEnvironment(connection)
+                case .hostFile(let path, let fileName):
+                    FileBrowserContentView(
+                        workspaceId: target.workspaceId,
+                        serverId: target.serverId,
+                        filePath: path,
+                        fileName: fileName,
+                        source: .hostFile,
                         lineAnchor: target.lineAnchor,
                         onLineAnchorNotice: { connection.extensionToast = $0 }
                     )

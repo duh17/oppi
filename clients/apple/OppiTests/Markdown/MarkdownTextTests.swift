@@ -888,6 +888,107 @@ struct WorkspaceWikiLinkRenderingTests {
         #expect(attributed.runs.compactMap(\.link).isEmpty)
     }
 
+    @Test func givenAbsoluteHostWikiLinkThenItStoresAHostFileCandidate() throws {
+        let blocks = parseCommonMark("Open [[/tmp/oppi-debug.log]]")
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-source"
+        )
+        let attributed = try textSegment(from: segments)
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+
+        #expect(parsed.target == "/tmp/oppi-debug.log")
+        #expect(parsed.kind == .hostFile)
+        #expect(parsed.fileCandidatePath == "/tmp/oppi-debug.log")
+        #expect(parsed.sourceServerID == "server-1")
+    }
+
+    @Test func givenHomeAndFileURLWikiLinksThenTheyBecomeHostFileCandidates() throws {
+        let cases: [(source: String, expected: String)] = [
+            ("[[~/workspace/kypu/README.md]]", "~/workspace/kypu/README.md"),
+            ("[[file:///tmp/foo.md]]", "/tmp/foo.md"),
+        ]
+
+        for item in cases {
+            let attributed = try textSegment(from: FlatSegment.build(
+                from: parseCommonMark("Open \(item.source)"),
+                themeID: .dark,
+                serverID: "server-1",
+                workspaceID: "workspace-1"
+            ))
+            let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+            #expect(parsed.kind == .hostFile)
+            #expect(parsed.fileCandidatePath == item.expected)
+        }
+    }
+
+    @Test func givenAbsoluteHostWikiLinkWithLineAnchorThenFileCandidateDropsFragment() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("Open [[/Users/chenda/workspace/kypu/src/main.go#L12-L18]]"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+
+        #expect(parsed.kind == .hostFile)
+        #expect(parsed.fileCandidatePath == "/Users/chenda/workspace/kypu/src/main.go")
+        #expect(parsed.lineAnchor?.range == 12...18)
+    }
+
+    @Test(arguments: [
+        "[[/tmp/foo.md?leak=1]]",
+        "[[~other/secrets.md]]",
+        "[[file://hostname/tmp/foo.md]]",
+        "[[file:/tmp/foo.md]]",
+        "[[/tmp/foo.md#Heading]]",
+    ])
+    func givenUnsupportedHostWikiLinkThenItRemainsLiteral(source: String) throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("Open \(source)"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+
+        #expect(String(attributed.characters) == "Open \(source)")
+        #expect(attributed.runs.compactMap(\.link).isEmpty)
+    }
+
+    @Test func givenRelativeWikiLinkThenItStaysAWorkspaceFileCandidate() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("See [[server/src/file-serving-policy.ts]]"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+
+        #expect(parsed.kind == .workspaceFile)
+        #expect(parsed.fileCandidatePath == "server/src/file-serving-policy.ts")
+    }
+
+    @Test func givenRelativeWikiLinkInsideHostMarkdownThenItStaysAHostFileCandidate() throws {
+        let cases: [(source: String, directory: String, expected: String)] = [
+            ("[[./topic]]", "/tmp", "/tmp/topic.md"),
+            ("[[../topic]]", "/tmp/notes", "/tmp/topic.md"),
+        ]
+
+        for item in cases {
+            let attributed = try textSegment(from: FlatSegment.build(
+                from: parseCommonMark("Open \(item.source)"),
+                themeID: .dark,
+                serverID: "server-1",
+                workspaceID: "workspace-1",
+                sourceDirectory: item.directory
+            ))
+            let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+            #expect(parsed.kind == .hostFile, "\(item.source)")
+            #expect(parsed.fileCandidatePath == item.expected, "\(item.source)")
+            #expect(parsed.target == String(item.source.dropFirst(2).dropLast(2)))
+        }
+    }
+
     @Test(arguments: [
         "#L0",
         "#L4-L3",
@@ -1463,6 +1564,73 @@ struct ResourceReferenceResolutionTests {
             sessionMatches: [session],
             fileLookup: .unavailable
         ) == .unavailable)
+    }
+
+    @Test func hostFileLookupDoesNotUseWorkspaceContents() {
+        let hostReference = ResourceReference(
+            target: "~/secret",
+            sourceServerID: "server-1",
+            workspaceID: "workspace-1",
+            sourceSessionID: "session-source",
+            fileCandidatePath: "~/secret",
+            kind: .hostFile
+        )
+        let hostFile = ResourceReferenceMatch.hostFile(.init(
+            serverID: "server-1",
+            path: "/Users/me/secret",
+            serverName: "Mac"
+        ))
+
+        #expect(ResourceReferenceFileLookupPolicy.kind(for: hostReference) == .hostFile)
+        #expect(ResourceReferenceCandidateCollector.resolve(
+            hostReference,
+            sessionMatches: [],
+            fileLookup: .complete([hostFile])
+        ) == .resolution(.resolved(hostFile)))
+        #expect(ResourceReferenceCandidateCollector.resolve(
+            hostReference,
+            sessionMatches: [],
+            fileLookup: .authorizationFailed
+        ) == .authorizationFailed)
+    }
+
+    @Test func hostFileTapScopeDoesNotRequireWorkspaceIdentity() {
+        let hostReference = ResourceReference(
+            target: "/tmp/oppi-debug.log",
+            sourceServerID: "server-1",
+            workspaceID: nil,
+            sourceSessionID: "session-source",
+            fileCandidatePath: "/tmp/oppi-debug.log",
+            kind: .hostFile
+        )
+        let workspaceReference = ResourceReference(
+            target: "notes.md",
+            sourceServerID: "server-1",
+            workspaceID: "workspace-1",
+            sourceSessionID: "session-source",
+            fileCandidatePath: "notes.md"
+        )
+
+        #expect(ResourceReferenceTapScope.matches(
+            hostReference,
+            serverID: "server-1",
+            workspaceID: nil
+        ))
+        #expect(ResourceReferenceTapScope.matches(
+            hostReference,
+            serverID: nil,
+            workspaceID: nil
+        ))
+        #expect(!ResourceReferenceTapScope.matches(
+            hostReference,
+            serverID: "server-other",
+            workspaceID: nil
+        ))
+        #expect(!ResourceReferenceTapScope.matches(
+            workspaceReference,
+            serverID: "server-1",
+            workspaceID: nil
+        ))
     }
 
     @Test func sameNamedServersProduceDistinctStableChoiceAndAccessibilityLabels() {
@@ -2041,6 +2209,25 @@ struct SessionFileFullScreenContentBuilderTests {
         #expect(context.workspaceID == "workspace-1")
         #expect(context.sessionID == "session-1")
         #expect(context.fetchSessionFile == nil)
+    }
+
+    @Test func hostFileMarkdownKeepsAbsoluteDisplayPath() throws {
+        let serverBaseURL = try #require(URL(string: "https://server.example.com"))
+        let content = SessionFileFullScreenContentBuilder.content(
+            text: "# Host note",
+            filePath: "/tmp/session-report.md",
+            workspaceID: "workspace-1",
+            serverBaseURL: serverBaseURL,
+            workspaceHostMount: "/tmp",
+            fetchSessionFileData: { _ in Data([1]) },
+            sessionID: "session-1"
+        )
+
+        guard case .markdown(_, let filePath, _) = content else {
+            Issue.record("Expected markdown full-screen content")
+            return
+        }
+        #expect(filePath == "/tmp/session-report.md")
     }
 }
 

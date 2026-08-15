@@ -12,6 +12,7 @@ import { createIconAssetRoutes } from "./icon-assets.js";
 import { createThemeRoutes } from "./themes.js";
 import { createTelemetryRoutes } from "./telemetry.js";
 import { createWorkspaceFileRoutes } from "./workspace-files.js";
+import { createHostFileRoutes } from "./host-files.js";
 import { createProviderAuthRoutes } from "./provider-auth.js";
 import { createScheduleRoutes } from "./schedules.js";
 import { createE2EUIHarnessRoutes } from "./e2e-ui-harness.js";
@@ -36,6 +37,7 @@ export class RouteHandler {
       createTelemetryRoutes(this.ctx, this.helpers),
       createThemeRoutes(this.ctx, this.helpers),
       createWorkspaceFileRoutes(this.ctx, this.helpers),
+      createHostFileRoutes(this.ctx, this.helpers),
       createProviderAuthRoutes(this.ctx, this.helpers),
       createScheduleRoutes(this.ctx, this.helpers),
       createE2EUIHarnessRoutes(this.ctx, this.helpers),

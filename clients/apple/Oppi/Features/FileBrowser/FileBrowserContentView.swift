@@ -7,6 +7,11 @@ enum FileBrowserContentChromeMode {
     case treePane
 }
 
+enum FileBrowserContentSource: Equatable {
+    case workspaceFile
+    case hostFile
+}
+
 enum FileBrowserTextRenderer: Equatable {
     case embeddedFileViewer
 }
@@ -19,8 +24,19 @@ enum FileBrowserContentRenderingPolicy {
         }
     }
 
-    static func showsNavigationChrome(for chromeMode: FileBrowserContentChromeMode) -> Bool {
-        chromeMode == .pushed
+    static func showsNavigationChrome(
+        for chromeMode: FileBrowserContentChromeMode,
+        source: FileBrowserContentSource = .workspaceFile
+    ) -> Bool {
+        chromeMode == .pushed && source != .hostFile
+    }
+
+    static func navigationTitle(
+        source: FileBrowserContentSource,
+        path: String,
+        fileName: String
+    ) -> String {
+        source == .hostFile ? path : fileName
     }
 }
 
@@ -48,8 +64,10 @@ struct FileBrowserContentView: View {
 
     let workspaceId: String
     var worktreeId: String? = nil
+    var serverId: String? = nil
     let filePath: String
     let fileName: String
+    var source: FileBrowserContentSource = .workspaceFile
     /// Known file size from directory listing. Nil when opened from search results.
     var fileSize: Int?
     var chromeMode: FileBrowserContentChromeMode = .pushed
@@ -81,6 +99,13 @@ struct FileBrowserContentView: View {
 
     private var currentFilePath: String { currentSelection.path }
     private var currentFileName: String { currentSelection.name }
+    private var viewerTitle: String {
+        FileBrowserContentRenderingPolicy.navigationTitle(
+            source: source,
+            path: currentFilePath,
+            fileName: currentFileName
+        )
+    }
 
     private var fileExtension: String {
         (currentFilePath as NSString).pathExtension.lowercased()
@@ -105,7 +130,7 @@ struct FileBrowserContentView: View {
     }
 
     private var shouldShowEmbeddedNavigationChrome: Bool {
-        FileBrowserContentRenderingPolicy.showsNavigationChrome(for: chromeMode)
+        FileBrowserContentRenderingPolicy.showsNavigationChrome(for: chromeMode, source: source)
     }
 
     private var shouldHideHostNavigationBar: Bool {
@@ -138,7 +163,7 @@ struct FileBrowserContentView: View {
                 fileNavigatorControls
                     .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
             }
-        .navigationTitle(shouldHideHostNavigationBar ? "" : currentFileName)
+        .navigationTitle(shouldHideHostNavigationBar ? "" : viewerTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(shouldHideHostNavigationBar ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
@@ -355,28 +380,35 @@ struct FileBrowserContentView: View {
         do {
             switch requestedCategory {
             case .video:
-                let source = try await api.makeWorkspaceMediaSource(
-                    workspaceId: workspaceId,
+                let source = try await mediaSource(
+                    api: api,
                     path: requestedPath,
-                    worktreeId: worktreeId,
                     contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: requestedExtension),
                     sourceFileExtension: requestedExtension
                 )
                 guard isCurrentFile(requestedPath) else { return }
                 content = .video(source)
             case .audio:
-                let source = try await api.makeWorkspaceMediaSource(
-                    workspaceId: workspaceId,
+                let source = try await mediaSource(
+                    api: api,
                     path: requestedPath,
-                    worktreeId: worktreeId,
                     contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: requestedExtension),
                     sourceFileExtension: requestedExtension
                 )
                 guard isCurrentFile(requestedPath) else { return }
                 content = .audio(source)
             case .image, .pdf, .text, .binary:
-                let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: requestedPath, worktreeId: worktreeId)
+                let data = try await browseFile(api: api, path: requestedPath)
                 guard isCurrentFile(requestedPath) else { return }
+                if source == .hostFile, HostFilePreviewPolicy.usesStringFetchViewer(for: requestedPath) {
+                    if FileType.detect(from: requestedPath) == .html,
+                       let text = String(data: data, encoding: .utf8) {
+                        content = .text(text)
+                    } else {
+                        content = .image(data)
+                    }
+                    break
+                }
                 switch requestedCategory {
                 case .image: content = .image(data)
                 case .pdf: content = .pdf(data)
@@ -415,9 +447,13 @@ struct FileBrowserContentView: View {
             filePath: sourcePath,
             workspaceContext: .init(
                 workspaceID: workspaceId,
+                serverID: serverId,
                 serverBaseURL: api.baseURL,
-                fetchWorkspaceFile: { [workspaceId, worktreeId] wsID, filePath in
-                    try await api.browseWorkspaceFile(
+                fetchWorkspaceFile: { [workspaceId, worktreeId, source] wsID, filePath in
+                    if source == .hostFile {
+                        return try await api.browseHostFile(path: filePath)
+                    }
+                    return try await api.browseWorkspaceFile(
                         workspaceId: wsID.isEmpty ? workspaceId : wsID,
                         path: filePath,
                         worktreeId: worktreeId
@@ -425,6 +461,43 @@ struct FileBrowserContentView: View {
                 }
             )
         )
+    }
+
+    private func browseFile(api: APIClient, path: String) async throws -> Data {
+        switch source {
+        case .hostFile:
+            return try await api.browseHostFile(path: path)
+        case .workspaceFile:
+            return try await api.browseWorkspaceFile(
+                workspaceId: workspaceId,
+                path: path,
+                worktreeId: worktreeId
+            )
+        }
+    }
+
+    private func mediaSource(
+        api: APIClient,
+        path: String,
+        contentTypeHint: String?,
+        sourceFileExtension: String?
+    ) async throws -> AuthenticatedMediaSource {
+        switch source {
+        case .hostFile:
+            return try await api.makeHostFileMediaSource(
+                path: path,
+                contentTypeHint: contentTypeHint,
+                sourceFileExtension: sourceFileExtension
+            )
+        case .workspaceFile:
+            return try await api.makeWorkspaceMediaSource(
+                workspaceId: workspaceId,
+                path: path,
+                worktreeId: worktreeId,
+                contentTypeHint: contentTypeHint,
+                sourceFileExtension: sourceFileExtension
+            )
+        }
     }
 
     // MARK: - Share

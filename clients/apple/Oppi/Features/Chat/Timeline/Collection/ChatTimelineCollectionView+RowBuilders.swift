@@ -72,17 +72,20 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             },
-            onOpenPathPill: { [workspaceId, weak apiClient = connection?.apiClient, interactionContext = self.interactionContext] pill, sourceView in
+            onOpenPathPill: { [workspaceId, serverId, weak apiClient = connection?.apiClient, interactionContext = self.interactionContext] pill, sourceView in
                 guard let workspaceId, !workspaceId.isEmpty,
                       let apiClient,
                       let presenter = sourceView.nearestViewController() else {
                     return
                 }
 
+                let isHostPath = MarkdownWikiLinkRewriter.resolvedHostPath(pill.path) != nil
                 let view = FileBrowserContentView(
                     workspaceId: workspaceId,
+                    serverId: serverId,
                     filePath: pill.path,
                     fileName: pill.label,
+                    source: isHostPath ? .hostFile : .workspaceFile,
                     fileSize: nil
                 )
                 .environment(\.apiClient, apiClient)

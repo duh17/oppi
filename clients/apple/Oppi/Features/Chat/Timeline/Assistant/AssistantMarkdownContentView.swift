@@ -377,8 +377,7 @@ enum MarkdownLinkInteractionSupport {
         }
         if scheme == ResourceReferenceURL.scheme,
            let reference = ResourceReferenceURL.parse(normalizedURL),
-           reference.workspaceID == workspaceID,
-           reference.sourceServerID == nil || reference.sourceServerID == serverID {
+           ResourceReferenceTapScope.matches(reference, serverID: serverID, workspaceID: workspaceID) {
             return .resourceReference(reference)
         }
         if scheme == "file",

@@ -284,13 +284,21 @@ struct LaunchRefreshTelemetryOutcome: Equatable, Sendable {
 }
 
 enum FileLinkOpenPolicy {
+    enum Kind: Equatable {
+        case workspaceFile
+        case hostFile
+    }
+
     struct ResolvedLink: Equatable {
         let serverId: String
         let workspace: Workspace
-        let relativePath: String
+        let kind: Kind
+        let path: String
+
+        var relativePath: String { path }
 
         var fileName: String {
-            (relativePath as NSString).lastPathComponent
+            (path as NSString).lastPathComponent
         }
     }
 
@@ -302,13 +310,19 @@ enum FileLinkOpenPolicy {
             guard let workspace = workspaces.first(where: { $0.id == payload.workspaceID }) else {
                 continue
             }
-            guard let relativePath = payload.filePath.workspaceRelativePath(hostMount: workspace.hostMount) else {
-                return nil
+            if let relativePath = payload.filePath.workspaceRelativePath(hostMount: workspace.hostMount) {
+                return ResolvedLink(
+                    serverId: serverId,
+                    workspace: workspace,
+                    kind: .workspaceFile,
+                    path: relativePath
+                )
             }
             return ResolvedLink(
                 serverId: serverId,
                 workspace: workspace,
-                relativePath: relativePath
+                kind: .hostFile,
+                path: payload.filePath
             )
         }
         return nil
@@ -671,7 +685,7 @@ struct OppiApp: App {
         let sessionMatches = reference.lineAnchor == nil
             ? knownSessionMatches(for: reference.target)
             : []
-        let fileLookup = await currentWorkspaceFileMatches(for: reference)
+        let fileLookup = await currentFileMatches(for: reference)
         guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
 
         switch ResourceReferenceCandidateCollector.resolve(
@@ -681,6 +695,8 @@ struct OppiApp: App {
         ) {
         case .unavailable:
             connection.extensionToast = "Could not resolve [[\(reference.target)]] right now"
+        case .authorizationFailed:
+            connection.extensionToast = "Could not authorize host file [[\(reference.target)]]"
         case .resolution(.unresolved(let target)):
             connection.extensionToast = "Could not resolve [[\(target)]]"
         case .resolution(.resolved(let match)):
@@ -715,10 +731,68 @@ struct OppiApp: App {
     }
 
     @MainActor
+    private func currentFileMatches(
+        for reference: ResourceReference
+    ) async -> ResourceReferenceFileLookup {
+        switch ResourceReferenceFileLookupPolicy.kind(for: reference) {
+        case .hostFile:
+            return await currentHostFileMatches(for: reference)
+        case .workspaceFile:
+            return await currentWorkspaceFileMatches(for: reference)
+        }
+    }
+
+    @MainActor
+    private func currentHostFileMatches(
+        for reference: ResourceReference
+    ) async -> ResourceReferenceFileLookup {
+        guard let fileCandidatePath = reference.fileCandidatePath else {
+            return .notApplicable
+        }
+
+        let scopes: [(serverID: String, connection: ServerConnection)]
+        if let sourceServerID = reference.sourceServerID {
+            guard let connection = coordinator.connection(for: sourceServerID) else {
+                return .unavailable
+            }
+            scopes = [(sourceServerID, connection)]
+        } else {
+            scopes = coordinator.connections.map { ($0.key, $0.value) }
+            guard !scopes.isEmpty else { return .unavailable }
+        }
+
+        var matches: [ResourceReferenceMatch] = []
+        for scope in scopes {
+            guard let apiClient = scope.connection.apiClient else { return .unavailable }
+            do {
+                let resolvedPath = try await apiClient.resolveHostFile(path: fileCandidatePath)
+                try Task.checkCancellation()
+                if let resolvedPath {
+                    matches.append(.hostFile(HostFileResourceReference(
+                        serverID: scope.serverID,
+                        path: resolvedPath,
+                        serverName: resourceReferenceServerName(scope.serverID)
+                    )))
+                }
+            } catch let APIError.server(status, _) where status == 404 {
+                continue
+            } catch let APIError.server(status, _) where status == 401 || status == 403 {
+                return .authorizationFailed
+            } catch let APIError.codedServer(status, _, _) where status == 401 || status == 403 {
+                return .authorizationFailed
+            } catch {
+                return .unavailable
+            }
+        }
+        return .complete(matches)
+    }
+
+    @MainActor
     private func currentWorkspaceFileMatches(
         for reference: ResourceReference
     ) async -> ResourceReferenceFileLookup {
-        guard let workspaceID = reference.workspaceID,
+        guard reference.kind == .workspaceFile,
+              let workspaceID = reference.workspaceID,
               let fileCandidatePath = reference.fileCandidatePath else {
             return .notApplicable
         }
@@ -872,6 +946,37 @@ struct OppiApp: App {
                 ),
                 workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace)
             )
+
+        case .hostFile(let file):
+            guard let connection = coordinator.connection(for: file.serverID) else {
+                guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
+                self.connection.extensionToast = "Could not open file \(file.path)"
+                return
+            }
+            guard await coordinator.switchToServerReady(file.serverID, shouldActivate: {
+                resourceReferenceRequestCoordinator.isCurrent(token)
+            }), resourceReferenceRequestCoordinator.isCurrent(token) else {
+                return
+            }
+
+            if let sourceSessionID = reference.sourceSessionID,
+               let sourceServerID = reference.sourceServerID {
+                NotificationCenter.default.post(
+                    name: .workspaceLinkedFileWillOpen,
+                    object: sourceSessionID,
+                    userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: sourceServerID]
+                )
+            }
+            // Host files stay on the current stack. Do not select another
+            // workspace or pretend the file lives in this checkout.
+            navigation.openWorkspaceLinkedFile(
+                .hostFile(
+                    serverId: file.serverID,
+                    workspaceId: reference.workspaceID ?? "",
+                    path: file.path,
+                    lineAnchor: reference.lineAnchor
+                )
+            )
         }
     }
 
@@ -890,10 +995,13 @@ struct OppiApp: App {
             return false
         }
 
-        navigation.openWorkspaceLinkedFile(
-            resolution.target,
-            workspace: WorkspaceNavTarget(serverId: resolution.target.serverId, workspace: resolution.workspace)
-        )
+        let workspace: WorkspaceNavTarget?
+        if case .workspaceFile = resolution.target.kind {
+            workspace = WorkspaceNavTarget(serverId: resolution.target.serverId, workspace: resolution.workspace)
+        } else {
+            workspace = nil
+        }
+        navigation.openWorkspaceLinkedFile(resolution.target, workspace: workspace)
         return true
     }
 
@@ -909,11 +1017,18 @@ struct OppiApp: App {
         ) else {
             return nil
         }
+        let kind: WorkspaceLinkedFileKind
+        switch resolution.kind {
+        case .workspaceFile:
+            kind = .workspaceFile(path: resolution.path, fileName: resolution.fileName)
+        case .hostFile:
+            kind = .hostFile(path: resolution.path, fileName: resolution.fileName)
+        }
         return (
             target: WorkspaceLinkedFileNavTarget(
                 serverId: resolution.serverId,
                 workspaceId: payload.workspaceID,
-                kind: .workspaceFile(path: resolution.relativePath, fileName: resolution.fileName)
+                kind: kind
             ),
             workspace: resolution.workspace
         )

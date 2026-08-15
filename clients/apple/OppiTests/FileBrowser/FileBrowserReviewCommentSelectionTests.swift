@@ -298,6 +298,12 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .treePane) == false)
         #expect(FileBrowserContentRenderingPolicy.textRenderer(for: .pushed) == .embeddedFileViewer)
         #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .pushed) == true)
+        #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .pushed, source: .hostFile) == false)
+        #expect(FileBrowserContentRenderingPolicy.navigationTitle(
+            source: .hostFile,
+            path: "/Users/me/secret",
+            fileName: "harmless note"
+        ) == "/Users/me/secret")
     }
 
     @Test func fileBrowserBackSwipePolicyYieldsOwnershipToModalHost() {

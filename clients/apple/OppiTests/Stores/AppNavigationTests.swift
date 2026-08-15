@@ -1068,7 +1068,7 @@ struct AppNavigationShellRoutingTests {
         #expect(resolved?.fileName == "oppi-jZhDRKeV.md")
     }
 
-    @Test func givenWorkspaceFileOutsideHostMountWhenResolvingThenItIsRejected() {
+    @Test func givenWorkspaceFileOutsideHostMountWhenResolvingThenItOpensAsHostFile() {
         let workspace = makeTestWorkspace(id: "workspace-1", hostMount: "~/workspace/oppi")
         let payload = FileLinkPayload(
             workspaceID: "workspace-1",
@@ -1081,7 +1081,44 @@ struct AppNavigationShellRoutingTests {
             workspacesByServer: ["server-1": [workspace]]
         )
 
-        #expect(resolved == nil)
+        #expect(resolved?.serverId == "server-1")
+        #expect(resolved?.workspace.id == "workspace-1")
+        #expect(resolved?.kind == .hostFile)
+        #expect(resolved?.path == "/tmp/server.ts")
+        #expect(resolved?.fileName == "server.ts")
+    }
+
+    @Test func hostHTMLAndSVGStayOnStringFetchViewer() {
+        #expect(HostFilePreviewPolicy.usesStringFetchViewer(for: "/tmp/report.html"))
+        #expect(HostFilePreviewPolicy.webViewLoadMode(for: "/tmp/logo.svg") == .htmlString)
+        #expect(HostFilePreviewPolicy.webViewLoadMode(for: "/tmp/notes.md") == .none)
+    }
+
+    @Test func hostFileOpenPushesViewerWithoutSwitchingWorkspace() {
+        let navigation = AppNavigation()
+        let sourceWorkspace = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        let sessionTarget = WorkspaceSessionNavTarget(
+            serverId: "server-1",
+            sessionId: "session-1",
+            workspaceId: "workspace-1"
+        )
+        let hostFile = WorkspaceLinkedFileNavTarget.hostFile(
+            serverId: "server-1",
+            workspaceId: "",
+            path: "/tmp/oppi-debug.log"
+        )
+
+        navigation.openWorkspace(sourceWorkspace)
+        navigation.openWorkspaceSession(sessionTarget, workspace: sourceWorkspace)
+        navigation.openWorkspaceLinkedFile(hostFile)
+
+        #expect(navigation.workspacePath.count == 3)
+        #expect(navigation.selectedWorkspaceFilter == sourceWorkspace)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "linked_file")
+        #expect(navigation.workspaceStackDiagnosticContext.workspaceId?.isEmpty != false)
     }
 
     @Test func utilityUsesSplitDetailSelectionInSplitPresentation() {

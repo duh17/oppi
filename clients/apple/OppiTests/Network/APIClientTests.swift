@@ -1423,6 +1423,67 @@ struct APIClientTests {
         #expect(source.sourceFileExtension == "mp4")
     }
 
+    @Test func hostRawFileUsesAuthenticatedQueryPath() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        var methods: [String] = []
+
+        MockURLProtocol.handler = { request in
+            methods.append(request.httpMethod ?? "")
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            #expect(components?.percentEncodedPath == "/files/raw")
+            #expect(components?.queryItems?.first(where: { $0.name == "path" })?.value == "/tmp/server.ts")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: [
+                    "Content-Type": "text/plain",
+                    HostRawFileHeaders.resolvedPathField: "/private/tmp/server.ts",
+                ]
+            )!
+            return (Data("host".utf8), response)
+        }
+
+        let resolved = try await client.resolveHostFile(path: "/tmp/server.ts")
+        let data = try await client.browseHostFile(path: "/tmp/server.ts")
+        #expect(resolved == "/private/tmp/server.ts")
+        #expect(String(data: data, encoding: .utf8) == "host")
+        #expect(methods == ["HEAD", "GET"])
+    }
+
+    @Test func hostRawFileHEADUsesCanonicalResolvedPathHeader() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "HEAD")
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            #expect(components?.queryItems?.first(where: { $0.name == "path" })?.value == "~/secret")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: [HostRawFileHeaders.resolvedPathField: "/Users/me/secret"]
+            )!
+            return (Data(), response)
+        }
+
+        let resolved = try await client.resolveHostFile(path: "~/secret")
+        #expect(resolved == "/Users/me/secret")
+        #expect(resolved != "~/secret")
+    }
+
+    @Test func hostRawFileHeaderDecodesPercentEncodedNonLatinPath() {
+        #expect(
+            HostRawFileHeaders.decode("/private/tmp/%E4%B8%AD%E6%96%87.md")
+                == "/private/tmp/中文.md"
+        )
+        #expect(HostRawFileHeaders.decode("/private/tmp/server.ts") == "/private/tmp/server.ts")
+        #expect(HostRawFileHeaders.decode("relative.md") == nil)
+    }
+
     @Test func sessionAttachmentMediaSourceUsesEncodedPathSegmentsAndBearerAuth() async throws {
         let client = makeClient()
         let source = try await client.makeSessionAttachmentMediaSource(

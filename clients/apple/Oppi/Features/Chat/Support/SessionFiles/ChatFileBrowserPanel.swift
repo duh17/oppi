@@ -84,6 +84,7 @@ struct ChatFileBrowserPanel: View {
     let changedFiles: [String]
     @Binding var selectedTab: ChatFileBrowserPanelTab
     var fileDetailReviewCommentScope: ReviewCommentSelectionScope?
+    var serverId: String? = nil
 
     @State private var changedSearchText = ""
 
@@ -154,13 +155,15 @@ struct ChatFileBrowserPanel: View {
                     workspaceId: workspaceId,
                     changedFiles: changedFiles,
                     searchText: changedSearchText,
-                    fileDetailReviewCommentScope: fileDetailReviewCommentScope
+                    fileDetailReviewCommentScope: fileDetailReviewCommentScope,
+                    serverId: serverId
                 )
             }
             .background(Color.themeBgDark)
         case .all:
             if let workspaceId {
                 FileBrowserView(
+                    serverId: serverId,
                     workspaceId: workspaceId,
                     initialPath: "",
                     layoutMode: .compactOnly,

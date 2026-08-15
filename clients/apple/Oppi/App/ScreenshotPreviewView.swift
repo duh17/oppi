@@ -351,12 +351,14 @@ private struct SplitFileNavigationLinkedFileProbe: View {
         switch target.kind {
         case .workspaceFile(let path, _):
             return "Linked file: \(path)"
+        case .hostFile(let path, _):
+            return "Host file: \(path)"
         }
     }
 
     private var fileName: String {
         switch target.kind {
-        case .workspaceFile(_, let fileName):
+        case .workspaceFile(_, let fileName), .hostFile(_, let fileName):
             return fileName
         }
     }

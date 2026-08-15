@@ -26,6 +26,7 @@ struct SessionFilesListView: View {
     let changedFiles: [String]
     var searchText: String = ""
     var fileDetailReviewCommentScope: ReviewCommentSelectionScope? = nil
+    var serverId: String? = nil
 
     @Environment(GitStatusStore.self) private var gitStatusStore
     @Environment(\.apiClient) private var apiClient
@@ -228,6 +229,7 @@ struct SessionFilesListView: View {
                         workspaceId: workspaceId,
                         selectedSessionId: sessionId,
                         file: gitFile.toReviewFile(),
+                        serverId: serverId,
                         reviewCommentSelectionScopeOverride: makeFileDetailReviewCommentScope(),
                         navigationFiles: reviewNavigationFiles
                     )

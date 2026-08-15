@@ -3,6 +3,27 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "APIClient")
 
+enum HostRawFileHeaders {
+    static let resolvedPathField = "X-Oppi-Resolved-Path"
+
+    static func resolvedPath(from response: URLResponse) -> String? {
+        guard let http = response as? HTTPURLResponse else { return nil }
+        let raw = http.value(forHTTPHeaderField: resolvedPathField)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let raw, !raw.isEmpty else { return nil }
+        return decode(raw)
+    }
+
+    /// Inverse of the server's `encodeURIComponent` header encoding, which
+    /// keeps `/` literal so ASCII paths stay readable on the wire.
+    static func decode(_ raw: String) -> String? {
+        guard let decoded = raw.removingPercentEncoding, decoded.hasPrefix("/") else {
+            return nil
+        }
+        return decoded
+    }
+}
+
 /// Network failures that may make an HTTP route unavailable for future work.
 /// HTTP responses, decoding failures, cancellation, and TLS failures are intentionally excluded.
 enum APIClientAvailabilityFailure: Sendable, Equatable {
@@ -1677,6 +1698,39 @@ actor APIClient: ClientLogUploading {
         )
     }
 
+    /// Exact-path existence check for an owner host file. 404 is unresolved.
+    /// A 200 response yields the server's canonical realpath when present.
+    func resolveHostFile(path: String) async throws -> String? {
+        let url = try makeHostRawURL(path: path)
+        do {
+            let (_, response) = try await request("HEAD", url: url)
+            try checkStatus(response, data: Data())
+            return HostRawFileHeaders.resolvedPath(from: response) ?? path
+        } catch let APIError.server(status, _) where status == 404 {
+            return nil
+        }
+    }
+
+    /// Fetch an authenticated host file through GET `/files/raw?path=`.
+    func browseHostFile(path: String) async throws -> Data {
+        try await get(url: makeHostRawURL(path: path))
+    }
+
+    func makeHostFileMediaSource(
+        path: String,
+        contentTypeHint: String? = nil,
+        sourceFileExtension: String? = nil
+    ) throws -> AuthenticatedMediaSource {
+        AuthenticatedMediaSource(
+            url: try makeHostRawURL(path: path),
+            authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
+            tlsCertFingerprint: tlsCertFingerprint,
+            tlsServerName: environment.tlsServerName,
+            contentTypeHint: contentTypeHint,
+            sourceFileExtension: sourceFileExtension
+        )
+    }
+
     /// Build a bearer-authenticated media source for AVPlayer resource loading.
     ///
     /// AVPlayer receives a local `oppi-media://` asset URL. The resource loader
@@ -2084,6 +2138,13 @@ actor APIClient: ClientLogUploading {
         try makeURL(
             pathSegments: ["workspaces", workspaceId, "raw", path],
             queryItems: queryItems
+        )
+    }
+
+    private func makeHostRawURL(path: String) throws -> URL {
+        try makeURL(
+            pathSegments: ["files", "raw"],
+            queryItems: [URLQueryItem(name: "path", value: path)]
         )
     }
 

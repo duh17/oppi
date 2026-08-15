@@ -1660,6 +1660,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
     private var textSelectionEnabled: Bool
+    private let serverID: String?
     private let workspaceID: String?
     private let sessionID: String?
     private let serverBaseURL: URL?
@@ -1708,6 +1709,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         textSelectionEnabled: Bool = true,
+        serverID: String? = nil,
         workspaceID: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
@@ -1727,6 +1729,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
         self.textSelectionEnabled = textSelectionEnabled
+        self.serverID = serverID
         self.workspaceID = workspaceID
         self.sessionID = sessionID
         self.serverBaseURL = serverBaseURL
@@ -1946,6 +1949,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             textSelectionEnabled: textSelectionEnabled,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
+            serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
@@ -2386,6 +2390,7 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
 
         let action = MarkdownLinkInteractionSupport.classify(
             url,
+            serverID: currentConfig?.serverID,
             workspaceID: currentConfig?.workspaceID
         )
         return MarkdownLinkInteractionSupport.menuConfiguration(
@@ -2423,6 +2428,7 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
 
         let action = MarkdownLinkInteractionSupport.classify(
             url,
+            serverID: currentConfig?.serverID,
             workspaceID: currentConfig?.workspaceID
         )
         return MarkdownLinkInteractionSupport.primaryAction(

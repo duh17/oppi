@@ -119,6 +119,7 @@ Oppi keeps workspace navigation HTTP-first. WebSockets carry live state where st
 | Workspace detail recent list                | HTTP                        | Recent active/stopped session summaries, attention snapshot, importable local sessions                   |
 | Workspace archive bucket                    | HTTP                        | Older stopped/importable rows for one lazy-loaded time bucket                                            |
 | Workspace files and media                   | HTTP GET/HEAD               | Directory listings, raw bytes, uploads, attachments, byte-range media                                    |
+| Host file raw                               | HTTP GET/HEAD               | Exact-path owner reads of any regular file the server process can already read                           |
 | Workspace quick actions and review comments | HTTP                        | Prompt-template options, selected-file preparation, review comments                                      |
 | Saved Agents and schedules                  | HTTP                        | Agent definitions, Agent launches, schedule definitions, manual runs, run history                        |
 | Global app event stream                     | Server-to-client WebSocket  | Session row updates, extension UI attention, workspace invalidation                                      |

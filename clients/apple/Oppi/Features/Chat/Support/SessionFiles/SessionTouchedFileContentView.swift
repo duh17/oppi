@@ -74,7 +74,11 @@ struct SessionTouchedFileContentView: View {
                 fileNavigatorControls
                     .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
             }
-        .navigationTitle(isUsingFileViewer ? "" : currentFileName)
+        .navigationTitle(
+            isUsingFileViewer
+                ? ""
+                : (MarkdownWikiLinkRewriter.resolvedHostPath(currentFilePath) != nil ? currentFilePath : currentFileName)
+        )
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(isUsingFileViewer ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
@@ -160,6 +164,9 @@ struct SessionTouchedFileContentView: View {
         loadedServerBaseURL = api.baseURL
         let workspaceHostMount = currentWorkspaceHostMount
         fetchSessionFileData = { [api, workspaceId, sessionId] path in
+            if MarkdownWikiLinkRewriter.resolvedHostPath(path) != nil {
+                return try await api.browseHostFile(path: path)
+            }
             let previewPath = path.workspaceRelativePath(hostMount: workspaceHostMount) ?? path
             return try await api.getSessionFileData(
                 workspaceId: workspaceId,
@@ -168,14 +175,19 @@ struct SessionTouchedFileContentView: View {
             )
         }
         let requestedPath = currentFilePath
-        let previewPath = requestedPath.workspaceRelativePath(hostMount: workspaceHostMount) ?? requestedPath
+        let isHostPath = MarkdownWikiLinkRewriter.resolvedHostPath(requestedPath) != nil
+        let previewPath = isHostPath
+            ? requestedPath
+            : (requestedPath.workspaceRelativePath(hostMount: workspaceHostMount) ?? requestedPath)
         phase = .loading
         do {
-            let data = try await api.browseSessionTouchedFile(
-                workspaceId: workspaceId,
-                sessionId: sessionId,
-                path: previewPath
-            )
+            let data = try await (isHostPath
+                ? api.browseHostFile(path: previewPath)
+                : api.browseSessionTouchedFile(
+                    workspaceId: workspaceId,
+                    sessionId: sessionId,
+                    path: previewPath
+                ))
             guard isCurrentFile(requestedPath) else { return }
 
             let ext = (requestedPath as NSString).pathExtension.lowercased()

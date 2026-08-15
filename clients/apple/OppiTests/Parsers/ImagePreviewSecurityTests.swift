@@ -204,5 +204,20 @@ struct HTMLContentSecurityTests {
         #expect(HTMLContentSecurity.allowsEmbeddedNavigation(to: try #require(URL(string: "blob:https://example.com/id"))))
         #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(to: try #require(URL(string: "file:///tmp/report.html"))))
         #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(to: try #require(URL(string: "https://example.com"))))
+        #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(
+            to: try #require(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
+        ))
+        #expect(HTMLContentSecurity.isHostRawFileURL(
+            try #require(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
+        ))
+    }
+
+    @Test("Host HTML and SVG files use the string-fetch CSP viewer, never a raw URL load")
+    func hostHTMLAndSVGUseStringFetchViewer() {
+        #expect(HostFilePreviewPolicy.usesStringFetchViewer(for: "/tmp/report.html"))
+        #expect(HostFilePreviewPolicy.usesStringFetchViewer(for: "/tmp/logo.svg"))
+        #expect(HostFilePreviewPolicy.webViewLoadMode(for: "/tmp/report.html") == .htmlString)
+        #expect(HostFilePreviewPolicy.webViewLoadMode(for: "/tmp/logo.svg") == .htmlString)
+        #expect(HostFilePreviewPolicy.webViewLoadMode(for: "/tmp/notes.md") == .none)
     }
 }

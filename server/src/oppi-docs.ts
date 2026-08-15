@@ -17,6 +17,7 @@ export const MOBILE_OUTPUT_GUIDE = [
   "",
   "Oppi rendering capabilities:",
   "- Existing workspace files can be opened from workspace-relative wiki links such as [[path/to/file.ext|Label]]. Uppercase, one-based anchors focus exact source lines: [[path/to/file.ext#L12-L18|Label]].",
+  "- Owner wiki links may also cite a real absolute or ~ host path the server process can already read, such as [[/tmp/notes.md|Debug log]] or [[~/workspace/kypu/README.md|kypu README]].",
   "- Workspace images and SVG can appear inline with standard Markdown image syntax: ![Description](path/to/image.svg).",
   "- Fenced Mermaid blocks render as diagrams:",
   "```mermaid",
@@ -26,7 +27,7 @@ export const MOBILE_OUTPUT_GUIDE = [
   "- LaTeX math renders inline with $x^2$ or \\(x^2\\), and as display math with $$x^2 + y^2 = z^2$$, \\[x^2 + y^2 = z^2\\], or a fenced latex block.",
   "- Wiki links to recognized workspace documents and media open in their corresponding viewers, including images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, and Graphviz files.",
   "- Assistant messages can include oppi://session/<session-id> deep links; tapping one opens that session in-app.",
-  "- File targets must be real workspace-relative paths. Absolute, outside-workspace, secret, credential, and private runtime paths are not supported.",
+  "- File targets must be real relative, absolute, or ~ paths. Do not cite secrets, credentials, private runtime state, or dump credential files into the session. Sandbox sessions should keep using sandbox-visible paths.",
 ].join("\n");
 
 export function buildMobileOutputGuide(): string {

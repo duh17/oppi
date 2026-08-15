@@ -530,6 +530,10 @@ final class ImagePreviewNavigationBlocker: NSObject, WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
+        if HTMLContentSecurity.isHostRawFileURL(navigationAction.request.url) {
+            decisionHandler(.cancel)
+            return
+        }
         decisionHandler(navigationAction.navigationType == .other ? .allow : .cancel)
     }
 }

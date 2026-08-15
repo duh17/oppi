@@ -568,6 +568,7 @@ struct WorkspaceDetailView: View {
                     isLoading: false,
                     workspaceId: workspace.id,
                     worktreeId: selectedWorktreeId,
+                    serverId: currentServerId,
                     showCleanWorkspace: true,
                     collapseToken: contextBarCollapseToken,
                     onExpandedChanged: { contextBarExpanded = $0 }

@@ -201,6 +201,7 @@ struct WorkspaceContextBar: View {
     let workspaceId: String?
     let sessionId: String?
     let worktreeId: String?
+    var serverId: String? = nil
     let showCleanWorkspace: Bool
     var onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)?
     var fileDetailReviewCommentScope: ReviewCommentSelectionScope?
@@ -240,6 +241,7 @@ struct WorkspaceContextBar: View {
         workspaceId: String? = nil,
         sessionId: String? = nil,
         worktreeId: String? = nil,
+        serverId: String? = nil,
         showCleanWorkspace: Bool = false,
         initialExpanded: Bool = false,
         onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)? = nil,
@@ -254,6 +256,7 @@ struct WorkspaceContextBar: View {
         self.workspaceId = workspaceId
         self.sessionId = sessionId
         self.worktreeId = worktreeId
+        self.serverId = serverId
         self.showCleanWorkspace = showCleanWorkspace
         _isExpanded = State(initialValue: initialExpanded)
         self.onReviewInCurrentSession = onReviewInCurrentSession
@@ -929,6 +932,7 @@ struct WorkspaceContextBar: View {
                     selectedSessionId: sessionId,
                     file: file.toReviewFile(),
                     worktreeId: worktreeId,
+                    serverId: serverId,
                     reviewCommentSelectionScopeOverride: Self.makeFileDetailReviewCommentScope(
                         parentScope: fileDetailReviewCommentScope,
                         fallbackScope: nil,

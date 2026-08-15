@@ -15,7 +15,9 @@ enum SessionFileFullScreenContentBuilder {
         fetchSessionFileData: ((String) async throws -> Data)?,
         sessionID: String
     ) -> FullScreenCodeContent {
-        let displayPath = filePath.workspaceRelativePath(hostMount: workspaceHostMount) ?? filePath
+        let displayPath = MarkdownWikiLinkRewriter.resolvedHostPath(filePath) != nil
+            ? filePath
+            : (filePath.workspaceRelativePath(hostMount: workspaceHostMount) ?? filePath)
 
         guard let workspaceID,
               let serverBaseURL,
@@ -71,7 +73,10 @@ struct RemoteFileView: View {
     }
 
     private var filename: String {
-        (path as NSString).lastPathComponent
+        if MarkdownWikiLinkRewriter.resolvedHostPath(path) != nil {
+            return path
+        }
+        return (path as NSString).lastPathComponent
     }
 
     private var pathExtension: String {
@@ -247,6 +252,9 @@ struct RemoteFileView: View {
         self.resolvedWorkspaceId = resolvedWorkspaceId
         let workspaceHostMount = currentWorkspaceHostMount
         fetchSessionFileData = { [api, resolvedWorkspaceId, sessionId] filePath in
+            if MarkdownWikiLinkRewriter.resolvedHostPath(filePath) != nil {
+                return try await api.browseHostFile(path: filePath)
+            }
             let previewPath = filePath.workspaceRelativePath(hostMount: workspaceHostMount) ?? filePath
             return try await api.getSessionFileData(
                 workspaceId: resolvedWorkspaceId,
@@ -254,24 +262,42 @@ struct RemoteFileView: View {
                 path: previewPath
             )
         }
-        let previewPath = path.workspaceRelativePath(hostMount: workspaceHostMount) ?? path
+        let isHostPath = MarkdownWikiLinkRewriter.resolvedHostPath(path) != nil
+        let previewPath = isHostPath
+            ? path
+            : (path.workspaceRelativePath(hostMount: workspaceHostMount) ?? path)
 
         do {
             if isImagePath {
-                let data = try await api.getSessionFileData(
-                    workspaceId: resolvedWorkspaceId,
-                    sessionId: sessionId,
-                    path: previewPath
-                )
+                let data = try await (isHostPath
+                    ? api.browseHostFile(path: previewPath)
+                    : api.getSessionFileData(
+                        workspaceId: resolvedWorkspaceId,
+                        sessionId: sessionId,
+                        path: previewPath
+                    ))
                 self.imageData = data
             } else if isVideoPath {
-                self.videoSource = try await api.makeSessionFileMediaSource(
-                    workspaceId: resolvedWorkspaceId,
-                    sessionId: sessionId,
-                    path: previewPath,
-                    contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: pathExtension),
-                    sourceFileExtension: pathExtension
-                )
+                self.videoSource = try await (isHostPath
+                    ? api.makeHostFileMediaSource(
+                        path: previewPath,
+                        contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: pathExtension),
+                        sourceFileExtension: pathExtension
+                    )
+                    : api.makeSessionFileMediaSource(
+                        workspaceId: resolvedWorkspaceId,
+                        sessionId: sessionId,
+                        path: previewPath,
+                        contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: pathExtension),
+                        sourceFileExtension: pathExtension
+                    ))
+            } else if isHostPath {
+                let data = try await api.browseHostFile(path: previewPath)
+                if let text = String(data: data, encoding: .utf8) {
+                    self.content = text
+                } else {
+                    errorMessage = "File is not text (binary content)"
+                }
             } else {
                 let text = try await api.getSessionFile(
                     workspaceId: resolvedWorkspaceId,

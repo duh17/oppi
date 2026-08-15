@@ -58,6 +58,7 @@ struct WorkspaceReviewFileDetailView: View {
     let selectedSessionId: String?
     let file: WorkspaceReviewFile
     var worktreeId: String? = nil
+    var serverId: String? = nil
     var reviewCommentSelectionScopeOverride: ReviewCommentSelectionScope? = nil
     var navigationFiles: [WorkspaceReviewFile] = []
     var allowsHorizontalBackSwipe = true
@@ -344,6 +345,7 @@ struct WorkspaceReviewFileDetailView: View {
             FileBrowserContentView(
                 workspaceId: workspaceId,
                 worktreeId: worktreeId,
+                serverId: serverId,
                 filePath: currentFile.path,
                 fileName: currentFile.path.lastPathComponentForDisplay,
                 chromeMode: .treePane,

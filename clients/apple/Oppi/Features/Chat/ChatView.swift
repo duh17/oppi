@@ -493,6 +493,7 @@ struct ChatView: View {
                     workspaceId: session?.workspaceId,
                     sessionId: sessionId,
                     worktreeId: session?.worktreeId,
+                    serverId: serverIdHint ?? connection.currentServerId,
                     onReviewInCurrentSession: { prompt, files in
                         stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)
                     },
@@ -1916,7 +1917,8 @@ struct ChatView: View {
                 workspaceId: session?.workspaceId,
                 changedFiles: session?.changeStats?.changedFiles ?? [],
                 selectedTab: $selectedFilePanelTab,
-                fileDetailReviewCommentScope: .activeSession(reviewCommentSelectionRouter)
+                fileDetailReviewCommentScope: .activeSession(reviewCommentSelectionRouter),
+                serverId: serverIdHint ?? connection.currentServerId
             )
             .navigationTitle("Files")
             .navigationBarTitleDisplayMode(.inline)

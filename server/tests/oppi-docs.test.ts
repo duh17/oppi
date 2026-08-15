@@ -43,7 +43,7 @@ describe("Oppi documentation prompt hint", () => {
     expect(guide).toContain("fenced latex block");
     expect(guide).toContain("images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, and Graphviz");
     expect(guide).toContain("oppi://session/<session-id>");
-    expect(guide).toContain("real workspace-relative paths");
+    expect(guide).toContain("real relative, absolute, or ~ paths");
     expect(guide).not.toMatch(/lead with|be concise|short paragraphs|instead of|must use/i);
     expect(guide).not.toContain("screen dimension");
   });

@@ -173,6 +173,13 @@ enum SourceLineMetrics {
     }
 }
 
+/// Distinguishes a workspace-relative file candidate from an exact host path.
+/// Tap resolution must not infer this from a leading `/`.
+enum ResourceReferenceKind: String, Hashable, Sendable {
+    case workspaceFile
+    case hostFile
+}
+
 /// Unresolved `[[target]]` carried through the attributed-link pipeline.
 ///
 /// Resolution stays client-local and happens only when the user taps. The
@@ -184,7 +191,9 @@ struct ResourceReference: Hashable, Sendable {
     let workspaceID: String?
     let sourceSessionID: String?
     let fileCandidatePath: String?
+    let kind: ResourceReferenceKind
     let lineAnchor: SourceLineAnchor?
+    let visibleLabel: String?
 
     init(
         target: String,
@@ -192,14 +201,18 @@ struct ResourceReference: Hashable, Sendable {
         workspaceID: String?,
         sourceSessionID: String?,
         fileCandidatePath: String?,
-        lineAnchor: SourceLineAnchor? = nil
+        kind: ResourceReferenceKind = .workspaceFile,
+        lineAnchor: SourceLineAnchor? = nil,
+        visibleLabel: String? = nil
     ) {
         self.target = target
         self.sourceServerID = sourceServerID
         self.workspaceID = workspaceID
         self.sourceSessionID = sourceSessionID
         self.fileCandidatePath = fileCandidatePath
+        self.kind = kind
         self.lineAnchor = lineAnchor
+        self.visibleLabel = visibleLabel
     }
 }
 
@@ -221,9 +234,16 @@ struct WorkspaceFileResourceReference: Hashable, Sendable {
     let serverName: String
 }
 
+struct HostFileResourceReference: Hashable, Sendable {
+    let serverID: String
+    let path: String
+    let serverName: String
+}
+
 enum ResourceReferenceMatch: Hashable, Sendable {
     case session(SessionResourceReference)
     case workspaceFile(WorkspaceFileResourceReference)
+    case hostFile(HostFileResourceReference)
 
     var id: String {
         switch self {
@@ -231,6 +251,8 @@ enum ResourceReferenceMatch: Hashable, Sendable {
             return "session|\(session.serverID)|\(session.sessionID)"
         case .workspaceFile(let file):
             return "file|\(file.serverID)|\(file.workspaceID)|\(file.worktreeID ?? "")|\(file.path)"
+        case .hostFile(let file):
+            return "hostfile|\(file.serverID)|\(file.path)"
         }
     }
 
@@ -242,6 +264,9 @@ enum ResourceReferenceMatch: Hashable, Sendable {
         case .workspaceFile(let file):
             let fileName = (file.path as NSString).lastPathComponent
             return "File: \(fileName) — \(file.workspaceName) on \(serverLabel(name: file.serverName, id: file.serverID))"
+        case .hostFile(let file):
+            let fileName = (file.path as NSString).lastPathComponent
+            return "Host file: \(fileName) — \(file.path) on \(serverLabel(name: file.serverName, id: file.serverID))"
         }
     }
 
@@ -261,13 +286,22 @@ enum ResourceReferenceMatch: Hashable, Sendable {
             guard reference.lineAnchor == nil else { return false }
             return session.sessionID == reference.target
         case .workspaceFile(let file):
-            guard let workspaceID = reference.workspaceID,
+            guard reference.kind == .workspaceFile,
+                  let workspaceID = reference.workspaceID,
                   let fileCandidatePath = reference.fileCandidatePath else {
                 return false
             }
             return file.workspaceID == workspaceID
                 && file.path == fileCandidatePath
                 && (reference.sourceServerID == nil || file.serverID == reference.sourceServerID)
+        case .hostFile(let file):
+            guard reference.kind == .hostFile,
+                  reference.fileCandidatePath != nil else {
+                return false
+            }
+            // HEAD /files/raw may replace a tilde or symlink candidate with
+            // the canonical realpath. Matching still uses source-server scope.
+            return reference.sourceServerID == nil || file.serverID == reference.sourceServerID
         }
     }
 
@@ -277,7 +311,35 @@ enum ResourceReferenceMatch: Hashable, Sendable {
             return "0|\(session.serverID)|\(session.sessionID)"
         case .workspaceFile(let file):
             return "1|\(file.serverID)|\(file.workspaceID)|\(file.worktreeID ?? "")|\(file.path)"
+        case .hostFile(let file):
+            return "2|\(file.serverID)|\(file.path)"
         }
+    }
+}
+
+enum ResourceReferenceFileLookupPolicy {
+    static func kind(for reference: ResourceReference) -> ResourceReferenceKind {
+        reference.kind
+    }
+}
+
+enum ResourceReferenceTapScope {
+    /// Workspace-relative taps stay scoped to the rendered chat.
+    /// Host-file taps only need the source server, so control chats still work.
+    static func matches(
+        _ reference: ResourceReference,
+        serverID: String?,
+        workspaceID: String?
+    ) -> Bool {
+        if let sourceServerID = reference.sourceServerID,
+           let serverID,
+           sourceServerID != serverID {
+            return false
+        }
+        if reference.kind == .hostFile {
+            return true
+        }
+        return reference.workspaceID == workspaceID
     }
 }
 
@@ -309,11 +371,13 @@ enum ResourceReferenceFileLookup: Equatable, Sendable {
     case notApplicable
     case complete([ResourceReferenceMatch])
     case unavailable
+    case authorizationFailed
 }
 
 enum ResourceReferenceCandidateCollectionResult: Equatable, Sendable {
     case resolution(ResourceReferenceResolution)
     case unavailable
+    case authorizationFailed
 }
 
 enum ResourceReferenceSelfLinkPolicy {
@@ -346,6 +410,8 @@ enum ResourceReferenceCandidateCollector {
             ))
         case .unavailable:
             return .unavailable
+        case .authorizationFailed:
+            return .authorizationFailed
         }
     }
 }
@@ -408,9 +474,10 @@ enum ResourceReferenceURL {
         guard !target.isEmpty else { return nil }
 
         var queryItems = [URLQueryItem(name: "target", value: target)]
-        if let workspaceID = nonEmpty(reference.workspaceID),
-           let fileCandidatePath = nonEmpty(reference.fileCandidatePath) {
+        if let workspaceID = nonEmpty(reference.workspaceID) {
             queryItems.append(URLQueryItem(name: "workspaceId", value: workspaceID))
+        }
+        if let fileCandidatePath = nonEmpty(reference.fileCandidatePath) {
             queryItems.append(URLQueryItem(name: "fileCandidate", value: fileCandidatePath))
         }
         if let sourceServerID = nonEmpty(reference.sourceServerID) {
@@ -421,6 +488,12 @@ enum ResourceReferenceURL {
         }
         if let lineAnchor = reference.lineAnchor {
             queryItems.append(URLQueryItem(name: "lineAnchor", value: lineAnchor.fragment))
+        }
+        if reference.kind == .hostFile {
+            queryItems.append(URLQueryItem(name: "kind", value: ResourceReferenceKind.hostFile.rawValue))
+        }
+        if let visibleLabel = nonEmpty(reference.visibleLabel) {
+            queryItems.append(URLQueryItem(name: "label", value: visibleLabel))
         }
 
         var components = URLComponents()
@@ -446,13 +519,23 @@ enum ResourceReferenceURL {
             lineAnchor = nil
         }
 
+        let kind: ResourceReferenceKind
+        if let rawKind = queryValue("kind", in: queryItems) {
+            guard let parsedKind = ResourceReferenceKind(rawValue: rawKind) else { return nil }
+            kind = parsedKind
+        } else {
+            kind = .workspaceFile
+        }
+
         return ResourceReference(
             target: target,
             sourceServerID: queryValue("sourceServerId", in: queryItems),
             workspaceID: queryValue("workspaceId", in: queryItems),
             sourceSessionID: queryValue("sourceSessionId", in: queryItems),
             fileCandidatePath: queryValue("fileCandidate", in: queryItems),
-            lineAnchor: lineAnchor
+            kind: kind,
+            lineAnchor: lineAnchor,
+            visibleLabel: queryValue("label", in: queryItems)
         )
     }
 
@@ -629,13 +712,7 @@ enum MarkdownWikiLinkRewriter {
     }
 
     private static func isPotentiallySupportedWikiTarget(_ rawTarget: Substring) -> Bool {
-        guard let parsed = parseWikiTarget(String(rawTarget)) else { return false }
-
-        let path = parsed.path.replacingOccurrences(of: "\\", with: "/")
-        return !path.hasPrefix("/")
-            && !path.hasPrefix("~")
-            && !path.contains("?")
-            && !path.contains(":")
+        classifyWikiTarget(String(rawTarget)) != nil
     }
 
     private static func unchangedParserInput(_ source: String) -> ParserInput {
@@ -672,24 +749,116 @@ enum MarkdownWikiLinkRewriter {
     }
 
     static func resolvedWorkspacePath(target: String, sourceDirectory: String?) -> String? {
+        guard let classified = classifyWikiTarget(target, sourceDirectory: sourceDirectory),
+              classified.kind == .workspaceFile else {
+            return nil
+        }
+        return classified.path
+    }
+
+    private struct ClassifiedWikiTarget {
+        let parsed: ParsedWikiTarget
+        let kind: ResourceReferenceKind
+        let path: String
+    }
+
+    private static func classifyWikiTarget(
+        _ target: String,
+        sourceDirectory: String? = nil
+    ) -> ClassifiedWikiTarget? {
         guard let parsed = parseWikiTarget(target) else { return nil }
 
         var path = parsed.path.replacingOccurrences(of: "\\", with: "/")
-        guard !path.hasPrefix("/"), !path.hasPrefix("~") else { return nil }
-        guard !path.contains("?"), !path.contains(":") else { return nil }
-
         let resolveFromSource = path.hasPrefix("./") || path.hasPrefix("../")
         if resolveFromSource,
            let sourceDirectory,
            !sourceDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Join before host/workspace classification so /tmp/index.md
+            // containing [[./topic]] stays a host file, not tmp/topic.md.
             path = sourceDirectory + "/" + path
         }
+
+        if let hostPath = resolvedHostPath(path) {
+            let resolved = applyMarkdownExtensionIfNeeded(hostPath)
+            return ClassifiedWikiTarget(parsed: parsed, kind: .hostFile, path: resolved)
+        }
+
+        guard !path.hasPrefix("/"), !path.hasPrefix("~") else { return nil }
+        guard !path.contains("?"), !path.contains(":") else { return nil }
 
         guard var normalized = normalizeWorkspacePath(path) else { return nil }
         if (normalized as NSString).pathExtension.isEmpty {
             normalized += ".md"
         }
-        return normalized
+        return ClassifiedWikiTarget(parsed: parsed, kind: .workspaceFile, path: normalized)
+    }
+
+    /// Accept absolute POSIX paths, bare `~` / `~/...`, and local `file://` URLs.
+    /// Reject `~user`, non-local file URLs, query strings, and relative leftovers.
+    static func resolvedHostPath(_ rawPath: String) -> String? {
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.contains("?"),
+              !trimmed.contains("\0") else {
+            return nil
+        }
+
+        if trimmed.lowercased().hasPrefix("file://") {
+            return expandLocalFileURL(trimmed)
+        }
+        if trimmed.lowercased().hasPrefix("file:") {
+            return nil
+        }
+
+        if trimmed == "~" || trimmed.hasPrefix("~/") {
+            return trimmed
+        }
+
+        if trimmed.hasPrefix("~") {
+            return nil
+        }
+
+        guard trimmed.hasPrefix("/") else { return nil }
+        return normalizeAbsoluteHostPath(trimmed)
+    }
+
+    /// Collapse `.` and `..` after source-directory join so `/tmp/./topic`
+    /// and `/tmp/notes/../topic` stay host files at `/tmp/topic`.
+    private static func normalizeAbsoluteHostPath(_ path: String) -> String? {
+        var output: [String] = []
+        for partSubsequence in path.split(separator: "/", omittingEmptySubsequences: true) {
+            let part = String(partSubsequence).trimmingCharacters(in: .whitespacesAndNewlines)
+            if part.isEmpty || part == "." { continue }
+            if part == ".." {
+                if !output.isEmpty { output.removeLast() }
+                continue
+            }
+            output.append(part)
+        }
+        guard !output.isEmpty else { return nil }
+        return "/" + output.joined(separator: "/")
+    }
+
+    private static func expandLocalFileURL(_ raw: String) -> String? {
+        guard let url = URL(string: raw),
+              url.scheme?.lowercased() == "file",
+              url.isFileURL,
+              (url.host ?? "").isEmpty,
+              url.query == nil,
+              url.fragment == nil else {
+            return nil
+        }
+
+        let path = url.path
+        guard path.hasPrefix("/"), !path.isEmpty else { return nil }
+        return path
+    }
+
+    private static func applyMarkdownExtensionIfNeeded(_ path: String) -> String {
+        if (path as NSString).pathExtension.isEmpty, path != "~" {
+            return path + ".md"
+        }
+        return path
     }
 
     private static func rewrite(blocks: [MarkdownBlock], context: RewriteContext) -> [MarkdownBlock] {
@@ -790,8 +959,7 @@ enum MarkdownWikiLinkRewriter {
         guard let rawTarget = pieces.first else { return nil }
 
         let target = String(rawTarget).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let parsedTarget = parseWikiTarget(target),
-              let filePath = resolvedWorkspacePath(target: target, sourceDirectory: context.sourceDirectory) else {
+        guard let classified = classifyWikiTarget(target, sourceDirectory: context.sourceDirectory) else {
             return nil
         }
 
@@ -801,13 +969,22 @@ enum MarkdownWikiLinkRewriter {
 
         let workspaceID = context.workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasWorkspaceScope = workspaceID?.isEmpty == false
+        let fileCandidatePath: String?
+        switch classified.kind {
+        case .hostFile:
+            fileCandidatePath = classified.path
+        case .workspaceFile:
+            fileCandidatePath = hasWorkspaceScope ? classified.path : nil
+        }
         guard let url = ResourceReferenceURL.make(ResourceReference(
             target: target,
             sourceServerID: context.serverID,
             workspaceID: hasWorkspaceScope ? workspaceID : nil,
             sourceSessionID: context.sessionID,
-            fileCandidatePath: hasWorkspaceScope ? filePath : nil,
-            lineAnchor: parsedTarget.lineAnchor
+            fileCandidatePath: fileCandidatePath,
+            kind: classified.kind,
+            lineAnchor: classified.parsed.lineAnchor,
+            visibleLabel: display
         )) else {
             return .text(display)
         }

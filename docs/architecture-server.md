@@ -157,6 +157,7 @@ The private loopback is an adapter, not a second API. Iroh transport code must n
 - `routes/server-resources.ts` — server-global Skill/extension catalogs, server-authored capabilities, contained Skill file reads, enable/disable, and Oppi extension configuration.
 - `routes/uploads.ts` — chat attachment upload records and content.
 - `routes/workspace-files.ts` — workspace path, directory, and raw-file routes.
+- `routes/host-files.ts` — authenticated exact-path host-file GET/HEAD.
 - `routes/themes.ts`, `routes/skills.ts`, `routes/provider-auth.ts`, `routes/telemetry.ts`, and E2E harness routes.
 
 WebSocket upgrade paths are explicit:
@@ -315,6 +316,7 @@ Keep these high-churn modules small and explicit:
 | Terminal mirror runtime                     | `server/src/runtime-router.ts`, `server/src/pi-tui-mirror-runtime.ts`, `server/src/pi-tui-mirror-contract.ts`, `pi-extensions/oppi-mirror/extensions/oppi-mirror.ts`                   |
 | Extension UI relay                          | `server/src/sdk-ui-bridge.ts`, `server/src/extension-ui-contract.ts`, `server/src/extension-ui-state.ts`, `server/src/session-agent-events.ts`                                         |
 | Workspace files and media                   | `server/src/routes/workspace-files.ts`, `server/src/file-serving-policy.ts`, `server/src/routes/uploads.ts`, `server/src/session-attachments.ts`, `server/src/http-range.ts`           |
+| Host file raw                               | `server/src/routes/host-files.ts`, `server/src/host-file-path.ts`, `server/src/file-serving-policy.ts`, `server/src/http-range.ts`                                                      |
 | Protocol contract                           | `server/src/types/protocol.ts`, `server/src/types.ts`, `protocol/*.json`                                                                                                               |
 | Pi model/auth and pricing                   | `server/src/session-title-generator.ts`, `server/src/token-usage.ts`, `server/src/model-catalog.ts`                                                                                    |
 | Provider usage quotas                       | `server/src/provider-quota/` (`adapters/registry.ts` to add a provider; shared DTO + Apple compact/detail presentation)                                                               |

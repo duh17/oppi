@@ -115,6 +115,35 @@ enum HTMLContentSecurity {
         guard let scheme = url?.scheme?.lowercased() else { return false }
         return scheme == "http" || scheme == "https"
     }
+
+    static func isHostRawFileURL(_ url: URL?) -> Bool {
+        guard let url, isHTTPURL(url) else { return false }
+        return url.path == "/files/raw" || url.path.hasSuffix("/files/raw")
+    }
+}
+
+enum HostFilePreviewWebViewLoadMode: Equatable {
+    case htmlString
+    case none
+}
+
+/// Host HTML/SVG must stay on fetch -> `loadHTMLString` + CSP.
+/// Direct WKWebView URL loads of `/files/raw` are forbidden.
+enum HostFilePreviewPolicy {
+    static func usesStringFetchViewer(for path: String) -> Bool {
+        webViewLoadMode(for: path) == .htmlString
+    }
+
+    static func webViewLoadMode(for path: String) -> HostFilePreviewWebViewLoadMode {
+        switch FileType.detect(from: path) {
+        case .html:
+            return .htmlString
+        case .image where (path as NSString).pathExtension.lowercased() == "svg":
+            return .htmlString
+        default:
+            return .none
+        }
+    }
 }
 
 // MARK: - HTMLRenderView
@@ -238,6 +267,10 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
+        if HTMLContentSecurity.isHostRawFileURL(navigationAction.request.url) {
+            decisionHandler(.cancel)
+            return
+        }
         if HTMLContentSecurity.allowsEmbeddedNavigation(to: navigationAction.request.url) {
             decisionHandler(.allow)
             return
@@ -256,6 +289,9 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
+        if HTMLContentSecurity.isHostRawFileURL(navigationAction.request.url) {
+            return nil
+        }
         if HTMLContentSecurity.isHTTPURL(navigationAction.request.url),
            let url = navigationAction.request.url {
             UIApplication.shared.open(url)
