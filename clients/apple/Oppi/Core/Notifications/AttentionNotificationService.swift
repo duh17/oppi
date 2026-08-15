@@ -22,7 +22,15 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
 
     /// Called when the user taps an ask notification body.
     /// Navigate to the session containing this ask request.
-    var onNavigateToSession: ((String) -> Void)?
+    var onNavigateToSession: ((String) -> Void)? {
+        didSet {
+            deliverPendingNavigationTapsIfPossible()
+        }
+    }
+
+    // Taps can arrive before OppiApp finishes wiring its navigation handler on
+    // cold launch. Keep them app-layer agnostic here and deliver them once wired.
+    private var pendingNavigationSessionIds: [String] = []
 
     // Test seams
     var _applicationStateForTesting: UIApplication.State?
@@ -172,6 +180,24 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
 
     // MARK: - UNUserNotificationCenterDelegate
 
+    func handleAskNotificationTap(sessionId: String) {
+        guard !sessionId.isEmpty else { return }
+        guard let onNavigateToSession else {
+            pendingNavigationSessionIds.append(sessionId)
+            return
+        }
+        onNavigateToSession(sessionId)
+    }
+
+    private func deliverPendingNavigationTapsIfPossible() {
+        guard let onNavigateToSession, !pendingNavigationSessionIds.isEmpty else { return }
+        let pendingSessionIds = pendingNavigationSessionIds
+        pendingNavigationSessionIds.removeAll()
+        for sessionId in pendingSessionIds {
+            onNavigateToSession(sessionId)
+        }
+    }
+
     /// Handle taps on local attention notifications.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
@@ -185,7 +211,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         if content.categoryIdentifier == Self.askCategoryId {
             if !sessionId.isEmpty {
                 Task { @MainActor in
-                    onNavigateToSession?(sessionId)
+                    handleAskNotificationTap(sessionId: sessionId)
                 }
             }
             completionHandler()

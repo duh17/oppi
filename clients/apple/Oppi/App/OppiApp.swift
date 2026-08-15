@@ -145,6 +145,42 @@ enum MissingSessionDeepLinkNavigationPolicy {
     }
 }
 
+enum SessionDeepLinkNavigationDisposition: Equatable {
+    case open
+    case park
+    case showWorkspaceRoot
+}
+
+enum SessionDeepLinkNavigationPolicy {
+    static func disposition(
+        sessionIsAvailable: Bool,
+        launchPhase: AppLaunchPhase,
+        startupComplete: Bool,
+        inviteBootstrapInFlight: Bool,
+        parkingAllowed: Bool
+    ) -> SessionDeepLinkNavigationDisposition {
+        if sessionIsAvailable {
+            return .open
+        }
+        let startupIsResolving = launchPhase == .resolving || !startupComplete
+        if parkingAllowed && (startupIsResolving || inviteBootstrapInFlight) {
+            return .park
+        }
+        return .showWorkspaceRoot
+    }
+}
+
+@MainActor
+enum AppStartupSequence {
+    static func run(
+        startupWork: () async -> Void,
+        markComplete: () -> Void
+    ) async {
+        await startupWork()
+        markComplete()
+    }
+}
+
 enum WorkspaceDeepLink {
     struct Payload: Equatable, Sendable {
         let path: String
@@ -294,6 +330,7 @@ struct OppiApp: App {
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
 
     @State private var inviteBootstrapInFlight = false
+    @State private var appStartupComplete = false
     @State private var pendingSessionDeepLinkId: String?
     @State private var pendingResourceReferenceChoice: PendingResourceReferenceChoice?
     @State private var resourceReferenceRequestCoordinator = ResourceReferenceRequestCoordinator()
@@ -473,6 +510,14 @@ struct OppiApp: App {
 
     @MainActor
     private func startApp() async {
+        await AppStartupSequence.run(
+            startupWork: { await performAppStartupWork() },
+            markComplete: { appStartupComplete = true }
+        )
+    }
+
+    @MainActor
+    private func performAppStartupWork() async {
         AppFont.rebuild()
         MetricKitService.shared.configure()
         DeviceResourceSampler.shared.configure()
@@ -886,20 +931,11 @@ struct OppiApp: App {
         guard let link = InAppSessionLink.parse(url) else {
             return false
         }
-        let sessionId = link.sessionId
-
-        if await openSessionDeepLinkIfAvailable(sessionId, source: .externalURL) {
-            return true
-        }
-
-        // A cold-launch URL can arrive before credentials and cached sessions
-        // finish loading. Keep the route until startup has populated the stores.
-        if navigation.launchPhase == .resolving || inviteBootstrapInFlight {
-            pendingSessionDeepLinkId = sessionId
-            return true
-        }
-
-        showWorkspaceRootForMissingSessionDeepLink()
+        await navigateToSessionFromDeepLink(
+            link.sessionId,
+            source: .externalURL,
+            parkingAllowed: true
+        )
         return true
     }
 
@@ -907,27 +943,41 @@ struct OppiApp: App {
     private func consumePendingSessionDeepLinkIfNeeded() async {
         guard let sessionId = pendingSessionDeepLinkId else { return }
         pendingSessionDeepLinkId = nil
-        if !(await openSessionDeepLinkIfAvailable(sessionId, source: .externalURL)) {
-            showWorkspaceRootForMissingSessionDeepLink()
-        }
+        await navigateToSessionFromDeepLink(
+            sessionId,
+            source: .externalURL,
+            parkingAllowed: false
+        )
     }
 
     @MainActor
-    private func openSessionDeepLinkIfAvailable(
+    private func navigateToSessionFromDeepLink(
         _ sessionId: String,
-        source: SessionNavigationSource
-    ) async -> Bool {
-        for (serverId, conn) in coordinator.connections
-            where conn.sessionStore.sessions.contains(where: { $0.id == sessionId }) {
+        source: SessionNavigationSource,
+        parkingAllowed: Bool
+    ) async {
+        let foundSession = coordinator.findSession(id: sessionId)
+        switch SessionDeepLinkNavigationPolicy.disposition(
+            sessionIsAvailable: foundSession != nil,
+            launchPhase: navigation.launchPhase,
+            startupComplete: appStartupComplete,
+            inviteBootstrapInFlight: inviteBootstrapInFlight,
+            parkingAllowed: parkingAllowed
+        ) {
+        case .open:
+            guard let foundSession else { return }
             await openWorkspaceSession(
-                serverId: serverId,
+                serverId: foundSession.serverId,
                 sessionId: sessionId,
-                connection: conn,
+                connection: foundSession.connection,
                 source: source
             )
-            return true
+        case .park:
+            // URL and notification routes share this one-shot launch parking slot.
+            pendingSessionDeepLinkId = sessionId
+        case .showWorkspaceRoot:
+            showWorkspaceRootForMissingSessionDeepLink()
         }
-        return false
     }
 
     @MainActor
@@ -1424,25 +1474,17 @@ struct OppiApp: App {
             PushRegistration.shared.configure(coordinator: coordinator)
         }
 
-        let navigateToSessionFromNotification: (String) -> Void = { [weak coordinator] sessionId in
-            guard let coordinator, !sessionId.isEmpty else { return }
-            Task { @MainActor in
-                if let found = coordinator.findSession(id: sessionId) {
-                    await openWorkspaceSession(
-                        serverId: found.serverId,
-                        sessionId: sessionId,
-                        connection: found.connection
-                    )
-                } else {
-                    MissingSessionDeepLinkNavigationPolicy.showWorkspaceRoot(in: navigation)
-                }
-            }
-        }
-
         // Navigate to session when user taps an attention notification body.
-        // Cross-server: find which server owns the session and switch to it.
+        // The service may deliver a tap latched before this handler was wired.
         notificationService.onNavigateToSession = { sessionId in
-            navigateToSessionFromNotification(sessionId)
+            guard !sessionId.isEmpty else { return }
+            Task { @MainActor in
+                await navigateToSessionFromDeepLink(
+                    sessionId,
+                    source: .externalURL,
+                    parkingAllowed: true
+                )
+            }
         }
     }
 
