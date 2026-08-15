@@ -67,6 +67,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "serve/start", summary: "start the local server in this terminal" },
       { name: "pair", summary: "show a signed pairing QR/link for the iOS app" },
       { name: "status", summary: "show server, network, and pairing status" },
+      { name: "quota", summary: "show plan and remaining quota for configured model providers" },
       { name: "doctor", summary: "run security and environment diagnostics" },
       { name: "server", summary: "install, restart, stop, or inspect the launchd service" },
       { name: "config", summary: "show, get, set, or validate server config" },
@@ -85,7 +86,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Default output is terminal-friendly for humans and agents; use '--json' for strict machine parsing.",
-      "Help, version, init, serve, pair, status, doctor, config, server, and update are available during setup; workspace, worktree, session, Agent, schedule, and wait commands require local owner credentials and a running server.",
+      "Help, version, init, serve, pair, status, doctor, config, server, and update are available during setup; quota, workspace, worktree, session, Agent, schedule, and wait commands require local owner credentials and a running server.",
       "Use '<noun> help' or '<command> --help' for flags and deeper examples.",
       "Use '--json' with help for an agent-readable description of the same topic.",
     ],
@@ -169,6 +170,18 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi status",
     notes: ["This reads local config and host network state; it does not contact the server API."],
     examples: [{ command: "oppi status" }],
+  },
+  {
+    path: ["quota"],
+    title: "Provider quotas",
+    summary: "Show plan, usage windows, reset times, and balances for model providers.",
+    usage: "oppi quota [--json]",
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    notes: [
+      "Quota data comes from the running server's normalized provider-quota adapters.",
+      "Providers without credentials or usage windows remain visible so missing configuration is explicit.",
+    ],
+    examples: [{ command: "oppi quota" }, { command: "oppi quota --json" }],
   },
   {
     path: ["doctor"],

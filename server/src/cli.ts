@@ -1110,6 +1110,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
       break;
 
     case "status":
+    case "quota":
     case "agent":
     case "workspace":
     case "worktree":

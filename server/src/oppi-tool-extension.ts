@@ -209,7 +209,7 @@ export function createOppiToolExtensionFactory(options: {
       description:
         "Run one exposed Oppi CLI command as JSON under the configured server approval policy.",
       promptSnippet:
-        "Run exposed Oppi CLI commands as JSON for workspaces, worktrees, Agents, Skills, sessions, schedules, and status.",
+        "Run exposed Oppi CLI commands as JSON for workspaces, worktrees, Agents, Skills, sessions, schedules, status, and provider quota.",
       promptGuidelines: [
         "Use oppi for Oppi app state instead of shell or filesystem tools, and use read commands before asking about discoverable state.",
         "Route session questions by intent and take the smallest sufficient step: orientation uses session list; current progress uses session inspect <id> --view summary; latest response uses session inspect <id> --view response directly, without summary or outline first.",

@@ -29,6 +29,7 @@ export type CliAgentClassification =
 
 const COMMAND_POLICIES: readonly CliCommandPolicy[] = [
   { path: ["status"], access: "read" },
+  { path: ["quota"], access: "read" },
 
   { path: ["workspace", "list"], access: "read" },
   { path: ["workspace", "get"], access: "read" },

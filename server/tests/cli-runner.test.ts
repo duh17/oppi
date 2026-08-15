@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { localApiRequest } from "../src/cli/local-api-client.js";
+import { quotaHeadroomState } from "../src/cli/quota.js";
 import { runCli } from "../src/cli/runner.js";
 
 vi.mock("../src/cli/local-api-client.js", async (importOriginal) => {
@@ -15,6 +16,16 @@ afterEach(() => {
 });
 
 describe("canonical CLI runner", () => {
+  it.each([
+    [51, "healthy"],
+    [50, "constrained"],
+    [21, "constrained"],
+    [20, "critical"],
+    [19, "critical"],
+  ] as const)("classifies %s%% quota headroom as %s", (remaining, expected) => {
+    expect(quotaHeadroomState(remaining)).toBe(expected);
+  });
+
   it("executes one canonical command and captures its JSON and complete ANSI human output", async () => {
     request.mockResolvedValueOnce({
       agent: { id: "agent-1", name: "Reviewer", status: "active", version: 3 },
@@ -76,6 +87,121 @@ describe("canonical CLI runner", () => {
     });
     expect(result.humanOutput).toContain("Server Configuration");
     expect(result.humanOutput).toContain("\u001b[");
+  });
+
+  it("renders quota help without contacting the server", async () => {
+    const result = await runCli(["quota", "--help"], {
+      dataDir: "/tmp/oppi-runner-quota-help-test",
+      captureHuman: true,
+      forceJson: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, exitCode: 0 });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      data: { help: { path: ["quota"], title: "Provider quotas" } },
+    });
+    expect(result.humanOutput).toContain("oppi quota");
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("queries and renders every configured provider quota", async () => {
+    request.mockResolvedValueOnce({
+      providers: [
+        {
+          providerId: "openai-codex",
+          displayName: "Codex",
+          authenticated: true,
+          planType: "prolite",
+          windows: [
+            {
+              key: "weekly",
+              shortLabel: "7d",
+              title: "Weekly",
+              usedPercent: 73,
+              remainingPercent: 27,
+              limitWindowSeconds: 604_800,
+              resetAt: 1_787_196_783,
+              includeWeekdayInReset: true,
+            },
+          ],
+          credits: { hasCredits: false, unlimited: false, balance: "0" },
+          prepaidBalanceCents: null,
+          fetchedAt: 1_786_785_160_944,
+        },
+        {
+          providerId: "unconfigured",
+          displayName: "Unconfigured",
+          authenticated: false,
+          planType: null,
+          windows: [],
+          credits: null,
+          prepaidBalanceCents: null,
+          fetchedAt: 1_786_785_160_944,
+        },
+      ],
+      fetchedAt: 1_786_785_160_944,
+    } as never);
+
+    const result = await runCli(["quota"], {
+      dataDir: "/tmp/oppi-runner-quota-test",
+      captureHuman: true,
+      forceJson: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, exitCode: 0 });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      data: {
+        providers: [
+          {
+            providerId: "openai-codex",
+            planType: "prolite",
+            windows: [{ key: "weekly", remainingPercent: 27 }],
+          },
+          { providerId: "unconfigured", authenticated: false },
+        ],
+      },
+    });
+    expect(result.humanOutput).toContain("Provider quotas");
+    expect(result.humanOutput).toContain("Codex");
+    expect(result.humanOutput).toContain("27% left");
+    expect(result.humanOutput).toContain("Unconfigured");
+    expect(result.humanOutput).toContain("Not configured");
+    expect(request).toHaveBeenCalledWith(expect.anything(), "/server/provider-quotas", undefined);
+  });
+
+  it("returns one error envelope for a malformed provider quota response", async () => {
+    request.mockResolvedValueOnce({
+      providers: [{ displayName: 42, windows: "broken" }],
+      fetchedAt: 1_786_785_160_944,
+    } as never);
+
+    const result = await runCli(["quota"], {
+      dataDir: "/tmp/oppi-runner-quota-malformed-test",
+      captureHuman: true,
+      forceJson: true,
+    });
+
+    expect(result).toMatchObject({ ok: false, exitCode: 1 });
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: false,
+      error: { message: "Invalid provider quota response from local API" },
+    });
+    expect(result.humanOutput).toContain("Invalid provider quota response");
+  });
+
+  it("renders an empty provider quota response clearly", async () => {
+    request.mockResolvedValueOnce({ providers: [], fetchedAt: 1_786_785_160_944 } as never);
+
+    const result = await runCli(["quota"], {
+      dataDir: "/tmp/oppi-runner-quota-empty-test",
+      captureHuman: true,
+      forceJson: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, exitCode: 0 });
+    expect(result.humanOutput).toContain("No quota providers reported");
   });
 
   it("does not terminate the process when a canonical command reports an error", async () => {

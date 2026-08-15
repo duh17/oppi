@@ -5,6 +5,7 @@ import { classifyCliAgentCommand, listCliAgentCommandPolicies } from "../src/cli
 describe("CLI agent access policy", () => {
   it.each([
     ["status", "read"],
+    ["quota", "read"],
     ["workspace list", "read"],
     ["workspace update", "mutation"],
     ["workspace delete", "destructive"],
