@@ -291,9 +291,23 @@ export class SessionLifecycleService {
         409,
       );
     }
-    if (existing.launch?.status === "launching") {
+    const launch = existing.launch;
+    if (launch?.status === "launching") {
+      // `launching` is deliberately conservative. A process can die after Pi
+      // accepts the prompt but before the delivered receipt is saved, and the
+      // current persistence boundary cannot distinguish that from a pre-send
+      // crash. Expiry releases contention, not permission to duplicate a turn.
+      const leaseIsActive = launch.lease && launch.lease.expiresAt > Date.now();
+      throw new SessionLifecycleError(
+        leaseIsActive ? "launch_in_progress" : "launch_delivery_unknown",
+        409,
+      );
+    }
+    const shouldDispatchPersistedPrompt =
+      Boolean(requestedPrompt?.trim()) && launch?.promptDispatch === "not_sent";
+    if (shouldDispatchPersistedPrompt) {
       const now = Date.now();
-      if (existing.launch.lease && existing.launch.lease.expiresAt > now) {
+      if (launch?.lease && launch.lease.expiresAt > now) {
         throw new SessionLifecycleError("launch_in_progress", 409);
       }
       const recovered = this.deps.storage.claimSessionLaunchRecovery(
@@ -348,24 +362,9 @@ export class SessionLifecycleService {
       await this.deps.sessions.sendPrompt(session.id, prompt, {
         ...(turnId ? { clientTurnId: turnId, requestId: turnId } : {}),
       });
-      session.firstMessage = prompt.slice(0, 200);
-      session.launch = {
-        ...launch,
-        status: "accepted",
-        promptDispatch: "delivered",
-        completedAt: Date.now(),
-        lease: undefined,
-      };
-      this.deps.storage.saveSession(session);
-      const summarySession = this.deps.ensureSessionContextWindow(session);
-      return {
-        session: summarySession,
-        createdSession,
-        summarySession,
-        prompted: true,
-        launchKind,
-      };
     } catch (error: unknown) {
+      // SessionManager resolves sendPrompt only after authoritative preflight
+      // acceptance. Errors here are therefore safe to persist as retryable.
       if (isRequiredModelUnavailableError(error)) session.status = "error";
       session.launch = {
         ...launch,
@@ -383,6 +382,27 @@ export class SessionLifecycleService {
         launchKind,
       };
     }
+
+    // Do not catch this save with prompt preflight failures. If persistence
+    // fails after acceptance, the durable row remains `launching`; recovery
+    // must conservatively refuse redispatch because acceptance is ambiguous.
+    session.firstMessage = prompt.slice(0, 200);
+    session.launch = {
+      ...launch,
+      status: "accepted",
+      promptDispatch: "delivered",
+      completedAt: Date.now(),
+      lease: undefined,
+    };
+    this.deps.storage.saveSession(session);
+    const summarySession = this.deps.ensureSessionContextWindow(session);
+    return {
+      session: summarySession,
+      createdSession,
+      summarySession,
+      prompted: true,
+      launchKind,
+    };
   }
 
   async resumeWorkspaceSession(params: {

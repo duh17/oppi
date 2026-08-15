@@ -402,7 +402,7 @@ describe("POST /control-sessions", () => {
     }
   });
 
-  it("recovers an expired idempotent control-session launch lease", async () => {
+  it("refuses to redispatch an expired ambiguous control-session launch", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-session-recovery-"));
 
     try {
@@ -413,6 +413,7 @@ describe("POST /control-sessions", () => {
         domain: "agents",
         intent: "revise",
         targetId: "agent-1",
+        prompt: "Inspect and revise the Agent.",
         launchIdempotencyKey: "ios-control-recovery-1",
       };
 
@@ -423,6 +424,7 @@ describe("POST /control-sessions", () => {
       session!.launch = {
         ...session!.launch,
         status: "launching",
+        promptDispatch: undefined,
         completedAt: undefined,
         lease: {
           owner: "abandoned-control-launch",
@@ -432,20 +434,15 @@ describe("POST /control-sessions", () => {
       };
       persistentStorage.saveSession(session!);
       mock.responses.splice(0);
+      mock.sessions.startSession.mockClear();
+      mock.sessions.sendPrompt.mockClear();
 
-      await dispatchCreate(mock, body);
+      expect(await dispatchCreate(mock, body)).toBe(true);
 
-      expect(mock.responses).toHaveLength(1);
-      expect(mock.responses[0]).toMatchObject({
-        status: 200,
-        data: {
-          session: {
-            id: session!.id,
-            launch: { status: "accepted", promptDispatch: "not_sent" },
-          },
-          launch: { existing: true },
-        },
-      });
+      expect(mock.responses).toEqual([]);
+      expect(mock.errors).toEqual([{ status: 409, message: "launch_delivery_unknown" }]);
+      expect(mock.sessions.startSession).not.toHaveBeenCalled();
+      expect(mock.sessions.sendPrompt).not.toHaveBeenCalled();
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

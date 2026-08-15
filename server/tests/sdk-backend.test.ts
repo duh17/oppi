@@ -274,8 +274,19 @@ describe("SdkBackend control sessions", () => {
         onEnd: vi.fn(),
       });
       expect(first.session.sessionManager.getCwd()).toBe(controlCwd);
-      expect(first.session.getActiveToolNames()).toEqual(["oppi", "ask", "read", "edit"]);
-      expect(first.session.getToolDefinition("write")).toBeUndefined();
+      expect(first.session.getActiveToolNames()).toEqual([
+        "oppi",
+        "ask",
+        "read",
+        "edit",
+        "write",
+        "grep",
+        "find",
+        "ls",
+      ]);
+      for (const name of ["write", "grep", "find", "ls"]) {
+        expect(first.session.getToolDefinition(name)).toBeDefined();
+      }
       expect(first.session.getToolDefinition("bash")).toBeUndefined();
 
       const selectedHostFile = join(dataDir, "selected-skill.md");
@@ -1310,7 +1321,7 @@ export default function (pi) {
 });
 
 describe("SdkBackend saved Agent definitions", () => {
-  it("registers only managed Oppi/ask plus stock read/edit for the Oppi agent runtime", async () => {
+  it("registers the exact isolated control tool set without project leakage", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-default-agent-runtime-"));
     mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
     writeFileSync(
@@ -1359,8 +1370,17 @@ describe("SdkBackend saved Agent definitions", () => {
         ),
       ).toBe(true);
       expect(extensions.some((ext) => ext.tools.has("extra_tool"))).toBe(false);
-      expect(backend.session.getActiveToolNames()).toEqual(["oppi", "ask", "read", "edit"]);
-      expect(backend.session.getToolDefinition("write")).toBeUndefined();
+      expect(backend.session.getActiveToolNames()).toEqual([
+        "oppi",
+        "ask",
+        "read",
+        "edit",
+        "write",
+        "grep",
+        "find",
+        "ls",
+      ]);
+      expect(backend.session.getToolDefinition("extra_tool")).toBeUndefined();
       expect(backend.session.getToolDefinition("bash")).toBeUndefined();
       expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
 

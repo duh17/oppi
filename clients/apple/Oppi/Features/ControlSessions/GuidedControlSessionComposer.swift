@@ -1,5 +1,156 @@
 import SwiftUI
 
+@MainActor
+enum GuidedControlSessionInitialPrompt {
+    struct PreparedPrompt: Equatable {
+        let message: String
+        let sentComments: [ReviewComment]
+
+        var sentCommentIds: [String] { sentComments.map(\.id) }
+    }
+
+    static func make(
+        domain: ControlSessionDomain,
+        intent: ControlSessionIntent,
+        targetId: String?,
+        targetName: String?,
+        targetPath: String?,
+        workspaceId: String,
+        workspaceName: String,
+        userRequest: String,
+        comments: ChatReviewCommentsController?
+    ) -> PreparedPrompt {
+        let completeRequest = comments?.appendReviewBlock(
+            to: userRequest,
+            pathFormatting: ChatView.reviewCommentPathFormattingPolicy(controlDomain: domain)
+        ) ?? userRequest
+        return PreparedPrompt(
+            message: ControlSessionStarterPrompt.make(
+                domain: domain,
+                intent: intent,
+                targetId: targetId,
+                targetName: targetName,
+                targetPath: targetPath,
+                workspaceId: workspaceId,
+                workspaceName: workspaceName,
+                userRequest: completeRequest
+            ),
+            sentComments: comments?.stagedComments ?? []
+        )
+    }
+}
+
+@MainActor
+struct GuidedControlSessionAtomicLaunch {
+    let request: APIClient.CreateControlSessionRequest
+    let sourceDraftText: String
+    let initialPrompt: GuidedControlSessionInitialPrompt.PreparedPrompt
+
+    static func make(
+        domain: ControlSessionDomain,
+        intent: ControlSessionIntent,
+        targetId: String?,
+        targetName: String?,
+        targetPath: String?,
+        workspaceId: String,
+        workspaceName: String,
+        sourceDraftText: String,
+        cleanRequest: String,
+        sessionName: String,
+        model: String?,
+        thinking: ThinkingLevel,
+        requestId: String,
+        comments: ChatReviewCommentsController?
+    ) -> Self {
+        let initialPrompt = GuidedControlSessionInitialPrompt.make(
+            domain: domain,
+            intent: intent,
+            targetId: targetId,
+            targetName: targetName,
+            targetPath: targetPath,
+            workspaceId: workspaceId,
+            workspaceName: workspaceName,
+            userRequest: cleanRequest,
+            comments: comments
+        )
+        return Self(
+            request: .init(
+                domain: domain,
+                intent: intent,
+                targetId: targetId,
+                targetName: targetName,
+                name: sessionName,
+                model: model,
+                thinking: thinking,
+                prompt: initialPrompt.message,
+                launchIdempotencyKey: requestId
+            ),
+            sourceDraftText: sourceDraftText,
+            initialPrompt: initialPrompt
+        )
+    }
+
+    func unchangedSentCommentIds(in currentComments: [ReviewComment]) -> [String] {
+        initialPrompt.sentComments.compactMap { sentComment in
+            currentComments.first(where: { $0.id == sentComment.id }) == sentComment
+                ? sentComment.id
+                : nil
+        }
+    }
+
+    func shouldClearDraft(currentText: String) -> Bool {
+        currentText == sourceDraftText
+    }
+}
+
+@MainActor
+enum GuidedControlSessionLaunchCoordinator {
+    struct Completion {
+        let session: Session
+        let starterPromptDelivered: Bool
+        let sessionTarget: WorkspaceSessionNavTarget
+        let sentCommentIdsToDispose: [String]
+        let shouldClearDraft: Bool
+        let hasUnsentContentAfterDisposal: Bool
+    }
+
+    static func prepare(
+        launch: GuidedControlSessionAtomicLaunch,
+        existingSession: Session?,
+        starterPromptDelivered: Bool,
+        serverId: String?,
+        fallbackServerId: String?,
+        currentDraftText: String,
+        currentComments: [ReviewComment],
+        create: (APIClient.CreateControlSessionRequest) async throws -> (session: Session, prompted: Bool),
+        onSessionCreated: (Session, Bool) -> Void
+    ) async throws -> Completion {
+        let prepared = try await ControlRevisionSessionLaunchCoordinator.prepare(
+            existingSession: existingSession,
+            starterPromptDelivered: starterPromptDelivered,
+            create: { try await create(launch.request) },
+            onSessionCreated: onSessionCreated
+        )
+        let target = try ControlRevisionCommentNavigation.makeAtomicLaunchSessionTarget(
+            serverId: serverId,
+            fallbackServerId: fallbackServerId,
+            toSessionId: prepared.session.id
+        )
+        let sentCommentIdsToDispose = launch.unchangedSentCommentIds(in: currentComments)
+        let sentCommentIdSet = Set(sentCommentIdsToDispose)
+        let shouldClearDraft = launch.shouldClearDraft(currentText: currentDraftText)
+        let hasRemainingComments = currentComments.contains { !sentCommentIdSet.contains($0.id) }
+        return Completion(
+            session: prepared.session,
+            starterPromptDelivered: prepared.starterPromptDelivered,
+            sessionTarget: target,
+            sentCommentIdsToDispose: sentCommentIdsToDispose,
+            shouldClearDraft: shouldClearDraft,
+            hasUnsentContentAfterDisposal: !shouldClearDraft || hasRemainingComments
+        )
+    }
+}
+
 enum GuidedControlSessionComposerReviewComments {
     struct Presentation: Equatable {
         let pendingCount: Int
@@ -290,7 +441,7 @@ struct GuidedControlSessionComposer: View {
         defer { isCreating = false }
 
         do {
-            let starterPrompt = ControlSessionStarterPrompt.make(
+            let candidateLaunch = GuidedControlSessionAtomicLaunch.make(
                 domain: domain,
                 intent: intent,
                 targetId: targetId,
@@ -298,91 +449,56 @@ struct GuidedControlSessionComposer: View {
                 targetPath: targetPath,
                 workspaceId: selectedWorkspace.id,
                 workspaceName: selectedWorkspace.name,
-                userRequest: cleanRequest
+                sourceDraftText: request,
+                cleanRequest: cleanRequest,
+                sessionName: sessionName(request: cleanRequest),
+                model: effectiveModelId,
+                thinking: thinkingLevel,
+                requestId: revisionLaunchState.requestId,
+                comments: stagedComments
             )
-            let prepared = try await ControlRevisionSessionLaunchCoordinator.prepare(
+            // Freeze every POST field and the exact comment snapshots before
+            // the first network attempt. A lost response cannot bind revised
+            // draft content to the old idempotency key.
+            let launch = revisionLaunchState.freeze(candidateLaunch)
+            let completion = try await GuidedControlSessionLaunchCoordinator.prepare(
+                launch: launch,
                 existingSession: revisionLaunchState.createdSession,
                 starterPromptDelivered: revisionLaunchState.starterPromptDelivered,
-                requestId: revisionLaunchState.requestId,
-                create: {
-                    // Persist the session first; prompt delivery then has its own
-                    // stable request ID and observable command result.
-                    let response = try await apiClient.createControlSession(.init(
-                        domain: domain,
-                        intent: intent,
-                        targetId: targetId,
-                        targetName: targetName,
-                        name: sessionName(request: cleanRequest),
-                        model: effectiveModelId,
-                        thinking: thinkingLevel,
-                        launchIdempotencyKey: revisionLaunchState.requestId
-                    ))
-                    return (response.session, response.prompted == true)
+                serverId: connection.currentServerId,
+                fallbackServerId: sessionStore.activeServerId,
+                currentDraftText: request,
+                currentComments: stagedComments?.stagedComments ?? [],
+                create: { request in
+                    let response = try await apiClient.createControlSession(request)
+                    return (
+                        response.session,
+                        response.prompted ?? (response.session.firstMessage != nil)
+                    )
                 },
                 onSessionCreated: { session, delivered in
                     revisionLaunchState.recordCreatedSession(session, promptDelivered: delivered)
                     sessionStore.cacheSessionForNavigation(session)
-                },
-                activateSession: { session in
-                    _ = try await apiClient.resumeSession(scope: .control, sessionId: session.id)
-                },
-                sendStarterPrompt: { session, requestId in
-                    try await apiClient.sendSessionCommand(
-                        scope: .control,
-                        sessionId: session.id,
-                        message: .prompt(
-                            message: starterPrompt,
-                            requestId: requestId,
-                            clientTurnId: requestId
-                        )
-                    )
                 }
             )
-            revisionLaunchState.starterPromptDelivered = prepared.starterPromptDelivered
-            let launch: ControlRevisionCommentNavigation.PreparedLaunchMessage
-            if let stagedComments {
-                launch = try ControlRevisionCommentNavigation.prepareLaunchMessage(
-                    request: cleanRequest,
-                    serverId: connection.currentServerId,
-                    fallbackServerId: sessionStore.activeServerId,
-                    domain: domain,
-                    targetId: targetId,
-                    toSessionId: prepared.session.id,
-                    comments: stagedComments
-                )
-            } else {
-                launch = try ControlRevisionCommentNavigation.prepareLaunchMessage(
-                    request: cleanRequest,
-                    serverId: connection.currentServerId,
-                    fallbackServerId: sessionStore.activeServerId,
-                    domain: domain,
-                    targetId: targetId,
-                    toSessionId: prepared.session.id
-                )
-            }
-            if !launch.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                try await apiClient.sendSessionCommand(
-                    scope: .control,
-                    sessionId: prepared.session.id,
-                    message: .prompt(
-                        message: launch.message,
-                        requestId: "\(revisionLaunchState.requestId):review-comments",
-                        clientTurnId: "\(revisionLaunchState.requestId):review-comments"
-                    )
-                )
-                if let stagedComments {
-                    launch.disposeSentComments(using: stagedComments)
-                }
-            }
-            sessionStore.cacheSessionForNavigation(prepared.session)
+            revisionLaunchState.starterPromptDelivered = completion.starterPromptDelivered
+            stagedComments?.clearSent(ids: completion.sentCommentIdsToDispose)
+            sessionStore.cacheSessionForNavigation(completion.session)
 
-            request = ""
+            if completion.shouldClearDraft {
+                request = ""
+            }
             revisionLaunchState.resetForNextLaunch()
+            if completion.hasUnsentContentAfterDisposal {
+                error = "Your earlier request was delivered. Revised text or comments are still ready to send."
+                return
+            }
+
             error = nil
             if let onSessionPrepared {
-                onSessionPrepared(launch.sessionTarget)
+                onSessionPrepared(completion.sessionTarget)
             } else {
-                navigation.openWorkspaceSession(launch.sessionTarget)
+                navigation.openWorkspaceSession(completion.sessionTarget)
             }
         } catch {
             self.error = targetId == nil

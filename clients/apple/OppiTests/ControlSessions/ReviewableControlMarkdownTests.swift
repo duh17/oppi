@@ -328,64 +328,145 @@ struct ReviewableControlMarkdownTests {
         #expect(state.requestId != firstRequestId)
     }
 
-    @Test func promptedFalseRetryReusesCreatedSessionAndStableRequestId() async throws {
+    @Test func retryFreezesAtomicPostAndPreservesRevisedDraftAndComments() async throws {
+        let suiteName = "ReviewableControlMarkdownTests.frozenRetry.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let comments = ChatReviewCommentsController(
+            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.frozenRetry")
+        )
+        let draftSessionId = "server-1:skills:skill-1"
+        comments.load(localScopeId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
+        #expect(comments.save(
+            body: "Original comment.",
+            request: ReviewCommentSelectionRequest(
+                selectedText: "Original selection",
+                source: ReviewCommentSourceContext(
+                    sessionId: draftSessionId,
+                    surface: .fullScreenMarkdown,
+                    sourceLabel: "review / SKILL.md"
+                )
+            ),
+            localScopeId: ReviewCommentLocalScope.controlDraft,
+            sessionId: draftSessionId
+        ) == nil)
+
+        var state = ControlRevisionSessionRetryState(requestId: "stable-request-id")
+        var draft = "Original request."
+        let originalCandidate = GuidedControlSessionAtomicLaunch.make(
+            domain: .skills,
+            intent: .revise,
+            targetId: "skill-1",
+            targetName: "review",
+            targetPath: "/tmp/review/SKILL.md",
+            workspaceId: "workspace-1",
+            workspaceName: "Oppi",
+            sourceDraftText: draft,
+            cleanRequest: draft,
+            sessionName: "Revise review",
+            model: "openai/gpt-5.4",
+            thinking: .high,
+            requestId: state.requestId,
+            comments: comments
+        )
+        let originalLaunch = state.freeze(originalCandidate)
         let session = makeTestSession(id: "control-session-1")
-        let requestId = "stable-request-id"
-        var createCalls = 0
-        var cachedSessions: [Session] = []
-        var activatedSessionIds: [String] = []
-        var sentRequestIds: [String] = []
-        var retainedSession: Session?
-        var delivered = false
+        var postedRequests: [APIClient.CreateControlSessionRequest] = []
 
         do {
-            _ = try await ControlRevisionSessionLaunchCoordinator.prepare(
-                existingSession: retainedSession,
-                starterPromptDelivered: delivered,
-                requestId: requestId,
-                create: {
-                    createCalls += 1
+            _ = try await GuidedControlSessionLaunchCoordinator.prepare(
+                launch: originalLaunch,
+                existingSession: state.createdSession,
+                starterPromptDelivered: state.starterPromptDelivered,
+                serverId: "server-1",
+                fallbackServerId: nil,
+                currentDraftText: draft,
+                currentComments: comments.stagedComments,
+                create: { request in
+                    postedRequests.append(request)
                     return (session, false)
                 },
-                onSessionCreated: { created, promptDelivered in
-                    retainedSession = created
-                    delivered = promptDelivered
-                    cachedSessions.append(created)
-                },
-                activateSession: { activatedSessionIds.append($0.id) },
-                sendStarterPrompt: { _, sentRequestId in
-                    sentRequestIds.append(sentRequestId)
-                    throw RetryFailure.simulatedNetworkFailure
-                }
+                onSessionCreated: { state.recordCreatedSession($0, promptDelivered: $1) }
             )
-            Issue.record("The first starter-prompt delivery should fail")
-        } catch RetryFailure.simulatedNetworkFailure {
+            Issue.record("A not-sent atomic POST must remain retryable")
+        } catch ControlRevisionSessionLaunchError.initialPromptNotSent {
         }
 
-        let prepared = try await ControlRevisionSessionLaunchCoordinator.prepare(
-            existingSession: retainedSession,
-            starterPromptDelivered: delivered,
-            requestId: requestId,
-            create: {
-                createCalls += 1
-                return (session, false)
+        let originalComment = try #require(comments.stagedComments.first)
+        #expect(comments.update(originalComment, body: "Revised unsent comment.") == nil)
+        #expect(comments.save(
+            body: "New unsent comment.",
+            request: ReviewCommentSelectionRequest(
+                selectedText: "New selection",
+                source: ReviewCommentSourceContext(
+                    sessionId: draftSessionId,
+                    surface: .fullScreenMarkdown,
+                    sourceLabel: "review / SKILL.md"
+                )
+            ),
+            localScopeId: ReviewCommentLocalScope.controlDraft,
+            sessionId: draftSessionId
+        ) == nil)
+        draft = "Revised unsent request."
+        let revisedCandidate = GuidedControlSessionAtomicLaunch.make(
+            domain: .skills,
+            intent: .revise,
+            targetId: "skill-1",
+            targetName: "review",
+            targetPath: "/tmp/review/SKILL.md",
+            workspaceId: "workspace-2",
+            workspaceName: "Other workspace",
+            sourceDraftText: draft,
+            cleanRequest: draft,
+            sessionName: "Changed name",
+            model: "anthropic/claude-sonnet-4",
+            thinking: .low,
+            requestId: state.requestId,
+            comments: comments
+        )
+        let frozenRetry = state.freeze(revisedCandidate)
+        let completion = try await GuidedControlSessionLaunchCoordinator.prepare(
+            launch: frozenRetry,
+            existingSession: state.createdSession,
+            starterPromptDelivered: state.starterPromptDelivered,
+            serverId: "server-1",
+            fallbackServerId: nil,
+            currentDraftText: draft,
+            currentComments: comments.stagedComments,
+            create: { request in
+                postedRequests.append(request)
+                return (session, true)
             },
-            onSessionCreated: { _, _ in
-                Issue.record("Retry must reuse the retained session")
-            },
-            activateSession: { activatedSessionIds.append($0.id) },
-            sendStarterPrompt: { retriedSession, sentRequestId in
-                #expect(retriedSession.id == session.id)
-                sentRequestIds.append(sentRequestId)
-            }
+            onSessionCreated: { state.recordCreatedSession($0, promptDelivered: $1) }
         )
 
-        #expect(createCalls == 1)
-        #expect(cachedSessions.map(\.id) == [session.id])
-        #expect(activatedSessionIds == [session.id, session.id])
-        #expect(sentRequestIds == [requestId, requestId])
-        #expect(prepared.session.id == session.id)
-        #expect(prepared.starterPromptDelivered)
+        #expect(postedRequests.count == 2)
+        for request in postedRequests {
+            #expect(request.launchIdempotencyKey == "stable-request-id")
+            #expect(request.name == "Revise review")
+            #expect(request.model == "openai/gpt-5.4")
+            #expect(request.thinking == .high)
+            #expect(request.prompt == originalCandidate.request.prompt)
+            #expect(request.prompt?.contains("Original request.") == true)
+            #expect(request.prompt?.contains("Original comment.") == true)
+            #expect(request.prompt?.contains("Revised unsent") == false)
+        }
+        #expect(completion.sentCommentIdsToDispose.isEmpty)
+        #expect(completion.shouldClearDraft == false)
+        #expect(completion.hasUnsentContentAfterDisposal)
+        comments.clearSent(ids: completion.sentCommentIdsToDispose)
+        if completion.shouldClearDraft { draft = "" }
+        var navigationTarget: WorkspaceSessionNavTarget?
+        if !completion.hasUnsentContentAfterDisposal {
+            navigationTarget = completion.sessionTarget
+        }
+        #expect(draft == "Revised unsent request.")
+        #expect(comments.stagedComments.map(\.body).sorted() == [
+            "New unsent comment.",
+            "Revised unsent comment.",
+        ])
+        #expect(navigationTarget == nil)
     }
 
     @Test func promptedSessionRetryAfterCommentTransferFailureReusesCreatedSession() async throws {
@@ -398,7 +479,6 @@ struct ReviewableControlMarkdownTests {
         let first = try await ControlRevisionSessionLaunchCoordinator.prepare(
             existingSession: retainedSession,
             starterPromptDelivered: delivered,
-            requestId: "transfer-retry-request",
             create: {
                 createCalls += 1
                 return (session, true)
@@ -406,12 +486,6 @@ struct ReviewableControlMarkdownTests {
             onSessionCreated: { created, promptDelivered in
                 retainedSession = created
                 delivered = promptDelivered
-            },
-            activateSession: { _ in
-                Issue.record("A prompted control session must not be resumed for delivery")
-            },
-            sendStarterPrompt: { _, _ in
-                Issue.record("A prompted control session must not send its starter prompt again")
             }
         )
 
@@ -425,19 +499,12 @@ struct ReviewableControlMarkdownTests {
         let retry = try await ControlRevisionSessionLaunchCoordinator.prepare(
             existingSession: retainedSession,
             starterPromptDelivered: delivered,
-            requestId: "transfer-retry-request",
             create: {
                 createCalls += 1
                 return (session, true)
             },
             onSessionCreated: { _, _ in
                 Issue.record("A comment-transfer retry must reuse the created session")
-            },
-            activateSession: { _ in
-                Issue.record("A delivered starter prompt must not resume again")
-            },
-            sendStarterPrompt: { _, _ in
-                Issue.record("A prompted control session must not resend its starter prompt")
             }
         )
 
@@ -593,96 +660,27 @@ struct ReviewableControlMarkdownTests {
         #expect(plural.title == ChatInputBar<EmptyView>.reviewCommentStashTitle(count: 2))
     }
 
-    @Test func skillLaunchSendsStagedCommentsOnceThenDisposesThem() throws {
-        let suiteName = "ReviewableControlMarkdownTests.autoSend.\(UUID().uuidString)"
+    @Test func successfulAtomicLaunchDisposesExactlySentCommentsAndBuildsNavigation() async throws {
+        let suiteName = "ReviewableControlMarkdownTests.atomicGuidedLaunch.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
-
         let comments = ChatReviewCommentsController(
-            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.autoSend")
+            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.atomicGuidedLaunch")
         )
-        let draftSessionId = ReviewableControlMarkdownDraftKey.make(
-            serverId: "server-1",
-            fallbackServerId: nil,
-            domain: .skills,
-            targetId: "skill-1"
-        )
-        comments.load(
-            localScopeId: ReviewCommentLocalScope.controlDraft,
-            sessionId: draftSessionId
-        )
-        let path = "/Users/chenda/workspace/agent-skills/skills/codex/SKILL.md"
+        let draftSessionId = "server-1:skills:skill-1"
+        comments.load(localScopeId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
+        let path = "/Users/chenda/.pi/agent/skills/review/SKILL.md"
         #expect(comments.save(
-            body: "Tighten this guidance.",
+            body: "Keep this constraint explicit.",
             request: ReviewCommentSelectionRequest(
                 selectedText: "Current guidance",
                 source: ReviewCommentSourceContext(
                     sessionId: draftSessionId,
                     surface: .fullScreenMarkdown,
-                    sourceLabel: "codex / SKILL.md",
+                    sourceLabel: "review / SKILL.md",
                     filePath: path,
-                    lineRange: 4...4,
-                    languageHint: "markdown",
-                    timelineItemId: "skill-reader"
-                )
-            ),
-            localScopeId: ReviewCommentLocalScope.controlDraft,
-            sessionId: draftSessionId
-        ) == nil)
-
-        let prepared = try ControlRevisionCommentNavigation.prepareLaunchMessage(
-            request: "Tighten the instructions.",
-            serverId: "server-1",
-            fallbackServerId: nil,
-            domain: .skills,
-            targetId: "skill-1",
-            toSessionId: "control-session-1",
-            comments: comments
-        )
-
-        #expect(prepared.sessionTarget.sessionId == "control-session-1")
-        #expect(prepared.sessionTarget.routeScope == .control)
-        #expect(prepared.message.contains("Tighten the instructions."))
-        #expect(prepared.message.contains("## Review comments"))
-        #expect(prepared.message.contains("`\(path)`:4 (file)"))
-        #expect(prepared.message.contains("> Tighten this guidance."))
-        #expect(prepared.sentCommentIds.count == 1)
-        #expect(comments.stagedCount == 1)
-
-        prepared.disposeSentComments(using: comments)
-        #expect(comments.stagedCount == 0)
-    }
-
-    @Test func failedSkillLaunchSendKeepsStagedComments() throws {
-        let suiteName = "ReviewableControlMarkdownTests.failedAutoSend.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        let comments = ChatReviewCommentsController(
-            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.failedAutoSend")
-        )
-        let draftSessionId = ReviewableControlMarkdownDraftKey.make(
-            serverId: "server-1",
-            fallbackServerId: nil,
-            domain: .skills,
-            targetId: "skill-1"
-        )
-        comments.load(
-            localScopeId: ReviewCommentLocalScope.controlDraft,
-            sessionId: draftSessionId
-        )
-        #expect(comments.save(
-            body: "Keep this comment.",
-            request: ReviewCommentSelectionRequest(
-                selectedText: "Current guidance",
-                source: ReviewCommentSourceContext(
-                    sessionId: draftSessionId,
-                    surface: .fullScreenMarkdown,
-                    sourceLabel: "codex / SKILL.md",
-                    filePath: "/Users/chenda/workspace/agent-skills/skills/codex/SKILL.md",
-                    lineRange: 4...4,
+                    lineRange: 8...8,
                     languageHint: "markdown"
                 )
             ),
@@ -690,17 +688,125 @@ struct ReviewableControlMarkdownTests {
             sessionId: draftSessionId
         ) == nil)
 
-        let prepared = try ControlRevisionCommentNavigation.prepareLaunchMessage(
-            request: "Tighten the instructions.",
+        var state = ControlRevisionSessionRetryState(requestId: "atomic-success")
+        var draft = "Tighten the instructions."
+        let launch = state.freeze(GuidedControlSessionAtomicLaunch.make(
+            domain: .skills,
+            intent: .revise,
+            targetId: "skill-1",
+            targetName: "review",
+            targetPath: path,
+            workspaceId: "workspace-1",
+            workspaceName: "Oppi",
+            sourceDraftText: draft,
+            cleanRequest: draft,
+            sessionName: "Revise review",
+            model: nil,
+            thinking: .medium,
+            requestId: state.requestId,
+            comments: comments
+        ))
+        var postedRequests: [APIClient.CreateControlSessionRequest] = []
+        let completion = try await GuidedControlSessionLaunchCoordinator.prepare(
+            launch: launch,
+            existingSession: nil,
+            starterPromptDelivered: false,
             serverId: "server-1",
             fallbackServerId: nil,
-            domain: .skills,
-            targetId: "skill-1",
-            toSessionId: "control-session-1",
-            comments: comments
+            currentDraftText: draft,
+            currentComments: comments.stagedComments,
+            create: { request in
+                postedRequests.append(request)
+                return (makeTestSession(id: "control-session-1"), true)
+            },
+            onSessionCreated: { state.recordCreatedSession($0, promptDelivered: $1) }
         )
 
-        #expect(prepared.sentCommentIds.count == 1)
-        #expect(comments.stagedCount == 1)
+        #expect(postedRequests.count == 1)
+        let posted = try #require(postedRequests.first)
+        #expect(posted.launchIdempotencyKey == "atomic-success")
+        #expect(posted.prompt?.contains("User request:\nTighten the instructions.") == true)
+        #expect(posted.prompt?.contains("## Review comments") == true)
+        #expect(posted.prompt?.contains("`\(path)`:8 (file)") == true)
+        #expect(posted.prompt?.contains("> Keep this constraint explicit.") == true)
+        #expect(completion.sentCommentIdsToDispose == comments.stagedCommentIds)
+        #expect(completion.hasUnsentContentAfterDisposal == false)
+        comments.clearSent(ids: completion.sentCommentIdsToDispose)
+        if completion.shouldClearDraft { draft = "" }
+        #expect(draft.isEmpty)
+        #expect(comments.stagedComments.isEmpty)
+        #expect(completion.sessionTarget.serverId == "server-1")
+        #expect(completion.sessionTarget.sessionId == "control-session-1")
+        #expect(completion.sessionTarget.routeScope == .control)
+    }
+
+    @Test func failedAtomicPromptPreflightKeepsProductionDraftCommentsAndNavigationInPlace() async throws {
+        let suiteName = "ReviewableControlMarkdownTests.failedAtomicPreflight.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let comments = ChatReviewCommentsController(
+            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.failedAtomicPreflight")
+        )
+        let draftSessionId = "server-1:agents:agent-1"
+        comments.load(localScopeId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
+        #expect(comments.save(
+            body: "Keep this staged.",
+            request: ReviewCommentSelectionRequest(
+                selectedText: "Current instructions",
+                source: ReviewCommentSourceContext(
+                    sessionId: draftSessionId,
+                    surface: .fullScreenMarkdown,
+                    sourceLabel: "Agent definition"
+                )
+            ),
+            localScopeId: ReviewCommentLocalScope.controlDraft,
+            sessionId: draftSessionId
+        ) == nil)
+
+        var state = ControlRevisionSessionRetryState(requestId: "failed-preflight")
+        var draft = "Tighten the responsibilities."
+        let launch = state.freeze(GuidedControlSessionAtomicLaunch.make(
+            domain: .agents,
+            intent: .revise,
+            targetId: "agent-1",
+            targetName: "Reviewer",
+            targetPath: nil,
+            workspaceId: "workspace-1",
+            workspaceName: "Oppi",
+            sourceDraftText: draft,
+            cleanRequest: draft,
+            sessionName: "Revise Reviewer",
+            model: nil,
+            thinking: .medium,
+            requestId: state.requestId,
+            comments: comments
+        ))
+        var navigationTarget: WorkspaceSessionNavTarget?
+
+        do {
+            let completion = try await GuidedControlSessionLaunchCoordinator.prepare(
+                launch: launch,
+                existingSession: nil,
+                starterPromptDelivered: false,
+                serverId: "server-1",
+                fallbackServerId: nil,
+                currentDraftText: draft,
+                currentComments: comments.stagedComments,
+                create: { _ in (makeTestSession(id: "control-session-1"), false) },
+                onSessionCreated: { state.recordCreatedSession($0, promptDelivered: $1) }
+            )
+            comments.clearSent(ids: completion.sentCommentIdsToDispose)
+            if completion.shouldClearDraft { draft = "" }
+            navigationTarget = completion.sessionTarget
+            Issue.record("Prompt preflight should fail before disposal or navigation")
+        } catch ControlRevisionSessionLaunchError.initialPromptNotSent {
+        }
+
+        #expect(draft == "Tighten the responsibilities.")
+        #expect(comments.stagedComments.map(\.body) == ["Keep this staged."])
+        #expect(navigationTarget == nil)
+        #expect(state.createdSession?.id == "control-session-1")
+        #expect(state.starterPromptDelivered == false)
     }
 }

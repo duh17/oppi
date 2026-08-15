@@ -125,60 +125,40 @@ enum ControlRevisionCommentNavigation {
         )
     }
 
-    struct PreparedLaunchMessage {
-        let sessionTarget: WorkspaceSessionNavTarget
-        let message: String
-        let sentCommentIds: [String]
-
-        @MainActor
-        func disposeSentComments(using comments: ChatReviewCommentsController) {
-            comments.clearSent(ids: sentCommentIds)
-        }
-    }
-
-    /// Move staged comments into the created control session, then build the
-    /// first user message from the typed request plus the existing review block.
-    /// The stash is cleared only after the caller reports a successful send.
-    static func prepareLaunchMessage(
-        request: String,
+    /// Build a route after an atomic launch has already carried the comments in
+    /// its initial prompt. Nothing moves into the ordinary composer stash.
+    static func makeAtomicLaunchSessionTarget(
         serverId: String?,
         fallbackServerId: String?,
-        domain: ControlSessionDomain,
-        targetId: String?,
-        toSessionId: String,
-        comments: ChatReviewCommentsController = ChatReviewCommentsController()
-    ) throws -> PreparedLaunchMessage {
-        let sessionTarget = try makeSessionTarget(
-            serverId: serverId,
-            fallbackServerId: fallbackServerId,
-            domain: domain,
-            targetId: targetId,
-            toSessionId: toSessionId,
-            comments: comments
-        )
-        comments.load(
-            localScopeId: SessionRouteScope.control.composerDraftScopeID,
-            sessionId: toSessionId
-        )
-        let message = comments.appendReviewBlock(
-            to: request,
-            pathFormatting: ChatView.reviewCommentPathFormattingPolicy(controlDomain: domain)
-        )
-        return PreparedLaunchMessage(
-            sessionTarget: sessionTarget,
-            message: message,
-            sentCommentIds: comments.stagedCommentIds
+        toSessionId: String
+    ) throws -> WorkspaceSessionNavTarget {
+        guard let resolvedServerId = serverId ?? fallbackServerId else {
+            throw ControlRevisionCommentNavigationError.serverUnavailable
+        }
+        return WorkspaceSessionNavTarget(
+            serverId: resolvedServerId,
+            sessionId: toSessionId,
+            routeScope: .control
         )
     }
+
 }
 
+@MainActor
 struct ControlRevisionSessionRetryState {
     var createdSession: Session?
     var starterPromptDelivered = false
     var requestId: String
+    private var frozenGuidedLaunch: GuidedControlSessionAtomicLaunch?
 
     init(requestId: String = UUID().uuidString) {
         self.requestId = requestId
+    }
+
+    mutating func freeze(_ candidate: GuidedControlSessionAtomicLaunch) -> GuidedControlSessionAtomicLaunch {
+        if let frozenGuidedLaunch { return frozenGuidedLaunch }
+        frozenGuidedLaunch = candidate
+        return candidate
     }
 
     mutating func recordCreatedSession(_ session: Session, promptDelivered: Bool) {
@@ -189,7 +169,19 @@ struct ControlRevisionSessionRetryState {
     mutating func resetForNextLaunch(requestId: String = UUID().uuidString) {
         createdSession = nil
         starterPromptDelivered = false
+        frozenGuidedLaunch = nil
         self.requestId = requestId
+    }
+}
+
+enum ControlRevisionSessionLaunchError: LocalizedError, Equatable {
+    case initialPromptNotSent
+
+    var errorDescription: String? {
+        switch self {
+        case .initialPromptNotSent:
+            "Oppi could not send the initial request. Try again."
+        }
     }
 }
 
@@ -203,29 +195,21 @@ enum ControlRevisionSessionLaunchCoordinator {
     static func prepare(
         existingSession: Session?,
         starterPromptDelivered: Bool,
-        requestId: String,
         create: () async throws -> (session: Session, prompted: Bool),
-        onSessionCreated: (Session, Bool) -> Void,
-        activateSession: (Session) async throws -> Void,
-        sendStarterPrompt: (Session, String) async throws -> Void
+        onSessionCreated: (Session, Bool) -> Void
     ) async throws -> PreparedSession {
-        let session: Session
-        var delivered = starterPromptDelivered
-        if let existingSession {
-            session = existingSession
-        } else {
-            let response = try await create()
-            session = response.session
-            delivered = response.prompted
-            onSessionCreated(session, delivered)
+        if starterPromptDelivered, let existingSession {
+            return PreparedSession(session: existingSession, starterPromptDelivered: true)
         }
 
-        if !delivered {
-            try await activateSession(session)
-            try await sendStarterPrompt(session, requestId)
-            delivered = true
+        // A not-sent response is retried through the same idempotent create
+        // request. Never follow creation with a second ordinary prompt.
+        let response = try await create()
+        onSessionCreated(response.session, response.prompted)
+        guard response.prompted else {
+            throw ControlRevisionSessionLaunchError.initialPromptNotSent
         }
-        return PreparedSession(session: session, starterPromptDelivered: delivered)
+        return PreparedSession(session: response.session, starterPromptDelivered: true)
     }
 }
 
@@ -497,38 +481,25 @@ struct ReviewableControlMarkdownView: View {
             let prepared = try await ControlRevisionSessionLaunchCoordinator.prepare(
                 existingSession: createdSession,
                 starterPromptDelivered: starterPromptDelivered,
-                requestId: starterPromptRequestId,
                 create: {
-                    // Persist the session first; prompt delivery then has its own
-                    // stable request ID and observable command result.
                     let response = try await apiClient.createControlSession(.init(
                         domain: domain,
                         intent: .revise,
                         targetId: targetId,
                         targetName: targetName,
                         name: "Revise \(targetName)",
+                        prompt: starterPrompt,
                         launchIdempotencyKey: starterPromptRequestId
                     ))
-                    return (response.session, response.prompted == true)
+                    return (
+                        response.session,
+                        response.prompted ?? (response.session.firstMessage != nil)
+                    )
                 },
                 onSessionCreated: { session, delivered in
                     createdSession = session
                     starterPromptDelivered = delivered
                     sessionStore.cacheSessionForNavigation(session)
-                },
-                activateSession: { session in
-                    _ = try await apiClient.resumeSession(scope: .control, sessionId: session.id)
-                },
-                sendStarterPrompt: { session, requestId in
-                    try await apiClient.sendSessionCommand(
-                        scope: .control,
-                        sessionId: session.id,
-                        message: .prompt(
-                            message: starterPrompt,
-                            requestId: requestId,
-                            clientTurnId: requestId
-                        )
-                    )
                 }
             )
             let session = prepared.session

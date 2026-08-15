@@ -56,6 +56,8 @@ function makeService(
     dataDir?: string;
     agentDefinitionStore?: AgentDefinitionStore;
     onStartSession?: () => void;
+    saveSessionErrorAtCall?: number;
+    sendPromptHandler?: () => Promise<void>;
   } = {},
 ): {
   service: SessionLifecycleService;
@@ -76,6 +78,9 @@ function makeService(
   getSessionSnapshot: ReturnType<typeof vi.fn>;
   getActiveSession: ReturnType<typeof vi.fn>;
   refreshSessionState: ReturnType<typeof vi.fn>;
+  claimSessionLaunchRecovery: ReturnType<typeof vi.fn>;
+  findSessionByLaunchIdempotencyKey: ReturnType<typeof vi.fn>;
+  getPersistedSession: (sessionId: string) => Session | undefined;
 } {
   const createSession = vi.fn(
     (name?: string, model?: string) =>
@@ -84,14 +89,68 @@ function makeService(
   const deleteSession = vi.fn(() => true);
   const deleteSearchIndexSession = vi.fn();
   const getDataDir = vi.fn(() => options.dataDir ?? join(tmpdir(), "oppi-lifecycle-service-test"));
-  const getSession = vi.fn(() => options.storedSession);
+  const persistedSessions = new Map<string, Session>();
+  if (options.storedSession) {
+    persistedSessions.set(options.storedSession.id, structuredClone(options.storedSession));
+  }
+  const getPersistedSession = (sessionId: string): Session | undefined => {
+    const session = persistedSessions.get(sessionId);
+    return session ? structuredClone(session) : undefined;
+  };
+  const getSession = vi.fn((sessionId: string) => getPersistedSession(sessionId));
   const getWorkspace = vi.fn(() => options.workspace);
-  const listSessions = vi.fn(() => []);
-  const saveSession = vi.fn();
+  const listSessions = vi.fn(() =>
+    Array.from(persistedSessions.values(), (session) => structuredClone(session)),
+  );
+  let saveSessionCall = 0;
+  const saveSession = vi.fn((session: Session) => {
+    saveSessionCall += 1;
+    if (saveSessionCall === options.saveSessionErrorAtCall) {
+      throw new Error("simulated session receipt persistence failure");
+    }
+    persistedSessions.set(session.id, structuredClone(session));
+  });
+  const findSessionByLaunchIdempotencyKey = vi.fn((key: string) => {
+    const session = Array.from(persistedSessions.values()).find(
+      (candidate) => candidate.launch?.idempotencyKey === key,
+    );
+    return session ? structuredClone(session) : undefined;
+  });
+  const claimSessionLaunchRecovery = vi.fn(
+    (session: Session, leaseOwner: string, nowMs: number, leaseTtlMs: number) => {
+      const persisted = persistedSessions.get(session.id);
+      const launch = session.launch;
+      const persistedLaunch = persisted?.launch;
+      if (!persisted || !launch?.idempotencyKey || !persistedLaunch) return undefined;
+      if (
+        persistedLaunch.idempotencyKey !== launch.idempotencyKey ||
+        persistedLaunch.status !== launch.status ||
+        persistedLaunch.lease?.owner !== launch.lease?.owner ||
+        persistedLaunch.lease?.expiresAt !== launch.lease?.expiresAt
+      ) {
+        return undefined;
+      }
+      const recovered: Session = {
+        ...session,
+        launch: {
+          ...launch,
+          status: "launching",
+          lease: {
+            owner: leaseOwner,
+            acquiredAt: nowMs,
+            expiresAt: nowMs + leaseTtlMs,
+          },
+        },
+      };
+      persistedSessions.set(session.id, structuredClone(recovered));
+      return structuredClone(recovered);
+    },
+  );
   const runCommand = vi.fn(async () => {
     if (options.runCommandError) throw options.runCommandError;
   });
   const sendPrompt = vi.fn(async () => {
+    if (options.sendPromptHandler) await options.sendPromptHandler();
     if (options.sendPromptError) throw options.sendPromptError;
   });
   const startSession = vi.fn(async () => {
@@ -117,6 +176,8 @@ function makeService(
       getWorkspace,
       listSessions,
       saveSession,
+      findSessionByLaunchIdempotencyKey,
+      claimSessionLaunchRecovery,
       getAgentDefinitionStore: () =>
         options.agentDefinitionStore ??
         ({
@@ -166,6 +227,9 @@ function makeService(
     getSessionSnapshot,
     getActiveSession,
     refreshSessionState,
+    claimSessionLaunchRecovery,
+    findSessionByLaunchIdempotencyKey,
+    getPersistedSession,
   };
 }
 
@@ -398,7 +462,10 @@ describe("SessionLifecycleService", () => {
           agentId: "oppi-default-agent",
           agentVersion: 1,
           target: { server: true, displayCwd: "Oppi Control" },
-          tools: { allowed: ["oppi", "ask", "read", "edit"], noTools: "builtin" },
+          tools: {
+            allowed: ["oppi", "ask", "read", "edit", "write", "grep", "find", "ls"],
+            noTools: "builtin",
+          },
         },
       });
       expect(startSession).toHaveBeenCalledWith("control-1", undefined);
@@ -413,6 +480,228 @@ describe("SessionLifecycleService", () => {
         contextWindow: 200_000,
       });
       expect(result.prompted).toBe(true);
+    });
+
+    it("dispatches a persisted not-sent idempotent control launch on retry", async () => {
+      const persisted = makeSession({
+        id: "control-retry-1",
+        workspaceId: undefined,
+        runtime: "oppi",
+        control: { domain: "skills", intent: "revise", targetId: "skill-1" },
+        launch: {
+          source: "human",
+          agentId: DEFAULT_AGENT_ID,
+          idempotencyKey: "control-launch-1",
+          target: { server: true, displayCwd: "Oppi Control" },
+          tools: {
+            allowed: ["oppi", "ask", "read", "edit", "write", "grep", "find", "ls"],
+            noTools: "builtin",
+          },
+          status: "failed",
+          requestedAt: 1,
+          completedAt: 2,
+          promptDispatch: "not_sent",
+          promptError: "Pi prompt preflight rejected",
+        },
+      });
+      const {
+        service,
+        createSession,
+        startSession,
+        sendPrompt,
+        claimSessionLaunchRecovery,
+      } = makeService({ storedSession: persisted });
+
+      const result = await service.createControlSession({
+        control: { domain: "skills", intent: "revise", targetId: "skill-1" },
+        prompt: "Complete atomic initial prompt",
+        idempotencyKey: "control-launch-1",
+      });
+
+      expect(createSession).not.toHaveBeenCalled();
+      expect(claimSessionLaunchRecovery).toHaveBeenCalledOnce();
+      expect(startSession).toHaveBeenCalledWith("control-retry-1", undefined);
+      expect(sendPrompt).toHaveBeenCalledWith(
+        "control-retry-1",
+        "Complete atomic initial prompt",
+        {
+          clientTurnId: "control-launch:control-launch-1",
+          requestId: "control-launch:control-launch-1",
+        },
+      );
+      expect(result).toMatchObject({
+        launchKind: "existing",
+        prompted: true,
+        session: {
+          id: "control-retry-1",
+          firstMessage: "Complete atomic initial prompt",
+          launch: { status: "accepted", promptDispatch: "delivered" },
+        },
+      });
+    });
+
+    it("does not redispatch after prompt acceptance when the delivered receipt save fails across restart", async () => {
+      const firstProcess = makeService({ saveSessionErrorAtCall: 2 });
+
+      await expect(
+        firstProcess.service.createControlSession({
+          control: { domain: "skills", intent: "revise", targetId: "skill-1" },
+          prompt: "Accepted exactly once",
+          idempotencyKey: "control-accepted-save-failure",
+        }),
+      ).rejects.toThrow("simulated session receipt persistence failure");
+      expect(firstProcess.sendPrompt).toHaveBeenCalledOnce();
+
+      const persisted = firstProcess.listSessions()[0] as Session;
+      expect(persisted.launch).toMatchObject({
+        status: "launching",
+        idempotencyKey: "control-accepted-save-failure",
+      });
+      expect(persisted.launch?.promptDispatch).toBeUndefined();
+      const expiredAfterRestart: Session = {
+        ...persisted,
+        launch: persisted.launch
+          ? {
+              ...persisted.launch,
+              lease: persisted.launch.lease
+                ? { ...persisted.launch.lease, expiresAt: 1 }
+                : undefined,
+            }
+          : undefined,
+      };
+      const restarted = makeService({ storedSession: expiredAfterRestart });
+
+      await expect(
+        restarted.service.createControlSession({
+          control: { domain: "skills", intent: "revise", targetId: "skill-1" },
+          prompt: "Accepted exactly once",
+          idempotencyKey: "control-accepted-save-failure",
+        }),
+      ).rejects.toMatchObject({
+        name: "SessionLifecycleError",
+        statusCode: 409,
+        message: "launch_delivery_unknown",
+      });
+      expect(restarted.claimSessionLaunchRecovery).not.toHaveBeenCalled();
+      expect(restarted.sendPrompt).not.toHaveBeenCalled();
+      expect(firstProcess.sendPrompt).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps an unexpired launch lease in progress without claiming or dispatching", async () => {
+      const persisted = makeSession({
+        id: "control-in-progress",
+        workspaceId: undefined,
+        runtime: "oppi",
+        control: { domain: "agents", intent: "create" },
+        launch: {
+          source: "human",
+          agentId: DEFAULT_AGENT_ID,
+          idempotencyKey: "control-in-progress-key",
+          target: { server: true, displayCwd: "Oppi Control" },
+          status: "launching",
+          requestedAt: 1,
+          lease: { owner: "other-process", acquiredAt: Date.now(), expiresAt: Date.now() + 60_000 },
+        },
+      });
+      const { service, claimSessionLaunchRecovery, sendPrompt } = makeService({
+        storedSession: persisted,
+      });
+
+      await expect(
+        service.createControlSession({
+          control: { domain: "agents", intent: "create" },
+          prompt: "Do not race this launch",
+          idempotencyKey: "control-in-progress-key",
+        }),
+      ).rejects.toMatchObject({ statusCode: 409, message: "launch_in_progress" });
+      expect(claimSessionLaunchRecovery).not.toHaveBeenCalled();
+      expect(sendPrompt).not.toHaveBeenCalled();
+    });
+
+    it("does not dispatch when the not-sent recovery CAS loses contention", async () => {
+      const persisted = makeSession({
+        id: "control-cas-lost",
+        workspaceId: undefined,
+        runtime: "oppi",
+        control: { domain: "agents", intent: "create" },
+        launch: {
+          source: "human",
+          agentId: DEFAULT_AGENT_ID,
+          idempotencyKey: "control-cas-lost-key",
+          target: { server: true, displayCwd: "Oppi Control" },
+          status: "failed",
+          requestedAt: 1,
+          completedAt: 2,
+          promptDispatch: "not_sent",
+        },
+      });
+      const { service, claimSessionLaunchRecovery, sendPrompt } = makeService({
+        storedSession: persisted,
+      });
+      claimSessionLaunchRecovery.mockReturnValueOnce(undefined);
+
+      await expect(
+        service.createControlSession({
+          control: { domain: "agents", intent: "create" },
+          prompt: "One contender only",
+          idempotencyKey: "control-cas-lost-key",
+        }),
+      ).rejects.toMatchObject({ statusCode: 409, message: "launch_in_progress" });
+      expect(claimSessionLaunchRecovery).toHaveBeenCalledOnce();
+      expect(sendPrompt).not.toHaveBeenCalled();
+    });
+
+    it("allows one concurrent retry to claim a not-sent launch and blocks the contender", async () => {
+      let releasePrompt!: () => void;
+      let signalPromptStarted!: () => void;
+      const promptStarted = new Promise<void>((resolve) => {
+        signalPromptStarted = resolve;
+      });
+      const promptGate = new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+      const persisted = makeSession({
+        id: "control-contended",
+        workspaceId: undefined,
+        runtime: "oppi",
+        control: { domain: "skills", intent: "revise", targetId: "skill-1" },
+        launch: {
+          source: "human",
+          agentId: DEFAULT_AGENT_ID,
+          idempotencyKey: "control-contended-key",
+          target: { server: true, displayCwd: "Oppi Control" },
+          status: "failed",
+          requestedAt: 1,
+          completedAt: 2,
+          promptDispatch: "not_sent",
+        },
+      });
+      const { service, claimSessionLaunchRecovery, sendPrompt } = makeService({
+        storedSession: persisted,
+        sendPromptHandler: async () => {
+          signalPromptStarted();
+          await promptGate;
+        },
+      });
+
+      const winner = service.createControlSession({
+        control: { domain: "skills", intent: "revise", targetId: "skill-1" },
+        prompt: "Dispatch once under contention",
+        idempotencyKey: "control-contended-key",
+      });
+      await promptStarted;
+      await expect(
+        service.createControlSession({
+          control: { domain: "skills", intent: "revise", targetId: "skill-1" },
+          prompt: "Dispatch once under contention",
+          idempotencyKey: "control-contended-key",
+        }),
+      ).rejects.toMatchObject({ statusCode: 409, message: "launch_in_progress" });
+      releasePrompt();
+
+      await expect(winner).resolves.toMatchObject({ prompted: true, launchKind: "existing" });
+      expect(claimSessionLaunchRecovery).toHaveBeenCalledOnce();
+      expect(sendPrompt).toHaveBeenCalledOnce();
     });
 
     it("marks an explicit control-session model required and does not dispatch after startup rejects it", async () => {

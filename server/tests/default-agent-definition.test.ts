@@ -27,16 +27,25 @@ function makeDataDir(): string {
 }
 
 describe("shipped Oppi agent definition", () => {
-  it("ships exactly Oppi, ask, and Pi's stock read/edit tools with a minimal prompt", async () => {
+  it("ships the exact isolated Oppi Control tool set with a minimal prompt", async () => {
     const { buildDefaultAgentSystemPrompt } = await import("../src/default-agent.js");
-    expect(DEFAULT_AGENT_TOOL_NAMES).toEqual(["oppi", "ask", "read", "edit"]);
+    expect(DEFAULT_AGENT_TOOL_NAMES).toEqual([
+      "oppi",
+      "ask",
+      "read",
+      "edit",
+      "write",
+      "grep",
+      "find",
+      "ls",
+    ]);
     expect(DEFAULT_AGENT_DEFINITION).toMatchObject({
       name: "Oppi",
       description:
-        "Manage Oppi workspaces, Agents, Skills, schedules, and sessions through the built-in oppi tool. Destructive actions need approval.",
+        "Manage Oppi workspaces, Agents, Skills, schedules, and sessions. Oppi tool mutations follow server approval; stock filesystem edit/write run directly with host-process permissions.",
       sessionDefaults: {
         noTools: "builtin",
-        tools: ["oppi", "ask", "read", "edit"],
+        tools: ["oppi", "ask", "read", "edit", "write", "grep", "find", "ls"],
       },
     });
     const prompt = buildDefaultAgentSystemPrompt({ docsPath: "/tmp/oppi-docs" });
@@ -45,12 +54,19 @@ describe("shipped Oppi agent definition", () => {
     expect(prompt).toContain("oppi help");
     expect(prompt).toContain("- read:");
     expect(prompt).toContain("- edit:");
+    expect(prompt).toContain("- write:");
+    expect(prompt).toContain("- grep:");
+    expect(prompt).toContain("- find:");
+    expect(prompt).toContain("- ls:");
+    expect(prompt).toContain("Only mutations through the oppi tool follow the server approval policy");
+    expect(prompt).toContain("edit and write execute directly with host-process permissions");
+    expect(prompt).not.toContain("Destructive actions need approval");
     expect(prompt).not.toContain("packaged Oppi docs only");
     expect(prompt).not.toContain("OPERATING RULES");
-    expect(prompt.length).toBeLessThan(1500);
+    expect(prompt.length).toBeLessThan(1800);
   });
 
-  it("always presents as Oppi and reconciles the safe tool list without losing other customization", () => {
+  it("repairs stale persisted defaults by preserving only the icon, once", () => {
     const dataDir = makeDataDir();
     let store = new AgentDefinitionStore(dataDir);
     const customized = store.updateAgent(
@@ -78,7 +94,7 @@ describe("shipped Oppi agent definition", () => {
           model: "openai-codex/gpt-5.5",
           thinkingLevel: "high",
           noTools: "builtin",
-          tools: ["oppi", "ask", "read", "edit"],
+          tools: ["oppi", "ask", "read", "edit", "write", "grep", "find", "ls"],
         },
       },
     });
@@ -108,24 +124,13 @@ describe("shipped Oppi agent definition", () => {
         name: "Oppi",
         version: 3,
         definition: {
-          name: "Oppi",
+          ...DEFAULT_AGENT_DEFINITION,
           icon: { kind: "emoji", value: "🏠" },
-          description: "Customized description",
-          instructions: { mode: "append", text: "Keep replies short." },
-          resources: { noContextFiles: true },
-          sessionDefaults: {
-            model: "openai-codex/gpt-5.5",
-            thinkingLevel: "high",
-            noTools: "builtin",
-            tools: ["oppi", "ask", "read", "edit"],
-          },
         },
       });
-      expect(store.getAgentVersion(DEFAULT_AGENT_ID, 3)?.definition.sessionDefaults).toEqual({
-        noTools: "builtin",
-        tools: ["oppi", "ask", "read", "edit"],
-        model: "openai-codex/gpt-5.5",
-        thinkingLevel: "high",
+      expect(store.getAgentVersion(DEFAULT_AGENT_ID, 3)?.definition).toEqual({
+        ...DEFAULT_AGENT_DEFINITION,
+        icon: { kind: "emoji", value: "🏠" },
       });
 
       store.close();

@@ -20,6 +20,9 @@ import {
   createReadToolDefinition,
   createWriteToolDefinition,
   createEditToolDefinition,
+  createGrepToolDefinition,
+  createFindToolDefinition,
+  createLsToolDefinition,
   type AgentSession,
   type AgentSessionEvent,
   type AgentSessionRuntime,
@@ -1053,7 +1056,14 @@ export class SdkBackend {
       }
 
       const controlTools = controlToolRuntime
-        ? [createReadToolDefinition(sessionCwd), createEditToolDefinition(sessionCwd)]
+        ? [
+            createReadToolDefinition(sessionCwd),
+            createEditToolDefinition(sessionCwd),
+            createWriteToolDefinition(sessionCwd),
+            createGrepToolDefinition(sessionCwd),
+            createFindToolDefinition(sessionCwd),
+            createLsToolDefinition(sessionCwd),
+          ]
         : undefined;
 
       // Sandbox mode: create tools backed by Gondolin micro-VM

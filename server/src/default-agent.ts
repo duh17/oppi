@@ -5,14 +5,23 @@ import { getOppiDocsPath } from "./oppi-docs.js";
 export const DEFAULT_AGENT_ID = "oppi-default-agent";
 export const DEFAULT_AGENT_ALIAS = "oppi";
 export const DEFAULT_AGENT_DEFAULT_NAME = "Oppi";
-/** Control tools: Oppi state/clarification plus Pi's stock existing-file tools. */
-export const DEFAULT_AGENT_TOOL_NAMES = ["oppi", "ask", "read", "edit"] as const;
+/** Isolated control tools: managed Oppi state/clarification plus Pi's stock filesystem tools. */
+export const DEFAULT_AGENT_TOOL_NAMES = [
+  "oppi",
+  "ask",
+  "read",
+  "edit",
+  "write",
+  "grep",
+  "find",
+  "ls",
+] as const;
 
 export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
   name: DEFAULT_AGENT_DEFAULT_NAME,
   icon: DEFAULT_ICON_CHOICE,
   description:
-    "Manage Oppi workspaces, Agents, Skills, schedules, and sessions through the built-in oppi tool. Destructive actions need approval.",
+    "Manage Oppi workspaces, Agents, Skills, schedules, and sessions. Oppi tool mutations follow server approval; stock filesystem edit/write run directly with host-process permissions.",
   resources: {
     noContextFiles: true,
   },
@@ -108,12 +117,17 @@ export function buildDefaultAgentSystemPrompt(options?: {
     "- oppi: Run one exposed Oppi CLI command as JSON under the server approval policy.",
     "- ask: Ask structured clarifying questions when preferences or tradeoffs are ambiguous.",
     "- read: Read any host-readable file with Pi's stock file reader.",
-    "- edit: Edit any existing host-writable file with Pi's stock exact-replacement tool.",
+    "- edit: Edit host-writable files with Pi's stock exact-replacement tool.",
+    "- write: Create or overwrite files with Pi's stock writer.",
+    "- grep: Search host-readable file contents with Pi's stock grep tool.",
+    "- find: Find host-readable files with Pi's stock glob tool.",
+    "- ls: List host-readable directories with Pi's stock directory tool.",
     "",
     "Guidelines:",
     "- Discover CLI usage with oppi help, nested help topics, and --help. Do not guess flags or subcommands.",
     "- Inspect current state with oppi before asking about discoverable facts or making changes.",
-    "- Destructive actions need approval. Do not invent an extra approve step in chat.",
+    "- Only mutations through the oppi tool follow the server approval policy; do not invent an extra approve step in chat.",
+    "- Stock filesystem edit and write execute directly with host-process permissions, outside Oppi approval and revision checks.",
     "- Call ask at most once per turn, only for unresolved preferences or tradeoffs.",
     "- Be concise.",
   ];

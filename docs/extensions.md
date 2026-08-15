@@ -18,7 +18,7 @@ Pi owns ordinary skills and extensions. Normal Oppi-managed sessions resolve the
 
 Oppi has one explicit server-owned exception: the built-in **Oppi** extension. It is pathless, off by default, and is not a Pi package or a row in Pi's filesystem resource settings. When enabled, it adds only the allowlisted `oppi` tool to ordinary non-sandbox Oppi-managed sessions. Sandbox sessions never receive or reserve this built-in tool. It never adds structured `ask`.
 
-The shipped Oppi agent is separate. Its isolated control identity always has server-managed `oppi`, structured `ask`, and Pi's stock `read` and `edit`, using the saved Oppi approval policy while disabling user/project extensions, skills, prompt templates, context files, and all other Pi built-ins. Stock `read` and `edit` follow host process permissions: absolute paths are not constrained by Skill catalog metadata, and edits bypass Oppi approval and revision checks. The system prompt stays minimal and discovers CLI detail through `oppi help`.
+The shipped Oppi agent is separate. Its isolated control identity always has server-managed `oppi`, structured `ask`, and Pi's stock `read`, `edit`, `write`, `grep`, `find`, and `ls`, while disabling `bash`, user/project extensions, skills, prompt templates, and context files. Only the `oppi` tool uses the saved Oppi approval policy. Stock filesystem tools follow host process permissions: absolute paths are not constrained by Skill catalog metadata, and file mutations execute directly, bypassing Oppi approval and revision checks. The system prompt stays minimal and discovers CLI detail through `oppi help`.
 
 ## Server Skills and Extensions
 

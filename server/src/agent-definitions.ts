@@ -432,9 +432,15 @@ export class AgentDefinitionStore {
     }
 
     const safeDefinition = applyDefaultAgentSafetyDefaults(existing.definition);
-    const definitionChanged =
+    const needsSafetyRepair =
       JSON.stringify(safeDefinition) !== JSON.stringify(existing.definition);
-    if (definitionChanged) {
+    if (needsSafetyRepair) {
+      // A stale reserved identity may contain obsolete authority-bearing fields.
+      // Reconcile it from shipped defaults, carrying only the user's icon choice.
+      const repairedDefinition: AgentDefinition = {
+        ...DEFAULT_AGENT_DEFINITION,
+        ...(existing.definition.icon !== undefined ? { icon: existing.definition.icon } : {}),
+      };
       const nextVersion = existing.version + 1;
       this.db.transaction(() => {
         this.db
@@ -443,8 +449,14 @@ export class AgentDefinitionStore {
              SET name = ?, status = 'active', version = ?, definition_json = ?, updated_at = ?, archived_at = NULL
              WHERE id = ?`,
           )
-          .run(safeDefinition.name, nextVersion, JSON.stringify(safeDefinition), now, existing.id);
-        this.insertAgentVersion(existing.id, nextVersion, safeDefinition, now);
+          .run(
+            repairedDefinition.name,
+            nextVersion,
+            JSON.stringify(repairedDefinition),
+            now,
+            existing.id,
+          );
+        this.insertAgentVersion(existing.id, nextVersion, repairedDefinition, now);
       })();
       return;
     }
