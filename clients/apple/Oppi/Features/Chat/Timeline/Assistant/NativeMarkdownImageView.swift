@@ -212,7 +212,7 @@ final class NativeMarkdownImageView: UIView {
             // would be captured. Alt text is honest and renders instantly.
             showExportPlaceholder(alt: alt)
 
-        case .live:
+        case .live, .staticReader:
             switch RemoteMarkdownImagePolicy.decision(for: url) {
             case .internalImageURL, .unsupported:
                 startImageLoad(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile, fetchSessionFile: fetchSessionFile)

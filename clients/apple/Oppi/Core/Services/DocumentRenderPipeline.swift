@@ -65,6 +65,105 @@ enum DocumentRenderPipeline {
         maxBytes: 64 * 1_024 * 1_024
     )
 
+    // MARK: - Render Cache
+
+    /// Cross-surface raster cache for graphically rendered blocks (LaTeX
+    /// formulas, Mermaid diagrams).
+    ///
+    /// The full-screen markdown reader renders these blocks synchronously so
+    /// cell self-sizing sees final heights on the first pass. Without a cache,
+    /// every cell reuse re-pays parse + layout + rasterize on the main thread.
+    /// Parse failures are deterministic per input, so negative results are
+    /// cached too. NSCache is thread-safe and evicts under memory pressure.
+    /// `NSCache` is documented thread-safe but not `Sendable`; this holder
+    /// lets the static satisfy strict-concurrency checking while concurrent
+    /// render calls from detached tasks share one cache.
+    private final class GraphicalRenderCacheStore: @unchecked Sendable {
+        let cache: NSCache<NSString, CachedGraphicalRender> = {
+            let cache = NSCache<NSString, CachedGraphicalRender>()
+            cache.totalCostLimit = 64 * 1_024 * 1_024
+            cache.name = "org.oppi.DocumentRenderPipeline"
+            return cache
+        }()
+    }
+
+    private static let renderCache = GraphicalRenderCacheStore()
+
+    private final class CachedGraphicalRender: @unchecked Sendable {
+        /// `nil` means the source is deterministically unrenderable — callers
+        /// show their source fallback without re-parsing.
+        let image: UIImage?
+        let size: CGSize
+        let baseline: CGFloat?
+
+        init(image: UIImage?, size: CGSize, baseline: CGFloat? = nil) {
+            self.image = image
+            self.size = size
+            self.baseline = baseline
+        }
+    }
+
+    /// Cache key includes the full source text (formulas are small) so hash
+    /// collisions can never surface the wrong raster.
+    private static func renderCacheKey(
+        kind: String,
+        text: String,
+        config: RenderConfiguration,
+        scale: CGFloat
+    ) -> NSString {
+        "\(kind)|\(config.fontSize)|\(Int(config.maxWidth.rounded()))|\(config.displayMode)|\(scale)|\(renderThemeSignature(config.theme))|\(text)" as NSString
+    }
+
+    private static func renderThemeSignature(_ theme: RenderTheme) -> String {
+        func componentString(_ color: CGColor) -> String {
+            guard
+                let space = CGColorSpace(name: CGColorSpace.sRGB),
+                let converted = color.converted(to: space, intent: .defaultIntent, options: nil),
+                let components = converted.components, components.count >= 3
+            else {
+                return "?"
+            }
+            let alpha = components.count > 3 ? components[3] : 1
+            return String(
+                format: "%.3f,%.3f,%.3f,%.3f",
+                components[0], components[1], components[2], alpha
+            )
+        }
+        return [
+            componentString(theme.foreground), componentString(theme.foregroundDim),
+            componentString(theme.background), componentString(theme.backgroundDark),
+            componentString(theme.comment), componentString(theme.keyword),
+            componentString(theme.string), componentString(theme.number),
+            componentString(theme.function), componentString(theme.type),
+            componentString(theme.link), componentString(theme.heading),
+            componentString(theme.accentBlue), componentString(theme.accentCyan),
+            componentString(theme.accentGreen), componentString(theme.accentOrange),
+            componentString(theme.accentPurple), componentString(theme.accentRed),
+            componentString(theme.accentYellow)
+        ].joined(separator: ";")
+    }
+
+    private static func cachedRenderCost(_ image: UIImage?) -> Int {
+        guard let image, let cgImage = image.cgImage else { return 16 }
+        return cgImage.bytesPerRow * cgImage.height
+    }
+
+    private static func renderCached(
+        kind: String,
+        text: String,
+        config: RenderConfiguration,
+        scale: CGFloat,
+        render: () -> CachedGraphicalRender
+    ) -> CachedGraphicalRender {
+        let key = renderCacheKey(kind: kind, text: text, config: config, scale: scale)
+        if let hit = renderCache.cache.object(forKey: key) {
+            return hit
+        }
+        let entry = render()
+        renderCache.cache.setObject(entry, forKey: key, cost: cachedRenderCost(entry.image))
+        return entry
+    }
+
     // MARK: - Graphical Layout
 
     /// Result of a graphical parse → layout pass. Contains everything
@@ -99,23 +198,28 @@ enum DocumentRenderPipeline {
         config: RenderConfiguration,
         scale: CGFloat = 2.0
     ) -> (image: UIImage, size: CGSize)? where P.Document == R.Document {
-        let layout = layoutGraphical(
-            parser: parser,
-            renderer: renderer,
-            text: text,
-            config: config
-        )
-        guard naturalRasterBudget.permits(pointSize: layout.size, scale: scale) else {
-            return nil
-        }
+        let kind = "graphical:\(String(reflecting: P.self))/\(String(reflecting: R.self))"
+        let entry = renderCached(kind: kind, text: text, config: config, scale: scale) {
+            let layout = layoutGraphical(
+                parser: parser,
+                renderer: renderer,
+                text: text,
+                config: config
+            )
+            guard naturalRasterBudget.permits(pointSize: layout.size, scale: scale) else {
+                return CachedGraphicalRender(image: nil, size: layout.size)
+            }
 
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
-        let imageRenderer = UIGraphicsImageRenderer(size: layout.size, format: format)
-        let image = imageRenderer.image { ctx in
-            layout.draw(ctx.cgContext, .zero)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = scale
+            let imageRenderer = UIGraphicsImageRenderer(size: layout.size, format: format)
+            let image = imageRenderer.image { ctx in
+                layout.draw(ctx.cgContext, .zero)
+            }
+            return CachedGraphicalRender(image: image, size: layout.size)
         }
-        return (image: image, size: layout.size)
+        guard let image = entry.image else { return nil }
+        return (image: image, size: entry.size)
     }
 
     /// Validate and rasterize one natural-size display formula. Unsupported or
@@ -126,22 +230,30 @@ enum DocumentRenderPipeline {
         config: RenderConfiguration,
         scale: CGFloat = 2.0
     ) -> (image: UIImage, size: CGSize)? {
-        let parser = TeXMathParser()
-        let parsed = parser.parseValidated(text)
-        guard parsed.isRenderable else { return nil }
+        let entry = renderCached(kind: "latex-display", text: text, config: config, scale: scale) {
+            let parser = TeXMathParser()
+            let parsed = parser.parseValidated(text)
+            guard parsed.isRenderable else {
+                return CachedGraphicalRender(image: nil, size: .zero)
+            }
 
-        let renderer = MathCoreGraphicsRenderer()
-        let layoutResult = renderer.layout(parsed.nodes, configuration: config)
-        let size = renderer.boundingBox(layoutResult)
-        guard naturalRasterBudget.permits(pointSize: size, scale: scale) else { return nil }
+            let renderer = MathCoreGraphicsRenderer()
+            let layoutResult = renderer.layout(parsed.nodes, configuration: config)
+            let size = renderer.boundingBox(layoutResult)
+            guard naturalRasterBudget.permits(pointSize: size, scale: scale) else {
+                return CachedGraphicalRender(image: nil, size: size)
+            }
 
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
-        let imageRenderer = UIGraphicsImageRenderer(size: size, format: format)
-        let image = imageRenderer.image { context in
-            renderer.draw(layoutResult, in: context.cgContext, at: .zero)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = scale
+            let imageRenderer = UIGraphicsImageRenderer(size: size, format: format)
+            let image = imageRenderer.image { context in
+                renderer.draw(layoutResult, in: context.cgContext, at: .zero)
+            }
+            return CachedGraphicalRender(image: image, size: size)
         }
-        return (image: image, size: size)
+        guard let image = entry.image else { return nil }
+        return (image: image, size: entry.size)
     }
 
     /// Rasterize one inline formula and preserve its TeX baseline so a text
@@ -152,21 +264,29 @@ enum DocumentRenderPipeline {
         config: RenderConfiguration,
         scale: CGFloat = 2.0
     ) -> (image: UIImage, size: CGSize, baseline: CGFloat)? {
-        let parser = TeXMathParser()
-        let parsed = parser.parseValidated(text)
-        guard parsed.isRenderable else { return nil }
-        let renderer = MathCoreGraphicsRenderer()
-        let layout = renderer.layout(parsed.nodes, configuration: config)
-        let size = renderer.boundingBox(layout)
-        guard naturalRasterBudget.permits(pointSize: size, scale: scale) else { return nil }
+        let entry = renderCached(kind: "latex-inline", text: text, config: config, scale: scale) {
+            let parser = TeXMathParser()
+            let parsed = parser.parseValidated(text)
+            guard parsed.isRenderable else {
+                return CachedGraphicalRender(image: nil, size: .zero)
+            }
+            let renderer = MathCoreGraphicsRenderer()
+            let layout = renderer.layout(parsed.nodes, configuration: config)
+            let size = renderer.boundingBox(layout)
+            guard naturalRasterBudget.permits(pointSize: size, scale: scale) else {
+                return CachedGraphicalRender(image: nil, size: size)
+            }
 
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
-        let imageRenderer = UIGraphicsImageRenderer(size: size, format: format)
-        let image = imageRenderer.image { context in
-            renderer.draw(layout, in: context.cgContext, at: .zero)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = scale
+            let imageRenderer = UIGraphicsImageRenderer(size: size, format: format)
+            let image = imageRenderer.image { context in
+                renderer.draw(layout, in: context.cgContext, at: .zero)
+            }
+            return CachedGraphicalRender(image: image, size: size, baseline: layout.rootBox.baseline)
         }
-        return (image: image, size: size, baseline: layout.rootBox.baseline)
+        guard let image = entry.image, let baseline = entry.baseline else { return nil }
+        return (image: image, size: entry.size, baseline: baseline)
     }
 
     // MARK: - LaTeX Multi-Expression Layout

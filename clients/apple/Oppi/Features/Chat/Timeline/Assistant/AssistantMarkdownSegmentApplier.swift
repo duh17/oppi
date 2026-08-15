@@ -326,7 +326,7 @@ final class AssistantMarkdownSegmentApplier {
             if isOpen {
                 mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
             } else {
-                config.renderingMode == .export ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
+                config.renderingMode.rendersHeightChangingBlocksSynchronously ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
             }
             stackView.addArrangedSubview(mermaidView)
             mermaidViews[index] = mermaidView
@@ -345,7 +345,7 @@ final class AssistantMarkdownSegmentApplier {
             if isOpen {
                 latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
             } else {
-                config.renderingMode == .export ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
+                config.renderingMode.rendersHeightChangingBlocksSynchronously ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
             }
             stackView.addArrangedSubview(latexView)
             latexViews[index] = latexView
@@ -560,7 +560,7 @@ final class AssistantMarkdownSegmentApplier {
                         mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
                         ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: mermaidView)
                     } else {
-                        config.renderingMode == .export ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
+                        config.renderingMode.rendersHeightChangingBlocksSynchronously ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
                     }
                 }
 
@@ -581,7 +581,7 @@ final class AssistantMarkdownSegmentApplier {
                         latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
                         ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: latexView)
                     } else {
-                        config.renderingMode == .export ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
+                        config.renderingMode.rendersHeightChangingBlocksSynchronously ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
                     }
                 }
             }
@@ -822,7 +822,7 @@ final class AssistantMarkdownSegmentApplier {
             let highlighted = SyntaxHighlighter.highlight(code, language: lang)
             codeBlockViews[index]?.applyHighlightedCode(highlighted)
 
-        case .live:
+        case .live, .staticReader:
             // Async — dispatch to background thread to avoid scroll jank.
             highlightTasks[index]?.cancel()
             highlightTasks[index] = Task { [weak self] in

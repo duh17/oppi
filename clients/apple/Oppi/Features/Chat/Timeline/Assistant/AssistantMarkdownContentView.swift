@@ -14,9 +14,22 @@ enum ContentRenderingMode: Equatable, Sendable {
     /// syntax highlighting is scheduled, images load via URLSession.
     case live
 
+    /// Static full-screen reader documents. Height-changing blocks (LaTeX,
+    /// Mermaid) render synchronously so self-sizing cells measure their final
+    /// height on the first pass — a later async resize would invalidate the
+    /// reader's collection layout without a viewport anchor and visibly shift
+    /// the scroll position. Images still load asynchronously like `.live`.
+    case staticReader
+
     /// Synchronous rendering for export/snapshot. All content renders on the
     /// current thread so `view.layer.render(in:)` captures complete output.
     case export
+
+    /// Whether block renderers that change their own height (LaTeX formulas,
+    /// Mermaid diagrams) must finish synchronously before cell self-sizing.
+    var rendersHeightChangingBlocksSynchronously: Bool {
+        self == .staticReader || self == .export
+    }
 }
 
 // MARK: - Native Markdown Content View

@@ -1952,7 +1952,11 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             sourceFilePath: sourceFilePath,
             lineAnchor: lineAnchor,
             readerPreferences: readerPreferences,
-            perfSurface: perfSurface
+            perfSurface: perfSurface,
+            // Static reader document: LaTeX/Mermaid must finish before cell
+            // self-sizing, or their async resize invalidates the collection
+            // layout without a viewport anchor and jumps the scroll position.
+            renderingMode: .staticReader
         )
 
         let cycleStart = MarkdownStreamingPerf.timestampNs()
