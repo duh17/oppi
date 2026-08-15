@@ -39,6 +39,29 @@ struct QuickSessionLaunchPlan: Equatable, Sendable {
     var shouldAutoSend: Bool
 }
 
+extension SlashCommand {
+    static func promptTemplates(from options: [WorkspaceQuickActionOption]) -> [SlashCommand] {
+        options.map {
+            SlashCommand(
+                name: $0.commandName,
+                description: $0.description,
+                source: .prompt
+            )
+        }
+    }
+
+    static func skills(from skills: [SkillInfo]) -> [SlashCommand] {
+        skills.compactMap { skill in
+            guard skill.enabled else { return nil }
+            return SlashCommand(
+                name: "skill:\(skill.name)",
+                description: skill.description.isEmpty ? nil : skill.description,
+                source: .skill
+            )
+        }
+    }
+}
+
 enum QuickSessionLaunchRouting {
     /// Resolve whether Quick Session should create a plain Pi session or launch an Agent.
     static func plan(for request: QuickSessionLaunchRequest) -> Result<QuickSessionLaunchPlan, QuickSessionLaunchValidationError> {

@@ -61,6 +61,19 @@ private struct AgentQuickSessionSubmitAttempt {
     var uploadedAttachments: [ChatAttachmentRef]?
 }
 
+private struct QuickSessionSlashCommandLoadKey: Equatable {
+    let serverId: String?
+    let workspaceId: String?
+    let apiClientIdentifier: ObjectIdentifier?
+}
+
+private enum QuickSessionSlashCommandLoadResult: Sendable {
+    case promptTemplates([SlashCommand])
+    case skills([SlashCommand])
+    case promptTemplateFailure(String)
+    case skillFailure(String)
+}
+
 /// Compact sheet for starting a new session.
 ///
 /// Presented from Oppi, the Control widget, App Intents, or saved share intake.
@@ -83,6 +96,9 @@ struct QuickSessionSheet: View {
     @State private var composerTextBeforeRecording: String?
     @State private var pendingAttachments: [PendingAttachment] = []
     @State private var pendingRepoPointers: [PendingFileReference] = []
+    @State private var promptTemplateSlashCommands: [SlashCommand] = []
+    @State private var skillSlashCommands: [SlashCommand] = []
+    @State private var slashCommandLoadGeneration: UInt64 = 0
     @State private var selectedWorkspace: Workspace?
     @State private var selectedWorkspaceSelectionSource = "unknown"
     @State private var selectedServerId: String?
@@ -177,6 +193,21 @@ struct QuickSessionSheet: View {
         selectedServerConnection()?.iconAssetCache
     }
 
+    private var slashCommands: [SlashCommand] {
+        promptTemplateSlashCommands + skillSlashCommands
+    }
+
+    private var slashCommandLoadKey: QuickSessionSlashCommandLoadKey {
+        let apiClient = selectedServerId.flatMap {
+            coordinator.connection(for: $0)?.apiClient
+        }
+        return QuickSessionSlashCommandLoadKey(
+            serverId: selectedServerId,
+            workspaceId: selectedWorkspace?.id,
+            apiClientIdentifier: apiClient.map(ObjectIdentifier.init)
+        )
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let rootFrame = proxy.frame(in: .global)
@@ -249,7 +280,7 @@ struct QuickSessionSheet: View {
                 pendingRepoPointers: $pendingRepoPointers,
                 isBusy: false,
                 busyStreamingBehavior: .followUp,
-                slashCommands: [],
+                slashCommands: slashCommands,
                 fileSuggestions: [],
                 onFileSuggestionQuery: nil,
                 session: nil,
@@ -265,6 +296,9 @@ struct QuickSessionSheet: View {
         }
         .task {
             await setupInitialState()
+        }
+        .task(id: slashCommandLoadKey) {
+            await loadSlashCommands(for: slashCommandLoadKey)
         }
         .onChange(of: selectedServerId) { _, _ in
             configureVoiceInputForSelectedServer()
@@ -328,7 +362,7 @@ struct QuickSessionSheet: View {
                 onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
                 showForceStop: false,
                 isForceStopInFlight: false,
-                slashCommands: [],
+                slashCommands: slashCommands,
                 fileSuggestions: [],
                 onFileSuggestionQuery: nil,
                 onSend: handleSend,
@@ -624,6 +658,61 @@ struct QuickSessionSheet: View {
         // Remote dictation is server-bound: connect directly to `/dictation/stream`.
         // No workspace session, no capability preflight, no legacy audio target.
         manager.setServerDictationTarget(nil)
+    }
+
+    private func loadSlashCommands(for key: QuickSessionSlashCommandLoadKey) async {
+        slashCommandLoadGeneration &+= 1
+        let generation = slashCommandLoadGeneration
+        promptTemplateSlashCommands = []
+        skillSlashCommands = []
+
+        guard let serverId = key.serverId,
+              let workspaceId = key.workspaceId,
+              let apiClientIdentifier = key.apiClientIdentifier,
+              key == slashCommandLoadKey,
+              let api = coordinator.connection(for: serverId)?.apiClient,
+              ObjectIdentifier(api) == apiClientIdentifier else {
+            return
+        }
+
+        await withTaskGroup(of: QuickSessionSlashCommandLoadResult.self) { group in
+            group.addTask {
+                do {
+                    let options = try await api.getWorkspaceQuickActions(workspaceId: workspaceId).actions
+                    return .promptTemplates(SlashCommand.promptTemplates(from: options))
+                } catch {
+                    return .promptTemplateFailure(error.localizedDescription)
+                }
+            }
+            group.addTask {
+                do {
+                    let skills = try await api.listSkills(workspaceId: workspaceId)
+                    return .skills(SlashCommand.skills(from: skills))
+                } catch {
+                    return .skillFailure(error.localizedDescription)
+                }
+            }
+
+            for await result in group {
+                guard !Task.isCancelled,
+                      generation == slashCommandLoadGeneration,
+                      key == slashCommandLoadKey else {
+                    group.cancelAll()
+                    return
+                }
+
+                switch result {
+                case .promptTemplates(let commands):
+                    promptTemplateSlashCommands = commands
+                case .skills(let commands):
+                    skillSlashCommands = commands
+                case .promptTemplateFailure(let message):
+                    logger.warning("Failed to load prompt templates for quick session: \(message, privacy: .public)")
+                case .skillFailure(let message):
+                    logger.warning("Failed to load skills for quick session: \(message, privacy: .public)")
+                }
+            }
+        }
     }
 
     private func selectedServerConnection() -> ServerConnection? {

@@ -2,6 +2,86 @@ import Foundation
 import Testing
 @testable import Oppi
 
+@Suite("Quick Session Prompt Template Slash Commands")
+struct QuickSessionPromptTemplateSlashCommandTests {
+    @Test func mapsCommandNameDescriptionAndPromptSource() {
+        let options = [
+            WorkspaceQuickActionOption(
+                id: "prompt:review",
+                title: "Review",
+                commandName: "review",
+                description: "Review the current workspace",
+                argumentHint: nil,
+                source: .prompt,
+                sourceScope: "project",
+                promptTemplateName: "review"
+            )
+        ]
+
+        #expect(SlashCommand.promptTemplates(from: options) == [
+            SlashCommand(
+                name: "review",
+                description: "Review the current workspace",
+                source: .prompt
+            )
+        ])
+    }
+
+    @Test func emptyOptionsProduceNoCommands() {
+        #expect(SlashCommand.promptTemplates(from: []).isEmpty)
+    }
+}
+
+@Suite("Quick Session Skill Slash Commands")
+struct QuickSessionSkillSlashCommandTests {
+    @Test func mapsEnabledSkillsWithSkillSourceAndOptionalDescription() {
+        let skills = [
+            SkillInfo(
+                name: "deep-research",
+                description: "Research with source-backed evidence",
+                path: "/skills/deep-research",
+                enabled: true
+            ),
+            SkillInfo(
+                name: "writing",
+                description: "",
+                path: "/skills/writing",
+                enabled: true
+            ),
+        ]
+
+        #expect(SlashCommand.skills(from: skills) == [
+            SlashCommand(
+                name: "skill:deep-research",
+                description: "Research with source-backed evidence",
+                source: .skill
+            ),
+            SlashCommand(
+                name: "skill:writing",
+                description: nil,
+                source: .skill
+            ),
+        ])
+    }
+
+    @Test func omitsDisabledSkills() {
+        let skills = [
+            SkillInfo(
+                name: "disabled-skill",
+                description: "Not available in this workspace",
+                path: "/skills/disabled-skill",
+                enabled: false
+            )
+        ]
+
+        #expect(SlashCommand.skills(from: skills).isEmpty)
+    }
+
+    @Test func emptySkillsProduceNoCommands() {
+        #expect(SlashCommand.skills(from: []).isEmpty)
+    }
+}
+
 @Suite("Quick Session Launch Routing")
 struct QuickSessionLaunchRoutingTests {
     @Test func plainPiAllowsEmptyPromptWithoutAutoSend() throws {
