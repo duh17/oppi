@@ -66,6 +66,9 @@ final class WebSocketClient {
     private var connectionWaiters: [UInt64: CheckedContinuation<Bool, Never>] = [:]
     private var nextWaiterId: UInt64 = 0
 
+    /// Test seam: observe whether a frame reaches the socket-send boundary.
+    var _sendFrameForTesting: ((ClientMessage) -> Void)?
+
     init(
         credentials: ServerCredentials,
         preferredEndpoint: EndpointSelection? = nil,
@@ -160,11 +163,13 @@ final class WebSocketClient {
 
     /// Send a client message over the active focused-session stream.
     ///
-    /// `sessionId` is ignored for split streams because the target session is bound
-    /// in the WebSocket URL prepared by `ServerConnection`.
+    /// The split-stream target is bound in the WebSocket URL. The session id is
+    /// therefore a safety assertion, not routing metadata.
     ///
     /// If the connection is reconnecting, waits briefly before failing.
-    func send(_ message: ClientMessage, sessionId _: String? = nil) async throws {
+    func send(_ message: ClientMessage, sessionId: String? = nil) async throws {
+        try requireMatchingBoundSession(sessionId)
+
         // Wait for connection if reconnecting (background → foreground)
         if status != .connected {
             let waited = try await waitForConnection()
@@ -173,6 +178,15 @@ final class WebSocketClient {
                 wsLogError("Send failed waiting for connection")
                 throw WebSocketError.notConnected
             }
+        }
+
+        // Focus can change while the send waits for a reconnect. Re-check at
+        // the last point before selecting the live socket.
+        try requireMatchingBoundSession(sessionId)
+
+        if let sendFrameForTesting = _sendFrameForTesting {
+            sendFrameForTesting(message)
+            return
         }
 
         guard let ws = webSocket, status == .connected else {
@@ -209,6 +223,18 @@ final class WebSocketClient {
             throw error
         }
 
+    }
+
+    private func requireMatchingBoundSession(_ requestedSessionId: String?) throws {
+        guard let requestedSessionId,
+              let boundSessionId = diagnosticSessionId,
+              requestedSessionId != boundSessionId else {
+            return
+        }
+        throw FocusedSessionBindingError.boundSessionChanged(
+            requestedSessionId: requestedSessionId,
+            boundSessionId: boundSessionId
+        )
     }
 
     /// Send payload with a hard timeout that cannot be wedged by a stuck async send.
@@ -761,6 +787,10 @@ final class WebSocketClient {
         }
     }
 
+    var connectionWaiterCountForTesting: Int {
+        connectionWaiters.count
+    }
+
     /// Thread-safe one-shot resolver for callback + timeout races.
     ///
     /// SAFETY (`@unchecked Sendable`):
@@ -800,6 +830,20 @@ final class WebSocketClient {
 }
 
 // MARK: - Errors
+
+enum FocusedSessionBindingError: LocalizedError {
+    case rebindUnavailable(requestedSessionId: String, boundSessionId: String)
+    case boundSessionChanged(requestedSessionId: String, boundSessionId: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .rebindUnavailable(let requestedSessionId, let boundSessionId):
+            return "Cannot send to session \(requestedSessionId): the focused stream is still bound to \(boundSessionId)"
+        case .boundSessionChanged(let requestedSessionId, let boundSessionId):
+            return "Send to session \(requestedSessionId) cancelled because the focused stream changed to \(boundSessionId)"
+        }
+    }
+}
 
 enum WebSocketError: LocalizedError {
     case notConnected

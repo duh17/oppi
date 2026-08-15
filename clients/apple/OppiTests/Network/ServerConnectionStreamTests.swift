@@ -712,4 +712,247 @@ struct ServerConnectionStreamTests {
         #expect(conn.focusedSessionStreamURLForTesting?.path == "/control-sessions/control-1/stream")
     }
 
+    @Test func mismatchedSteerRebindsBeforeEmittingFrame() async throws {
+        let (conn, _) = makeTestConnection(sessionId: "session-a")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.sessionStore.upsert(makeTestSession(id: "session-a", workspaceId: "w1", status: .busy))
+        conn.sessionStore.upsert(makeTestSession(id: "session-b", workspaceId: "w1", status: .ready))
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-b", workspaceId: "w1")
+        conn._connectStreamForTesting = { AsyncStream { _ in } }
+
+        var emittedBoundPaths: [String] = []
+        conn._sendMessageForTesting = { message in
+            emittedBoundPaths.append(conn.focusedSessionStreamURLForTesting?.path ?? "none")
+            guard case .steer(_, _, let requestId, _) = message,
+                  let requestId else { return }
+            _ = conn.commands.resolveTurnCommandResult(
+                command: "steer",
+                requestId: requestId,
+                success: true,
+                error: nil
+            )
+        }
+
+        try await conn.sendSteer("redirect safely", sessionIdOverride: "session-a")
+
+        #expect(emittedBoundPaths == ["/workspaces/w1/sessions/session-a/stream"])
+        #expect(conn.focusedSessionId == "session-a")
+        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/session-a/stream")
+        conn.disconnectSession()
+    }
+
+    @Test func matchingSteerDoesNotPrepareEndpointAgain() async throws {
+        let (conn, _) = makeTestConnection(sessionId: "session-a")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.sessionStore.upsert(makeTestSession(id: "session-a", workspaceId: "w1", status: .busy))
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-a", workspaceId: "w1")
+
+        var prepareCount = 0
+        conn._onPrepareForSessionReentryForTesting = { _ in prepareCount += 1 }
+        conn._sendMessageForTesting = { message in
+            guard case .steer(_, _, let requestId, _) = message,
+                  let requestId else { return }
+            _ = conn.commands.resolveTurnCommandResult(
+                command: "steer",
+                requestId: requestId,
+                success: true,
+                error: nil
+            )
+        }
+
+        try await conn.sendSteer("already safe", sessionIdOverride: "session-a")
+
+        #expect(prepareCount == 0)
+        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/session-a/stream")
+    }
+
+    @Test func mismatchedSteerWithoutRouteFailsBeforeEmittingFrame() async {
+        let (conn, _) = makeTestConnection(sessionId: "session-a")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.sessionStore.upsert(makeTestSession(id: "session-b", workspaceId: "w1", status: .ready))
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-b", workspaceId: "w1")
+
+        var emittedCount = 0
+        conn._sendMessageForTesting = { _ in emittedCount += 1 }
+
+        do {
+            try await conn.sendSteer("must not cross streams", sessionIdOverride: "session-a")
+            Issue.record("A mismatched send without route scope should fail")
+        } catch {
+            #expect(error.localizedDescription.contains("session-a"))
+        }
+
+        #expect(emittedCount == 0)
+        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/session-b/stream")
+    }
+
+    @Test func everyOverriddenTurnCommandRepairsMismatchedBinding() async throws {
+        for command in BindingGuardCommand.allCases {
+            let (conn, _) = makeTestConnection(sessionId: "session-a")
+            conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+            conn.sessionStore.upsert(makeTestSession(id: "session-a", workspaceId: "w1", status: .busy))
+            conn.sessionStore.upsert(makeTestSession(id: "session-b", workspaceId: "w1", status: .ready))
+            conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-b", workspaceId: "w1")
+            conn._connectStreamForTesting = { AsyncStream { _ in } }
+
+            var emittedPath: String?
+            conn._sendMessageForTesting = { message in
+                emittedPath = conn.focusedSessionStreamURLForTesting?.path
+                switch message {
+                case .prompt(_, _, _, let requestId, _):
+                    if let requestId {
+                        _ = conn.commands.resolveTurnCommandResult(
+                            command: "prompt", requestId: requestId, success: true, error: nil
+                        )
+                    }
+                case .steer(_, _, let requestId, _):
+                    if let requestId {
+                        _ = conn.commands.resolveTurnCommandResult(
+                            command: "steer", requestId: requestId, success: true, error: nil
+                        )
+                    }
+                case .followUp(_, _, let requestId, _):
+                    if let requestId {
+                        _ = conn.commands.resolveTurnCommandResult(
+                            command: "follow_up", requestId: requestId, success: true, error: nil
+                        )
+                    }
+                case .stop(let requestId):
+                    if let requestId {
+                        _ = conn.commands.resolveCommandResult(
+                            command: "stop", requestId: requestId, success: true, data: nil, error: nil
+                        )
+                    }
+                default:
+                    break
+                }
+            }
+
+            try await command.send(using: conn, sessionId: "session-a")
+
+            #expect(
+                emittedPath == "/workspaces/w1/sessions/session-a/stream",
+                "\(command) must emit only after rebinding"
+            )
+            conn.disconnectSession()
+        }
+    }
+
+    @Test func focusArbitrationTelemetryRecordsRequestedCancelledAndWon() {
+        let (conn, _) = makeTestConnection(sessionId: "session-a")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-b", workspaceId: "w1")
+        conn.wsClient?._setStatusForTesting(.connecting)
+        conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
+
+        var events: [(outcome: String, metadata: [String: String])] = []
+        conn._onFocusArbitrationForTesting = { events.append(($0, $1)) }
+
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-a", workspaceId: "w1")
+
+        #expect(events.map(\.outcome) == ["requested", "cancelled", "won"])
+        for event in events {
+            #expect(event.metadata["previousSessionId"] == "session-b")
+            #expect(event.metadata["nextSessionId"] == "session-a")
+        }
+    }
+
+    @Test func webSocketRejectsFrameWhenBoundSessionChangesBeforeSend() async {
+        let (conn, _) = makeTestConnection(sessionId: "session-a")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-b", workspaceId: "w1")
+        guard let wsClient = conn.wsClient else {
+            Issue.record("Expected configured WebSocket client")
+            return
+        }
+
+        do {
+            try await wsClient.send(.stopSession(), sessionId: "session-a")
+            Issue.record("A frame must not use a stream bound to another session")
+        } catch let error as FocusedSessionBindingError {
+            #expect(error.localizedDescription.contains("session-a"))
+            #expect(error.localizedDescription.contains("session-b"))
+        } catch {
+            Issue.record("Expected FocusedSessionBindingError, got \(error)")
+        }
+    }
+
+    @Test func webSocketRejectsFrameWhenBoundSessionChangesWhileWaitingToSend() async {
+        let (conn, _) = makeTestConnection(sessionId: "session-a")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "session-a", workspaceId: "w1")
+        guard let wsClient = conn.wsClient else {
+            Issue.record("Expected configured WebSocket client")
+            return
+        }
+
+        var emittedTypes: [String] = []
+        wsClient._sendFrameForTesting = { emittedTypes.append($0.typeLabel) }
+        wsClient._setStatusForTesting(.connecting)
+
+        let sendTask = Task { @MainActor in
+            do {
+                try await wsClient.send(.stopSession(), sessionId: "session-a")
+                return "sent"
+            } catch let error as FocusedSessionBindingError {
+                switch error {
+                case .boundSessionChanged(let requestedSessionId, let boundSessionId):
+                    return "bound_changed:\(requestedSessionId):\(boundSessionId)"
+                case .rebindUnavailable:
+                    return "wrong_binding_error"
+                }
+            } catch {
+                return "unexpected:\(error.localizedDescription)"
+            }
+        }
+
+        let sendIsWaiting = await waitForMainActorCondition(
+            timeout: .milliseconds(300),
+            poll: .milliseconds(5)
+        ) {
+            wsClient.connectionWaiterCountForTesting == 1
+        }
+        guard sendIsWaiting else {
+            wsClient._setStatusForTesting(.disconnected)
+            _ = await sendTask.value
+            Issue.record("Send did not suspend in waitForConnection")
+            return
+        }
+
+        wsClient.setStreamURL(
+            URL(string: "wss://localhost/workspaces/w1/sessions/session-b/stream"),
+            sessionId: "session-b",
+            workspaceId: "w1"
+        )
+        wsClient._setStatusForTesting(.connected)
+
+        let outcome = await sendTask.value
+        #expect(outcome == "bound_changed:session-a:session-b")
+        #expect(emittedTypes.isEmpty)
+    }
+
+}
+
+private enum BindingGuardCommand: CaseIterable {
+    case prompt
+    case steer
+    case followUp
+    case stop
+    case stopSession
+
+    @MainActor
+    func send(using connection: ServerConnection, sessionId: String) async throws {
+        switch self {
+        case .prompt:
+            try await connection.sendPrompt("prompt", sessionIdOverride: sessionId)
+        case .steer:
+            try await connection.sendSteer("steer", sessionIdOverride: sessionId)
+        case .followUp:
+            try await connection.sendFollowUp("follow up", sessionIdOverride: sessionId)
+        case .stop:
+            try await connection.sendStop(sessionIdOverride: sessionId)
+        case .stopSession:
+            try await connection.sendStopSession(sessionIdOverride: sessionId)
+        }
+    }
 }

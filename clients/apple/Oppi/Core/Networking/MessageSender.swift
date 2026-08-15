@@ -560,8 +560,7 @@ final class MessageSender {
     }
 
     func sendStopSession(sessionIdOverride: String? = nil) async throws {
-        guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.stopSession(), sessionId: sessionIdOverride ?? targetSessionId)
+        try await dispatchSend(.stopSession(), sessionIdOverride: sessionIdOverride)
     }
 
     // MARK: - Convenience: Commands

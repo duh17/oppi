@@ -326,6 +326,9 @@ final class ServerConnection {
     /// Test seam: observe view-driven session re-entry preparation.
     var _onPrepareForSessionReentryForTesting: ((String) -> Void)?
 
+    /// Test seam: inspect bounded focus-arbitration telemetry.
+    var _onFocusArbitrationForTesting: ((_ outcome: String, _ metadata: [String: String]) -> Void)?
+
     /// Test seam: replace compact sidebar Git summary HTTP fetches.
     var _getWorkspaceGitSummaryForTesting: ((String) async throws -> WorkspaceGitSummary)?
 
@@ -2339,12 +2342,28 @@ final class ServerConnection {
     }
 
     private func prepareFocusedSessionStreamEndpoint(sessionId: String, routeScope: SessionRouteScope) {
+        let previousBoundSessionId = focusedSessionStreamSessionId
+        if previousBoundSessionId != sessionId {
+            recordFocusArbitration(
+                outcome: "requested",
+                previousSessionId: previousBoundSessionId,
+                nextSessionId: sessionId,
+                context: "stream_bind"
+            )
+        }
+
         if focusedSessionStreamTargetMatches(sessionId: sessionId, routeScope: routeScope) {
             // Keep a live/reconnecting transport for the same bound endpoint,
             // but still recompute the URL below. Endpoint selection may have
             // changed after Wi-Fi/cellular handoff while the session target did not.
         } else if focusedSessionStreamEndpointKind == "split_session",
                   hasActiveFocusedSessionStreamTransport() {
+            recordFocusArbitration(
+                outcome: "cancelled",
+                previousSessionId: previousBoundSessionId,
+                nextSessionId: sessionId,
+                context: "stream_bind"
+            )
             disconnectStream()
         } else {
             clearFocusedSessionStreamEndpoint()
@@ -2371,6 +2390,15 @@ final class ServerConnection {
         focusedSessionStreamURL = sessionStreamURL
         wsClient?.setPreferredEndpoint(selection)
         wsClient?.setStreamURL(sessionStreamURL, sessionId: sessionId, workspaceId: routeScope.workspaceId)
+
+        if previousBoundSessionId != sessionId {
+            recordFocusArbitration(
+                outcome: "won",
+                previousSessionId: previousBoundSessionId,
+                nextSessionId: sessionId,
+                context: "stream_bind"
+            )
+        }
 
         if let previousURL, previousURL != sessionStreamURL {
             var metadata: [String: String] = [
@@ -2442,6 +2470,23 @@ final class ServerConnection {
             return ["\(prefix)Transport": "iroh"]
         }
         return ClientLog.endpointMetadata(url, prefix: prefix)
+    }
+
+    private func recordFocusArbitration(
+        outcome: String,
+        previousSessionId: String?,
+        nextSessionId: String,
+        context: String
+    ) {
+        let metadata = [
+            "outcome": outcome,
+            "previousSessionId": previousSessionId ?? "none",
+            "nextSessionId": nextSessionId,
+            "context": context,
+            "transport": transportPath.rawValue,
+        ]
+        ClientLog.info("Focus", "Focused stream arbitration", metadata: metadata)
+        _onFocusArbitrationForTesting?(outcome, metadata)
     }
 
     func cancelDeferredQueueSync() {
@@ -2564,6 +2609,12 @@ final class ServerConnection {
         cancelDeferredPlaybackDisconnect(for: sessionId)
         let previousSessionId = focusedSessionId
         if previousSessionId != sessionId {
+            recordFocusArbitration(
+                outcome: "requested",
+                previousSessionId: previousSessionId,
+                nextSessionId: sessionId,
+                context: "focus"
+            )
             // Stop the old focused-session watchdog before switching command
             // routing. Pending AskCard state already lives in AskRequestStore.
             silenceWatchdog.stop()
@@ -2651,20 +2702,57 @@ final class ServerConnection {
 
     // MARK: - Actions (delegated to MessageSender)
 
+    /// Split streams bind the destination in the URL, so the envelope override
+    /// cannot redirect a frame. Repair a stale binding before any turn command.
+    private func prepareFocusedSessionBindingForSendIfNeeded(
+        sessionIdOverride: String?
+    ) throws {
+        guard let requestedSessionId = sessionIdOverride,
+              focusedSessionStreamEndpointKind == "split_session",
+              let boundSessionId = focusedSessionStreamSessionId,
+              boundSessionId != requestedSessionId else {
+            return
+        }
+
+        prepareForSessionReentry(
+            requestedSessionId,
+            workspaceIdHint: sessionReentryWorkspaceId(for: requestedSessionId),
+            routeScope: sessionStore.routeScope(for: requestedSessionId)
+        )
+
+        guard focusedSessionStreamEndpointKind == "split_session",
+              focusedSessionStreamSessionId == requestedSessionId else {
+            throw FocusedSessionBindingError.rebindUnavailable(
+                requestedSessionId: requestedSessionId,
+                boundSessionId: boundSessionId
+            )
+        }
+    }
+
     func sendPrompt(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try prepareFocusedSessionBindingForSendIfNeeded(sessionIdOverride: sessionIdOverride)
         try await sender.sendPrompt(text, attachments: attachments, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride, onAckStage: onAckStage)
     }
 
     func sendSteer(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try prepareFocusedSessionBindingForSendIfNeeded(sessionIdOverride: sessionIdOverride)
         try await sender.sendSteer(text, attachments: attachments, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride, onAckStage: onAckStage)
     }
 
     func sendFollowUp(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try prepareFocusedSessionBindingForSendIfNeeded(sessionIdOverride: sessionIdOverride)
         try await sender.sendFollowUp(text, attachments: attachments, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride, onAckStage: onAckStage)
     }
 
-    func sendStop(sessionIdOverride: String? = nil) async throws { try await sender.sendStop(sessionIdOverride: sessionIdOverride) }
-    func sendStopSession(sessionIdOverride: String? = nil) async throws { try await sender.sendStopSession(sessionIdOverride: sessionIdOverride) }
+    func sendStop(sessionIdOverride: String? = nil) async throws {
+        try prepareFocusedSessionBindingForSendIfNeeded(sessionIdOverride: sessionIdOverride)
+        try await sender.sendStop(sessionIdOverride: sessionIdOverride)
+    }
+
+    func sendStopSession(sessionIdOverride: String? = nil) async throws {
+        try prepareFocusedSessionBindingForSendIfNeeded(sessionIdOverride: sessionIdOverride)
+        try await sender.sendStopSession(sessionIdOverride: sessionIdOverride)
+    }
 
     func send(_ message: ClientMessage) async throws { try await sender.send(message) }
 
