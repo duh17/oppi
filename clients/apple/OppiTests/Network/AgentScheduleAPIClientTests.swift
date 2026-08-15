@@ -375,6 +375,35 @@ struct AgentScheduleAPIClientTests {
         #expect(response.session?.id == "session-1")
     }
 
+    @Test func agentLaunchEncodesWorktreeId() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/agents/agent-1/sessions")
+            let json = try #require(
+                JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
+            )
+            let target = try #require(json["target"] as? [String: Any])
+            #expect(target["workspaceId"] as? String == "ws-1")
+            #expect(target["worktreeId"] as? String == "wt_feature")
+            return mockResponse(status: 201, json: """
+            {"receipt":{"accepted":true,"agentId":"agent-1","agentVersion":2,"sessionId":"session-1","promptDispatch":"not_sent"},"session":{"id":"session-1","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"cost":0,"runtime":"oppi","workspaceId":"ws-1","worktreeId":"wt_feature"}}
+            """)
+        }
+
+        let response = try await client.launchAgentSession(
+            agentId: "agent-1",
+            prompt: nil,
+            workspaceId: "ws-1",
+            worktreeId: "wt_feature",
+            idempotencyKey: "stable-launch-key"
+        )
+
+        #expect(response.session?.id == "session-1")
+        #expect(response.session?.worktreeId == "wt_feature")
+    }
 
     @Test func agentIconUpdateSendsOnlyIconForSetAndClear() async throws {
         let client = makeClient()

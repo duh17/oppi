@@ -97,6 +97,7 @@ struct QuickSessionLaunchRoutingTests {
 
         #expect(plan.mode == .plainPi)
         #expect(plan.workspaceId == "ws-1")
+        #expect(plan.worktreeId == WorkspaceWorktree.mainId)
         #expect(plan.shouldAutoSend == false)
     }
 
@@ -122,6 +123,7 @@ struct QuickSessionLaunchRoutingTests {
             )
         ).get()
         #expect(withAttachment.mode == .plainPi)
+        #expect(withAttachment.worktreeId == WorkspaceWorktree.mainId)
         #expect(withAttachment.shouldAutoSend)
     }
 
@@ -189,8 +191,53 @@ struct QuickSessionLaunchRoutingTests {
         ).get()
 
         #expect(plan.mode == .agent(agentId: "reviewer"))
+        #expect(plan.workspaceId == "ws-1")
+        #expect(plan.worktreeId == WorkspaceWorktree.mainId)
         #expect(plan.prompt == "Review this")
         #expect(plan.shouldAutoSend)
+    }
+
+    @Test func preservesExplicitWorktreeOnPlainPiAndAgentLaunch() throws {
+        let plain = try QuickSessionLaunchRouting.plan(
+            for: .init(
+                workspaceId: "ws-1",
+                worktreeId: "wt_feature",
+                agentId: nil,
+                prompt: "hello",
+                hasAttachments: false,
+                hasRepoReferences: false
+            )
+        ).get()
+        let agent = try QuickSessionLaunchRouting.plan(
+            for: .init(
+                workspaceId: "ws-1",
+                worktreeId: "  wt_feature  ",
+                agentId: "reviewer",
+                prompt: "Review this",
+                hasAttachments: false,
+                hasRepoReferences: false
+            )
+        ).get()
+
+        #expect(plain.mode == .plainPi)
+        #expect(plain.worktreeId == "wt_feature")
+        #expect(agent.mode == .agent(agentId: "reviewer"))
+        #expect(agent.worktreeId == "wt_feature")
+    }
+
+    @Test func blankWorktreeIdResolvesToMain() throws {
+        let plan = try QuickSessionLaunchRouting.plan(
+            for: .init(
+                workspaceId: "ws-1",
+                worktreeId: "   ",
+                agentId: nil,
+                prompt: "hello",
+                hasAttachments: false,
+                hasRepoReferences: false
+            )
+        ).get()
+
+        #expect(plan.worktreeId == WorkspaceWorktree.mainId)
     }
 
     @Test func filtersWorkspacesUsingAgentConstraints() {
@@ -267,6 +314,100 @@ struct QuickSessionLaunchRoutingTests {
                 lastAgentId: lastAgentId,
                 availableAgentIds: available
             ) == expected
+        )
+    }
+}
+
+@Suite("Quick Session worktree picker policy")
+struct QuickSessionWorktreePickerPolicyTests {
+    @Test(arguments: [
+        (0, false),
+        (1, false),
+        (2, true),
+        (3, true),
+    ])
+    func showsPickerOnlyWhenMultipleWorktreesExist(count: Int, expected: Bool) {
+        #expect(QuickSessionWorktreePickerPolicy.shouldShowPicker(worktreeCount: count) == expected)
+    }
+
+    @Test func keepsSelectedWorktreeWhenItStillExists() {
+        let worktrees = [
+            makeWorktree(id: "main", isMain: true),
+            makeWorktree(id: "wt_feature", isMain: false),
+        ]
+
+        #expect(
+            QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
+                selectedId: "wt_feature",
+                worktrees: worktrees
+            ) == "wt_feature"
+        )
+    }
+
+    @Test func fallsBackToMainWhenSelectionIsMissing() {
+        let worktrees = [
+            makeWorktree(id: "wt_feature", isMain: false),
+            makeWorktree(id: "main", isMain: true),
+        ]
+
+        #expect(
+            QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
+                selectedId: "gone",
+                worktrees: worktrees
+            ) == "main"
+        )
+        #expect(
+            QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
+                selectedId: nil,
+                worktrees: worktrees
+            ) == "main"
+        )
+    }
+
+    @Test func fallsBackToFirstWorktreeWhenMainIsAbsent() {
+        let worktrees = [
+            makeWorktree(id: "wt_one", isMain: false),
+            makeWorktree(id: "wt_two", isMain: false),
+        ]
+
+        #expect(
+            QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
+                selectedId: nil,
+                worktrees: worktrees
+            ) == "wt_one"
+        )
+    }
+
+    @Test func usesImplicitMainWhenTheWorkspaceHasNoWorktrees() {
+        #expect(
+            QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
+                selectedId: "wt_feature",
+                worktrees: []
+            ) == WorkspaceWorktree.mainId
+        )
+    }
+
+    @Test(arguments: [
+        (Optional<String>.none, WorkspaceWorktree.mainId),
+        (Optional(""), WorkspaceWorktree.mainId),
+        (Optional("   "), WorkspaceWorktree.mainId),
+        (Optional("wt_feature"), "wt_feature"),
+        (Optional("  wt_feature  "), "wt_feature"),
+    ])
+    func normalizesLaunchWorktreeId(_ worktreeId: String?, expected: String) {
+        #expect(QuickSessionWorktreePickerPolicy.normalizedLaunchWorktreeId(worktreeId) == expected)
+    }
+
+    private func makeWorktree(id: String, isMain: Bool) -> WorkspaceWorktree {
+        WorkspaceWorktree(
+            id: id,
+            name: id,
+            path: "/tmp/\(id)",
+            branch: isMain ? "main" : id,
+            headSha: nil,
+            isMain: isMain,
+            isGitRepo: true,
+            sessionCount: nil
         )
     }
 }

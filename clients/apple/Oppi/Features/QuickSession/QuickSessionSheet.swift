@@ -46,6 +46,7 @@ struct QuickSessionOverlayLayout {
 private struct AgentQuickSessionSubmitKey: Equatable {
     let serverId: String
     let workspaceId: String
+    let worktreeId: String
     let agentId: String
     let prompt: String
     let attachmentIds: [String]
@@ -77,12 +78,15 @@ private enum QuickSessionSlashCommandLoadResult: Sendable {
 /// Compact sheet for starting a new session.
 ///
 /// Presented from Oppi, the Control widget, App Intents, or saved share intake.
-/// The sheet stays focused on one task: pick workspace (and optionally Agent),
-/// compose the first message, then create and navigate to the new session.
+/// The sheet stays focused on one task: pick workspace (and a worktree when the
+/// workspace has more than one checkout), optionally pick an Agent, compose the
+/// first message, then create and navigate to the new session.
 ///
-/// **Flow**: Pick workspace/Agent → compose message → send → session created →
-/// navigate to ChatView. Plain Pi uses workspace session create + optional
-/// auto-send. A selected Agent uses `launchAgentSession` so definition defaults apply.
+/// **Flow**: Pick workspace/worktree/Agent → compose message → send → session created →
+/// navigate to ChatView. Create and Agent launch send the resolved checkout.
+/// Hidden single-checkout workspaces still bind to Main. Plain Pi uses workspace
+/// session create + optional auto-send. A selected Agent uses `launchAgentSession`
+/// so definition defaults apply.
 struct QuickSessionSheet: View {
     let onDismiss: () -> Void
 
@@ -101,6 +105,10 @@ struct QuickSessionSheet: View {
     @State private var slashCommandLoadGeneration: UInt64 = 0
     @State private var selectedWorkspace: Workspace?
     @State private var selectedWorkspaceSelectionSource = "unknown"
+    @State private var selectedWorktreeId = WorkspaceWorktree.mainId
+    @State private var worktrees: [WorkspaceWorktree] = []
+    @State private var isLoadingWorktrees = false
+    @State private var worktreeLoadGeneration: UInt64 = 0
     @State private var selectedServerId: String?
     @State private var selectedModelId: String? = AppPreferences.QuickSession.lastModelId
     @State private var thinkingLevel: ThinkingLevel = AppPreferences.QuickSession.lastThinkingLevel
@@ -124,6 +132,7 @@ struct QuickSessionSheet: View {
     @State private var busyStreamingBehavior: StreamingBehavior = .followUp
     @State private var composerFocusRequestID = 0
     @State private var showWorkspacePicker = false
+    @State private var showWorktreePicker = false
     @State private var showAgentPicker = false
     @State private var measuredComposerHeight: CGFloat = 0
     @State private var measuredAccessibilityActionHeight: CGFloat = 0
@@ -191,6 +200,22 @@ struct QuickSessionSheet: View {
 
     private var selectedServerIconAssetCache: IconAssetCache? {
         selectedServerConnection()?.iconAssetCache
+    }
+
+    private var showsWorktreePicker: Bool {
+        QuickSessionWorktreePickerPolicy.shouldShowPicker(worktreeCount: worktrees.count)
+    }
+
+    private var selectedWorktree: WorkspaceWorktree? {
+        let resolvedId = QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
+            selectedId: selectedWorktreeId,
+            worktrees: worktrees
+        )
+        return worktrees.first { $0.id == resolvedId }
+    }
+
+    private var selectedWorktreeDisplayName: String {
+        selectedWorktree?.displayName ?? "Main"
     }
 
     private var slashCommands: [SlashCommand] {
@@ -300,6 +325,9 @@ struct QuickSessionSheet: View {
         .task(id: slashCommandLoadKey) {
             await loadSlashCommands(for: slashCommandLoadKey)
         }
+        .task(id: selectedWorkspace?.id) {
+            await loadWorktrees(for: selectedWorkspace)
+        }
         .onChange(of: selectedServerId) { _, _ in
             configureVoiceInputForSelectedServer()
             guard isInitialized else { return }
@@ -342,10 +370,16 @@ struct QuickSessionSheet: View {
                 .background(.themeRed.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
-            // Only the Agent picker is detached above the input capsule.
-            // Workspace/model/thinking stay in the composer action row.
-            agentPickerPill
-                .padding(.horizontal, 16)
+            // Workspace and worktree sit above the capsule so destination is
+            // chosen before compose. Agent/model/thinking stay in the action row.
+            HStack(spacing: 6) {
+                workspaceNavBarItem
+                    .layoutPriority(1)
+                if showsWorktreePicker {
+                    worktreePickerPill
+                }
+            }
+            .padding(.horizontal, 16)
 
             ChatInputBar(
                 text: $text,
@@ -389,14 +423,14 @@ struct QuickSessionSheet: View {
     @ViewBuilder
     private var quickSessionActionControls: some View {
         if !stacksActionControls {
-            workspaceNavBarItem
+            agentPickerPill
             sessionToolbar
         }
     }
 
     private var accessibilityActionControls: some View {
         VStack(alignment: .leading, spacing: 6) {
-            workspaceNavBarItem
+            agentPickerPill
 
             HStack(spacing: 6) {
                 sessionToolbar
@@ -486,13 +520,15 @@ struct QuickSessionSheet: View {
         if let selectedWorkspace, constraints.allows(selectedWorkspace) { return }
         selectedWorkspace = nil
         selectedWorkspaceSelectionSource = "agent_constraint_required"
+        resetWorktreeSelection()
         error = "Choose a workspace compatible with \(selectedAgent?.name ?? "this Agent")."
         showWorkspacePicker = true
+        showWorktreePicker = false
     }
 
     // MARK: - Workspace Picker
 
-    /// Compact workspace picker for the action row — icon + name with a custom popover.
+    /// Compact workspace picker above the capsule — icon + name with a custom popover.
     private var workspaceNavBarItem: some View {
         Button {
             showWorkspacePicker.toggle()
@@ -519,6 +555,7 @@ struct QuickSessionSheet: View {
     }
 
     private func selectWorkspace(_ workspace: Workspace, serverId: String) {
+        let workspaceChanged = selectedWorkspace?.id != workspace.id || selectedServerId != serverId
         if selectedServerId != serverId {
             selectedAgentId = nil
             agentModelOverride = nil
@@ -528,11 +565,92 @@ struct QuickSessionSheet: View {
         selectedWorkspace = workspace
         selectedWorkspaceSelectionSource = "manual"
         selectedServerId = serverId
+        if workspaceChanged {
+            resetWorktreeSelection()
+        }
         showWorkspacePicker = false
+        showWorktreePicker = false
         error = nil
         launchFailure = nil
         configureVoiceInputForSelectedServer()
         AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
+    }
+
+    // MARK: - Worktree Picker
+
+    /// Compact worktree picker next to workspace. Visible only when the
+    /// selected workspace has more than one checkout.
+    private var worktreePickerPill: some View {
+        Button {
+            showWorktreePicker.toggle()
+        } label: {
+            QuickSessionWorktreePillLabel(worktree: selectedWorktree)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showWorktreePicker, arrowEdge: .bottom) {
+            QuickSessionWorktreePicker(
+                worktrees: worktrees,
+                selectedWorktreeId: selectedWorktreeId,
+                isLoading: isLoadingWorktrees,
+                onSelect: selectWorktree
+            )
+            .presentationCompactAdaptation(.popover)
+            .presentationBackground(Color.themeSurfaceFill(.popover))
+        }
+        .accessibilityLabel("Worktree picker, current worktree \(selectedWorktreeDisplayName)")
+        .accessibilityIdentifier("quickSession.worktreePicker")
+    }
+
+    private func selectWorktree(_ worktree: WorkspaceWorktree) {
+        selectedWorktreeId = worktree.id
+        showWorktreePicker = false
+    }
+
+    private func resetWorktreeSelection() {
+        selectedWorktreeId = WorkspaceWorktree.mainId
+        worktrees = []
+        isLoadingWorktrees = false
+        worktreeLoadGeneration &+= 1
+    }
+
+    private func loadWorktrees(for workspace: Workspace?) async {
+        worktreeLoadGeneration &+= 1
+        let generation = worktreeLoadGeneration
+        guard let workspace else {
+            worktrees = []
+            selectedWorktreeId = WorkspaceWorktree.mainId
+            isLoadingWorktrees = false
+            return
+        }
+        isLoadingWorktrees = worktrees.isEmpty
+        defer {
+            if generation == worktreeLoadGeneration {
+                isLoadingWorktrees = false
+            }
+        }
+
+        guard let api = selectedServerConnection()?.apiClient else {
+            if generation == worktreeLoadGeneration {
+                worktrees = []
+                selectedWorktreeId = WorkspaceWorktree.mainId
+            }
+            return
+        }
+
+        do {
+            let fetched = try await api.listWorkspaceWorktrees(workspaceId: workspace.id)
+            guard generation == worktreeLoadGeneration else { return }
+            worktrees = fetched
+            selectedWorktreeId = QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
+                selectedId: selectedWorktreeId,
+                worktrees: fetched
+            )
+        } catch {
+            guard generation == worktreeLoadGeneration else { return }
+            logger.warning("Failed to load worktrees for quick session: \(error.localizedDescription, privacy: .public)")
+            worktrees = []
+            selectedWorktreeId = WorkspaceWorktree.mainId
+        }
     }
 
     // MARK: - Actions
@@ -830,6 +948,10 @@ struct QuickSessionSheet: View {
         let launchDecision = QuickSessionLaunchRouting.plan(
             for: QuickSessionLaunchRequest(
                 workspaceId: selectedWorkspace?.id,
+                worktreeId: QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
+                    selectedId: selectedWorktreeId,
+                    worktrees: worktrees
+                ),
                 agentId: selectedAgentId,
                 prompt: transportText,
                 hasAttachments: !pendingAttachments.isEmpty,
@@ -870,6 +992,7 @@ struct QuickSessionSheet: View {
             "has_repo_refs": pendingRepoPointers.isEmpty ? "0" : "1",
             "has_model": modelId == nil ? "0" : "1",
             "has_agent": selectedAgentId == nil ? "0" : "1",
+            "worktree": plan.worktreeId == WorkspaceWorktree.mainId ? "main" : "other",
         ]
 
         // Capture references before dismiss invalidates environment
@@ -895,7 +1018,8 @@ struct QuickSessionSheet: View {
                     let response = try await api.createWorkspaceSession(
                         workspaceId: workspace.id,
                         model: modelId,
-                        thinking: thinking.rawValue
+                        thinking: thinking.rawValue,
+                        worktreeId: plan.worktreeId
                     )
                     session = response.session
                     autoSendMessage = plan.shouldAutoSend ? transportText : nil
@@ -910,6 +1034,7 @@ struct QuickSessionSheet: View {
                     let submitKey = AgentQuickSessionSubmitKey(
                         serverId: serverId,
                         workspaceId: workspace.id,
+                        worktreeId: plan.worktreeId,
                         agentId: agentId,
                         prompt: plan.prompt,
                         attachmentIds: attachments.map(\.id),
@@ -938,6 +1063,7 @@ struct QuickSessionSheet: View {
                                 agentId: agentId,
                                 prompt: nil,
                                 workspaceId: workspace.id,
+                                worktreeId: plan.worktreeId,
                                 model: modelId,
                                 thinkingLevel: agentThinking,
                                 idempotencyKey: attempt.launchIdempotencyKey
@@ -1052,7 +1178,7 @@ struct QuickSessionSheet: View {
     }
 }
 
-// MARK: - Agent picker (detached above input)
+// MARK: - Agent picker (action row)
 
 private struct QuickSessionAgentPillLabel: View {
     let agent: AgentDefinitionSummary?
@@ -1081,6 +1207,117 @@ private struct QuickSessionAgentPillLabel: View {
         .glassEffect(.regular, in: Capsule())
         .frame(minHeight: ComposerInputMetrics.controlDiameter)
         .contentShape(Rectangle())
+    }
+}
+
+private struct QuickSessionWorktreePillLabel: View {
+    let worktree: WorkspaceWorktree?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: worktree?.isMain == false
+                ? "arrow.triangle.branch"
+                : "house")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.themePurple)
+                .frame(width: 16, height: 16)
+            Text(worktree?.displayName ?? "Main")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.themeComment)
+        }
+        .frame(minHeight: 17)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .glassEffect(.regular, in: Capsule())
+        .frame(minHeight: ComposerInputMetrics.controlDiameter)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct QuickSessionWorktreePicker: View {
+    let worktrees: [WorkspaceWorktree]
+    let selectedWorktreeId: String?
+    let isLoading: Bool
+    let onSelect: (WorkspaceWorktree) -> Void
+
+    var body: some View {
+        Group {
+            if isLoading && worktrees.isEmpty {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading worktrees…")
+                        .font(.subheadline)
+                        .foregroundStyle(.themeComment)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(worktrees) { worktree in
+                            Button {
+                                onSelect(worktree)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: worktree.isMain
+                                        ? "house"
+                                        : "arrow.triangle.branch")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.themePurple)
+                                        .frame(width: 22, height: 22)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(WorkspaceWorktreeMenuFormatting.title(for: worktree))
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(.themeFg)
+                                            .lineLimit(1)
+                                        if let subtitle = worktreeSubtitle(for: worktree) {
+                                            Text(subtitle)
+                                                .font(.caption)
+                                                .foregroundStyle(.themeComment)
+                                                .lineLimit(1)
+                                        }
+                                    }
+
+                                    Spacer(minLength: 8)
+
+                                    if worktree.id == selectedWorktreeId {
+                                        Image(systemName: "checkmark")
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(.themeBlue)
+                                    }
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(WorkspaceWorktreeMenuFormatting.accessibilityLabel(for: worktree))
+                            .accessibilityAddTraits(worktree.id == selectedWorktreeId ? .isSelected : [])
+                            .accessibilityIdentifier("quickSession.worktree.\(worktree.id)")
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+        .frame(minWidth: 240, idealWidth: 260, maxHeight: 320)
+    }
+
+    private func worktreeSubtitle(for worktree: WorkspaceWorktree) -> String? {
+        if let count = WorkspaceWorktreeMenuFormatting.sessionCountText(for: worktree) {
+            let noun = worktree.sessionCount == 1 ? "session" : "sessions"
+            return "\(count) \(noun)"
+        }
+        if !worktree.subtitle.isEmpty, worktree.subtitle != worktree.displayName {
+            return worktree.subtitle
+        }
+        return nil
     }
 }
 

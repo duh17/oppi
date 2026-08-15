@@ -24,6 +24,8 @@ enum QuickSessionLaunchValidationError: Equatable, Sendable, LocalizedError {
 
 struct QuickSessionLaunchRequest: Equatable, Sendable {
     var workspaceId: String?
+    /// Selected checkout. Blank or missing resolves to Main.
+    var worktreeId: String? = nil
     /// `nil` means plain Pi (no Agent).
     var agentId: String?
     var prompt: String
@@ -34,6 +36,7 @@ struct QuickSessionLaunchRequest: Equatable, Sendable {
 struct QuickSessionLaunchPlan: Equatable, Sendable {
     var mode: QuickSessionLaunchMode
     var workspaceId: String
+    var worktreeId: String
     var prompt: String
     /// Only meaningful for plain Pi — Agent launch delivers the prompt server-side.
     var shouldAutoSend: Bool
@@ -73,6 +76,7 @@ enum QuickSessionLaunchRouting {
 
         let prompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let agentId = request.agentId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let worktreeId = QuickSessionWorktreePickerPolicy.normalizedLaunchWorktreeId(request.worktreeId)
 
         if let agentId, !agentId.isEmpty {
             if prompt.isEmpty {
@@ -82,6 +86,7 @@ enum QuickSessionLaunchRouting {
                 QuickSessionLaunchPlan(
                     mode: .agent(agentId: agentId),
                     workspaceId: workspaceId,
+                    worktreeId: worktreeId,
                     prompt: prompt,
                     shouldAutoSend: true
                 )
@@ -92,6 +97,7 @@ enum QuickSessionLaunchRouting {
             QuickSessionLaunchPlan(
                 mode: .plainPi,
                 workspaceId: workspaceId,
+                worktreeId: worktreeId,
                 prompt: prompt,
                 shouldAutoSend: !prompt.isEmpty || request.hasAttachments || request.hasRepoReferences
             )
@@ -119,5 +125,34 @@ enum QuickSessionLaunchRouting {
     ) -> String? {
         guard let lastAgentId, !lastAgentId.isEmpty else { return nil }
         return availableAgentIds.contains(lastAgentId) ? lastAgentId : nil
+    }
+}
+
+/// Worktree selection for Quick Session create and Agent launch.
+enum QuickSessionWorktreePickerPolicy {
+    /// Hide the pill for single-checkout workspaces so Main is not a dead control.
+    static func shouldShowPicker(worktreeCount: Int) -> Bool {
+        worktreeCount > 1
+    }
+
+    static func resolvedWorktreeId(
+        selectedId: String?,
+        worktrees: [WorkspaceWorktree]
+    ) -> String {
+        if let selectedId, worktrees.contains(where: { $0.id == selectedId }) {
+            return selectedId
+        }
+        return worktrees.first(where: \.isMain)?.id
+            ?? worktrees.first?.id
+            ?? WorkspaceWorktree.mainId
+    }
+
+    /// Create and Agent launch always send a concrete checkout. Blank input is Main.
+    static func normalizedLaunchWorktreeId(_ worktreeId: String?) -> String {
+        let trimmed = worktreeId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed, !trimmed.isEmpty else {
+            return WorkspaceWorktree.mainId
+        }
+        return trimmed
     }
 }
