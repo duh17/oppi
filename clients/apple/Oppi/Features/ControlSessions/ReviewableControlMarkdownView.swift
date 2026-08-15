@@ -12,6 +12,24 @@ enum ReviewableControlMarkdownDraftKey {
     }
 }
 
+enum ReviewableControlMarkdownEditFlow: Equatable {
+    case directSession
+    case guidedRevision
+}
+
+struct ControlRevisionSheetHandoff {
+    private var pendingTarget: WorkspaceSessionNavTarget?
+
+    mutating func prepare(_ target: WorkspaceSessionNavTarget) {
+        pendingTarget = target
+    }
+
+    mutating func completeAfterDismissal() -> WorkspaceSessionNavTarget? {
+        defer { pendingTarget = nil }
+        return pendingTarget
+    }
+}
+
 @MainActor
 enum ControlRevisionCommentTransfer {
     @discardableResult
@@ -79,6 +97,78 @@ enum ControlRevisionCommentNavigation {
             comments: comments
         )
         return Handoff(serverId: resolvedServerId, movedCount: movedCount)
+    }
+
+    /// Build the ordinary control-chat route after the durable comment move.
+    /// A zero-comment draft is still a valid handoff; navigation must not be
+    /// conditional on having review comments to transfer.
+    static func makeSessionTarget(
+        serverId: String?,
+        fallbackServerId: String?,
+        domain: ControlSessionDomain,
+        targetId: String?,
+        toSessionId: String,
+        comments: ChatReviewCommentsController = ChatReviewCommentsController()
+    ) throws -> WorkspaceSessionNavTarget {
+        let handoff = try moveStagedComments(
+            serverId: serverId,
+            fallbackServerId: fallbackServerId,
+            domain: domain,
+            targetId: targetId,
+            toSessionId: toSessionId,
+            comments: comments
+        )
+        return WorkspaceSessionNavTarget(
+            serverId: handoff.serverId,
+            sessionId: toSessionId,
+            routeScope: .control
+        )
+    }
+
+    struct PreparedLaunchMessage {
+        let sessionTarget: WorkspaceSessionNavTarget
+        let message: String
+        let sentCommentIds: [String]
+
+        @MainActor
+        func disposeSentComments(using comments: ChatReviewCommentsController) {
+            comments.clearSent(ids: sentCommentIds)
+        }
+    }
+
+    /// Move staged comments into the created control session, then build the
+    /// first user message from the typed request plus the existing review block.
+    /// The stash is cleared only after the caller reports a successful send.
+    static func prepareLaunchMessage(
+        request: String,
+        serverId: String?,
+        fallbackServerId: String?,
+        domain: ControlSessionDomain,
+        targetId: String?,
+        toSessionId: String,
+        comments: ChatReviewCommentsController = ChatReviewCommentsController()
+    ) throws -> PreparedLaunchMessage {
+        let sessionTarget = try makeSessionTarget(
+            serverId: serverId,
+            fallbackServerId: fallbackServerId,
+            domain: domain,
+            targetId: targetId,
+            toSessionId: toSessionId,
+            comments: comments
+        )
+        comments.load(
+            localScopeId: SessionRouteScope.control.composerDraftScopeID,
+            sessionId: toSessionId
+        )
+        let message = comments.appendReviewBlock(
+            to: request,
+            pathFormatting: ChatView.reviewCommentPathFormattingPolicy(controlDomain: domain)
+        )
+        return PreparedLaunchMessage(
+            sessionTarget: sessionTarget,
+            message: message,
+            sentCommentIds: comments.stagedCommentIds
+        )
     }
 }
 
@@ -157,6 +247,7 @@ struct ReviewableControlMarkdownView: View {
     let targetName: String
     let sourceLabel: String
     let sourcePath: String
+    let editFlow: ReviewableControlMarkdownEditFlow
 
     init(
         content: String,
@@ -164,7 +255,8 @@ struct ReviewableControlMarkdownView: View {
         targetId: String,
         targetName: String,
         sourceLabel: String,
-        sourcePath: String
+        sourcePath: String,
+        editFlow: ReviewableControlMarkdownEditFlow = .directSession
     ) {
         self.viewerContent = .markdown(content: content, filePath: sourcePath)
         self.languageHint = "markdown"
@@ -174,6 +266,7 @@ struct ReviewableControlMarkdownView: View {
         self.targetName = targetName
         self.sourceLabel = sourceLabel
         self.sourcePath = sourcePath
+        self.editFlow = editFlow
     }
 
     init(
@@ -182,7 +275,8 @@ struct ReviewableControlMarkdownView: View {
         targetId: String,
         targetName: String,
         sourceLabel: String,
-        sourcePath: String
+        sourcePath: String,
+        editFlow: ReviewableControlMarkdownEditFlow = .directSession
     ) {
         self.viewerContent = .fromText(fileContent, filePath: sourcePath)
         self.languageHint = Self.languageHint(for: sourcePath)
@@ -192,10 +286,13 @@ struct ReviewableControlMarkdownView: View {
         self.targetName = targetName
         self.sourceLabel = sourceLabel
         self.sourcePath = sourcePath
+        self.editFlow = editFlow
     }
 
     @State private var comments = ChatReviewCommentsController()
     @State private var showCommentStash = false
+    @State private var showGuidedRevision = false
+    @State private var guidedSessionHandoff = ControlRevisionSheetHandoff()
     @State private var isCreatingSession = false
     @State private var createdSession: Session?
     @State private var starterPromptDelivered = false
@@ -241,7 +338,12 @@ struct ReviewableControlMarkdownView: View {
                 accessibilityLabel: "Edit in Oppi Session",
                 isEnabled: !isCreatingSession,
                 handler: {
-                    Task { await createOrOpenRevisionSession() }
+                    switch editFlow {
+                    case .directSession:
+                        Task { await createOrOpenRevisionSession() }
+                    case .guidedRevision:
+                        showGuidedRevision = true
+                    }
                 }
             ),
             FullScreenViewerNavigationAction(
@@ -295,6 +397,21 @@ struct ReviewableControlMarkdownView: View {
                 onClose: { showCommentStash = false }
             )
         }
+        .sheet(isPresented: $showGuidedRevision, onDismiss: completeGuidedSessionHandoff) {
+            GuidedControlSessionSheet(
+                domain: domain,
+                intent: .revise,
+                targetId: targetId,
+                targetName: targetName,
+                targetPath: domain == .skills ? sourcePath : nil,
+                placeholder: "Describe how this \(domainTitle) should change…",
+                stagedComments: comments,
+                onSessionPrepared: { target in
+                    guidedSessionHandoff.prepare(target)
+                    showGuidedRevision = false
+                }
+            )
+        }
         .alert("Unable to Edit", isPresented: Binding(
             get: { error != nil },
             set: { if !$0 { error = nil } }
@@ -320,6 +437,21 @@ struct ReviewableControlMarkdownView: View {
                 reviewCommentSelectionContext: selectionContext,
                 navigationActions: navigationActions
             )
+        }
+    }
+
+    @MainActor
+    private func completeGuidedSessionHandoff() {
+        guard let target = guidedSessionHandoff.completeAfterDismissal() else { return }
+        navigation.openWorkspaceSession(target)
+    }
+
+    private var domainTitle: String {
+        switch domain {
+        case .agents: "Agent"
+        case .schedules: "Schedule"
+        case .skills: "Skill"
+        case .workspaces: "Workspace"
         }
     }
 
@@ -402,7 +534,7 @@ struct ReviewableControlMarkdownView: View {
             let session = prepared.session
             starterPromptDelivered = prepared.starterPromptDelivered
 
-            let handoff = try ControlRevisionCommentNavigation.moveStagedComments(
+            let sessionTarget = try ControlRevisionCommentNavigation.makeSessionTarget(
                 serverId: connection.currentServerId,
                 fallbackServerId: sessionStore.activeServerId,
                 domain: domain,
@@ -414,11 +546,7 @@ struct ReviewableControlMarkdownView: View {
             error = nil
             dismiss()
             await Task.yield()
-            navigation.openWorkspaceSession(.init(
-                serverId: handoff.serverId,
-                sessionId: session.id,
-                routeScope: .control
-            ))
+            navigation.openWorkspaceSession(sessionTarget)
         } catch {
             self.error = "\(error.localizedDescription) Your staged comments are still saved."
         }

@@ -1,6 +1,24 @@
 import SwiftUI
 
-/// Quick Session-style intake for server-scoped Agent and Schedule control sessions.
+enum GuidedControlSessionComposerReviewComments {
+    struct Presentation: Equatable {
+        let pendingCount: Int
+        let showsStash: Bool
+        let title: String?
+    }
+
+    static func presentation(stagedCount: Int) -> Presentation {
+        Presentation(
+            pendingCount: stagedCount,
+            showsStash: stagedCount > 0,
+            title: stagedCount > 0
+                ? ChatInputBar<EmptyView>.reviewCommentStashTitle(count: stagedCount)
+                : nil
+        )
+    }
+}
+
+/// Quick Session-style intake for server-scoped Agent, Schedule, and Skill control sessions.
 ///
 /// The selected workspace is prompt context only. Control sessions intentionally
 /// remain workspace-less so the Oppi agent can inspect and mutate server-owned
@@ -18,10 +36,12 @@ struct GuidedControlSessionComposer: View {
     let intent: ControlSessionIntent
     var targetId: String?
     var targetName: String?
+    var targetPath: String?
     var initialRequest = ""
     var allowsEmptyRequest = false
     var placeholder: String
-    var onWillNavigate: (() -> Void)?
+    var stagedComments: ChatReviewCommentsController?
+    var onSessionPrepared: ((WorkspaceSessionNavTarget) -> Void)?
 
     @State private var request = ""
     @State private var textBeforeRecording: String?
@@ -36,7 +56,14 @@ struct GuidedControlSessionComposer: View {
     @State private var isInitialized = false
     @State private var isCreating = false
     @State private var revisionLaunchState = ControlRevisionSessionRetryState()
+    @State private var showReviewCommentStash = false
     @State private var error: String?
+
+    private var reviewCommentPresentation: GuidedControlSessionComposerReviewComments.Presentation {
+        GuidedControlSessionComposerReviewComments.presentation(
+            stagedCount: stagedComments?.stagedCount ?? 0
+        )
+    }
 
     private var effectiveModelId: String? {
         selectedModelId ?? selectedWorkspace?.defaultModel
@@ -68,6 +95,8 @@ struct GuidedControlSessionComposer: View {
                 isBusy: false,
                 busyStreamingBehavior: $streamingBehavior,
                 isSending: isCreating,
+                pendingReviewCommentCount: reviewCommentPresentation.pendingCount,
+                onReviewCommentsTap: { showReviewCommentStash = true },
                 placeholderOverride: resolvedPlaceholder,
                 allowsEmptySubmit: allowsEmptyRequest,
                 sendProgressText: nil,
@@ -112,6 +141,23 @@ struct GuidedControlSessionComposer: View {
         .padding(.top, 8)
         .sheet(isPresented: $showModelPicker) {
             ModelPickerSheet(currentModel: effectiveModelId, onSelect: selectModel)
+        }
+        .sheet(isPresented: $showReviewCommentStash) {
+            if let stagedComments {
+                ReviewCommentStashSheet(
+                    comments: stagedComments.stagedComments,
+                    focusedCommentId: nil,
+                    onEdit: { comment, body in
+                        if let updateError = stagedComments.update(comment, body: body) {
+                            error = updateError
+                            return false
+                        }
+                        return true
+                    },
+                    onDelete: { stagedComments.delete($0) },
+                    onClose: { showReviewCommentStash = false }
+                )
+            }
         }
         .task { await initialize() }
     }
@@ -249,6 +295,7 @@ struct GuidedControlSessionComposer: View {
                 intent: intent,
                 targetId: targetId,
                 targetName: targetName,
+                targetPath: targetPath,
                 workspaceId: selectedWorkspace.id,
                 workspaceName: selectedWorkspace.name,
                 userRequest: cleanRequest
@@ -292,25 +339,51 @@ struct GuidedControlSessionComposer: View {
                 }
             )
             revisionLaunchState.starterPromptDelivered = prepared.starterPromptDelivered
-            let handoff = try ControlRevisionCommentNavigation.moveStagedComments(
-                serverId: connection.currentServerId,
-                fallbackServerId: sessionStore.activeServerId,
-                domain: domain,
-                targetId: targetId,
-                toSessionId: prepared.session.id
-            )
+            let launch: ControlRevisionCommentNavigation.PreparedLaunchMessage
+            if let stagedComments {
+                launch = try ControlRevisionCommentNavigation.prepareLaunchMessage(
+                    request: cleanRequest,
+                    serverId: connection.currentServerId,
+                    fallbackServerId: sessionStore.activeServerId,
+                    domain: domain,
+                    targetId: targetId,
+                    toSessionId: prepared.session.id,
+                    comments: stagedComments
+                )
+            } else {
+                launch = try ControlRevisionCommentNavigation.prepareLaunchMessage(
+                    request: cleanRequest,
+                    serverId: connection.currentServerId,
+                    fallbackServerId: sessionStore.activeServerId,
+                    domain: domain,
+                    targetId: targetId,
+                    toSessionId: prepared.session.id
+                )
+            }
+            if !launch.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try await apiClient.sendSessionCommand(
+                    scope: .control,
+                    sessionId: prepared.session.id,
+                    message: .prompt(
+                        message: launch.message,
+                        requestId: "\(revisionLaunchState.requestId):review-comments",
+                        clientTurnId: "\(revisionLaunchState.requestId):review-comments"
+                    )
+                )
+                if let stagedComments {
+                    launch.disposeSentComments(using: stagedComments)
+                }
+            }
             sessionStore.cacheSessionForNavigation(prepared.session)
 
             request = ""
             revisionLaunchState.resetForNextLaunch()
             error = nil
-            onWillNavigate?()
-            await Task.yield()
-            navigation.openWorkspaceSession(.init(
-                serverId: handoff.serverId,
-                sessionId: prepared.session.id,
-                routeScope: .control
-            ))
+            if let onSessionPrepared {
+                onSessionPrepared(launch.sessionTarget)
+            } else {
+                navigation.openWorkspaceSession(launch.sessionTarget)
+            }
         } catch {
             self.error = targetId == nil
                 ? error.localizedDescription
@@ -330,14 +403,18 @@ struct GuidedControlSessionComposer: View {
 
 struct GuidedControlSessionSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppNavigation.self) private var navigation
 
     let domain: ControlSessionDomain
     let intent: ControlSessionIntent
     var targetId: String?
     var targetName: String?
+    var targetPath: String?
     var initialRequest = ""
     var allowsEmptyRequest = true
     var placeholder: String
+    var stagedComments: ChatReviewCommentsController?
+    var onSessionPrepared: ((WorkspaceSessionNavTarget) -> Void)?
 
     var body: some View {
         NavigationStack {
@@ -360,10 +437,22 @@ struct GuidedControlSessionSheet: View {
                     intent: intent,
                     targetId: targetId,
                     targetName: targetName,
+                    targetPath: targetPath,
                     initialRequest: initialRequest,
                     allowsEmptyRequest: allowsEmptyRequest,
                     placeholder: placeholder,
-                    onWillNavigate: { dismiss() }
+                    stagedComments: stagedComments,
+                    onSessionPrepared: { target in
+                        if let onSessionPrepared {
+                            onSessionPrepared(target)
+                        } else {
+                            dismiss()
+                            Task { @MainActor in
+                                await Task.yield()
+                                navigation.openWorkspaceSession(target)
+                            }
+                        }
+                    }
                 )
             }
         }

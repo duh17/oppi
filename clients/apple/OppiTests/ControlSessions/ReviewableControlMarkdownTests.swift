@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import Oppi
 
@@ -444,5 +445,262 @@ struct ReviewableControlMarkdownTests {
         #expect(retry.session.id == session.id)
         #expect(createCalls == 1)
         #expect(transferCalls == 1)
+    }
+
+    @Test func zeroStagedCommentsStillBuildsAnOrdinaryControlSessionTarget() throws {
+        let suiteName = "ReviewableControlMarkdownTests.zeroComments.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let comments = ChatReviewCommentsController(
+            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.zeroComments")
+        )
+
+        let target = try ControlRevisionCommentNavigation.makeSessionTarget(
+            serverId: "server-1",
+            fallbackServerId: nil,
+            domain: .skills,
+            targetId: "skill-1",
+            toSessionId: "control-session-1",
+            comments: comments
+        )
+
+        #expect(target.serverId == "server-1")
+        #expect(target.sessionId == "control-session-1")
+        #expect(target.routeScope == .control)
+    }
+
+    @Test func guidedSkillHandoffUpdatesTheReaderOwnedCommentController() throws {
+        let suiteName = "ReviewableControlMarkdownTests.guidedReaderState.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let comments = ChatReviewCommentsController(
+            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.guidedReaderState")
+        )
+        let draftSessionId = ReviewableControlMarkdownDraftKey.make(
+            serverId: "server-1",
+            fallbackServerId: nil,
+            domain: .skills,
+            targetId: "skill-1"
+        )
+        comments.load(
+            localScopeId: ReviewCommentLocalScope.controlDraft,
+            sessionId: draftSessionId
+        )
+        let request = ReviewCommentSelectionRequest(
+            selectedText: "Current guidance",
+            source: ReviewCommentSourceContext(
+                sessionId: draftSessionId,
+                surface: .fullScreenMarkdown,
+                sourceLabel: "Skill file",
+                filePath: "/Users/chen/.pi/agent/skills/review/SKILL.md",
+                lineRange: 4...4,
+                languageHint: "markdown",
+                timelineItemId: "skill-reader"
+            )
+        )
+        #expect(comments.save(
+            body: "Tighten this guidance.",
+            request: request,
+            localScopeId: ReviewCommentLocalScope.controlDraft,
+            sessionId: draftSessionId
+        ) == nil)
+        #expect(comments.stagedCount == 1)
+
+        _ = try ControlRevisionCommentNavigation.makeSessionTarget(
+            serverId: "server-1",
+            fallbackServerId: nil,
+            domain: .skills,
+            targetId: "skill-1",
+            toSessionId: "control-session-1",
+            comments: comments
+        )
+
+        #expect(comments.stagedCount == 0)
+        #expect(comments.stagedComments.isEmpty)
+    }
+
+    @Test func guidedSkillHandoffNavigatesOnlyAfterSheetDismissalCompletes() throws {
+        let navigation = AppNavigation()
+        navigation.launchPhase = .ready
+        navigation.showOnboarding = false
+        navigation.openWorkspaceUtility(.skills)
+        navigation.openServerSkillBrowser(.init(serverId: "server-1", resourceId: "skill-1"))
+        navigation.openServerSkillFile(.init(
+            serverId: "server-1",
+            resourceId: "skill-1",
+            path: "SKILL.md"
+        ))
+        let readerDepth = navigation.workspacePath.count
+
+        let target = try ControlRevisionCommentNavigation.makeSessionTarget(
+            serverId: "server-1",
+            fallbackServerId: nil,
+            domain: .skills,
+            targetId: "skill-1",
+            toSessionId: "control-session-1"
+        )
+        var handoff = ControlRevisionSheetHandoff()
+        handoff.prepare(target)
+
+        #expect(navigation.workspacePath.count == readerDepth)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_file")
+
+        let completedTarget = handoff.completeAfterDismissal()
+        let dismissedTarget = try #require(completedTarget)
+        navigation.openWorkspaceSession(dismissedTarget)
+
+        #expect(navigation.workspacePath.count == readerDepth + 1)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "chat")
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "control-session-1")
+        #expect(handoff.completeAfterDismissal() == nil)
+    }
+
+    @Test func skillGuidedComposerPromptKeepsTheSelectedHostFile() {
+        let prompt = ControlSessionStarterPrompt.make(
+            domain: .skills,
+            intent: .revise,
+            targetId: "skill-1",
+            targetName: "codex",
+            targetPath: "/Users/chenda/workspace/agent-skills/skills/codex/SKILL.md",
+            workspaceId: "workspace-1",
+            workspaceName: "Oppi",
+            userRequest: "Tighten the instructions."
+        )
+
+        #expect(prompt.contains("Selected existing host file: /Users/chenda/workspace/agent-skills/skills/codex/SKILL.md"))
+        #expect(prompt.contains("Canonical workspace ID: workspace-1"))
+        #expect(prompt.contains("User request:\nTighten the instructions."))
+        #expect(prompt.contains("stock `read`"))
+        #expect(prompt.contains("stock `edit`"))
+    }
+
+    @Test func guidedComposerReusesTheChatReviewCommentStashWhenCommentsAreStaged() {
+        let hidden = GuidedControlSessionComposerReviewComments.presentation(stagedCount: 0)
+        let singular = GuidedControlSessionComposerReviewComments.presentation(stagedCount: 1)
+        let plural = GuidedControlSessionComposerReviewComments.presentation(stagedCount: 2)
+
+        #expect(hidden.showsStash == false)
+        #expect(hidden.pendingCount == 0)
+        #expect(hidden.title == nil)
+        #expect(singular.showsStash)
+        #expect(singular.pendingCount == 1)
+        #expect(singular.title == ChatInputBar<EmptyView>.reviewCommentStashTitle(count: 1))
+        #expect(plural.showsStash)
+        #expect(plural.pendingCount == 2)
+        #expect(plural.title == ChatInputBar<EmptyView>.reviewCommentStashTitle(count: 2))
+    }
+
+    @Test func skillLaunchSendsStagedCommentsOnceThenDisposesThem() throws {
+        let suiteName = "ReviewableControlMarkdownTests.autoSend.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let comments = ChatReviewCommentsController(
+            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.autoSend")
+        )
+        let draftSessionId = ReviewableControlMarkdownDraftKey.make(
+            serverId: "server-1",
+            fallbackServerId: nil,
+            domain: .skills,
+            targetId: "skill-1"
+        )
+        comments.load(
+            localScopeId: ReviewCommentLocalScope.controlDraft,
+            sessionId: draftSessionId
+        )
+        let path = "/Users/chenda/workspace/agent-skills/skills/codex/SKILL.md"
+        #expect(comments.save(
+            body: "Tighten this guidance.",
+            request: ReviewCommentSelectionRequest(
+                selectedText: "Current guidance",
+                source: ReviewCommentSourceContext(
+                    sessionId: draftSessionId,
+                    surface: .fullScreenMarkdown,
+                    sourceLabel: "codex / SKILL.md",
+                    filePath: path,
+                    lineRange: 4...4,
+                    languageHint: "markdown",
+                    timelineItemId: "skill-reader"
+                )
+            ),
+            localScopeId: ReviewCommentLocalScope.controlDraft,
+            sessionId: draftSessionId
+        ) == nil)
+
+        let prepared = try ControlRevisionCommentNavigation.prepareLaunchMessage(
+            request: "Tighten the instructions.",
+            serverId: "server-1",
+            fallbackServerId: nil,
+            domain: .skills,
+            targetId: "skill-1",
+            toSessionId: "control-session-1",
+            comments: comments
+        )
+
+        #expect(prepared.sessionTarget.sessionId == "control-session-1")
+        #expect(prepared.sessionTarget.routeScope == .control)
+        #expect(prepared.message.contains("Tighten the instructions."))
+        #expect(prepared.message.contains("## Review comments"))
+        #expect(prepared.message.contains("`\(path)`:4 (file)"))
+        #expect(prepared.message.contains("> Tighten this guidance."))
+        #expect(prepared.sentCommentIds.count == 1)
+        #expect(comments.stagedCount == 1)
+
+        prepared.disposeSentComments(using: comments)
+        #expect(comments.stagedCount == 0)
+    }
+
+    @Test func failedSkillLaunchSendKeepsStagedComments() throws {
+        let suiteName = "ReviewableControlMarkdownTests.failedAutoSend.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let comments = ChatReviewCommentsController(
+            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.failedAutoSend")
+        )
+        let draftSessionId = ReviewableControlMarkdownDraftKey.make(
+            serverId: "server-1",
+            fallbackServerId: nil,
+            domain: .skills,
+            targetId: "skill-1"
+        )
+        comments.load(
+            localScopeId: ReviewCommentLocalScope.controlDraft,
+            sessionId: draftSessionId
+        )
+        #expect(comments.save(
+            body: "Keep this comment.",
+            request: ReviewCommentSelectionRequest(
+                selectedText: "Current guidance",
+                source: ReviewCommentSourceContext(
+                    sessionId: draftSessionId,
+                    surface: .fullScreenMarkdown,
+                    sourceLabel: "codex / SKILL.md",
+                    filePath: "/Users/chenda/workspace/agent-skills/skills/codex/SKILL.md",
+                    lineRange: 4...4,
+                    languageHint: "markdown"
+                )
+            ),
+            localScopeId: ReviewCommentLocalScope.controlDraft,
+            sessionId: draftSessionId
+        ) == nil)
+
+        let prepared = try ControlRevisionCommentNavigation.prepareLaunchMessage(
+            request: "Tighten the instructions.",
+            serverId: "server-1",
+            fallbackServerId: nil,
+            domain: .skills,
+            targetId: "skill-1",
+            toSessionId: "control-session-1",
+            comments: comments
+        )
+
+        #expect(prepared.sentCommentIds.count == 1)
+        #expect(comments.stagedCount == 1)
     }
 }

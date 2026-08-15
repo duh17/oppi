@@ -113,7 +113,8 @@ struct ServerSkillFileView: View {
                         targetId: target.resourceId,
                         targetName: summary.name,
                         sourceLabel: "\(summary.name) / \(target.path)",
-                        sourcePath: hostPath
+                        sourcePath: hostPath,
+                        editFlow: .guidedRevision
                     )
                 case .editingUnavailable(let reason):
                     ordinaryViewer(
