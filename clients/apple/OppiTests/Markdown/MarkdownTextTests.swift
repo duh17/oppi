@@ -1354,6 +1354,224 @@ struct WorkspaceWikiLinkRenderingTests {
 
 private struct WikiLinkTestFailure: Error {}
 
+// MARK: - Non-text wiki link file icons
+
+@Suite("Non-text wiki link file icons")
+struct NonTextWikiLinkIconTests {
+    private struct AttachmentEntry {
+        let index: Int
+        let attachment: NSTextAttachment
+    }
+
+    private func textSegment(from segments: [FlatSegment]) throws -> AttributedString {
+        #expect(segments.count == 1)
+        guard segments.count == 1, case .text(let attributed) = segments[0] else {
+            Issue.record("Expected one .text segment, got \(segments)")
+            throw WikiLinkTestFailure()
+        }
+        return attributed
+    }
+
+    private func attachments(in attributed: AttributedString) -> [NSTextAttachment] {
+        attachmentEntries(in: attributed).map(\.attachment)
+    }
+
+    /// Attachment characters (U+FFFC) with their UTF-16 indices.
+    private func attachmentEntries(in attributed: AttributedString) -> [AttachmentEntry] {
+        let rendered = NSAttributedString(attributed)
+        var entries: [AttachmentEntry] = []
+        rendered.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: rendered.length)
+        ) { value, range, _ in
+            if let attachment = value as? NSTextAttachment {
+                entries.append(AttachmentEntry(index: range.location, attachment: attachment))
+            }
+        }
+        return entries
+    }
+
+    private func linkURL(atUTF16Index index: Int, in attributed: AttributedString) -> URL? {
+        let rendered = NSAttributedString(attributed)
+        guard rendered.length > index else { return nil }
+        return rendered.attribute(.link, at: index, effectiveRange: nil) as? URL
+    }
+
+    private func distinctLinkURLs(in attributed: AttributedString) -> [URL] {
+        var seen: [URL] = []
+        for run in attributed.runs {
+            if let link = run.link, !seen.contains(link) {
+                seen.append(link)
+            }
+        }
+        return seen
+    }
+
+    private func visibleText(in attributed: AttributedString) -> String {
+        NSAttributedString(attributed).string
+            .replacingOccurrences(of: "\u{FFFC}", with: "")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// The attachment image must be the tinted SF Symbol `FileIcon.forPath`
+    /// resolves for the path, not a placeholder or a different file's icon.
+    /// Rebuilds the exact image the renderer produces and compares the
+    /// rasterized data so a dummy or wrong icon fails.
+    private func imageMatchesFileIcon(_ image: UIImage, path: String) -> Bool {
+        let icon = FileIcon.forPath(path)
+        let bodyFont = AppFont.messageBody
+        let side = round(bodyFont.capHeight * 1.25)
+        guard side > 0 else { return false }
+        let configuration = UIImage.SymbolConfiguration(pointSize: side * 0.72, weight: .medium)
+        guard let reference = UIImage(systemName: icon.symbolName, withConfiguration: configuration)?
+            .withTintColor(UIColor(icon.color), renderingMode: .alwaysOriginal) else {
+            return false
+        }
+        return image.size == reference.size && image.pngData() == reference.pngData()
+    }
+
+    @Test(arguments: [
+        ("[[photo.png]]", "photo.png"),
+        ("[[song.mp3]]", "song.mp3"),
+        ("[[clip.mp4]]", "clip.mp4"),
+        ("[[doc.pdf]]", "doc.pdf"),
+        ("[[archive.zip]]", "archive.zip"),
+    ])
+    func nonTextWikiLinkRendersLeadingIcon(source: String, expectedLabel: String) throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark(source),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+
+        let rendered = NSAttributedString(attributed)
+        let entries = attachmentEntries(in: attributed)
+
+        // Exactly one icon, and it is the leading character (not trailing).
+        #expect(entries.count == 1, "Expected a single file icon for \(source)")
+        #expect(rendered.string.hasPrefix("\u{FFFC}"), "\(source): icon must be the first character")
+
+        // The icon image is the real FileIcon for this path, not a dummy.
+        let entry = try #require(entries.first)
+        let image = try #require(entry.attachment.image)
+        #expect(imageMatchesFileIcon(image, path: expectedLabel), "\(source): icon must match FileIcon.forPath(\(expectedLabel))")
+
+        // Label text is correct and carries an oppi-resource-reference URL.
+        #expect(visibleText(in: attributed) == expectedLabel)
+        let labelURL = try #require(distinctLinkURLs(in: attributed).first)
+        let reference = try #require(ResourceReferenceURL.parse(labelURL))
+        #expect(reference.fileCandidatePath == expectedLabel)
+
+        // The attachment character is inside the link run (tappable).
+        let attachmentURL = try #require(linkURL(atUTF16Index: entry.index, in: attributed))
+        #expect(attachmentURL == labelURL, "\(source): attachment must carry the same link URL as the label")
+    }
+
+    @Test func wikiLinkIconAttachmentCarriesSameURLAsLabel() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("[[photo.png]]"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        let rendered = NSAttributedString(attributed)
+
+        // Label is tappable via an oppi-resource-reference URL.
+        let labelURL = try #require(distinctLinkURLs(in: attributed).first)
+        let reference = try #require(ResourceReferenceURL.parse(labelURL))
+        #expect(reference.fileCandidatePath == "photo.png")
+
+        // The icon is a leading U+FFFC character ...
+        let entry = try #require(attachmentEntries(in: attributed).first)
+        #expect(rendered.string.hasPrefix("\u{FFFC}"))
+        // ... and that character carries the identical link URL, so tapping the
+        // icon opens the same resource as tapping the label.
+        let attachmentURL = try #require(linkURL(atUTF16Index: entry.index, in: attributed))
+        #expect(attachmentURL == labelURL)
+    }
+
+    @Test func inlineMathNextToNonTextWikiLinkKeepsIconAndLink() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("See [[photo.png]] and $x^2$"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+
+        // Two attachments: the file icon and the inline math formula.
+        let entries = attachmentEntries(in: attributed)
+        #expect(entries.count == 2, "Expected the file icon plus the inline math attachment")
+
+        // Only the file icon attachment carries a link, and it points at photo.png.
+        let linkedEntries = entries.filter { linkURL(atUTF16Index: $0.index, in: attributed) != nil }
+        #expect(linkedEntries.count == 1, "Only the file icon attachment should be tappable")
+        let iconEntry = try #require(linkedEntries.first)
+        let iconURL = try #require(linkURL(atUTF16Index: iconEntry.index, in: attributed))
+        let reference = try #require(ResourceReferenceURL.parse(iconURL))
+        #expect(reference.fileCandidatePath == "photo.png")
+
+        // The icon image is the real photo icon, not a dummy.
+        let image = try #require(iconEntry.attachment.image)
+        #expect(imageMatchesFileIcon(image, path: "photo.png"))
+
+        // Surrounding prose and the label survive.
+        let text = visibleText(in: attributed)
+        #expect(text.contains("See"))
+        #expect(text.contains("photo.png"))
+        #expect(text.contains("and"))
+    }
+
+    @Test(arguments: [
+        "[[README.md]]",
+        "[[Sources/App.swift]]",
+        "[[notes.md]]",
+        "[[config.json]]",
+    ])
+    func textAndCodeWikiLinksStayIconFree(source: String) throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark(source),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        #expect(attachments(in: attributed).isEmpty, "\(source) must stay text-only")
+        #expect(distinctLinkURLs(in: attributed).count == 1)
+    }
+
+    @Test func labeledNonTextWikiLinkShowsIconAndLabel() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("[[photo.png|team photo]]"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        #expect(attachments(in: attributed).count == 1)
+        #expect(visibleText(in: attributed) == "team photo")
+
+        // The icon shares the label's link so the whole control is tappable.
+        let entry = try #require(attachmentEntries(in: attributed).first)
+        let labelURL = try #require(distinctLinkURLs(in: attributed).first)
+        #expect(linkURL(atUTF16Index: entry.index, in: attributed) == labelURL)
+    }
+
+    @Test func embeddedWikiLinkInProseShowsIconAndKeepsSurroundingText() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("See [[photo.png]] here"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+
+        let entries = attachmentEntries(in: attributed)
+        #expect(entries.count == 1)
+        let text = visibleText(in: attributed)
+        #expect(text.contains("See"))
+        #expect(text.contains("photo.png"))
+        #expect(text.contains("here"))
+
+        // The icon is tappable with the same URL as the label, and only one
+        // distinct resource is referenced.
+        let entry = try #require(entries.first)
+        let labelURL = try #require(distinctLinkURLs(in: attributed).first)
+        #expect(linkURL(atUTF16Index: entry.index, in: attributed) == labelURL)
+    }
+}
+
 @Suite("Resource reference resolution")
 struct ResourceReferenceResolutionTests {
     private let reference = ResourceReference(

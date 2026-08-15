@@ -848,12 +848,16 @@ enum FlatSegment: Sendable {
                 )
                 rendered.attributed.uiKit.foregroundColor = UIColor(palette.mdLink)
                 rendered.attributed.underlineStyle = .single
+                // Decorate first (leading file icon), then apply `.link` to the
+                // whole run so the icon itself is tappable. Underline stays on
+                // the text only because it is set before decoration.
+                var decorated = prependWikiIcon(to: rendered.attributed, destination: destination)
                 if let destination,
                    let url = URL(string: destination),
                    url.scheme != nil {
-                    rendered.attributed.link = url
+                    decorated.link = url
                 }
-                result.attributed.append(rendered.attributed)
+                result.attributed.append(decorated)
                 result.handledDelimiter = result.handledDelimiter || rendered.handledDelimiter
 
             case .image(let alt, _):
@@ -1778,6 +1782,13 @@ enum FlatSegment: Sendable {
         palette: ThemePalette,
         defaultColor: UIColor?
     ) -> AttributedString {
+        // Wiki links to non-text files (image/audio/video/PDF/binary) render a
+        // leading file icon. Attachments can't be emitted by the range-based
+        // plain-text path below, so route such paragraphs through a direct-append
+        // renderer instead.
+        if containsWikiIconLink(inlines) {
+            return renderInlinesDirectAppend(inlines, palette: palette, defaultColor: defaultColor)
+        }
         // Fast path: single text inline (most common paragraph).
         if inlines.count == 1, case .text(let string) = inlines[0] {
             if let color = defaultColor {
@@ -1960,6 +1971,163 @@ enum FlatSegment: Sendable {
         case .strikethrough(let children):
             var result = renderInlines(children, palette: palette)
             result.strikethroughStyle = .single
+            return result
+        }
+    }
+
+    // MARK: - Wiki-link file icon decoration
+
+    /// A non-text file preview category renders a recognizable leading icon,
+    /// reusing `FileIcon.forPath` and `FileType.previewCategory`. Text-like
+    /// files (code, markdown, JSON, plain) stay icon-free.
+    private static func wikiLinkFileIcon(for destination: String?) -> FileIcon? {
+        guard let destination,
+              let url = URL(string: destination),
+              let reference = ResourceReferenceURL.parse(url) else {
+            return nil
+        }
+        let path = reference.fileCandidatePath ?? reference.target
+        guard FileType.detect(from: path).previewCategory != .text else {
+            return nil
+        }
+        return FileIcon.forPath(path)
+    }
+
+    /// Renders the leading inline file icon as a tinted SF Symbol attachment.
+    /// Non-text file icons resolve to SF Symbols in `FileIcon`, so the asset
+    /// catalog fallback isn't needed here; an unknown symbol fails closed to
+    /// no icon.
+    private static func wikiIconAttachment(for icon: FileIcon) -> AttributedString? {
+        let bodyFont = AppFont.messageBody
+        let side = round(bodyFont.capHeight * 1.25)
+        guard side > 0 else { return nil }
+        let configuration = UIImage.SymbolConfiguration(
+            pointSize: side * 0.72,
+            weight: .medium
+        )
+        guard let image = UIImage(systemName: icon.symbolName, withConfiguration: configuration)?
+            .withTintColor(UIColor(icon.color), renderingMode: .alwaysOriginal) else {
+            return nil
+        }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        // Center the square icon on the body font's cap height.
+        attachment.bounds = CGRect(
+            x: 0,
+            y: (bodyFont.capHeight - side) / 2,
+            width: side,
+            height: side
+        )
+        return AttributedString(NSAttributedString(attachment: attachment))
+    }
+
+    /// Prepends the wiki-link file icon (plus a single space) to already-rendered
+    /// link text. Returns the text unchanged when the link has no icon.
+    private static func prependWikiIcon(
+        to linkText: AttributedString,
+        destination: String?
+    ) -> AttributedString {
+        guard let icon = wikiLinkFileIcon(for: destination),
+              let attachment = wikiIconAttachment(for: icon) else {
+            return linkText
+        }
+        var decorated = attachment
+        decorated.append(AttributedString(" "))
+        decorated.append(linkText)
+        return decorated
+    }
+
+    /// Whether any inline (at any nesting depth) is a wiki link that should
+    /// render a leading file icon.
+    private static func containsWikiIconLink(_ inlines: [MarkdownInline]) -> Bool {
+        for inline in inlines {
+            switch inline {
+            case .link(_, let destination):
+                if wikiLinkFileIcon(for: destination) != nil { return true }
+            case .emphasis(let children),
+                 .strong(let children),
+                 .strikethrough(let children):
+                if containsWikiIconLink(children) { return true }
+            case .text, .code, .image, .softBreak, .hardBreak, .html:
+                continue
+            }
+        }
+        return false
+    }
+
+    /// Direct-append inline renderer used only when a paragraph contains a wiki
+    /// link with a leading file icon. Mirrors `renderInlineLatexInlines` (minus
+    /// math parsing) so attachments can be emitted; the range-based path in
+    /// `renderInlinesCore` builds from plain text and cannot carry attachments.
+    private static func renderInlinesDirectAppend(
+        _ inlines: [MarkdownInline],
+        palette: ThemePalette,
+        defaultColor: UIColor?
+    ) -> AttributedString {
+        var result = AttributedString()
+        for inline in inlines {
+            result.append(renderInlineDirectAppend(inline, palette: palette, defaultColor: defaultColor))
+        }
+        return result
+    }
+
+    private static func renderInlineDirectAppend(
+        _ inline: MarkdownInline,
+        palette: ThemePalette,
+        defaultColor: UIColor?
+    ) -> AttributedString {
+        switch inline {
+        case .text(let string):
+            var result = AttributedString(string)
+            if let color = defaultColor {
+                result.uiKit.foregroundColor = color
+            }
+            return result
+        case .emphasis(let children):
+            var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: defaultColor)
+            result.inlinePresentationIntent = .emphasized
+            return result
+        case .strong(let children):
+            var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: defaultColor)
+            result.inlinePresentationIntent = .stronglyEmphasized
+            return result
+        case .strikethrough(let children):
+            var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: defaultColor)
+            result.strikethroughStyle = .single
+            return result
+        case .code(let code):
+            var result = AttributedString(code)
+            result.uiKit.font = monospacedFont(forTextStyle: .subheadline)
+            result.uiKit.foregroundColor = UIColor(palette.mdCode)
+            result.uiKit.backgroundColor = UIColor(palette.bgHighlight)
+            return result
+        case .link(let children, let destination):
+            var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: nil)
+            result.uiKit.foregroundColor = UIColor(palette.mdLink)
+            result.underlineStyle = .single
+            // Decorate first (leading file icon), then apply `.link` to the
+            // whole run so the icon itself is tappable. Underline stays on the
+            // text only because it is set before decoration.
+            var decorated = prependWikiIcon(to: result, destination: destination)
+            if let destination,
+               let url = URL(string: destination),
+               url.scheme != nil {
+                decorated.link = url
+            }
+            return decorated
+        case .image(let alt, _):
+            var result = AttributedString(imageFallbackText(alt: alt))
+            result.uiKit.foregroundColor = UIColor(palette.comment)
+            return result
+        case .softBreak, .hardBreak:
+            var result = AttributedString("\n")
+            if let color = defaultColor {
+                result.uiKit.foregroundColor = color
+            }
+            return result
+        case .html(let raw):
+            var result = AttributedString(raw)
+            result.uiKit.foregroundColor = UIColor(palette.comment)
             return result
         }
     }
