@@ -202,6 +202,39 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("user row keeps reloaded skill-only turns visible as /skill:name")
+    func userRowKeepsReloadedSkillOnlyTurnsVisibleAsSlashCommand() throws {
+        let raw = """
+        <skill name="zwift-coros-sync" location="/Users/chenda/.pi/agent/skills/zwift-coros-sync/SKILL.md">
+        References are relative to /Users/chenda/.pi/agent/skills/zwift-coros-sync.
+
+        # Zwift–COROS Sync
+
+        Use the standalone CLI.
+        </skill>
+        """
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: raw,
+                images: [],
+                canFork: false,
+                onFork: nil
+            )
+        )
+
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 200)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let renderedTextView = try #require(userMessageTextView(in: view))
+        let bubble = try #require(userMessageBubbleContainer(in: view))
+        #expect(renderedTextView.text == "/skill:zwift-coros-sync")
+        #expect(!renderedTextView.isHidden)
+        #expect(!bubble.isHidden)
+        #expect(view.copyableText == "/skill:zwift-coros-sync")
+    }
+
+    @MainActor
     @Test("timeline user row builder keeps fork disabled in row menus")
     func timelineUserRowBuilderKeepsForkDisabledInRowMenus() {
         let controller = ChatTimelineCollectionHost.Controller()

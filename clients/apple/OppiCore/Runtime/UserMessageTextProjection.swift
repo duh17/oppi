@@ -12,7 +12,13 @@ enum UserMessageTextProjection {
     static let attachedFilesHeader = "Attached files:"
 
     static func comparableText(_ rawText: String) -> String {
-        visibleText(from: rawText)
+        let visible = visibleText(from: rawText)
+        guard visible.hasPrefix("/skill:") else { return visible }
+        return visible
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     static func visibleText(from rawText: String) -> String {
@@ -24,7 +30,71 @@ enum UserMessageTextProjection {
             ?? withoutMarker
         let withoutReferenceBlock = splitTrailingReferenceBlock(from: withoutAttachedFiles)?.visibleText
             ?? withoutAttachedFiles
-        return withoutReferenceBlock.trimmingCharacters(in: .whitespacesAndNewlines)
+        return collapseLeadingSkillBlock(
+            in: withoutReferenceBlock.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    /// Pi expands `/skill:name` into a leading `<skill>` block before history reload.
+    /// Keep the compact command visible without rewriting the stored XML.
+    static func collapseLeadingSkillBlock(in text: String) -> String {
+        let prefix = "<skill name=\""
+        guard text.hasPrefix(prefix) else { return text }
+
+        let afterPrefix = text.dropFirst(prefix.count)
+        guard let nameEnd = afterPrefix.firstIndex(of: "\"") else { return text }
+        let name = String(afterPrefix[..<nameEnd])
+        guard !name.isEmpty else { return text }
+
+        var cursor = afterPrefix[afterPrefix.index(after: nameEnd)...]
+        let locationPrefix = " location=\""
+        guard cursor.hasPrefix(locationPrefix) else { return text }
+        cursor = cursor.dropFirst(locationPrefix.count)
+        guard let locationEnd = cursor.firstIndex(of: "\"") else { return text }
+        cursor = cursor[cursor.index(after: locationEnd)...]
+        guard cursor.hasPrefix(">\n") else { return text }
+        cursor = cursor.dropFirst(2)
+
+        guard let closerRange = lastValidSkillCloserRange(
+            in: text,
+            bodyStart: cursor.startIndex
+        ) else {
+            return text
+        }
+
+        let trailing = text[closerRange.upperBound...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let command = "/skill:\(name)"
+        guard !trailing.isEmpty else { return command }
+        return "\(command)\n\n\(trailing)"
+    }
+
+    private static func lastValidSkillCloserRange(
+        in text: String,
+        bodyStart: String.Index
+    ) -> Range<String.Index>? {
+        let closerNeedle = "\n</skill>"
+        var searchEnd = text.endIndex
+        while searchEnd > bodyStart {
+            guard let closerStart = text.range(
+                of: closerNeedle,
+                options: .backwards,
+                range: bodyStart..<searchEnd
+            )?.lowerBound else {
+                return nil
+            }
+
+            let closerEnd = text.index(closerStart, offsetBy: closerNeedle.count)
+            let suffix = text[closerEnd...]
+            if suffix.isEmpty {
+                return closerStart..<closerEnd
+            }
+            if suffix.hasPrefix("\n\n") {
+                return closerStart..<text.index(closerEnd, offsetBy: 2)
+            }
+            searchEnd = closerStart
+        }
+        return nil
     }
 
     private static func stripMarker(from text: String) -> String {

@@ -187,7 +187,9 @@ enum UserMessageAttachmentPresentation {
         let (withoutReferenceBlock, referencePathPills) = stripReferenceBlock(from: withoutAttachedFiles)
 
         return (
-            withoutReferenceBlock.trimmingCharacters(in: .whitespacesAndNewlines),
+            UserMessageTextProjection.collapseLeadingSkillBlock(
+                in: withoutReferenceBlock.trimmingCharacters(in: .whitespacesAndNewlines)
+            ),
             markerBadges,
             dedupePathPills(markerPathPills + attachedFilePills + referencePathPills)
         )

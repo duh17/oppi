@@ -446,4 +446,82 @@ struct PendingFileReferenceTests {
         #expect(parsed.visibleText == "Please inspect")
         #expect(parsed.pathPills.map { $0.path } == ["Sources/App.swift", "Tests/AppTests.swift"])
     }
+
+    @Test func attachmentPresentationCollapsesReloadedSkillOnlyBlockToSlashCommand() {
+        let raw = """
+        <skill name="zwift-coros-sync" location="/Users/chenda/.pi/agent/skills/zwift-coros-sync/SKILL.md">
+        References are relative to /Users/chenda/.pi/agent/skills/zwift-coros-sync.
+
+        # Zwift–COROS Sync
+
+        Use the standalone CLI.
+        </skill>
+        """
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == "/skill:zwift-coros-sync")
+        #expect(parsed.badges.isEmpty)
+        #expect(parsed.pathPills.isEmpty)
+        #expect(UserMessageTextProjection.visibleText(from: raw) == "/skill:zwift-coros-sync")
+        #expect(UserMessageTextProjection.comparableText(raw) == "/skill:zwift-coros-sync")
+        #expect(UserMessageTextProjection.comparableText("/skill:zwift-coros-sync") == "/skill:zwift-coros-sync")
+    }
+
+    @Test func attachmentPresentationKeepsTrailingTextAfterReloadedSkillBlock() {
+        let raw = """
+        <skill name="zwift-coros-sync" location="/tmp/SKILL.md">
+        # Zwift–COROS Sync
+        </skill>
+
+        just today, confirm upload
+        """
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == "/skill:zwift-coros-sync\n\njust today, confirm upload")
+        #expect(UserMessageTextProjection.visibleText(from: raw) == "/skill:zwift-coros-sync\n\njust today, confirm upload")
+        #expect(UserMessageTextProjection.comparableText(raw) == "/skill:zwift-coros-sync just today, confirm upload")
+        #expect(UserMessageTextProjection.comparableText("/skill:zwift-coros-sync just today, confirm upload") == "/skill:zwift-coros-sync just today, confirm upload")
+    }
+
+    @Test func attachmentPresentationIgnoresEmbeddedSkillCloserInReloadedBlock() {
+        let raw = """
+        <skill name="demo" location="/tmp/SKILL.md">
+        Example closer:
+        </skill>
+        Keep reading after the documented closer.
+        </skill>
+        """
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == "/skill:demo")
+        #expect(UserMessageTextProjection.visibleText(from: raw) == "/skill:demo")
+    }
+
+    @Test func attachmentPresentationIgnoresEmbeddedSkillCloserFollowedByBlankLine() {
+        let raw = """
+        <skill name="demo" location="/tmp/SKILL.md">
+        Example:
+        </skill>
+
+        Remaining skill body.
+        </skill>
+        """
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == "/skill:demo")
+        #expect(UserMessageTextProjection.visibleText(from: raw) == "/skill:demo")
+    }
+
+    @Test func attachmentPresentationLeavesSkillMentionsAndIncompleteBlocksVisible() {
+        let prose = "Please wrap the next answer in a <skill name=\"demo\"> block so I can copy it."
+        let incomplete = "<skill name=\"demo\" location=\"/tmp/SKILL.md\">\n# Demo\n"
+        let midMessage = "Before the skill\n<skill name=\"demo\" location=\"/tmp/SKILL.md\">\n# Demo\n</skill>"
+
+        for raw in [prose, incomplete, midMessage] {
+            let expected = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+            #expect(parsed.visibleText == expected)
+            #expect(UserMessageTextProjection.visibleText(from: raw) == expected)
+        }
+    }
 }

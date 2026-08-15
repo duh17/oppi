@@ -175,6 +175,31 @@ struct TimelineReducerBasicTests {
         #expect(UserMessageTextProjection.comparableText(withReferences) == "hello")
     }
 
+    @Test func userMessageProjectionMatchesOptimisticSkillCommandToReloadedSkillBlock() {
+        let live = "/skill:demo investigate this"
+        let reloaded = """
+        <skill name="demo" location="/tmp/SKILL.md">
+        # Demo
+        </skill>
+
+        investigate this
+        """
+        let reducer = TimelineReducer()
+        reducer.appendUserMessage(live)
+
+        #expect(UserMessageTextProjection.comparableText(live) == UserMessageTextProjection.comparableText(reloaded))
+        #expect(reducer.hasUserMessage(matching: reloaded))
+    }
+
+    @Test func userMessageProjectionKeepsOrdinaryMultilineTextDistinctFromSingleLine() {
+        let reducer = TimelineReducer()
+        reducer.appendUserMessage("alpha\nbeta")
+
+        #expect(UserMessageTextProjection.comparableText("alpha\nbeta") == "alpha\nbeta")
+        #expect(UserMessageTextProjection.comparableText("alpha beta") == "alpha beta")
+        #expect(!reducer.hasUserMessage(matching: "alpha beta"))
+    }
+
     @Test func userMessageProjectionPreservesReservedHeadersUsedAsProse() {
         let commitPrompt = """
         Extra focus:
