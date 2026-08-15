@@ -25,6 +25,7 @@ export const MOBILE_OUTPUT_GUIDE = [
   "```",
   "- LaTeX math renders inline with $x^2$ or \\(x^2\\), and as display math with $$x^2 + y^2 = z^2$$, \\[x^2 + y^2 = z^2\\], or a fenced latex block.",
   "- Wiki links to recognized workspace documents and media open in their corresponding viewers, including images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, and Graphviz files.",
+  "- Assistant messages can include oppi://session/<session-id> deep links; tapping one opens that session in-app.",
   "- File targets must be real workspace-relative paths. Absolute, outside-workspace, secret, credential, and private runtime paths are not supported.",
 ].join("\n");
 
