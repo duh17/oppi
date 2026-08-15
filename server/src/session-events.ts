@@ -15,6 +15,7 @@ import {
 import { extractQueuedUserText } from "./session-queue-utils.js";
 import type { PendingStop } from "./session-stop.js";
 import type { Storage } from "./storage.js";
+import { isThinkingLevel } from "./thinking-levels.js";
 import { normalizeMutationToolName } from "./tool-mutations.js";
 import type { Session, ServerMessage } from "./types.js";
 
@@ -71,6 +72,78 @@ function estimateTokensFromChars(chars: number): number {
   return Math.ceil(Math.max(0, chars) / 4);
 }
 
+const SAFE_TOOL_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+
+/** Split canonical `provider/modelId` without inventing a provider. */
+function splitExactProviderModel(
+  model: string | undefined,
+): { provider: string; model: string } | undefined {
+  if (!model) return undefined;
+  const slash = model.indexOf("/");
+  if (slash <= 0 || slash === model.length - 1) return undefined;
+  return { provider: model.slice(0, slash), model: model.slice(slash + 1) };
+}
+
+function sanitizeToolName(toolName: unknown): string | undefined {
+  if (typeof toolName !== "string") return undefined;
+  const trimmed = toolName.trim();
+  if (!SAFE_TOOL_NAME.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+function classifyTurnError(errorMessage: unknown): string {
+  if (typeof errorMessage !== "string") return "unknown";
+  const message = errorMessage.toLowerCase();
+  if (message.includes("request_too_large") || message.includes("context_length")) {
+    return "request_too_large";
+  }
+  if (
+    message.includes("overloaded") ||
+    message.includes("service_unavailable") ||
+    message.includes("server is busy")
+  ) {
+    return "overloaded";
+  }
+  if (message.includes("rate_limit") || message.includes("rate limit") || message.includes("429")) {
+    return "rate_limit";
+  }
+  if (
+    message.includes("unauthorized") ||
+    message.includes("authentication") ||
+    message.includes("invalid api key") ||
+    message.includes("401") ||
+    message.includes("403")
+  ) {
+    return "auth";
+  }
+  if (message.includes("timed out") || message.includes("timeout")) return "timeout";
+  if (message.includes("connection") || message.includes("econn") || message.includes("network")) {
+    return "connection";
+  }
+  if (message.includes("json") && message.includes("parse")) return "json_parse";
+  if (message.includes("terminated") || message.includes("aborted")) return "terminated";
+  return "other";
+}
+
+/** Session-configured route plus a bounded configured thinking level when known. */
+function routingTags(session: Session, extra?: Record<string, string>): Record<string, string> {
+  const tags: Record<string, string> = { sessionId: session.id };
+  const parsed = splitExactProviderModel(session.model);
+  if (parsed) {
+    tags.provider = parsed.provider;
+    tags.model = parsed.model;
+  }
+  if (session.thinkingLevel && isThinkingLevel(session.thinkingLevel)) {
+    tags.thinking = session.thinkingLevel;
+  }
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (value) tags[key] = value;
+    }
+  }
+  return tags;
+}
+
 export interface EventProcessorSessionState extends ExtensionUIState {
   session: Session;
   partialResults: Map<string, string>;
@@ -93,6 +166,8 @@ export interface EventProcessorSessionState extends ExtensionUIState {
   turnFirstTokenRecorded?: boolean;
   /** Number of tool_execution_start events in the current turn. */
   turnToolCallCount?: number;
+  /** In-flight tool starts keyed by toolCallId so concurrent calls pair correctly. */
+  inflightToolStarts?: Map<string, { startedAt: number; toolName?: string }>;
   /** Timestamp (ms) when auto-compaction started (for duration tracking). */
   compactionStartedAt?: number;
   /** Authoritative context usage at the start of the active turn/estimate window. */
@@ -158,7 +233,6 @@ export class SessionEventProcessor {
     let shouldFlushNow = false;
     const pendingStopMode = active.pendingStop?.mode;
     const metrics = this.deps.metrics;
-    const sessionId = session.id;
 
     switch (event.type) {
       case "agent_start": {
@@ -170,6 +244,7 @@ export class SessionEventProcessor {
         active.turnStartedAt = now;
         active.turnFirstTokenRecorded = false;
         active.turnToolCallCount = 0;
+        active.inflightToolStarts = new Map();
         active.contextUsageBaselineTokens = session.contextTokens ?? 0;
         active.contextUsageTrailingChars = 0;
         active.contextUsageLastBroadcastAt = 0;
@@ -185,29 +260,31 @@ export class SessionEventProcessor {
 
         // Turn duration
         if (metrics && active.turnStartedAt) {
-          metrics.record("server.turn_duration_ms", Date.now() - active.turnStartedAt, {
-            sessionId,
-          });
+          metrics.record(
+            "server.turn_duration_ms",
+            Date.now() - active.turnStartedAt,
+            routingTags(session),
+          );
         }
 
         // Tool call count for this turn
         if (metrics && active.turnToolCallCount !== undefined) {
-          metrics.record("server.turn_tool_calls", active.turnToolCallCount, { sessionId });
+          metrics.record("server.turn_tool_calls", active.turnToolCallCount, routingTags(session));
         }
 
         // Check for error: last message in agent_end has stopReason "error"
         if (metrics && "messages" in event && Array.isArray(event.messages)) {
           const lastMsg = event.messages[event.messages.length - 1];
           if (lastMsg && "stopReason" in lastMsg && lastMsg.stopReason === "error") {
-            const category =
-              "errorMessage" in lastMsg && typeof lastMsg.errorMessage === "string"
-                ? lastMsg.errorMessage.slice(0, 64)
-                : "unknown";
-            metrics.record("server.turn_error", 1, { sessionId, category });
+            const category = classifyTurnError(
+              "errorMessage" in lastMsg ? lastMsg.errorMessage : undefined,
+            );
+            metrics.record("server.turn_error", 1, routingTags(session, { category }));
           }
         }
 
         active.turnStartedAt = undefined;
+        active.inflightToolStarts = undefined;
         break;
 
       case "agent_settled":
@@ -244,7 +321,11 @@ export class SessionEventProcessor {
           evt &&
           (evt.type === "text_delta" || evt.type === "thinking_delta")
         ) {
-          metrics.record("server.turn_ttft_ms", Date.now() - active.turnStartedAt, { sessionId });
+          metrics.record(
+            "server.turn_ttft_ms",
+            Date.now() - active.turnStartedAt,
+            routingTags(session),
+          );
           active.turnFirstTokenRecorded = true;
         }
         if (evt?.type === "text_delta" && typeof evt.delta === "string") {
@@ -255,18 +336,50 @@ export class SessionEventProcessor {
         break;
       }
 
-      case "tool_execution_start":
+      case "tool_execution_start": {
         updateSessionChangeStats(session, event.toolName, event.args);
         this.maybeEmitGitStatus(key, session, event.toolName);
         if (active.turnToolCallCount !== undefined) {
           active.turnToolCallCount++;
         }
+        const toolCallId =
+          "toolCallId" in event &&
+          typeof event.toolCallId === "string" &&
+          event.toolCallId.length > 0
+            ? event.toolCallId
+            : undefined;
+        if (toolCallId) {
+          active.inflightToolStarts ??= new Map();
+          active.inflightToolStarts.set(toolCallId, {
+            startedAt: Date.now(),
+            toolName: sanitizeToolName(event.toolName),
+          });
+        }
         break;
+      }
 
-      case "tool_execution_end":
+      case "tool_execution_end": {
         this.maybeEmitGitStatus(key, session, event.toolName);
         this.addEstimatedContextChars(key, active, estimateToolResultChars(event.result));
+        if (metrics) {
+          const toolCallId =
+            "toolCallId" in event &&
+            typeof event.toolCallId === "string" &&
+            event.toolCallId.length > 0
+              ? event.toolCallId
+              : undefined;
+          const started = toolCallId ? active.inflightToolStarts?.get(toolCallId) : undefined;
+          if (toolCallId) active.inflightToolStarts?.delete(toolCallId);
+          const tool = started?.toolName ?? sanitizeToolName(event.toolName) ?? "unknown";
+          const status = event.isError === true ? "error" : "ok";
+          const tags = routingTags(session, { tool, status });
+          if (started) {
+            metrics.record("server.tool_duration_ms", Date.now() - started.startedAt, tags);
+          }
+          metrics.record("server.tool_result", 1, tags);
+        }
         break;
+      }
 
       case "message_end":
         if (event.message.role === "user" && this.deps.recordUserMessagesFromEvents) {
@@ -297,17 +410,21 @@ export class SessionEventProcessor {
               : null;
           if (usage) {
             if (typeof usage.input === "number") {
-              metrics.record("server.turn_input_tokens", usage.input, { sessionId });
+              metrics.record("server.turn_input_tokens", usage.input, routingTags(session));
             }
             if (typeof usage.output === "number") {
-              metrics.record("server.turn_output_tokens", usage.output, { sessionId });
+              metrics.record("server.turn_output_tokens", usage.output, routingTags(session));
             }
             const cost =
               usage.cost && typeof usage.cost === "object"
                 ? (usage.cost as Record<string, unknown>)
                 : null;
             if (cost && typeof cost.total === "number") {
-              metrics.record("server.turn_cost", Math.round(cost.total * 1_000_000), { sessionId });
+              metrics.record(
+                "server.turn_cost",
+                Math.round(cost.total * 1_000_000),
+                routingTags(session),
+              );
             }
           }
         }
@@ -317,7 +434,11 @@ export class SessionEventProcessor {
         if (metrics) {
           const attempt =
             "attempt" in event && typeof event.attempt === "number" ? event.attempt : 1;
-          metrics.record("server.auto_retry", 1, { sessionId, attempt: String(attempt) });
+          metrics.record(
+            "server.auto_retry",
+            1,
+            routingTags(session, { attempt: String(attempt) }),
+          );
         }
         break;
 
@@ -336,13 +457,15 @@ export class SessionEventProcessor {
         if (metrics) {
           // Duration
           if (active.compactionStartedAt) {
-            metrics.record("server.compaction_ms", Date.now() - active.compactionStartedAt, {
-              sessionId,
-            });
+            metrics.record(
+              "server.compaction_ms",
+              Date.now() - active.compactionStartedAt,
+              routingTags(session),
+            );
           }
           // Result
           const result = aborted ? "aborted" : willRetry ? "will_retry" : "success";
-          metrics.record("server.compaction_result", 1, { sessionId, result });
+          metrics.record("server.compaction_result", 1, routingTags(session, { result }));
         }
         active.compactionStartedAt = undefined;
         break;

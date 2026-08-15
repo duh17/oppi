@@ -96,34 +96,47 @@ export const SERVER_METRIC_REGISTRY = {
   "server.turn_duration_ms": {
     unit: "ms",
     description:
-      "Full agent work duration (agent_start to agent_end). This is workload/progress telemetry, not UX latency by itself.",
+      "Full agent work duration (agent_start to agent_end). Tagged by the exact session-configured provider/model route and bounded configured thinking when known. Workload telemetry, not accepted-task correctness.",
   },
   "server.turn_ttft_ms": {
     unit: "ms",
-    description: "Server-side time-to-first-token (agent_start to first text_delta).",
+    description:
+      "Server-side time-to-first-token (agent_start to first text_delta or thinking_delta). Tagged by the exact session-configured provider/model route and bounded configured thinking when known.",
   },
   "server.turn_input_tokens": {
     unit: "count",
     description:
-      "Input tokens consumed by turns (from message_end usage). Aggregated by sum before storage.",
+      "Input tokens consumed by turns (from message_end usage). Tagged by the exact session-configured provider/model route when known and aggregated by sum before storage.",
   },
   "server.turn_output_tokens": {
     unit: "count",
     description:
-      "Output tokens produced by turns (from message_end usage). Aggregated by sum before storage.",
+      "Output tokens produced by turns (from message_end usage). Tagged by the exact session-configured provider/model route when known and aggregated by sum before storage.",
   },
   "server.turn_cost": {
     unit: "count",
     description:
-      "Turn cost in microdollars (usage.cost * 1_000_000, integer). Aggregated by sum before storage.",
+      "Turn cost in microdollars (usage.cost * 1_000_000, integer). Tagged by the exact session-configured provider/model route when known and aggregated by sum before storage.",
   },
   "server.turn_tool_calls": {
     unit: "count",
-    description: "Tool calls executed in a single turn; useful for interpreting turn workload.",
+    description:
+      "Tool calls executed in a single turn, tagged by the exact session-configured provider/model route when known; useful for interpreting turn workload.",
   },
   "server.turn_error": {
     unit: "count",
-    description: "Turns that ended with an error. Tagged by error category.",
+    description:
+      "Turns that ended with an error. Tagged by a bounded error category plus the exact session-configured provider/model route and configured thinking when known. Operational, not accepted-task correctness.",
+  },
+  "server.tool_duration_ms": {
+    unit: "ms",
+    description:
+      "Paired tool-call wall time (tool_execution_start to matching tool_execution_end). Tagged by the exact session-configured provider/model route, tool, and status. Omitted when start or end is missing.",
+  },
+  "server.tool_result": {
+    unit: "count",
+    description:
+      "One sample per observed tool_execution_end. Tagged by the exact session-configured provider/model route, sanitized tool name, and status. Operational success is not accepted-task correctness.",
   },
 
   // ── P2: Capacity / Throughput ──

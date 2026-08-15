@@ -3,7 +3,8 @@
 /**
  * Oppi telemetry review — reads JSONL metric files, computes percentiles,
  * flags SLO reference threshold violations, and provides dictation-focused
- * dashboard views with engine/source/provider/model breakdowns.
+ * and model-routing dashboard views. `--models` is read-only operational
+ * telemetry: success is not accepted-task correctness.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -127,6 +128,68 @@ interface ReviewOutput {
   dictationConfig: DictationConfigSummary | null;
   fetchedAt: string;
 }
+
+interface LatencySummary {
+  count: number;
+  p50: number;
+  p95: number;
+}
+
+export interface ModelReviewRow {
+  provider: string | null;
+  model: string | null;
+  samples: number;
+  turns: number;
+  untagged: boolean;
+  ttft: LatencySummary;
+  turnDuration: LatencySummary;
+  toolDuration: LatencySummary;
+  toolCalls: number;
+  observedToolResults: number;
+  toolCallFrequency: number;
+  turnErrorRate: number;
+  toolErrorRate: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  totalCostPerToolStartUsd: number | null;
+  totalOutputTokensPerToolStart: number | null;
+}
+
+export interface ModelToolReviewRow {
+  provider: string | null;
+  model: string | null;
+  tool: string;
+  calls: number;
+  frequency: number;
+  duration: LatencySummary;
+  errors: number;
+  errorRate: number;
+  untagged: boolean;
+}
+
+export interface ModelsReviewOutput {
+  days: number;
+  untaggedSamples: number;
+  note: string;
+  models: ModelReviewRow[];
+  modelTools: ModelToolReviewRow[];
+}
+
+const MODELS_REVIEW_NOTE =
+  "Operational success is not accepted-task correctness. These rows measure observed routing latency and mechanical tool/turn outcomes, not whether the agent completed the user's task.";
+
+const MODEL_REVIEW_METRICS = new Set([
+  "server.turn_ttft_ms",
+  "server.turn_duration_ms",
+  "server.turn_error",
+  "server.turn_tool_calls",
+  "server.turn_input_tokens",
+  "server.turn_output_tokens",
+  "server.turn_cost",
+  "server.tool_duration_ms",
+  "server.tool_result",
+]);
 
 export const STATUS_FILTERED_METRICS = new Set([
   "chat.trace_fetch_ms",
@@ -800,6 +863,274 @@ export function computeStats(vals: number[]): MetricStats {
   };
 }
 
+/** Nearest-rank percentile using ceil(p/100 * n). Better small-n p50 than floor. */
+function routingPercentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.max(0, Math.ceil((sorted.length * p) / 100) - 1);
+  return sorted[Math.min(idx, sorted.length - 1)];
+}
+
+function latencySummary(vals: number[]): LatencySummary {
+  if (vals.length === 0) return { count: 0, p50: 0, p95: 0 };
+  const sorted = [...vals].sort((a, b) => a - b);
+  return {
+    count: sorted.length,
+    p50: routingPercentile(sorted, 50),
+    p95: routingPercentile(sorted, 95),
+  };
+}
+
+function ratio(numerator: number, denominator: number): number {
+  if (denominator <= 0) return 0;
+  return numerator / denominator;
+}
+
+function modelRoutingKey(provider: string | null, model: string | null): string {
+  if (!provider || !model) return "untagged";
+  return `${provider}\0${model}`;
+}
+
+function routingIdentity(tags: Record<string, string> | undefined): {
+  provider: string | null;
+  model: string | null;
+  untagged: boolean;
+  key: string;
+} {
+  const provider = tags?.provider?.trim() || null;
+  const model = tags?.model?.trim() || null;
+  if (!provider || !model) {
+    return { provider: null, model: null, untagged: true, key: modelRoutingKey(null, null) };
+  }
+  return { provider, model, untagged: false, key: modelRoutingKey(provider, model) };
+}
+
+interface ModelAccumulator {
+  provider: string | null;
+  model: string | null;
+  untagged: boolean;
+  samples: number;
+  ttft: number[];
+  turnDuration: number[];
+  toolDuration: number[];
+  turnErrors: number;
+  turnToolCalls: number;
+  toolResults: number;
+  toolErrors: number;
+  inputTokens: number;
+  outputTokens: number;
+  costMicrodollars: number;
+}
+
+interface ModelToolAccumulator {
+  provider: string | null;
+  model: string | null;
+  tool: string;
+  untagged: boolean;
+  duration: number[];
+  calls: number;
+  errors: number;
+}
+
+function emptyModelAccumulator(identity: ReturnType<typeof routingIdentity>): ModelAccumulator {
+  return {
+    provider: identity.provider,
+    model: identity.model,
+    untagged: identity.untagged,
+    samples: 0,
+    ttft: [],
+    turnDuration: [],
+    toolDuration: [],
+    turnErrors: 0,
+    turnToolCalls: 0,
+    toolResults: 0,
+    toolErrors: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    costMicrodollars: 0,
+  };
+}
+
+export function reviewModels(data: LoadResult, options: { days: number }): ModelsReviewOutput {
+  const models = new Map<string, ModelAccumulator>();
+  const modelTools = new Map<string, ModelToolAccumulator>();
+  let untaggedSamples = 0;
+
+  for (const sample of data.samples) {
+    if (!MODEL_REVIEW_METRICS.has(sample.metric)) continue;
+    const identity = routingIdentity(sample.tags);
+    if (identity.untagged) untaggedSamples += 1;
+    const modelRow = models.get(identity.key) ?? emptyModelAccumulator(identity);
+    modelRow.samples += 1;
+    if (sample.metric === "server.turn_ttft_ms") modelRow.ttft.push(sample.value);
+    if (sample.metric === "server.turn_duration_ms") modelRow.turnDuration.push(sample.value);
+    if (sample.metric === "server.turn_error") modelRow.turnErrors += Math.max(0, sample.value);
+    if (sample.metric === "server.turn_tool_calls") {
+      modelRow.turnToolCalls += Math.max(0, sample.value);
+    }
+    if (sample.metric === "server.turn_input_tokens") {
+      modelRow.inputTokens += Math.max(0, sample.value);
+    }
+    if (sample.metric === "server.turn_output_tokens") {
+      modelRow.outputTokens += Math.max(0, sample.value);
+    }
+    if (sample.metric === "server.turn_cost") {
+      modelRow.costMicrodollars += Math.max(0, sample.value);
+    }
+    if (sample.metric === "server.tool_duration_ms") modelRow.toolDuration.push(sample.value);
+    if (sample.metric === "server.tool_result") {
+      const results = Math.max(0, sample.value);
+      modelRow.toolResults += results;
+      if (sample.tags?.status === "error") modelRow.toolErrors += results;
+    }
+    models.set(identity.key, modelRow);
+
+    if (sample.metric === "server.tool_duration_ms" || sample.metric === "server.tool_result") {
+      const tool = sample.tags?.tool?.trim() || "unknown";
+      const toolKey = `${identity.key}\0${tool}`;
+      const toolRow =
+        modelTools.get(toolKey) ??
+        ({
+          provider: identity.provider,
+          model: identity.model,
+          tool,
+          untagged: identity.untagged,
+          duration: [],
+          calls: 0,
+          errors: 0,
+        } satisfies ModelToolAccumulator);
+      if (sample.metric === "server.tool_duration_ms") toolRow.duration.push(sample.value);
+      if (sample.metric === "server.tool_result") {
+        const results = Math.max(0, sample.value);
+        toolRow.calls += results;
+        if (sample.tags?.status === "error") toolRow.errors += results;
+      }
+      modelTools.set(toolKey, toolRow);
+    }
+  }
+
+  const modelRows = [...models.values()]
+    .map((row) => {
+      const turns = row.turnDuration.length;
+      return {
+        provider: row.provider,
+        model: row.model,
+        samples: row.samples,
+        turns,
+        untagged: row.untagged,
+        ttft: latencySummary(row.ttft),
+        turnDuration: latencySummary(row.turnDuration),
+        toolDuration: latencySummary(row.toolDuration),
+        toolCalls: row.turnToolCalls,
+        observedToolResults: row.toolResults,
+        toolCallFrequency: ratio(row.turnToolCalls, turns),
+        turnErrorRate: ratio(row.turnErrors, turns),
+        toolErrorRate: ratio(row.toolErrors, row.toolResults),
+        inputTokens: row.inputTokens,
+        outputTokens: row.outputTokens,
+        costUsd: row.costMicrodollars / 1_000_000,
+        totalCostPerToolStartUsd:
+          row.turnToolCalls > 0 ? row.costMicrodollars / 1_000_000 / row.turnToolCalls : null,
+        totalOutputTokensPerToolStart:
+          row.turnToolCalls > 0 ? row.outputTokens / row.turnToolCalls : null,
+      } satisfies ModelReviewRow;
+    })
+    .sort((a, b) => {
+      if (a.untagged !== b.untagged) return a.untagged ? 1 : -1;
+      return b.samples - a.samples;
+    });
+
+  const turnsByModel = new Map(
+    modelRows.map((row) => [modelRoutingKey(row.provider, row.model), row.turns]),
+  );
+
+  const modelToolRows = [...modelTools.values()]
+    .map((row) => {
+      const turns = turnsByModel.get(modelRoutingKey(row.provider, row.model)) ?? 0;
+      return {
+        provider: row.provider,
+        model: row.model,
+        tool: row.tool,
+        calls: row.calls,
+        frequency: ratio(row.calls, turns),
+        duration: latencySummary(row.duration),
+        errors: row.errors,
+        errorRate: ratio(row.errors, row.calls),
+        untagged: row.untagged,
+      } satisfies ModelToolReviewRow;
+    })
+    .sort((a, b) => {
+      if (a.untagged !== b.untagged) return a.untagged ? 1 : -1;
+      return b.calls - a.calls || a.tool.localeCompare(b.tool);
+    });
+
+  return {
+    days: options.days,
+    untaggedSamples,
+    note: MODELS_REVIEW_NOTE,
+    models: modelRows,
+    modelTools: modelToolRows,
+  };
+}
+
+function formatModelLabel(provider: string | null, model: string | null): string {
+  if (!provider || !model) return "untagged";
+  return `${provider}/${model}`;
+}
+
+function formatUsd(value: number | null): string {
+  if (value == null) return "—";
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
+}
+
+export function formatModelsReview(
+  result: ModelsReviewOutput,
+  options: { noColor?: boolean } = {},
+): string {
+  const c = makeColors(!options.noColor);
+  const lines: string[] = [];
+  lines.push(`${c.bold}Model routing telemetry${c.reset} ${c.dim}${result.days}d${c.reset}`);
+  lines.push(`  ${c.dim}${result.note}${c.reset}`);
+  lines.push(
+    `  Historical untagged samples: ${result.untaggedSamples} (pre-tag or missing provider/model)`,
+  );
+  lines.push("");
+  lines.push(`${c.bold}${c.cyan}By model${c.reset}`);
+  lines.push(
+    `  ${"Model".padEnd(32)} ${"turns".padStart(6)} ${"ttft p50/p95".padStart(16)} ${"turn p50/p95".padStart(16)} ${"tool p50/p95".padStart(16)} ${"calls".padStart(6)} ${"freq".padStart(6)} ${"Total$/call".padStart(10)} ${"TotalOut/call".padStart(13)} ${"turn err".padStart(8)} ${"tool err".padStart(8)}`,
+  );
+  for (const row of result.models) {
+    const label = formatModelLabel(row.provider, row.model);
+    const ttft =
+      row.ttft.count > 0 ? `${fmtValue(row.ttft.p50, "ms")}/${fmtValue(row.ttft.p95, "ms")}` : "—";
+    const turn =
+      row.turnDuration.count > 0
+        ? `${fmtValue(row.turnDuration.p50, "ms")}/${fmtValue(row.turnDuration.p95, "ms")}`
+        : "—";
+    const tool =
+      row.toolDuration.count > 0
+        ? `${fmtValue(row.toolDuration.p50, "ms")}/${fmtValue(row.toolDuration.p95, "ms")}`
+        : "—";
+    lines.push(
+      `  ${label.slice(0, 32).padEnd(32)} ${String(row.turns).padStart(6)} ${ttft.padStart(16)} ${turn.padStart(16)} ${tool.padStart(16)} ${String(row.toolCalls).padStart(6)} ${row.toolCallFrequency.toFixed(2).padStart(6)} ${formatUsd(row.totalCostPerToolStartUsd).padStart(10)} ${(row.totalOutputTokensPerToolStart == null ? "—" : fmtValue(row.totalOutputTokensPerToolStart, "count")).padStart(13)} ${fmtPercent(row.turnErrorRate).padStart(8)} ${fmtPercent(row.toolErrorRate).padStart(8)}`,
+    );
+  }
+  lines.push("");
+  lines.push(`${c.bold}${c.cyan}By model + tool${c.reset}`);
+  lines.push(
+    `  ${"Model".padEnd(28)} ${"Tool".padEnd(16)} ${"calls".padStart(6)} ${"freq".padStart(6)} ${"p50".padStart(8)} ${"p95".padStart(8)} ${"errors".padStart(7)} ${"err%".padStart(7)}`,
+  );
+  for (const row of result.modelTools) {
+    const label = formatModelLabel(row.provider, row.model);
+    const p50 = row.duration.count > 0 ? fmtValue(row.duration.p50, "ms") : "—";
+    const p95 = row.duration.count > 0 ? fmtValue(row.duration.p95, "ms") : "—";
+    lines.push(
+      `  ${label.slice(0, 28).padEnd(28)} ${row.tool.slice(0, 16).padEnd(16)} ${String(row.calls).padStart(6)} ${row.frequency.toFixed(2).padStart(6)} ${p50.padStart(8)} ${p95.padStart(8)} ${String(row.errors).padStart(7)} ${fmtPercent(row.errorRate).padStart(7)}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function statusValue(stats: MetricStats): number {
   return stats.tm99;
 }
@@ -1390,6 +1721,8 @@ const GROUP_NOTES: Record<string, string> = {
 const AGENT_WORKLOAD_METRICS = new Set([
   "server.turn_duration_ms",
   "server.turn_tool_calls",
+  "server.tool_duration_ms",
+  "server.tool_result",
   "server.turn_input_tokens",
   "server.turn_output_tokens",
   "server.turn_cost",
@@ -1760,12 +2093,13 @@ interface ParsedArgs {
   noColor: boolean;
   help: boolean;
   dictation: boolean;
+  models: boolean;
   fields: Set<string> | null;
   byTags: string[];
   svgOut: string | undefined;
 }
 
-function parseArgs(argv: string[]): ParsedArgs {
+export function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {
     dataDir: undefined,
     days: 7,
@@ -1776,6 +2110,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     noColor: false,
     help: false,
     dictation: false,
+    models: false,
     fields: null,
     byTags: [],
     svgOut: undefined,
@@ -1810,6 +2145,9 @@ function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--dictation":
         result.dictation = true;
+        break;
+      case "--models":
+        result.models = true;
         break;
       case "--by": {
         const raw = argv[++i] ?? "";
@@ -1855,6 +2193,8 @@ Phone-friendly by default. Use --wide for full tables.
   bun server/scripts/telemetry-review.ts --days 1
   bun server/scripts/telemetry-review.ts --dictation --wide
   bun server/scripts/telemetry-review.ts --dictation --by engine,source,provider_id,model
+  bun server/scripts/telemetry-review.ts --models
+  bun server/scripts/telemetry-review.ts --models --json
 
 Options:
   --data-dir <path>     Oppi data dir (default: ~/.config/oppi)
@@ -1862,6 +2202,9 @@ Options:
   --wide                Full table with all columns
   --dictation           Dictation-focused dashboard (UX + backend + assets)
                         Defaults to --by engine,source,provider_id,model
+  --models              Read-only routing review by exact provider/model and tool.
+                        Historical untagged samples stay explicit. Operational
+                        success is not accepted-task correctness.
   --by <tags>           Breakdown tags (comma-separated). Example: engine,source,provider_id,model
   --json                Machine-readable JSON
   --compact             Minimal JSON for agents
@@ -1899,6 +2242,16 @@ function main(): void {
       console.error(`  hint: ${err.hint}`);
     }
     process.exit(1);
+  }
+
+  if (args.models) {
+    const modelsResult = reviewModels(data, { days: args.days });
+    if (args.json || args.compact) {
+      console.log(JSON.stringify(modelsResult, null, args.compact ? 0 : 2));
+    } else {
+      console.log(formatModelsReview(modelsResult, { noColor: args.noColor }));
+    }
+    return;
   }
 
   const result = review(data, {

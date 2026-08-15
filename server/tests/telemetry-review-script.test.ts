@@ -8,8 +8,11 @@ import {
   SLO_THRESHOLDS,
   buildTelemetryTrendSvg,
   buildTrendBuckets,
+  formatModelsReview,
   loadSamples,
+  parseArgs,
   review,
+  reviewModels,
 } from "../scripts/telemetry-review.ts";
 
 const HOUR_MS = 60 * 60 * 1_000;
@@ -210,5 +213,271 @@ describe("telemetry-review svg reporting", () => {
     expect(svg).toContain("overall tm99");
     expect(svg).toContain(">OVER<");
     expect(svg).toContain("SLO 20.0ms");
+  });
+});
+
+describe("telemetry-review --models", () => {
+  it("parses a read-only models mode", () => {
+    expect(parseArgs(["--models", "--days", "3", "--json"]).models).toBe(true);
+    expect(parseArgs(["--wide"]).models).toBe(false);
+  });
+
+  it("reports latency, call frequency, and error rates by model and model+tool", () => {
+    const now = Date.now();
+    const data = {
+      values: {},
+      byBuild: {},
+      buildSummary: {},
+      samples: [
+        {
+          ts: now,
+          metric: "server.turn_ttft_ms",
+          value: 100,
+          unit: "ms",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.turn_ttft_ms",
+          value: 300,
+          unit: "ms",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.turn_duration_ms",
+          value: 1_000,
+          unit: "ms",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.turn_duration_ms",
+          value: 3_000,
+          unit: "ms",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.turn_error",
+          value: 1,
+          unit: "count",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.turn_tool_calls",
+          value: 2,
+          unit: "count",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.turn_input_tokens",
+          value: 1_000,
+          unit: "count",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.turn_output_tokens",
+          value: 500,
+          unit: "count",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.turn_cost",
+          value: 250_000,
+          unit: "count",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.turn_input_tokens",
+          value: 500,
+          unit: "count",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.turn_output_tokens",
+          value: 100,
+          unit: "count",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.turn_cost",
+          value: 50_000,
+          unit: "count",
+          tags: { provider: "anthropic", model: "claude-sonnet-4-0" },
+        },
+        {
+          ts: now,
+          metric: "server.tool_duration_ms",
+          value: 40,
+          unit: "ms",
+          tags: {
+            provider: "anthropic",
+            model: "claude-sonnet-4-0",
+            tool: "bash",
+            status: "ok",
+          },
+        },
+        {
+          ts: now,
+          metric: "server.tool_duration_ms",
+          value: 80,
+          unit: "ms",
+          tags: {
+            provider: "anthropic",
+            model: "claude-sonnet-4-0",
+            tool: "bash",
+            status: "error",
+          },
+        },
+        {
+          ts: now,
+          metric: "server.tool_result",
+          value: 1,
+          unit: "count",
+          tags: {
+            provider: "anthropic",
+            model: "claude-sonnet-4-0",
+            tool: "bash",
+            status: "ok",
+          },
+        },
+        {
+          ts: now,
+          metric: "server.tool_result",
+          value: 1,
+          unit: "count",
+          tags: {
+            provider: "anthropic",
+            model: "claude-sonnet-4-0",
+            tool: "bash",
+            status: "error",
+          },
+        },
+        {
+          ts: now,
+          metric: "server.turn_duration_ms",
+          value: 9_000,
+          unit: "ms",
+        },
+        {
+          ts: now,
+          metric: "server.turn_tool_calls",
+          value: 3,
+          unit: "count",
+        },
+        {
+          ts: now,
+          metric: "server.tool_result",
+          value: 1,
+          unit: "count",
+          tags: { tool: "read", status: "ok" },
+        },
+      ],
+      totalSamples: 19,
+      filesRead: 1,
+    } satisfies Parameters<typeof reviewModels>[0];
+
+    const result = reviewModels(data, { days: 2 });
+    expect(result.untaggedSamples).toBe(3);
+    expect(result.note).toMatch(/operational success is not accepted-task correctness/i);
+
+    const tagged = result.models.find(
+      (row) => row.provider === "anthropic" && row.model === "claude-sonnet-4-0",
+    );
+    expect(tagged).toMatchObject({
+      samples: 16,
+      turns: 2,
+      untagged: false,
+      ttft: { count: 2, p50: 100, p95: 300 },
+      turnDuration: { count: 2, p50: 1_000, p95: 3_000 },
+      toolDuration: { count: 2, p50: 40, p95: 80 },
+      toolCalls: 2,
+      observedToolResults: 2,
+      toolCallFrequency: 1,
+      turnErrorRate: 0.5,
+      toolErrorRate: 0.5,
+      inputTokens: 1_500,
+      outputTokens: 600,
+      costUsd: 0.3,
+      totalCostPerToolStartUsd: 0.15,
+      totalOutputTokensPerToolStart: 300,
+    });
+
+    const untagged = result.models.find((row) => row.untagged);
+    expect(untagged).toMatchObject({
+      provider: null,
+      model: null,
+      samples: 3,
+      turns: 1,
+      toolCalls: 3,
+      observedToolResults: 1,
+    });
+
+    const bash = result.modelTools.find(
+      (row) =>
+        row.provider === "anthropic" && row.model === "claude-sonnet-4-0" && row.tool === "bash",
+    );
+    expect(bash).toMatchObject({
+      calls: 2,
+      frequency: 1,
+      duration: { count: 2, p50: 40, p95: 80 },
+      errors: 1,
+      errorRate: 0.5,
+      untagged: false,
+    });
+
+    const historical = result.modelTools.find((row) => row.untagged && row.tool === "read");
+    expect(historical).toMatchObject({
+      provider: null,
+      model: null,
+      calls: 1,
+      errors: 0,
+      errorRate: 0,
+    });
+  });
+
+  it("prints human output with untagged history and the operational-success caveat", () => {
+    const now = Date.now();
+    const result = reviewModels(
+      {
+        values: {},
+        byBuild: {},
+        buildSummary: {},
+        samples: [
+          {
+            ts: now,
+            metric: "server.turn_ttft_ms",
+            value: 120,
+            unit: "ms",
+            tags: { provider: "openai", model: "gpt-5.5" },
+          },
+          {
+            ts: now,
+            metric: "server.turn_duration_ms",
+            value: 2_000,
+            unit: "ms",
+          },
+        ],
+        totalSamples: 2,
+        filesRead: 1,
+      },
+      { days: 1 },
+    );
+
+    const text = formatModelsReview(result, { noColor: true });
+    expect(text).toContain("openai/gpt-5.5");
+    expect(text).toContain("untagged");
+    expect(text).toMatch(/operational success is not accepted-task correctness/i);
+    expect(text).toContain("p50");
+    expect(text).toContain("p95");
+    expect(text).toContain("Total$/call");
   });
 });

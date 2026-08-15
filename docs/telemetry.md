@@ -25,6 +25,7 @@ From `server/`:
 
 ```bash
 npm run telemetry:review -- --days 1 --wide
+npm run telemetry:review -- --models --days 7
 npm run telemetry:client-logs -- --days 1 --limit 30
 npm run telemetry:client-logs -- --hours 3 --limit 30
 npm run telemetry:metrickit -- --days 14 --limit 50
@@ -105,11 +106,13 @@ Use this split when reading dashboards or telemetry reviews:
 | --------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | UX responsiveness           | The user is waiting for the app, stream, or media to become usable. | `chat.ttft_ms`, `chat.session_load_ms`, `chat.ws_wait_for_connected_ms`, `chat.media_playback_start_ms`       | High values are user-visible latency. These belong on the front page and can have SLOs.                                                  |
 | Reliability counters        | A user action, stream, or render path failed or recovered.          | `chat.message_queue_stale_drop`, `chat.app_event_stream_reconnect`, `chat.media_playback_error`, client logs  | Trend toward zero; drill into logs and tags.                                                                                             |
-| Agent workload and progress | The agent is actively doing work.                                   | `server.turn_duration_ms`, `server.turn_tool_calls`, `server.turn_input_tokens`, `chat.session_files_changed` | Long values are not automatically bad. Correlate with progress, tokens, tools, file changes, errors, and TTFT before calling it a stall. |
+| Agent workload and progress | The agent is actively doing work.                                   | `server.turn_duration_ms`, `server.turn_tool_calls`, `server.tool_duration_ms`, `server.tool_result`, `server.turn_input_tokens`, `chat.session_files_changed` | Long values are not automatically bad. Correlate with progress, tokens, tools, file changes, errors, and TTFT before calling it a stall. `npm run telemetry:review -- --models` compares exact provider/model and model+tool latency. Operational success is not accepted-task correctness. |
 | Resource health             | Local client/server pressure that can make UX worse.                | `device.memory_mb`, `server.heap_mb`, `server.event_loop_lag_ms`                                              | Diagnose capacity or leaks; do not confuse with agent productivity.                                                                      |
 | Drill-down internals        | Mechanical sub-steps used to explain a front-page metric.           | `chat.queue_sync_ms`, `server.session_subscribe_ms`, `chat.render_strategy_ms`                                | Keep available, but do not let them define product health by themselves.                                                                 |
 
 `server.turn_duration_ms` is workload telemetry. It measures the full wall-clock duration of an agent turn. A long turn can mean the agent is handling a large task, running tools, editing files, waiting on tests, or processing a large context. Treat it as a problem only when it combines with missing progress signals, high first-token latency, stuck tool calls, errors, blocked asks, or disconnected clients.
+
+Turn and tool ops metrics carry the exact session-configured `provider` and `model` route when the session already has a canonical `provider/modelId`. A bounded `thinking` tag records the session-configured reasoning level when it is one of Pi's known levels. Provider fallback or per-response reasoning changes can differ from those configured-route tags. Per-tool `server.tool_duration_ms` and `server.tool_result` pair concurrent calls by `toolCallId`. An end event without a matching start records a result without duration; starts without an end are discarded at turn end. These samples never include tool arguments, output, or file paths. Use `npm run telemetry:review -- --models` to compare observed TTFT, turn and tool latency, call frequency, token use, total observed cost/output divided by tool starts, and mechanical error rates. The cost/output ratios are route-level efficiency indicators across all observed turns, not costs attributable to individual tools. Historical samples without provider/model tags stay in an explicit untagged bucket. A `status=ok` tool result means the tool finished without a mechanical error; it does not mean the agent completed the accepted task correctly.
 
 ## Experience metrics that belong on the front page
 
@@ -254,9 +257,9 @@ Current handling guidance:
 
 Pi persists sessions as JSONL and emits structured `AgentSessionEvent` values for lifecycle, streaming, tool execution, retry, compaction, and queue state. Oppi treats those primitives as the raw truth, then derives user-facing diagnostics:
 
-- server turn duration and server-side time to first token
+- server turn duration and server-side time to first token, tagged by the exact session-configured provider/model route when known
 - token and cost snapshots
-- tool-call counts and mutating-file stats
+- per-tool duration and mechanical result counts, plus turn tool-call counts and mutating-file stats
 - retries, compactions, and compaction duration
 - ask and extension UI round-trip timing
 - session summaries and catch-up events for clients
@@ -288,6 +291,10 @@ Use the same tag names across clients, server metrics, logs, and dashboards when
 
 | Tag          | Use                                                                                                                                                                                                 |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`   | Exact provider from the session-configured canonical `provider/modelId` route. Omitted when missing or malformed; a provider fallback can differ from this route.                                  |
+| `model`      | Exact model id after the first `/` of the session-configured route, including nested ids such as `z.ai/glm-5`. Never a family alias.                                                                 |
+| `thinking`   | Bounded session-configured Pi thinking level (`off` through `max`). Omitted when missing or unsafe; per-response reasoning can differ.                                                              |
+| `tool`       | Sanitized tool name (`[A-Za-z0-9._-]{1,64}`). Unsafe or missing names become `unknown`. Never arguments, output, or paths.                                                                          |
 | `status`     | Bounded mechanical outcome. Common values are `ok`, `error`, `cancelled`, and `timeout`; transport metrics also use `connected`, `failed`, `attempt`, `recovered`, `completed`, and `setup_failed`. |
 | `result`     | Domain result, such as catch-up result: `applied`, `no_gap`, `ring_miss`, `fetch_failed`.                                                                                                           |
 | `reason`     | Why an event happened, such as `capabilityRefreshFailed` or `idle_timeout`.                                                                                                                         |
@@ -295,6 +302,7 @@ Use the same tag names across clients, server metrics, logs, and dashboards when
 | `path`       | Privacy-safe selected network path: `direct`, `relay`, or `unknown`; never an IP, endpoint ID, relay URL, or relay host.                                                                            |
 | `streamRole` | WebSocket role in client logs, such as `focused_session` or another low-cardinality stream name.                                                                                                    |
 | `error_kind` | Coarse error class for metrics: `network`, `timeout`, `decode`, `cancelled`, `not_connected`, or `other`.                                                                                           |
+| `category`   | Bounded turn error class: `request_too_large`, `overloaded`, `rate_limit`, `auth`, `timeout`, `connection`, `json_parse`, `terminated`, `other`, or `unknown`.                                       |
 
 Prefer logs over metrics for raw platform error details such as `NSURLErrorDomain`, HTTP status, or WebSocket close code. Use metrics for bounded counts, durations, and ratios.
 
