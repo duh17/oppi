@@ -6,6 +6,7 @@ import type { ResourceLoader } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../src/agent-launch-service.js";
+import { freezeOppiExtensionSettingsSnapshot } from "../src/oppi-extension-settings.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { serverResourceId } from "../src/server-resource-id.js";
 import type { Session, Workspace } from "../src/types.js";
@@ -317,7 +318,7 @@ describe.sequential("saved Agent exact resource selection", () => {
     }
   });
 
-  it("fails closed when an explicit Agent tool is not registered by its selected Extensions", async () => {
+  it("starts with a warning and drops a stale allowed tool instead of failing the launch", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-missing-tool-cwd-"));
     const agentDir = mkdtempSync(join(tmpdir(), "oppi-agent-missing-tool-agent-"));
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -339,31 +340,108 @@ describe.sequential("saved Agent exact resource selection", () => {
         status: "launching",
         requestedAt: session.createdAt,
         agentId: "agent-1",
-        tools: { allowed: ["hacker_news"], noTools: "builtin" },
+        // `stale_tool` matches no registered tool; `other_tool` comes from the
+        // selected Extension. The launch must keep `other_tool`, drop
+        // `stale_tool`, and record exactly one session warning.
+        tools: { allowed: ["stale_tool", "other_tool"], noTools: "builtin" },
       };
 
-      await expect(async () => {
-        backend = await SdkBackend.create({
-          session,
-          workspace: {
-            id: "workspace-1",
-            name: "Missing Agent Tool Test",
-            runtime: "host",
-            hostMount: cwd,
-          } as Workspace,
-          agentDefinition: {
-            name: "Missing Agent Tool",
-            resources: {
-              skillPaths: [],
-              extensionIds: [serverResourceId("extension", selectedExtension)],
-            },
+      backend = await SdkBackend.create({
+        session,
+        workspace: {
+          id: "workspace-1",
+          name: "Stale Agent Tool Test",
+          runtime: "host",
+          hostMount: cwd,
+        } as Workspace,
+        agentDefinition: {
+          name: "Stale Agent Tool",
+          resources: {
+            skillPaths: [],
+            extensionIds: [serverResourceId("extension", selectedExtension)],
           },
-          onEvent: vi.fn(),
-          onEnd: vi.fn(),
-        });
-      }).rejects.toThrow(
-        "Configured Agent tool is unavailable: hacker_news. Update the Agent's selected Extensions or tool allowlist.",
+        },
+        getOppiExtensionSettings: () =>
+          freezeOppiExtensionSettingsSnapshot({
+            enabled: true,
+            approvalPolicy: "readOnly",
+          }),
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      const activeToolNames = backend.session.agent.state.tools.map((tool) => tool.name);
+      expect(activeToolNames).toContain("other_tool");
+      expect(activeToolNames).not.toContain("stale_tool");
+      expect(session.warnings).toHaveLength(1);
+      expect(session.warnings?.[0]).toContain(
+        "Configured Agent tool is unavailable and was dropped from this session: stale_tool",
       );
+      expect(session.warnings?.[0]).toContain("Edit the Agent's Allowed Tools");
+      // The requested launch policy stays untouched; only the effective runtime
+      // tool set dropped the stale name.
+      expect(session.launch?.tools?.allowed).toEqual(["stale_tool", "other_tool"]);
+    } finally {
+      if (backend) await backend.dispose();
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still starts with the reserved tools and a loud warning when every allowed tool is missing", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-all-tools-missing-cwd-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-agent-all-tools-missing-agent-"));
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    writeFileSync(join(agentDir, "auth.json"), "{}");
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    let backend: SdkBackend | undefined;
+    try {
+      const session = makeSession();
+      session.launch = {
+        ...session.launch,
+        status: "launching",
+        requestedAt: session.createdAt,
+        agentId: "agent-1",
+        tools: { allowed: ["request_feedback"], noTools: "builtin" },
+      };
+
+      backend = await SdkBackend.create({
+        session,
+        workspace: {
+          id: "workspace-1",
+          name: "All Tools Missing Test",
+          runtime: "host",
+          hostMount: cwd,
+        } as Workspace,
+        agentDefinition: {
+          name: "All Tools Missing",
+          resources: { skillPaths: [], extensionIds: [] },
+        },
+        // Match the real launch path, where the Oppi tool extension is enabled
+        // and the reserved `oppi` tool keeps the session runnable.
+        getOppiExtensionSettings: () =>
+          freezeOppiExtensionSettingsSnapshot({
+            enabled: true,
+            approvalPolicy: "readOnly",
+          }),
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      const activeToolNames = backend.session.agent.state.tools.map((tool) => tool.name);
+      expect(activeToolNames).not.toContain("request_feedback");
+      // The ordinary managed runtime always reserves the `oppi` tool, so the
+      // session never ends up with a dead allowlist.
+      expect(activeToolNames).toContain("oppi");
+      expect(session.warnings).toHaveLength(1);
+      expect(session.warnings?.[0]).toContain(
+        "Every configured Agent tool is unavailable and was dropped from this session: request_feedback",
+      );
+      expect(session.warnings?.[0]).toContain("may not work as intended");
     } finally {
       if (backend) await backend.dispose();
       if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

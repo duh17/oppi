@@ -1360,6 +1360,10 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Agent definitions are target-agnostic; workspace/worktree/cwd are launch inputs, not stored Agent fields.",
+      "AgentDefinition top-level keys: name, icon, description, instructions, resources, sessionDefaults, launchConstraints. Anything else is rejected.",
+      "Launch-only keys are forbidden in definitions: target, workspaceId, worktreeId, cwd, schedule, attachments, images.",
+      "resources.extensionIds and resources.skillPaths are exact selections; omitting them inherits normal Pi discovery.",
+      "sessionDefaults.tools is an allowlist of real tool names that must exist at launch; stale names are dropped from the session with a warning instead of failing the launch.",
       "Use 'oppi session create --agent <agent> --workspace <workspace> --prompt <text>' to launch a saved Agent.",
       "Server-default Agent launches and self-management extensions are separate from public saved Agent definitions.",
     ],
@@ -1407,12 +1411,17 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Choose at most one of --definition or --definition-json; --name or definition.name is required.",
-      "Definitions cannot include workspace, worktree, schedule, attachments, or other launch-only fields.",
+      "Allowed AgentDefinition keys: name, icon, description, instructions, resources, sessionDefaults, launchConstraints.",
+      "Forbidden launch-only keys: target, workspaceId, worktreeId, cwd, schedule, attachments, images.",
+      "resources.extensionIds / resources.skillPaths are exact selections; omit them to inherit Pi discovery.",
+      "sessionDefaults.tools must list real tool names available at launch; unavailable names are dropped with a session warning, not a launch failure. excludeTools stays a denylist and noTools stays 'all' | 'builtin'.",
       "definition.icon uses the tagged default, emoji, symbol, or Genmoji asset-reference object.",
     ],
     examples: [
       { command: "oppi agent create --name Reviewer --definition ./agent.json --json" },
-      { command: `oppi agent create --definition-json '{"name":"Reviewer"}' --json` },
+      {
+        command: `oppi agent create --definition-json '{"name":"Reviewer","sessionDefaults":{"tools":["read","grep","oppi"]}}' --json`,
+      },
     ],
   },
   {
@@ -1442,13 +1451,18 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Choose exactly one of --definition or --definition-json.",
-      "Use --expected-version with the version from a previously reviewed Agent snapshot; a stale version returns a conflict instead of overwriting newer changes.",
+      "Update is a PATCH: omitted fields keep their stored values; nested resources, sessionDefaults, and launchConstraints merge key by key; JSON null clears a field or nested key.",
+      "Run 'oppi agent get <agent>' first, then patch only the changed fields; --expected-version with the reviewed version returns a conflict instead of overwriting newer changes.",
+      "sessionDefaults.tools is an allowlist of real tool names; a stale name is dropped from launched sessions with a warning, so patch it to the current tool names instead of leaving leftovers.",
       "Omit --expected-version for a compatible unconditional PATCH.",
     ],
     examples: [
       { command: "oppi agent update Reviewer --definition ./agent-update.json --json" },
       {
-        command: `oppi agent update Reviewer --definition-json '{"description":"Reviews risky diffs"}' --expected-version 3 --json`,
+        command: `oppi agent update Reviewer --definition-json '{"sessionDefaults":{"tools":["read","grep","oppi"]}}' --expected-version 3 --json`,
+      },
+      {
+        command: `oppi agent update Reviewer --definition-json '{"sessionDefaults":{"tools":null}}' --json`,
       },
     ],
   },

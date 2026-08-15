@@ -220,8 +220,8 @@ describe("BoundSessionStreamMux", () => {
     const session = makeSession("agent-config-failure", "w1");
     const { ctx } = createMockContext([session]);
     vi.mocked(ctx.sessions.startSession).mockRejectedValue(
-      new AgentConfigurationError("agent_tools_unavailable", {
-        missingTools: ["research_web_search"],
+      new AgentConfigurationError("agent_extensions_unavailable", {
+        unavailableExtensions: ["/extensions/research-bundle.ts"],
       }),
     );
 

@@ -1314,8 +1314,8 @@ describe("agent routes", () => {
       });
 
       startSession.mockRejectedValueOnce(
-        new AgentConfigurationError("agent_tools_unavailable", {
-          missingTools: ["research_web_search", "research_youtube_transcribe"],
+        new AgentConfigurationError("agent_extensions_unavailable", {
+          unavailableExtensions: ["/extensions/research-bundle.ts"],
         }),
       );
       const configurationRes = makeResponse();
@@ -1332,20 +1332,20 @@ describe("agent routes", () => {
 
       expect(configurationRes.statusCode).toBe(422);
       expect(JSON.parse(configurationRes.body)).toMatchObject({
-        code: "agent_tools_unavailable",
+        code: "agent_extensions_unavailable",
         error:
-          "Reviewer can’t start in Oppi because these configured tools are unavailable: research_web_search, research_youtube_transcribe. Edit Reviewer → Resources → Extensions and select Extensions that provide these tools, or remove them from Allowed Tools. Then start again.",
+          "Reviewer can’t start in Oppi because selected Extensions are unavailable: /extensions/research-bundle.ts. Edit Reviewer → Resources → Extensions and replace or remove the unavailable selections. Then start again.",
         receipt: {
           accepted: false,
           retryable: false,
-          reason: "agent_tools_unavailable",
+          reason: "agent_extensions_unavailable",
           promptDispatch: "not_sent",
         },
         recovery: {
           actions: ["edit_agent"],
           agentId: agent.id,
           workspaceId: "ws-1",
-          missingTools: ["research_web_search", "research_youtube_transcribe"],
+          unavailableExtensions: ["/extensions/research-bundle.ts"],
         },
       });
       expect(JSON.parse(configurationRes.body).sessionId).toEqual(expect.any(String));
@@ -1356,7 +1356,7 @@ describe("agent routes", () => {
           (session) =>
             session.status === "error" &&
             session.launch?.promptDispatch === "not_sent" &&
-            session.launch.failure?.code === "agent_tools_unavailable",
+            session.launch.failure?.code === "agent_extensions_unavailable",
         ),
       ).toBe(true);
 

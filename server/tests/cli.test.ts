@@ -381,6 +381,10 @@ describe("oppi help", () => {
       expect(text).toContain(implemented);
     }
     expect(text).toContain("session create --agent");
+    expect(text).toContain(
+      "name, icon, description, instructions, resources, sessionDefaults, launchConstraints",
+    );
+    expect(text).toContain("target, workspaceId, worktreeId, cwd, schedule, attachments, images");
   });
 
   it("prints agent-readable help with '--json'", () => {
@@ -627,6 +631,9 @@ describe("oppi help", () => {
           "--definition <file>",
           "--definition-json <json-object>",
           "--name <name>",
+          "Allowed AgentDefinition keys: name, icon, description, instructions, resources, sessionDefaults, launchConstraints",
+          "Forbidden launch-only keys: target, workspaceId, worktreeId, cwd, schedule, attachments, images",
+          "unavailable names are dropped with a session warning, not a launch failure",
         ],
       },
       {
@@ -635,6 +642,11 @@ describe("oppi help", () => {
           "Usage: oppi agent update <agent>",
           "--definition <file>",
           "--definition-json <json-object>",
+          "Update is a PATCH: omitted fields keep their stored values",
+          "JSON null clears a field or nested key",
+          "Run 'oppi agent get <agent>' first, then patch only the changed fields",
+          "--expected-version",
+          "sessionDefaults.tools",
         ],
       },
       {

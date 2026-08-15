@@ -217,6 +217,7 @@ export function createOppiToolExtensionFactory(options: {
         "Use session dialogs to read pending user questions and session respond to answer one; session respond always needs approval.",
         "Use session wait for bounded monitoring. The CLI session watch stream is not exposed to agents; one-session watch requests normalize to wait, while multi-session, --all, and any-change streaming are denied.",
         "Use Oppi mutation commands only after the user asks for them; read the current state first and let the configured policy control approval.",
+        "To edit a saved Agent, run 'oppi agent get <agent>' first, then patch only the changed fields with 'oppi agent update <agent> --definition-json'. Update is a PATCH: omitted fields stay, nested resources/sessionDefaults/launchConstraints merge, and JSON null clears a field or nested key. Allowed top-level keys are name, icon, description, instructions, resources, sessionDefaults, launchConstraints; launch-only keys (target, workspaceId, worktreeId, cwd, schedule, attachments, images) are rejected. sessionDefaults.tools must name real tools available at launch; unavailable names are dropped from the session with a warning.",
       ],
       parameters: Type.Object({
         args: Type.Array(Type.String(), {

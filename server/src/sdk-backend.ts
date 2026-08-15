@@ -506,24 +506,41 @@ export class QueuedModelTurnsReconciliationError extends Error {
   }
 }
 
-function assertConfiguredAgentToolsAvailable(
+/**
+ * Allowed tool names from a saved Agent's sessionDefaults that no active
+ * tool matches at launch. These names are stale: the running Pi session can
+ * never activate them, so launches drop them from the effective tool set and
+ * surface a session warning instead of failing the whole launch. The saved
+ * Agent definition is never mutated.
+ */
+function findUnavailableConfiguredAgentTools(
   configuredAllowed: readonly string[] | undefined,
   configuredExcluded: readonly string[] | undefined,
   activeToolNames: readonly string[],
-): void {
-  if (!configuredAllowed) return;
+): string[] {
+  if (!configuredAllowed) return [];
   const excluded = new Set(configuredExcluded ?? []);
   const active = new Set(activeToolNames);
-  const missing = [...new Set(configuredAllowed)].filter(
-    (name) => !excluded.has(name) && !active.has(name),
-  );
-  if (missing.length === 0) return;
-  const noun = missing.length === 1 ? "tool is" : "tools are";
-  throw new AgentConfigurationError(
-    "agent_tools_unavailable",
-    { missingTools: missing },
-    `Configured Agent ${noun} unavailable: ${missing.join(", ")}. Update the Agent's selected Extensions or tool allowlist.`,
-  );
+  return [...new Set(configuredAllowed)].filter((name) => !excluded.has(name) && !active.has(name));
+}
+
+function recordDroppedAgentToolsWarning(
+  session: Session,
+  configuredAllowed: readonly string[],
+  missingTools: readonly string[],
+): void {
+  const eligibleCount = new Set(configuredAllowed).size;
+  const noun = missingTools.length === 1 ? "tool is" : "tools are";
+  const warning =
+    missingTools.length >= eligibleCount
+      ? `Every configured Agent tool is unavailable and was dropped from this session: ${missingTools.join(", ")}. The session started with only the remaining default/reserved tools and may not work as intended. Edit the Agent's Allowed Tools or selected Extensions, then start again.`
+      : `Configured Agent ${noun} unavailable and was dropped from this session: ${missingTools.join(", ")}. The session continues with the remaining allowed tools. Edit the Agent's Allowed Tools or selected Extensions to stop this warning.`;
+  session.warnings = [...new Set([...(session.warnings ?? []), warning])];
+  log.warn("sdk.agent_tools_dropped", {
+    sessionId: session.id,
+    droppedTools: [...missingTools],
+    allConfiguredToolsDropped: missingTools.length >= eligibleCount,
+  });
 }
 
 function reserveOppiToolPolicy(options: {
@@ -1164,17 +1181,20 @@ export class SdkBackend {
         ...(effectiveToolPolicy.excluded ? { excludeTools: effectiveToolPolicy.excluded } : {}),
       });
 
-      try {
-        if (agentDefinition) {
-          assertConfiguredAgentToolsAvailable(
-            launchToolPolicy?.allowed,
-            launchToolPolicy?.excluded,
-            createResult.session.agent.state.tools.map((tool) => tool.name),
-          );
+      if (agentDefinition && launchToolPolicy?.allowed) {
+        const activeToolNames = createResult.session.agent.state.tools.map((tool) => tool.name);
+        const missingTools = findUnavailableConfiguredAgentTools(
+          launchToolPolicy.allowed,
+          launchToolPolicy.excluded,
+          activeToolNames,
+        );
+        if (missingTools.length > 0) {
+          // Warn and start: stale allowlist names never enter the running
+          // session's effective tool set because Pi filters the allowlist
+          // against registered tools, so the active set above already
+          // excludes them. Only Extensions and Skills stay fail-closed.
+          recordDroppedAgentToolsWarning(session, launchToolPolicy.allowed, missingTools);
         }
-      } catch (error) {
-        createResult.session.dispose();
-        throw error;
       }
 
       SdkBackend.applyDefaultQueueModes(createResult.session);
