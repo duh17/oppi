@@ -27,7 +27,7 @@ Oppi renders extension prompts, confirmations, editor requests, status, and widg
 │   iPhone / iPad     │
 │        Oppi         │
 └──────────┬──────────┘
-           │ Iroh or HTTPS / WSS
+           │ HTTPS / WSS (Tailscale supported)
            │ session stream + Pi extension UI
 ┌──────────▼──────────┐
 │     oppi-server     │
@@ -83,13 +83,7 @@ With the default HTTP/TLS transport, the phone must reach the server over LAN, T
 oppi pair --host <hostname-or-ip>
 ```
 
-Iroh mode connects through a signed server endpoint ID, either directly or through an Iroh relay. It works without an Oppi host, port, TLS certificate, LAN, or Tailscale:
-
-```bash
-OPPI_IROH_TRANSPORT=1 OPPI_IROH_INVITE_MODE=irohOnly oppi serve
-```
-
-Oppi rejects HTTP fallback for an Iroh-only invite and its device token.
+Supported remote access is authenticated HTTPS/WSS, including through Tailscale.
 
 Notes:
 

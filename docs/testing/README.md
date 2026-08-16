@@ -69,24 +69,6 @@ E2E_NATIVE=1 npm run test:e2e
 npm run test:e2e # Docker Compose mode when that environment is explicitly needed
 ```
 
-The dedicated Iroh container matrix is non-skippable. It does not publish the Oppi HTTP port to its client. It pairs with an Iroh-only invite, creates state through the tunnel, and exercises REST mutations, uploads, file ranges, focused/app-event WebSockets, reconnect/catch-up, cancellation, auth rejection, and binary dictation:
-
-```bash
-cd server
-npm run test:e2e:iroh
-```
-
-The compose topology lives in `server/e2e/docker-compose.iroh-isolated.yml`. It uses separate containers and ephemeral volumes, does not use host networking or `host.docker.internal`, and fails if the assertion harness does not execute its full matrix.
-
-Collect transport evidence with the separate, non-gating Iroh performance lane:
-
-```bash
-cd server
-npm run bench:iroh-network
-```
-
-It compares HTTP direct, path-asserted Iroh direct, and path-asserted forced relay with fixed sample counts. The relay containers use separate egress networks and block peer UDP while retaining only their resolved public-relay traffic. Raw JSON and the Markdown recommendation are written to `.internal/reports/iroh-benchmark-<timestamp>.{json,md}`; Compose logs remain under `/tmp`.
-
 ## Apple
 
 From `clients/apple/`:
@@ -328,22 +310,6 @@ Run after Apple UI or rendering changes. From the repo root:
 bun scripts/duplication-scan.ts
 ```
 
-### Iroh transport checks
-
-After an Apple Iroh transport change, regenerate the project and run the focused transport suites before the broader app build:
-
-```bash
-cd clients/apple
-xcodegen generate
-bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- \
-  xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test \
-  -only-testing:OppiTests/IrohTransportTests \
-  -only-testing:OppiTests/IrohConnectionManagerTests \
-  -only-testing:OppiTests/IrohFrameCodecTests \
-  -only-testing:OppiTests/IrohInvitePairingClientTests
-```
-
-The server and Apple implementations must agree on metadata version `2`, `oppi/pair/1`, `oppi/http/1`, and the `httpTunnel` preface. The isolated container matrix proves the Node/server transport. Focused Apple tests and a simulator build prove the IrohLib integration compiles; a live Apple-to-container run is separate interoperability evidence.
 
 ### Protocol checks
 

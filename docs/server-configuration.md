@@ -18,7 +18,7 @@ oppi config set --help
 - Paths use dot notation (`tls.mode`, `runtimeEnv.TTS_BASE_URL`).
 - `oppi config set` without enough arguments lists supported keys and current values.
 - Unknown keys are ignored on startup and reported by `oppi config validate`.
-- Many keys need a **server restart** before they take effect (`asr`, `tls`, `iroh`, `port`, `host`, `runtimeEnv`).
+- Many keys need a **server restart** before they take effect (`asr`, `tls`, `port`, `host`, `runtimeEnv`).
 
 From the Oppi agent tool, the same commands are available under the approval policy. Prefer `config get` / `config show` before `config set`.
 
@@ -72,8 +72,8 @@ Server-global Skills and Extensions are managed from the Apple app (**Skills** /
 Useful companion docs:
 
 - [extension-native-ui.md](extension-native-ui.md) — mobile-safe extension UI surfaces
-- [onboarding.md](onboarding.md) — install, pair, Iroh
-- [networking.md](networking.md) — HTTPS / Iroh routing
+- [onboarding.md](onboarding.md) — install and pair over HTTPS/WSS
+- [networking.md](networking.md) — supported HTTPS/WSS routing
 
 Provider API keys use `pi auth`, not Oppi config.
 
@@ -83,7 +83,6 @@ Provider API keys use `pi auth`, not Oppi config.
 | --- | --- |
 | `port` / `host` | Listen address (restart) |
 | `tls.mode` | `disabled`, `self-signed`, `tailscale`, `manual` (restart) |
-| `iroh.enabled` / `iroh.relays` | Host-free transport (restart) |
 | `asr.sttEndpoint` | Dictation STT backend (restart) |
 | `runtimeEnv.<NAME>` | Host runtime env, including TTS URLs (restart) |
 | `extensions.voice.defaultVoiceId` | Default voice id |
