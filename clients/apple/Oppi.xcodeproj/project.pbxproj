@@ -2624,13 +2624,6 @@
 			path = Support;
 			sourceTree = "<group>";
 		};
-		263EFCAE50BD67A0D4EDFD79 /* Shared */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = Shared;
-			sourceTree = "<group>";
-		};
 		2A3ED4D76F7128528B4862A0 /* Views */ = {
 			isa = PBXGroup;
 			children = (
@@ -2990,7 +2983,6 @@
 				CCCD0FEEB0FA6CA03D5FB4BE /* Formatting */,
 				67A4BFE894238F682E52B210 /* Models */,
 				462286059792C3F45FAABF72 /* Runtime */,
-				263EFCAE50BD67A0D4EDFD79 /* Shared */,
 				C84DC2265EFE2E8B916FE05E /* Stores */,
 			);
 			path = OppiCore;
