@@ -12,7 +12,7 @@ Oppi's supported remote transport is authenticated HTTPS/WSS. Automatic Apple ro
 
 Device authentication uses a per-device P-256 signing key, short-lived HTTPS access token, single-use refresh challenge, and HTTP/WSS token refresh. The owner `sk_` credential is accepted only on the Unix socket. Existing `dt_` credentials migrate transparently over HTTPS; revocation removes the token and its binding and closes matching live WebSockets.
 
-Older Iroh-only persisted connections are unsupported and must be migrated by pairing the server over HTTPS/Tailscale again. They never fall back to plaintext.
+Older persisted connections without an HTTPS endpoint are unsupported and must be paired again over HTTPS/Tailscale. They never fall back to plaintext.
 
 ## Pairing and recovery
 

@@ -151,10 +151,7 @@ struct OnboardingView: View {
 
     private func testConnection(inviteURL: URL) async {
         guard let credentials = InviteBootstrapService.credentials(from: inviteURL) else {
-            let version = URLComponents(url: inviteURL, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "v" })?.value
-            connectionTest = .failed(version == "4"
-                ? "Iroh connections are unsupported. Ask the server owner for an HTTPS/Tailscale invite."
-                : "Received an invalid nearby invite. Try again or use the QR code.")
+            connectionTest = .failed("Received an invalid nearby invite. Try again or use the QR code.")
             return
         }
 
@@ -411,7 +408,7 @@ enum InviteBootstrapService {
         }
     ) async throws -> InviteBootstrapResult {
         guard credentials.resolvedScheme == .https, let baseURL = credentials.baseURL else {
-            throw InviteBootstrapError.message("HTTPS is required. Iroh connections are unsupported; ask the server owner for an HTTPS/Tailscale invite.")
+            throw InviteBootstrapError.message("HTTPS is required. Ask the server owner for an HTTPS/Tailscale invite.")
         }
         let existingFingerprint = existingCredentials?.normalizedServerFingerprint
         let inviteFingerprint = credentials.normalizedServerFingerprint

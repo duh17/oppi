@@ -272,14 +272,14 @@ struct PairedServerTests {
         #expect(server.baseURL?.absoluteString == "https://192.168.1.50:7749")
     }
 
-    @Test("Old Iroh-only records fail with an HTTPS migration error")
-    func oldIrohOnlyRecordFailsClearly() throws {
+    @Test("Old transport-only records fail with an HTTPS migration error")
+    func oldTransportOnlyRecordFailsClearly() throws {
         let json = """
         {
           "id": "sha256:old",
           "name": "Old server",
           "token": "dt_old",
-          "transports": {"preference":"irohOnly"},
+          "transports": {"preference":"unsupported"},
           "addedAt": 0,
           "sortOrder": 0
         }
@@ -287,9 +287,9 @@ struct PairedServerTests {
 
         do {
             _ = try JSONDecoder().decode(PairedServer.self, from: Data(json.utf8))
-            Issue.record("Expected old Iroh-only record to fail")
+            Issue.record("Expected old transport-only record to fail")
         } catch let DecodingError.dataCorrupted(context) {
-            #expect(context.debugDescription == "Unsupported Iroh connection; migrate this server to HTTPS/Tailscale")
+            #expect(context.debugDescription == "Unsupported connection; pair this server over HTTPS/Tailscale again")
         } catch {
             Issue.record("Expected a clear HTTPS migration decoding error")
         }

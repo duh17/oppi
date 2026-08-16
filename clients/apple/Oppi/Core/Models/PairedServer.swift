@@ -95,7 +95,7 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
             throw DecodingError.dataCorruptedError(
                 forKey: .transports,
                 in: container,
-                debugDescription: "Unsupported Iroh connection; migrate this server to HTTPS/Tailscale"
+                debugDescription: "Unsupported connection; pair this server over HTTPS/Tailscale again"
             )
         }
         self.id = try container.decode(String.self, forKey: .id)

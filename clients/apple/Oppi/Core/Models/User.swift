@@ -82,7 +82,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
             throw DecodingError.dataCorruptedError(
                 forKey: .transports,
                 in: container,
-                debugDescription: "Unsupported Iroh connection; migrate this server to HTTPS/Tailscale"
+                debugDescription: "Unsupported connection; pair this server over HTTPS/Tailscale again"
             )
         }
         self.init(
@@ -141,7 +141,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         let queryItems = components.queryItems ?? []
         if let version = queryItems.first(where: { $0.name == "v" })?.value,
-           !version.isEmpty, version != "3", version != "4" { return nil }
+           !version.isEmpty, version != "3" { return nil }
         if let invite = queryItems.first(where: { $0.name == "invite" })?.value,
            let decoded = decodeBase64URL(invite),
            let raw = String(data: decoded, encoding: .utf8) {

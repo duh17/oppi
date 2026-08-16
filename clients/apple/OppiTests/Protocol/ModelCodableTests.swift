@@ -480,9 +480,10 @@ struct ServerCredentialsInviteSecurityTests {
         let inviteB64 = Data(json.utf8).base64URLEncodedString
 
         let unsupported = try #require(URL(string: "oppi://connect?v=2&invite=\(inviteB64)"))
-        let creds = ServerCredentials.decodeInviteURL(unsupported)
+        let retired = try #require(URL(string: "oppi://connect?v=4&invite=\(inviteB64)"))
 
-        #expect(creds == nil)
+        #expect(ServerCredentials.decodeInviteURL(unsupported) == nil)
+        #expect(ServerCredentials.decodeInviteURL(retired) == nil)
     }
 
     @Test func decodeInviteURLRejectsUnknownRoute() throws {
