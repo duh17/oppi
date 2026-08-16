@@ -40,6 +40,29 @@ struct InviteBootstrapServiceTests {
         #expect(result.effectiveCredentials.deviceCredential?.accessToken == "at_paired")
     }
 
+    @Test func olderServerPairingResponseKeepsTheIssuedDeviceToken() async throws {
+        let log = InviteBootstrapCallLog()
+        let pairingAPI = RecordingInviteBootstrapAPI(log: log, deviceToken: "dt_old_server")
+        let authenticatedAPI = RecordingInviteBootstrapAPI(log: log)
+        var apis = [pairingAPI, authenticatedAPI]
+        var factoryTokens: [String] = []
+
+        let result = try await InviteBootstrapService.validateAndBootstrap(
+            credentials: credentials(),
+            existingCredentials: nil,
+            confirmTrust: { _ in true },
+            apiFactory: { _, token, _ in
+                factoryTokens.append(token)
+                return apis.removeFirst()
+            },
+            deviceKeyProvider: { InMemoryP256DeviceKey() }
+        )
+
+        #expect(factoryTokens == ["", "dt_old_server"])
+        #expect(result.effectiveCredentials.token == "dt_old_server")
+        #expect(result.effectiveCredentials.deviceCredential == nil)
+    }
+
     @Test func cancelledTrustDoesNotProbeOrExchangePairingToken() async throws {
         let log = InviteBootstrapCallLog()
         var factoryCalled = false
@@ -133,10 +156,16 @@ private actor InviteBootstrapCallLog {
 private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
     private let log: InviteBootstrapCallLog
     private let accessToken: String
+    private let deviceToken: String?
 
-    init(log: InviteBootstrapCallLog, accessToken: String = "at_current") {
+    init(
+        log: InviteBootstrapCallLog,
+        accessToken: String = "at_current",
+        deviceToken: String? = nil
+    ) {
         self.log = log
         self.accessToken = accessToken
+        self.deviceToken = deviceToken
     }
 
     func pairDevice(
@@ -147,6 +176,14 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
         await log.append("pair:\(pairingToken)")
         #expect(devicePublicKey.kty == "EC")
         #expect(devicePublicKey.crv == "P-256")
+        if let deviceToken {
+            return PairDeviceResponse(
+                deviceId: "",
+                accessToken: "",
+                expiresAt: 0,
+                deviceToken: deviceToken
+            )
+        }
         return PairDeviceResponse(
             deviceId: "dev_https",
             accessToken: accessToken,

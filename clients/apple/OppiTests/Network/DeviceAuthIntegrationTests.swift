@@ -7,12 +7,24 @@ import Testing
 private struct StubMigrationClient: DeviceAuthMigrationTransport {
     let credential: DeviceCredential?
     let error: DeviceAuthError?
+    let pairResponse: PairDeviceResponse?
+
+    init(
+        credential: DeviceCredential?,
+        error: DeviceAuthError?,
+        pairResponse: PairDeviceResponse? = nil
+    ) {
+        self.credential = credential
+        self.error = error
+        self.pairResponse = pairResponse
+    }
 
     func migrateDevice(
         deviceName: String?,
         devicePublicKey: DevicePublicKey
     ) async throws -> PairDeviceResponse {
         if let error { throw error }
+        if let pairResponse { return pairResponse }
         let credential = try #require(credential)
         return PairDeviceResponse(
             deviceId: credential.deviceId,
@@ -114,6 +126,32 @@ struct DeviceAuthMigrationServiceTests {
         let result = await service.migrateIfNeeded(server)
 
         #expect(result.deviceCredential?.deviceId == "dev_1")
+        #expect(persistCalls == 0)
+    }
+
+    @Test func dtOnlyMigrateResponseLeavesStoredTokenUsable() async throws {
+        var persistCalls = 0
+        let service = DeviceAuthMigrationService(
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            clientFactory: { _ in
+                StubMigrationClient(
+                    credential: nil,
+                    error: nil,
+                    pairResponse: PairDeviceResponse(
+                        deviceId: "",
+                        accessToken: "",
+                        expiresAt: 0,
+                        deviceToken: "dt_old_server"
+                    )
+                )
+            },
+            persist: { _ in persistCalls += 1 }
+        )
+
+        let result = await service.migrateIfNeeded(try legacyServer())
+
+        #expect(result.token == "dt_legacy")
+        #expect(result.deviceCredential == nil)
         #expect(persistCalls == 0)
     }
 

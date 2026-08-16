@@ -32,6 +32,8 @@ After pairing, Oppi uses authenticated HTTPS/WSS. Automatic routing evaluates ve
 
 Before pairing, the app uses a read-only HTTPS `GET /health` probe and then sends exactly one `POST /pair` with the device's P-256 public key. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
 
+Existing `dt_` pairings stay usable if the app or server updates first. During a mixed update, `/pair` still issues a `dt_` when the client has no device key, and a new app keeps a `dt_` from an older server until it can migrate.
+
 After pairing, the client keeps HTTPS route health evidence. Availability failures suppress a route only for that pass; authentication and transport-integrity failures remain fail-closed. See [Networking and connection routing](networking.md) for recovery details.
 
 ## Pair another device

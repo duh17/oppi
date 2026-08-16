@@ -388,6 +388,20 @@ private extension Data {
     }
 }
 
+@Suite("PairDeviceResponse")
+struct PairDeviceResponseTests {
+    @Test func olderPairingResponseKeepsTheIssuedDeviceToken() throws {
+        let json = """
+        {"deviceToken":"dt_old_server"}
+        """
+        let decoded = try JSONDecoder().decode(PairDeviceResponse.self, from: Data(json.utf8))
+
+        #expect(decoded.deviceToken == "dt_old_server")
+        #expect(decoded.accessToken.isEmpty)
+        #expect(decoded.deviceCredential == nil)
+    }
+}
+
 @Suite("ServerCredentials Invite Security")
 struct ServerCredentialsInviteSecurityTests {
     private func defaultPayloadV3() -> InvitePayloadV3Fixture {

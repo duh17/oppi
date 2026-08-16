@@ -51,8 +51,13 @@ final class DeviceAuthMigrationService {
                 deviceName: server.name,
                 devicePublicKey: publicKey
             )
+            guard let deviceCredential = response.deviceCredential else {
+                // A dt_-only or otherwise incomplete replacement must not wipe
+                // the stored token. Leave the pairing usable until a later pass.
+                return server
+            }
             var migrated = server
-            migrated.deviceCredential = response.deviceCredential
+            migrated.deviceCredential = deviceCredential
             migrated.token = ""
             try persist(migrated)
             return migrated
