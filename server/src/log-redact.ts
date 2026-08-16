@@ -15,12 +15,7 @@ const SENSITIVE_KEY =
 
 const SENSITIVE_EXACT_NORMALIZED_KEYS = new Set([
   "authdevicetokens",
-  "clientnodeid",
   "deviceid",
-  "endpointid",
-  "irohdevicetokenbindings",
-  "irohnodeid",
-  "nodeid",
   "pushdevicetokens",
 ]);
 
@@ -37,6 +32,8 @@ const SENSITIVE_NORMALIZED_KEY_TERMS = [
   "clientsecret",
   "accesstoken",
   "authtoken",
+  "nonce",
+  "signature",
 ] as const;
 
 export function isSensitiveLogKey(key: string): boolean {
@@ -70,7 +67,7 @@ const SECRET_VALUE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
     replacement: "Bearer [REDACTED]",
   },
   {
-    pattern: /\b(?:sk|pt|dt)_[A-Za-z0-9_-]{8,}\b/g,
+    pattern: /\b(?:sk|pt|dt|at)_[A-Za-z0-9_-]{8,}\b/g,
     replacement: REDACTED,
   },
   {

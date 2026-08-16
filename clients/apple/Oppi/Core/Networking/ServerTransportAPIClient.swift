@@ -1,21 +1,14 @@
 import Foundation
 
-/// Canonical bearer header construction for every authenticated HTTP and
-/// WebSocket request, including requests sent to the Iroh loopback proxy.
 enum ServerAuthorization {
-    static func headerValue(token: String) -> String {
-        "Bearer \(token)"
-    }
+    static func headerValue(token: String) -> String { "Bearer \(token)" }
 
     static func apply(token: String, to request: inout URLRequest) {
         request.setValue(headerValue(token: token), forHTTPHeaderField: "Authorization")
     }
 }
 
-/// Builds a transport-aware API client for short-lived processes such as App
-/// Intents. Iroh managers and their loopback listeners are always shut down
-/// before the operation returns; normal app UI uses ConnectionCoordinator
-/// ownership instead.
+/// Builds the HTTPS client used by short-lived app intents and extensions.
 enum ServerTransportAPIClient {
     static func withClient<Result: Sendable>(
         for server: PairedServer,
@@ -25,97 +18,25 @@ enum ServerTransportAPIClient {
         lanReachabilityProbe: @Sendable (EndpointSelection, ServerCredentials) async -> Bool = { selection, credentials in
             await LANEndpointSelection.isReachable(selection, credentials: credentials)
         },
-        managerFactory: @Sendable (IrohServerTransport) -> IrohConnectionManager = { metadata in
-            IrohConnectionManager(iroh: metadata)
-        },
-        irohRelayPreparer: @Sendable (IrohServerTransport) async throws -> Void = { metadata in
-            try await IrohTransportRegistry.shared.prepare(iroh: metadata)
-        },
         httpAvailabilityProbe: @Sendable (APIClient) async throws -> Void = { client in
-            guard try await client.health() else {
-                throw IrohTransportError.protocolViolation("Server health probe did not succeed")
-            }
-        },
-        irohAvailabilityProbe: @Sendable (IrohConnectionManager) async throws -> Void = { manager in
-            _ = try await manager.selectedPathEvidence()
+            guard try await client.health() else { throw APIError.invalidResponse }
         },
         operation: @Sendable (APIClient) async throws -> Result
     ) async throws -> Result {
         let credentials = server.credentials
-        let discoveredLANCandidate: LANDiscoveredEndpoint? = if server.effectiveRouteMode.requestedTransports.contains(.https) {
-            await lanEndpointProvider(credentials)
-        } else {
-            nil
+        let discovered = await lanEndpointProvider(credentials)
+        let verified: LANDiscoveredEndpoint? = if let discovered,
+                          let selection = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered),
+                          selection.transportPath == .lan,
+                          await lanReachabilityProbe(selection, credentials) {
+            discovered
+        } else { nil }
+        guard let selection = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: verified) else {
+            throw APIError.server(status: 400, message: "Unsupported HTTPS server endpoint")
         }
-        let verifiedLANEndpoint: LANDiscoveredEndpoint?
-        if let discoveredLANCandidate,
-           let selection = LANEndpointSelection.select(
-               credentials: credentials,
-               discoveredEndpoint: discoveredLANCandidate
-           ), selection.transportPath == .lan,
-           await lanReachabilityProbe(selection, credentials) {
-            verifiedLANEndpoint = discoveredLANCandidate
-        } else {
-            verifiedLANEndpoint = nil
-        }
-
-        let candidates = try ServerTransportPlanResolver.candidates(
-            credentials: credentials,
-            mode: server.effectiveRouteMode,
-            discoveredLANEndpoint: verifiedLANEndpoint
-        )
-
-        for candidate in candidates {
-            switch candidate {
-            case .http(let selection):
-                let client = makeHTTPClient(for: server, selection: selection)
-                do {
-                    try await httpAvailabilityProbe(client)
-                } catch {
-                    guard ServerRouteFailure.mayAdvance(after: error) else { throw error }
-                    continue
-                }
-
-                // The operation starts only after the read-only availability
-                // probe succeeds. Never catch and route around this call: a
-                // mutation can have reached the server before its error returns.
-                return try await operation(client)
-
-            case .iroh(let metadata):
-                // Validate before any process-global relay membership change or
-                // manager construction — same order as main app and onboarding.
-                do {
-                    try IrohPeerValidator.validate(metadata, requiredALPN: IrohTunnelProtocol.alpn)
-                } catch {
-                    guard ServerRouteFailure.mayAdvance(after: error) else { throw error }
-                    continue
-                }
-
-                do {
-                    try await irohRelayPreparer(metadata)
-                } catch {
-                    guard ServerRouteFailure.mayAdvance(after: error) else { throw error }
-                    continue
-                }
-
-                let manager = managerFactory(metadata)
-                var operationStarted = false
-                do {
-                    try await irohAvailabilityProbe(manager)
-                    let baseURL = try await manager.startProxy(token: server.token)
-                    let client = APIClient(baseURL: baseURL, token: server.token)
-                    operationStarted = true
-                    let result = try await operation(client)
-                    await manager.shutdown()
-                    return result
-                } catch {
-                    await manager.shutdown()
-                    guard !operationStarted, ServerRouteFailure.mayAdvance(after: error) else { throw error }
-                }
-            }
-        }
-
-        throw IrohTransportError.unavailable("No authorized server transport is reachable")
+        let client = try makeHTTPClient(for: server, selection: selection)
+        try await httpAvailabilityProbe(client)
+        return try await operation(client)
     }
 
     @MainActor
@@ -126,32 +47,38 @@ enum ServerTransportAPIClient {
         let discovery = LANDiscovery()
         discovery.start()
         defer { discovery.stop() }
-
         let startedAt = ContinuousClock.now
         while ContinuousClock.now - startedAt < timeout {
-            if let endpoint = discovery.endpoints.first(where: { endpoint in
-                LANEndpointSelection.select(
-                    credentials: credentials,
-                    discoveredEndpoint: endpoint
-                )?.transportPath == .lan
-            }) {
-                return endpoint
-            }
+            if let endpoint = discovery.endpoints.first(where: {
+                LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: $0)?.transportPath == .lan
+            }) { return endpoint }
             try? await Task.sleep(for: .milliseconds(25))
         }
         return nil
     }
 
-    private static func makeHTTPClient(
-        for server: PairedServer,
-        selection: EndpointSelection
-    ) -> APIClient {
-        APIClient(environment: OppiClientEnvironment(
+    private static func makeHTTPClient(for server: PairedServer, selection: EndpointSelection) throws -> APIClient {
+        let client = APIClient(environment: OppiClientEnvironment(
             baseURL: selection.baseURL,
             bearerToken: server.token,
             pinnedCertificateFingerprint: server.tlsCertFingerprint,
             tlsServerName: selection.tlsServerName
         ))
+        guard let credential = server.deviceCredential else { return client }
+        let session = DeviceAuthSession(
+            credential: credential,
+            key: try DeviceKeyProvider.shared.loadOrCreate(),
+            transport: client,
+            onRefresh: { result in
+                try? KeychainDeviceCredentialMerger.mergeRefresh(
+                    serverId: server.id,
+                    accessToken: result.accessToken,
+                    expiresAt: Int64(result.expiresAt),
+                    refreshChallenge: result.refreshChallenge
+                )
+            }
+        )
+        client.attachAuthSession(session)
+        return client
     }
-
 }

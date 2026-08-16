@@ -16,8 +16,7 @@ const secrets = {
   owner: "sk_owner-output-fixture-secret",
   pairing: "pt_pairing-output-fixture-secret",
   authDevice: "dt_auth-output-fixture-secret",
-  irohDevice: "dt_iroh-output-fixture-secret",
-  irohClient: "iroh-client-output-fixture-id",
+  accessToken: "at_access-output-fixture-secret",
   push: "apns-output-fixture-secret",
   liveActivity: "live-output-fixture-secret",
   runtime: "runtime-output-fixture-secret",
@@ -26,14 +25,8 @@ const secrets = {
 const credentialPayload = {
   token: secrets.owner,
   pairingToken: secrets.pairing,
-  authDeviceTokens: [secrets.authDevice],
-  irohDeviceTokenBindings: [
-    {
-      token: secrets.irohDevice,
-      clientNodeId: secrets.irohClient,
-      allowedTransports: ["http", "iroh"],
-    },
-  ],
+  authDevices: [{ deviceId: "dev-output-fixture", token: secrets.authDevice }],
+  authAccessTokens: [{ deviceId: "dev-output-fixture", token: secrets.accessToken }],
   pushDeviceTokens: [secrets.push],
   liveActivityToken: secrets.liveActivity,
   runtimeEnv: { OPENAI_API_KEY: secrets.runtime, TTS_BASE_URL: "http://127.0.0.1:7937" },
@@ -49,19 +42,18 @@ afterEach(() => {
 });
 
 describe("credential output redaction", () => {
-  it("redacts credential-bearing values while preserving counts and transport metadata", () => {
+  it("redacts credential-bearing values while preserving collection counts", () => {
     const redacted = redactCredentialValue(credentialPayload);
     const text = JSON.stringify(redacted);
 
     expectNoFixtureCredentials(redacted);
+    expect(text).toContain("[REDACTED 1 device]");
     expect(text).toContain("[REDACTED 1 token]");
-    expect(text).toContain('"count":1');
-    expect(text).toContain('"transports":["http","iroh"]');
     expect(text).toContain('"TTS_BASE_URL":"http://127.0.0.1:7937"');
   });
 
-  it("redacts Oppi bearer prefixes and authorization values embedded in text", () => {
-    const input = `owner=${secrets.owner} pair=${secrets.pairing} device=${secrets.authDevice} Authorization: Bearer ${secrets.irohDevice}`;
+  it("redacts bearer prefixes and authorization values embedded in text", () => {
+    const input = `owner=${secrets.owner} pair=${secrets.pairing} device=${secrets.authDevice} Authorization: Bearer ${secrets.accessToken}`;
     const output = redactCredentialString(input);
 
     expectNoFixtureCredentials(output);
@@ -72,7 +64,7 @@ describe("credential output redaction", () => {
     const output = redactCredentialString(
       [
         "{",
-        `  "clientNodeId": "${secrets.irohClient}",`,
+        `  "deviceId": "dev-output-fixture",`,
         `  "pushDeviceTokens": ["${secrets.push}"],`,
         `  "liveActivityToken": "${secrets.liveActivity}",`,
         `  "OPENAI_API_KEY": "${secrets.runtime}"`,
@@ -94,8 +86,8 @@ describe("credential output redaction", () => {
       ok: true,
       data: {
         token: "[REDACTED]",
-        authDeviceTokens: "[REDACTED 1 token]",
-        irohDeviceTokenBindings: { count: 1, transports: ["http", "iroh"] },
+        authDevices: "[REDACTED 1 device]",
+        authAccessTokens: "[REDACTED 1 token]",
       },
     });
   });

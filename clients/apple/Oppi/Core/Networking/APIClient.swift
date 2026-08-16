@@ -68,6 +68,19 @@ private final class APIClientResponseFailureObserverBox: @unchecked Sendable {
     }
 }
 
+private final class DeviceAuthSessionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var session: DeviceAuthSession?
+
+    func set(_ session: DeviceAuthSession?) {
+        lock.withLock { self.session = session }
+    }
+
+    func get() -> DeviceAuthSession? {
+        lock.withLock { self.session }
+    }
+}
+
 private struct SessionCommandRejectedError: LocalizedError {
     let message: String
 
@@ -119,6 +132,9 @@ actor APIClient: ClientLogUploading {
     let baseURL: URL
     let token: String
     let environment: OppiClientEnvironment
+    /// Device-key auth session. When set, the bearer comes from this session and
+    /// a 401 triggers a single-flight refresh with exactly one retry.
+    nonisolated private let authSessionBox = DeviceAuthSessionBox()
     private let tlsCertFingerprint: String?
     private let session: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
@@ -250,23 +266,44 @@ actor APIClient: ClientLogUploading {
         if let timeoutInterval {
             request.timeoutInterval = timeoutInterval
         }
-        ServerAuthorization.apply(token: token, to: &request)
+        ServerAuthorization.apply(token: try await authorizedToken(), to: &request)
         let (_, response) = try await performData(for: request)
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
-    /// Exchange a one-time pairing token for a long-lived auth device token.
+    /// Exchange a one-time pairing token for a device-key credential.
+    /// The server registers `devicePublicKey` and returns a short-lived access
+    /// token, not a long-lived bearer.
     func pairDevice(
         pairingToken: String,
         deviceName: String? = nil,
-        clientNodeId: String? = nil
+        devicePublicKey: DevicePublicKey
     ) async throws -> PairDeviceResponse {
         let body = PairDeviceRequest(
             pairingToken: pairingToken,
             deviceName: deviceName,
-            clientNodeId: clientNodeId
+            devicePublicKey: devicePublicKey
         )
         let (data, response) = try await requestNoAuth("POST", path: "/pair", body: body)
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(PairDeviceResponse.self, from: data)
+    }
+
+    /// Migrate a legacy `dt_` token to a device-key credential (idempotent).
+    /// Authenticated by the legacy token itself; the server revokes it only after
+    /// the replacement access token proves usable on a normal call.
+    func migrateDevice(
+        deviceName: String?,
+        devicePublicKey: DevicePublicKey
+    ) async throws -> PairDeviceResponse {
+        let (data, response) = try await request(
+            "POST",
+            path: "/auth/migrate",
+            body: MigrateDeviceRequest(
+                devicePublicKey: devicePublicKey,
+                deviceName: deviceName
+            )
+        )
         try checkStatus(response, data: data)
         return try JSONDecoder().decode(PairDeviceResponse.self, from: data)
     }
@@ -289,10 +326,18 @@ actor APIClient: ClientLogUploading {
     func serverInfo(bootstrapDeadline: BootstrapDeadline) async throws -> ServerInfo {
         var request = try URLRequest(url: makeURL(path: "/server/info"))
         request.httpMethod = "GET"
-        ServerAuthorization.apply(token: token, to: &request)
+        var current = try await authorizedToken()
+        ServerAuthorization.apply(token: current, to: &request)
         logger.debug("GET /server/info [bootstrap]")
 
-        let (data, response) = try await bootstrapData(for: request, deadline: bootstrapDeadline)
+        var (data, response) = try await bootstrapData(for: request, deadline: bootstrapDeadline)
+        if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
+            current = try await authorizedToken(forceRefresh: true)
+            var retry = try URLRequest(url: makeURL(path: "/server/info"))
+            retry.httpMethod = "GET"
+            ServerAuthorization.apply(token: current, to: &retry)
+            (data, response) = try await bootstrapData(for: retry, deadline: bootstrapDeadline)
+        }
         try checkStatus(response, data: data)
         return try JSONDecoder().decode(ServerInfo.self, from: data)
     }
@@ -1604,13 +1649,14 @@ actor APIClient: ClientLogUploading {
             pathSegments = ["sessions", sessionId, "attachments", attachmentId]
         }
         let url = try makeURL(pathSegments: pathSegments)
-        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-        req.httpMethod = "GET"
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         logger.debug("GET \(url.path)")
 
-        let (data, response) = try await performData(for: req)
+        let (data, response) = try await performAuthorized {
+            var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+            req.httpMethod = "GET"
+            req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            return req
+        }
         try checkStatus(response, data: data)
         try checkCompleteSessionAttachmentResponse(response, data: data)
         return data
@@ -1749,7 +1795,7 @@ actor APIClient: ClientLogUploading {
                 path: path,
                 queryItems: workspaceWorktreeQueryItems(worktreeId)
             ),
-            authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
+            authorizationProvider: mediaAuthorizationProvider(),
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: environment.tlsServerName,
             contentTypeHint: contentTypeHint,
@@ -1768,7 +1814,7 @@ actor APIClient: ClientLogUploading {
     ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
             url: try makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path),
-            authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
+            authorizationProvider: mediaAuthorizationProvider(),
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: environment.tlsServerName,
             contentTypeHint: contentTypeHint,
@@ -1804,7 +1850,7 @@ actor APIClient: ClientLogUploading {
             : ["sessions", sessionId, "attachments", attachmentId]
         return AuthenticatedMediaSource(
             url: try makeURL(pathSegments: pathSegments),
-            authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
+            authorizationProvider: mediaAuthorizationProvider(),
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: environment.tlsServerName,
             contentTypeHint: contentTypeHint,
@@ -2011,19 +2057,21 @@ actor APIClient: ClientLogUploading {
     }
 
     func request(_ method: String, path: String) async throws -> (Data, URLResponse) {
-        var req = try URLRequest(url: makeURL(path: path))
-        req.httpMethod = method
-        ServerAuthorization.apply(token: token, to: &req)
-        logger.debug("\(method) \(path)")
-        return try await performData(for: req)
+        try await performAuthorized {
+            var req = try URLRequest(url: self.makeURL(path: path))
+            req.httpMethod = method
+            logger.debug("\(method) \(path)")
+            return req
+        }
     }
 
     private func request(_ method: String, url: URL) async throws -> (Data, URLResponse) {
-        var req = URLRequest(url: url)
-        req.httpMethod = method
-        ServerAuthorization.apply(token: token, to: &req)
-        logger.debug("\(method) \(url.path)")
-        return try await performData(for: req)
+        try await performAuthorized {
+            var req = URLRequest(url: url)
+            req.httpMethod = method
+            logger.debug("\(method) \(url.path)")
+            return req
+        }
     }
 
     private func request<T: Encodable>(
@@ -2032,13 +2080,14 @@ actor APIClient: ClientLogUploading {
         body: T,
         encoder: JSONEncoder? = nil
     ) async throws -> (Data, URLResponse) {
-        var req = URLRequest(url: url)
-        req.httpMethod = method
-        ServerAuthorization.apply(token: token, to: &req)
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try (encoder ?? JSONEncoder()).encode(body)
-        logger.debug("\(method) \(url.path)")
-        return try await performData(for: req)
+        try await performAuthorized {
+            var req = URLRequest(url: url)
+            req.httpMethod = method
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try (encoder ?? JSONEncoder()).encode(body)
+            logger.debug("\(method) \(url.path)")
+            return req
+        }
     }
 
     func request<T: Encodable>(
@@ -2047,23 +2096,79 @@ actor APIClient: ClientLogUploading {
         body: T,
         encoder: JSONEncoder? = nil
     ) async throws -> (Data, URLResponse) {
-        var req = try URLRequest(url: makeURL(path: path))
-        req.httpMethod = method
-        ServerAuthorization.apply(token: token, to: &req)
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try (encoder ?? JSONEncoder()).encode(body)
-        logger.debug("\(method) \(path)")
-        return try await performData(for: req)
+        try await performAuthorized {
+            var req = try URLRequest(url: self.makeURL(path: path))
+            req.httpMethod = method
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try (encoder ?? JSONEncoder()).encode(body)
+            logger.debug("\(method) \(path)")
+            return req
+        }
     }
 
     func request(_ method: String, path: String, body: Data, contentType: String) async throws -> (Data, URLResponse) {
-        var req = try URLRequest(url: makeURL(path: path))
-        req.httpMethod = method
-        ServerAuthorization.apply(token: token, to: &req)
-        req.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        req.httpBody = body
-        logger.debug("\(method) \(path)")
-        return try await performData(for: req)
+        try await performAuthorized {
+            var req = try URLRequest(url: self.makeURL(path: path))
+            req.httpMethod = method
+            req.setValue(contentType, forHTTPHeaderField: "Content-Type")
+            req.httpBody = body
+            logger.debug("\(method) \(path)")
+            return req
+        }
+    }
+
+    // MARK: - Authorization
+
+    /// Resolve the bearer token, refreshing a device-key access token when it is
+    /// near expiry. Falls back to the static token for legacy/static credentials.
+    private func authorizedToken(forceRefresh: Bool = false) async throws -> String {
+        guard let authSession = authSessionBox.get() else { return token }
+        if forceRefresh {
+            return try await authSession.refreshAccessToken()
+        }
+        return try await authSession.currentAccessToken()
+    }
+
+    /// A per-request bearer resolver for AVFoundation media loading. It refreshes
+    /// (single-flight) when the access token is near expiry instead of returning a
+    /// 10-minute snapshot, so long playback outlives the token. Fails closed when
+    /// no non-empty bearer can be resolved (revoked/unknown device or an
+    /// unavailable device key) instead of issuing an unauthenticated request.
+    private func mediaAuthorizationProvider() -> @Sendable () async throws -> String {
+        let staticToken = token
+        return { [weak self] in
+            guard let self else {
+                return try Self.requireNonEmptyBearer(staticToken)
+            }
+            let current = try await self.authorizedToken()
+            return try Self.requireNonEmptyBearer(current)
+        }
+    }
+
+    private static func requireNonEmptyBearer(_ token: String) throws -> String {
+        guard !token.isEmpty else {
+            throw DeviceAuthError.challengeUnavailable
+        }
+        return ServerAuthorization.headerValue(token: token)
+    }
+
+    /// Apply the bearer token, perform the request, and on a 401 with a device-key
+    /// session refresh single-flight and retry exactly once. Refresh rejection
+    /// (revoked/unknown device) propagates so the caller fails closed.
+    private func performAuthorized(
+        buildingRequest: () throws -> URLRequest
+    ) async throws -> (Data, URLResponse) {
+        var request = try buildingRequest()
+        var current = try await authorizedToken()
+        ServerAuthorization.apply(token: current, to: &request)
+        var (data, response) = try await performData(for: request)
+        if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
+            current = try await authorizedToken(forceRefresh: true)
+            var retry = try buildingRequest()
+            ServerAuthorization.apply(token: current, to: &retry)
+            (data, response) = try await performData(for: retry)
+        }
+        return (data, response)
     }
 
     private func requestNoAuth<T: Encodable>(_ method: String, path: String, body: T) async throws -> (Data, URLResponse) {
@@ -2248,6 +2353,12 @@ actor APIClient: ClientLogUploading {
         responseFailureObserverBox.set(observer)
     }
 
+    /// Attach the device-key auth session used for bearer tokens and 401 refresh.
+    /// Nonisolated so callers on other actors can wire it without an await.
+    nonisolated func attachAuthSession(_ session: DeviceAuthSession?) {
+        authSessionBox.set(session)
+    }
+
     func checkStatus(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
@@ -2256,16 +2367,21 @@ actor APIClient: ClientLogUploading {
             let body = String(data: data, encoding: .utf8) ?? ""
             if let parsed = try? JSONDecoder().decode(ServerError.self, from: data) {
                 if let rawCode = parsed.code,
-                   let code = TunnelAuthenticationErrorCode(rawValue: rawCode) {
+                   !rawCode.isEmpty {
                     let error = APIError.codedServer(
                         status: http.statusCode,
                         message: parsed.error,
-                        code: code
+                        code: rawCode
                     )
                     responseFailureObserverBox.notify(error)
                     throw error
                 }
                 throw APIError.server(status: http.statusCode, message: parsed.error)
+            }
+            if http.statusCode == 401 {
+                let error = APIError.server(status: http.statusCode, message: body)
+                responseFailureObserverBox.notify(error)
+                throw error
             }
             throw APIError.server(status: http.statusCode, message: body)
         }
@@ -2295,5 +2411,84 @@ actor APIClient: ClientLogUploading {
     private struct ServerError: Decodable {
         let error: String
         let code: String?
+    }
+}
+
+// MARK: - DeviceAuthTransport
+
+/// `APIClient` is the challenge/refresh transport for its server. These calls are
+/// unauthenticated (they carry their own proof) and never embed credentials in URLs.
+extension APIClient: DeviceAuthTransport {
+    /// Build a challenge/refresh request body. These endpoints carry their own
+    /// device-key proof and are unauthenticated on the network listener, so they
+    /// must NEVER consult the attached auth session: doing so re-enters
+    /// `DeviceAuthSession.refreshAccessToken()` from inside its own in-flight
+    /// refresh and deadlocks. Use only the statically captured bearer.
+    private func deviceAuthRequest<T: Encodable>(_ method: String, path: String, body: T) async throws -> (Data, URLResponse) {
+        var req = try URLRequest(url: makeURL(path: path))
+        req.httpMethod = method
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONEncoder().encode(body)
+        if !token.isEmpty {
+            ServerAuthorization.apply(token: token, to: &req)
+        }
+        return try await performData(for: req)
+    }
+
+    func requestChallenge(deviceId: String) async throws -> DeviceAuthChallenge {
+        struct Body: Encodable { let deviceId: String }
+        let (data, response) = try await deviceAuthRequest(
+            "POST",
+            path: "/auth/challenge",
+            body: Body(deviceId: deviceId)
+        )
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw DeviceAuthError.challengeUnavailable
+        }
+        guard let challenge = try? JSONDecoder().decode(DeviceAuthChallenge.self, from: data) else {
+            throw DeviceAuthError.malformedResponse
+        }
+        return challenge
+    }
+
+    func refresh(
+        deviceId: String,
+        nonce: String,
+        signature: String
+    ) async throws -> DeviceAuthRefreshResult {
+        struct Body: Encodable {
+            let deviceId: String
+            let nonce: String
+            let signature: String
+        }
+        struct RefreshResponse: Decodable {
+            let accessToken: String
+            let expiresAt: Int
+            let refreshChallenge: DeviceAuthChallenge?
+        }
+        let (data, response) = try await deviceAuthRequest(
+            "POST",
+            path: "/auth/refresh",
+            body: Body(
+                deviceId: deviceId,
+                nonce: nonce,
+                signature: signature
+            )
+        )
+        guard let http = response as? HTTPURLResponse else {
+            throw DeviceAuthError.malformedResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let code = (try? JSONDecoder().decode(ServerError.self, from: data).error) ?? "refresh_failed"
+            throw DeviceAuthError.refreshRejected(code: code)
+        }
+        guard let decoded = try? JSONDecoder().decode(RefreshResponse.self, from: data) else {
+            throw DeviceAuthError.malformedResponse
+        }
+        return DeviceAuthRefreshResult(
+            accessToken: decoded.accessToken,
+            expiresAt: decoded.expiresAt,
+            refreshChallenge: decoded.refreshChallenge
+        )
     }
 }

@@ -226,6 +226,86 @@ struct ShareQuickSessionSenderTests {
         #expect(await transport.uploadedFileURLs.isEmpty)
         #expect(await transport.requests.map(\.httpMethod) == ["POST", "POST"])
     }
+
+    @Test func deviceKeyShareRefreshesOnceAndPersistsAcrossAttachments() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("shared file".utf8).write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let future = Int(Date().timeIntervalSince1970 * 1000) + 3_600_000
+        let credential = DeviceCredential(
+            deviceId: "dev-share",
+            accessToken: "at_expired",
+            expiresAt: Int64(Date().timeIntervalSince1970 * 1000) - 10_000, // already expired
+            refreshChallenge: nil
+        )
+        let server = try #require(ShareQuickSessionServer(
+            id: "server-1",
+            name: "Mac",
+            baseURL: URL(string: "https://mac.example:7749"),
+            token: "",
+            deviceCredential: credential,
+            tlsCertFingerprint: nil,
+            sortOrder: 0
+        ))
+
+        final class PersistedCredentialBox: @unchecked Sendable {
+            let lock = NSLock()
+            var credentials: [DeviceCredential] = []
+            func append(_ credential: DeviceCredential) {
+                lock.lock()
+                defer { lock.unlock() }
+                credentials.append(credential)
+            }
+            func count() -> Int {
+                lock.lock()
+                defer { lock.unlock() }
+                return credentials.count
+            }
+        }
+        let persisted = PersistedCredentialBox()
+
+        let transport = ShareSenderStubTransport(responses: [
+            // One challenge → one refresh, then the create/upload/command flow.
+            .json(200, #"{"nonce":"nonce-1","audience":"oppi:refresh:v1","expiresAt":\#(future)}"#),
+            .json(200, #"{"accessToken":"at_fresh","expiresAt":\#(future),"refreshChallenge":{"nonce":"nonce-2","audience":"oppi:refresh:v1","expiresAt":\#(future)}}"#),
+            .json(201, #"{"session":{"id":"session-2"}}"#),
+            .json(201, #"{"uploadId":"upload-1","contentUrl":"/content","maxFileBytes":1000,"expiresAt":0}"#),
+            .json(200, #"{"attachment":{"type":"file","id":"upload-1","source":"upload","name":"notes.txt","mimeType":"text/plain","sizeBytes":11,"sha256":null,"kind":"text","workspacePath":null}}"#),
+            .json(200, #"{"messages":[]}"#),
+        ])
+        let sender = ShareQuickSessionSender(
+            transport: transport,
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            persistCredential: { _, credential in persisted.append(credential) }
+        )
+        let workspace = ShareQuickSessionWorkspace(id: "ws-1", name: "Oppi", server: server)
+
+        _ = try await sender.send(
+            payloadID: "share-device-key",
+            text: "Summarize",
+            attachments: [ShareQuickSessionDraftAttachment(
+                name: "notes.txt",
+                mimeType: "text/plain",
+                fileURL: fileURL
+            )],
+            workspace: workspace
+        )
+
+        let requests = await transport.requests
+        let challengeRequests = requests.filter { $0.url?.path == "/auth/challenge" }
+        let refreshRequests = requests.filter { $0.url?.path == "/auth/refresh" }
+        #expect(challengeRequests.count == 1)
+        #expect(refreshRequests.count == 1)
+
+        // Every non-auth request carries the single refreshed bearer.
+        let authed = requests.filter { $0.url?.path.hasPrefix("/auth/") == false }
+        #expect(authed.count == 4)
+        for request in authed {
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer at_fresh")
+        }
+        #expect(persisted.count() == 1)
+    }
 }
 
 private actor ShareSenderStubTransport: ShareQuickSessionHTTPTransport {

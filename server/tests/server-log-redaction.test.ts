@@ -4,7 +4,6 @@ import { formatUnauthorizedAuthLog } from "../src/server.js";
 describe("auth log redaction", () => {
   it("logs auth presence for HTTP 401 without bearer material", () => {
     const line = formatUnauthorizedAuthLog({
-      transport: "http",
       method: "POST",
       path: "/workspaces/ws1/sessions",
       authorization: "Bearer sk_live_super_secret_token",

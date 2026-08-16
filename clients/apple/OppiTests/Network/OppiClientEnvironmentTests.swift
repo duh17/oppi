@@ -51,7 +51,7 @@ struct OppiClientEnvironmentTests {
         #expect(await client.environment == environment)
         #expect(await client.baseURL == baseURL)
         #expect(await client.token == "owner-token")
-        #expect(source.authorizationHeaderValue == "Bearer owner-token")
+        #expect(try await source.authorizationProvider() == "Bearer owner-token")
         #expect(source.tlsCertFingerprint == "sha256/example")
     }
 }

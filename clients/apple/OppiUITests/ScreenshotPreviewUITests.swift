@@ -1099,7 +1099,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
             (
                 id: "server-connections",
                 title: "More predictable server connections",
-                description: "Choose Automatic, HTTPS Only, or Iroh Only for each server; Oppi now follows that choice more consistently."
+                description: "Server connections use authenticated HTTPS/WSS, normally through LAN, Tailscale, or a reachable TLS endpoint."
             ),
         ]
 

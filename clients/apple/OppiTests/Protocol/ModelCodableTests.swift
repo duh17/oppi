@@ -379,50 +379,6 @@ private struct InvitePayloadV3Fixture: Codable {
     var fingerprint: String?
 }
 
-private struct SignedInviteEnvelopeV4Fixture: Codable {
-    var v: Int
-    var alg: String
-    var signedPayload: String
-    var publicKey: String
-    var signature: String
-}
-
-private struct InvitePayloadV4Fixture: Codable {
-    var v: Int
-    var name: String
-    var pairingToken: String
-    var fingerprint: String
-    var preference: String
-    var transports: InviteTransportsV4Fixture
-}
-
-private struct InviteTransportsV4Fixture: Codable {
-    var iroh: IrohInviteTransportV4Fixture?
-    var http: HTTPInviteTransportV4Fixture?
-}
-
-private struct IrohInviteTransportV4Fixture: Codable {
-    var version: Int
-    var nodeId: String
-    var alpns: [String]
-    var addressMode: String
-    var ticket: String?
-}
-
-private struct HTTPInviteTransportV4Fixture: Codable {
-    var host: String
-    var port: Int
-    var scheme: String
-    var tlsCertFingerprint: String?
-}
-
-private struct SignedInviteV4Fixture {
-    var url: URL
-    var envelope: SignedInviteEnvelopeV4Fixture
-    var payload: InvitePayloadV4Fixture
-    var fingerprint: String
-}
-
 private extension Data {
     var base64URLEncodedString: String {
         base64EncodedString()
@@ -445,53 +401,6 @@ struct ServerCredentialsInviteSecurityTests {
             name: "my-server",
             tlsCertFingerprint: "sha256:test-leaf",
             fingerprint: "sha256:test-fingerprint"
-        )
-    }
-
-    private func defaultPayloadV4() -> InvitePayloadV4Fixture {
-        InvitePayloadV4Fixture(
-            v: 4,
-            name: "host-free-mac",
-            pairingToken: "pt_v4_invite",
-            fingerprint: "sha256:test-fingerprint",
-            preference: "irohOnly",
-            transports: InviteTransportsV4Fixture(
-                iroh: IrohInviteTransportV4Fixture(
-                    version: 2,
-                    nodeId: "iroh-node-v4",
-                    alpns: ["oppi/pair/1", "oppi/http/1"],
-                    addressMode: "node-id",
-                    ticket: nil
-                ),
-                http: nil
-            )
-        )
-    }
-
-    private func makeSignedV4Invite(payload: InvitePayloadV4Fixture? = nil) throws -> SignedInviteV4Fixture {
-        let signingKey = Curve25519.Signing.PrivateKey()
-        let publicKey = signingKey.publicKey.rawRepresentation
-        let fingerprint = "sha256:\(Data(SHA256.hash(data: publicKey)).base64URLEncodedString)"
-        var signedPayload = payload ?? defaultPayloadV4()
-        signedPayload.fingerprint = fingerprint
-        let signedPayloadData = try JSONEncoder().encode(signedPayload)
-        let signedPayloadString = signedPayloadData.base64URLEncodedString
-        let signature = try signingKey.signature(for: Data(signedPayloadString.utf8))
-        let envelope = SignedInviteEnvelopeV4Fixture(
-            v: 4,
-            alg: "ed25519",
-            signedPayload: signedPayloadString,
-            publicKey: publicKey.base64URLEncodedString,
-            signature: signature.base64URLEncodedString
-        )
-        let envelopeData = try JSONEncoder().encode(envelope)
-        let invite = envelopeData.base64URLEncodedString
-        let url = try #require(URL(string: "oppi://connect?v=4&invite=\(invite)"))
-        return SignedInviteV4Fixture(
-            url: url,
-            envelope: envelope,
-            payload: signedPayload,
-            fingerprint: fingerprint
         )
     }
 
@@ -548,40 +457,6 @@ struct ServerCredentialsInviteSecurityTests {
         #expect(creds?.resolvedScheme == .https)
     }
 
-    @Test func decodeInviteURLAcceptsSignedV4IrohOnlyWithoutHTTPTransport() throws {
-        let fixture = try makeSignedV4Invite()
-
-        let creds = ServerCredentials.decodeInviteURL(fixture.url)
-
-        #expect(creds?.name == "host-free-mac")
-        #expect(creds?.pairingToken == "pt_v4_invite")
-        #expect(creds?.normalizedServerFingerprint == fixture.fingerprint)
-        #expect(creds?.transports.preference == .irohOnly)
-        #expect(creds?.transports.http == nil)
-        #expect(creds?.transports.iroh?.version == 2)
-        #expect(creds?.transports.iroh?.nodeId == "iroh-node-v4")
-        #expect(creds?.transports.iroh?.alpns == ["oppi/pair/1", "oppi/http/1"])
-        #expect(creds?.transports.iroh?.addressMode == .nodeId)
-        #expect(creds?.transports.iroh?.ticket == nil)
-        #expect(creds?.baseURL == nil)
-    }
-
-    @Test func decodeInviteURLRejectsV4SignedPayloadTampering() throws {
-        let fixture = try makeSignedV4Invite()
-        var tamperedPayload = fixture.payload
-        tamperedPayload.transports.iroh?.nodeId = "iroh-node-tampered"
-        let tamperedPayloadData = try JSONEncoder().encode(tamperedPayload)
-        var tamperedEnvelope = fixture.envelope
-        tamperedEnvelope.signedPayload = tamperedPayloadData.base64URLEncodedString
-        let tamperedEnvelopeData = try JSONEncoder().encode(tamperedEnvelope)
-        let tamperedInvite = tamperedEnvelopeData.base64URLEncodedString
-        let tamperedURL = try #require(URL(string: "oppi://connect?v=4&invite=\(tamperedInvite)"))
-
-        let creds = ServerCredentials.decodeInviteURL(tamperedURL)
-
-        #expect(creds == nil)
-    }
-
     @Test func decodeInviteURLRejectsUnsignedV3DeepLinkWithPins() throws {
         let payload = defaultPayloadV3()
         let data = try JSONEncoder().encode(payload)
@@ -605,9 +480,10 @@ struct ServerCredentialsInviteSecurityTests {
         let inviteB64 = Data(json.utf8).base64URLEncodedString
 
         let unsupported = try #require(URL(string: "oppi://connect?v=2&invite=\(inviteB64)"))
-        let creds = ServerCredentials.decodeInviteURL(unsupported)
+        let retired = try #require(URL(string: "oppi://connect?v=4&invite=\(inviteB64)"))
 
-        #expect(creds == nil)
+        #expect(ServerCredentials.decodeInviteURL(unsupported) == nil)
+        #expect(ServerCredentials.decodeInviteURL(retired) == nil)
     }
 
     @Test func decodeInviteURLRejectsUnknownRoute() throws {

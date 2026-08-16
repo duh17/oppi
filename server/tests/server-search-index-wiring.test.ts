@@ -1,10 +1,17 @@
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
+
+const originalTlsRejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+beforeAll(() => { process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; });
+afterAll(() => {
+  if (originalTlsRejectUnauthorized === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  else process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsRejectUnauthorized;
+});
 
 function writeSearchableTrace(path: string, text: string): void {
   const timestamp = new Date().toISOString();
@@ -23,6 +30,17 @@ function writeSearchableTrace(path: string, text: string): void {
   );
 }
 
+function enrollTestDevice(storage: Storage): string {
+  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = publicKey.export({ format: "jwk" }) as { x: string; y: string };
+  const result = storage.enrollViaPairing(
+    storage.issuePairingToken(),
+    { name: "search-test", publicKey: { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y } },
+  );
+  if (!result) throw new Error("test device enrollment failed");
+  return result.accessToken;
+}
+
 async function yieldToEventLoop(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
@@ -34,9 +52,10 @@ describe("Server search index wiring", () => {
     storage.updateConfig({
       host: "127.0.0.1",
       port: 0,
-      tls: { mode: "disabled" },
+      tls: { mode: "self-signed" },
     });
-    const token = storage.ensurePaired();
+    storage.ensurePaired();
+    const token = enrollTestDevice(storage);
     const session = storage.createSession("startup wiring title");
     session.workspaceId = "startup-wiring-workspace";
     const tracePath = join(dataDir, "startup-wiring.jsonl");
@@ -47,7 +66,7 @@ describe("Server search index wiring", () => {
     const server = new Server(storage);
     try {
       await server.start();
-      const searchUrl = `http://127.0.0.1:${server.port}/sessions/search?q=${encodeURIComponent(
+      const searchUrl = `https://127.0.0.1:${server.port}/sessions/search?q=${encodeURIComponent(
         "startup wiring searchable token",
       )}&workspaceId=startup-wiring-workspace&limit=10`;
       let results: Array<{ sessionId: string; workspaceId: string; title: string }> = [];

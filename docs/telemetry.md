@@ -145,22 +145,6 @@ The front page should focus on metrics that directly map to user experience. Kee
 | `server.ws_ping_timeout`                              | Dead connection detection.                                                                        |
 | Client logs: `WebSocket`, `AppEventStream`, `Network` | Reconnect storms, HTTP 1011s, POSIX disconnects, endpoint changes, and app-event stream failures. |
 
-### Iroh transport diagnostics
-
-Iroh emits privacy-safe, informational transport metrics without release SLOs:
-
-| Metric                                                                     | Why it matters                                                                                                                                                  |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `network.iroh_connection_ms`                                               | QUIC connection setup latency and coarse outcome.                                                                                                               |
-| `network.iroh_path_rtt_ms`                                                 | Selected direct/relay path RTT at connection and stream boundaries.                                                                                             |
-| `network.iroh_path_transition`                                             | Direct, relay, or unknown path changes.                                                                                                                         |
-| `network.iroh_reconnect`                                                   | Reconnect attempts, recoveries, and failures.                                                                                                                   |
-| `network.iroh_tunnel_duration_ms`                                          | Lifetime of a local HTTP/WebSocket tunnel.                                                                                                                      |
-| `network.iroh_tunnel_request_bytes` / `network.iroh_tunnel_response_bytes` | Observed per-tunnel byte volume, tagged by completion status, for throughput and relay-volume diagnosis. Failed pumps can undercount the final in-flight chunk. |
-| `network.iroh_tunnel_error`                                                | Coarse setup/pump error counts.                                                                                                                                 |
-
-Allowed tags are bounded categories such as `transport=iroh`, `path=direct|relay|unknown`, status, phase, reason, and coarse error kind. Telemetry and ordinary client logs must not include relay URLs or hosts, IP addresses, tokens, tickets, node IDs, endpoint IDs, or raw transport errors. The normal telemetry review prints these metrics in a separate informational Iroh section so they do not affect release-gate status.
-
 ### Attention and media interactions
 
 | Metric                         | Why it matters                                                                         |
@@ -298,8 +282,8 @@ Use the same tag names across clients, server metrics, logs, and dashboards when
 | `status`     | Bounded mechanical outcome. Common values are `ok`, `error`, `cancelled`, and `timeout`; transport metrics also use `connected`, `failed`, `attempt`, `recovered`, `completed`, and `setup_failed`. |
 | `result`     | Domain result, such as catch-up result: `applied`, `no_gap`, `ring_miss`, `fetch_failed`.                                                                                                           |
 | `reason`     | Why an event happened, such as `capabilityRefreshFailed` or `idle_timeout`.                                                                                                                         |
-| `transport`  | Active transport for metric samples: `http`, `iroh`, `lan`, `paired`, or `unknown`.                                                                                                                 |
-| `path`       | Privacy-safe selected network path: `direct`, `relay`, or `unknown`; never an IP, endpoint ID, relay URL, or relay host.                                                                            |
+| `transport`  | Active transport for metric samples: `http`, `lan`, `paired`, or `unknown`.                                                                                                                        |
+| `path`       | Privacy-safe selected network path: `direct` or `unknown`; never an IP, endpoint ID, relay URL, or relay host.                                                                                     |
 | `streamRole` | WebSocket role in client logs, such as `focused_session` or another low-cardinality stream name.                                                                                                    |
 | `error_kind` | Coarse error class for metrics: `network`, `timeout`, `decode`, `cancelled`, `not_connected`, or `other`.                                                                                           |
 | `category`   | Bounded turn error class: `request_too_large`, `overloaded`, `rate_limit`, `auth`, `timeout`, `connection`, `json_parse`, `terminated`, `other`, or `unknown`.                                       |

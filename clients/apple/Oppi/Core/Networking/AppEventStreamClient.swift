@@ -67,7 +67,11 @@ final class AppEventStreamClient {
     private(set) var status: Status = .disconnected
 
     private let url: URL
-    private let token: String
+    private var token: String
+    private let currentTokenProvider: (@Sendable () async throws -> String)?
+    /// Distinct forced refresh used only after a 401. Static-token streams leave
+    /// both providers nil and treat 401 as terminal.
+    private let refreshTokenProvider: (@Sendable () async throws -> String)?
     private let trustDelegate: PinnedServerTrustDelegate
     private let urlSession: URLSession
     private let reconnectDelay: @Sendable (Int) -> TimeInterval
@@ -90,12 +94,20 @@ final class AppEventStreamClient {
     /// Prevents stale stream termination handlers from closing a newer socket.
     private var connectionID: UInt64 = 0
 
+    /// True after a forced refresh has been consumed since the last successful
+    /// frame. A second 401 on a socket that was already refreshed once is
+    /// terminal, so a server that keeps rejecting freshly-issued tokens cannot
+    /// recurse into an unbounded refresh/reconnect loop.
+    private var didForceRefreshForConnection = false
+
     init(
         url: URL,
         token: String,
         tlsCertFingerprint: String? = nil,
         tlsServerName: String? = nil,
         diagnosticRemoteIdentity: String? = nil,
+        currentTokenProvider: (@Sendable () async throws -> String)? = nil,
+        refreshTokenProvider: (@Sendable () async throws -> String)? = nil,
         pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval,
         pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
         reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = WebSocketRecoveryPolicy.reconnectDelay,
@@ -104,6 +116,8 @@ final class AppEventStreamClient {
     ) {
         self.url = url
         self.token = token
+        self.currentTokenProvider = currentTokenProvider
+        self.refreshTokenProvider = refreshTokenProvider
         self.reconnectDelay = reconnectDelay
         self.diagnosticRemoteIdentity = diagnosticRemoteIdentity
         self.pingInterval = pingInterval
@@ -126,6 +140,7 @@ final class AppEventStreamClient {
         disconnect()
         connectionID &+= 1
         let thisConnection = connectionID
+        didForceRefreshForConnection = false
         status = .connecting
         reconnectAttempt = 0
 
@@ -135,7 +150,27 @@ final class AppEventStreamClient {
                 return
             }
             self.continuation = continuation
-            self.open(continuation: continuation)
+            if let currentTokenProvider = self.currentTokenProvider {
+                Task { [weak self] in
+                    do {
+                        let current = try await currentTokenProvider()
+                        guard let self,
+                              self.connectionID == thisConnection,
+                              self.status != .disconnected,
+                              !current.isEmpty else {
+                            self?.disconnect()
+                            return
+                        }
+                        self.token = current
+                        self.open(continuation: continuation)
+                    } catch {
+                        self?.logStreamError("Initial device token resolution failed", error: error)
+                        self?.disconnect()
+                    }
+                }
+            } else {
+                self.open(continuation: continuation)
+            }
 
             continuation.onTermination = { [weak self] _ in
                 Task { @MainActor in
@@ -212,6 +247,9 @@ final class AppEventStreamClient {
                         switch self?.status {
                         case .connecting, .reconnecting(_):
                             self?.status = .connected
+                            // A successfully received frame resets the forced-refresh
+                            // budget so a later natural token expiry can refresh again.
+                            self?.didForceRefreshForConnection = false
                         case .connected, .disconnected, nil:
                             break
                         }
@@ -230,7 +268,16 @@ final class AppEventStreamClient {
                     let statusCode = (ws.response() as? HTTPURLResponse)?.statusCode
                     reconnectReason = "receive_error"
                     reconnectCloseCode = String(ws.closeCode().rawValue)
-                    if let statusCode, WebSocketRecoveryPolicy.isNonRetryableHandshakeStatus(statusCode) {
+                    if statusCode == 401, let self, self.refreshTokenProvider != nil {
+                        // Expired/unknown device token: force-refresh exactly once, then
+                        // reconnect exactly once. A failed/empty refresh or a repeated
+                        // 401 disconnects terminally without a retry loop. Never call
+                        // `disconnect()` on the success path.
+                        shouldAttemptReconnect = false
+                        if await self.handleAuthFailure(ws: ws) {
+                            return
+                        }
+                    } else if let statusCode, WebSocketRecoveryPolicy.isNonRetryableHandshakeStatus(statusCode) {
                         shouldAttemptReconnect = false
                         reconnectReason = "handshake_http"
                         appEventClientLogger.error("App event stream handshake rejected with HTTP \(statusCode, privacy: .public)")
@@ -413,6 +460,38 @@ final class AppEventStreamClient {
             metadata[key] = value
         }
         ClientLog.error("AppEventStream", message, metadata: streamLogMetadata(extra: metadata))
+    }
+
+    /// Handle an auth 401 on `ws`: force-refresh exactly once, then reconnect
+    /// exactly once on success. A failed refresh, an empty token, or a repeated
+    /// 401 (already refreshed this connection) disconnects terminally.
+    /// Returns `true` when the socket has been replaced (the caller must stop
+    /// touching the old loop); `false` when the caller should disconnect.
+    private func handleAuthFailure(ws: AppEventWebSocketTransport) async -> Bool {
+        guard let refreshTokenProvider else { return false }
+        guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
+        guard !didForceRefreshForConnection else {
+            appEventClientLogger.error("Repeated 401 after forced refresh — disconnecting")
+            return false
+        }
+        do {
+            let refreshed = try await refreshTokenProvider()
+            guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
+            guard !refreshed.isEmpty else {
+                appEventClientLogger.error("Refresh returned an empty access token — disconnecting")
+                return false
+            }
+            token = refreshed
+            didForceRefreshForConnection = true
+            attemptReconnect(reason: "auth_refresh")
+            return true
+        } catch {
+            logStreamError(
+                "Device-key refresh failed on 401",
+                error: error
+            )
+            return false
+        }
     }
 
     private func attemptReconnect(reason: String, closeCode: String? = nil) {

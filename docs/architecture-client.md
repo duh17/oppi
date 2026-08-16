@@ -1,12 +1,12 @@
 # Oppi client architecture
 
-The Oppi Apple client controls and renders server-owned and terminal-owned Pi sessions. It keeps workspace navigation HTTP-first, reserves WebSockets for live streams, and renders the hot chat timeline through a UIKit-backed pipeline. The same HTTP/WebSocket clients connect to a normal remote endpoint or an app-local loopback proxy carried by Iroh.
+The Oppi Apple client controls and renders server-owned and terminal-owned Pi sessions. It keeps workspace navigation HTTP-first, reserves WebSockets for live streams, and renders the hot chat timeline through a UIKit-backed pipeline. HTTP/WebSocket clients use authenticated HTTPS/WSS routes.
 
 ## Audience and scope
 
 Read this page before changing iOS or macOS client transport code, session and workspace stores, workspace navigation, chat timeline state, extension UI rendering, dictation, or media playback.
 
-This page covers the Apple client structure. Server route, runtime, and storage details live in [Server architecture](architecture-server.md). For end-to-end LAN, paired HTTPS, and Iroh route selection, see [Networking and connection routing](networking.md).
+This page covers the Apple client structure. Server route, runtime, and storage details live in [Server architecture](architecture-server.md). For end-to-end LAN and paired HTTPS route selection, see [Networking and connection routing](networking.md).
 
 ## Client responsibilities
 
@@ -27,7 +27,6 @@ The client does not execute Pi sessions or directly mutate server read models. I
 ```mermaid
 graph TD
   subgraph Transport[Transport]
-    Iroh[Iroh endpoint manager<br/>and loopback proxy]
     API[APIClient]
     AppEventClient[AppEventStreamClient]
     SessionClient[WebSocketClient]
@@ -65,10 +64,6 @@ graph TD
     UIKit[ChatTimelineCollectionView]
   end
 
-  Iroh --> API
-  Iroh --> AppEventClient
-  Iroh --> SessionClient
-  Iroh --> AudioClient
   API --> Connection
   AppEventClient --> Connection
   SessionClient --> Connection
@@ -102,8 +97,7 @@ graph TD
 
 | Block                                         | Owns                                                                                                                                                     | Does not own                                            |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `ServerConnection`                            | connection composition, HTTP/Iroh selection, API/WS client wiring, focused/app-event stream startup, shared store updates                                | per-session timeline reducer state                      |
-| `IrohConnectionManager` + `IrohLoopbackProxy` | persistent endpoint/connection ownership, signed-peer validation, and bounded local TCP-to-Iroh stream pumping                                           | HTTP routes or WebSocket semantics                      |
+| `ServerConnection`                            | HTTPS/WSS connection composition, API/WS client wiring, focused/app-event stream startup, shared store updates                                            | per-session timeline reducer state                      |
 | `APIClient`                                   | authenticated HTTP requests and response decoding                                                                                                        | UI decisions or store mutation policy                   |
 | `WebSocketClient`                             | focused session WebSocket transport, reconnect policy, inbound metadata                                                                                  | protocol side effects                                   |
 | `AppEventStreamClient` + coordinator          | app-event WebSocket consumption                                                                                                                          | focused timeline replay                                 |
@@ -125,17 +119,11 @@ Non-adapter files in `OppiCore` must stay platform-neutral. UI/device work belon
 
 ## Transport lanes
 
-The signed invite authorizes HTTPS, Iroh, or both. The historical wire value `irohPreferred` means both authorization only; route order comes from the paired server's Apple mode: **Automatic** (verified LAN HTTPS → paired HTTPS → Iroh), **HTTPS Only** (verified LAN HTTPS → paired HTTPS), or **Iroh Only**. Automatic is the default and modes can narrow, never expand, the signed set. Each issued device credential also records its HTTP/Iroh grant. Candidate construction intersects signed authorization, credential grant, and route mode before applying pass-local exclusions.
+**Automatic** constructs verified LAN HTTPS and paired HTTPS candidates. Device credentials use short-lived HTTPS/WSS tokens and P-256 proof. For each HTTPS candidate, the client constructs the final authenticated `APIClient`, probes `GET /server/info` under a total bootstrap deadline, and retains that client if it wins.
 
-For HTTP candidates, the client constructs the final authenticated `APIClient`, probes `GET /server/info` under a total bootstrap deadline, and retains that client if it wins. For Iroh, `IrohConnectionManager` reuses the process endpoint and verified QUIC connection; `IrohLoopbackProxy` exposes an ephemeral IPv4 loopback URL, and existing `APIClient`/WebSocket callers retain their URLSession semantics. The Iroh candidate must validate signed metadata, obtain selected-path evidence, and complete authenticated bootstrap before the composition is installed. Loopback URLs are runtime-only and never become paired-server identity.
+A route with current health evidence remains installed across ordinary foreground and network boundaries. Availability failures may retry another supported HTTPS/WSS candidate during the current selection pass. Unknown or revoked credentials fail closed, and TLS identity or protocol failures stop fallback. Pairing probes candidates before one non-replayed `/pair` mutation. Short-lived HTTPS/WSS clients use the device-key refresh flow.
 
-A route with current health evidence remains installed across ordinary foreground and network boundaries. An availability failure excludes that route only for the current selection pass; a later recovery of a missing or failed composition, verified LAN change, or explicit retry considers it again. Iroh binding and transport-grant rejections narrow that credential's grant without blocking LAN or paired HTTPS recovery. Unknown credentials fail closed globally. TLS identity, signed-peer, ALPN, framing, and protocol failures stop automatic fallback. The failed operation is not replayed, and transport generations prevent in-flight mutations from crossing lanes. Pairing probes candidates before one non-replayed `/pair` mutation. HTTPS pairing sends the stable Apple Iroh node ID when authorized and stores the server-confirmed credential grant. Short-lived clients follow the same rule.
-
-After foregrounding an active Iroh route, the client recycles the endpoint in place, verifies selected-path evidence, rebuilds loopback-bound clients if necessary, and restores streams. It walks other Automatic candidates only when that recovery fails. Persistent stream failures use the server-scoped recovery coordinator and shared retry budget; one server cannot replace another server's healthy composition.
-
-Optional Iroh metadata v2 `relayUrls` is required for custom relay deployments. Before each Iroh dial, the process-global Apple endpoint adds that signed server's relay URLs to the public defaults. Membership is owned by signed server node ID: shared URLs remain while any active owner uses them, and replacement or teardown removes URLs with no remaining owner. Missing URLs preserve public-default behavior; older clients that ignore them might not reach private-only relays.
-
-Production telemetry records only bounded transport categories: connection latency/outcome, `direct|relay|unknown` path and RTT, path transitions, reconnect outcomes, tunnel duration/bytes, and coarse error kinds. Uploaded telemetry and client logs must not include relay URLs or hosts, IP addresses, tokens, tickets, node IDs, endpoint IDs, or raw transport errors.
+Supported telemetry and logs cover HTTPS/WSS device-auth outcomes without exposing tokens, private keys, or raw credentials.
 
 ```mermaid
 graph TD
@@ -295,7 +283,7 @@ Keep these high-churn client modules small and explicit:
 
 | Concern                       | Files                                                                                                                                                                                                                                   |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connection composition        | `clients/apple/Oppi/Core/Networking/ServerConnection.swift`, `ServerConnection+*.swift`, `IrohConnectionManager.swift`, `IrohLoopbackProxy.swift`, `IrohTransportPolicy.swift`                                                          |
+| Connection composition        | `clients/apple/Oppi/Core/Networking/ServerConnection.swift`, `ServerConnection+*.swift`, and `ConnectionCoordinator.swift`                                                        |
 | HTTP API                      | `clients/apple/Oppi/Core/Networking/APIClient.swift`                                                                                                                                                                                    |
 | Focused WebSocket transport   | `clients/apple/Oppi/Core/Networking/WebSocketClient.swift`, `SessionStreamCoordinator.swift`, `MessageSender.swift`; shared state in `clients/apple/OppiCore/Runtime/FocusedSessionStore.swift` and `SessionStreamCatchUpTracker.swift` |
 | App event stream              | `clients/apple/Oppi/Core/Networking/AppEventStreamClient.swift`, `AppEventStreamCoordinator.swift`, `ServerConnection+AppEvents.swift`                                                                                                  |

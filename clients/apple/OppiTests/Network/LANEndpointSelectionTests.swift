@@ -28,80 +28,6 @@ struct LANEndpointSelectionTests {
         )
 
         let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: nil)
-        #expect(result?.transportPath == .paired)
-    }
-
-    @Test func irohPreferredIsEligibleForVerifiedLANSelection() throws {
-        let credentials = ServerCredentials(
-            host: "my-server.tail00000.ts.net",
-            port: 7749,
-            token: "dt_iroh",
-            name: "Iroh Preferred",
-            scheme: .https,
-            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
-            tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF",
-            transports: ServerTransports(
-                preference: .irohPreferred,
-                iroh: IrohServerTransport(
-                    version: 99,
-                    nodeId: "",
-                    alpns: ["oppi/http/1"],
-                    addressMode: .ticket,
-                    ticket: nil
-                ),
-                http: HTTPServerTransport(
-                    host: "my-server.tail00000.ts.net",
-                    port: 7749,
-                    scheme: .https,
-                    tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF"
-                )
-            )
-        )
-        let discovered = LANDiscoveredEndpoint(
-            host: "192.168.1.42",
-            port: 7749,
-            serverFingerprintPrefix: "SERVERFINGERPRINT",
-            tlsCertFingerprintPrefix: "TLSFINGERPRINT"
-        )
-
-        let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered)
-
-        let selected = try #require(result)
-        #expect(selected.transportPath == .lan)
-        let candidates = try ServerTransportPlanResolver.candidates(
-            credentials: credentials,
-            mode: .automatic,
-            discoveredLANEndpoint: discovered
-        )
-        guard case .http(let first) = candidates.first else {
-            Issue.record("Automatic with verified LAN must lead with LAN HTTPS")
-            return
-        }
-        #expect(first == selected)
-    }
-
-    @Test func irohOnlyIsNotEligibleForLANSelection() {
-        let credentials = ServerCredentials(
-            host: "",
-            port: 0,
-            token: "dt_iroh",
-            name: "Iroh Server",
-            scheme: nil,
-            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
-            transports: ServerTransports(
-                preference: .irohOnly,
-                iroh: IrohServerTransport(
-                    version: 2,
-                    nodeId: "node-id-123",
-                    alpns: ["oppi/http/1"],
-                    addressMode: .nodeId,
-                    ticket: nil
-                )
-            )
-        )
-
-        let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: nil)
-
         #expect(result == nil)
     }
 
@@ -248,8 +174,7 @@ struct LANEndpointSelectionTests {
 
         let result = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discovered)
 
-        #expect(result?.transportPath == .paired)
-        #expect(result?.baseURL.absoluteString == "http://my-server.tail00000.ts.net:7749")
+        #expect(result == nil)
     }
 
     @Test func selectsLANWithDiscoveredIPWhenPairedHostIsIPAddress() {

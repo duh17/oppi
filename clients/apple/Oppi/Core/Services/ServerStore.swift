@@ -17,22 +17,41 @@ final class ServerStore {
 
     // MARK: - CRUD
 
-    /// Add a new paired server. If a server with the same fingerprint exists,
-    /// updates its credentials instead (re-pair scenario).
+    /// Add a new paired server, or update an existing one's credentials
+    /// (re-pair). Non-throwing UI convenience: a Keychain write failure is
+    /// logged. Use `persistServer(_:)` when the caller must fail safely on a
+    /// persistence failure (device-key migration).
     func addOrUpdate(_ server: PairedServer) {
+        do {
+            try persistServer(server)
+        } catch {
+            logger.error("Failed to save server \(server.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Persist a paired server, throwing when the Keychain write fails.
+    ///
+    /// The record is written through BEFORE the in-memory list is mutated, so a
+    /// caller that catches the error observes the previous durable state (no
+    /// half-applied in-memory credential).
+    func persistServer(_ server: PairedServer) throws {
+        let toSave: PairedServer
         if let idx = servers.firstIndex(where: { $0.id == server.id }) {
-            // Re-pair: update credentials, preserve local metadata
             var existing = servers[idx]
             existing.updateCredentials(from: server.credentials)
-            servers[idx] = existing
-            save(existing)
-            logger.warning("Updated server \(server.name, privacy: .public) (re-pair)")
+            toSave = existing
         } else {
             var newServer = server
             newServer.sortOrder = servers.count
-            servers.append(newServer)
-            save(newServer)
-            logger.warning("Added server \(server.name, privacy: .public)")
+            toSave = newServer
+        }
+
+        try save(toSave)
+
+        if let idx = servers.firstIndex(where: { $0.id == toSave.id }) {
+            servers[idx] = toSave
+        } else {
+            servers.append(toSave)
         }
         saveIndex()
     }
@@ -62,21 +81,34 @@ final class ServerStore {
     func setBadgeIcon(id: String, to icon: ServerBadgeIcon) {
         guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
         servers[idx].badgeIcon = icon
-        save(servers[idx])
+        do {
+            try save(servers[idx])
+        } catch {
+            logger.error("Failed to save badge icon for \(id.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
-    /// Persist the client-only route restriction for one paired server.
-    func setRouteMode(id: String, to mode: PairedServerRouteMode) {
-        guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
-        servers[idx].routeMode = mode
-        save(servers[idx])
-    }
-
-    /// Persist a server-confirmed credential scope reduction.
-    func setCredentialGrant(id: String, to grant: CredentialTransportGrant) {
-        guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
-        servers[idx].credentialGrant = grant
-        save(servers[idx])
+    /// Persist a device-credential refresh, merging against the latest stored
+    /// Keychain record so a concurrent writer in another process cannot roll it back.
+    @discardableResult
+    func persistDeviceCredentialRefresh(
+        id: String,
+        result: DeviceAuthRefreshResult
+    ) throws -> DeviceCredential {
+        guard servers.contains(where: { $0.id == id }) else {
+            throw KeychainCredentialMergeError.itemNotFound
+        }
+        let merged = try KeychainDeviceCredentialMerger.mergeRefresh(
+            serverId: id,
+            accessToken: result.accessToken,
+            expiresAt: Int64(result.expiresAt),
+            refreshChallenge: result.refreshChallenge
+        )
+        if let idx = servers.firstIndex(where: { $0.id == id }) {
+            servers[idx].deviceCredential = merged
+        }
+        saveIndex()
+        return merged
     }
 
     /// Look up a server by fingerprint ID.
@@ -97,12 +129,8 @@ final class ServerStore {
         servers.sort { $0.sortOrder < $1.sortOrder }
     }
 
-    private func save(_ server: PairedServer) {
-        do {
-            try KeychainService.saveServer(server)
-        } catch {
-            logger.error("Failed to save server \(server.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
-        }
+    private func save(_ server: PairedServer) throws {
+        try KeychainService.saveServer(server)
     }
 
     /// Persist the ordered list of server IDs to both shared and standard UserDefaults.

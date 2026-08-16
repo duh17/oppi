@@ -89,6 +89,41 @@ struct KeychainServiceTests {
         #expect(loaded?.port == 7749)
     }
 
+    @Test func saveServerUpdatesInPlaceWithoutOrphaningOrDuplicating() throws {
+        let fp = UUID().uuidString
+        let id = "sha256:\(fp)"
+        defer { cleanupAll(serverId: id) }
+
+        guard let server = makeServer(fingerprint: fp) else {
+            Issue.record("Failed to create PairedServer")
+            return
+        }
+        try KeychainService.saveServer(server)
+
+        // Update the SAME account: this must take the update-in-place path
+        // (never delete-before-add) and replace the stored value.
+        let updatedCreds = ServerCredentials(
+            host: "10.0.0.9", port: 7749, token: "sk_updated", name: "Updated",
+            serverFingerprint: id
+        )
+        let updated = try #require(PairedServer(from: updatedCreds))
+        try KeychainService.saveServer(updated)
+
+        // The item survived the update (no delete-before-add data loss) and the
+        // stored value is the replacement.
+        let reloaded = try #require(KeychainService.loadServer(id: id))
+        #expect(reloaded.host == "10.0.0.9")
+        #expect(reloaded.token == "sk_updated")
+
+        // Discovery returns exactly one server for this account (no duplicate).
+        // Clear leftover host-app ID indexes so loadServers scans Keychain
+        // instead of a stale UserDefaults list that omits this isolated record.
+        UserDefaults.standard.removeObject(forKey: SharedConstants.pairedServerIdsKey)
+        SharedConstants.sharedDefaults.removeObject(forKey: SharedConstants.pairedServerIdsKey)
+        let matches = KeychainService.loadServers().filter { $0.id == id }
+        #expect(matches.count == 1)
+    }
+
     @Test func deleteRemovesServer() throws {
         let fp = UUID().uuidString
         guard let server = makeServer(fingerprint: fp) else {
@@ -196,43 +231,10 @@ struct KeychainServiceTests {
         #expect(loaded?.host == server.host)
     }
 
-    // MARK: - Iroh Endpoint Secret
-
-    @Test func irohEndpointSecretGeneratesOnceAndReusesKeychainValue() throws {
-        KeychainService.deleteIrohEndpointSecretForTests()
-        defer { KeychainService.deleteIrohEndpointSecretForTests() }
-
-        var generationCount = 0
-        let first = try KeychainService.loadOrCreateIrohEndpointSecret {
-            generationCount += 1
-            return Data(repeating: 7, count: 32)
-        }
-        let second = try KeychainService.loadOrCreateIrohEndpointSecret {
-            generationCount += 1
-            return Data(repeating: 8, count: 32)
-        }
-
-        #expect(first == Data(repeating: 7, count: 32))
-        #expect(second == first)
-        #expect(generationCount == 1)
-    }
-
-    @Test func irohEndpointSecretRejectsInvalidGeneratedLength() {
-        KeychainService.deleteIrohEndpointSecretForTests()
-        defer { KeychainService.deleteIrohEndpointSecretForTests() }
-
-        #expect(throws: KeychainError.invalidSecretLength) {
-            _ = try KeychainService.loadOrCreateIrohEndpointSecret {
-                Data(repeating: 1, count: 31)
-            }
-        }
-    }
-
     // MARK: - KeychainError
 
     @Test func keychainErrorDescription() {
         let err = KeychainError.saveFailed(-25299)
         #expect(err.errorDescription?.contains("-25299") == true)
-        #expect(KeychainError.invalidSecretLength.errorDescription == "Iroh endpoint secret must be 32 bytes")
     }
 }

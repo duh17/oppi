@@ -313,7 +313,6 @@ private struct ManualEntryView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var host = ""
     @State private var port = "7749"
-    @State private var scheme: ServerScheme = .https
     @State private var token = ""
     @State private var name = ""
 
@@ -321,11 +320,7 @@ private struct ManualEntryView: View {
         NavigationStack {
             Form {
                 Section("Server") {
-                    Picker("Scheme", selection: $scheme) {
-                        Text("HTTPS").tag(ServerScheme.https)
-                        Text("HTTP (insecure)").tag(ServerScheme.http)
-                    }
-                    .pickerStyle(.segmented)
+                    LabeledContent("Scheme", value: "HTTPS")
                     TextField("Host (e.g. my-mac.local)", text: $host)
                         .textContentType(.URL)
                         .autocorrectionDisabled()
@@ -355,7 +350,7 @@ private struct ManualEntryView: View {
                             port: Int(port) ?? 7749,
                             token: token,
                             name: name,
-                            scheme: scheme
+                            scheme: .https
                         )
                         onConnect(creds)
                     }
@@ -386,7 +381,7 @@ protocol InviteBootstrapAPI: Sendable {
     func pairDevice(
         pairingToken: String,
         deviceName: String?,
-        clientNodeId: String?
+        devicePublicKey: DevicePublicKey
     ) async throws -> PairDeviceResponse
     func health() async throws -> Bool
     func me() async throws -> User
@@ -395,269 +390,67 @@ protocol InviteBootstrapAPI: Sendable {
 
 extension APIClient: InviteBootstrapAPI {}
 
-/// Minimal policy boundary for the Iroh pairing step.
-protocol IrohInvitePairingClient: Sendable {
-    func pairDevice(
-        pairingToken: String,
-        iroh: IrohServerTransport,
-        deviceName: String?
-    ) async -> IrohInvitePairingResult
-}
-
-enum IrohInvitePairingResult: Sendable, Equatable {
-    case success(
-        deviceToken: String,
-        credentialTransports: [CredentialTransport]? = nil
-    )
-    /// Relay preparation or other failure before the pairing exchange begins.
-    case transportUnavailable(String)
-    /// The pairing exchange began, but the client did not receive a response.
-    case responseUnavailable
-    case pairingRejected(status: Int, message: String)
-
-    static func rejected(_ message: String) -> Self {
-        .pairingRejected(status: rejectionStatus(for: message), message: message)
-    }
-
-    static func rejected(status: Int, message: String) -> Self {
-        .pairingRejected(status: status, message: message)
-    }
-
-    private static func rejectionStatus(for message: String) -> Int {
-        let normalized = message.localizedLowercase
-        if normalized.contains("too many") || normalized.contains("rate limit") {
-            return 429
-        }
-        if normalized.contains("invalid") || normalized.contains("expired") {
-            return 401
-        }
-        return 500
-    }
-}
-
 @MainActor
 enum InviteBootstrapService {
     static func credentials(from inviteURL: URL) -> ServerCredentials? {
         ServerCredentials.decodeInviteURL(inviteURL)
     }
 
-    private static let irohPairingALPN = "oppi/pair/1"
-
     static func validateAndBootstrap(
         credentials: ServerCredentials,
         existingCredentials: ServerCredentials?,
         confirmTrust: @MainActor (String) async -> Bool,
-        irohPairingClient: any IrohInvitePairingClient = RealIrohInvitePairingClient(),
         apiFactory: @MainActor (URL, String, String?) -> any InviteBootstrapAPI = { baseURL, token, tlsCertFingerprint in
             APIClient(baseURL: baseURL, token: token, tlsCertFingerprint: tlsCertFingerprint)
         },
-        irohProxyFactory: @MainActor (IrohServerTransport, String) async throws -> URL = { iroh, token in
-            let (_, url) = try await IrohTransportRegistry.shared.startProxy(iroh: iroh, token: token)
-            return url
-        },
-        httpReachabilityProbe: @MainActor (EndpointSelection, ServerCredentials) async throws -> Void = { selection, credentials in
-            try await InvitePairingHTTPSProbe.probe(selection: selection, credentials: credentials)
-        },
-        irohReachabilityProbe: any IrohInvitePairingReachabilityProbing = RealIrohInvitePairingReachabilityProbe(),
-        irohClientNodeIDProvider: @MainActor () throws -> String = {
-            try IrohEndpointSecretStore.clientNodeID()
+        deviceKeyProvider: @MainActor () throws -> any DeviceKey = {
+            try DeviceKeyProvider.shared.loadOrCreate()
         }
     ) async throws -> InviteBootstrapResult {
-        let sameTarget = isSameServer(existingCredentials, credentials)
+        guard credentials.resolvedScheme == .https, let baseURL = credentials.baseURL else {
+            throw InviteBootstrapError.message("HTTPS is required. Ask the server owner for an HTTPS/Tailscale invite.")
+        }
         let existingFingerprint = existingCredentials?.normalizedServerFingerprint
         let inviteFingerprint = credentials.normalizedServerFingerprint
-        let requiresTrustReset = sameTarget
-            && existingFingerprint != nil
-            && inviteFingerprint != nil
-            && existingFingerprint != inviteFingerprint
-
-        let requiresInviteTrust = inviteFingerprint != nil
-
-        if requiresTrustReset || requiresInviteTrust {
-            let reason: String
-            if requiresTrustReset {
-                reason = "Server identity changed for \(displayTarget(credentials)). Confirm trust reset."
-            } else {
-                let displayFingerprint = inviteFingerprint ?? "unknown"
-                reason = "Trust \(displayTarget(credentials)) (\(shortFingerprint(displayFingerprint)))"
-            }
-
-            let trusted = await confirmTrust(reason)
-            guard trusted else {
+        if (existingFingerprint != nil && inviteFingerprint != nil && existingFingerprint != inviteFingerprint)
+            || inviteFingerprint != nil {
+            let reason = existingFingerprint != nil && existingFingerprint != inviteFingerprint
+                ? "Server identity changed for \(displayTarget(credentials)). Confirm trust reset."
+                : "Trust \(displayTarget(credentials)) (\(shortFingerprint(inviteFingerprint ?? "unknown")))"
+            guard await confirmTrust(reason) else {
                 throw InviteBootstrapError.message("Trust confirmation cancelled")
             }
         }
 
-        let route = try await selectRoute(
-            credentials: credentials,
-            httpReachabilityProbe: httpReachabilityProbe,
-            irohReachabilityProbe: irohReachabilityProbe
-        )
-
-        let credential: (token: String, grant: CredentialTransportGrant?)
-        if let pairingToken = credentials.pairingToken, !pairingToken.isEmpty {
-            credential = try await pairToken(
-                pairingToken,
-                credentials: credentials,
-                route: route,
-                irohPairingClient: irohPairingClient,
-                apiFactory: apiFactory,
-                irohClientNodeIDProvider: irohClientNodeIDProvider
-            )
-        } else {
-            credential = (credentials.token, credentials.credentialGrant)
-        }
-
         let api: any InviteBootstrapAPI
-        switch route {
-        case .iroh(let iroh):
-            let localURL = try await irohProxyFactory(iroh, credential.token)
-            api = apiFactory(localURL, credential.token, nil)
-        case .http(let selection):
-            api = apiFactory(
-                selection.baseURL,
-                credential.token,
-                credentials.normalizedTLSCertFingerprint
-            )
-        }
-
-        let sessions = try await bootstrapSessions(using: api)
-        return InviteBootstrapResult(
-            effectiveCredentials: credentials.withAuthToken(
-                credential.token,
-                credentialGrant: credential.grant
-            ),
-            sessions: sessions
-        )
-    }
-
-    private static func selectRoute(
-        credentials: ServerCredentials,
-        httpReachabilityProbe: @MainActor (EndpointSelection, ServerCredentials) async throws -> Void,
-        irohReachabilityProbe: any IrohInvitePairingReachabilityProbing
-    ) async throws -> ServerTransportPlan {
-        let candidates: [ServerTransportPlan]
-        do {
-            // There is no stored per-server setting before pairing. The signed
-            // invite only authorizes lanes; Automatic supplies their order.
-            candidates = try ServerTransportPlanResolver.candidates(
-                credentials: credentials,
-                mode: .automatic,
-                discoveredLANEndpoint: nil
-            )
-        } catch {
-            throw InviteBootstrapError.message(error.localizedDescription)
-        }
-
-        var lastAvailabilityFailure: Error?
-        for candidate in candidates {
+        if let pairingToken = credentials.pairingToken, !pairingToken.isEmpty {
+            let bootstrapAPI = apiFactory(baseURL, credentials.token, credentials.normalizedTLSCertFingerprint)
+            let pairResult: PairDeviceResponse
             do {
-                switch candidate {
-                case .http(let selection):
-                    try await httpReachabilityProbe(selection, credentials)
-                case .iroh(let transport):
-                    guard transport.alpns.contains(irohPairingALPN) else {
-                        throw InviteBootstrapError.message("Selected Iroh transport is missing oppi/pair/1 metadata")
-                    }
-                    try IrohPeerValidator.validate(transport, requiredALPN: irohPairingALPN)
-                    try await irohReachabilityProbe.probe(iroh: transport)
-                }
-                return candidate
+                pairResult = try await bootstrapAPI.pairDevice(
+                    pairingToken: pairingToken,
+                    deviceName: nil,
+                    devicePublicKey: try deviceKeyProvider().publicKey
+                )
             } catch {
-                guard ServerRouteFailure.mayAdvance(after: error) else { throw error }
-                lastAvailabilityFailure = error
+                throw InviteBootstrapError.message(pairingMutationFailureMessage(for: error, host: displayTarget(credentials)))
             }
+            let deviceCredential = pairResult.deviceCredential
+            let effective = credentials.withDeviceCredential(deviceCredential)
+            let pairedAPI = apiFactory(baseURL, deviceCredential.accessToken, credentials.normalizedTLSCertFingerprint)
+            let sessions = try await bootstrapSessions(using: pairedAPI)
+            return InviteBootstrapResult(effectiveCredentials: effective, sessions: sessions)
         }
 
-        if lastAvailabilityFailure is IrohTransportError {
-            throw InviteBootstrapError.message(preDispatchIrohFailureMessage())
-        }
-        if let lastAvailabilityFailure {
-            throw InviteBootstrapError.message(
-                pairingFailureMessage(for: lastAvailabilityFailure, host: displayTarget(credentials))
-            )
-        }
-        throw InviteBootstrapError.message("Could not reach the server. Check your network and try again.")
+        api = apiFactory(baseURL, credentials.effectiveAccessToken, credentials.normalizedTLSCertFingerprint)
+        let sessions = try await bootstrapSessions(using: api)
+        return InviteBootstrapResult(effectiveCredentials: credentials, sessions: sessions)
     }
 
     private static func bootstrapSessions(using api: any InviteBootstrapAPI) async throws -> [Session] {
-        let healthy = try await api.health()
-        guard healthy else {
-            throw InviteBootstrapError.message("Server is not healthy")
-        }
-
+        guard try await api.health() else { throw InviteBootstrapError.message("Server is not healthy") }
         _ = try await api.me()
         return try await api.listSessionsFromWorkspaces(recentDays: 3)
-    }
-
-    private static func pairToken(
-        _ pairingToken: String,
-        credentials: ServerCredentials,
-        route: ServerTransportPlan,
-        irohPairingClient: any IrohInvitePairingClient,
-        apiFactory: @MainActor (URL, String, String?) -> any InviteBootstrapAPI,
-        irohClientNodeIDProvider: @MainActor () throws -> String
-    ) async throws -> (token: String, grant: CredentialTransportGrant) {
-        switch route {
-        case .iroh(let iroh):
-            guard iroh.alpns.contains(irohPairingALPN) else {
-                throw InviteBootstrapError.message("Selected Iroh transport is missing oppi/pair/1 metadata")
-            }
-            switch await irohPairingClient.pairDevice(
-                pairingToken: pairingToken,
-                iroh: iroh,
-                deviceName: nil
-            ) {
-            case .success(let deviceToken, let credentialTransports):
-                let grant = credentialTransports.map(CredentialTransportGrant.init)
-                    ?? .inferred(from: credentials.transports.authorizedTransports)
-                return (deviceToken, grant)
-            case .transportUnavailable:
-                throw InviteBootstrapError.message(preDispatchIrohFailureMessage())
-            case .responseUnavailable:
-                throw InviteBootstrapError.message(
-                    "Pairing may have completed, but its response was lost. Open Oppi to check, or request a fresh invite before trying again."
-                )
-            case .pairingRejected(let status, let message):
-                throw InviteBootstrapError.message(
-                    pairingFailureMessage(
-                        for: APIError.server(status: status, message: message),
-                        host: displayTarget(credentials)
-                    )
-                )
-            }
-
-        case .http(let selection):
-            let bootstrapAPI = apiFactory(
-                selection.baseURL,
-                credentials.token,
-                credentials.normalizedTLSCertFingerprint
-            )
-            do {
-                let clientNodeId = credentials.transports.authorizedTransports.contains(.iroh)
-                    ? try irohClientNodeIDProvider()
-                    : nil
-                let pairResult = try await bootstrapAPI.pairDevice(
-                    pairingToken: pairingToken,
-                    deviceName: nil,
-                    clientNodeId: clientNodeId
-                )
-                // Older HTTP servers did not confirm credential scope. Such
-                // credentials were not Iroh-bound, so infer HTTP only.
-                return (
-                    pairResult.deviceToken,
-                    pairResult.credentialGrant ?? .http
-                )
-            } catch {
-                throw InviteBootstrapError.message(
-                    pairingMutationFailureMessage(for: error, host: displayTarget(credentials))
-                )
-            }
-        }
-    }
-
-    private static func preDispatchIrohFailureMessage() -> String {
-        "Could not reach the server over Iroh. Check your network and try again."
     }
 
     private static func pairingMutationFailureMessage(for error: Error, host: String) -> String {
@@ -672,65 +465,33 @@ enum InviteBootstrapService {
             switch apiError {
             case .invalidResponse:
                 return "Server returned an invalid pairing response. Request a fresh invite and try again."
-            case .server(401, let message)
-                where message.localizedCaseInsensitiveContains("invalid or expired pairing token"):
+            case .server(401, let message) where message.localizedCaseInsensitiveContains("invalid or expired pairing token"):
                 return "Invite link expired or was already used. Request a fresh invite."
             case .server(429, _):
                 return "Too many invalid pairing attempts. Wait a moment, request a fresh invite, and try again."
-            case .server(let status, let message),
-                 .codedServer(let status, let message, _):
+            case .server(let status, let message), .codedServer(let status, let message, _):
                 return "Pairing failed with server error (\(status)): \(message)"
             }
         }
-
         if let urlError = error as? URLError {
             switch urlError.code {
-            case .timedOut,
-                    .cannotFindHost,
-                    .cannotConnectToHost,
-                    .networkConnectionLost,
-                    .notConnectedToInternet,
-                    .dnsLookupFailed,
-                    .cannotLoadFromNetwork:
+            case .timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet, .dnsLookupFailed, .cannotLoadFromNetwork:
                 return "Could not reach \(host). Check the address, VPN, or network and try again."
-            case .secureConnectionFailed,
-                    .serverCertificateHasBadDate,
-                    .serverCertificateHasUnknownRoot,
-                    .serverCertificateNotYetValid,
-                    .serverCertificateUntrusted,
-                    .clientCertificateRejected,
-                    .clientCertificateRequired:
+            case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid, .serverCertificateUntrusted, .clientCertificateRejected, .clientCertificateRequired:
                 return "Secure connection to \(host) failed. Verify the invite host and certificate, then try again."
-            default:
-                break
+            default: break
             }
         }
-
         let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !message.isEmpty {
-            return "Pairing failed: \(message)"
-        }
-
-        return "Pairing failed. Request a fresh invite and try again."
+        return message.isEmpty ? "Pairing failed. Request a fresh invite and try again." : "Pairing failed: \(message)"
     }
 
     private static func displayTarget(_ credentials: ServerCredentials) -> String {
-        if !credentials.host.isEmpty {
-            return credentials.host
-        }
-        return credentials.name
-    }
-
-    private static func isSameServer(_ lhs: ServerCredentials?, _ rhs: ServerCredentials) -> Bool {
-        guard let lhs else { return false }
-        return lhs.port == rhs.port && lhs.host.caseInsensitiveCompare(rhs.host) == .orderedSame
+        credentials.host.isEmpty ? credentials.name : credentials.host
     }
 
     private static func shortFingerprint(_ fingerprint: String) -> String {
-        if fingerprint.count > 24 {
-            return String(fingerprint.prefix(24)) + "…"
-        }
-        return fingerprint
+        fingerprint.count > 24 ? String(fingerprint.prefix(24)) + "…" : fingerprint
     }
 }
 
@@ -759,7 +520,7 @@ private enum InvitePairingHTTPSProbe {
         defer { session.finishTasksAndInvalidate() }
         let (_, response) = try await session.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw IrohTransportError.protocolViolation("Pairing health probe did not succeed")
+            throw APIError.invalidResponse
         }
     }
 }

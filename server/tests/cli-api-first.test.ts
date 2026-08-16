@@ -236,7 +236,6 @@ describe("CLI app-state API boundary", () => {
         args: () => ["pair", "Lock test", "--host", "127.0.0.1", "--json"],
         needsConfig: true,
       },
-      { name: "token", args: () => ["token", "rotate"], needsConfig: true },
       { name: "config", args: () => ["config", "set", "port", "7750"], needsConfig: true },
       {
         name: "init",

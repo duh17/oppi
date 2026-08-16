@@ -102,9 +102,6 @@ describe("log-redact", () => {
     expect(isSensitiveLogKey("accessToken")).toBe(true);
     expect(isSensitiveLogKey("openaiApiKey")).toBe(true);
     expect(isSensitiveLogKey("authDeviceTokens")).toBe(true);
-    expect(isSensitiveLogKey("irohDeviceTokenBindings")).toBe(true);
-    expect(isSensitiveLogKey("clientNodeId")).toBe(true);
-    expect(isSensitiveLogKey("endpointId")).toBe(true);
     expect(isSensitiveLogKey("tokenCount")).toBe(false);
     expect(isSensitiveLogKey("authPresent")).toBe(false);
   });

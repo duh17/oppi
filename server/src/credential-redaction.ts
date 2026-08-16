@@ -1,16 +1,12 @@
 import { isSensitiveLogKey, REDACTED, redactLogString } from "./log-redact.js";
 
-const STABLE_DEVICE_IDENTIFIER_KEYS = new Set([
-  "clientnodeid",
-  "deviceid",
-  "endpointid",
-  "irohnodeid",
-  "nodeid",
-]);
+const STABLE_DEVICE_IDENTIFIER_KEYS = new Set(["deviceid"]);
 
 const TOKEN_COLLECTIONS = new Map([
   ["authdevicetokens", "token"],
   ["pushdevicetokens", "token"],
+  ["authaccesstokens", "token"],
+  ["authdevices", "device"],
 ]);
 
 function normalizedKey(key: string): string {
@@ -19,20 +15,6 @@ function normalizedKey(key: string): string {
 
 function collectionSummary(count: number, singular: string): string {
   return `[REDACTED ${count} ${count === 1 ? singular : `${singular}s`}]`;
-}
-
-function irohBindingMetadata(value: unknown): { count: number; transports: string[] } {
-  if (!Array.isArray(value)) return { count: 0, transports: [] };
-  const transports = new Set<string>();
-  for (const binding of value) {
-    if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
-    const allowed = (binding as { allowedTransports?: unknown }).allowedTransports;
-    if (!Array.isArray(allowed)) continue;
-    for (const transport of allowed) {
-      if (transport === "http" || transport === "iroh") transports.add(transport);
-    }
-  }
-  return { count: value.length, transports: [...transports].sort() };
 }
 
 export function redactCredentialString(value: string): string {
@@ -48,7 +30,6 @@ export function redactCredentialString(value: string): string {
         const normalized = normalizedKey(key);
         if (
           TOKEN_COLLECTIONS.has(normalized) ||
-          normalized === "irohdevicetokenbindings" ||
           isSensitiveLogKey(key) ||
           STABLE_DEVICE_IDENTIFIER_KEYS.has(normalized)
         ) {
@@ -79,7 +60,6 @@ export function redactCredentialValue(value: unknown, key?: string): unknown {
   const normalized = key ? normalizedKey(key) : "";
   const collection = TOKEN_COLLECTIONS.get(normalized);
   if (collection && Array.isArray(value)) return collectionSummary(value.length, collection);
-  if (normalized === "irohdevicetokenbindings") return irohBindingMetadata(value);
   if (
     key &&
     (isSensitiveLogKey(key) || STABLE_DEVICE_IDENTIFIER_KEYS.has(normalized)) &&

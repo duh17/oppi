@@ -36,9 +36,6 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
     type: "boolean",
     desc: "Append a concise Oppi CLI management hint to Oppi sessions",
   },
-  iroh: { type: "json", desc: "Iroh transport config JSON object" },
-  "iroh.enabled": { type: "boolean", desc: "Enable host-free Iroh transport" },
-  "iroh.relays": { type: "json", desc: "Custom Iroh relay entries JSON array (restart required)" },
   tls: { type: "json", desc: "TLS config JSON object" },
   "tls.mode": { type: "string", desc: "TLS mode" },
   "tls.certPath": { type: "string", desc: "Manual TLS certificate path" },
@@ -212,7 +209,6 @@ export function cmdConfig(
           restartHint:
             key.startsWith("asr") ||
             key.startsWith("tls") ||
-            key.startsWith("iroh") ||
             key.startsWith("runtimeEnv.") ||
             key === "runtimeEnv" ||
             key === "port" ||

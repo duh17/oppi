@@ -57,21 +57,13 @@ describe("Storage pairing", () => {
     expect(reloaded.getToken()).toBe(rotated);
   });
 
-  it("owner rotation invalidates paired, Iroh-bound, pairing, and push credentials", () => {
+  it("owner rotation invalidates paired, pairing, and push credentials", () => {
     const storage = new Storage(dir);
     storage.ensurePaired();
     storage.updateConfig({
       pairingToken: "pt_rotation-fixture-secret",
       pairingTokenExpiresAt: Date.now() + 60_000,
       authDeviceTokens: ["dt_rotation-fixture-secret"],
-      irohDeviceTokenBindings: [
-        {
-          token: "dt_rotation-fixture-secret",
-          clientNodeId: "client-rotation-fixture-id",
-          allowedTransports: ["iroh"],
-          createdAt: 1,
-        },
-      ],
       pushDeviceTokens: ["push-rotation-fixture-secret"],
       liveActivityToken: "live-rotation-fixture-secret",
     });
@@ -82,7 +74,6 @@ describe("Storage pairing", () => {
     expect(config.pairingToken).toBeUndefined();
     expect(config.pairingTokenExpiresAt).toBeUndefined();
     expect(config.authDeviceTokens).toEqual([]);
-    expect(config.irohDeviceTokenBindings).toEqual([]);
     expect(config.pushDeviceTokens).toEqual([]);
     expect(config.liveActivityToken).toBeUndefined();
   });

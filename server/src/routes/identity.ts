@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
 import { createLogger } from "../logger.js";
-import { handleIrohPairingRequest } from "../iroh-pairing.js";
+import { isLocalRequest } from "../request-trust.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import type { RegisterDeviceTokenRequest } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
@@ -25,7 +25,6 @@ const log = createLogger({ base: { component: "route_identity" } });
 export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   const pairingFailuresBySource = new Map<string, number[]>();
   const pairingBlockedUntilBySource = new Map<string, number>();
-
   function pairingSourceKey(req: IncomingMessage): string {
     return req.socket.remoteAddress || "unknown";
   }
@@ -68,36 +67,33 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return;
     }
 
-    const body = await helpers.parseBody<{ pairingToken?: string; clientNodeId?: string }>(req);
+    const body = await helpers.parseBody<{
+      pairingToken?: string;
+      devicePublicKey?: unknown;
+      deviceName?: string;
+    }>(req);
     const pairingToken = typeof body.pairingToken === "string" ? body.pairingToken.trim() : "";
-    const clientNodeId =
-      typeof body.clientNodeId === "string" && body.clientNodeId.trim().length > 0
-        ? body.clientNodeId.trim()
-        : undefined;
-
     if (!pairingToken) {
       helpers.error(res, 400, "pairingToken required");
       return;
     }
+    if (!body.devicePublicKey) {
+      helpers.error(res, 400, "devicePublicKey required");
+      return;
+    }
 
-    const pairing = handleIrohPairingRequest(
-      ctx.storage,
-      { pairingToken, clientNodeId },
-      { transport: "http" },
-    );
-    if (!pairing.ok) {
-      if (pairing.status === 401) {
-        recordPairingFailure(source, now);
-      }
-      helpers.error(res, pairing.status, pairing.error);
+    const pairing = ctx.storage.enrollViaPairing(pairingToken, {
+      publicKey: body.devicePublicKey,
+      name: body.deviceName,
+    });
+    if (!pairing) {
+      recordPairingFailure(source, now);
+      helpers.error(res, 401, "Invalid or expired pairing token");
       return;
     }
 
     clearPairingFailures(source);
-    helpers.json(res, {
-      deviceToken: pairing.deviceToken,
-      credentialTransports: pairing.credentialTransports,
-    });
+    helpers.json(res, pairing);
   }
 
   function handleGetMe(res: ServerResponse): void {
@@ -251,9 +247,189 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     });
   }
 
+  // ─── Device-key auth routes ───
+
+  async function handleAuthMigrate(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const authorization = req.headers.authorization;
+    const legacyToken = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
+    if (!legacyToken) {
+      helpers.error(res, 400, "legacy device token required");
+      return;
+    }
+
+    const body = await helpers.parseBody<{ devicePublicKey?: unknown; deviceName?: string }>(req);
+    if (!body.devicePublicKey) {
+      helpers.error(res, 400, "devicePublicKey required");
+      return;
+    }
+
+    const enrollment = ctx.storage.migrateLegacyDevice(legacyToken, {
+      publicKey: body.devicePublicKey,
+      name: body.deviceName,
+    });
+    if (!enrollment) {
+      helpers.error(res, 401, "Invalid or unsupported legacy device token");
+      return;
+    }
+
+    log.info("auth.device_migrated", { device: enrollment.deviceId });
+    helpers.json(res, {
+      deviceId: enrollment.deviceId,
+      accessToken: enrollment.accessToken,
+      expiresAt: enrollment.expiresAt,
+      refreshChallenge: enrollment.refreshChallenge,
+    });
+  }
+
+  async function handleAuthChallenge(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await helpers.parseBody<{ deviceId?: string }>(req);
+    const deviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : "";
+    if (!deviceId) {
+      helpers.error(res, 400, "deviceId required");
+      return;
+    }
+
+    const challenge = ctx.storage.issueChallenge(deviceId);
+    if (!challenge) {
+      helpers.error(res, 404, "Unknown or revoked device");
+      return;
+    }
+    helpers.json(res, challenge);
+  }
+
+  async function handleAuthRefresh(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await helpers.parseBody<{
+      deviceId?: string;
+      nonce?: string;
+      signature?: unknown;
+    }>(req);
+    const deviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : "";
+    const nonce = typeof body.nonce === "string" ? body.nonce.trim() : "";
+    if (!deviceId || !nonce || typeof body.signature !== "string" || body.signature.length === 0) {
+      helpers.error(res, 400, "deviceId, nonce, and signature required");
+      return;
+    }
+
+    const result = ctx.storage.refresh({ deviceId, nonce, signature: body.signature });
+    if (!result.ok) {
+      const status =
+        result.code === "unknown_device"
+          ? 404
+          : result.code === "revoked"
+            ? 403
+            : result.code === "rate_limited"
+              ? 429
+              : 401;
+      log.warn("auth.refresh_failed", { device: deviceId, code: result.code });
+      helpers.error(res, status, result.code);
+      return;
+    }
+
+    log.info("auth.refresh_succeeded", { device: deviceId });
+    const nextChallenge = ctx.storage.issueChallenge(deviceId);
+    helpers.json(res, {
+      accessToken: result.accessToken,
+      expiresAt: result.expiresAt,
+      ...(nextChallenge ? { refreshChallenge: nextChallenge } : {}),
+    });
+  }
+
+  function handleListDevices(req: IncomingMessage, res: ServerResponse): void {
+    if (!isLocalRequest(req)) {
+      helpers.error(res, 403, "Local admin only");
+      return;
+    }
+    const devices = ctx.storage.listDevices().map((device) => ({
+      id: device.id,
+      name: device.name,
+      scope: device.scope,
+      createdAt: device.createdAt,
+      lastUsedAt: device.lastUsedAt,
+      revokedAt: device.revokedAt,
+      keyEnrolled: device.publicKey !== undefined,
+    }));
+    helpers.json(res, { devices });
+  }
+
+  function handleRevokeDevice(req: IncomingMessage, res: ServerResponse, deviceId: string): void {
+    if (!isLocalRequest(req)) {
+      helpers.error(res, 403, "Local admin only");
+      return;
+    }
+    if (!ctx.storage.revokeDevice(deviceId)) {
+      helpers.error(res, 404, "Unknown or already-revoked device");
+      return;
+    }
+    log.warn("auth.device_revoked", { device: deviceId });
+    ctx.onDeviceRevoked?.(deviceId);
+    helpers.json(res, { ok: true });
+  }
+
+  function handleAuthFinalize(req: IncomingMessage, res: ServerResponse, finalized: boolean): void {
+    if (!isLocalRequest(req)) {
+      helpers.error(res, 403, "Local admin only");
+      return;
+    }
+    ctx.storage.setMigrationFinalized(finalized);
+    ctx.onMigrationFinalized?.(finalized);
+    if (finalized) {
+      log.warn("auth.migration_finalized", {});
+    } else {
+      log.warn("auth.migration_compat_restored", {});
+    }
+    helpers.json(res, { ok: true, finalized });
+  }
+
+  function handleAuthRotate(req: IncomingMessage, res: ServerResponse): void {
+    if (!isLocalRequest(req)) {
+      helpers.error(res, 403, "Local admin only");
+      return;
+    }
+    ctx.storage.rotateToken();
+    // An emergency owner rotation must immediately sever every already-open
+    // remote device socket; the cleared device/access-token state alone only
+    // affects future upgrades.
+    ctx.onOwnerTokenRotated?.();
+    log.warn("auth.owner_rotated", {});
+    helpers.json(res, { ok: true });
+  }
+
   return async ({ method, path, url, req, res }) => {
     if (path === "/pair" && method === "POST") {
       await handlePair(req, res);
+      return true;
+    }
+    if (path === "/auth/migrate" && method === "POST") {
+      await handleAuthMigrate(req, res);
+      return true;
+    }
+    if (path === "/auth/challenge" && method === "POST") {
+      await handleAuthChallenge(req, res);
+      return true;
+    }
+    if (path === "/auth/refresh" && method === "POST") {
+      await handleAuthRefresh(req, res);
+      return true;
+    }
+    if (path === "/auth/devices" && method === "GET") {
+      handleListDevices(req, res);
+      return true;
+    }
+    const deviceRevokeMatch = path.match(/^\/auth\/devices\/([^/]+)$/);
+    if (deviceRevokeMatch && method === "DELETE") {
+      handleRevokeDevice(req, res, decodeURIComponent(deviceRevokeMatch[1]));
+      return true;
+    }
+    if (path === "/auth/finalize" && method === "POST") {
+      handleAuthFinalize(req, res, true);
+      return true;
+    }
+    if (path === "/auth/compat" && method === "POST") {
+      handleAuthFinalize(req, res, false);
+      return true;
+    }
+    if (path === "/auth/rotate" && method === "POST") {
+      handleAuthRotate(req, res);
       return true;
     }
     if (path === "/me" && method === "GET") {

@@ -1,12 +1,12 @@
 # Oppi server architecture
 
-The Oppi server owns sessions, workspace access, runtime configuration, and the mobile-facing projection of Pi session state. It exposes authenticated HTTP over an owner-only Unix socket to the local CLI. Apple clients, dictation, app events, and the terminal mirror bridge use the same remote HTTP and WebSocket handlers through an independently available network listener or Iroh encrypted tunnel.
+The Oppi server owns sessions, workspace access, runtime configuration, and the mobile-facing projection of Pi session state. It exposes authenticated HTTP plus the bearer-free Oppi Mirror bridge over an owner-only Unix socket. Apple clients, dictation, and app events use authenticated HTTPS/WSS listeners.
 
 ## Audience and scope
 
 Read this page when changing server routes, WebSocket transports, session lifecycle code, runtime ownership, the Pi SDK adapter, terminal mirror behavior, storage projections, or protocol contracts.
 
-This page covers production server structure. For Apple UI composition, see [Client architecture](architecture-client.md). For route selection, Iroh fallback, and cross-system connection recovery, see [Networking and connection routing](networking.md).
+This page covers production server structure. For Apple UI composition, see [Client architecture](architecture-client.md). For supported HTTPS/WSS routing, see [Networking and connection routing](networking.md).
 
 ## Server responsibilities
 
@@ -37,8 +37,6 @@ graph TD
 
   subgraph Boundaries[Boundary adapters]
     LocalHTTP[HTTP over Unix socket<br/>owner-only local control plane]
-    Iroh[Iroh endpoint<br/>oppi/pair/1 + oppi/http/1]
-    Loopback[Private authenticated<br/>HTTP loopback]
     REST[Network REST routes<br/>routes/*]
     AppEvents[Global app event stream<br/>app-event-stream.ts]
     Live[Focused session and audio streams<br/>stream.ts + ws-message-handler.ts]
@@ -74,9 +72,6 @@ graph TD
   end
 
   Client --> Root
-  Client --> Iroh
-  Iroh --> Loopback
-  Loopback --> Root
   Terminal --> Root
   CLI --> LocalHTTP
   LocalHTTP --> Root
@@ -118,8 +113,7 @@ graph TD
 
 | Block                                              | Owns                                                                                                                 | Does not own                               |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `server.ts`                                        | startup, dependency wiring, HTTP, WebSocket, and Iroh entry, auth shell, service lifecycle                           | session semantics                          |
-| `iroh-pairing-server.ts` + `iroh-http-loopback.ts` | persistent Iroh endpoint, peer-bound pairing, bounded tunnel streams, and private HTTP/WebSocket adaptation          | route, runtime, or projection semantics    |
+| `server.ts`                                        | startup, dependency wiring, HTTPS, WebSocket, auth shell, and service lifecycle                                      | session semantics                          |
 | `routes/*`                                         | HTTP parsing, auth-checked route boundaries, response shapes, app-event emission                                     | lifecycle, list, trace, or runtime policy  |
 | `session-lifecycle-service.ts`                     | create/import, resume/open, stop, fork, delete, and mirror promotion policy                                          | HTTP response mapping                      |
 | `session-list-service.ts`                          | recent/workspace/archive session row shaping, active runtime overlays, local-session catalog joins                   | route query parsing                        |
@@ -141,11 +135,9 @@ graph TD
 - The mandatory local listener serves HTTP over an owner-only Unix socket. Its normal path is `$OPPI_DATA_DIR/run/oppi.sock`; deep custom data-directory paths use a deterministic socket under the user's temporary runtime directory. The runtime directory is `0700`, the socket and startup lock are `0600`, stale paths are ownership-checked, and startup refuses concurrent owners.
 - The network listener serves configured HTTP(S) and scoped WebSockets to remote clients. TLS preparation runs off the main thread after the local socket begins listening, so certificate commands and renewal-lock waits do not block local requests. Expected Tailscale availability failures disable the remote listener; unexpected preparation errors remain fatal. Network TLS failure must never create a plaintext fallback.
 
-The local socket intentionally has no WebSocket upgrade handler. Oppi Mirror continues to use the network WebSocket listener. `server.ts` validates network startup security, handles CORS and `/health`, authenticates requests, and delegates authenticated HTTP from either listener to `RouteHandler`.
+The local socket accepts only the `/mirror/v1/bridge` WebSocket upgrade; that bridge is bearer-free because Unix-socket ownership is the trust boundary. The network listener returns 404 for the mirror bridge. `server.ts` validates network startup security, handles CORS and `/health`, authenticates requests, and delegates authenticated HTTP from either listener to `RouteHandler`.
 
-When Iroh is enabled, `iroh-pairing-server.ts` owns one persistent endpoint with `oppi/pair/1` and `oppi/http/1` ALPNs. Pairing issues an explicit HTTP/Iroh credential grant. Iroh-ALPN pairing obtains the Apple endpoint ID from the live QUIC peer; HTTPS pairing can submit that stable node ID when the signed invite authorizes Iroh. Token consumption and binding are atomic, and an unbound HTTP-issued token is never granted Iroh. Tunnel authentication rejections return stable machine-readable codes so the client can distinguish a route-scoped binding problem from an unknown credential. Each authenticated HTTP tunnel stream is pumped into `iroh-http-loopback.ts`, which invokes the same request and WebSocket upgrade handlers as the network listener. Limits on connections, streams, preface size and timeout, bearer size, and pump chunks bound resource use. Iroh-only startup and authentication fail closed.
-
-The private loopback is an adapter, not a second API. Iroh transport code must not branch on route names, session types, or feature payloads.
+The server's supported remote boundary is HTTPS/WSS with per-device P-256 keys and short-lived access tokens. The local loopback is reserved for the owner-only Unix-socket Mirror bridge; it is not a remote transport or a second API.
 
 `RouteHandler` owns route dispatch across domain files:
 
@@ -168,7 +160,7 @@ WebSocket upgrade paths are explicit:
 | `/control-sessions/:sessionId/stream`                  | `BoundSessionStreamMux` | control-focused timeline through the same runtime path   |
 | `/app/events/stream`                                  | `AppEventStreamMux`     | app-wide session row and extension UI attention events   |
 | `/dictation/stream`                                   | `DictationStreamMux`    | dictation control and binary audio                       |
-| `/mirror/v1/bridge`                                   | `PiTuiMirrorRuntime`    | terminal Pi TUI mirror registration and command proxying |
+| `/mirror/v1/bridge` (owner Unix socket only)          | `PiTuiMirrorRuntime`    | terminal Pi TUI mirror registration and command proxying |
 
 ## Session runtime ownership
 

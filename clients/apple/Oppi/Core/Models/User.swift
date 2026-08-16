@@ -22,285 +22,6 @@ enum ServerScheme: String, Codable, Sendable {
     }
 }
 
-enum TransportPreference: String, Codable, Sendable, Equatable, Hashable {
-    case irohOnly
-    case irohPreferred
-    case httpOnly
-}
-
-/// Per-server client preference persisted independently of signed transport authorization.
-enum PairedServerRouteMode: String, Codable, Sendable, Equatable, Hashable {
-    case automatic
-    case httpsOnly
-    case irohOnly
-
-    func effective(for authorization: SignedTransportAuthorization) -> Self {
-        guard requestedTransports.intersection(authorization).isEmpty else {
-            return self
-        }
-        // Re-pairing can replace the signed transport set. Pick its one
-        // authorized lane rather than leaving an impossible explicit mode.
-        if authorization == [.https] {
-            return .httpsOnly
-        }
-        if authorization == [.iroh] {
-            return .irohOnly
-        }
-        return .automatic
-    }
-
-    var requestedTransports: SignedTransportAuthorization {
-        switch self {
-        case .automatic:
-            [.https, .iroh]
-        case .httpsOnly:
-            [.https]
-        case .irohOnly:
-            [.iroh]
-        }
-    }
-}
-
-enum IrohAddressMode: String, Codable, Sendable, Equatable, Hashable {
-    case nodeId = "node-id"
-    case ticket
-}
-
-/// The signed relay list is intentionally constrained to public HTTPS origins.
-/// Invalid metadata is a transport-integrity failure, never a reason to try a
-/// default relay map.
-enum IrohRelayURLValidationError: LocalizedError, Equatable {
-    case invalidMetadata
-
-    var errorDescription: String? {
-        "Invalid signed Iroh relay metadata"
-    }
-}
-
-enum IrohRelayURLs {
-    static let maximumCount = 8
-
-    /// Returns canonical HTTPS origins, or `nil` when the signed field is
-    /// absent or empty. Relay paths and URL credentials are not part of the
-    /// signed relay contract and must not reach Iroh.
-    static func canonicalize(_ relayURLs: [String]?) throws -> [String]? {
-        guard let relayURLs, !relayURLs.isEmpty else { return nil }
-        guard relayURLs.count <= maximumCount else {
-            throw IrohRelayURLValidationError.invalidMetadata
-        }
-
-        var canonical = Set<String>()
-        for value in relayURLs {
-            guard let components = URLComponents(string: value),
-                  components.scheme?.lowercased() == "https",
-                  let host = components.host?.lowercased(), !host.isEmpty,
-                  !isDisallowedHost(host),
-                  components.user == nil, components.password == nil,
-                  components.query == nil, components.fragment == nil,
-                  components.percentEncodedPath.isEmpty || components.percentEncodedPath == "/",
-                  components.port.map({ (1...65_535).contains($0) }) ?? true else {
-                throw IrohRelayURLValidationError.invalidMetadata
-            }
-
-            var normalized = URLComponents()
-            normalized.scheme = "https"
-            normalized.host = host
-            normalized.port = components.port
-            guard let url = normalized.url else {
-                throw IrohRelayURLValidationError.invalidMetadata
-            }
-            canonical.insert(url.absoluteString)
-        }
-
-        return canonical.sorted()
-    }
-
-    /// Relay hostnames remain DNS-unresolved: owners may use public DNS names
-    /// for self-hosted relays. IP literals and localhost names are rejected
-    /// locally so signed metadata cannot direct the endpoint to local ranges.
-    private static func isDisallowedHost(_ host: String) -> Bool {
-        let hostname = host
-            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-            .lowercased()
-        if hostname == "localhost" || hostname.hasSuffix(".localhost") {
-            return true
-        }
-        if let ipv4 = IPv4Address(hostname) {
-            return disallowedIPv4(Array(ipv4.rawValue))
-        }
-        if let ipv6 = IPv6Address(hostname) {
-            return disallowedIPv6(Array(ipv6.rawValue))
-        }
-        return false
-    }
-
-    private static func disallowedIPv4(_ octets: [UInt8]) -> Bool {
-        guard octets.count == 4 else { return true }
-        let first = octets[0]
-        let second = octets[1]
-        return first == 0
-            || first == 127
-            || first == 10
-            || (first == 172 && (16...31).contains(second))
-            || (first == 192 && second == 168)
-            || (first == 169 && second == 254)
-    }
-
-    private static func disallowedIPv6(_ bytes: [UInt8]) -> Bool {
-        guard bytes.count == 16 else { return true }
-        let isUnspecified = bytes.allSatisfy { $0 == 0 }
-        let isLoopback = bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1
-        if isUnspecified || isLoopback {
-            return true
-        }
-        // fc00::/7 private and fe80::/10 link-local.
-        let isPrivate = bytes[0] & 0xfe == 0xfc
-        let isLinkLocal = bytes[0] == 0xfe && bytes[1] & 0xc0 == 0x80
-        if isPrivate || isLinkLocal {
-            return true
-        }
-        // ::ffff:0:0/96 embeds an IPv4 address that must follow the same policy.
-        if bytes.prefix(10).allSatisfy({ $0 == 0 }) && bytes[10] == 0xff && bytes[11] == 0xff {
-            return disallowedIPv4(Array(bytes.suffix(4)))
-        }
-        return false
-    }
-}
-
-struct IrohServerTransport: Codable, Sendable, Equatable, Hashable {
-    let version: Int
-    let nodeId: String
-    let alpns: [String]
-    let addressMode: IrohAddressMode
-    let ticket: String?
-    /// Optional signed v2 metadata. Absent or empty retains public defaults.
-    let relayUrls: [String]?
-
-    init(
-        version: Int,
-        nodeId: String,
-        alpns: [String],
-        addressMode: IrohAddressMode,
-        ticket: String?,
-        relayUrls: [String]? = nil
-    ) {
-        self.version = version
-        self.nodeId = nodeId
-        self.alpns = alpns
-        self.addressMode = addressMode
-        self.ticket = ticket
-        self.relayUrls = relayUrls
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case version
-        case nodeId
-        case alpns
-        case addressMode
-        case ticket
-        case relayUrls
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        version = try container.decode(Int.self, forKey: .version)
-        nodeId = try container.decode(String.self, forKey: .nodeId)
-        alpns = try container.decode([String].self, forKey: .alpns)
-        addressMode = try container.decode(IrohAddressMode.self, forKey: .addressMode)
-        ticket = try container.decodeIfPresent(String.self, forKey: .ticket)
-        relayUrls = try IrohRelayURLs.canonicalize(
-            container.decodeIfPresent([String].self, forKey: .relayUrls)
-        )
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(version, forKey: .version)
-        try container.encode(nodeId, forKey: .nodeId)
-        try container.encode(alpns, forKey: .alpns)
-        try container.encode(addressMode, forKey: .addressMode)
-        try container.encodeIfPresent(ticket, forKey: .ticket)
-        try container.encodeIfPresent(
-            IrohRelayURLs.canonicalize(relayUrls),
-            forKey: .relayUrls
-        )
-    }
-}
-
-struct HTTPServerTransport: Codable, Sendable, Equatable, Hashable {
-    let host: String
-    let port: Int
-    let scheme: ServerScheme
-    let tlsCertFingerprint: String?
-
-    var baseURL: URL? {
-        URL(string: "\(scheme.rawValue)://\(host):\(port)")
-    }
-}
-
-struct ServerTransports: Codable, Sendable, Equatable, Hashable {
-    var preference: TransportPreference
-    var iroh: IrohServerTransport?
-    var http: HTTPServerTransport?
-
-    init(
-        preference: TransportPreference,
-        iroh: IrohServerTransport? = nil,
-        http: HTTPServerTransport? = nil
-    ) {
-        self.preference = preference
-        self.iroh = iroh
-        self.http = http
-    }
-
-    /// Maps raw signed invite values at the compatibility boundary. In
-    /// particular, `irohPreferred` authorizes both lanes; it does not order them.
-    var authorizedTransports: SignedTransportAuthorization {
-        switch preference {
-        case .httpOnly:
-            [.https]
-        case .irohOnly:
-            [.iroh]
-        case .irohPreferred:
-            [.https, .iroh]
-        }
-    }
-
-    static func legacyHTTP(
-        host: String,
-        port: Int,
-        scheme: ServerScheme?,
-        tlsCertFingerprint: String?
-    ) -> Self {
-        let http = validHTTPTransport(
-            host: host,
-            port: port,
-            scheme: scheme ?? .https,
-            tlsCertFingerprint: tlsCertFingerprint
-        )
-        return Self(preference: .httpOnly, http: http)
-    }
-
-    private static func validHTTPTransport(
-        host: String,
-        port: Int,
-        scheme: ServerScheme,
-        tlsCertFingerprint: String?
-    ) -> HTTPServerTransport? {
-        // Legacy/stored HTTP credentials used to derive baseURL directly from
-        // host/port, and Foundation accepts edge host values such as an empty
-        // host. Keep that compatibility here; Iroh-only credentials opt out by
-        // carrying explicit transports with `http == nil`.
-        guard (1...65_535).contains(port) else { return nil }
-        return HTTPServerTransport(
-            host: host,
-            port: port,
-            scheme: scheme,
-            tlsCertFingerprint: tlsCertFingerprint
-        )
-    }
-}
-
 /// Connection credentials from QR code scan or deep link.
 ///
 /// Invite payload is decoded by `decodeInvitePayload(_:)`.
@@ -312,22 +33,10 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     let token: String
     let name: String
     let scheme: ServerScheme?
-
-    // One-time pairing bootstrap token (preferred over token when present)
     let pairingToken: String?
-
-    // Stable server identity metadata
     let serverFingerprint: String?
-
-    // Optional leaf-cert pin for self-signed HTTPS pairing.
     let tlsCertFingerprint: String?
-
-    // Signed transport metadata. v3 credentials synthesize an HTTP-only value.
-    let transports: ServerTransports
-
-    // Server-confirmed credential scope. Nil means an older stored record whose
-    // grant is unknown until the server returns a typed authorization result.
-    let credentialGrant: CredentialTransportGrant?
+    let deviceCredential: DeviceCredential?
 
     init(
         host: String,
@@ -338,8 +47,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         pairingToken: String? = nil,
         serverFingerprint: String? = nil,
         tlsCertFingerprint: String? = nil,
-        transports: ServerTransports? = nil,
-        credentialGrant: CredentialTransportGrant? = nil
+        deviceCredential: DeviceCredential? = nil
     ) {
         self.host = host
         self.port = port
@@ -349,370 +57,158 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         self.pairingToken = pairingToken
         self.serverFingerprint = serverFingerprint
         self.tlsCertFingerprint = tlsCertFingerprint
-        self.transports = transports ?? ServerTransports.legacyHTTP(
-            host: host,
-            port: port,
-            scheme: scheme,
-            tlsCertFingerprint: tlsCertFingerprint
-        )
-        self.credentialGrant = credentialGrant
+        self.deviceCredential = deviceCredential
     }
 
-    /// Unknown stored grants retain signed candidates until a typed server
-    /// rejection can narrow the credential without guessing.
-    var effectiveTransportAuthorization: SignedTransportAuthorization {
-        let signed = transports.authorizedTransports
-        guard let credentialGrant else { return signed }
-        return signed.intersection(credentialGrant.signedAuthorization)
-    }
+    var effectiveAccessToken: String { deviceCredential?.accessToken ?? token }
 
-    var resolvedScheme: ServerScheme {
-        scheme ?? transports.http?.scheme ?? .https
-    }
+    var resolvedScheme: ServerScheme { scheme ?? .https }
 
-    /// Base URL for REST and WebSocket connections.
-    /// Returns `nil` for malformed host (corrupted QR, bad keychain data) or Iroh-only servers.
     var baseURL: URL? {
-        transports.http?.baseURL
+        guard !host.isEmpty, (1...65_535).contains(port) else { return nil }
+        return URL(string: "\(resolvedScheme.rawValue)://\(host):\(port)")
     }
 
     enum CodingKeys: String, CodingKey {
-        case host
-        case port
-        case token
-        case name
-        case scheme
-        case pairingToken
-        case serverFingerprint
-        case tlsCertFingerprint
-        case transports
-        case credentialGrant = "credentialTransports"
+        case host, port, token, name, scheme, pairingToken, serverFingerprint
+        case tlsCertFingerprint, transports, deviceCredential
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let host = try container.decodeIfPresent(String.self, forKey: .host) ?? ""
         let port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 0
-        let token = try container.decodeIfPresent(String.self, forKey: .token) ?? ""
-        let name = try container.decode(String.self, forKey: .name)
-        let scheme = try container.decodeIfPresent(ServerScheme.self, forKey: .scheme)
-        let pairingToken = try container.decodeIfPresent(String.self, forKey: .pairingToken)
-        let serverFingerprint = try container.decodeIfPresent(String.self, forKey: .serverFingerprint)
-        let tlsCertFingerprint = try container.decodeIfPresent(String.self, forKey: .tlsCertFingerprint)
-        let transports = try container.decodeIfPresent(ServerTransports.self, forKey: .transports)
-        let credentialGrant = try container.decodeIfPresent(
-            CredentialTransportGrant.self,
-            forKey: .credentialGrant
-        )
-
+        if container.contains(.transports), host.isEmpty && port == 0 {
+            throw DecodingError.dataCorruptedError(
+                forKey: .transports,
+                in: container,
+                debugDescription: "Unsupported connection; pair this server over HTTPS/Tailscale again"
+            )
+        }
         self.init(
             host: host,
             port: port,
-            token: token,
-            name: name,
-            scheme: scheme,
-            pairingToken: pairingToken,
-            serverFingerprint: serverFingerprint,
-            tlsCertFingerprint: tlsCertFingerprint,
-            transports: transports,
-            credentialGrant: credentialGrant
+            token: try container.decodeIfPresent(String.self, forKey: .token) ?? "",
+            name: try container.decode(String.self, forKey: .name),
+            scheme: try container.decodeIfPresent(ServerScheme.self, forKey: .scheme),
+            pairingToken: try container.decodeIfPresent(String.self, forKey: .pairingToken),
+            serverFingerprint: try container.decodeIfPresent(String.self, forKey: .serverFingerprint),
+            tlsCertFingerprint: try container.decodeIfPresent(String.self, forKey: .tlsCertFingerprint),
+            deviceCredential: try container.decodeIfPresent(DeviceCredential.self, forKey: .deviceCredential)
         )
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        if transports.http != nil || !host.isEmpty {
-            try container.encode(host, forKey: .host)
-        }
-        if transports.http != nil || port != 0 {
-            try container.encode(port, forKey: .port)
-        }
+        try container.encode(host, forKey: .host)
+        try container.encode(port, forKey: .port)
         try container.encode(token, forKey: .token)
         try container.encode(name, forKey: .name)
         try container.encodeIfPresent(scheme, forKey: .scheme)
         try container.encodeIfPresent(pairingToken, forKey: .pairingToken)
         try container.encodeIfPresent(serverFingerprint, forKey: .serverFingerprint)
         try container.encodeIfPresent(tlsCertFingerprint, forKey: .tlsCertFingerprint)
-        try container.encode(transports, forKey: .transports)
-        try container.encodeIfPresent(credentialGrant, forKey: .credentialGrant)
+        try container.encodeIfPresent(deviceCredential, forKey: .deviceCredential)
     }
 
-    /// Decode invite payload JSON.
-    ///
-    /// Supported formats:
-    /// - signed v4 envelope with host-free transport metadata
-    /// - signed v3 envelope with pinned server identity metadata
-    /// - unsigned v3 payload without pinned identity metadata
     static func decodeInvitePayload(_ payload: String) -> Self? {
         guard let data = payload.data(using: .utf8) else { return nil }
         let decoder = JSONDecoder()
-
-        if let envelope = try? decoder.decode(SignedInviteEnvelopeV4.self, from: data), envelope.v == 4 {
-            guard envelope.alg == "ed25519",
-                  let signedPayloadData = decodeBase64URL(envelope.signedPayload),
-                  let publicKeyData = decodeBase64URL(envelope.publicKey),
-                  let signatureData = decodeBase64URL(envelope.signature) else {
-                return nil
-            }
-
-            do {
-                let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData)
-                let signatureInput = Data(envelope.signedPayload.utf8)
-                guard publicKey.isValidSignature(signatureData, for: signatureInput) else { return nil }
-            } catch {
-                return nil
-            }
-
-            guard let signedPayload = try? decoder.decode(InvitePayloadV4.self, from: signedPayloadData) else {
-                return nil
-            }
-            let derivedFingerprint = "sha256:\(Data(SHA256.hash(data: publicKeyData)).base64URLEncodedString)"
-            guard signedPayload.v == 4,
-                  !signedPayload.name.isEmpty,
-                  !signedPayload.pairingToken.isEmpty,
-                  signedPayload.fingerprint == derivedFingerprint,
-                  let transports = buildTransports(from: signedPayload) else {
-                return nil
-            }
-
-            let http = transports.http
-            return ServerCredentials(
-                host: http?.host ?? "",
-                port: http?.port ?? 0,
-                token: "",
-                name: signedPayload.name,
-                scheme: http?.scheme,
-                pairingToken: signedPayload.pairingToken,
-                serverFingerprint: derivedFingerprint,
-                tlsCertFingerprint: http?.tlsCertFingerprint,
-                transports: transports
-            )
-        }
-
         if let envelope = try? decoder.decode(SignedInviteEnvelopeV3.self, from: data), envelope.v == 3 {
             guard let signedData = decodeBase64URL(envelope.signedPayload),
                   let publicKeyData = decodeBase64URL(envelope.publicKey),
                   let signatureData = decodeBase64URL(envelope.signature),
-                  let signedPayload = String(data: signedData, encoding: .utf8) else {
-                return nil
-            }
-
+                  let signedPayload = String(data: signedData, encoding: .utf8) else { return nil }
             do {
                 let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData)
                 guard publicKey.isValidSignature(signatureData, for: signedData) else { return nil }
-            } catch {
-                return nil
-            }
-
+            } catch { return nil }
             guard var credentials = decodeUnsignedInvitePayload(signedPayload, allowPinnedUnsigned: true) else {
                 return nil
             }
-            let derivedFingerprint = "sha256:\(Data(SHA256.hash(data: publicKeyData)).base64URLEncodedString)"
-            guard credentials.normalizedServerFingerprint == derivedFingerprint else { return nil }
-            credentials = ServerCredentials(
-                host: credentials.host,
-                port: credentials.port,
-                token: credentials.token,
-                name: credentials.name,
-                scheme: credentials.resolvedScheme,
-                pairingToken: credentials.pairingToken,
-                serverFingerprint: derivedFingerprint,
-                tlsCertFingerprint: credentials.tlsCertFingerprint
-            )
+            let fingerprint = "sha256:\(Data(SHA256.hash(data: publicKeyData)).base64URLEncodedString)"
+            guard credentials.serverFingerprint == fingerprint else { return nil }
+            credentials = credentials.withServerFingerprint(fingerprint)
             return credentials
         }
-
         return decodeUnsignedInvitePayload(payload, allowPinnedUnsigned: false)
     }
 
-    /// Decode a deep-link invite.
-    ///
-    /// Supported routes:
-    /// - `oppi://connect?...`
-    /// - `oppi://pair?...`
     static func decodeInviteURL(_ url: URL) -> Self? {
-        guard url.scheme?.lowercased() == "oppi" else {
-            return nil
-        }
-
-        let hostRoute = url.host?.lowercased()
-        let pathRoute = url.path
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            .lowercased()
-        let route = hostRoute?.isEmpty == false ? hostRoute : (pathRoute.isEmpty ? nil : pathRoute)
-
-        guard route == "connect" || route == "pair" else {
-            return nil
-        }
-
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return nil
-        }
-
+        guard url.scheme?.lowercased() == "oppi" else { return nil }
+        let route = url.host?.lowercased() ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+        guard route == "connect" || route == "pair",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         let queryItems = components.queryItems ?? []
-        let inviteParam = queryValue(named: "invite", in: queryItems)
-
-        if let version = queryValue(named: "v", in: queryItems),
-           !version.isEmpty,
-           version != "3",
-           version != "4" {
-            return nil
+        if let version = queryItems.first(where: { $0.name == "v" })?.value,
+           !version.isEmpty, version != "3" { return nil }
+        if let invite = queryItems.first(where: { $0.name == "invite" })?.value,
+           let decoded = decodeBase64URL(invite),
+           let raw = String(data: decoded, encoding: .utf8) {
+            return decodeInvitePayload(raw)
         }
-
-        if let inviteParam,
-           let inviteData = decodeBase64URL(inviteParam),
-           let invitePayload = String(data: inviteData, encoding: .utf8) {
-            return decodeInvitePayload(invitePayload)
+        if let raw = queryItems.first(where: { $0.name == "payload" })?.value, !raw.isEmpty {
+            return decodeInvitePayload(raw)
         }
-
-        if let rawPayload = queryValue(named: "payload", in: queryItems), !rawPayload.isEmpty {
-            return decodeInvitePayload(rawPayload)
-        }
-
         return nil
     }
 
-    /// Decode a deep-link invite from raw text.
     static func decodeInviteURLString(_ value: String) -> Self? {
         guard let url = URL(string: value) else { return nil }
         return decodeInviteURL(url)
     }
 
     var normalizedServerFingerprint: String? {
-        guard let serverFingerprint else { return nil }
-        let trimmed = serverFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        guard let value = serverFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
     }
 
     var normalizedTLSCertFingerprint: String? {
-        guard let tlsCertFingerprint else { return nil }
-        let trimmed = tlsCertFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        guard let value = tlsCertFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
     }
 
-    func withAuthToken(
-        _ newToken: String,
-        credentialGrant: CredentialTransportGrant? = nil
-    ) -> Self {
-        Self(
-            host: host,
-            port: port,
-            token: newToken,
-            name: name,
-            scheme: transports.http?.scheme ?? scheme,
-            pairingToken: nil,
-            serverFingerprint: serverFingerprint,
-            tlsCertFingerprint: tlsCertFingerprint,
-            transports: transports,
-            credentialGrant: credentialGrant ?? self.credentialGrant
-        )
+    func withAuthToken(_ newToken: String) -> Self {
+        Self(host: host, port: port, token: newToken, name: name, scheme: scheme,
+             serverFingerprint: serverFingerprint, tlsCertFingerprint: tlsCertFingerprint,
+             deviceCredential: deviceCredential)
     }
 
-    func withCredentialGrant(_ grant: CredentialTransportGrant) -> Self {
-        Self(
-            host: host,
-            port: port,
-            token: token,
-            name: name,
-            scheme: transports.http?.scheme ?? scheme,
-            pairingToken: pairingToken,
-            serverFingerprint: serverFingerprint,
-            tlsCertFingerprint: tlsCertFingerprint,
-            transports: transports,
-            credentialGrant: grant
-        )
+    func withDeviceCredential(_ credential: DeviceCredential) -> Self {
+        Self(host: host, port: port, token: "", name: name, scheme: scheme,
+             serverFingerprint: serverFingerprint, tlsCertFingerprint: tlsCertFingerprint,
+             deviceCredential: credential)
     }
 
-    private static func decodeUnsignedInvitePayload(
-        _ payload: String,
-        allowPinnedUnsigned: Bool
-    ) -> Self? {
-        guard let data = payload.data(using: .utf8) else { return nil }
-        let decoder = JSONDecoder()
+    private func withServerFingerprint(_ fingerprint: String) -> Self {
+        Self(host: host, port: port, token: token, name: name, scheme: scheme,
+             pairingToken: pairingToken, serverFingerprint: fingerprint,
+             tlsCertFingerprint: tlsCertFingerprint, deviceCredential: deviceCredential)
+    }
 
-        guard let v3 = try? decoder.decode(InvitePayloadV3.self, from: data), v3.v == 3 else {
-            return nil
-        }
-
-        if !allowPinnedUnsigned,
-           (!(v3.fingerprint?.isEmpty ?? true) || !(v3.tlsCertFingerprint?.isEmpty ?? true)) {
-            return nil
-        }
-
+    private static func decodeUnsignedInvitePayload(_ payload: String, allowPinnedUnsigned: Bool) -> Self? {
+        guard let data = payload.data(using: .utf8), let v3 = try? JSONDecoder().decode(InvitePayloadV3.self, from: data), v3.v == 3 else { return nil }
+        if !allowPinnedUnsigned && (!(v3.fingerprint?.isEmpty ?? true) || !(v3.tlsCertFingerprint?.isEmpty ?? true)) { return nil }
         let hasDirectToken = !v3.token.isEmpty
         let hasPairingToken = !(v3.pairingToken?.isEmpty ?? true)
-        guard !v3.host.isEmpty, (1...65_535).contains(v3.port), hasDirectToken || hasPairingToken else {
-            return nil
-        }
-
-        let inviteSchemeRaw = (v3.scheme?.lowercased() ?? ServerScheme.https.rawValue)
-        guard let inviteScheme = ServerScheme(rawValue: inviteSchemeRaw) else {
-            return nil
-        }
-
-        return Self(
-            host: v3.host,
-            port: v3.port,
-            token: v3.token,
-            name: v3.name,
-            scheme: inviteScheme,
-            pairingToken: v3.pairingToken,
-            serverFingerprint: v3.fingerprint,
-            tlsCertFingerprint: v3.tlsCertFingerprint
-        )
-    }
-
-    private static func buildTransports(from payload: InvitePayloadV4) -> ServerTransports? {
-        let iroh = payload.transports.iroh
-        let http = payload.transports.http
-
-        if let iroh {
-            guard !iroh.nodeId.isEmpty, !iroh.alpns.isEmpty else { return nil }
-        }
-        if let http {
-            guard !http.host.isEmpty, (1...65_535).contains(http.port) else { return nil }
-        }
-
-        switch payload.preference {
-        case .irohOnly:
-            guard iroh != nil, http == nil else { return nil }
-        case .irohPreferred:
-            guard iroh != nil, http != nil else { return nil }
-        case .httpOnly:
-            guard http != nil else { return nil }
-        }
-
-        return ServerTransports(preference: payload.preference, iroh: iroh, http: http)
-    }
-
-    private static func queryValue(named name: String, in queryItems: [URLQueryItem]) -> String? {
-        queryItems.first(where: { $0.name == name })?.value
+        guard !v3.host.isEmpty, (1...65_535).contains(v3.port), hasDirectToken || hasPairingToken else { return nil }
+        let rawScheme = v3.scheme?.lowercased() ?? ServerScheme.https.rawValue
+        guard let scheme = ServerScheme(rawValue: rawScheme) else { return nil }
+        return Self(host: v3.host, port: v3.port, token: v3.token, name: v3.name,
+                    scheme: scheme, pairingToken: v3.pairingToken,
+                    serverFingerprint: v3.fingerprint, tlsCertFingerprint: v3.tlsCertFingerprint)
     }
 
     private static func decodeBase64URL(_ value: String) -> Data? {
-        var normalized = value
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-
-        let rem = normalized.count % 4
-        if rem > 0 {
-            normalized += String(repeating: "=", count: 4 - rem)
-        }
-
+        var normalized = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        let remainder = normalized.count % 4
+        if remainder > 0 { normalized += String(repeating: "=", count: 4 - remainder) }
         return Data(base64Encoded: normalized)
     }
 }
 
 private struct SignedInviteEnvelopeV3: Decodable {
     let v: Int
-    let signedPayload: String
-    let publicKey: String
-    let signature: String
-}
-
-private struct SignedInviteEnvelopeV4: Decodable {
-    let v: Int
-    let alg: String
     let signedPayload: String
     let publicKey: String
     let signature: String
@@ -730,25 +226,8 @@ private struct InvitePayloadV3: Decodable {
     let fingerprint: String?
 }
 
-private struct InvitePayloadV4: Decodable {
-    let v: Int
-    let name: String
-    let pairingToken: String
-    let fingerprint: String
-    let preference: TransportPreference
-    let transports: InviteTransportsV4
-}
-
-private struct InviteTransportsV4: Decodable {
-    let iroh: IrohServerTransport?
-    let http: HTTPServerTransport?
-}
-
 private extension Data {
     var base64URLEncodedString: String {
-        base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+        base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
 }

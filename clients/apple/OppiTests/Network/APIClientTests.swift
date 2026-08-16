@@ -331,7 +331,7 @@ struct APIClientTests {
         #expect(result == false)
     }
 
-    @Test func pairResponseRetainsConfirmedCredentialGrant() async throws {
+    @Test func pairResponseDecodesHTTPSDeviceCredential() async throws {
         let client = makeClient()
         defer { cleanup() }
 
@@ -339,17 +339,20 @@ struct APIClientTests {
             let body = try #require(
                 JSONSerialization.jsonObject(with: self.requestBodyData(request)) as? [String: Any]
             )
-            #expect(body["clientNodeId"] as? String == "stable-apple-node")
-            return self.mockResponse(json: #"{"deviceToken":"dt_bound","credentialTransports":["http","iroh"]}"#)
+            let key = body["devicePublicKey"] as? [String: Any]
+            #expect(key?["kty"] as? String == "EC")
+            #expect(key?["crv"] as? String == "P-256")
+            return self.mockResponse(json: #"{"deviceId":"dev_1","accessToken":"at_1","expiresAt":2000000,"refreshChallenge":{"nonce":"n","audience":"oppi:refresh:v1","expiresAt":2000000}}"#)
         }
 
         let response = try await client.pairDevice(
             pairingToken: "pt_dual",
             deviceName: nil,
-            clientNodeId: "stable-apple-node"
+            devicePublicKey: DevicePublicKey(x: "x", y: "y")
         )
 
-        #expect(response.credentialGrant == [.http, .iroh])
+        #expect(response.deviceId == "dev_1")
+        #expect(response.accessToken == "at_1")
     }
 
     // MARK: - me
@@ -1398,7 +1401,7 @@ struct APIClientTests {
         #expect(components?.queryItems?.isEmpty ?? true)
         #expect(source.url.absoluteString.contains("sk_test") == false)
         #expect(source.identity.contains("sk_test") == false)
-        #expect(source.authorizationHeaderValue == "Bearer sk_test")
+        #expect(try await source.authorizationProvider() == "Bearer sk_test")
         #expect(source.contentTypeHint == "video/quicktime")
         #expect(source.sourceFileExtension == "mov")
     }
@@ -1418,7 +1421,7 @@ struct APIClientTests {
             components?.percentEncodedPath ==
                 "/workspaces/w1/sessions/s1/raw/%2Ftmp%2Fmovie%20clip.mp4"
         )
-        #expect(source.authorizationHeaderValue == "Bearer sk_test")
+        #expect(try await source.authorizationProvider() == "Bearer sk_test")
         #expect(source.contentTypeHint == "video/mp4")
         #expect(source.sourceFileExtension == "mp4")
     }
@@ -1501,9 +1504,30 @@ struct APIClientTests {
         #expect(components?.queryItems?.isEmpty ?? true)
         #expect(source.url.absoluteString.contains("sk_test") == false)
         #expect(source.identity.contains("sk_test") == false)
-        #expect(source.authorizationHeaderValue == "Bearer sk_test")
+        #expect(try await source.authorizationProvider() == "Bearer sk_test")
         #expect(source.contentTypeHint == "audio/wav")
         #expect(source.sourceFileExtension == "wav")
+    }
+
+    @Test func mediaAuthorizationProviderFailsClosedWithoutBearer() async throws {
+        // A device-key pairing clears the static token; with no auth session
+        // attached the media provider must throw rather than emit an empty
+        // `Authorization: Bearer ` header.
+        let environment = OppiClientEnvironment(
+            baseURL: URL(string: "http://localhost:7749")!,
+            bearerToken: ""
+        )
+        let client = APIClient(environment: environment)
+        let source = try await client.makeWorkspaceMediaSource(
+            workspaceId: "w1",
+            path: "image.png"
+        )
+        do {
+            _ = try await source.authorizationProvider()
+            Issue.record("expected the media provider to throw without a bearer")
+        } catch {
+            #expect(error as? DeviceAuthError == .challengeUnavailable)
+        }
     }
 
     @Test func fetchSessionAttachmentBypassesCacheAndRejectsShortBody() async throws {
@@ -1809,31 +1833,6 @@ struct APIClientTests {
             }
             #expect(status == 401)
             #expect(msg == "Invalid token")
-        }
-    }
-
-    @Test func serverErrorRetainsMachineReadableTunnelCode() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { _ in
-            self.mockResponse(
-                status: 403,
-                json: #"{"error":"forbidden","code":"binding_missing"}"#
-            )
-        }
-
-        do {
-            _ = try await client.me()
-            Issue.record("Expected error")
-        } catch let error as APIError {
-            guard case .codedServer(let status, let message, let code) = error else {
-                Issue.record("Expected coded server error")
-                return
-            }
-            #expect(status == 403)
-            #expect(message == "forbidden")
-            #expect(code == .bindingMissing)
         }
     }
 

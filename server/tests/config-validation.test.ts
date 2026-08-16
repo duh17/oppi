@@ -27,7 +27,6 @@ describe("Storage config validation", () => {
     expect(result.config?.runtimePathEntries?.length).toBeGreaterThan(0);
     expect(result.config?.oppiDocsPrompt?.enabled).toBe(true);
     expect(result.config?.oppiCliPrompt?.enabled).toBe(true);
-    expect(result.config?.iroh?.enabled).toBe(false);
     expect(result.config?.tls?.mode).toBe("self-signed");
     expect(result.config?.images?.autoResize).toBe(false);
   });
@@ -236,146 +235,14 @@ describe("Storage config validation", () => {
     expect(invalid.errors).toContain("config.oppiCliPrompt.unknownField: unknown key");
   });
 
-  it("preserves and validates durable Iroh transport config", () => {
-    const enabled = Storage.validateConfig(
-      { ...Storage.getDefaultConfig(dir), iroh: { enabled: true } },
-      dir,
-      true,
-    );
-    expect(enabled.valid).toBe(true);
-    expect(enabled.config?.iroh?.enabled).toBe(true);
-
-    const invalid = Storage.validateConfig(
-      {
-        ...Storage.getDefaultConfig(dir),
-        iroh: { enabled: "yes", unknownField: true },
-      },
-      dir,
-      true,
-    );
-    expect(invalid.valid).toBe(false);
-    expect(invalid.errors).toContain("config.iroh.enabled: expected boolean");
-    expect(invalid.errors).toContain("config.iroh.unknownField: unknown key");
-  });
-
-  it("keeps valid relay normalization when a non-strict load reports another invalid field", () => {
+  it("rejects unknown transport configuration keys", () => {
     const result = Storage.validateConfig(
-      {
-        ...Storage.getDefaultConfig(dir),
-        port: "not-a-port",
-        iroh: { enabled: true, relays: [{ url: "https://relay.example" }] },
-      },
+      { ...Storage.getDefaultConfig(dir), removedTransport: { enabled: true } },
       dir,
-      false,
+      true,
     );
-
     expect(result.valid).toBe(false);
-    expect(result.errors).toContain("config.port: expected number");
-    expect(result.config?.iroh).toEqual({
-      enabled: true,
-      relays: [{ url: "https://relay.example/", quicPort: 7842 }],
-    });
-  });
-
-  it("normalizes custom Iroh relays deterministically and preserves Iroh siblings", () => {
-    const normalized = Storage.validateConfig(
-      {
-        ...Storage.getDefaultConfig(dir),
-        iroh: {
-          enabled: true,
-          relays: [
-            { url: "https://Relay.Example" },
-            { url: "https://relay.example/", quicPort: 7842 },
-            { url: "https://relay-eu.example", quicPort: 7842 },
-          ],
-        },
-      },
-      dir,
-      true,
-    );
-
-    expect(normalized.valid).toBe(true);
-    expect(normalized.config?.iroh).toEqual({
-      enabled: true,
-      relays: [
-        { url: "https://relay.example/", quicPort: 7842 },
-        { url: "https://relay-eu.example/", quicPort: 7842 },
-      ],
-    });
-
-    const storage = new Storage(dir);
-    storage.updateConfig({ iroh: { relays: normalized.config?.iroh?.relays } });
-    storage.updateConfig({ iroh: { enabled: true } });
-    expect(storage.getConfig().iroh).toEqual(normalized.config?.iroh);
-  });
-
-  it.each([
-    ["non-HTTPS URL", { url: "http://relay.example" }, "expected HTTPS URL"],
-    ["missing host", { url: "https:///" }, "expected HTTPS URL with host"],
-    ["userinfo", { url: "https://user@relay.example" }, "must not include userinfo"],
-    ["query", { url: "https://relay.example?debug=true" }, "must not include a query"],
-    ["fragment", { url: "https://relay.example#fragment" }, "must not include a fragment"],
-    ["path", { url: "https://relay.example/relay" }, "must use the root path"],
-    ["IPv4 loopback", { url: "https://127.0.0.1" }, "must not use a loopback"],
-    ["IPv4 private", { url: "https://192.168.1.1" }, "must not use a private"],
-    ["IPv4 link-local", { url: "https://169.254.1.1" }, "must not use a link-local"],
-    ["IPv4 unspecified", { url: "https://0.0.0.0" }, "must not use an unspecified"],
-    ["IPv4 carrier-grade NAT", { url: "https://100.64.0.1" }, "must not use a carrier-grade NAT"],
-    ["IPv4 benchmarking", { url: "https://198.18.0.1" }, "must not use a benchmarking"],
-    ["IPv4 multicast", { url: "https://224.0.0.1" }, "must not use a multicast"],
-    ["IPv4 broadcast", { url: "https://255.255.255.255" }, "must not use a broadcast"],
-    ["IPv6 loopback", { url: "https://[::1]" }, "must not use a loopback"],
-    ["IPv6 private", { url: "https://[fd00::1]" }, "must not use a private"],
-    ["IPv6 link-local", { url: "https://[fe80::1]" }, "must not use a link-local"],
-    ["IPv6 unspecified", { url: "https://[::]" }, "must not use an unspecified"],
-    ["IPv6 multicast", { url: "https://[ff02::1]" }, "must not use a multicast"],
-    ["zero QUIC port", { url: "https://relay.example", quicPort: 0 }, "expected integer 1-65535"],
-    [
-      "fractional QUIC port",
-      { url: "https://relay.example", quicPort: 7842.5 },
-      "expected integer 1-65535",
-    ],
-    ["auth token", { url: "https://relay.example", authToken: "not-yet" }, "unknown key"],
-  ])("rejects Iroh relay entries with %s", (_label, relay, expectedError) => {
-    const result = Storage.validateConfig(
-      {
-        ...Storage.getDefaultConfig(dir),
-        iroh: { enabled: true, relays: [relay] },
-      },
-      dir,
-      true,
-    );
-
-    expect(result.valid).toBe(false);
-    expect(result.errors.join("\n")).toContain(expectedError);
-  });
-
-  it("allows public relay DNS hostnames without resolving them", () => {
-    const result = Storage.validateConfig(
-      {
-        ...Storage.getDefaultConfig(dir),
-        iroh: { enabled: true, relays: [{ url: "https://relay.example" }] },
-      },
-      dir,
-      true,
-    );
-
-    expect(result.valid).toBe(true);
-    expect(result.config?.iroh?.relays).toEqual([
-      { url: "https://relay.example/", quicPort: 7842 },
-    ]);
-  });
-
-  it("rejects more than eight Iroh relays without persisting invalid updates", () => {
-    const storage = new Storage(dir);
-    const before = readFileSync(storage.getConfigPath(), "utf8");
-    const relays = Array.from({ length: 9 }, (_, index) => ({
-      url: `https://relay-${index}.example`,
-    }));
-
-    expect(() => storage.updateConfig({ iroh: { relays } })).toThrow("config.iroh.relays");
-    expect(readFileSync(storage.getConfigPath(), "utf8")).toBe(before);
-    expect(storage.getConfig().iroh?.relays).toBeUndefined();
+    expect(result.errors).toContain("config.removedTransport: unknown key");
   });
 
   it("preserves image auto-resize config", () => {
@@ -456,5 +323,14 @@ describe("Storage config validation", () => {
     const result = Storage.validateConfigFile(configPath, dir, true);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.startsWith(configPath))).toBe(true);
+  });
+
+  it("does not overwrite a truncated config.json and fails closed on load", () => {
+    const configPath = join(dir, "config.json");
+    const truncated = '{"port": 7749, "host": "0.0.0.0"';
+    writeFileSync(configPath, truncated);
+
+    expect(() => new Storage(dir)).toThrow(/invalid JSON|config\.json/i);
+    expect(readFileSync(configPath, "utf8")).toBe(truncated);
   });
 });

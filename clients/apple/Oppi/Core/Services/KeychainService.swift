@@ -16,18 +16,57 @@ enum KeychainService {
     private static let service = SharedConstants.keychainService
     private static let accessGroup = SharedConstants.keychainAccessGroup
     private static let serverAccountPrefix = SharedConstants.serverAccountPrefix
-    private static let irohEndpointSecretAccount = "iroh.endpoint.secret.v1"
-    private static let irohEndpointSecretLock = NSLock()
 
     // MARK: - Save / Delete
 
     /// Save a paired server to Keychain (shared access group).
+    ///
+    /// Update-in-place: the existing item is replaced via `SecItemUpdate`;
+    /// `SecItemAdd` runs only when the item is genuinely absent. The
+    /// delete-before-add pattern is avoided so a concurrent process never
+    /// observes a window where the only stored record is missing.
+    ///
+    /// The write is serialized across processes with an advisory `flock` and
+    /// merges the incoming `deviceCredential` against the latest stored record
+    /// (freshest per-transport token wins), so a stale full-record writer in
+    /// another process cannot roll back a token it never observed.
     static func saveServer(_ server: PairedServer) throws {
-        let data = try JSONEncoder().encode(server)
-        let account = serverAccount(for: server.id)
+        let container = try CrossProcessFileLock.appGroupContainer(
+            identifier: SharedConstants.appGroupIdentifier
+        )
+        try CrossProcessFileLock.withLock(serverId: server.id, container: container) {
+            try saveServerLocked(server)
+        }
+    }
 
-        // Delete from shared group only
-        SecItemDelete(sharedQuery(account: account) as CFDictionary)
+    private static func saveServerLocked(_ server: PairedServer) throws {
+        var toWrite = server
+        let account = serverAccount(for: server.id)
+        if let latest = loadServerFromGroup(account: account, accessGroup: accessGroup),
+           let stored = latest.deviceCredential {
+            if let incoming = toWrite.deviceCredential {
+                toWrite.deviceCredential = incoming.freshestMerge(with: stored)
+            } else if toWrite.token.isEmpty {
+                // Stale pre-migration in-memory record: adopt the credential a
+                // concurrent process already migrated in.
+                toWrite.deviceCredential = stored
+            }
+        }
+
+        let data = try JSONEncoder().encode(toWrite)
+        let updateAttributes: [String: Any] = [
+            kSecValueData as String: data,
+        ]
+        let updateStatus = SecItemUpdate(
+            sharedQuery(account: account) as CFDictionary,
+            updateAttributes as CFDictionary
+        )
+        if updateStatus == errSecSuccess {
+            return
+        }
+        if updateStatus != errSecItemNotFound {
+            throw KeychainError.saveFailed(updateStatus)
+        }
 
         var addQuery = sharedQuery(account: account)
         addQuery[kSecValueData as String] = data
@@ -54,54 +93,6 @@ enum KeychainService {
             kSecAttrAccessGroup as String: accessGroup,
         ]
         SecItemDelete(query as CFDictionary)
-    }
-
-    // MARK: - Iroh Endpoint Secret
-
-    static func loadOrCreateIrohEndpointSecret(generate: () throws -> Data) throws -> Data {
-        irohEndpointSecretLock.lock()
-        defer { irohEndpointSecretLock.unlock() }
-
-        if let existing = loadIrohEndpointSecret(), existing.count == 32 {
-            return existing
-        }
-
-        let secret = try generate()
-        guard secret.count == 32 else {
-            throw KeychainError.invalidSecretLength
-        }
-        try saveIrohEndpointSecret(secret)
-        return secret
-    }
-
-    static func deleteIrohEndpointSecretForTests() {
-        SecItemDelete(sharedQuery(account: irohEndpointSecretAccount) as CFDictionary)
-    }
-
-    private static func loadIrohEndpointSecret() -> Data? {
-        var query = sharedQuery(account: irohEndpointSecretAccount)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else {
-            return nil
-        }
-        return data
-    }
-
-    private static func saveIrohEndpointSecret(_ secret: Data) throws {
-        SecItemDelete(sharedQuery(account: irohEndpointSecretAccount) as CFDictionary)
-
-        var addQuery = sharedQuery(account: irohEndpointSecretAccount)
-        addQuery[kSecValueData as String] = secret
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw KeychainError.saveFailed(status)
-        }
     }
 
     // MARK: - Load
@@ -312,14 +303,11 @@ enum KeychainService {
 
 enum KeychainError: LocalizedError, Equatable {
     case saveFailed(OSStatus)
-    case invalidSecretLength
 
     var errorDescription: String? {
         switch self {
         case .saveFailed(let status):
             return "Keychain save failed: \(status)"
-        case .invalidSecretLength:
-            return "Iroh endpoint secret must be 32 bytes"
         }
     }
 }

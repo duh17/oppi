@@ -1717,8 +1717,7 @@ struct OppiApp: App {
             reveal: {
                 navigation.revealPairedServerShell()
             },
-            // 4. Prepare transport after revealing the paired shell. Iroh may use
-            // its full bounded reachability deadline without holding the first frame.
+            // 4. Prepare the HTTPS endpoint after revealing the paired shell.
             prepare: {
                 await coordinator.ensureConnectionReady(for: server)
             }

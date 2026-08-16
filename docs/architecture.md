@@ -1,6 +1,6 @@
 # Oppi architecture
 
-Oppi pairs an Apple client with an Oppi server to view, prompt, and steer Pi coding-agent sessions from iPhone, iPad, and Mac clients. The server embeds the Pi SDK for managed sessions, can mirror live terminal-owned Pi TUI sessions through the Oppi Mirror extension, and stores saved Agent and schedule state. It exposes HTTP over an owner-only Unix socket for the local CLI. Apple clients reach remote HTTP and scoped WebSocket handlers through an optional network listener or an Iroh encrypted tunnel, without an Oppi host, port, DNS name, TLS certificate, LAN, or Tailscale.
+Oppi pairs an Apple client with an Oppi server to view, prompt, and steer Pi coding-agent sessions from iPhone, iPad, and Mac clients. The server embeds the Pi SDK for managed sessions, can mirror live terminal-owned Pi TUI sessions through the Oppi Mirror extension, and stores saved Agent and schedule state. It exposes HTTP over an owner-only Unix socket for the local CLI. Apple clients reach remote HTTP and scoped WebSocket handlers over authenticated HTTPS/WSS routes, including Tailscale.
 
 ## Audience and scope
 
@@ -10,7 +10,7 @@ For implementation details, read the split pages:
 
 - [Server architecture](architecture-server.md) — HTTP routes, stream muxes, runtime ownership, session coordinators, storage, mirror bridge, and server boundary rules.
 - [Client architecture](architecture-client.md) — Apple stores, transport coordinators, workspace navigation, chat timeline pipeline, extension UI rendering, and client boundary rules.
-- [Networking and connection routing](networking.md) — LAN, paired HTTPS, Iroh, transport selection, fallback, recovery, and diagnostics.
+- [Networking and connection routing](networking.md) — LAN, paired HTTPS, route selection, fallback, recovery, and diagnostics.
 
 This page does not document every source file or operational runbook.
 
@@ -31,7 +31,6 @@ graph TD
 
   subgraph Server[Oppi server]
     LocalHTTP[HTTP over owner-only Unix socket]
-    Iroh[Iroh endpoint<br/>HTTP and WebSocket tunnel]
     HTTP[Network REST API]
     Streams[Focused session, app event,<br/>and audio streams]
     Router[Session runtime router]
@@ -56,9 +55,6 @@ graph TD
   LocalHTTP --> Automations
   LocalHTTP --> Storage
   App --> HTTP
-  App --> Iroh
-  Iroh --> HTTP
-  Iroh --> Streams
   App --> Streams
   HTTP --> Router
   HTTP --> Automations
@@ -113,7 +109,6 @@ Oppi keeps workspace navigation HTTP-first. WebSockets carry live state where st
 | Lane                                        | Transport                   | Carries                                                                                                  |
 | ------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------- |
 | Local CLI control plane                     | HTTP over Unix socket       | Authenticated CLI routes without host, port, TLS, DNS, or Tailscale dependencies                         |
-| Host-free Apple transport                   | HTTP/WebSocket over Iroh    | The same remote routes and streams through an authenticated encrypted tunnel                             |
 | Global sessions inbox                       | HTTP                        | Recent session summaries across workspaces; the root groups active rows by attention and execution state |
 | Workspace catalog summaries                 | HTTP                        | Workspace rows, active/stopped counts, attention/error flags, and optional compact Git summaries         |
 | Workspace detail recent list                | HTTP                        | Recent active/stopped session summaries, attention snapshot, importable local sessions                   |
@@ -174,10 +169,8 @@ Durable session events get per-session sequence numbers and can be replayed thro
 ## Cross-system invariants
 
 - The local CLI uses bearer-authenticated HTTP over the owner-only Unix socket. It does not discover or fall back to a host, port, DNS name, TLS identity, or plaintext network listener.
-- Network HTTP(S)/WebSocket and Iroh availability are independent from the local CLI socket. Remote transport failures fail closed without disabling local CLI routes.
-- Iroh reuses the existing HTTP route and WebSocket upgrade handlers through a private loopback adapter. It must not implement a second feature-specific API or session projection.
-- Iroh device tokens are bound to the paired Apple endpoint ID. Iroh-only credentials fail closed without HTTP fallback, and Iroh-bound tokens follow their invite transport policy.
-- Host-free means Oppi does not require a server hostname, port, TLS certificate, LAN, or Tailscale. Iroh can use direct paths, signed endpoint address lookup, and relay infrastructure to reach the signed server endpoint ID.
+- Supported remote access uses HTTPS/WSS, including Tailscale, and is independent from the local CLI socket. Remote failures fail closed without disabling local CLI routes.
+- HTTPS/WSS device credentials are bound to a per-device P-256 key and short-lived token.
 - Workspace navigation is HTTP-first. `/app/events/stream` keeps visible rows and attention state fresh between snapshots; compact sidebar Git state comes from the workspace catalog snapshot, never raw Git payloads on the app-event stream.
 - The Workspaces root is a server-scoped active-session inbox. Workspace selection opens the workspace-scoped recent list, files, and configuration.
 - The hot workspace recent list is time-bounded. Older stopped/importable history belongs in archive buckets.

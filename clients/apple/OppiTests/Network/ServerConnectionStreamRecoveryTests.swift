@@ -222,69 +222,7 @@ struct ServerConnectionStreamRecoveryTests {
 
     /// If the first paired bootstrap after LAN loss fails, automatic recovery
     /// must retry with budget instead of settling with nil clients forever.
-    @Test func lanPathLossFailedDemotionRetriesUntilPairedSucceeds() async throws {
-        let connection = ServerConnection()
-        defer { cleanup(connection) }
 
-        var bootstrapCalls = 0
-        var now = Date(timeIntervalSince1970: 1_700_000_100)
-        connection._automaticIrohRecoveryNowForTesting = { now }
-        connection._refreshAfterAutomaticIrohRecoveryForTesting = {}
-        var connectCalls = 0
-        connection._connectStreamForTesting = {
-            connectCalls += 1
-            return AsyncStream { $0.finish() }
-        }
-
-        connection.setDiscoveredLANEndpoint(
-            LANDiscoveredEndpoint(
-                host: "192.168.1.42",
-                port: 7749,
-                serverFingerprintPrefix: "SERVERFINGERPRINT",
-                tlsCertFingerprintPrefix: "TLSFINGERPRINT"
-            )
-        )
-        #expect(await connection.configureForUse(
-            credentials: pairedCredentials(),
-            serverInfoBootstrap: { _, _ in
-                bootstrapCalls += 1
-                // 1 = initial LAN success. 2 = first demotion attempt fails.
-                // 3+ = automatic retry succeeds.
-                if bootstrapCalls == 2 {
-                    throw URLError(.notConnectedToInternet)
-                }
-                return try self.mockServerInfo()
-            }
-        ))
-        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
-        connection.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
-        #expect(connection.transportPath == .lan)
-
-        connection.handleNetworkPathChange()
-
-        // First demotion pass fails and should leave recovery armed.
-        let failedDeadline = ContinuousClock.now + .milliseconds(1_000)
-        while connection.apiClient != nil && ContinuousClock.now < failedDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        #expect(connection.apiClient == nil)
-        #expect(connection.isTransportDemoting || connection.hasScheduledAutomaticRouteRecoveryForTesting)
-
-        // Advance past the first automatic backoff and wait for retry.
-        now = now.addingTimeInterval(1.1)
-        try await waitForPairedFocusedStream(
-            connection,
-            minConnectCalls: 1,
-            connectCalls: { connectCalls },
-            timeoutMs: 3_000
-        )
-
-        #expect(connection.transportPath == .paired)
-        #expect(await connection.apiClient?.baseURL.host == "100.64.0.2")
-        #expect(connectCalls >= 1)
-        #expect(!connection.isTransportDemoting)
-        #expect(bootstrapCalls >= 3)
-    }
 
     /// While demotion is in flight, diagnostics/UI must not present a settled
     /// "local network" connection with nil clients.
@@ -429,7 +367,7 @@ struct ServerConnectionStreamRecoveryTests {
 
     private func makeConnection(
         host: String = "127.0.0.1",
-        scheme: ServerScheme = .http,
+        scheme: ServerScheme = .https,
         tlsFingerprint: String? = nil
     ) -> ServerConnection {
         let connection = ServerConnection()

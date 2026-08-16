@@ -47,11 +47,9 @@ enum LANEndpointSelection {
         credentials: ServerCredentials,
         discoveredEndpoint: LANDiscoveredEndpoint?
     ) -> EndpointSelection? {
-        // Iroh-authorized credentials still permit their signed HTTP transport.
-        // Cross-lane priority is owned by ServerTransportPlanResolver; this
-        // helper only validates and constructs HTTP/LAN endpoint selections.
-        guard credentials.transports.preference != .irohOnly,
-              credentials.transports.http != nil,
+        // Remote authentication is HTTPS/WSS-only. The same rule applies to
+        // discovered LAN endpoints so a plaintext invite cannot downgrade auth.
+        guard credentials.resolvedScheme == .https,
               let paired = pairedSelection(from: credentials) else {
             return nil
         }
@@ -168,5 +166,46 @@ enum LANEndpointSelection {
         }
 
         return trimmed
+    }
+}
+
+enum ServerRouteCandidateKind: Hashable, Sendable {
+    case paired
+    case lan
+}
+
+enum ServerRouteFailure {
+    static func mayAdvance(after error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            return [.timedOut, .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet].contains(urlError.code)
+        }
+        if case APIError.server(let status, _) = error {
+            return status == 401 || status == 404 || status == 408 || status >= 500
+        }
+        return false
+    }
+}
+
+enum ServerTransportPlanResolver {
+    static func candidates(
+        credentials: ServerCredentials,
+        discoveredLANEndpoint: LANDiscoveredEndpoint?,
+        excluding: Set<ServerRouteCandidateKind> = []
+    ) throws -> [EndpointSelection] {
+        guard credentials.resolvedScheme == .https else {
+            throw APIError.server(status: 403, message: "HTTPS required")
+        }
+        guard let paired = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: nil) else {
+            throw APIError.server(status: 400, message: "Unsupported HTTPS server endpoint")
+        }
+        var result: [EndpointSelection] = []
+        if let discoveredLANEndpoint,
+           !excluding.contains(.lan),
+           let lan = LANEndpointSelection.select(credentials: credentials, discoveredEndpoint: discoveredLANEndpoint),
+           lan.transportPath == .lan {
+            result.append(lan)
+        }
+        if !excluding.contains(.paired) { result.append(paired) }
+        return result
     }
 }
