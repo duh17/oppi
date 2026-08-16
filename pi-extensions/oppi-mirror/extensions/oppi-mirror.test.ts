@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import oppiPiMirror, { type MessageQueueState } from "./oppi-mirror.js";
@@ -337,6 +341,37 @@ async function drainMicrotasks(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function preferredLocalApiSocketPath(dataDir: string): string {
+  return join(dataDir, "run", "oppi.sock");
+}
+
+function fallbackLocalApiSocketPath(dataDir: string): string {
+  const uid = process.getuid?.() ?? "user";
+  const dataDirHash = createHash("sha256")
+    .update(resolve(dataDir))
+    .digest("hex")
+    .slice(0, 16);
+  return join("/tmp", `oppi-${uid}`, `${dataDirHash}.sock`);
+}
+
+function writeOppiConfig(
+  overrides: Record<string, unknown> = {},
+): { dataDir: string; configPath: string } {
+  const dataDir = mkdtempSync(join(tmpdir(), "oppi-mirror-config-"));
+  const configPath = join(dataDir, "config.json");
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      host: "0.0.0.0",
+      port: 7749,
+      tls: { mode: "tailscale" },
+      token: "sk_unused_owner_token",
+      ...overrides,
+    }),
+  );
+  return { dataDir, configPath };
 }
 
 function withInteractiveTerminal(run: () => Promise<void>): Promise<void> {
@@ -1248,6 +1283,63 @@ describe("oppi mirror extension UI replay", () => {
           }),
         ]),
       );
+    });
+  });
+});
+
+describe("oppi mirror unix socket connect", () => {
+  it("auto-discovers the owner Unix socket and omits the owner bearer token", async () => {
+    await withInteractiveTerminal(async () => {
+      const { dataDir, configPath } = writeOppiConfig();
+      vi.stubEnv("OPPI_CONFIG_PATH", configPath);
+      vi.stubEnv("OPPI_DATA_DIR", dataDir);
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      await pi.commands.get("oppi-mirror")?.handler("start", ctx);
+      const socket = wsMock.instances.at(-1);
+      if (!socket) throw new Error("Expected mirror websocket");
+
+      const socketPath = preferredLocalApiSocketPath(dataDir);
+      expect(socket.url).toBe(`ws+unix:${socketPath}:/mirror/v1/bridge`);
+      expect(socket.options.headers).toBeUndefined();
+    });
+  });
+
+  it("uses the same long-path Unix socket fallback as the Oppi server", async () => {
+    await withInteractiveTerminal(async () => {
+      const { dataDir } = writeOppiConfig();
+      const longDataDir = join(dataDir, "x".repeat(90));
+      mkdirSync(longDataDir, { recursive: true });
+      const configPath = join(longDataDir, "config.json");
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          host: "0.0.0.0",
+          port: 7749,
+          tls: { mode: "tailscale" },
+          token: "sk_unused_owner_token",
+        }),
+      );
+      vi.stubEnv("OPPI_CONFIG_PATH", configPath);
+      vi.stubEnv("OPPI_DATA_DIR", longDataDir);
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      await pi.commands.get("oppi-mirror")?.handler("start", ctx);
+      const socket = wsMock.instances.at(-1);
+      if (!socket) throw new Error("Expected mirror websocket");
+
+      const socketPath = fallbackLocalApiSocketPath(longDataDir);
+      expect(preferredLocalApiSocketPath(longDataDir).length).toBeGreaterThan(
+        100,
+      );
+      expect(socket.url).toBe(`ws+unix:${socketPath}:/mirror/v1/bridge`);
+      expect(socket.options.headers).toBeUndefined();
     });
   });
 });

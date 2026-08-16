@@ -22,7 +22,7 @@ If Pi is already running, reload extensions:
 
 ## Use
 
-Start the Oppi server so the extension can read `~/.config/oppi/config.json`. Then start Pi in an interactive terminal:
+Start the Oppi server so `$OPPI_DATA_DIR/run/oppi.sock` exists. Then start Pi in an interactive terminal:
 
 ```bash
 pi
@@ -38,9 +38,15 @@ Check or control the bridge from Pi:
 
 ## Configuration
 
-By default, the extension reads the local Oppi server URL and token from `~/.config/oppi/config.json`.
+By default, the extension connects over the owner-only Unix socket at `$OPPI_DATA_DIR/run/oppi.sock`. That upgrade is bearer-free. The network HTTPS/WSS listener does not expose `/mirror/v1/bridge`.
 
-Override the connection for one process:
+Override the socket for one process:
+
+```bash
+OPPI_MIRROR_SOCKET=/path/to/oppi.sock pi
+```
+
+Use a network URL only for explicit debug overrides. The live server rejects owner-token WSS upgrades on `/mirror/v1/bridge`:
 
 ```bash
 OPPI_MIRROR_URL=https://127.0.0.1:7749 \

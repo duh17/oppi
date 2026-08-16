@@ -9,6 +9,7 @@ import {
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
+import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { hostname } from "node:os";
@@ -32,9 +33,15 @@ type OppiMirrorWorkspaceCreationMode = "ask" | "always" | "never";
 interface OppiMirrorSettings {
   serverUrl?: string;
   token?: string;
+  socketPath?: string;
   autoStart?: boolean;
   workspaceCreation?: OppiMirrorWorkspaceCreationMode;
 }
+
+const MAX_PORTABLE_UNIX_SOCKET_PATH_BYTES = 100;
+const LOCAL_API_RUNTIME_DIRECTORY = "run";
+const LOCAL_API_SOCKET_NAME = "oppi.sock";
+const MIRROR_BRIDGE_PATH = "/mirror/v1/bridge";
 
 type MirrorLogLevel = "debug" | "info" | "warn" | "error";
 
@@ -402,14 +409,6 @@ function readSettingsFile(): Record<string, unknown> {
   return readJsonFile(settingsPath());
 }
 
-function localHostForConfig(host: unknown): string {
-  const value = typeof host === "string" ? host.trim() : "";
-  if (!value || value === "0.0.0.0" || value === "::" || value === "[::]") {
-    return "127.0.0.1";
-  }
-  return value;
-}
-
 function normalizeWorkspaceCreationMode(
   value: unknown,
 ): OppiMirrorWorkspaceCreationMode | undefined {
@@ -422,23 +421,37 @@ function normalizeWorkspaceCreationMode(
   return undefined;
 }
 
-function autoDiscoverOppiSettings(): Partial<OppiMirrorSettings> {
-  const config = readJsonFile(oppiConfigPath()) as {
-    host?: unknown;
-    port?: unknown;
-    tls?: { mode?: unknown };
-    token?: unknown;
-  };
-  const token = typeof config.token === "string" ? config.token.trim() : "";
-  const port =
-    typeof config.port === "number" || typeof config.port === "string"
-      ? String(config.port)
-      : "";
-  if (!token || !port) return {};
+function socketPathFits(path: string): boolean {
+  return Buffer.byteLength(path) <= MAX_PORTABLE_UNIX_SOCKET_PATH_BYTES;
+}
 
-  const scheme = config.tls?.mode === "disabled" ? "http" : "https";
-  const host = localHostForConfig(config.host);
-  return { serverUrl: `${scheme}://${host}:${port}`, token };
+function localApiSocketPath(dataDir: string): string {
+  const preferredPath = join(
+    dataDir,
+    LOCAL_API_RUNTIME_DIRECTORY,
+    LOCAL_API_SOCKET_NAME,
+  );
+  if (socketPathFits(preferredPath)) return preferredPath;
+
+  const uid = process.getuid?.() ?? "user";
+  const dataDirHash = createHash("sha256")
+    .update(resolve(dataDir))
+    .digest("hex")
+    .slice(0, 16);
+  const fallbackPath = join("/tmp", `oppi-${uid}`, `${dataDirHash}.sock`);
+  if (socketPathFits(fallbackPath)) return fallbackPath;
+
+  throw new Error(
+    `Oppi local API socket path is too long (${Buffer.byteLength(fallbackPath)} bytes): ${fallbackPath}`,
+  );
+}
+
+function autoDiscoverOppiSettings(): Partial<OppiMirrorSettings> {
+  try {
+    return { socketPath: localApiSocketPath(oppiDataDir()) };
+  } catch {
+    return {};
+  }
 }
 
 function loadSettings(): OppiMirrorSettings {
@@ -466,6 +479,12 @@ function loadSettings(): OppiMirrorSettings {
       discovered.serverUrl,
     token:
       process.env.OPPI_MIRROR_TOKEN || fileSettings.token || discovered.token,
+    socketPath:
+      process.env.OPPI_MIRROR_SOCKET?.trim() ||
+      (typeof fileSettings.socketPath === "string"
+        ? fileSettings.socketPath.trim()
+        : "") ||
+      discovered.socketPath,
     // Installing/enabling the extension is the opt-in. Mirror automatically unless explicitly disabled.
     autoStart: envAutoStart ?? fileSettings.autoStart !== false,
     workspaceCreation,
@@ -485,10 +504,14 @@ function isInteractiveTerminalProcess(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
-function bridgeUrl(serverUrl: string): string {
+function unixBridgeUrl(socketPath: string): string {
+  return `ws+unix:${resolve(expandHomePath(socketPath))}:${MIRROR_BRIDGE_PATH}`;
+}
+
+function networkBridgeUrl(serverUrl: string): string {
   const url = new URL(serverUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = "/mirror/v1/bridge";
+  url.pathname = MIRROR_BRIDGE_PATH;
   url.search = "";
   return url.toString();
 }
@@ -4085,9 +4108,34 @@ async function createTuiMirrorRuntime(
     }, 10_000);
   }
 
-  function configured(): { serverUrl: string; token: string } | null {
-    if (!settings.serverUrl || !settings.token) return null;
-    return { serverUrl: settings.serverUrl, token: settings.token };
+  function configured():
+    | { kind: "unix"; socketPath: string }
+    | { kind: "network"; serverUrl: string; token: string }
+    | null {
+    const envSocket = process.env.OPPI_MIRROR_SOCKET?.trim();
+    if (envSocket) return { kind: "unix", socketPath: envSocket };
+
+    const envUrl = process.env.OPPI_MIRROR_URL?.trim();
+    if (envUrl) {
+      const token = (
+        process.env.OPPI_MIRROR_TOKEN ||
+        settings.token ||
+        ""
+      ).trim();
+      if (!token) return null;
+      return { kind: "network", serverUrl: envUrl, token };
+    }
+
+    const socketPath = settings.socketPath?.trim();
+    if (socketPath) return { kind: "unix", socketPath };
+    if (settings.serverUrl && settings.token) {
+      return {
+        kind: "network",
+        serverUrl: settings.serverUrl,
+        token: settings.token,
+      };
+    }
+    return null;
   }
 
   function workspaceNameFromSuggestion(hostMount: string): string {
@@ -4289,7 +4337,7 @@ async function createTuiMirrorRuntime(
     if (!config) {
       notify(
         ctx,
-        "Oppi Mirror could not auto-discover ~/.config/oppi/config.json. Start the Oppi server once, or set OPPI_MIRROR_URL/OPPI_MIRROR_TOKEN.",
+        "Oppi Mirror could not find the local Oppi socket. Start the Oppi server once, or set OPPI_MIRROR_SOCKET.",
         "warning",
       );
       return;
@@ -4312,14 +4360,19 @@ async function createTuiMirrorRuntime(
     let url: string;
     let socket: WebSocket;
     try {
-      url = bridgeUrl(config.serverUrl);
-      socket = new WebSocket(url, {
-        headers: { Authorization: `Bearer ${config.token}` },
-        perMessageDeflate: false,
-        // Auto-discovery reads the local Oppi config/token from the same user account.
-        // Local self-signed HTTPS is expected; do not require manual cert pairing for this path.
-        rejectUnauthorized: !isLocalUrl(config.serverUrl),
-      });
+      if (config.kind === "unix") {
+        url = unixBridgeUrl(config.socketPath);
+        socket = new WebSocket(url, {
+          perMessageDeflate: false,
+        });
+      } else {
+        url = networkBridgeUrl(config.serverUrl);
+        socket = new WebSocket(url, {
+          headers: { Authorization: `Bearer ${config.token}` },
+          perMessageDeflate: false,
+          rejectUnauthorized: !isLocalUrl(config.serverUrl),
+        });
+      }
     } catch (error) {
       logCallbackError("websocket setup failed", error);
       setIndicatorMode("error");

@@ -9,7 +9,7 @@ Do not use mirror mode for server-owned SDK sessions, `pi -p`, JSON mode, RPC mo
 ## Prerequisites
 
 - Oppi server `0.45.0` or newer is running.
-- The server has a valid token in `~/.config/oppi/config.json`.
+- The owner-only local socket exists at `$OPPI_DATA_DIR/run/oppi.sock` (normally `~/.config/oppi/run/oppi.sock`).
 - You are starting Pi in interactive terminal mode.
 
 ## Install from npm
@@ -61,9 +61,15 @@ Stop or restart the bridge:
 
 ## Configuration
 
-By default, the extension reads the local Oppi server URL and token from `~/.config/oppi/config.json`.
+By default, the extension connects over the owner-only Unix socket at `$OPPI_DATA_DIR/run/oppi.sock`. That upgrade is bearer-free. The network HTTPS/WSS listener does not expose `/mirror/v1/bridge`.
 
-Override the connection for one process:
+Override the socket for one process:
+
+```bash
+OPPI_MIRROR_SOCKET=/path/to/oppi.sock pi
+```
+
+Use a network URL only for explicit debug overrides. The live server rejects owner-token WSS upgrades on `/mirror/v1/bridge`:
 
 ```bash
 OPPI_MIRROR_URL=https://127.0.0.1:7749 \
@@ -183,11 +189,10 @@ Run:
 /oppi-mirror status
 ```
 
-If the extension cannot find Oppi configuration, start the Oppi server once or set:
+If the extension cannot find the local Oppi socket, start the Oppi server once or set:
 
 ```bash
-OPPI_MIRROR_URL=...
-OPPI_MIRROR_TOKEN=...
+OPPI_MIRROR_SOCKET=/path/to/oppi.sock
 ```
 
 ### The extension starts in the wrong process
