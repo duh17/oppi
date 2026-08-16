@@ -100,7 +100,7 @@ async function runTraceOutlineCli(entries: TraceOutlineFixtureEntry[]): Promise<
   }
 }
 
-// ── Session orchestration fixtures (steer/abort/dialogs/respond/watch/wait) ──
+// ── Session orchestration fixtures (steer/abort/watch/wait) ──
 
 interface OrchRequest {
   method: string;
@@ -634,116 +634,7 @@ describe("CLI app-state API boundary", () => {
     );
   });
 
-  it("lists pending dialogs with prompt and option details", async () => {
-    await withOrchApi(
-      (res) =>
-        sendJson(res, {
-          dialogs: [
-            {
-              id: "ask-1",
-              method: "ask",
-              questions: [
-                {
-                  id: "approach",
-                  question: "Which approach?",
-                  options: [{ value: "unit", label: "Unit" }],
-                },
-              ],
-              allowCustom: false,
-            },
-          ],
-        }),
-      async ({ dataDir }) => {
-        const { stdout, code } = await runCliResult(["session", "dialogs", "sess-1"], dataDir);
-        expect(code).toBe(0);
-        const text = stripAnsi(stdout);
-        expect(text).toContain("Pending dialogs for sess-1 (1)");
-        expect(text).toContain("ask-1");
-        expect(text).toContain("Which approach?");
-        expect(text).toContain("unit — Unit");
-      },
-    );
-  });
-
-  it("answers a single-question ask by building the answer JSON", async () => {
-    await withOrchApi(
-      (res, ctx) => {
-        if (ctx.path === "/sessions/sess-1/dialogs") {
-          sendJson(res, {
-            dialogs: [
-              {
-                id: "ask-1",
-                method: "ask",
-                questions: [
-                  {
-                    id: "approach",
-                    question: "Which?",
-                    options: [{ value: "unit", label: "Unit" }],
-                  },
-                ],
-              },
-            ],
-          });
-          return;
-        }
-        sendJson(res, { messages: [] });
-      },
-      async ({ dataDir, requests }) => {
-        const { code } = await runCliResult(
-          ["session", "respond", "sess-1", "--option", "unit", "--json"],
-          dataDir,
-        );
-        expect(code).toBe(0);
-        const command = requests.find((request) => request.path === "/sessions/sess-1/command");
-        expect(command?.body).toEqual({
-          type: "extension_ui_response",
-          id: "ask-1",
-          value: JSON.stringify({ approach: "unit" }),
-        });
-      },
-    );
-  });
-
-  it("rejects an unknown ask option before posting a response", async () => {
-    await withOrchApi(
-      (res, ctx) => {
-        if (ctx.path === "/sessions/sess-1/dialogs") {
-          sendJson(res, {
-            dialogs: [
-              {
-                id: "ask-1",
-                method: "ask",
-                questions: [
-                  {
-                    id: "approach",
-                    question: "Which?",
-                    options: [{ value: "unit", label: "Unit" }],
-                  },
-                ],
-                allowCustom: false,
-              },
-            ],
-          });
-          return;
-        }
-        sendJson(res, { messages: [] });
-      },
-      async ({ dataDir, requests }) => {
-        const { stdout, code } = await runCliResult(
-          ["session", "respond", "sess-1", "--option", "bogus", "--json"],
-          dataDir,
-        );
-        expect(code).toBe(1);
-        expect(JSON.parse(stdout)).toMatchObject({
-          ok: false,
-          error: { message: 'Unknown option "bogus" for question approach' },
-        });
-        expect(requests.filter((request) => request.path.endsWith("/command"))).toHaveLength(0);
-      },
-    );
-  });
-
-  it.each(["changes", "diff"] as const)(
+  it.each(["changes", "diff", "dialogs", "respond"] as const)(
     "rejects removed session %s before making a local API request",
     async (command) => {
       await withOrchApi(
@@ -769,8 +660,6 @@ describe("CLI app-state API boundary", () => {
     ["get", ["get", "caller-1"]],
     ["send", ["send", "caller-1"]],
     ["abort", ["abort", "caller-1"]],
-    ["dialogs", ["dialogs", "caller-1"]],
-    ["respond", ["respond", "caller-1"]],
     ["watch", ["watch", "other-1", "caller-1"]],
     ["wait", ["wait", "caller-1"]],
     ["read", ["read", "caller-1"]],

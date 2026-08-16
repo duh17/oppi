@@ -66,7 +66,8 @@ describe("Oppi agent Oppi tool", () => {
     expect(guidance).toContain("session inspect <id> --view outline");
     expect(guidance).toContain("bounded session messages or tools");
     expect(guidance).toContain("session wait for bounded monitoring");
-    expect(guidance).toContain("session dialogs");
+    expect(guidance).not.toContain("session dialogs");
+    expect(guidance).not.toContain("session respond");
     expect(guidance).not.toContain("start with session inspect <id> --view summary");
   });
 

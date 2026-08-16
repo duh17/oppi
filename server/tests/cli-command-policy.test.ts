@@ -17,7 +17,6 @@ describe("CLI agent access policy", () => {
     ["agent archive", "destructive"],
     ["session wait", "read"],
     ["session send", "mutation"],
-    ["session respond", "alwaysApprove"],
     ["session delete", "destructive"],
     ["schedule runs", "read"],
     ["schedule pause", "mutation"],
@@ -68,6 +67,8 @@ describe("CLI agent access policy", () => {
   it.each([
     ["session", "changes", "sess-1"],
     ["session", "diff", "sess-1"],
+    ["session", "dialogs", "sess-1"],
+    ["session", "respond", "sess-1"],
     ["skill", "list"],
     ["skill", "get", "skill-1"],
     ["skill", "file", "skill-1", "--path", "SKILL.md"],

@@ -19,7 +19,6 @@ export const EVALUATION_SCENARIOS = [
   "latest-response",
   "historical-investigation",
   "multi-session-monitoring",
-  "dialog-handling",
   "safe-mutation",
   "unclassified",
 ] as const;
@@ -157,7 +156,6 @@ const KNOWN_ACTIONS = new Set([
   "changes",
   "create",
   "delete",
-  "dialogs",
   "diff",
   "events",
   "file",
@@ -172,7 +170,6 @@ const KNOWN_ACTIONS = new Set([
   "read",
   "remove",
   "rename",
-  "respond",
   "restart",
   "restore",
   "resume",
@@ -208,7 +205,6 @@ const MUTATING_ACTIONS = new Set([
   "pause",
   "remove",
   "rename",
-  "respond",
   "restart",
   "restore",
   "resume",
@@ -222,7 +218,6 @@ const MUTATING_ACTIONS = new Set([
 ]);
 const READ_ACTIONS = new Set([
   "changes",
-  "dialogs",
   "diff",
   "events",
   "file",
@@ -531,7 +526,6 @@ function classifyScenario(steps: EvaluationStep[]): EvaluationScenario {
   const hasSessionAction = (actions: string[]): boolean =>
     steps.some((step) => step.command === "session" && actions.includes(step.action));
 
-  if (hasSessionAction(["dialogs", "respond"])) return "dialog-handling";
   if (hasSessionAction(["wait", "watch"]) || hasRoute("wait", "session")) {
     return "multi-session-monitoring";
   }
@@ -584,8 +578,6 @@ function isTaskCorrect(scenario: EvaluationScenario, steps: EvaluationStep[]): b
           (step.command === "session" && ["wait", "watch"].includes(step.action)) ||
           (step.command === "wait" && step.action === "session"),
       );
-    case "dialog-handling":
-      return has((step) => step.command === "session" && step.action === "dialogs");
     case "safe-mutation": {
       const firstMutation = steps.findIndex((step) => MUTATING_ACTIONS.has(step.action));
       return (

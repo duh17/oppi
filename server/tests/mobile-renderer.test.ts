@@ -171,11 +171,6 @@ describe("oppi renderer", () => {
     },
     { args: ["session", "send", "sess-1", "--text", "Continue"], title: "oppi session send" },
     { args: ["session", "abort", "sess-1"], title: "oppi session abort" },
-    { args: ["session", "dialogs", "sess-1"], title: "oppi session dialogs" },
-    {
-      args: ["session", "respond", "sess-1", "--dialog", "dialog-1", "--confirm"],
-      title: "oppi session respond",
-    },
     { args: ["session", "stop", "sess-1"], title: "oppi session stop" },
     { args: ["session", "resume", "sess-1"], title: "oppi session resume" },
     { args: ["session", "fork", "sess-1", "--entry", "entry-1"], title: "oppi session fork" },

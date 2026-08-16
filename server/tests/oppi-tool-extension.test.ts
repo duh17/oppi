@@ -209,23 +209,6 @@ describe("Oppi approval policy", () => {
     expect(result).toMatchObject({ kind: "executed" });
   });
 
-  it("requires approval for session respond under every mutation-capable policy", async () => {
-    const command = prepared(["session", "respond", "sess-1", "--dialog", "dialog-1", "--confirm"]);
-    const approve = vi.fn(async () => true);
-    const execute = vi.fn(async () => ({ ok: true }) as OppiToolCommandResult);
-
-    await applyOppiToolPolicy({
-      prepared: command,
-      policy: "confirmDestructiveOnly",
-      identity: "ordinary",
-      approve,
-      execute,
-    });
-
-    expect(approve).toHaveBeenCalledOnce();
-    expect(execute).toHaveBeenCalledOnce();
-  });
-
   it("rejects read-only mutations without approval or execution", async () => {
     const command = prepared(["session", "stop", "sess-1"]);
     const approve = vi.fn(async () => true);

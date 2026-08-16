@@ -214,7 +214,6 @@ export function createOppiToolExtensionFactory(options: {
         "Use oppi for Oppi app state instead of shell or filesystem tools, and use read commands before asking about discoverable state.",
         "Route session questions by intent and take the smallest sufficient step: orientation uses session list; current progress uses session inspect <id> --view summary; latest response uses session inspect <id> --view response directly, without summary or outline first.",
         "For historical investigation, use session search or session inspect <id> --view outline first, then request only bounded session messages or tools; use trace-outline only when exact entry ids are needed, followed by trace-page or tool-output for the smallest range.",
-        "Use session dialogs to read pending user questions and session respond to answer one; session respond always needs approval.",
         "Use session wait for bounded monitoring. The CLI session watch stream is not exposed to agents; one-session watch requests normalize to wait, while multi-session, --all, and any-change streaming are denied.",
         "Use Oppi mutation commands only after the user asks for them; read the current state first and let the configured policy control approval.",
         "To edit a saved Agent, run 'oppi agent get <agent>' first, then patch only the changed fields with 'oppi agent update <agent> --definition-json'. Update is a PATCH: omitted fields stay, nested resources/sessionDefaults/launchConstraints merge, and JSON null clears a field or nested key. Allowed top-level keys are name, icon, description, instructions, resources, sessionDefaults, launchConstraints; launch-only keys (target, workspaceId, worktreeId, cwd, schedule, attachments, images) are rejected. sessionDefaults.tools must name real tools available at launch; unavailable names are dropped from the session with a warning.",
@@ -391,9 +390,7 @@ function commandRequiresApproval(
   return (
     policy !== "readOnly" &&
     prepared.access !== "read" &&
-    (prepared.access === "alwaysApprove" ||
-      policy === "confirmAllChanges" ||
-      prepared.access === "destructive")
+    (policy === "confirmAllChanges" || prepared.access === "destructive")
   );
 }
 
@@ -487,8 +484,6 @@ function sessionTargets(prepared: PreparedOppiCommand): string[] {
       "get",
       "send",
       "abort",
-      "dialogs",
-      "respond",
       "wait",
       "read",
       "events",

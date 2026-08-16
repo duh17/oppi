@@ -50,8 +50,6 @@ describe("CLI agent-flow evaluation", () => {
       },
       { file: "history", command: "session", action: "messages", result_bytes: 500 },
       { file: "monitor", command: "session", action: "wait", result_bytes: 150 },
-      { file: "dialog", command: "session", action: "dialogs", result_bytes: 100 },
-      { file: "dialog", command: "session", action: "respond", result_bytes: 100 },
       { file: "mutation", command: "agent", action: "list", result_bytes: 100 },
       { file: "mutation", command: "agent", action: "update", result_bytes: 120 },
     ]);
@@ -60,13 +58,12 @@ describe("CLI agent-flow evaluation", () => {
     const byScenario = Object.fromEntries(bundle.jobs.map((job) => [job.scenario, job]));
 
     expect(bundle.source.kind).toBe("sanitized-rows");
-    expect(bundle.jobs).toHaveLength(7);
+    expect(bundle.jobs).toHaveLength(6);
     expect(byScenario["session-orientation"]?.correct).toBe(true);
     expect(byScenario["current-progress"]?.correct).toBe(true);
     expect(byScenario["latest-response"]?.correct).toBe(true);
     expect(byScenario["historical-investigation"]?.correct).toBe(true);
     expect(byScenario["multi-session-monitoring"]?.correct).toBe(true);
-    expect(byScenario["dialog-handling"]?.correct).toBe(true);
     expect(byScenario["safe-mutation"]?.correct).toBe(true);
     expect(JSON.stringify(bundle)).not.toContain("prompt contents");
     expect(JSON.stringify(bundle)).not.toContain("response contents");

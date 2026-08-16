@@ -41,13 +41,7 @@ import {
 } from "./session-inspect.js";
 import {
   assertNoCommandError,
-  buildDialogResponse,
-  type DialogSnapshot,
-  dialogMetaLabels,
-  dialogOptionDetails,
-  dialogPromptText,
   printSessionNotice,
-  resolveDialogTarget,
   resolveSendStreamingKind,
   sendSessionInput,
 } from "./session-interactions.js";
@@ -155,55 +149,6 @@ export async function cmdSession(
       assertNoCommandError(result);
       output({ session_id: id, command: "abort" }, () =>
         printSessionNotice(`aborted turn → ${id}`),
-      );
-      return;
-    }
-
-    if (mode === "dialogs") {
-      const id = requirePositional(positional, "session id is required");
-      const result = await call<Record<string, unknown>>(
-        `/sessions/${encodeURIComponent(id)}/dialogs`,
-      );
-      const dialogs = Array.isArray(result.dialogs) ? (result.dialogs as DialogSnapshot[]) : [];
-      output(
-        {
-          session_id: id,
-          dialogs,
-          ...(typeof result.serverNow === "number" ? { server_now: result.serverNow } : {}),
-        },
-        () => {
-          printList(
-            `Pending dialogs for ${id} (${dialogs.length})`,
-            dialogs.map((dialog) => ({
-              id: dialog.id ?? "?",
-              status: dialog.method ?? "dialog",
-              title: dialogPromptText(dialog),
-              meta: dialogMetaLabels(dialog),
-              details: dialogOptionDetails(dialog),
-            })),
-            { empty: "No pending dialogs." },
-          );
-        },
-      );
-      return;
-    }
-
-    if (mode === "respond") {
-      const id = requirePositional(positional, "session id is required");
-      const list = await call<{ dialogs?: DialogSnapshot[] }>(
-        `/sessions/${encodeURIComponent(id)}/dialogs`,
-      );
-      const target = resolveDialogTarget(list.dialogs ?? [], flags.dialog?.trim());
-      const payload = buildDialogResponse(target, flags);
-      const result = await call<Record<string, unknown>>(
-        `/sessions/${encodeURIComponent(id)}/command`,
-        { method: "POST", body: payload },
-      );
-      assertNoCommandError(result);
-      output({ session_id: id, dialog_id: target.id, method: target.method }, () =>
-        printSessionNotice(
-          `answered ${target.id ?? "dialog"} (${target.method ?? "dialog"}) → ${id}`,
-        ),
       );
       return;
     }
@@ -479,7 +424,7 @@ export async function cmdSession(
     }
 
     throw new Error(
-      "Usage: oppi session list|get|create|send|abort|dialogs|respond|watch|wait|read|events|trace|search|inspect|stop|resume|fork|delete|tool-output|trace-page|trace-outline",
+      "Usage: oppi session list|get|create|send|abort|watch|wait|read|events|trace|search|inspect|stop|resume|fork|delete|tool-output|trace-page|trace-outline",
     );
   } catch (err: unknown) {
     if (callerContext.signal?.aborted) throw err;
@@ -586,8 +531,6 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
   ],
   send: ["follow-up", "json", "steer", "text"],
   abort: ["json"],
-  dialogs: ["json"],
-  respond: ["answers", "cancel", "confirm", "decline", "dialog", "json", "option", "text"],
   watch: ["all", "interval", "json", "timeout", "until"],
   wait: ["for", "json", "poll", "timeout"],
   read: ["json", "tail"],
@@ -645,8 +588,6 @@ function sessionTargetsForMode(mode: string, positional: string[]): string[] {
       "get",
       "send",
       "abort",
-      "dialogs",
-      "respond",
       "wait",
       "read",
       "events",

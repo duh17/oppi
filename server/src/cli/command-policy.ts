@@ -1,7 +1,7 @@
 import { isHelpFlag, parseCliArgs, type ParsedCliArgs } from "./args.js";
 import { helpPathFor, isNestedHelpRequest, resolveHelpTopic } from "./help.js";
 
-export type CliAgentAccess = "read" | "mutation" | "destructive" | "alwaysApprove" | "denied";
+export type CliAgentAccess = "read" | "mutation" | "destructive" | "denied";
 
 type AllowedCliAgentAccess = Exclude<CliAgentAccess, "denied">;
 
@@ -62,11 +62,9 @@ const COMMAND_POLICIES: readonly CliCommandPolicy[] = [
   { path: ["session", "tool-output"], access: "read" },
   { path: ["session", "trace-page"], access: "read" },
   { path: ["session", "wait"], access: "read" },
-  { path: ["session", "dialogs"], access: "read" },
   { path: ["session", "create"], access: "mutation" },
   { path: ["session", "send"], access: "mutation" },
   { path: ["session", "abort"], access: "mutation" },
-  { path: ["session", "respond"], access: "alwaysApprove" },
   { path: ["session", "stop"], access: "mutation" },
   { path: ["session", "resume"], access: "mutation" },
   { path: ["session", "fork"], access: "mutation" },
