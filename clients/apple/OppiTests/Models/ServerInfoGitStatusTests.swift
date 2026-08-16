@@ -42,21 +42,6 @@ struct ServerInfoTests {
             "keyId": "main",
             "algorithm": "ed25519"
           },
-          "runtimeUpdate": {
-            "packageName": "@earendil-works/pi-coding-agent",
-            "currentVersion": "1.0.0",
-            "latestVersion": "1.1.0",
-            "pendingVersion": null,
-            "updateAvailable": true,
-            "canUpdate": true,
-            "checking": false,
-            "updateInProgress": false,
-            "restartRequired": false,
-            "lastCheckedAt": 123,
-            "checkError": null,
-            "lastUpdatedAt": null,
-            "lastUpdateError": null
-          },
           "stats": {
             "workspaceCount": 3,
             "activeSessionCount": 2,
@@ -70,7 +55,7 @@ struct ServerInfoTests {
         let decoded = try JSONDecoder().decode(ServerInfo.self, from: json)
         #expect(decoded.name == "oppi")
         #expect(decoded.identity?.fingerprint == "abc123")
-        #expect(decoded.runtimeUpdate?.updateAvailable == true)
+        #expect(decoded.piVersion == "0.7.1")
         #expect(decoded.capabilities == nil)
         #expect(decoded.stats.workspaceCount == 3)
     }
@@ -344,7 +329,6 @@ struct ServerInfoTests {
             piVersion: "0.1.0",
             configVersion: 1,
             identity: nil,
-            runtimeUpdate: nil,
             uploadProtocol: nil,
             images: nil,
             capabilities: nil,

@@ -141,7 +141,6 @@ struct WorkspaceNavigationServerScopeTests {
             piVersion: "1",
             configVersion: 1,
             identity: nil,
-            runtimeUpdate: nil,
             uploadProtocol: nil,
             images: nil,
             capabilities: .init(

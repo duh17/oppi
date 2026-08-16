@@ -15,7 +15,6 @@ struct ServerInfo: Codable, Sendable, Equatable {
     let piVersion: String
     let configVersion: Int
     let identity: IdentityInfo?
-    let runtimeUpdate: RuntimeUpdateInfo?
     let uploadProtocol: UploadProtocolInfo?
     let images: ImageSettingsInfo?
     let capabilities: Capabilities?
@@ -25,22 +24,6 @@ struct ServerInfo: Codable, Sendable, Equatable {
         let fingerprint: String
         let keyId: String
         let algorithm: String
-    }
-
-    struct RuntimeUpdateInfo: Codable, Sendable, Equatable {
-        let packageName: String
-        let currentVersion: String
-        let latestVersion: String?
-        let pendingVersion: String?
-        let updateAvailable: Bool
-        let canUpdate: Bool
-        let checking: Bool
-        let updateInProgress: Bool
-        let restartRequired: Bool
-        let lastCheckedAt: Int?
-        let checkError: String?
-        let lastUpdatedAt: Int?
-        let lastUpdateError: String?
     }
 
     struct UploadProtocolInfo: Codable, Sendable, Equatable {
@@ -354,10 +337,6 @@ extension ServerInfo.Capabilities {
 }
 
 extension ServerInfo {
-    var agentVersionLabel: String {
-        runtimeUpdate?.currentVersion ?? piVersion
-    }
-
     /// Human-readable uptime (e.g. "2d 14h", "3h 25m", "45s").
     var uptimeLabel: String {
         let days = uptime / 86400

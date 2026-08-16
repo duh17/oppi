@@ -953,21 +953,6 @@ struct ServerStatsTests {
             "keyId": "key-1",
             "algorithm": "ed25519"
           },
-          "runtimeUpdate": {
-            "packageName": "@anthropic/pi",
-            "currentVersion": "1.2.3",
-            "latestVersion": "1.3.0",
-            "pendingVersion": null,
-            "updateAvailable": true,
-            "canUpdate": true,
-            "checking": false,
-            "updateInProgress": false,
-            "restartRequired": false,
-            "lastCheckedAt": 1711100000000,
-            "checkError": null,
-            "lastUpdatedAt": null,
-            "lastUpdateError": null
-          },
           "images": {
             "autoResize": false
           },
@@ -990,10 +975,7 @@ struct ServerStatsTests {
 
         #expect(info.identity?.fingerprint == "SHA256:abc123")
         #expect(info.identity?.algorithm == "ed25519")
-
-        #expect(info.runtimeUpdate?.updateAvailable == true)
-        #expect(info.runtimeUpdate?.latestVersion == "1.3.0")
-        #expect(info.runtimeUpdate?.pendingVersion == nil)
+        #expect(info.piVersion == "0.9.0")
         #expect(info.images?.autoResize == false)
 
         #expect(info.stats.workspaceCount == 3)
@@ -1013,7 +995,6 @@ struct ServerStatsTests {
           "piVersion": "0.1.0",
           "configVersion": 1,
           "identity": null,
-          "runtimeUpdate": null,
           "stats": {
             "workspaceCount": 0,
             "activeSessionCount": 0,
@@ -1026,7 +1007,6 @@ struct ServerStatsTests {
         let info = try decode(json, as: ServerInfo.self)
 
         #expect(info.identity == nil)
-        #expect(info.runtimeUpdate == nil)
         #expect(info.images == nil)
         #expect(info.stats.totalSessionCount == 0)
     }
@@ -1049,7 +1029,6 @@ struct ServerStatsTests {
             piVersion: "0.9.0",
             configVersion: 1,
             identity: nil,
-            runtimeUpdate: nil,
             uploadProtocol: nil,
             images: nil,
             capabilities: nil,

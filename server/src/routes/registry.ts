@@ -116,7 +116,6 @@ const settingsOperationIds = new Set<string>([
   "getProviderQuotas",
   "getServerStats",
   "getDailyServerStats",
-  "updateServerRuntime",
   "getAutoTitleConfig",
   "setAutoTitleConfig",
   "listServerSkills",

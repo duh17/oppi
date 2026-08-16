@@ -4,7 +4,7 @@ import Testing
 
 @Suite("ServerInfo agent version")
 struct ServerInfoVersionTests {
-    @Test func usesPiVersionWhenMutableRuntimeStatusIsAbsent() throws {
+    @Test func decodesPiVersion() throws {
         let data = Data(#"""
         {
           "name":"test",
@@ -17,14 +17,13 @@ struct ServerInfoVersionTests {
           "piVersion":"0.81.0",
           "configVersion":1,
           "identity":null,
-          "runtimeUpdate":null,
           "stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}
         }
         """#.utf8)
 
         let info = try JSONDecoder().decode(ServerInfo.self, from: data)
 
-        #expect(info.agentVersionLabel == "0.81.0")
+        #expect(info.piVersion == "0.81.0")
     }
 
     @Test func decodesControlSessionCapability() throws {

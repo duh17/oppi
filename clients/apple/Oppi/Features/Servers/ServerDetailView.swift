@@ -85,7 +85,7 @@ struct ServerDetailView: View {
                     workspaceManagementSection
 
                     Section("Runtime") {
-                        LabeledContent("Agent", value: info.agentVersionLabel)
+                        LabeledContent("Agent", value: info.piVersion)
                         LabeledContent("Server", value: info.version)
                     }
                 }
