@@ -428,13 +428,6 @@ export class DeviceAuthStore {
     return { ok: true, deviceId: device.id, scope: device.scope };
   }
 
-  deviceIdForAccessToken(candidate: string): string | undefined {
-    const hash = tokenHash(candidate);
-    return (this.configStore.getConfig().authAccessTokens ?? []).find(
-      (item) => item.tokenHash === hash,
-    )?.deviceId;
-  }
-
   commitLegacyRevocation(deviceId: string): boolean {
     const config = this.configStore.getConfig();
     const target = (config.authDevices ?? []).find((device) => device.id === deviceId);
@@ -486,9 +479,5 @@ export class DeviceAuthStore {
     return (this.configStore.getConfig().authDevices ?? []).find(
       (device) => device.legacyTokenHash === hash,
     )?.id;
-  }
-
-  clearChallenges(): void {
-    this.challenges.clear();
   }
 }

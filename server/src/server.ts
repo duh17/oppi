@@ -384,30 +384,6 @@ export class Server {
     }
   }
 
-  /** Read installed pi-coding-agent version from its package.json. */
-  static detectPiAgentVersion(): string {
-    // import.meta.url points to dist/src/server.js
-    // node_modules is at the project root (two levels up from dist/src/)
-    const srcDir = dirname(fileURLToPath(import.meta.url));
-    const packageScopes = ["@earendil-works", "@mariozechner"];
-    const candidateRoots = [
-      join(srcDir, "..", "..", "node_modules"),
-      join(srcDir, "..", "node_modules"),
-    ];
-    const candidates = candidateRoots.flatMap((root) =>
-      packageScopes.map((scope) => join(root, scope, "pi-coding-agent", "package.json")),
-    );
-    for (const pkgPath of candidates) {
-      try {
-        const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };
-        if (pkg.version) return pkg.version;
-      } catch {
-        // Try next candidate
-      }
-    }
-    return "unknown";
-  }
-
   private storage: Storage;
   private sessions: SessionManager;
   private skillRegistry: SkillRegistry;

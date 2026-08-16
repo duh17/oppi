@@ -11,8 +11,6 @@ export type {
 } from "./types/session.js";
 
 export class AgentConfigurationError extends Error {
-  readonly retryable = false as const;
-
   constructor(
     readonly code: AgentConfigurationFailureCode,
     readonly details: AgentConfigurationFailureDetails,

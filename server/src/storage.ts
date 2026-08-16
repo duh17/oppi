@@ -328,10 +328,6 @@ export class Storage {
     return this.deviceAuthStore.validateAccessToken(candidate);
   }
 
-  deviceIdForAccessToken(candidate: string): string | undefined {
-    return this.deviceAuthStore.deviceIdForAccessToken(candidate);
-  }
-
   commitLegacyRevocation(deviceId: string): boolean {
     return this.deviceAuthStore.commitLegacyRevocation(deviceId);
   }
@@ -354,10 +350,6 @@ export class Storage {
 
   setMigrationFinalized(finalized: boolean): void {
     this.deviceAuthStore.setMigrationFinalized(finalized);
-  }
-
-  clearChallenges(): void {
-    this.deviceAuthStore.clearChallenges();
   }
 
   hasAuthToken(candidate: string): boolean {

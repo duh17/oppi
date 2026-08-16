@@ -1778,12 +1778,6 @@ export class SdkBackend {
     await preflight;
   }
 
-  get isReloading(): boolean {
-    return (this.requestedExclusiveOperations ?? []).some(
-      (operation) => operation.name === "reload",
-    );
-  }
-
   async abort(permit?: SessionRuntimeTransactionPermit): Promise<void> {
     if (permit) {
       this.getRuntimeTransaction().assertPermit(permit, "exclusive");
