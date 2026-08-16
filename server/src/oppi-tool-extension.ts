@@ -257,18 +257,28 @@ export function createOppiToolExtensionFactory(options: {
           ctx.hasUI && typeof ctx.ui.confirm === "function"
             ? (message: string) => ctx.ui.confirm("Approve Oppi command", message)
             : undefined;
+        const cwd = typeof ctx.cwd === "string" ? ctx.cwd : undefined;
+        const resolvedApprovalMessage =
+          approvalRequired && confirm
+            ? await resolveApprovalMessage({
+                prepared,
+                ...(dataDir !== undefined ? { dataDir } : {}),
+                ...(cwd !== undefined ? { cwd } : {}),
+                ...(signal ? { signal } : {}),
+              })
+            : undefined;
         const policyResult = await applyOppiToolPolicy({
           prepared,
           policy,
           identity,
           ...(signal ? { signal } : {}),
-          ...(approvalRequired ? { approvalMessage: approvalMessage(prepared) } : {}),
+          ...(resolvedApprovalMessage ? { approvalMessage: resolvedApprovalMessage } : {}),
           ...(confirm ? { approve: confirm } : {}),
           execute: async (approvedCommand, approvedSignal) =>
             executePreparedOppiCommand({
               prepared: approvedCommand,
               ...(dataDir !== undefined ? { dataDir } : {}),
-              ...(typeof ctx.cwd === "string" ? { cwd: ctx.cwd } : {}),
+              ...(cwd !== undefined ? { cwd } : {}),
               ...(approvedSignal ? { signal: approvedSignal } : {}),
             }),
         });
@@ -394,8 +404,102 @@ function commandRequiresApproval(
   );
 }
 
-function approvalMessage(prepared: PreparedOppiCommand): string {
+async function resolveApprovalMessage(options: {
+  prepared: PreparedOppiCommand;
+  dataDir?: string;
+  cwd?: string;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const { prepared } = options;
+  if (prepared.path[0] === "worktree" && prepared.path[1] === "remove" && !prepared.isHelp) {
+    return redactCredentialString(await worktreeRemoveApprovalMessage(options));
+  }
   return redactCredentialString(`Run Oppi command: ${prepared.path.join(" ")}`);
+}
+
+async function worktreeRemoveApprovalMessage(options: {
+  prepared: PreparedOppiCommand;
+  dataDir?: string;
+  cwd?: string;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const parsed = parseCliArgs([...options.prepared.args]);
+  const worktreeId = parsed.positional[1]?.trim();
+  const workspace = parsed.flags.workspace?.trim();
+  const lookup = worktreeId
+    ? await lookupWorktreeForApproval(options, worktreeId, workspace)
+    : undefined;
+  const name = firstNonEmpty(lookup?.name, lookup?.branch, worktreeId);
+  const id = firstNonEmpty(lookup?.id, worktreeId);
+  const workspaceLabel = firstNonEmpty(lookup?.workspaceId, workspace);
+  const lines = ["Remove this worktree?"];
+  if (name) lines.push(`Name: ${name}`);
+  if (id && id !== name) lines.push(`ID: ${id}`);
+  if (workspaceLabel) lines.push(`Workspace: ${workspaceLabel}`);
+  if (lookup?.branch && lookup.branch !== name) lines.push(`Branch: ${lookup.branch}`);
+  return lines.join("\n");
+}
+
+async function lookupWorktreeForApproval(
+  options: {
+    prepared: PreparedOppiCommand;
+    dataDir?: string;
+    cwd?: string;
+    signal?: AbortSignal;
+  },
+  worktreeId: string,
+  workspace?: string,
+): Promise<
+  | {
+      id?: string;
+      name?: string;
+      branch?: string;
+      workspaceId?: string;
+    }
+  | undefined
+> {
+  const lookup = prepareOppiCommand([
+    "worktree",
+    "get",
+    worktreeId,
+    ...(workspace ? ["--workspace", workspace] : []),
+  ]);
+  if (!lookup.ok) return undefined;
+  try {
+    const result = await executePreparedOppiCommand({
+      prepared: lookup.command,
+      ...(options.dataDir !== undefined ? { dataDir: options.dataDir } : {}),
+      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    if (!result.ok || !result.json?.ok) return undefined;
+    const data = result.json.data;
+    const worktree = isRecord(data.worktree) ? data.worktree : undefined;
+    return {
+      ...(stringField(worktree?.id) ? { id: stringField(worktree?.id) } : {}),
+      ...(stringField(worktree?.name) ? { name: stringField(worktree?.name) } : {}),
+      ...(stringField(worktree?.branch) ? { branch: stringField(worktree?.branch) } : {}),
+      ...(stringField(data.workspaceId) ? { workspaceId: stringField(data.workspaceId) } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function terminalTranscript(args: readonly string[], humanOutput: string): string {

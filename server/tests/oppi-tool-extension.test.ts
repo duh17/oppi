@@ -327,6 +327,90 @@ describe("thin Oppi extension", () => {
     expect(result.details.expandedText).toBe(`$ oppi session read sess-1\n\n${humanOutput}`);
   });
 
+  it("names the looked-up worktree in the remove approval before executing", async () => {
+    const confirm = vi.fn(async () => true);
+    const tool = registeredTool("confirmDestructiveOnly");
+    canonicalRun.mockImplementation(async (args) => {
+      if (args[0] === "worktree" && args[1] === "get") {
+        return {
+          ...successfulRun(),
+          stdout:
+            '{\n  "ok": true,\n  "data": {"workspaceId":"oppi","worktree":{"id":"wt_device-key-abc12345","name":"device-key","branch":"device-key"}}\n}\n',
+          json: {
+            ok: true,
+            data: {
+              workspaceId: "oppi",
+              worktree: {
+                id: "wt_device-key-abc12345",
+                name: "device-key",
+                branch: "device-key",
+              },
+            },
+          },
+        };
+      }
+      return successfulRun();
+    });
+
+    await tool.execute(
+      "call-remove-worktree",
+      {
+        args: ["worktree", "remove", "wt_device-key-abc12345", "--workspace", "oppi"],
+      },
+      undefined,
+      undefined,
+      { hasUI: true, ui: { confirm } },
+    );
+
+    expect(canonicalRun.mock.calls[0]?.[0].slice(0, 3)).toEqual([
+      "worktree",
+      "get",
+      "wt_device-key-abc12345",
+    ]);
+    expect(confirm).toHaveBeenCalledWith(
+      "Approve Oppi command",
+      "Remove this worktree?\nName: device-key\nID: wt_device-key-abc12345\nWorkspace: oppi",
+    );
+    expect(canonicalRun.mock.calls.at(-1)?.[0].slice(0, 3)).toEqual([
+      "worktree",
+      "remove",
+      "wt_device-key-abc12345",
+    ]);
+  });
+
+  it("falls back to the worktree id when the name lookup fails", async () => {
+    const confirm = vi.fn(async () => false);
+    const tool = registeredTool("confirmDestructiveOnly");
+    canonicalRun.mockResolvedValueOnce({
+      ...successfulRun(),
+      ok: false,
+      exitCode: 1,
+      stdout: '{\n  "ok": false,\n  "error": {"message":"Worktree not found"}\n}\n',
+      json: { ok: false, error: { message: "Worktree not found" } },
+    });
+
+    await tool.execute(
+      "call-remove-worktree-unknown",
+      {
+        args: ["worktree", "remove", "wt_missing-abc12345", "--workspace", "oppi"],
+      },
+      undefined,
+      undefined,
+      { hasUI: true, ui: { confirm } },
+    );
+
+    expect(confirm).toHaveBeenCalledWith(
+      "Approve Oppi command",
+      "Remove this worktree?\nName: wt_missing-abc12345\nWorkspace: oppi",
+    );
+    expect(canonicalRun).toHaveBeenCalledTimes(1);
+    expect(canonicalRun.mock.calls[0]?.[0].slice(0, 3)).toEqual([
+      "worktree",
+      "get",
+      "wt_missing-abc12345",
+    ]);
+  });
+
   it("preserves compact cancellation metadata without executing", async () => {
     const tool = registeredTool("confirmDestructiveOnly");
 
