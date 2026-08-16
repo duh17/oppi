@@ -30,7 +30,7 @@ struct PairedServerTests {
         #expect(server?.resolvedScheme == .https)
         #expect(server?.token == "sk_test123")
         #expect(server?.tlsCertFingerprint == "sha256:leafpin")
-        #expect(server?.fingerprint == "sha256:testfp123")
+        #expect(server?.id == "sha256:testfp123")
         #expect(server?.sortOrder == 0)
     }
 
@@ -120,7 +120,7 @@ struct PairedServerTests {
 
         // Preserved fields
         #expect(server.id == "sha256:fp1")
-        #expect(server.fingerprint == "sha256:fp1")
+        #expect(server.id == "sha256:fp1")
         #expect(server.addedAt == originalAddedAt)
         #expect(server.sortOrder == 5)
     }
@@ -144,7 +144,7 @@ struct PairedServerTests {
         #expect(decoded.host == original.host)
         #expect(decoded.port == original.port)
         #expect(decoded.token == original.token)
-        #expect(decoded.fingerprint == original.fingerprint)
+        #expect(decoded.id == original.id)
         #expect(decoded.sortOrder == original.sortOrder)
         // Date precision: within 1 second is fine
         #expect(abs(decoded.addedAt.timeIntervalSince(original.addedAt)) < 1)
@@ -172,11 +172,10 @@ struct PairedServerTests {
 
         #expect(decoded.badgeIcon == nil)
         #expect(decoded.resolvedBadgeIcon == .defaultValue)
-        #expect(decoded.routeMode == .automatic)
     }
 
-    @Test("Credential grant round-trips while an older record remains unknown")
-    func credentialGrantCodableCompatibility() throws {
+    @Test("Old transport metadata is stripped from supported records")
+    func oldTransportMetadataIsStripped() throws {
         let grantedJSON = """
         {
           "id": "sha256:grant",
@@ -195,7 +194,7 @@ struct PairedServerTests {
         let granted = try JSONDecoder().decode(PairedServer.self, from: Data(grantedJSON.utf8))
         let reencoded = try JSONEncoder().encode(granted)
         let reencodedObject = try #require(JSONSerialization.jsonObject(with: reencoded) as? [String: Any])
-        #expect(reencodedObject["credentialTransports"] as? [String] == ["http"])
+        #expect(reencodedObject["credentialTransports"] == nil)
 
         var olderObjectValue = try #require(
             JSONSerialization.jsonObject(with: Data(grantedJSON.utf8)) as? [String: Any]
@@ -206,56 +205,6 @@ struct PairedServerTests {
         let olderReencoded = try JSONEncoder().encode(older)
         let olderObject = try #require(JSONSerialization.jsonObject(with: olderReencoded) as? [String: Any])
         #expect(olderObject["credentialTransports"] == nil)
-    }
-
-    @Test("Re-pair preserves the local mode and falls back when it becomes impossible")
-    func rePairPreservesRouteModeAndFallsBack() {
-        let both = ServerCredentials(
-            host: "studio.example.test",
-            port: 443,
-            token: "dt_both",
-            name: "Studio",
-            serverFingerprint: "sha256:route-mode",
-            transports: ServerTransports(
-                preference: .irohPreferred,
-                iroh: IrohServerTransport(
-                    version: 2,
-                    nodeId: "signed-node",
-                    alpns: [IrohTunnelProtocol.alpn],
-                    addressMode: .nodeId,
-                    ticket: nil
-                ),
-                http: HTTPServerTransport(
-                    host: "studio.example.test",
-                    port: 443,
-                    scheme: .https,
-                    tlsCertFingerprint: nil
-                )
-            )
-        )
-        var server = PairedServer(from: both)!
-        server.routeMode = .irohOnly
-
-        let httpOnly = ServerCredentials(
-            host: "studio.example.test",
-            port: 443,
-            token: "dt_http",
-            name: "Studio",
-            serverFingerprint: "sha256:route-mode",
-            transports: ServerTransports(
-                preference: .httpOnly,
-                http: HTTPServerTransport(
-                    host: "studio.example.test",
-                    port: 443,
-                    scheme: .https,
-                    tlsCertFingerprint: nil
-                )
-            )
-        )
-        server.updateCredentials(from: httpOnly)
-
-        #expect(server.routeMode == .irohOnly)
-        #expect(server.effectiveRouteMode == .httpsOnly)
     }
 
     @Test("Equatable compares all fields, not just ID")
@@ -323,50 +272,26 @@ struct PairedServerTests {
         #expect(server.baseURL?.absoluteString == "https://192.168.1.50:7749")
     }
 
-    @Test("Iroh-only transport metadata stores without HTTP base URL")
-    func irohOnlyStorageRoundTrip() throws {
-        let iroh = IrohServerTransport(
-            version: 2,
-            nodeId: "iroh-node-storage",
-            alpns: ["oppi/pair/1", "oppi/http/1"],
-            addressMode: .nodeId,
-            ticket: nil
-        )
-        let transports = ServerTransports(
-            preference: .irohOnly,
-            iroh: iroh,
-            http: nil
-        )
-        let creds = ServerCredentials(
-            host: "",
-            port: 0,
-            token: "dt_iroh_storage",
-            name: "Iroh Mac",
-            scheme: nil,
-            serverFingerprint: "sha256:irohstorage",
-            tlsCertFingerprint: nil,
-            transports: transports
-        )
+    @Test("Old Iroh-only records fail with an HTTPS migration error")
+    func oldIrohOnlyRecordFailsClearly() throws {
+        let json = """
+        {
+          "id": "sha256:old",
+          "name": "Old server",
+          "token": "dt_old",
+          "transports": {"preference":"irohOnly"},
+          "addedAt": 0,
+          "sortOrder": 0
+        }
+        """
 
-        let original = try #require(PairedServer(from: creds, sortOrder: 7))
-        #expect(original.baseURL == nil)
-        #expect(original.transports.preference == .irohOnly)
-        #expect(original.transports.http == nil)
-        #expect(original.transports.iroh == iroh)
-
-        let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(PairedServer.self, from: data)
-        #expect(decoded.baseURL == nil)
-        #expect(decoded.transports.preference == .irohOnly)
-        #expect(decoded.transports.http == nil)
-        #expect(decoded.transports.iroh == iroh)
-        #expect(decoded.sortOrder == 7)
-
-        let derived = decoded.credentials
-        #expect(derived.baseURL == nil)
-        #expect(derived.transports.preference == .irohOnly)
-        #expect(derived.transports.http == nil)
-        #expect(derived.transports.iroh == iroh)
-        #expect(derived.token == "dt_iroh_storage")
+        do {
+            _ = try JSONDecoder().decode(PairedServer.self, from: Data(json.utf8))
+            Issue.record("Expected old Iroh-only record to fail")
+        } catch let DecodingError.dataCorrupted(context) {
+            #expect(context.debugDescription == "Unsupported Iroh connection; migrate this server to HTTPS/Tailscale")
+        } catch {
+            Issue.record("Expected a clear HTTPS migration decoding error")
+        }
     }
 }

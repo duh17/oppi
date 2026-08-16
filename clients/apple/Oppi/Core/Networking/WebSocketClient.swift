@@ -3,6 +3,58 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "WebSocket")
 
+/// Narrow transport seam for deterministic focused-session reconnect tests.
+/// Production still delegates every operation to `URLSessionWebSocketTask`.
+@MainActor
+struct FocusedWebSocketTransport {
+    typealias Message = URLSessionWebSocketTask.Message
+    typealias CloseCode = URLSessionWebSocketTask.CloseCode
+
+    let identity: ObjectIdentifier
+    let resume: () -> Void
+    let receive: () async throws -> Message
+    let send: (Message, @escaping @Sendable (Error?) -> Void) -> Void
+    let sendPing: (@escaping @Sendable (Error?) -> Void) -> Void
+    let cancel: (CloseCode, Data?) -> Void
+    let state: () -> URLSessionTask.State
+    let response: () -> URLResponse?
+    let closeCode: () -> CloseCode
+
+    init(task: URLSessionWebSocketTask) {
+        identity = ObjectIdentifier(task)
+        resume = { task.resume() }
+        receive = { try await task.receive() }
+        send = { message, handler in task.send(message, completionHandler: handler) }
+        sendPing = { handler in task.sendPing(pongReceiveHandler: handler) }
+        cancel = { code, reason in task.cancel(with: code, reason: reason) }
+        state = { task.state }
+        response = { task.response }
+        closeCode = { task.closeCode }
+    }
+
+    init(
+        identity: AnyObject,
+        resume: @escaping () -> Void,
+        receive: @escaping () async throws -> Message,
+        send: @escaping (Message, @escaping @Sendable (Error?) -> Void) -> Void,
+        sendPing: @escaping (@escaping @Sendable (Error?) -> Void) -> Void,
+        cancel: @escaping (CloseCode, Data?) -> Void,
+        state: @escaping () -> URLSessionTask.State,
+        response: @escaping () -> URLResponse?,
+        closeCode: @escaping () -> CloseCode
+    ) {
+        self.identity = ObjectIdentifier(identity)
+        self.resume = resume
+        self.receive = receive
+        self.send = send
+        self.sendPing = sendPing
+        self.cancel = cancel
+        self.state = state
+        self.response = response
+        self.closeCode = closeCode
+    }
+}
+
 /// WebSocket client for the active focused-session stream endpoint.
 ///
 /// Returns an `AsyncStream<StreamFrameEvent>` from `connect()`.
@@ -24,11 +76,17 @@ final class WebSocketClient {
     /// Used to prevent stale `onTermination` handlers from killing newer connections.
     private var connectionID: UInt64 = 0
 
+    /// True after a forced refresh has been consumed since the last successful
+    /// frame. A second 401 on a socket that was already refreshed once is
+    /// terminal, so a server that keeps rejecting freshly-issued tokens cannot
+    /// recurse into an unbounded refresh/reconnect loop.
+    private var didForceRefreshForConnection = false
+
     var diagnosticConnectionID: UInt64 { connectionID }
 
     typealias InboundMeta = InboundStreamMeta
 
-    private var webSocket: URLSessionWebSocketTask?
+    private var webSocket: FocusedWebSocketTransport?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
@@ -44,6 +102,9 @@ final class WebSocketClient {
     private let receiveErrorLogCooldownNs: UInt64 = 60_000_000_000
 
     let credentials: ServerCredentials
+    /// Device-key auth session. When set, the WebSocket bearer comes from this
+    /// session and a 401 handshake refreshes single-flight before one reconnect.
+    private var authSession: DeviceAuthSession?
     var configuredTLSServerName: String? { trustDelegate.expectedServerName }
     private var preferredEndpoint: EndpointSelection?
     private var streamURL: URL?
@@ -53,6 +114,7 @@ final class WebSocketClient {
     private let diagnosticRemoteIdentity: String?
     private let urlSession: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
+    private let webSocketFactory: (URLRequest) -> FocusedWebSocketTransport
 
     private let pingInterval: Duration
     private let pingTimeout: Duration
@@ -76,12 +138,15 @@ final class WebSocketClient {
         diagnosticRemoteIdentity: String? = nil,
         tlsCertFingerprint: String? = nil,
         tlsServerName: String? = nil,
+        authSession: DeviceAuthSession? = nil,
         pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval,
         pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
         waitForConnectionTimeout: Duration = .seconds(3),
-        sendTimeout: Duration = .seconds(5)
+        sendTimeout: Duration = .seconds(5),
+        webSocketFactory: ((URLRequest) -> FocusedWebSocketTransport)? = nil
     ) {
         self.credentials = credentials
+        self.authSession = authSession
         self.preferredEndpoint = preferredEndpoint
         self.diagnosticRole = diagnosticRole
         self.diagnosticRemoteIdentity = diagnosticRemoteIdentity
@@ -97,11 +162,15 @@ final class WebSocketClient {
         let config = URLSessionConfiguration.default
         // No timeout for WebSocket — we handle keepalive ourselves
         config.timeoutIntervalForRequest = 60
-        self.urlSession = URLSession(
+        let urlSession = URLSession(
             configuration: config,
             delegate: trustDelegate,
             delegateQueue: nil
         )
+        self.urlSession = urlSession
+        self.webSocketFactory = webSocketFactory ?? { request in
+            FocusedWebSocketTransport(task: urlSession.webSocketTask(with: request))
+        }
     }
 
     // MARK: - Connect
@@ -122,6 +191,7 @@ final class WebSocketClient {
 
         connectionID &+= 1
         let thisConnection = connectionID
+        didForceRefreshForConnection = false
         lastHTTPStatusCode = nil
         status = .connecting
         wsLogInfo(
@@ -214,8 +284,8 @@ final class WebSocketClient {
                     "WS send timed out",
                     metadata: ["type": message.typeLabel]
                 )
-                if self.webSocket === ws {
-                    ws.cancel(with: .goingAway, reason: nil)
+                if self.webSocket?.identity == ws.identity {
+                    ws.cancel(.goingAway, nil)
                     self.webSocket = nil
                     attemptReconnect()
                 }
@@ -240,7 +310,7 @@ final class WebSocketClient {
     /// Send payload with a hard timeout that cannot be wedged by a stuck async send.
     private func sendWithTimeout(
         payload: String,
-        over ws: URLSessionWebSocketTask,
+        over ws: FocusedWebSocketTransport,
         timeout: Duration
     ) async throws {
         let timeoutMs = Self.durationMilliseconds(timeout)
@@ -286,9 +356,9 @@ final class WebSocketClient {
         }
     }
 
-    nonisolated private static func sendPayload(
+    private static func sendPayload(
         _ payload: String,
-        over ws: URLSessionWebSocketTask,
+        over ws: FocusedWebSocketTransport,
         baseMetadata: [String: String],
         resolver: SendResolver
     ) {
@@ -363,7 +433,7 @@ final class WebSocketClient {
         receiveTask = nil
         pingTask?.cancel()
         pingTask = nil
-        webSocket?.cancel(with: .goingAway, reason: nil)
+        webSocket?.cancel(.goingAway, nil)
         webSocket = nil
         status = .disconnected
         resolveConnectionWaiters()
@@ -382,7 +452,7 @@ final class WebSocketClient {
         healthReportTask = nil
         pingTask?.cancel()
         pingTask = nil
-        ws.cancel(with: .goingAway, reason: nil)
+        ws.cancel(.goingAway, nil)
     }
 
     /// Disconnect and clean up.
@@ -406,7 +476,7 @@ final class WebSocketClient {
         pingTask?.cancel()
         pingTask = nil
 
-        webSocket?.cancel(with: .normalClosure, reason: nil)
+        webSocket?.cancel(.normalClosure, nil)
         webSocket = nil
 
         continuation?.finish()
@@ -495,12 +565,12 @@ final class WebSocketClient {
         wsLogInfo("Suppressed recoverable WebSocket receive errors", metadata: metadata)
     }
 
-    private func receiveFailureMetadata(for ws: URLSessionWebSocketTask, error: Error) -> [String: String] {
+    private func receiveFailureMetadata(for ws: FocusedWebSocketTransport, error: Error) -> [String: String] {
         var metadata = ClientLog.networkErrorMetadata(error)
-        if let statusCode = (ws.response as? HTTPURLResponse)?.statusCode {
+        if let statusCode = (ws.response() as? HTTPURLResponse)?.statusCode {
             metadata["httpStatusCode"] = String(statusCode)
         }
-        metadata["webSocketCloseCode"] = String(ws.closeCode.rawValue)
+        metadata["webSocketCloseCode"] = String(ws.closeCode().rawValue)
         return metadata
     }
 
@@ -508,8 +578,8 @@ final class WebSocketClient {
         WebSocketRecoveryPolicy.isNonRetryableHandshakeStatus(statusCode)
     }
 
-    private func isRecoverableReceiveError(_ error: Error, ws: URLSessionWebSocketTask) -> Bool {
-        WebSocketRecoveryPolicy.isRecoverableReceiveError(error, closeCode: ws.closeCode)
+    private func isRecoverableReceiveError(_ error: Error, ws: FocusedWebSocketTransport) -> Bool {
+        WebSocketRecoveryPolicy.isRecoverableReceiveError(error, closeCode: ws.closeCode())
     }
 
     private func openStreamWebSocket(continuation: AsyncStream<StreamFrameEvent>.Continuation) {
@@ -518,18 +588,73 @@ final class WebSocketClient {
             disconnect()
             return
         }
-        var request = URLRequest(url: url)
-        ServerAuthorization.apply(token: credentials.token, to: &request)
+        guard let authSession else {
+            openSocket(url: url, token: credentials.token, continuation: continuation)
+            return
+        }
+        let connectionAtOpen = connectionID
+        Task { @MainActor [weak self] in
+            guard let self,
+                  self.connectionID == connectionAtOpen,
+                  self.status != .disconnected else { return }
+            let token = (try? await authSession.currentAccessToken()) ?? self.credentials.effectiveAccessToken
+            guard self.connectionID == connectionAtOpen, self.status != .disconnected else { return }
+            self.openSocket(url: url, token: token, continuation: continuation)
+        }
+    }
 
-        let ws = urlSession.webSocketTask(with: request)
+    private func openSocket(
+        url: URL,
+        token: String,
+        continuation: AsyncStream<StreamFrameEvent>.Continuation
+    ) {
+        var request = URLRequest(url: url)
+        ServerAuthorization.apply(token: token, to: &request)
+        let ws = webSocketFactory(request)
         self.webSocket = ws
         ws.resume()
-
         startReceiveLoop(ws: ws, continuation: continuation)
         startPingTimer(ws: ws)
     }
 
-    private func startReceiveLoop(ws: URLSessionWebSocketTask, continuation: AsyncStream<StreamFrameEvent>.Continuation) {
+    /// Handle an auth 401 on `ws`: force-refresh exactly once via the device-key
+    /// session, then reconnect exactly once on success. A failed refresh
+    /// (revoked/unknown device), an empty token, or a repeated 401 disconnects
+    /// terminally. Returns `true` when the socket was replaced (the caller must
+    /// stop touching the old loop); `false` when the caller should disconnect.
+    private func handleAuthFailure(ws: FocusedWebSocketTransport) async -> Bool {
+        guard let authSession else { return false }
+        guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
+        guard !didForceRefreshForConnection else {
+            wsLogError(
+                "Repeated 401 after forced refresh",
+                metadata: ["reason": "repeat"]
+            )
+            return false
+        }
+        do {
+            let refreshed = try await authSession.refreshAccessToken()
+            guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
+            guard !refreshed.isEmpty else {
+                wsLogError(
+                    "Refresh returned an empty access token",
+                    metadata: ["reason": "empty"]
+                )
+                return false
+            }
+            didForceRefreshForConnection = true
+            attemptReconnect()
+            return true
+        } catch {
+            wsLogError(
+                "Device-key refresh failed on 401",
+                metadata: ["error": String(describing: error)]
+            )
+            return false
+        }
+    }
+
+    private func startReceiveLoop(ws: FocusedWebSocketTransport, continuation: AsyncStream<StreamFrameEvent>.Continuation) {
         receiveTask = Task { [weak self] in
             var shouldAttemptReconnect = true
             while !Task.isCancelled {
@@ -577,12 +702,14 @@ final class WebSocketClient {
                     // socket has opened. Only the task that owns the current socket may publish
                     // frames or mutate shared connection status.
                     let ownsCurrentSocket = await MainActor.run { [weak self] in
-                        guard let self, self.webSocket === ws else { return false }
+                        guard let self, self.webSocket?.identity == ws.identity else { return false }
                         if case .connecting = self.status {
                             self.status = .connected
+                            self.didForceRefreshForConnection = false
                             self.resolveConnectionWaiters()
                         } else if case .reconnecting = self.status {
                             self.status = .connected
+                            self.didForceRefreshForConnection = false
                             self.resolveConnectionWaiters()
                         }
                         return true
@@ -602,16 +729,24 @@ final class WebSocketClient {
                         shouldAttemptReconnect = false
                         break
                     }
-                    guard let self, self.webSocket === ws else {
+                    guard let self, self.webSocket?.identity == ws.identity else {
                         shouldAttemptReconnect = false
                         break
                     }
 
-                    let statusCode = (ws.response as? HTTPURLResponse)?.statusCode
+                    let statusCode = (ws.response() as? HTTPURLResponse)?.statusCode
                     if let statusCode {
                         self.lastHTTPStatusCode = statusCode
                     }
-                    if let statusCode, self.isNonRetryableHandshakeStatus(statusCode) {
+                    if statusCode == 401, self.authSession != nil {
+                        // Expired/unknown device token: force-refresh exactly once, then
+                        // reconnect exactly once. Revoked/unknown device or a repeated
+                        // 401 is terminal. Never call `disconnect()` on the success path.
+                        shouldAttemptReconnect = false
+                        if await self.handleAuthFailure(ws: ws) {
+                            return
+                        }
+                    } else if let statusCode, self.isNonRetryableHandshakeStatus(statusCode) {
                         shouldAttemptReconnect = false
                         let metadata = self.receiveFailureMetadata(for: ws, error: error)
                             .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
@@ -620,11 +755,11 @@ final class WebSocketClient {
                             "WebSocket handshake rejected",
                             metadata: metadata
                         )
-                    } else if WebSocketRecoveryPolicy.isNonRetryableCloseCode(ws.closeCode) {
+                    } else if WebSocketRecoveryPolicy.isNonRetryableCloseCode(ws.closeCode()) {
                         shouldAttemptReconnect = false
                         let metadata = self.receiveFailureMetadata(for: ws, error: error)
                             .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
-                        logger.error("WebSocket terminal close code \(ws.closeCode.rawValue)")
+                        logger.error("WebSocket terminal close code \(ws.closeCode().rawValue)")
                         self.wsLogError(
                             "WebSocket terminal protocol close",
                             metadata: metadata
@@ -655,7 +790,7 @@ final class WebSocketClient {
 
             // Connection lost — attempt reconnect unless the server rejected the endpoint/auth.
             await MainActor.run { [weak self] in
-                guard let self, self.webSocket === ws else { return }
+                guard let self, self.webSocket?.identity == ws.identity else { return }
                 if shouldAttemptReconnect {
                     self.attemptReconnect()
                 } else {
@@ -665,20 +800,20 @@ final class WebSocketClient {
         }
     }
 
-    private func startPingTimer(ws: URLSessionWebSocketTask) {
+    private func startPingTimer(ws: FocusedWebSocketTransport) {
         pingTask = Task { [weak self] in
             var consecutiveFailures = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: self?.pingInterval ?? WebSocketRecoveryPolicy.pingInterval)
                 guard !Task.isCancelled else { break }
-                guard ws.state == .running,
+                guard ws.state() == .running,
                       let self,
-                      self.webSocket === ws else { break }
+                      self.webSocket?.identity == ws.identity else { break }
 
                 let result = await WebSocketPingDeadline.wait(timeout: self.pingTimeout) { callback in
-                    ws.sendPing(pongReceiveHandler: callback)
+                    ws.sendPing(callback)
                 }
-                guard !Task.isCancelled, self.webSocket === ws else { break }
+                guard !Task.isCancelled, self.webSocket?.identity == ws.identity else { break }
 
                 switch result {
                 case .succeeded:
@@ -696,7 +831,7 @@ final class WebSocketClient {
                     await self.onTransportHealthFailure?(.pingTimeout)
                 }
 
-                guard !Task.isCancelled, self.webSocket === ws else { break }
+                guard !Task.isCancelled, self.webSocket?.identity == ws.identity else { break }
                 logger.error("Ping watchdog detected an unhealthy socket — triggering reconnect")
                 self.wsLogError(
                     "Ping watchdog reconnect",
@@ -707,7 +842,7 @@ final class WebSocketClient {
                 )
                 self.receiveTask?.cancel()
                 self.receiveTask = nil
-                ws.cancel(with: .goingAway, reason: nil)
+                ws.cancel(.goingAway, nil)
                 self.webSocket = nil
                 self.attemptReconnect()
                 break
@@ -723,7 +858,7 @@ final class WebSocketClient {
         if case .reconnecting(let a) = status { attempt = a }
 
         // Persistent subscriptions remain intended until their owner disconnects them.
-        // A prolonged Iroh/network outage must not silently turn that intent off.
+        // A prolonged network outage must not silently turn that intent off.
         let nextAttempt = WebSocketRecoveryPolicy.nextReconnectAttempt(after: attempt)
         status = .reconnecting(attempt: nextAttempt)
         let delay = Self.reconnectDelay(attempt: nextAttempt)
@@ -746,7 +881,7 @@ final class WebSocketClient {
         pingTask?.cancel()
         pingTask = nil
         reconnectTask?.cancel()
-        webSocket?.cancel(with: .goingAway, reason: nil)
+        webSocket?.cancel(.goingAway, nil)
         webSocket = nil
 
         reconnectTask = Task { [weak self] in

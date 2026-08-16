@@ -133,12 +133,10 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         _ resourceLoader: AVAssetResourceLoader,
         shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest
     ) -> Bool {
-        var request = URLRequest(url: source.url)
-        request.httpMethod = loadingRequest.dataRequest == nil ? "HEAD" : "GET"
-        request.setValue(source.authorizationHeaderValue, forHTTPHeaderField: "Authorization")
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-
+        // Resolve the byte range synchronously; resolve the bearer per request so
+        // long playback refreshes instead of reusing a short-lived token snapshot.
         let requestedRange: AuthenticatedMediaRequestedRange?
+        let rangeHeader: String?
         if let dataRequest = loadingRequest.dataRequest {
             let offset = max(dataRequest.currentOffset, dataRequest.requestedOffset)
             let requestedLength = dataRequest.requestedLength > 0
@@ -146,21 +144,50 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
                 : AuthenticatedMediaPlaybackConstants.defaultRangeLength
             let end = offset + Int64(requestedLength) - 1
             requestedRange = AuthenticatedMediaRequestedRange(start: offset, end: end)
-            request.setValue("bytes=\(offset)-\(end)", forHTTPHeaderField: "Range")
+            rangeHeader = "bytes=\(offset)-\(end)"
         } else {
             requestedRange = nil
+            rangeHeader = nil
         }
 
-        let task = session.dataTask(with: request)
-        let context = LoadingContext(loadingRequest: loadingRequest, requestedRange: requestedRange)
         let requestId = ObjectIdentifier(loadingRequest)
+        let url = source.url
+        let authorizationProvider = source.authorizationProvider
+        Task { [weak self] in
+            guard let self else {
+                loadingRequest.finishLoading(with: URLError(.cancelled))
+                return
+            }
+            // Resolve the bearer before building the request. A failure here
+            // (revoked/unknown device, unavailable key) fails the AV loading
+            // request without ever issuing an unauthenticated network request.
+            let authorization: String
+            do {
+                authorization = try await authorizationProvider()
+            } catch {
+                loadingRequest.finishLoading(with: error)
+                return
+            }
+            guard !authorization.isEmpty else {
+                loadingRequest.finishLoading(with: mediaError("No bearer available"))
+                return
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = loadingRequest.dataRequest == nil ? "HEAD" : "GET"
+            request.setValue(authorization, forHTTPHeaderField: "Authorization")
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            if let rangeHeader {
+                request.setValue(rangeHeader, forHTTPHeaderField: "Range")
+            }
 
-        lock.lock()
-        contextsByTaskId[task.taskIdentifier] = context
-        tasksByRequestId[requestId] = task
-        lock.unlock()
-
-        task.resume()
+            let task = self.session.dataTask(with: request)
+            let context = LoadingContext(loadingRequest: loadingRequest, requestedRange: requestedRange)
+            self.lock.withLock {
+                self.contextsByTaskId[task.taskIdentifier] = context
+                self.tasksByRequestId[requestId] = task
+            }
+            task.resume()
+        }
         return true
     }
 

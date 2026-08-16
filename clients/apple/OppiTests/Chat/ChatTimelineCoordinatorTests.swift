@@ -94,7 +94,7 @@ struct ChatTimelineCoordinatorTests {
             port: 7749,
             token: "test-token",
             name: "Test Server",
-            scheme: .http
+            scheme: .https
         )))
         let source = try await sourceProvider("att-image", "image/png", "png")
         #expect(source.url.path == "/sessions/session-attachment-scope/attachments/att-image")
@@ -148,7 +148,7 @@ struct ChatTimelineCoordinatorTests {
             port: 7749,
             token: "test-token",
             name: "Test Server",
-            scheme: .http
+            scheme: .https
         )))
         let source = try await provider("/tmp/movie.mp4")
         #expect(

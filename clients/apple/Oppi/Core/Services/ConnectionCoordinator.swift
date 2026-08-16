@@ -19,7 +19,6 @@ enum PreparedServerActivation {
 
 private struct ConnectionPreparation {
     let id: UUID
-    let routeMode: PairedServerRouteMode
     let credentials: ServerCredentials
     let isForced: Bool
     let task: Task<ServerConnection?, Never>
@@ -81,10 +80,6 @@ final class ConnectionCoordinator {
     #if DEBUG
     var _onRefreshAllServersForTesting: (() -> Void)?
     var _onRefreshInactiveServerForTesting: ((String) -> Void)?
-    var _irohProxyFactoryForTesting: (@MainActor (
-        IrohServerTransport,
-        String
-    ) async throws -> (IrohConnectionManager?, URL))?
     var _onConnectionPreparedForTesting: ((String, ServerConnection) -> Void)?
     var _initialLANEndpointForTesting: (@MainActor (String) async -> LANDiscoveredEndpoint?)?
     var _serverInfoBootstrapForTesting: ServerConnectionInfoBootstrap?
@@ -127,11 +122,6 @@ final class ConnectionCoordinator {
     /// mutation. Production navigation never calls this path.
     @discardableResult
     func ensureConnection(for server: PairedServer) -> ServerConnection {
-        // Synchronous test seam is HTTP-only. Iroh needs configureForUse.
-        guard server.credentials.transports.http != nil,
-              server.effectiveRouteMode.requestedTransports.contains(.https) else {
-            return disconnectedSentinel
-        }
         return ensureHTTPConnectionForTesting(for: server)
     }
 
@@ -157,8 +147,8 @@ final class ConnectionCoordinator {
 
     /// Publish the paired server's stores and make them active before its
     /// network transport is ready. Cold launch can render cached content from
-    /// this connection while `ensureConnectionReady` performs bounded Iroh/LAN/
-    /// HTTP selection in the background.
+    /// this connection while `ensureConnectionReady` performs bounded HTTPS/LAN
+    /// selection in the background.
     @discardableResult
     func activatePairedServerShell(_ server: PairedServer) -> ServerConnection {
         let connection = stagePairedServerConnection(server)
@@ -176,9 +166,7 @@ final class ConnectionCoordinator {
         return staged
     }
 
-    /// Await transport setup for HTTP or Iroh. Iroh needs this asynchronous path
-    /// because its app-local listener must reach `.ready` before clients receive
-    /// the ephemeral URL.
+    /// Await HTTPS endpoint setup before exposing the connection to navigation.
     @discardableResult
     func ensureConnectionReady(
         for server: PairedServer,
@@ -188,8 +176,7 @@ final class ConnectionCoordinator {
         if let preparation = connectionPreparationTasks[serverId] {
             let prepared = await preparation.task.value ?? disconnectedSentinel
             let latestServer = serverStore.server(for: serverId) ?? server
-            let requestChanged = preparation.routeMode != latestServer.effectiveRouteMode
-                || preparation.credentials != latestServer.credentials
+            let requestChanged = preparation.credentials != latestServer.credentials
             if forceReconfigure, !preparation.isForced || requestChanged {
                 finishConnectionPreparation(serverId: serverId, id: preparation.id)
                 return await ensureConnectionReady(
@@ -213,7 +200,6 @@ final class ConnectionCoordinator {
         let preparationID = UUID()
         connectionPreparationTasks[serverId] = ConnectionPreparation(
             id: preparationID,
-            routeMode: server.effectiveRouteMode,
             credentials: server.credentials,
             isForced: forceReconfigure,
             task: task
@@ -240,6 +226,7 @@ final class ConnectionCoordinator {
         for server: PairedServer,
         forceReconfigure: Bool = false
     ) async -> ServerConnection? {
+        let server = await migrateLegacyDeviceIfNeeded(server)
         let serverId = server.id
         let initialLANEndpoint = await initialLANEndpoint(for: server)
         if let existing = connections[serverId] {
@@ -257,7 +244,6 @@ final class ConnectionCoordinator {
                 guard await configureConnection(
                     existing,
                     credentials: server.credentials,
-                    routeMode: server.effectiveRouteMode,
                     preservingPersistentStreams: forceReconfigure
                 ) else {
                     logger.error("Failed to prepare paired server transport")
@@ -276,13 +262,11 @@ final class ConnectionCoordinator {
         }
 
         let connection = ServerConnection()
-        // Feed verified discovery into the policy before initial configuration
-        // so private LAN wins over Iroh at the initial transport boundary.
+        // Feed verified discovery into the HTTPS endpoint selection before initial configuration.
         connection.setDiscoveredLANEndpoint(initialLANEndpoint)
         guard await configureConnection(
             connection,
             credentials: server.credentials,
-            routeMode: server.effectiveRouteMode
         ) else {
             logger.error("Failed to configure connection for \(server.name, privacy: .public)")
             return nil
@@ -301,8 +285,20 @@ final class ConnectionCoordinator {
         return connection
     }
 
+    /// Migrate a legacy `dt_` paired server to a device-key credential before
+    /// first network use. The store is updated so later connections skip the
+    /// one-time migration. Failure leaves the `dt_` usable (compat window).
+    private func migrateLegacyDeviceIfNeeded(_ server: PairedServer) async -> PairedServer {
+        let service = DeviceAuthMigrationService(persist: { [weak self] migrated in
+            guard let self else {
+                throw KeychainCredentialMergeError.itemNotFound
+            }
+            try self.serverStore.persistServer(migrated)
+        })
+        return await service.migrateIfNeeded(server)
+    }
+
     private func initialLANEndpoint(for server: PairedServer) async -> LANDiscoveredEndpoint? {
-        guard server.credentials.transports.preference != .irohOnly else { return nil }
         let endpoint = bestLANEndpoint(forServerId: server.id)
         #if DEBUG
         if endpoint == nil, let testEndpoint = _initialLANEndpointForTesting {
@@ -317,7 +313,6 @@ final class ConnectionCoordinator {
         server: PairedServer,
         initialEndpoint: LANDiscoveredEndpoint?
     ) async {
-        guard server.credentials.transports.preference != .irohOnly else { return }
         var reconciledEndpoint = initialEndpoint
         while true {
             let latestEndpoint = await initialLANEndpoint(for: server)
@@ -334,52 +329,50 @@ final class ConnectionCoordinator {
     private func configureConnection(
         _ connection: ServerConnection,
         credentials: ServerCredentials,
-        routeMode: PairedServerRouteMode,
         preservingPersistentStreams: Bool = false
     ) async -> Bool {
-        let grantObserver: ServerConnectionCredentialGrantObserver = { [weak self] grant in
-            guard let serverId = credentials.normalizedServerFingerprint else { return }
-            self?.serverStore.setCredentialGrant(id: serverId, to: grant)
+        let deviceCredentialObserver: ServerConnectionDeviceCredentialObserver = { [weak self] result in
+            guard let self, let serverId = credentials.normalizedServerFingerprint else { return }
+            do {
+                try self.serverStore.persistDeviceCredentialRefresh(
+                    id: serverId,
+                    result: result
+                )
+            } catch {
+                ClientLog.error("DeviceCredential", "Failed to persist device-credential refresh", metadata: [
+                    "serverId": serverId,
+                    "error": error.localizedDescription,
+                ])
+            }
         }
         #if DEBUG
-        if let factory = _irohProxyFactoryForTesting {
-            let bootstrap = _serverInfoBootstrapForTesting ?? { client, deadline in
-                try await client.serverInfo(bootstrapDeadline: deadline)
-            }
-            let apiFactory = _apiClientFactoryForTesting ?? { environment, observer in
-                APIClient(environment: environment, availabilityObserver: observer)
-            }
-            if preservingPersistentStreams {
-                return await connection.reconfigureForExplicitRetry(
-                    credentials: credentials,
-                    routeMode: routeMode,
-                    apiClientFactory: apiFactory,
-                    serverInfoBootstrap: bootstrap,
-                    irohProxyFactory: factory,
-                    credentialGrantDidChange: grantObserver
-                )
-            }
-            return await connection.configureForUse(
-                credentials: credentials,
-                routeMode: routeMode,
-                apiClientFactory: apiFactory,
-                serverInfoBootstrap: bootstrap,
-                irohProxyFactory: factory,
-                credentialGrantDidChange: grantObserver
-            )
+        let bootstrap = _serverInfoBootstrapForTesting ?? { client, deadline in
+            try await client.serverInfo(bootstrapDeadline: deadline)
+        }
+        let apiFactory = _apiClientFactoryForTesting ?? { environment, observer in
+            APIClient(environment: environment, availabilityObserver: observer)
+        }
+        #else
+        let bootstrap: ServerConnectionInfoBootstrap = { client, deadline in
+            try await client.serverInfo(bootstrapDeadline: deadline)
+        }
+        let apiFactory: ServerConnectionAPIClientFactory = { environment, observer in
+            APIClient(environment: environment, availabilityObserver: observer)
         }
         #endif
         if preservingPersistentStreams {
             return await connection.reconfigureForExplicitRetry(
                 credentials: credentials,
-                routeMode: routeMode,
-                credentialGrantDidChange: grantObserver
+                apiClientFactory: apiFactory,
+                serverInfoBootstrap: bootstrap,
+                deviceCredentialDidChange: deviceCredentialObserver
             )
         }
         return await connection.configureForUse(
             credentials: credentials,
-            routeMode: routeMode,
-            credentialGrantDidChange: grantObserver
+            apiClientFactory: apiFactory,
+            serverInfoBootstrap: bootstrap,
+            deviceCredentialDidChange: deviceCredentialObserver
         )
     }
 
@@ -675,7 +668,7 @@ final class ConnectionCoordinator {
     // MARK: - Server Switching
 
     /// Prepare and switch the focused server. The previous server remains active
-    /// while an unprepared Iroh listener starts, so navigation never receives a
+    /// while an unprepared HTTPS endpoint starts, so navigation never receives a
     /// disconnected sentinel.
     @discardableResult
     func switchToServerReady(
@@ -724,7 +717,7 @@ final class ConnectionCoordinator {
     }
 
     #if DEBUG
-    /// Test-only synchronous switch for HTTP fixtures. Iroh fixtures must use
+    /// Test-only synchronous switch for HTTP fixtures. HTTPS fixtures must use
     /// `switchToServerReady` to cover production behavior.
     @discardableResult
     func switchToServer(_ serverId: String) -> Bool {
@@ -774,7 +767,7 @@ final class ConnectionCoordinator {
     func addServerReady(_ server: PairedServer, switchTo: Bool = true) async -> Bool {
         let previous = serverStore.server(for: server.id)
         serverStore.addOrUpdate(server)
-        // Re-pair preserves local routeMode/badge via ServerStore. Configure from
+        // Re-pair preserves local badge via ServerStore. Configure from
         // that canonical merged row, not the incoming automatic PairedServer.
         guard let canonical = serverStore.server(for: server.id) else { return false }
         let connection = await ensureConnectionReady(for: canonical)

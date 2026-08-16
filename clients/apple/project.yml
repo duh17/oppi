@@ -15,9 +15,6 @@ packages:
   tree-sitter-bash:
     url: https://github.com/tree-sitter/tree-sitter-bash
     from: "0.25.0"
-  IrohLib:
-    url: https://github.com/n0-computer/iroh-ffi.git
-    exactVersion: "1.1.0"
 
 options:
   bundleIdPrefix: dev.chenda
@@ -237,8 +234,6 @@ targets:
         product: SwiftTreeSitter
       - package: tree-sitter-bash
         product: TreeSitterBash
-      - package: IrohLib
-        product: IrohLib
       - target: OppiActivityExtension
         embed: true
       - target: OppiControlWidget
@@ -256,6 +251,8 @@ targets:
         type: group
         excludes:
           - "ModelColorHelpers.swift"
+          - "ShareQuickSessionSender.swift"
+          - "KeychainDeviceCredentialMerger.swift"
       - path: OppiCore/Formatting/SessionFormatting.swift
         type: file
     entitlements:
@@ -292,6 +289,18 @@ targets:
           - "NearbyPairing"
           - "Renderers"
           - "Models"
+      - path: OppiCore/Client/DeviceKey.swift
+        type: file
+      - path: OppiCore/Client/DeviceAuthSession.swift
+        type: file
+      - path: OppiCore/Client/DeviceCredential.swift
+        type: file
+      - path: OppiCore/Client/CrossProcessFileLock.swift
+        type: file
+      - path: Oppi/Core/Services/DeviceKeyStore.swift
+        type: file
+      - path: Oppi/Core/Services/DeviceKeyProvider.swift
+        type: file
     entitlements:
       path: OppiShareExtension/OppiShareExtension.entitlements
       properties:
@@ -342,6 +351,8 @@ targets:
         type: group
         excludes:
           - "ModelColorHelpers.swift"
+          - "ShareQuickSessionSender.swift"
+          - "KeychainDeviceCredentialMerger.swift"
       - path: OppiCore/Formatting/SessionFormatting.swift
         type: file
     entitlements:
@@ -381,8 +392,6 @@ targets:
         CODE_SIGNING_ALLOWED: "NO"
     info:
       path: .build/OppiTestsInfo.plist
-      properties:
-        OPPIIrohLiveInvite: "$(OPPI_IROH_LIVE_INVITE_B64)"
 
   OppiPerfTests:
     type: bundle.unit-test
@@ -459,7 +468,6 @@ targets:
         excludes:
           - "PiSessionAttributes.swift"
           - "LiveActivityPresentation.swift"
-          - "SharedConstants.swift"
           - "ShareQuickSessionPayload.swift"
           - "ShareQuickSessionSender.swift"
     dependencies:

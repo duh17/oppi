@@ -285,20 +285,10 @@ enum ServerConnectionLanePresentation {
         state: ServerBadgeConnectionState,
         isPreparing: Bool
     ) -> String {
-        if isPreparing {
-            return switch server.credentials.transports.preference {
-            case .irohOnly: "Trying Iroh"
-            case .irohPreferred: "Connecting"
-            case .httpOnly: "Connecting to paired server"
-            }
-        }
+        if isPreparing { return "Connecting over HTTPS/WSS" }
 
         guard let connection, let credentials = connection.credentials else {
-            return switch server.credentials.transports.preference {
-            case .irohOnly: "Iroh unavailable"
-            case .irohPreferred: "Connection unavailable"
-            case .httpOnly: "Paired server unavailable"
-            }
+            return "HTTPS/WSS server unavailable"
         }
 
         // Mid Wi‑Fi→cell demotion keeps a stale transportPath (.lan) while
@@ -307,11 +297,7 @@ enum ServerConnectionLanePresentation {
             return "Recovering connection"
         }
 
-        let lane = switch connection.transportPath {
-        case .iroh: "Iroh"
-        case .lan: "local network"
-        case .paired: credentials.resolvedScheme == .http ? "paired HTTP" : "paired HTTPS"
-        }
+        let lane = connection.transportPath == .lan ? "local network HTTPS" : "paired HTTPS"
         return switch state {
         case .connected: "Connected via \(lane)"
         case .connecting: "Connecting via \(lane)"

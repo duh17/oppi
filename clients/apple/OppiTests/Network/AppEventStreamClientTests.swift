@@ -176,6 +176,165 @@ struct AppEventStreamClientTests {
         await consumer.value
     }
 
+    @Test func auth401ForcesOneRefreshThenOneReconnect() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let refreshCounter = RefreshCounter()
+        let client = try makeClient(
+            factory: factory,
+            reconnectDelay: { _ in 0 },
+            refreshTokenProvider: {
+                refreshCounter.increment()
+                return "at_fresh"
+            }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in
+            for await _ in stream {}
+        }
+
+        let socket = try #require(factory.sockets.first)
+        socket.fail(
+            URLError(.userAuthenticationRequired),
+            responseStatusCode: 401,
+            closeCode: .policyViolation
+        )
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 2
+        })
+        #expect(refreshCounter.current() == 1)
+        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_fresh")
+
+        // The reconnected socket is live and drives status back to connected.
+        let reconnected = try #require(factory.sockets.last)
+        reconnected.yield(.string(Self.connectedJSON))
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            client.status == .connected
+        })
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func authRefreshFailureDisconnectsTerminallyWithoutReconnect() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let refreshCounter = RefreshCounter()
+        let client = try makeClient(
+            factory: factory,
+            reconnectDelay: { _ in 0 },
+            refreshTokenProvider: {
+                refreshCounter.increment()
+                throw DeviceAuthError.refreshRejected(code: "revoked")
+            }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in
+            for await _ in stream {}
+        }
+
+        let socket = try #require(factory.sockets.first)
+        socket.fail(
+            URLError(.userAuthenticationRequired),
+            responseStatusCode: 401,
+            closeCode: .policyViolation
+        )
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            client.status == .disconnected
+        })
+        #expect(refreshCounter.current() == 1)
+        #expect(factory.sockets.count == 1)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func repeatedAuth401CannotRefreshOrReconnectForever() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let refreshCounter = RefreshCounter()
+        let client = try makeClient(
+            factory: factory,
+            reconnectDelay: { _ in 0 },
+            refreshTokenProvider: {
+                refreshCounter.increment()
+                return "at_still_rejected"
+            }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in
+            for await _ in stream {}
+        }
+
+        let first = try #require(factory.sockets.first)
+        first.fail(
+            URLError(.userAuthenticationRequired),
+            responseStatusCode: 401,
+            closeCode: .policyViolation
+        )
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 2
+        })
+
+        let second = try #require(factory.sockets.last)
+        second.fail(
+            URLError(.userAuthenticationRequired),
+            responseStatusCode: 401,
+            closeCode: .policyViolation
+        )
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            client.status == .disconnected
+        })
+        #expect(refreshCounter.current() == 1)
+        #expect(factory.sockets.count == 2)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func productionStyleProvidersResolveCurrentBeforeOpenAndForceRefreshAfter401() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let currentCounter = RefreshCounter()
+        let refreshCounter = RefreshCounter()
+        let client = try makeClient(
+            factory: factory,
+            reconnectDelay: { _ in 0 },
+            currentTokenProvider: {
+                currentCounter.increment()
+                return "at_current"
+            },
+            refreshTokenProvider: {
+                refreshCounter.increment()
+                return "at_refreshed"
+            }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 1
+        })
+        #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_current")
+        #expect(currentCounter.current() == 1)
+        #expect(refreshCounter.current() == 0)
+
+        let first = try #require(factory.sockets.first)
+        first.fail(
+            URLError(.userAuthenticationRequired),
+            responseStatusCode: 401,
+            closeCode: .policyViolation
+        )
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 2
+        })
+        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
+        #expect(currentCounter.current() == 1)
+        #expect(refreshCounter.current() == 1)
+
+        client.disconnect()
+        await consumer.value
+    }
+
     @Test func terminalCloseCodeWithoutHTTPResponseFinishesWithoutRetrying() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let client = try makeClient(factory: factory, reconnectDelay: { _ in 0 })
@@ -255,12 +414,16 @@ struct AppEventStreamClientTests {
         pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval,
         pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
         reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = { _ in 60 },
-        onTransportHealthFailure: (@MainActor @Sendable (PersistentStreamHealthFailure) async -> Void)? = nil
+        onTransportHealthFailure: (@MainActor @Sendable (PersistentStreamHealthFailure) async -> Void)? = nil,
+        currentTokenProvider: (@Sendable () async throws -> String)? = nil,
+        refreshTokenProvider: (@Sendable () async throws -> String)? = nil
     ) throws -> AppEventStreamClient {
         let url = try #require(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
         return AppEventStreamClient(
             url: url,
             token: "test-token",
+            currentTokenProvider: currentTokenProvider,
+            refreshTokenProvider: refreshTokenProvider,
             pingInterval: pingInterval,
             pingTimeout: pingTimeout,
             reconnectDelay: reconnectDelay,
@@ -716,7 +879,7 @@ struct StickyRefreshReconciliationTests {
             port: 7749,
             token: "sk_reconcile",
             name: "Reconcile",
-            scheme: .http,
+            scheme: .https,
             serverFingerprint: "sha256:reconcile"
         )))
         connection.setAPIClientForTesting(makeReconciliationAPIClient())
@@ -839,6 +1002,23 @@ private final class ReconciliationRequestCounter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return paths
+    }
+}
+
+private final class RefreshCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func increment() {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+    }
+
+    func current() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
     }
 }
 

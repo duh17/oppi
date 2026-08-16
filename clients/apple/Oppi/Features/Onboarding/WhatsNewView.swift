@@ -90,7 +90,7 @@ struct WhatsNewView: View {
             icon: "point.3.connected.trianglepath.dotted",
             iconColor: .themeGreen,
             title: String(localized: "More predictable server connections"),
-            description: String(localized: "Choose Automatic, HTTPS Only, or Iroh Only for each server; Oppi now follows that choice more consistently.")
+            description: String(localized: "Oppi now uses HTTPS/WSS for remote connections, normally through Tailscale or a directly reachable TLS endpoint.")
         ),
     ]
 

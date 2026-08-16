@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 import Security
 
 struct ShareQuickSessionServer: Codable, Equatable, Identifiable, Sendable {
@@ -7,6 +8,7 @@ struct ShareQuickSessionServer: Codable, Equatable, Identifiable, Sendable {
     let name: String
     let baseURL: URL
     let token: String
+    let deviceCredential: DeviceCredential?
     let tlsCertFingerprint: String?
     let sortOrder: Int
 
@@ -15,6 +17,7 @@ struct ShareQuickSessionServer: Codable, Equatable, Identifiable, Sendable {
         name: String,
         baseURL: URL?,
         token: String,
+        deviceCredential: DeviceCredential? = nil,
         tlsCertFingerprint: String?,
         sortOrder: Int
     ) {
@@ -23,12 +26,13 @@ struct ShareQuickSessionServer: Codable, Equatable, Identifiable, Sendable {
         self.name = name
         self.baseURL = baseURL
         self.token = token
+        self.deviceCredential = deviceCredential
         self.tlsCertFingerprint = tlsCertFingerprint
         self.sortOrder = sortOrder
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, host, port, scheme, token, tlsCertFingerprint, sortOrder
+        case id, name, host, port, scheme, token, deviceCredential, tlsCertFingerprint, sortOrder
     }
 
     init(from decoder: Decoder) throws {
@@ -36,6 +40,7 @@ struct ShareQuickSessionServer: Codable, Equatable, Identifiable, Sendable {
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         token = try container.decode(String.self, forKey: .token)
+        deviceCredential = try container.decodeIfPresent(DeviceCredential.self, forKey: .deviceCredential)
         tlsCertFingerprint = try container.decodeIfPresent(String.self, forKey: .tlsCertFingerprint)
         sortOrder = try container.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
 
@@ -57,11 +62,31 @@ struct ShareQuickSessionServer: Codable, Equatable, Identifiable, Sendable {
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
         try container.encode(token, forKey: .token)
+        try container.encodeIfPresent(deviceCredential, forKey: .deviceCredential)
         try container.encodeIfPresent(tlsCertFingerprint, forKey: .tlsCertFingerprint)
         try container.encode(sortOrder, forKey: .sortOrder)
         try container.encode(baseURL.host, forKey: .host)
         try container.encode(baseURL.port, forKey: .port)
         try container.encode(baseURL.scheme, forKey: .scheme)
+    }
+
+    /// Replace the device credential, clearing the static token so it is never
+    /// used after the short-lived access token has been issued.
+    func withDeviceCredential(_ credential: DeviceCredential) -> ShareQuickSessionServer {
+        guard let updated = ShareQuickSessionServer(
+            id: id,
+            name: name,
+            baseURL: baseURL,
+            token: "",
+            deviceCredential: credential,
+            tlsCertFingerprint: tlsCertFingerprint,
+            sortOrder: sortOrder
+        ) else {
+            // The failable init only fails on a nil baseURL; this instance's
+            // baseURL is a stored non-optional URL.
+            return self
+        }
+        return updated
     }
 }
 
@@ -155,13 +180,116 @@ enum ShareQuickSessionCredentialStore {
             return try? JSONDecoder().decode(ShareQuickSessionServer.self, from: data)
         }
     }
+
+    /// Persist a refreshed device credential back to the shared keychain so a
+    /// later share or relaunch starts from the replacement token, not the
+    /// expired one. Merges the HTTP-scoped field against the LATEST stored
+    /// record so a concurrent process cannot roll back or drop record fields.
+    static func save(server: ShareQuickSessionServer, deviceCredential: DeviceCredential) {
+        do {
+            try KeychainDeviceCredentialMerger.mergeRefresh(
+                serverId: server.id,
+                accessToken: deviceCredential.accessToken,
+                expiresAt: deviceCredential.expiresAt,
+                refreshChallenge: deviceCredential.refreshChallenge
+            )
+        } catch {
+            // Recoverable: the in-memory session still holds the fresh token;
+            // the next share re-refreshes from the stale persisted credential.
+            os.Logger(subsystem: "dev.chenda.Oppi.share", category: "CredentialStore")
+                .error("Failed to persist refreshed device credential: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+}
+
+/// Device-auth challenge/refresh transport for the share extension. Credentials
+/// are sent only in request bodies, never in URLs.
+private struct ShareQuickSessionDeviceAuthTransport: DeviceAuthTransport {
+    let baseURL: URL
+    let transport: any ShareQuickSessionHTTPTransport
+
+    func requestChallenge(deviceId: String) async throws -> DeviceAuthChallenge {
+        struct Body: Encodable { let deviceId: String }
+        let (data, response) = try await post(path: "auth/challenge", body: Body(deviceId: deviceId))
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw DeviceAuthError.challengeUnavailable
+        }
+        guard let challenge = try? JSONDecoder().decode(DeviceAuthChallenge.self, from: data) else {
+            throw DeviceAuthError.malformedResponse
+        }
+        return challenge
+    }
+
+    func refresh(
+        deviceId: String,
+        nonce: String,
+        signature: String
+    ) async throws -> DeviceAuthRefreshResult {
+        struct Body: Encodable {
+            let deviceId: String
+            let nonce: String
+            let signature: String
+        }
+        struct RefreshResponse: Decodable {
+            let accessToken: String
+            let expiresAt: Int
+            let refreshChallenge: DeviceAuthChallenge?
+        }
+        struct ErrorResponse: Decodable { let error: String? }
+        let (data, response) = try await post(
+            path: "auth/refresh",
+            body: Body(deviceId: deviceId, nonce: nonce, signature: signature)
+        )
+        guard let http = response as? HTTPURLResponse else {
+            throw DeviceAuthError.malformedResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let code = (try? JSONDecoder().decode(ErrorResponse.self, from: data).error) ?? "refresh_failed"
+            throw DeviceAuthError.refreshRejected(code: code)
+        }
+        guard let decoded = try? JSONDecoder().decode(RefreshResponse.self, from: data) else {
+            throw DeviceAuthError.malformedResponse
+        }
+        return DeviceAuthRefreshResult(
+            accessToken: decoded.accessToken,
+            expiresAt: decoded.expiresAt,
+            refreshChallenge: decoded.refreshChallenge
+        )
+    }
+
+    private func post<Body: Encodable>(path: String, body: Body) async throws -> (Data, URLResponse) {
+        var url = baseURL
+        for component in path.split(separator: "/") {
+            url.append(path: String(component))
+        }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+        request.httpMethod = "POST"
+        request.httpBody = try JSONEncoder().encode(body)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return try await transport.data(for: request)
+    }
 }
 
 actor ShareQuickSessionSender {
     private let transport: any ShareQuickSessionHTTPTransport
+    private let deviceKeyProvider: () throws -> any DeviceKey
+    private let persistCredential: @Sendable (ShareQuickSessionServer, DeviceCredential) -> Void
+    /// One device-auth session per server, retained for the whole operation
+    /// (including every attachment), so the refresh nonce/token are never
+    /// recreated from a stale persisted snapshot.
+    private var sessions: [String: DeviceAuthSession] = [:]
 
-    init(transport: any ShareQuickSessionHTTPTransport) {
+    init(
+        transport: any ShareQuickSessionHTTPTransport,
+        deviceKeyProvider: @escaping () throws -> any DeviceKey = {
+            try DeviceKeyProvider.shared.loadOrCreate()
+        },
+        persistCredential: @escaping @Sendable (ShareQuickSessionServer, DeviceCredential) -> Void = { _, _ in }
+    ) {
         self.transport = transport
+        self.deviceKeyProvider = deviceKeyProvider
+        self.persistCredential = persistCredential
     }
 
     static func live(server: ShareQuickSessionServer) -> ShareQuickSessionSender {
@@ -173,7 +301,51 @@ actor ShareQuickSessionSender {
             pinnedLeafFingerprint: server.tlsCertFingerprint
         )
         let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
-        return ShareQuickSessionSender(transport: session)
+        return ShareQuickSessionSender(
+            transport: session,
+            persistCredential: { server, credential in
+                ShareQuickSessionCredentialStore.save(server: server, deviceCredential: credential)
+            }
+        )
+    }
+
+    /// Build (once) and return the device-key auth session for a server, or nil
+    /// for legacy/static-token servers. The device key load fails closed: it is
+    /// never silently replaced by an empty static bearer.
+    private func deviceSession(for server: ShareQuickSessionServer) throws -> DeviceAuthSession? {
+        guard let credential = server.deviceCredential else { return nil }
+        if let existing = sessions[server.id] { return existing }
+        let key = try deviceKeyProvider()
+        let session = DeviceAuthSession(
+            credential: credential,
+            key: key,
+            transport: ShareQuickSessionDeviceAuthTransport(
+                baseURL: server.baseURL,
+                transport: transport
+            ),
+            onRefresh: { [persistCredential, server, credential] result in
+                let updated = credential.updatingAccessToken(
+                    result.accessToken,
+                    expiresAt: Int64(result.expiresAt),
+                    refreshChallenge: result.refreshChallenge
+                )
+                persistCredential(server, updated)
+            }
+        )
+        sessions[server.id] = session
+        return session
+    }
+
+    /// Resolve the bearer token for a server: the device-key access token when
+    /// a device credential exists, otherwise the legacy/static token.
+    private func resolveBearer(
+        server: ShareQuickSessionServer,
+        forceRefresh: Bool = false
+    ) async throws -> String {
+        guard let session = try deviceSession(for: server) else { return server.token }
+        return forceRefresh
+            ? try await session.refreshAccessToken()
+            : try await session.currentAccessToken()
     }
 
     func fetchWorkspaces(server: ShareQuickSessionServer) async throws -> [ShareQuickSessionWorkspace] {
@@ -361,17 +533,43 @@ actor ShareQuickSessionSender {
         for component in path {
             url.append(path: component)
         }
+        var bearer = try await resolveBearer(server: server)
+        var result = try await performRequest(
+            url: url,
+            method: method,
+            dataBody: dataBody,
+            contentType: contentType,
+            bearer: bearer
+        )
+        if server.deviceCredential != nil, (result.1 as? HTTPURLResponse)?.statusCode == 401 {
+            bearer = try await resolveBearer(server: server, forceRefresh: true)
+            result = try await performRequest(
+                url: url,
+                method: method,
+                dataBody: dataBody,
+                contentType: contentType,
+                bearer: bearer
+            )
+        }
+        return try validatedData(result)
+    }
+
+    private func performRequest(
+        url: URL,
+        method: String,
+        dataBody: Data?,
+        contentType: String?,
+        bearer: String
+    ) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
         request.httpMethod = method
         request.httpBody = dataBody
-        request.setValue("Bearer \(server.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let contentType {
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
-
-        let result = try await transport.data(for: request)
-        return try validatedData(result)
+        return try await transport.data(for: request)
     }
 
     private func uploadFile(
@@ -385,13 +583,40 @@ actor ShareQuickSessionSender {
         for component in path {
             url.append(path: component)
         }
+        var bearer = try await resolveBearer(server: server)
+        var result = try await performUpload(
+            url: url,
+            method: method,
+            fileURL: fileURL,
+            contentType: contentType,
+            bearer: bearer
+        )
+        if server.deviceCredential != nil, (result.1 as? HTTPURLResponse)?.statusCode == 401 {
+            bearer = try await resolveBearer(server: server, forceRefresh: true)
+            result = try await performUpload(
+                url: url,
+                method: method,
+                fileURL: fileURL,
+                contentType: contentType,
+                bearer: bearer
+            )
+        }
+        return try validatedData(result)
+    }
+
+    private func performUpload(
+        url: URL,
+        method: String,
+        fileURL: URL,
+        contentType: String,
+        bearer: String
+    ) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
         request.httpMethod = method
-        request.setValue("Bearer \(server.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        let result = try await transport.upload(for: request, fromFile: fileURL)
-        return try validatedData(result)
+        return try await transport.upload(for: request, fromFile: fileURL)
     }
 
     private func validatedData(_ result: (Data, URLResponse)) throws -> Data {

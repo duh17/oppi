@@ -31,8 +31,7 @@ struct ServerView: View {
         Self.resolveServer(selectedId: selectedServerId, from: serverStore.servers)
     }
 
-    /// Resolve the coordinator-owned client so HTTP and Iroh-only servers use
-    /// the same dashboard/provider path.
+    /// Resolve the coordinator-owned client for the dashboard/provider path.
     private func apiClient(for server: PairedServer) async -> APIClient? {
         await coordinator.apiClientReady(for: server.id)
     }

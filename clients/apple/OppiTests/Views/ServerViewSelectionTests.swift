@@ -94,44 +94,6 @@ struct ServerSelectionTests {
         #expect(a != b)
     }
 
-    // MARK: - Connection Mode Presentation
-
-    @Test func connectionModePresentationOffersAllAuthorizedModes() {
-        #expect(ServerRouteModePresentation.options(for: [.https, .iroh]) == [
-            .automatic,
-            .httpsOnly,
-            .irohOnly,
-        ])
-    }
-
-    @Test func connectionModePresentationOmitsUnauthorizedOrPlaintextModes() {
-        #expect(ServerRouteModePresentation.options(for: [.https]) == [
-            .automatic,
-            .httpsOnly,
-        ])
-        #expect(ServerRouteModePresentation.options(for: [.iroh]) == [
-            .automatic,
-            .irohOnly,
-        ])
-        #expect(ServerRouteModePresentation.options(
-            for: [.https, .iroh],
-            httpScheme: .http
-        ) == [
-            .automatic,
-            .irohOnly,
-        ])
-    }
-
-    @Test func connectionModePresentationUsesProductLabelsAndAutomaticExplanation() {
-        #expect(ServerRouteModePresentation.label(for: .automatic) == "Automatic")
-        #expect(ServerRouteModePresentation.label(for: .httpsOnly) == "HTTPS Only")
-        #expect(ServerRouteModePresentation.label(for: .irohOnly) == "Iroh Only")
-        #expect(
-            ServerRouteModePresentation.description(for: .automatic) ==
-                "Uses LAN or paired HTTPS first, with Iroh fallback."
-        )
-    }
-
     // MARK: - Helpers
 
     private func makeServer(id: String, sortOrder: Int = 0) -> PairedServer {

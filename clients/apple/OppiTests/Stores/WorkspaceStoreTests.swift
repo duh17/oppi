@@ -336,46 +336,14 @@ struct ServerBadgeConnectionStateTests {
         #expect(ServerBadgeConnectionState(presentation, hasSyncFailure: false) == .connected)
     }
 
-    @Test func connectedIrohStatusConsolidatesHealthAndLane() async throws {
-        let (server, connection) = try await makeIrohBadgeFixture()
-
-        #expect(ServerConnectionLanePresentation.title(
-            server: server,
-            connection: connection,
-            state: .connected,
-            isPreparing: false
-        ) == "Connected via Iroh")
-    }
-
-    @Test func updateFailurePreservesFailureAndActiveLane() async throws {
-        let (server, connection) = try await makeIrohBadgeFixture()
-
-        #expect(ServerConnectionLanePresentation.title(
-            server: server,
-            connection: connection,
-            state: .syncFailed,
-            isPreparing: false
-        ) == "Update failed via Iroh")
-    }
-
-    @Test func pairedHTTPStatusUsesAuthoritativeTransportScheme() throws {
+    @Test func pairedHTTPSStatusUsesAuthoritativeTransportScheme() throws {
         let credentials = ServerCredentials(
             host: "paired.test",
             port: 7749,
-            token: "dt_paired_http_badge",
-            name: "Paired HTTP",
-            scheme: nil,
-            serverFingerprint: "sha256:PAIREDHTTPBADGE",
-            transports: ServerTransports(
-                preference: .httpOnly,
-                iroh: nil,
-                http: HTTPServerTransport(
-                    host: "paired.test",
-                    port: 7749,
-                    scheme: .http,
-                    tlsCertFingerprint: nil
-                )
-            )
+            token: "dt_paired_https_badge",
+            name: "Paired HTTPS",
+            scheme: .https,
+            serverFingerprint: "sha256:PAIREDHTTPSBADGE"
         )
         let server = try #require(PairedServer(from: credentials, sortOrder: 0))
         let connection = ServerConnection()
@@ -386,33 +354,17 @@ struct ServerBadgeConnectionStateTests {
             connection: connection,
             state: .connected,
             isPreparing: false
-        ) == "Connected via paired HTTP")
+        ) == "Connected via paired HTTPS")
     }
 
-    @Test func preparingIrohPreferredServerStaysRouteNeutral() throws {
+    @Test func preparingPairedServerShowsConnecting() throws {
         let credentials = ServerCredentials(
             host: "studio.tailnet.ts.net",
             port: 7749,
             token: "dt_badge_lane",
             name: "Studio",
             scheme: .https,
-            serverFingerprint: "sha256:BADGELANESERVER",
-            transports: ServerTransports(
-                preference: .irohPreferred,
-                iroh: IrohServerTransport(
-                    version: 2,
-                    nodeId: "iroh-node",
-                    alpns: [IrohTunnelProtocol.alpn],
-                    addressMode: .nodeId,
-                    ticket: nil
-                ),
-                http: HTTPServerTransport(
-                    host: "studio.tailnet.ts.net",
-                    port: 7749,
-                    scheme: .https,
-                    tlsCertFingerprint: nil
-                )
-            )
+            serverFingerprint: "sha256:BADGELANESERVER"
         )
         let server = try #require(PairedServer(from: credentials, sortOrder: 0))
 
@@ -422,45 +374,6 @@ struct ServerBadgeConnectionStateTests {
             state: .connecting,
             isPreparing: true
         ) == "Connecting")
-    }
-
-    private func makeIrohBadgeFixture() async throws -> (PairedServer, ServerConnection) {
-        let credentials = ServerCredentials(
-            host: "studio.tailnet.ts.net",
-            port: 7749,
-            token: "dt_badge_fixture",
-            name: "Studio",
-            scheme: .https,
-            serverFingerprint: "sha256:BADGEFIXTURESERVER",
-            transports: ServerTransports(
-                preference: .irohPreferred,
-                iroh: IrohServerTransport(
-                    version: 2,
-                    nodeId: "iroh-node",
-                    alpns: [IrohTunnelProtocol.alpn],
-                    addressMode: .nodeId,
-                    ticket: nil
-                ),
-                http: HTTPServerTransport(
-                    host: "studio.tailnet.ts.net",
-                    port: 7749,
-                    scheme: .https,
-                    tlsCertFingerprint: nil
-                )
-            )
-        )
-        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
-        let connection = ServerConnection()
-        let configured = await connection.configureForUse(
-            credentials: credentials,
-            routeMode: .irohOnly,
-            serverInfoBootstrap: { _, _ in badgeServerInfo() },
-            irohProxyFactory: { _, _ in
-                (nil, try #require(URL(string: "http://127.0.0.1:41995")))
-            }
-        )
-        #expect(configured)
-        return (server, connection)
     }
 }
 

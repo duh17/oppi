@@ -39,28 +39,17 @@ struct ServerConnectionForegroundRecoveryTests {
             guard routeReachable else { throw URLError(.cannotConnectToHost) }
             return foregroundRecoveryServerInfo()
         }
-        let proxyFactory: @MainActor (
-            IrohServerTransport,
-            String
-        ) async throws -> (IrohConnectionManager?, URL) = { _, _ in
-            throw IrohTransportError.unavailable("Iroh is not authorized in this fixture")
-        }
-
         #expect(await conn.configureForUse(
             credentials: credentials,
-            routeMode: .automatic,
             apiClientFactory: apiFactory,
-            serverInfoBootstrap: bootstrap,
-            irohProxyFactory: proxyFactory
+            serverInfoBootstrap: bootstrap
         ))
 
         routeReachable = false
         #expect(!(await conn.reconfigureForExplicitRetry(
             credentials: credentials,
-            routeMode: .automatic,
             apiClientFactory: apiFactory,
-            serverInfoBootstrap: bootstrap,
-            irohProxyFactory: proxyFactory
+            serverInfoBootstrap: bootstrap
         )))
         #expect(conn.credentials != nil)
         #expect(conn.apiClient == nil)
@@ -76,10 +65,8 @@ struct ServerConnectionForegroundRecoveryTests {
         routeReachable = false
         #expect(!(await conn.reconfigureForExplicitRetry(
             credentials: credentials,
-            routeMode: .automatic,
             apiClientFactory: apiFactory,
-            serverInfoBootstrap: bootstrap,
-            irohProxyFactory: proxyFactory
+            serverInfoBootstrap: bootstrap
         )))
         routeReachable = true
         conn.handleNetworkPathChange()
@@ -89,48 +76,6 @@ struct ServerConnectionForegroundRecoveryTests {
 
         #expect(conn.apiClient != nil)
         #expect(bootstrapAttempts == 5)
-    }
-
-    @Test func reconnectInvalidatesCachedIrohConnectionBeforeRefresh() async throws {
-        let conn = ServerConnection()
-        let credentials = makeTestIrohOnlyCredentials()
-        let iroh = try #require(credentials.transports.iroh)
-        let provider = ForegroundRecoveryIrohProvider()
-        let manager = IrohConnectionManager(iroh: iroh, provider: provider)
-        let localURL = try #require(URL(string: "http://127.0.0.1:41995"))
-        let configured = await conn.configureForUse(
-            credentials: credentials,
-            apiClientFactory: { environment, _ in
-                makeForegroundRecoveryFailingAPIClient(environment: environment)
-            },
-            serverInfoBootstrap: { _, _ in foregroundRecoveryServerInfo() },
-            irohProxyFactory: { _, _ in (manager, localURL) }
-        )
-        #expect(configured)
-        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true, appEventStream: true)
-        var appEventStarts = 0
-        conn._startAppEventStreamForTesting = { _ in appEventStarts += 1 }
-        conn.startAppEventStreamIfAvailable()
-        #expect(appEventStarts == 1)
-        conn._setActiveSessionIdForTesting("s1")
-        conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
-        let sessionEvents = AsyncStream<SessionStreamEvent> { continuation in
-            conn.sessionEventContinuations["s1"] = continuation
-        }
-        conn._connectStreamForTesting = {
-            AsyncStream<StreamFrameEvent> { _ in }
-        }
-
-        await conn.reconnectIfNeeded()
-
-        #expect(await provider.suspendCount() == 1)
-        #expect(await provider.endpointRecycleCount() == 1)
-        #expect(conn.sessionEventContinuations["s1"] != nil)
-        // The callback observes start requests but does not mark the real
-        // coordinator running: initial intent + composition commit + recovery check.
-        #expect(appEventStarts == 3)
-        _ = sessionEvents
-        conn.disconnectStream()
     }
 
     @Test func reconnectDoesNotTouchReducerTimeline() async {
@@ -332,33 +277,4 @@ private final class ForegroundRecoveryFailingURLProtocol: URLProtocol, @unchecke
     }
 
     override func stopLoading() {}
-}
-
-private actor ForegroundRecoveryIrohProvider: IrohConnectionProviding {
-    private var suspends = 0
-    private var endpointRecycles = 0
-
-    func openStream(alpn: String) async throws -> any IrohByteStream {
-        throw IrohTransportError.unavailable("No stream expected in foreground recovery unit test")
-    }
-
-    func suspendConnections() async {
-        suspends += 1
-    }
-
-    func recycleEndpoint() async throws {
-        endpointRecycles += 1
-    }
-
-    func shutdown() async {
-        await suspendConnections()
-    }
-
-    func suspendCount() -> Int {
-        suspends
-    }
-
-    func endpointRecycleCount() -> Int {
-        endpointRecycles
-    }
 }

@@ -42,21 +42,6 @@ struct ServerStoreTests {
         #expect(store.servers[1].sortOrder == 1)
     }
 
-    @Test func routeModePersistsPerPairedServer() {
-        let store = makeCleanStore()
-        defer { cleanupKeychain(store) }
-
-        _ = store.addOrUpdate(from: makeTestCredentials(
-            host: "test-host",
-            name: "test-host",
-            fingerprint: "sha256:route-mode-store"
-        ))
-        store.setRouteMode(id: "sha256:route-mode-store", to: .irohOnly)
-
-        #expect(store.server(for: "sha256:route-mode-store")?.routeMode == .irohOnly)
-        #expect(ServerStore().server(for: "sha256:route-mode-store")?.routeMode == .irohOnly)
-    }
-
     @Test func rePairUpdatesCredentialsPreservesMetadata() {
         let store = makeCleanStore()
         defer { cleanupKeychain(store) }
