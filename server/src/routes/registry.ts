@@ -82,7 +82,6 @@ const sessionOperationIds = new Set<string>([
   "listRecentSessions",
   "getWorkspaceGitSummary",
   "getWorkspaceGitStatus",
-  "listWorkspaceGitChanges",
   "getWorkspaceGitDiff",
   "listWorkspaceCommits",
   "getWorkspaceCommit",
@@ -1020,13 +1019,6 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
-    path: "/workspaces/{workspaceId}/git/changes",
-    operationId: "listWorkspaceGitChanges",
-    surface: "core",
-    auth: "owner",
-  },
-  {
-    method: "GET",
     path: "/workspaces/{workspaceId}/git/diff",
     operationId: "getWorkspaceGitDiff",
     surface: "core",
@@ -1092,13 +1084,6 @@ const rawApiRouteSpecs = [
       response: schemaRef("WorkspaceQuickActionSessionResponse"),
       error: errorResponse,
     },
-  },
-  {
-    method: "GET",
-    path: "/workspaces/{workspaceId}/system-prompt/base",
-    operationId: "getWorkspaceBaseSystemPrompt",
-    surface: "internal",
-    auth: "owner",
   },
 
   {

@@ -13,7 +13,6 @@ import type {
   Session,
   Workspace,
   WorkspaceReviewDiffResponse,
-  WorkspaceReviewFilesResponse,
 } from "../src/types.js";
 import { createWorkspaceWorktree } from "../src/worktrees.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
@@ -495,7 +494,7 @@ describe("workspaces module", () => {
     }
   });
 
-  it("routes review changes and diffs through the selected session worktree", async () => {
+  it("routes review diffs through the selected session worktree", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-review-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-review-data-"));
     try {
@@ -540,26 +539,6 @@ describe("workspaces module", () => {
         },
       } as unknown as RouteContext;
       const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
-      const changesRes = makeResponse();
-
-      await dispatch({
-        method: "GET",
-        path: "/workspaces/ws-1/git/changes",
-        url: new URL(
-          "http://localhost/workspaces/ws-1/git/changes?selectedSessionId=session-worktree",
-        ),
-        req: {} as never,
-        res: changesRes as never,
-      });
-
-      expect(changesRes.statusCode).toBe(200);
-      const changes = JSON.parse(changesRes.body) as WorkspaceReviewFilesResponse;
-      expect(changes.branch).toBe("feature/review");
-      expect(changes.selectedSessionId).toBe("session-worktree");
-      expect(changes.files).toEqual([
-        expect.objectContaining({ path: "review.swift", selectedSessionTouched: true }),
-      ]);
-
       const diffRes = makeResponse();
       await dispatch({
         method: "GET",
@@ -1017,6 +996,28 @@ describe("workspaces module", () => {
     });
 
     expect(handled).toBe(false);
+  });
+
+  it("does not handle unused workspace git/changes or system-prompt/base routes", async () => {
+    const dispatch = createWorkspaceRoutes({} as RouteContext, createRouteHelpers());
+
+    const changesHandled = await dispatch({
+      method: "GET",
+      path: "/workspaces/ws-1/git/changes",
+      url: new URL("http://localhost/workspaces/ws-1/git/changes"),
+      req: {} as never,
+      res: makeResponse() as never,
+    });
+    expect(changesHandled).toBe(false);
+
+    const promptHandled = await dispatch({
+      method: "GET",
+      path: "/workspaces/ws-1/system-prompt/base",
+      url: new URL("http://localhost/workspaces/ws-1/system-prompt/base"),
+      req: {} as never,
+      res: makeResponse() as never,
+    });
+    expect(promptHandled).toBe(false);
   });
 
   it("returns false for unrelated routes", async () => {

@@ -1,13 +1,4 @@
-import { existsSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-import {
-  DefaultResourceLoader,
-  SettingsManager,
-  getAgentDir,
-} from "@earendil-works/pi-coding-agent";
 
 import {
   CommitDiffError,
@@ -18,13 +9,6 @@ import {
 import { getGitStatus, getWorkspaceGitSummary } from "../git-status.js";
 import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "../local-sessions.js";
 import { safeErrorMessage } from "../log-utils.js";
-import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "../oppi-cli-prompt.js";
-import {
-  isOppiCliPromptEnabled,
-  isOppiDocsPromptEnabled,
-  resolveSdkSessionCwd,
-} from "../sdk-backend.js";
-import { appendOppiSystemPromptHint, buildOppiSystemPromptAppend } from "../oppi-docs.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
 import { isPiTuiTaskRecordSession } from "../pi-tui-session-classification.js";
 import { hostMountValidationError } from "../host.js";
@@ -55,7 +39,6 @@ import type {
   PreviewWorkspaceWorktreeRequest,
 } from "../types.js";
 import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
-import { buildWorkspaceReviewFilesResponse } from "../workspace-review.js";
 import {
   loadWorkspaceQuickActionOptions,
   prepareWorkspaceQuickActionSession,
@@ -78,63 +61,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
 
     return undefined;
-  }
-
-  async function loadWorkspaceBaseSystemPrompt(workspace: Workspace): Promise<string> {
-    const cwd = resolveSdkSessionCwd(workspace);
-    const agentDir = getAgentDir();
-    const settingsManager = SettingsManager.create(cwd, agentDir);
-    const loader = new DefaultResourceLoader({
-      cwd,
-      agentDir,
-      settingsManager,
-      noExtensions: true,
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-    });
-    await loader.reload();
-
-    const config = ctx.storage.getConfig();
-    const includeOppiDocsHint = isOppiDocsPromptEnabled(config);
-    const includeOppiCliHint = isOppiCliPromptEnabled(config);
-
-    // If a custom SYSTEM.md exists, return that.
-    const custom = loader.getSystemPrompt();
-    if (custom) {
-      const prompt = includeOppiDocsHint ? appendOppiSystemPromptHint(custom) : custom;
-      return includeOppiCliHint ? `${prompt}\n\n${OPPI_CLI_SYSTEM_PROMPT_HINT}` : prompt;
-    }
-
-    // Otherwise, generate the built-in Pi base system prompt.
-    // buildSystemPrompt isn't in the package's exports map, so import via
-    // file URL to bypass Node's package-exports resolution.
-    const thisDir = dirname(fileURLToPath(import.meta.url));
-    const moduleCandidates = [
-      resolve(
-        thisDir,
-        "../../node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js",
-      ),
-      resolve(
-        thisDir,
-        "../../node_modules/@mariozechner/pi-coding-agent/dist/core/system-prompt.js",
-      ),
-    ];
-    const modFile = moduleCandidates.find((candidate) => existsSync(candidate));
-    if (!modFile) {
-      throw new Error("Unable to locate pi system prompt module in node_modules");
-    }
-    const { buildSystemPrompt } = (await import(`file://${modFile}`)) as {
-      buildSystemPrompt: (opts?: { cwd?: string; appendSystemPrompt?: string }) => string;
-    };
-    const promptAppends = [
-      includeOppiDocsHint ? buildOppiSystemPromptAppend() : undefined,
-      includeOppiCliHint ? OPPI_CLI_SYSTEM_PROMPT_HINT : undefined,
-    ].filter((value): value is string => value !== undefined);
-    return buildSystemPrompt({
-      cwd,
-      appendSystemPrompt: promptAppends.length > 0 ? promptAppends.join("\n\n") : undefined,
-    });
   }
 
   async function handleListLocalSessions(res: ServerResponse): Promise<void> {
@@ -262,20 +188,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
 
     helpers.json(res, { workspace });
-  }
-
-  async function handleGetWorkspaceBaseSystemPrompt(
-    wsId: string,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const systemPrompt = await loadWorkspaceBaseSystemPrompt(workspace);
-    helpers.json(res, { systemPrompt });
   }
 
   async function handleUpdateWorkspace(
@@ -672,32 +584,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     helpers.json(res, status);
   }
 
-  async function handleGetWorkspaceGitChanges(
-    wsId: string,
-    url: URL,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const checkout = workspaceCheckoutFromQuery(workspace, wsId, url, res);
-    if (!checkout) return;
-
-    const gitStatus = checkout.path ? await getGitStatus(checkout.path) : emptyGitStatus();
-    helpers.json(
-      res,
-      buildWorkspaceReviewFilesResponse({
-        workspaceId: wsId,
-        gitStatus,
-        selectedSession: checkout.selectedSession,
-        workspaceRoot: checkout.path,
-      }),
-    );
-  }
-
   async function handleGetWorkspaceCommitLog(
     wsId: string,
     url: URL,
@@ -1074,12 +960,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       }
     }
 
-    const wsBaseSystemPromptMatch = path.match(/^\/workspaces\/([^/]+)\/system-prompt\/base$/);
-    if (wsBaseSystemPromptMatch && method === "GET") {
-      await handleGetWorkspaceBaseSystemPrompt(wsBaseSystemPromptMatch[1], res);
-      return true;
-    }
-
     const wsWorktreesMatch = path.match(/^\/workspaces\/([^/]+)\/worktrees$/);
     if (wsWorktreesMatch && method === "GET") {
       handleListWorkspaceWorktrees(wsWorktreesMatch[1], res);
@@ -1139,12 +1019,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const wsGitStatusResourceMatch = path.match(/^\/workspaces\/([^/]+)\/git\/status$/);
     if (wsGitStatusResourceMatch && method === "GET") {
       await handleGetWorkspaceGitStatus(wsGitStatusResourceMatch[1], url, res);
-      return true;
-    }
-
-    const wsGitChangesMatch = path.match(/^\/workspaces\/([^/]+)\/git\/changes$/);
-    if (wsGitChangesMatch && method === "GET") {
-      await handleGetWorkspaceGitChanges(wsGitChangesMatch[1], url, res);
       return true;
     }
 

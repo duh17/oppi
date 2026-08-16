@@ -393,16 +393,6 @@ describe("workspaces API", () => {
     expect(body.workspace.systemPromptMode).toBe("append");
   });
 
-  it("GET /workspaces/:id/system-prompt/base returns a string payload", async () => {
-    const createRes = await post("/workspaces", { name: "base-prompt" });
-    const { workspace } = await createRes.json();
-
-    const res = await get(`/workspaces/${workspace.id}/system-prompt/base`);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(typeof body.systemPrompt).toBe("string");
-  });
-
   it("DELETE /workspaces/:id removes workspace", async () => {
     const createRes = await post("/workspaces", { name: "delete-me" });
     const { workspace } = await createRes.json();
@@ -1315,6 +1305,18 @@ describe("retired workspace routes", () => {
 
     const res = await get(`/workspaces/${workspace.id}/policy`);
     expect(res.status).toBe(404);
+  });
+
+  it("GET unused workspace git/changes and system-prompt/base routes return 404", async () => {
+    const createRes = await post("/workspaces", { name: "unused-route-check" });
+    expect(createRes.status).toBe(201);
+    const { workspace } = await createRes.json();
+
+    const changes = await get(`/workspaces/${workspace.id}/git/changes`);
+    expect(changes.status).toBe(404);
+
+    const prompt = await get(`/workspaces/${workspace.id}/system-prompt/base`);
+    expect(prompt.status).toBe(404);
   });
 });
 

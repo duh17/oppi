@@ -28,7 +28,6 @@ const ROUTES = {
   wsRaw: /^\/workspaces\/([^/]+)\/raw\/(.+)$/,
   wsPaths: /^\/workspaces\/([^/]+)\/paths$/,
   wsGitStatus: /^\/workspaces\/([^/]+)\/git\/status$/,
-  wsGitChanges: /^\/workspaces\/([^/]+)\/git\/changes$/,
   wsGitDiff: /^\/workspaces\/([^/]+)\/git\/diff$/,
   wsQuickActions: /^\/workspaces\/([^/]+)\/quick-actions$/,
   wsQuickActionSelection: /^\/workspaces\/([^/]+)\/quick-actions\/selection$/,
@@ -165,7 +164,6 @@ describe("Workspace-scoped API routes", () => {
 
   it("matches resource-shaped workspace git routes", () => {
     expect("/workspaces/ws-1/git/status".match(ROUTES.wsGitStatus)?.[1]).toBe("ws-1");
-    expect("/workspaces/ws-1/git/changes".match(ROUTES.wsGitChanges)?.[1]).toBe("ws-1");
     expect("/workspaces/ws-1/git/diff".match(ROUTES.wsGitDiff)?.[1]).toBe("ws-1");
   });
 

@@ -94,7 +94,6 @@ const sessionOperationIds = [
   "listRecentSessions",
   "getWorkspaceGitSummary",
   "getWorkspaceGitStatus",
-  "listWorkspaceGitChanges",
   "getWorkspaceGitDiff",
   "listWorkspaceCommits",
   "getWorkspaceCommit",
@@ -366,5 +365,7 @@ describe("api route registry", () => {
     expect(paths.has("/workspaces/{workspaceId}/sessions/{sessionId}/overall-diff")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/git-status")).toBe(false);
     expect(paths.has("/workspaces/{workspaceId}/review/diff")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/git/changes")).toBe(false);
+    expect(paths.has("/workspaces/{workspaceId}/system-prompt/base")).toBe(false);
   });
 });
