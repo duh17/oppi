@@ -38,7 +38,6 @@ export const OPPI_MIRROR_SERVER_REMOTE_COMMANDS = [
   "get_commands",
   "set_model",
   "cycle_model",
-  "get_available_models",
   "set_thinking_level",
   "cycle_thinking_level",
   "set_session_name",

@@ -159,7 +159,6 @@ export class WsMessageHandler {
       case "share_session":
       case "set_model":
       case "cycle_model":
-      case "get_available_models":
       case "set_thinking_level":
       case "cycle_thinking_level":
       case "reload":

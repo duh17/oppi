@@ -26,7 +26,6 @@ enum ClientMessage: Sendable {
     // ── Model ──
     case setModel(provider: String, modelId: String, requestId: String? = nil)
     case cycleModel(requestId: String? = nil)
-    case getAvailableModels(requestId: String? = nil)
 
     // ── Thinking ──
     case setThinkingLevel(level: ThinkingLevel, requestId: String? = nil)
@@ -273,10 +272,6 @@ extension ClientMessage: Encodable {
             try c.encode("cycle_model", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
-        case .getAvailableModels(let reqId):
-            try c.encode("get_available_models", forKey: .type)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
         // ── Thinking ──
         case .setThinkingLevel(let level, let reqId):
             try c.encode("set_thinking_level", forKey: .type)
@@ -431,7 +426,6 @@ extension ClientMessage {
         case .setQueue: return "set_queue"
         case .setModel: return "set_model"
         case .cycleModel: return "cycle_model"
-        case .getAvailableModels: return "get_available_models"
         case .setThinkingLevel: return "set_thinking_level"
         case .cycleThinkingLevel: return "cycle_thinking_level"
         case .newSession: return "new_session"

@@ -471,7 +471,6 @@ export class SessionCommandCoordinator {
           label: readOptionalString(cmd.label),
         }),
     ],
-    ["get_available_models", () => []],
     ["get_commands", (session) => collectSessionCommands(session)],
     [
       "share_session",

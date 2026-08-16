@@ -4957,9 +4957,6 @@ async function createTuiMirrorRuntime(
       case "get_commands":
         return { commands: pi.getCommands() };
 
-      case "get_available_models":
-        return { models: await ctx.modelRegistry.getAvailable() };
-
       case "set_model": {
         const provider = String(command.provider ?? "");
         const modelId = String(command.modelId ?? command.id ?? "");

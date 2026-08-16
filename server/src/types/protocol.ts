@@ -107,7 +107,6 @@ export type ClientMessage = // ── Prompting ──
     // ── Model ──
     | { type: "set_model"; provider: string; modelId: string; requestId?: string }
     | { type: "cycle_model"; requestId?: string }
-    | { type: "get_available_models"; requestId?: string }
     // ── Thinking ──
     | {
         type: "set_thinking_level";
