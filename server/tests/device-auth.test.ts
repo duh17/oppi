@@ -254,6 +254,36 @@ describe("legacy dt_ migration", () => {
     });
     expect(second?.deviceId).toBe(first.deviceId);
     expect(storage.listDevices().filter((d) => d.publicKey)).toHaveLength(1);
+    expect(storage.validateAccessToken(first.accessToken).ok).toBe(true);
+    expect(storage.validateAccessToken(second!.accessToken).ok).toBe(true);
+  });
+
+  it("rejects a second migrate with a different key and leaves the first enrollment intact", () => {
+    const legacyToken = "dt_legacy_secret_token";
+    seedLegacyDevice(legacyToken);
+    const firstKey = makeDeviceKey();
+    const first = storage.migrateLegacyDevice(legacyToken, {
+      publicKey: firstKey.publicKeyJwk,
+      name: "Migrated iPhone",
+    });
+    expect(first).not.toBeNull();
+    if (!first) return;
+
+    const second = storage.migrateLegacyDevice(legacyToken, {
+      publicKey: makeDeviceKey().publicKeyJwk,
+      name: "Attacker",
+    });
+    expect(second).toBeNull();
+
+    const devices = storage.listDevices().filter((d) => d.publicKey);
+    expect(devices).toHaveLength(1);
+    expect(devices[0]?.id).toBe(first.deviceId);
+    expect(devices[0]?.publicKey).toEqual(firstKey.publicKeyJwk);
+    expect(storage.validateAccessToken(first.accessToken)).toEqual({
+      ok: true,
+      deviceId: first.deviceId,
+      scope: "device",
+    });
   });
 
   it("commits legacy revocation only after the replacement access token is used", () => {

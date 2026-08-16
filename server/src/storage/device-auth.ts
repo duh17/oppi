@@ -80,6 +80,12 @@ function importDevicePublicKey(publicKey: DevicePublicKey): ReturnType<typeof cr
   });
 }
 
+function sameDevicePublicKey(left: DevicePublicKey, right: DevicePublicKey): boolean {
+  return (
+    left.kty === right.kty && left.crv === right.crv && left.x === right.x && left.y === right.y
+  );
+}
+
 function derLength(length: number): Buffer {
   return length < 0x80 ? Buffer.from([length]) : Buffer.from([0x81, length]);
 }
@@ -273,9 +279,12 @@ export class DeviceAuthStore {
     } catch {
       return null;
     }
+    if (existing.publicKey && !sameDevicePublicKey(existing.publicKey, deviceInput.publicKey)) {
+      return null;
+    }
     const device: DeviceRecord = {
       ...existing,
-      publicKey: deviceInput.publicKey,
+      publicKey: existing.publicKey ?? deviceInput.publicKey,
       name:
         typeof deviceInput.name === "string" && deviceInput.name.trim()
           ? deviceInput.name.trim()

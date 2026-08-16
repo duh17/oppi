@@ -844,9 +844,7 @@ export class ConfigStore {
           configPath: this.configPath,
           error: message,
         });
-        log.warn("config_store.defaults_fallback", {
-          configPath: this.configPath,
-        });
+        throw new Error(`${this.configPath}: invalid JSON (${message})`, { cause: err });
       }
     }
 

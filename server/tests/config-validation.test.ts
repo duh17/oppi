@@ -324,4 +324,13 @@ describe("Storage config validation", () => {
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.startsWith(configPath))).toBe(true);
   });
+
+  it("does not overwrite a truncated config.json and fails closed on load", () => {
+    const configPath = join(dir, "config.json");
+    const truncated = '{"port": 7749, "host": "0.0.0.0"';
+    writeFileSync(configPath, truncated);
+
+    expect(() => new Storage(dir)).toThrow(/invalid JSON|config\.json/i);
+    expect(readFileSync(configPath, "utf8")).toBe(truncated);
+  });
 });
