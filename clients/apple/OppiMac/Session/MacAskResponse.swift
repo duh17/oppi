@@ -1,42 +1,13 @@
 import Foundation
 
-/// Mac-local answer model for the shared `AskRequest` DTO.
+/// Mac-only mapping from a local ask draft onto `ClientMessage`.
 ///
-/// iOS has richer ask-card presentation code in the iOS target. The Mac client
-/// keeps a small encoder here so selected-session ask handling can stay in the
-/// Mac target without pulling iOS view code into the desktop app.
-enum MacAskAnswer: Equatable, Sendable {
-    case single(String)
-    case multi(Set<String>)
-    case custom(String)
-}
-
+/// Wire JSON for `.ask` answers lives in `AskResponseEncoder`. This type keeps
+/// Mac response-encoding constants and the confirm/select/input wrappers.
 enum MacAskResponseEncoder {
     static let inlineQuestionId = "extension-ui"
     static let confirmValue = "__oppi_confirm"
     static let cancelValue = "__oppi_cancel"
-
-    static func encode(_ answers: [String: MacAskAnswer]) -> String {
-        var result: [String: Any] = [:]
-        for (key, answer) in answers {
-            switch answer {
-            case .single(let value):
-                result[key] = value
-            case .multi(let values):
-                result[key] = Array(values).sorted()
-            case .custom(let text):
-                result[key] = text
-            }
-        }
-
-        guard let data = try? JSONSerialization.data(
-            withJSONObject: result,
-            options: [.sortedKeys]
-        ) else {
-            return "{}"
-        }
-        return String(data: data, encoding: .utf8) ?? "{}"
-    }
 
     static func responseMessage(request: AskRequest, draft: MacAskResponseDraft) -> ClientMessage {
         switch request.responseEncoding {
@@ -67,7 +38,7 @@ enum MacAskResponseEncoder {
 }
 
 struct MacAskResponseDraft: Equatable, Sendable {
-    private(set) var answers: [String: MacAskAnswer] = [:]
+    private(set) var answers: [String: AskAnswer] = [:]
 
     var isEmpty: Bool { answers.isEmpty }
 
@@ -109,6 +80,6 @@ struct MacAskResponseDraft: Equatable, Sendable {
     }
 
     func encodedValue() -> String {
-        MacAskResponseEncoder.encode(answers)
+        AskResponseEncoder.encode(answers)
     }
 }

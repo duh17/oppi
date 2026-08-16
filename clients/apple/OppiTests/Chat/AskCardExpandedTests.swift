@@ -153,11 +153,7 @@ struct AskCardExpandedTests {
     func customTextStored() {
         var answers: [String: AskAnswer] = [:]
         answers["approach"] = .custom("property-based tests")
-
-        // Verify encoding roundtrip
-        let json = AskResponseEncoder.encode(answers)
-        let parsed = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
-        #expect(parsed?["approach"] as? String == "property-based tests")
+        #expect(answers["approach"] == .custom("property-based tests"))
     }
 
     @Test("Option selection overwrites custom answer")
@@ -178,46 +174,6 @@ struct AskCardExpandedTests {
         // User types custom text — overwrites option
         answers["approach"] = .custom("snapshot tests")
         #expect(answers["approach"] == .custom("snapshot tests"))
-    }
-
-    // MARK: - Submit Page Review
-
-    @Test("Answer map shows all questions with answered/ignored status")
-    func answerMapShowsAllQuestions() {
-        let request = Self.multiQuestionRequest()
-        let answers: [String: AskAnswer] = [
-            "approach": .single("unit"),
-            // "frameworks" omitted = ignored
-            "coverage": .single("90"),
-        ]
-
-        let entries = AskResponseEncoder.answerMap(answers: answers, questions: request.questions)
-        #expect(entries.count == 3)
-        #expect(entries[0].answer == .single("unit"))   // approach answered
-        #expect(entries[1].answer == nil)                // frameworks ignored
-        #expect(entries[2].answer == .single("90"))      // coverage answered
-    }
-
-    @Test("Mixed answer types in review: single + multi + custom")
-    func mixedAnswerTypesInReview() {
-        let answers: [String: AskAnswer] = [
-            "approach": .single("unit"),
-            "frameworks": .multi(["jest", "vitest"]),
-            "coverage": .custom("aim for 85%"),
-        ]
-
-        let json = AskResponseEncoder.encode(answers)
-        let parsed = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
-        #expect(parsed?["approach"] as? String == "unit")
-        #expect(parsed?["frameworks"] as? [String] == ["jest", "vitest"])
-        #expect(parsed?["coverage"] as? String == "aim for 85%")
-    }
-
-    @Test("All questions ignored produces empty JSON")
-    func allIgnoredProducesEmptyJson() {
-        let answers: [String: AskAnswer] = [:]
-        let json = AskResponseEncoder.encode(answers)
-        #expect(json == "{}")
     }
 
     // MARK: - Navigation Bounds

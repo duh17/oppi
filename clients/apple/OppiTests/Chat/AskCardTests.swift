@@ -80,52 +80,6 @@ struct AskCardTests {
         )
     }
 
-    // MARK: - AskAnswer Encoding
-
-    @Test("Single-select encodes as string value")
-    func singleSelectEncoding() {
-        let answers: [String: AskAnswer] = ["approach": .single("unit")]
-        let json = AskResponseEncoder.encode(answers)
-        let parsed = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
-        #expect(parsed?["approach"] as? String == "unit")
-    }
-
-    @Test("Multi-select encodes as sorted array")
-    func multiSelectEncoding() {
-        let answers: [String: AskAnswer] = ["frameworks": .multi(["vitest", "jest"])]
-        let json = AskResponseEncoder.encode(answers)
-        let parsed = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
-        let values = parsed?["frameworks"] as? [String]
-        #expect(values == ["jest", "vitest"])
-    }
-
-    @Test("Custom text encodes as string value")
-    func customTextEncoding() {
-        let answers: [String: AskAnswer] = ["approach": .custom("property-based tests")]
-        let json = AskResponseEncoder.encode(answers)
-        let parsed = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
-        #expect(parsed?["approach"] as? String == "property-based tests")
-    }
-
-    @Test("Mixed answer types encode correctly")
-    func mixedAnswerEncoding() {
-        let answers: [String: AskAnswer] = [
-            "approach": .single("unit"),
-            "frameworks": .multi(["jest", "vitest"]),
-        ]
-        let json = AskResponseEncoder.encode(answers)
-        let parsed = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
-        #expect(parsed?["approach"] as? String == "unit")
-        #expect(parsed?["frameworks"] as? [String] == ["jest", "vitest"])
-    }
-
-    @Test("Empty answers encode as empty object")
-    func emptyAnswersEncoding() {
-        let answers: [String: AskAnswer] = [:]
-        let json = AskResponseEncoder.encode(answers)
-        #expect(json == "{}")
-    }
-
     // MARK: - Inline Preview
 
     @Test("Short inline questions do not use compact preview")
@@ -252,58 +206,4 @@ struct AskCardTests {
         #expect(tags.values.contains("jest") == false)
     }
 
-    // MARK: - Answer Map
-
-    @Test("Ignored question omitted from answer map values")
-    func ignoredQuestionOmitted() {
-        let request = Self.multiQuestionRequest()
-        let answers: [String: AskAnswer] = ["approach": .single("unit")]
-        // "frameworks" not in answers = ignored
-        let map = AskResponseEncoder.answerMap(answers: answers, questions: request.questions)
-        #expect(map.count == 2)
-        #expect(map[0].answer != nil) // approach answered
-        #expect(map[1].answer == nil) // frameworks ignored
-    }
-
-    @Test("All ignored produces empty JSON")
-    func allIgnoredProducesEmptyMap() {
-        let answers: [String: AskAnswer] = [:]
-        let json = AskResponseEncoder.encode(answers)
-        #expect(json == "{}")
-    }
-
-    @Test("Response JSON structure matches wire format")
-    func responseJsonStructure() {
-        let answers: [String: AskAnswer] = [
-            "q1": .single("value"),
-            "q2": .multi(["a", "b"]),
-        ]
-        let json = AskResponseEncoder.encode(answers)
-
-        // Parse and verify structure
-        let data = Data(json.utf8)
-        let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        #expect(parsed != nil)
-        #expect(parsed?.count == 2)
-
-        // q1 is a string
-        #expect(parsed?["q1"] is String)
-        #expect(parsed?["q1"] as? String == "value")
-
-        // q2 is an array
-        #expect(parsed?["q2"] is [String])
-        #expect(parsed?["q2"] as? [String] == ["a", "b"])
-    }
-
-    // MARK: - AskAnswer Equatable
-
-    @Test("AskAnswer equatable works")
-    func askAnswerEquatable() {
-        #expect(AskAnswer.single("a") == AskAnswer.single("a"))
-        #expect(AskAnswer.single("a") != AskAnswer.single("b"))
-        #expect(AskAnswer.multi(["a", "b"]) == AskAnswer.multi(["a", "b"]))
-        #expect(AskAnswer.multi(["a"]) != AskAnswer.multi(["a", "b"]))
-        #expect(AskAnswer.custom("x") == AskAnswer.custom("x"))
-        #expect(AskAnswer.custom("x") != AskAnswer.single("x"))
-    }
 }

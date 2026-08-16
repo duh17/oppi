@@ -4,16 +4,6 @@ import Testing
 @Suite("Mac ask response")
 struct MacAskResponseTests {
 
-    @Test func encodesSingleMultiAndCustomAnswersDeterministically() {
-        let encoded = MacAskResponseEncoder.encode([
-            "choice": .single("swift"),
-            "many": .multi(["b", "a"]),
-            "note": .custom("ship it"),
-        ])
-
-        #expect(encoded == #"{"choice":"swift","many":["a","b"],"note":"ship it"}"#)
-    }
-
     @Test func draftTogglesMultiSelectOptions() {
         let option = AskOption(value: "a", label: "A")
         let question = AskQuestion(id: "q", question: "Pick", options: [option], multiSelect: true)

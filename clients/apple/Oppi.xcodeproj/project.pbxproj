@@ -498,6 +498,7 @@
 		690694F1E3716FF50DE9072A /* MermaidGanttRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F18A5EDD0D5360E79FEC7967 /* MermaidGanttRenderer.swift */; };
 		690E548B5857091C356F223E /* WorkspaceFilesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F4CE812BDB5FC5E356A0D6B /* WorkspaceFilesTests.swift */; };
 		690FCD4B6A10CD30B75840A4 /* BadgePickerViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C323704130A82F418B3A1EF /* BadgePickerViews.swift */; };
+		69349C66448FC17DB87498AD /* AskResponseEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B6B578A2C27753BD281561B /* AskResponseEncoder.swift */; };
 		696F6AAB3F72304487B3010F /* UIHangHarnessUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F90C52338F8E06EAEF144C2E /* UIHangHarnessUITests.swift */; };
 		69AFD204BE4CF4B6510CAD51 /* MacInlineOutputFormatterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7942205316D2FA12B7A6B8B /* MacInlineOutputFormatterTests.swift */; };
 		69CB1181B3B886D4543719F2 /* QuickSessionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE08235E992454CDCC6FA56A /* QuickSessionSheet.swift */; };
@@ -564,6 +565,7 @@
 		754AAFE32609AF8126B5DDD3 /* FiraCode-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D1B9632BE494CBCA93E2F1EC /* FiraCode-SemiBold.ttf */; };
 		760DA416B18D3EC2B21751E9 /* AppNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F913345C6AC390A0913E3B6F /* AppNavigationTests.swift */; };
 		765329F758983E0FA45EF651 /* ToolDetailsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A6EE44430C95A2FB1C358BB /* ToolDetailsStore.swift */; };
+		77068F2EE8288E7B4C7C0D4F /* AskResponseEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B6B578A2C27753BD281561B /* AskResponseEncoder.swift */; };
 		773106D4ECE458964901599D /* AgentNativeEditView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147AA8755F380ADB6488261B /* AgentNativeEditView.swift */; };
 		7747419D039E7F0C739353EA /* BashToolRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42BB6A03DD8FEF3287493701 /* BashToolRowView.swift */; };
 		776E0B18BD9714DB5C2E83A8 /* NearbyPairingInviteMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 036E70B04782CB208DE18873 /* NearbyPairingInviteMessage.swift */; };
@@ -1677,6 +1679,7 @@
 		5ADDF47F1831F78C28CC6E4E /* MicButtonLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicButtonLabel.swift; sourceTree = "<group>"; };
 		5B0E3F624DE6F2A0176249F5 /* AskRequestStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskRequestStoreTests.swift; sourceTree = "<group>"; };
 		5B65FEE66FAB328B15B0F651 /* TerminalMirrorIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalMirrorIndicatorView.swift; sourceTree = "<group>"; };
+		5B6B578A2C27753BD281561B /* AskResponseEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskResponseEncoder.swift; sourceTree = "<group>"; };
 		5BF5CE9F5FA051497A8877B8 /* ServerExtensionListPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerExtensionListPresentation.swift; sourceTree = "<group>"; };
 		5C323704130A82F418B3A1EF /* BadgePickerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BadgePickerViews.swift; sourceTree = "<group>"; };
 		5C3972E0317D6796D73FA20C /* RemoteFileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteFileView.swift; sourceTree = "<group>"; };
@@ -3117,6 +3120,7 @@
 				8753E8E22FD305260864F567 /* APIResponseTypes.swift */,
 				16B008DE6991A30564DF7701 /* AppEventMessage.swift */,
 				57FFB187680CC8DF92D2228A /* AskRequest.swift */,
+				5B6B578A2C27753BD281561B /* AskResponseEncoder.swift */,
 				D2C3C70BD59E7E4AACF8F03C /* ClientMessage.swift */,
 				6FAC6584DA592860CDBC370D /* ComposerDraft.swift */,
 				07489F1A058FF1C292D3B82D /* DeviceAuthPairTypes.swift */,
@@ -4884,6 +4888,7 @@
 				7DEFAA3275C86A8559685225 /* AppEventMessage.swift in Sources */,
 				ADF3688FFE60F112AABFFCD7 /* AskRequest.swift in Sources */,
 				C7CC43541E65B79B9ED64060 /* AskRequestStore.swift in Sources */,
+				77068F2EE8288E7B4C7C0D4F /* AskResponseEncoder.swift in Sources */,
 				51966BE7A9FC012126C9D416 /* ChatItem.swift in Sources */,
 				163F14AFD79D9F7839C8792F /* ClientLogUploadModels.swift in Sources */,
 				1C99F2C691BC96795F5AF140 /* ClientLogUploadQueue.swift in Sources */,
@@ -5525,6 +5530,7 @@
 				89F3D73055B44E2373A6FCB9 /* AskOppiIntent.swift in Sources */,
 				ABBAB909889612BBF56F23AB /* AskRequest.swift in Sources */,
 				2C89043A0D54115769552330 /* AskRequestStore.swift in Sources */,
+				69349C66448FC17DB87498AD /* AskResponseEncoder.swift in Sources */,
 				7D6DCC2CF86CDDBAAD8A9C88 /* AssistantAvatar.swift in Sources */,
 				934ADA51B4B4E46A7426B7F6 /* AssistantMarkdownBlockViews.swift in Sources */,
 				F0EA23654B2B0A0DE04915CB /* AssistantMarkdownContentView.swift in Sources */,
