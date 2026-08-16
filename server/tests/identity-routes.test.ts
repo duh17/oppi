@@ -32,7 +32,7 @@ describe("identity module", () => {
   it("validates POST /pair body", async () => {
     const ctx = {
       storage: {
-        consumePairingToken: vi.fn(() => undefined),
+        enrollViaPairing: vi.fn(() => null),
       },
     } as unknown as RouteContext;
 
@@ -52,13 +52,15 @@ describe("identity module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "pairingToken required" });
   });
 
-  it("binds dual-transport HTTPS pairing to the supplied Iroh node", async () => {
-    const consumePairingToken = vi.fn(() => ({
-      deviceToken: "dt_bound",
-      credentialTransports: ["http", "iroh"],
+  it("enrolls an HTTPS device key", async () => {
+    const enrollViaPairing = vi.fn(() => ({
+      deviceId: "dev_bound",
+      accessToken: "at_bound",
+      expiresAt: 123,
+      refreshChallenge: { nonce: "n", audience: "oppi:refresh:v1", expiresAt: 456 },
     }));
     const ctx = {
-      storage: { consumePairingToken },
+      storage: { enrollViaPairing },
     } as unknown as RouteContext;
 
     const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
@@ -68,19 +70,24 @@ describe("identity module", () => {
       method: "POST",
       path: "/pair",
       url: new URL("https://paired.example/pair"),
-      req: makeRequest({ pairingToken: "pt_dual", clientNodeId: "apple-node" }) as never,
+      req: makeRequest({
+        pairingToken: "pt_dual",
+        devicePublicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" },
+      }) as never,
       res: res as never,
     });
 
     expect(handled).toBe(true);
-    expect(consumePairingToken).toHaveBeenCalledWith("pt_dual", {
-      transport: "http",
-      irohClientNodeId: "apple-node",
-    });
+    expect(enrollViaPairing).toHaveBeenCalledWith(
+      "pt_dual",
+        { publicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" }, name: undefined },
+    );
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({
-      deviceToken: "dt_bound",
-      credentialTransports: ["http", "iroh"],
+      deviceId: "dev_bound",
+      accessToken: "at_bound",
+      expiresAt: 123,
+      refreshChallenge: { nonce: "n", audience: "oppi:refresh:v1", expiresAt: 456 },
     });
   });
 

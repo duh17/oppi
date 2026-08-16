@@ -24,21 +24,43 @@ export interface UploadStoreConfig {
   allowedMimeTypes?: string[];
 }
 
-export type AuthTransport = "http" | "iroh";
-export type IrohInviteMode = "irohOnly" | "irohPreferred" | "httpOnly";
+/** Coarse capability scope for an authenticated credential. */
+export type DeviceScope = "device" | "admin" | "mirror";
 
-/** A server-owned relay entry. A custom non-empty list replaces Iroh's public relay map. */
-export interface IrohRelayConfig {
-  url: string;
-  quicPort?: number;
+/** `dt_` compatibility window state. */
+export type AuthMigrationMode = "compat" | "finalized";
+
+/** Canonical P-256 device public key (JWK, RFC 7517 §6). */
+export interface DevicePublicKey {
+  kty: "EC";
+  crv: "P-256";
+  x: string;
+  y: string;
 }
 
-export interface IrohDeviceTokenBinding {
-  token: string;
-  clientNodeId: string;
-  allowedTransports: AuthTransport[];
+/** Per-device identity stored server-side. Only the public key, never a private key. */
+export interface DeviceRecord {
+  id: string;
+  name: string;
+  /** Absent for a legacy `dt_` record that has not yet migrated to key proof. */
+  publicKey?: DevicePublicKey;
+  scope: DeviceScope;
   createdAt: number;
-  lastSeenAt?: number;
+  lastUsedAt?: number;
+  revokedAt?: number;
+  /** SHA-256 of the legacy `dt_` token pending revocation after migration commit. */
+  legacyTokenHash?: string;
+}
+
+/** Short-lived access token stored hashed at rest. The server is the only verifier. */
+export interface AccessTokenRecord {
+  id: string;
+  tokenHash: string;
+  deviceId: string;
+  scope: DeviceScope;
+  createdAt: number;
+  expiresAt: number;
+  lastUsedAt?: number;
 }
 
 export interface ServerConfig {
@@ -66,20 +88,8 @@ export interface ServerConfig {
     enabled: boolean;
   };
 
-  /** Host-free Iroh transport activation. */
-  iroh?: {
-    enabled: boolean;
-    /** Omitted or empty keeps Iroh's public relay defaults. */
-    relays?: IrohRelayConfig[];
-  };
-
   /** Transport security (HTTPS/WSS). */
   tls?: TlsConfig;
-
-  /** Effective invite policy persisted by the running server for separate CLI invocations. */
-  irohInviteMode?: IrohInviteMode;
-  /** Correlates invite readiness with the current server start. */
-  irohInviteReadinessId?: string;
 
   // Owner/admin bearer token
   token?: string;
@@ -87,12 +97,13 @@ export interface ServerConfig {
   // One-time pairing token bootstrap state
   pairingToken?: string;
   pairingTokenExpiresAt?: number;
-  pairingTokenAllowedTransports?: AuthTransport[];
-
   // Device auth state (issued during pairing)
   authDeviceTokens?: string[];
-  irohDeviceTokenBindings?: IrohDeviceTokenBinding[];
 
+  // Device-key auth state (new model). Additive and backward compatible.
+  authMigrationMode?: AuthMigrationMode;
+  authDevices?: DeviceRecord[];
+  authAccessTokens?: AccessTokenRecord[];
   // Push notification state (written by iOS client registration)
   pushDeviceTokens?: string[];
   liveActivityToken?: string;

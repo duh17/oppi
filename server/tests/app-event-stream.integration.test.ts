@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -109,6 +110,32 @@ let server: Server;
 let token: string;
 let baseUrl: string;
 let clients: AppStreamClient[] = [];
+let originalTlsRejectUnauthorized: string | undefined;
+
+function enrollTestDevice(storage: Storage): string {
+  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = publicKey.export({ format: "jwk" }) as { x: string; y: string };
+  const pairingToken = storage.issuePairingToken();
+  const result = storage.enrollViaPairing(
+    pairingToken,
+    { name: "app-event-test", publicKey: { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y } },
+  );
+  if (!result) throw new Error("test device enrollment failed");
+  return result.accessToken;
+}
+
+beforeAll(() => {
+  originalTlsRejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+});
+
+afterAll(() => {
+  if (originalTlsRejectUnauthorized === undefined) {
+    delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  } else {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsRejectUnauthorized;
+  }
+});
 
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-app-event-stream-"));
@@ -116,12 +143,13 @@ beforeEach(async () => {
   storage.updateConfig({
     port: 0,
     host: "127.0.0.1",
-    tls: { mode: "disabled" },
+    tls: { mode: "self-signed" },
   });
-  token = storage.ensurePaired();
+  storage.ensurePaired();
+  token = enrollTestDevice(storage);
   server = new Server(storage);
   await server.start();
-  baseUrl = `http://127.0.0.1:${server.port}`;
+  baseUrl = `https://127.0.0.1:${server.port}`;
 });
 
 afterEach(async () => {
@@ -315,10 +343,11 @@ describe("WS /app/events/stream", { timeout: 30_000 }, () => {
 });
 
 async function connectAppStream(): Promise<AppStreamClient> {
-  const wsUrl = `${baseUrl.replace(/^http:/, "ws:")}/app/events/stream`;
+  const wsUrl = `${baseUrl.replace(/^https:/, "wss:")}/app/events/stream`;
   const client = new AppStreamClient(
     new WebSocket(wsUrl, {
       headers: { Authorization: `Bearer ${token}` },
+      rejectUnauthorized: false,
     }),
   );
   clients.push(client);

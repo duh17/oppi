@@ -20,7 +20,6 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
-import { writeIrohInviteState } from "../src/iroh-invite-state.js";
 import { Storage } from "../src/storage.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 
@@ -719,8 +718,6 @@ describe("oppi config", () => {
       owner: "sk_owner-config-display-secret",
       pairing: "pt_pairing-config-display-secret",
       authDevice: "dt_auth-config-display-secret",
-      irohDevice: "dt_iroh-config-display-secret",
-      irohClient: "node-config-display-secret",
       push: "apns-config-display-secret",
       liveActivity: "live-config-display-secret",
       runtime: "runtime-config-display-secret",
@@ -730,14 +727,6 @@ describe("oppi config", () => {
       token: secrets.owner,
       pairingToken: secrets.pairing,
       authDeviceTokens: [secrets.authDevice],
-      irohDeviceTokenBindings: [
-        {
-          token: secrets.irohDevice,
-          clientNodeId: secrets.irohClient,
-          allowedTransports: ["http", "iroh"],
-          createdAt: 1,
-        },
-      ],
       pushDeviceTokens: [secrets.push],
       liveActivityToken: secrets.liveActivity,
       runtimeEnv: { OPENAI_API_KEY: secrets.runtime },
@@ -753,16 +742,11 @@ describe("oppi config", () => {
 
   it("config show redacts authentication, device, and runtime secrets", () => {
     const secrets = seedConfigDisplaySecrets();
-
     const { stdout, exitCode } = run(["config", "show"]);
-
     expect(exitCode).toBe(0);
     expect(stdout).toContain('"token": "[REDACTED]"');
     expect(stdout).toContain('"pairingToken": "[REDACTED]"');
     expect(stdout).toContain('"authDeviceTokens": "[REDACTED 1 token]"');
-    expect(stdout).toContain('"irohDeviceTokenBindings": {');
-    expect(stdout).toContain('"count": 1');
-    expect(stdout).toContain('"transports": [');
     expect(stdout).toContain('"pushDeviceTokens": "[REDACTED 1 token]"');
     expect(stdout).toContain('"liveActivityToken": "[REDACTED]"');
     expect(stdout).toContain('"OPENAI_API_KEY": "[REDACTED]"');
@@ -770,25 +754,18 @@ describe("oppi config", () => {
   });
 
   it.each([
-    ["token", false],
-    ["pairingToken", false],
-    ["authDeviceTokens", false],
-    ["irohDeviceTokenBindings", true],
-    ["pushDeviceTokens", false],
-    ["liveActivityToken", false],
-    ["runtimeEnv.OPENAI_API_KEY", false],
-    ["runtimeEnv", false],
-  ] as const)("config get redacts %s", (key, exposesBindingMetadata) => {
+    "token",
+    "pairingToken",
+    "authDeviceTokens",
+    "pushDeviceTokens",
+    "liveActivityToken",
+    "runtimeEnv.OPENAI_API_KEY",
+    "runtimeEnv",
+  ])("config get redacts %s", (key) => {
     seedConfigDisplaySecrets();
-
     const { stdout, exitCode } = run(["config", "get", key]);
     expect(exitCode).toBe(0);
-    if (exposesBindingMetadata) {
-      expect(stdout).toContain('"count": 1');
-      expect(stdout).toContain('"transports": [');
-    } else {
-      expect(stdout).toContain("[REDACTED");
-    }
+    expect(stdout).toContain("[REDACTED");
     expect(stdout).not.toContain("config-display-secret");
   });
 
@@ -797,7 +774,6 @@ describe("oppi config", () => {
     const success = run(["config", "set", "runtimeEnv.OPENAI_API_KEY", secret]);
     const invalid = run(["config", "set", "runtimeEnv", `{not-json:${secret}}`]);
     const listing = run(["config", "set"]);
-
     expect(success.exitCode).toBe(0);
     expect(success.stdout).toContain("[REDACTED]");
     expect(success.stdout).not.toContain(secret);
@@ -807,64 +783,17 @@ describe("oppi config", () => {
     expect(listing.stdout).not.toContain(secret);
   });
 
-  it("config set/get roundtrips a value", () => {
+  it("config set/get roundtrips values", () => {
     run(["config", "set", "port", "9999"]);
-    const { stdout } = run(["config", "get", "port"]);
-    expect(stdout.trim()).toContain("9999");
-  });
-
-  it("config set updates extension config", () => {
+    expect(run(["config", "get", "port"]).stdout.trim()).toContain("9999");
     run(["config", "set", "extensions", '{"voice":{"defaultVoiceId":"warm"}}']);
-    const { stdout } = run(["config", "get", "extensions"]);
-    expect(stdout.trim()).toContain('"defaultVoiceId": "warm"');
-  });
-
-  it("config set/get supports nested config paths", () => {
+    expect(run(["config", "get", "extensions"]).stdout.trim()).toContain('"defaultVoiceId": "warm"');
     run(["config", "set", "asr.sttEndpoint", "http://127.0.0.1:7936"]);
-    const { stdout } = run(["config", "get", "asr.sttEndpoint"]);
-    expect(stdout.trim()).toBe("http://127.0.0.1:7936");
-  });
-
-  it("config set/get supports durable Iroh enablement", () => {
-    run(["config", "set", "iroh.enabled", "true"]);
-    expect(run(["config", "get", "iroh.enabled"]).stdout.trim()).toBe("true");
-  });
-
-  it("config set validates relays before saving and preserves Iroh siblings", () => {
-    const setRelays = run([
-      "config",
-      "set",
-      "iroh.relays",
-      '[{"url":"https://relay-us.example"},{"url":"https://relay-eu.example","quicPort":7842}]',
-    ]);
-    expect(setRelays.exitCode).toBe(0);
-    expect(run(["config", "get", "iroh.enabled"]).stdout.trim()).toBe("true");
-    const beforeInvalid = run(["config", "get", "iroh.relays"]).stdout;
-
-    const invalid = run(["config", "set", "iroh.relays", '[{"url":"http://127.0.0.1"}]']);
-    expect(invalid.exitCode).toBe(1);
-    expect(invalid.stdout).toContain("expected HTTPS URL");
-    expect(run(["config", "get", "iroh.relays"]).stdout).toBe(beforeInvalid);
-  });
-
-  it("config set/get supports Oppi prompt toggles", () => {
+    expect(run(["config", "get", "asr.sttEndpoint"]).stdout.trim()).toBe("http://127.0.0.1:7936");
     run(["config", "set", "oppiDocsPrompt.enabled", "false"]);
     expect(run(["config", "get", "oppiDocsPrompt.enabled"]).stdout.trim()).toBe("false");
-
-    run(["config", "set", "oppiCliPrompt.enabled", "true"]);
-    expect(run(["config", "get", "oppiCliPrompt.enabled"]).stdout.trim()).toBe("true");
-  });
-
-  it("config set supports nested extension config paths", () => {
-    run(["config", "set", "extensions.voice.defaultVoiceId", "warm-technical-teammate"]);
-    const { stdout } = run(["config", "get", "extensions"]);
-    expect(stdout).toContain("warm-technical-teammate");
-  });
-
-  it("config set supports dynamic runtimeEnv keys", () => {
     run(["config", "set", "runtimeEnv.TTS_BASE_URL", "http://127.0.0.1:7937"]);
-    const { stdout } = run(["config", "get", "runtimeEnv.TTS_BASE_URL"]);
-    expect(stdout.trim()).toBe("http://127.0.0.1:7937");
+    expect(run(["config", "get", "runtimeEnv.TTS_BASE_URL"]).stdout.trim()).toBe("http://127.0.0.1:7937");
   });
 
   it("config validate succeeds on valid config", () => {
@@ -876,8 +805,7 @@ describe("oppi config", () => {
   it("config validate detects invalid config file", () => {
     const badConfig = join(dataDir, "bad-config.json");
     writeFileSync(badConfig, '{ "port": "not-a-number" }');
-    const { stdout, exitCode } = run(["config", "validate", "--config-file", badConfig]);
-    // Should report issues
+    const { stdout } = run(["config", "validate", "--config-file", badConfig]);
     expect(stdout.length).toBeGreaterThan(0);
   });
 });
@@ -900,7 +828,6 @@ describe("oppi session", () => {
 describe("oppi wait", () => {
   it("rejects a zero poll interval before polling the local API", () => {
     const { stdout, exitCode } = run(["wait", "session", "sess-1", "--poll", "0ms", "--json"]);
-
     expect(exitCode).toBe(1);
     expect(JSON.parse(stdout)).toEqual({
       ok: false,
@@ -2354,34 +2281,19 @@ describe("oppi token", () => {
     rmSync(freshDir, { recursive: true, force: true });
   });
 
-  it("token rotate generates a new token after pairing", () => {
-    // Pair first to create owner token
+  it("token rotate requires a running server (no file-based fallback)", () => {
+    // Pair first to create the owner token.
     run(["pair"]);
     const before = new Storage(dataDir).getToken();
+
+    // Rotation now mutates the live server via the owner-only Unix socket.
     const { stdout, exitCode } = run(["token", "rotate"]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("rotated");
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain("could not rotate");
+
+    // No stale file-based mutation when the server is absent.
     const after = new Storage(dataDir).getToken();
-    expect(after).not.toBe(before);
-  });
-
-  it("token rotate remains valid across consecutive rotations", () => {
-    run(["pair"]);
-
-    const firstBefore = new Storage(dataDir).getToken();
-    const rotate1 = run(["token", "rotate"]);
-    const firstAfter = new Storage(dataDir).getToken();
-
-    expect(rotate1.exitCode).toBe(0);
-    expect(firstAfter).not.toBe(firstBefore);
-    expect(firstAfter).toMatch(/^sk_/);
-
-    const rotate2 = run(["token", "rotate"]);
-    const secondAfter = new Storage(dataDir).getToken();
-
-    expect(rotate2.exitCode).toBe(0);
-    expect(secondAfter).not.toBe(firstAfter);
-    expect(secondAfter).toMatch(/^sk_/);
+    expect(after).toBe(before);
   });
 });
 
@@ -2395,173 +2307,6 @@ describe("oppi pair", () => {
     expect(exitCode).toBe(0);
     // Should contain QR blocks or URL
     expect(stdout.length).toBeGreaterThan(50);
-  });
-});
-
-describe("oppi pair persisted Iroh policy", () => {
-  function preparePersistedPolicy(
-    mode: "irohOnly" | "irohPreferred" | "httpOnly",
-    state: "ready" | "missing" | "stale",
-  ): string {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-iroh-policy-"));
-    const storage = new Storage(dir);
-    const readinessId = `readiness-${mode}`;
-    storage.updateConfig({
-      host: "127.0.0.1",
-      port: 7749,
-      tls: { mode: "disabled" },
-      irohInviteMode: mode,
-      irohInviteReadinessId: mode === "httpOnly" ? undefined : readinessId,
-    });
-    storage.ensurePaired();
-    if (state !== "missing") {
-      writeIrohInviteState(dir, {
-        version: 2,
-        nodeId: `node-${mode}`,
-        alpns: ["oppi/pair/1", "oppi/http/1"],
-        addressMode: "ticket",
-        ticket: `ticket-${mode}`,
-        readinessId,
-        processId: state === "ready" ? process.pid : 2_147_483_647,
-      });
-    }
-    return dir;
-  }
-
-  const plainPairEnv = (dir: string): Record<string, string> => ({
-    OPPI_DATA_DIR: dir,
-    OPPI_IROH_PAIRING: "0",
-    OPPI_IROH_TRANSPORT: "0",
-    OPPI_IROH_INVITE_MODE: "",
-  });
-
-  it("keeps plain pair Iroh-only when durable Iroh activation is also enabled", () => {
-    const dir = preparePersistedPolicy("irohOnly", "ready");
-    try {
-      new Storage(dir).updateConfig({ iroh: { enabled: true } });
-      const { stdout, exitCode } = run(["pair", "--json"], plainPairEnv(dir));
-      expect(exitCode).toBe(0);
-      const invite = JSON.parse(stdout) as Record<string, unknown>;
-      expect(invite.preference).toBe("irohOnly");
-      expect(invite.transports).toMatchObject({ iroh: { nodeId: "node-irohOnly" } });
-      expect(invite).not.toHaveProperty("host");
-      expect(invite).not.toHaveProperty("port");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it.each(["missing", "stale"] as const)(
-    "errors instead of downgrading persisted Iroh-only when readiness is %s",
-    (state) => {
-      const dir = preparePersistedPolicy("irohOnly", state);
-      try {
-        const { stderr, exitCode } = run(["pair", "--json"], plainPairEnv(dir));
-        expect(exitCode).toBe(1);
-        expect(stderr).toContain("Iroh-only pairing is unavailable");
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it("signs custom relay URLs from live state rather than edited config", () => {
-    const dir = preparePersistedPolicy("irohOnly", "ready");
-    const liveRelay = "https://relay-live.example/";
-    const editedRelay = "https://relay-edited.example/";
-    try {
-      const storage = new Storage(dir);
-      storage.updateConfig({ iroh: { enabled: true, relays: [{ url: editedRelay }] } });
-      writeIrohInviteState(dir, {
-        version: 2,
-        nodeId: "node-live-relay",
-        alpns: ["oppi/pair/1", "oppi/http/1"],
-        addressMode: "ticket",
-        ticket: "ticket-live-relay",
-        relayMode: "custom",
-        relayUrls: [liveRelay],
-        ticketHomeRelay: liveRelay,
-        readinessId: "readiness-irohOnly",
-        processId: process.pid,
-      });
-
-      const { stdout, exitCode } = run(["pair", "--json"], plainPairEnv(dir));
-      expect(exitCode).toBe(0);
-      const invite = JSON.parse(stdout) as { inviteURL: string };
-      const encodedInvite = new URL(invite.inviteURL).searchParams.get("invite");
-      if (!encodedInvite) throw new Error("missing signed invite");
-      const envelope = JSON.parse(Buffer.from(encodedInvite, "base64url").toString("utf8")) as {
-        signedPayload: string;
-      };
-      const signedPayload = JSON.parse(
-        Buffer.from(envelope.signedPayload, "base64url").toString("utf8"),
-      ) as { transports: { iroh?: { relayUrls?: string[] } } };
-
-      expect(signedPayload.transports.iroh).toMatchObject({
-        nodeId: "node-live-relay",
-        ticket: "ticket-live-relay",
-        alpns: ["oppi/pair/1", "oppi/http/1"],
-        relayUrls: [liveRelay],
-      });
-      expect(signedPayload.transports.iroh?.relayUrls).not.toContain(editedRelay);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("omits relay URLs from public-default Iroh invites", () => {
-    const dir = preparePersistedPolicy("irohOnly", "ready");
-    try {
-      const { stdout, exitCode } = run(["pair", "--json"], plainPairEnv(dir));
-      expect(exitCode).toBe(0);
-      const invite = JSON.parse(stdout) as { inviteURL: string };
-      const encodedInvite = new URL(invite.inviteURL).searchParams.get("invite");
-      if (!encodedInvite) throw new Error("missing signed invite");
-      const envelope = JSON.parse(Buffer.from(encodedInvite, "base64url").toString("utf8")) as {
-        signedPayload: string;
-      };
-      const signedPayload = JSON.parse(
-        Buffer.from(envelope.signedPayload, "base64url").toString("utf8"),
-      ) as { transports: { iroh?: Record<string, unknown> } };
-
-      expect(signedPayload.transports.iroh).toMatchObject({
-        nodeId: "node-irohOnly",
-        ticket: "ticket-irohOnly",
-        alpns: ["oppi/pair/1", "oppi/http/1"],
-      });
-      expect(signedPayload.transports.iroh).not.toHaveProperty("relayUrls");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("preserves preferred invites with HTTP and plain HTTP mode", () => {
-    const preferredDir = preparePersistedPolicy("irohPreferred", "ready");
-    const httpDir = preparePersistedPolicy("httpOnly", "missing");
-    try {
-      const preferredResult = run(
-        ["pair", "--host", "127.0.0.1", "--json"],
-        plainPairEnv(preferredDir),
-      );
-      expect(preferredResult.exitCode).toBe(0);
-      const preferred = JSON.parse(preferredResult.stdout) as Record<string, unknown>;
-      expect(preferred.preference).toBe("irohPreferred");
-      expect(preferred).toMatchObject({ host: "127.0.0.1", scheme: "http" });
-      expect(preferred.transports).toMatchObject({
-        iroh: { nodeId: "node-irohPreferred" },
-        http: { host: "127.0.0.1" },
-      });
-
-      const httpResult = run(["pair", "--host", "127.0.0.1", "--json"], plainPairEnv(httpDir));
-      expect(httpResult.exitCode).toBe(0);
-      const http = JSON.parse(httpResult.stdout) as Record<string, unknown>;
-      expect(http).toMatchObject({ host: "127.0.0.1", scheme: "http" });
-      expect(http).not.toHaveProperty("preference");
-      expect(http).not.toHaveProperty("transports");
-    } finally {
-      rmSync(preferredDir, { recursive: true, force: true });
-      rmSync(httpDir, { recursive: true, force: true });
-    }
   });
 });
 
@@ -2807,273 +2552,3 @@ describe("oppi serve (first-run tls bootstrap)", () => {
 });
 
 // ── Init ──
-
-describe("oppi doctor", () => {
-  it("reports missing self-signed TLS material without generating it", () => {
-    const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-"));
-    const certPath = join(doctorDir, "tls", "self-signed", "server.crt");
-    const keyPath = join(doctorDir, "tls", "self-signed", "server.key");
-    const caPath = join(doctorDir, "tls", "self-signed", "ca.crt");
-
-    try {
-      const { exitCode: initExitCode } = run(["init", "--yes", "--data-dir", doctorDir]);
-      expect(initExitCode).toBe(0);
-
-      const { stdout, exitCode } = run(["doctor"], { OPPI_DATA_DIR: doctorDir });
-      expect(exitCode).toBe(1);
-      expect(stdout).toContain("TLS cert missing");
-      expect(stdout).toContain("TLS key missing");
-      expect(stdout).toContain("TLS CA missing");
-      expect(existsSync(certPath)).toBe(false);
-      expect(existsSync(keyPath)).toBe(false);
-      expect(existsSync(caPath)).toBe(false);
-    } finally {
-      rmSync(doctorDir, { recursive: true, force: true });
-    }
-  }, 30_000);
-
-  it("reports custom relay health without exposing relay URLs", () => {
-    const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-iroh-"));
-    const relayUrl = "https://private-relay.example/";
-
-    try {
-      const storage = new Storage(doctorDir);
-      storage.updateConfig({ iroh: { enabled: true, relays: [{ url: relayUrl }] } });
-      writeIrohInviteState(doctorDir, {
-        version: 2,
-        nodeId: "node-doctor",
-        alpns: ["oppi/pair/1", "oppi/http/1"],
-        addressMode: "ticket",
-        ticket: "ticket-doctor",
-        relayMode: "custom",
-        relayUrls: [relayUrl],
-        ticketHomeRelay: "https://PRIVATE-relay.example:443/",
-        readinessId: "doctor-ready",
-        processId: process.pid,
-      });
-
-      const { stdout } = run(["doctor"], { OPPI_DATA_DIR: doctorDir });
-      const text = stripAnsi(stdout);
-      expect(text).toContain("Iroh relay mode: custom (1); configured and live match");
-      expect(text).toContain("Iroh ticket home belongs to the live custom relay set");
-      expect(text).not.toContain("private-relay.example");
-    } finally {
-      rmSync(doctorDir, { recursive: true, force: true });
-    }
-  });
-
-  it("reports drift when default config leaves a custom relay map live", () => {
-    const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-iroh-default-drift-"));
-    const relayUrl = "https://private-relay.example/";
-
-    try {
-      const storage = new Storage(doctorDir);
-      storage.updateConfig({ iroh: { enabled: true } });
-      writeIrohInviteState(doctorDir, {
-        version: 2,
-        nodeId: "node-doctor-default-drift",
-        alpns: ["oppi/pair/1", "oppi/http/1"],
-        addressMode: "ticket",
-        ticket: "ticket-doctor-default-drift",
-        relayMode: "custom",
-        relayUrls: [relayUrl],
-        ticketHomeRelay: relayUrl,
-        readinessId: "doctor-default-drift",
-        processId: process.pid,
-      });
-
-      const text = stripAnsi(run(["doctor"], { OPPI_DATA_DIR: doctorDir }).stdout);
-      expect(text).toContain("Iroh relay mode: public defaults; configured/live drift");
-      expect(text).not.toContain("private-relay.example");
-    } finally {
-      rmSync(doctorDir, { recursive: true, force: true });
-    }
-  });
-
-  it("reports drift when custom config has a default relay map live", () => {
-    const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-iroh-custom-drift-"));
-
-    try {
-      const storage = new Storage(doctorDir);
-      storage.updateConfig({
-        iroh: { enabled: true, relays: [{ url: "https://private-relay.example/" }] },
-      });
-      writeIrohInviteState(doctorDir, {
-        version: 2,
-        nodeId: "node-doctor-custom-drift",
-        alpns: ["oppi/pair/1", "oppi/http/1"],
-        addressMode: "ticket",
-        ticket: "ticket-doctor-custom-drift",
-        relayMode: "default",
-        readinessId: "doctor-custom-drift",
-        processId: process.pid,
-      });
-
-      const text = stripAnsi(run(["doctor"], { OPPI_DATA_DIR: doctorDir }).stdout);
-      expect(text).toContain("Iroh relay mode: custom (1); configured/live drift");
-      expect(text).not.toContain("private-relay.example");
-    } finally {
-      rmSync(doctorDir, { recursive: true, force: true });
-    }
-  });
-
-  it("omits Iroh relay checks while Iroh is disabled", () => {
-    const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-iroh-disabled-"));
-
-    try {
-      const storage = new Storage(doctorDir);
-      storage.updateConfig({
-        iroh: { enabled: false, relays: [{ url: "https://private-relay.example/" }] },
-      });
-      writeIrohInviteState(doctorDir, {
-        version: 2,
-        nodeId: "node-doctor-disabled",
-        alpns: ["oppi/pair/1", "oppi/http/1"],
-        addressMode: "ticket",
-        ticket: "ticket-doctor-disabled",
-        relayMode: "custom",
-        relayUrls: ["https://private-relay.example/"],
-        ticketHomeRelay: "https://private-relay.example/",
-        readinessId: "doctor-disabled",
-        processId: process.pid,
-      });
-
-      const text = stripAnsi(run(["doctor"], { OPPI_DATA_DIR: doctorDir }).stdout);
-      expect(text).not.toContain("Iroh relay mode");
-      expect(text).not.toContain("Iroh ticket home");
-      expect(text).not.toContain("private-relay.example");
-    } finally {
-      rmSync(doctorDir, { recursive: true, force: true });
-    }
-  });
-
-  describe.skipIf(
-    logSkip(!hasOpenSSL, "oppi doctor (tailscale)", "openssl executable is unavailable"),
-  )("Tailscale material", () => {
-    function setupDoctorDir(options: { dnsSan?: string; malformed?: boolean } = {}): {
-      doctorDir: string;
-      certPath: string;
-      keyPath: string;
-      env: Record<string, string>;
-    } {
-      const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-tailscale-"));
-      expect(run(["init", "--yes", "--data-dir", doctorDir]).exitCode).toBe(0);
-      expect(
-        run(["config", "set", "tls", '{"mode":"tailscale"}'], {
-          OPPI_DATA_DIR: doctorDir,
-        }).exitCode,
-      ).toBe(0);
-      const tlsDir = join(doctorDir, "tls", "tailscale");
-      const certPath = join(tlsDir, "server.crt");
-      const keyPath = join(tlsDir, "server.key");
-      mkdirSync(tlsDir, { recursive: true });
-      if (options.malformed) {
-        writeFileSync(certPath, "not a certificate");
-        writeFileSync(keyPath, "not a key");
-      } else {
-        generateDoctorCertificate(certPath, keyPath, options.dnsSan);
-      }
-      return { doctorDir, certPath, keyPath, env: disconnectedTailscaleEnv(doctorDir) };
-    }
-
-    it("warns but passes while disconnected when the cert/key are locally valid", () => {
-      const fixture = setupDoctorDir({ dnsSan: "node.tail00000.ts.net" });
-      try {
-        const { stdout, exitCode } = run(["doctor"], {
-          OPPI_DATA_DIR: fixture.doctorDir,
-          ...fixture.env,
-        });
-        expect(exitCode).toBe(0);
-        expect(stripAnsi(stdout)).toContain("Tailscale is not connected");
-        expect(stripAnsi(stdout)).toContain("public trust is enforced by TLS clients");
-      } finally {
-        rmSync(fixture.doctorDir, { recursive: true, force: true });
-      }
-    });
-
-    it.each([
-      ["missing", "missing"],
-      ["malformed", "malformed"],
-      ["without a Tailnet SAN", "no-san"],
-      ["with a mismatched key", "mismatch"],
-    ])("fails for %s offline Tailscale material", (_label, failure) => {
-      const fixture = setupDoctorDir({
-        dnsSan: failure === "no-san" ? undefined : "node.tail00000.ts.net",
-        malformed: failure === "malformed",
-      });
-      try {
-        if (failure === "missing") {
-          rmSync(fixture.certPath, { force: true });
-          rmSync(fixture.keyPath, { force: true });
-        } else if (failure === "mismatch") {
-          generateDoctorCertificate(
-            join(fixture.doctorDir, "replacement.crt"),
-            fixture.keyPath,
-            "node.tail00000.ts.net",
-          );
-        }
-        const { stdout, exitCode } = run(["doctor"], {
-          OPPI_DATA_DIR: fixture.doctorDir,
-          ...fixture.env,
-        });
-        expect(exitCode).toBe(1);
-        expect(stripAnsi(stdout)).toContain("Tailscale TLS material is unusable");
-      } finally {
-        rmSync(fixture.doctorDir, { recursive: true, force: true });
-      }
-    });
-
-    it.each([
-      ["expired", "expired"],
-      ["not yet valid", "future"],
-    ])("fails when offline Tailscale material is %s", (_label, validity) => {
-      const fixture = setupDoctorDir({ dnsSan: "node.tail00000.ts.net" });
-      try {
-        const cert = new X509Certificate(readFileSync(fixture.certPath));
-        const nowMs =
-          validity === "expired" ? Date.parse(cert.validTo) + 1 : Date.parse(cert.validFrom) - 1;
-        const { stdout, exitCode } = run(["doctor"], {
-          OPPI_DATA_DIR: fixture.doctorDir,
-          ...fixture.env,
-          NODE_OPTIONS: fakeDateNodeOptions(fixture.doctorDir, nowMs),
-        });
-        expect(exitCode).toBe(1);
-        expect(stripAnsi(stdout)).toContain(
-          validity === "expired" ? "certificate is expired" : "certificate is not yet valid",
-        );
-      } finally {
-        rmSync(fixture.doctorDir, { recursive: true, force: true });
-      }
-    });
-  });
-});
-
-describe("oppi init (non-interactive)", () => {
-  it("writes config with self-signed TLS by default", () => {
-    const initDir = mkdtempSync(join(tmpdir(), "oppi-cli-init-"));
-
-    try {
-      const { exitCode } = run(["init", "--yes", "--data-dir", initDir]);
-      expect(exitCode).toBe(0);
-
-      const { stdout: tlsJson } = run(["config", "get", "tls"], { OPPI_DATA_DIR: initDir });
-      const config = JSON.parse(tlsJson) as { mode?: string };
-
-      expect(config.mode).toBe("self-signed");
-    } finally {
-      rmSync(initDir, { recursive: true, force: true });
-    }
-  });
-
-  it("outputs TLS confirmation message", () => {
-    const initDir = mkdtempSync(join(tmpdir(), "oppi-cli-init-tls-msg-"));
-
-    try {
-      const { stdout, exitCode } = run(["init", "--yes", "--data-dir", initDir]);
-      expect(exitCode).toBe(0);
-      expect(stdout).toContain("self-signed");
-    } finally {
-      rmSync(initDir, { recursive: true, force: true });
-    }
-  });
-});

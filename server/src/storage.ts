@@ -19,6 +19,13 @@ import { AgentScheduleStore } from "./agent-schedules.js";
 import { openDatabase } from "./sqlite-compat.js";
 import { AuthStore } from "./storage/auth-store.js";
 import {
+  DeviceAuthStore,
+  type AccessTokenValidation,
+  type Challenge,
+  type EnrollResult,
+  type RefreshResult,
+} from "./storage/device-auth.js";
+import {
   ConfigStore,
   DEFAULT_DATA_DIR,
   type ConfigValidationResult,
@@ -37,7 +44,6 @@ import { SessionSqliteStore } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import type { OppiExtensionSettingsSnapshot } from "./oppi-extension-settings.js";
 import type {
-  AuthTransport,
   CreateWorkspaceRequest,
   ServerConfig,
   Session,
@@ -88,6 +94,7 @@ function readJsonlSessionCwd(filePath: string | undefined): string | null {
 export class Storage {
   private readonly configStore: ConfigStore;
   private readonly authStore: AuthStore;
+  private readonly deviceAuthStore: DeviceAuthStore;
   private readonly sessionStore: SessionSqliteStore;
   private readonly iconAssetStore: IconAssetStore;
   private readonly oppiExtensionSettingsStore: OppiExtensionSettingsStore;
@@ -98,6 +105,7 @@ export class Storage {
   constructor(dataDir?: string) {
     this.configStore = new ConfigStore(dataDir ?? DEFAULT_DATA_DIR);
     this.authStore = new AuthStore(this.configStore);
+    this.deviceAuthStore = new DeviceAuthStore(this.configStore);
     this.sessionStore = new SessionSqliteStore(this.configStore.getDataDir());
     this.iconAssetStore = new IconAssetStore(this.configStore.getDataDir());
     this.oppiExtensionSettingsStore = new OppiExtensionSettingsStore(this.configStore.getDataDir());
@@ -112,6 +120,7 @@ export class Storage {
       this.iconAssetStore.has(assetId),
     );
     this.migrateLegacyWorkspaceSessions();
+    this.deviceAuthStore.migrateLegacyRecords();
     // Reconcile only after Agent current/version history, workspaces, and
     // immutable session launch snapshots are all available.
     this.cleanupUnreferencedIconAssets(undefined, {
@@ -283,33 +292,76 @@ export class Storage {
     return this.authStore.rotateToken();
   }
 
-  issuePairingToken(ttlMs?: number, options?: { allowedTransports?: AuthTransport[] }): string {
-    return this.authStore.issuePairingToken(ttlMs, options);
+  issuePairingToken(ttlMs?: number): string {
+    return this.authStore.issuePairingToken(ttlMs);
   }
 
-  consumePairingToken(
+  consumePairingToken(candidate: string): ReturnType<AuthStore["consumePairingToken"]> {
+    return this.authStore.consumePairingToken(candidate);
+  }
+
+  // ─── Device-key auth ───
+
+  enrollViaPairing(
     candidate: string,
-    options: { transport: AuthTransport; irohClientNodeId?: string },
-  ): ReturnType<AuthStore["consumePairingToken"]> {
-    return this.authStore.consumePairingToken(candidate, options);
+    deviceInput: { publicKey: unknown; name?: unknown },
+  ): EnrollResult | null {
+    return this.deviceAuthStore.enrollViaPairing(candidate, deviceInput);
+  }
+
+  migrateLegacyDevice(
+    candidate: string,
+    deviceInput: { publicKey: unknown; name?: unknown },
+  ): EnrollResult | null {
+    return this.deviceAuthStore.migrateLegacyDevice(candidate, deviceInput);
+  }
+
+  issueChallenge(deviceId: string): Challenge | null {
+    return this.deviceAuthStore.issueChallenge(deviceId);
+  }
+
+  refresh(input: { deviceId: string; nonce: string; signature: unknown }): RefreshResult {
+    return this.deviceAuthStore.refresh(input);
+  }
+
+  validateAccessToken(candidate: string): AccessTokenValidation {
+    return this.deviceAuthStore.validateAccessToken(candidate);
+  }
+
+  deviceIdForAccessToken(candidate: string): string | undefined {
+    return this.deviceAuthStore.deviceIdForAccessToken(candidate);
+  }
+
+  commitLegacyRevocation(deviceId: string): boolean {
+    return this.deviceAuthStore.commitLegacyRevocation(deviceId);
+  }
+
+  revokeDevice(deviceId: string): boolean {
+    return this.deviceAuthStore.revokeDevice(deviceId);
+  }
+
+  listDevices(): ReturnType<DeviceAuthStore["listDevices"]> {
+    return this.deviceAuthStore.listDevices();
+  }
+
+  deviceIdForLegacyToken(candidate: string): string | undefined {
+    return this.deviceAuthStore.deviceIdForLegacyToken(candidate);
+  }
+
+  isMigrationFinalized(): boolean {
+    return this.deviceAuthStore.isMigrationFinalized();
+  }
+
+  setMigrationFinalized(finalized: boolean): void {
+    this.deviceAuthStore.setMigrationFinalized(finalized);
+  }
+
+  clearChallenges(): void {
+    this.deviceAuthStore.clearChallenges();
   }
 
   hasAuthToken(candidate: string): boolean {
     return this.authStore.hasAuthToken(candidate);
-  }
-
-  hasAuthTokenForTransport(
-    candidate: string,
-    transport: AuthTransport,
-  ): ReturnType<AuthStore["hasAuthTokenForTransport"]> {
-    return this.authStore.hasAuthTokenForTransport(candidate, transport);
-  }
-
-  validateIrohDeviceToken(
-    candidate: string,
-    clientNodeId: string,
-  ): ReturnType<AuthStore["validateIrohDeviceToken"]> {
-    return this.authStore.validateIrohDeviceToken(candidate, clientNodeId);
   }
 
   getOwnerName(): string {

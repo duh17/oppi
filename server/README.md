@@ -88,16 +88,7 @@ Create a workspace in the app and start a session.
 - macOS or Linux
 - OpenSSL on PATH for `tls.mode=self-signed` certificate generation
 
-## Iroh transport
-
-Set `OPPI_IROH_TRANSPORT=1` before `oppi serve` to start one Iroh endpoint with two ALPNs:
-
-- `oppi/pair/1` exchanges a single-use pairing token for a device token bound to the client Iroh node ID.
-- `oppi/http/1` carries an authenticated preface followed by raw HTTP/1.1 or WebSocket bytes. Requests enter the same route and upgrade handlers as HTTP/TLS clients.
-
-`OPPI_IROH_INVITE_MODE=irohOnly` makes endpoint readiness mandatory. Startup fails if Iroh is disabled, cannot bind, or does not become online before the readiness timeout. `irohPreferred` keeps HTTP/TLS available when Iroh startup fails. The Unix-socket CLI path is independent of both network transports.
-
-Iroh tunnel limits are fixed at 64 QUIC connections, 16 concurrent bi-streams per connection, and 128 active tunnels. Each stream has a 4 KiB preface limit, a 512-byte bearer limit, a 10-second preface timeout, and a 3-second internal loopback timeout. HTTP bodies and WebSocket frames retain the limits enforced by the existing HTTP and WebSocket handlers.
+Remote clients use authenticated HTTPS/WSS, including HTTPS through Tailscale.
 
 ## Docker (skills-ready compose setup)
 
@@ -194,7 +185,7 @@ oppi token rotate            # rotate owner bearer token
 oppi update                  # update the npm-installed server and CLI
 ```
 
-Commands that call the local API use bearer-authenticated HTTP over `$OPPI_DATA_DIR/run/oppi.sock`. They never fall back automatically to a network host or plaintext TCP. Deep custom data-directory paths use a deterministic owner-only socket under the system temporary directory to stay within Unix socket path limits. Local CLI commands continue to work when remote HTTPS/WSS is unavailable. Oppi Mirror still requires the network WebSocket listener.
+Commands that call the local API use bearer-authenticated HTTP over `$OPPI_DATA_DIR/run/oppi.sock`. They never fall back automatically to a network host or plaintext TCP. Deep custom data-directory paths use a deterministic owner-only socket under the system temporary directory to stay within Unix socket path limits. Local CLI commands continue to work when remote HTTPS/WSS is unavailable. The bearer-free Oppi Mirror bridge also uses this owner-only Unix socket and is not exposed by the network listener.
 
 `oppi session inspect` consolidates session-history reads. Start with its default turn outline, use `--view summary` for counts, and request `--turns <spec> --view messages|tools` only for the smallest relevant turn set.
 
@@ -243,19 +234,15 @@ Key config sections:
 
 Manage provider API keys with `pi auth`, not Oppi config. See [model-selection.md](docs/model-selection.md) for model routing. Unknown config keys are ignored on startup and reported by `oppi config validate`.
 
-Quick inspection:
+Use the redacted CLI view and typed setters; do not print the raw credential-bearing config:
 
 ```bash
-cat ~/.config/oppi/config.json | jq .          # raw config
-cat ~/.config/oppi/config.json | jq '.asr'     # single section
-oppi config show                                # formatted overview
-oppi config get asr                             # top-level key
+oppi config show
+oppi config get asr
 oppi config set images.autoResize false
 oppi config set tls '{"mode":"self-signed"}'
 # Source checkouts: use `node dist/src/cli.js` instead of `oppi`.
 ```
-
-For unsupported nested keys, edit `config.json` directly, then restart the server.
 
 See [config-schema.md](docs/config-schema.md) for full reference.
 
@@ -280,8 +267,6 @@ npm run dev                         # watch mode
 npm run test:e2e                    # Docker E2E harness
 npm run test:e2e:pairing            # pairing flow only
 npm run test:e2e:session            # paired session flow only
-npm run test:e2e:iroh               # isolated host-free Iroh transport matrix
-npm run bench:iroh-network           # HTTP/direct-Iroh/forced-relay evidence
 E2E_NATIVE=1 npm run test:e2e       # native E2E harness without Docker
 npm run bench:correctness           # check + test before perf measurements
 npm run bench                       # correctness + perf regression gate

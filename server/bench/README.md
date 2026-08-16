@@ -1,6 +1,6 @@
 # Server benchmarks
 
-This directory contains the canonical server microbenchmarks and performance-regression checks. The containerized Iroh network benchmark lives under `e2e/` because it exercises production HTTP routes, WebSocket muxes, uploads, downloads, Docker topology, and selected Iroh paths—not an in-process hot path.
+This directory contains the canonical server microbenchmarks and performance-regression checks. The network benchmark lives under `e2e/` because it exercises production HTTP routes, WebSocket muxes, uploads, downloads, and Docker or Tailscale topology—not an in-process hot path.
 
 ## Layout
 
@@ -57,8 +57,6 @@ npm run bench:hotpath     # critical event pipeline benchmark
 npm run bench:hotpath:gate
 npm run bench:compare -- --baseline <file> --current <file>
 
-# Separate evidence lane; not part of the flaky-sensitive unit/perf gate
-npm run bench:iroh-network
+# Separate HTTPS/Tailscale evidence lane; not part of the flaky-sensitive unit/perf gate
+npm run bench:tailscale-network
 ```
-
-`bench:iroh-network` uses fixed sample counts. It writes durable raw JSON and a Markdown comparison to `.internal/reports/iroh-benchmark-<timestamp>.{json,md}`. It fails when samples are missing or an Iroh `Connection.paths()` selection does not match the requested direct or relay path.

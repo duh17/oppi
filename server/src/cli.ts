@@ -38,17 +38,7 @@ import {
   validateTailscaleMaterial,
 } from "./tls.js";
 import type { ServerConfig } from "./types.js";
-import {
-  irohInviteTransportFromState,
-  isIrohInviteStateReady,
-  readIrohInviteState,
-} from "./iroh-invite-state.js";
-import {
-  generateInvite,
-  type GeneratedInvite,
-  type GeneratedInviteWithHttp,
-  type GenerateInviteOptions,
-} from "./invite.js";
+import { generateInvite, type GeneratedInvite } from "./invite.js";
 import { getPackageInfo } from "./version.js";
 import {
   getServiceStatus,
@@ -71,6 +61,7 @@ import {
   resolveHelpTopic,
   writeCliHelpOutput,
 } from "./cli/help.js";
+import { localApiRequest } from "./cli/local-api-client.js";
 import { isNpmVersionNewer } from "./cli/npm-version.js";
 import { cmdConfig } from "./cli/commands/config.js";
 import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
@@ -151,11 +142,7 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
 
   // Load APNs config from config file if present
   const apnsConfig = loadAPNsConfig(storage);
-  const server = new Server(storage, apnsConfig, {
-    onIrohTransportFailure(error) {
-      void shutdown(1, c.red(`Iroh-only transport failed: ${safeErrorMessage(error)}`));
-    },
-  });
+  const server = new Server(storage, apnsConfig);
   let shuttingDown = false;
 
   async function shutdown(code: number, reason?: string): Promise<void> {
@@ -211,8 +198,6 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     if (tailscaleIp) {
       console.log(`  Tail IP:   ${c.dim(`${scheme}://${tailscaleIp}:${displayPort}`)}`);
     }
-  } else {
-    console.log(`  Transport: ${c.cyan("Iroh only (no public HTTP listener)")}`);
   }
   console.log(`  Data:      ${c.dim(storage.getDataDir())}`);
   console.log("");
@@ -233,56 +218,8 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   }
 }
 
-function configuredInviteMode(
-  storage: CliConfigStorage,
-): "irohOnly" | "irohPreferred" | "httpOnly" {
-  const envMode = process.env.OPPI_IROH_INVITE_MODE;
-  if (envMode === "irohOnly" || envMode === "irohPreferred") return envMode;
-  const config = storage.getConfig();
-  if (config.irohInviteMode === "irohOnly" || config.irohInviteMode === "irohPreferred") {
-    return config.irohInviteMode;
-  }
-  if (
-    config.iroh?.enabled === true ||
-    process.env.OPPI_IROH_PAIRING === "1" ||
-    process.env.OPPI_IROH_TRANSPORT === "1"
-  ) {
-    return "irohPreferred";
-  }
-  return "httpOnly";
-}
-
-function buildPairInviteOptions(
-  storage: CliConfigStorage,
-  hostOverride?: string,
-  requestedName?: string,
-): GenerateInviteOptions {
-  const base = { hostOverride, requestedName };
-  const mode = configuredInviteMode(storage);
-  if (mode === "httpOnly") return base;
-
-  const state = readIrohInviteState(storage.getDataDir());
-  const ready = isIrohInviteStateReady(state, storage.getConfig().irohInviteReadinessId);
-  const iroh = ready ? irohInviteTransportFromState(state) : undefined;
-  if (!iroh) {
-    if (mode === "irohOnly") {
-      throw new Error(
-        "Iroh-only pairing is unavailable because the running server has no current Iroh readiness state",
-      );
-    }
-    return base;
-  }
-
-  return {
-    ...base,
-    inviteVersion: 4,
-    preference: mode,
-    transports: { iroh },
-  };
-}
-
-function inviteHasHttpTransport(invite: GeneratedInvite): invite is GeneratedInviteWithHttp {
-  return typeof (invite as { host?: unknown }).host === "string";
+function inviteHasHttpTransport(invite: GeneratedInvite): boolean {
+  return invite.host.length > 0;
 }
 
 function generatePairInvite(
@@ -290,21 +227,11 @@ function generatePairInvite(
   hostOverride?: string,
   requestedName?: string,
 ): GeneratedInvite {
-  const options = buildPairInviteOptions(storage, hostOverride, requestedName);
-  if (options.inviteVersion === 4) {
-    return generateInvite(
-      storage,
-      (override) => resolveInviteHost(storage.getConfig(), override),
-      shortHostLabel,
-      options,
-    );
-  }
-
   return generateInvite(
     storage,
     (override) => resolveInviteHost(storage.getConfig(), override),
     shortHostLabel,
-    options,
+    { hostOverride, requestedName },
   );
 }
 
@@ -342,13 +269,6 @@ function showPairingQR(
     if (invite.tlsCertFingerprint) {
       console.log(c.dim(`  Cert pin:  ${invite.tlsCertFingerprint}`));
     }
-  } else {
-    console.log(c.dim("  (host-free Iroh invite)"));
-    console.log(`  📱 Pair with ${c.bold(invite.name)}`);
-    console.log(c.dim(`  Transport: IROH (${invite.transports.iroh?.nodeId ?? "unknown-node"})`));
-  }
-  if (invite.transports?.iroh && inviteHasHttpTransport(invite)) {
-    console.log(c.dim(`  Iroh node: ${invite.transports.iroh.nodeId}`));
   }
   console.log("");
   console.log("  Scan this QR code in Oppi:");
@@ -405,15 +325,6 @@ async function cmdPair(
 function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
-}
-
-function canonicalRelayOrigin(relayUrl: string | undefined): string | undefined {
-  if (!relayUrl) return undefined;
-  try {
-    return new URL(relayUrl).origin;
-  } catch {
-    return undefined;
-  }
 }
 
 function cmdDoctor(storage: CliConnectionConfig): void {
@@ -593,51 +504,6 @@ function cmdDoctor(storage: CliConnectionConfig): void {
     }
   }
 
-  if (config.iroh?.enabled) {
-    const configuredRelays = config.iroh.relays ?? [];
-    const irohState = readIrohInviteState(storage.getDataDir());
-    const configuredCustom = configuredRelays.length > 0;
-    const configuredMode = configuredCustom
-      ? `custom (${configuredRelays.length})`
-      : "public defaults";
-
-    if (!irohState) {
-      checks.push({
-        level: "warn",
-        message: `Iroh relay mode: ${configuredMode}; no live state (restart required)`,
-      });
-    } else {
-      const liveRelays = irohState.relayUrls ?? [];
-      const matchesLive = configuredCustom
-        ? irohState.relayMode === "custom" &&
-          liveRelays.length === configuredRelays.length &&
-          liveRelays.every((url, index) => url === configuredRelays[index]?.url)
-        : irohState.relayMode === "default";
-      checks.push({
-        level: matchesLive ? "pass" : "warn",
-        message: matchesLive
-          ? configuredCustom
-            ? `Iroh relay mode: ${configuredMode}; configured and live match`
-            : "Iroh relay mode: public defaults"
-          : `Iroh relay mode: ${configuredMode}; configured/live drift`,
-      });
-      if (irohState.relayMode === "custom" && irohState.ticketHomeRelay) {
-        const ticketHomeOrigin = canonicalRelayOrigin(irohState.ticketHomeRelay);
-        const ticketHomeMember =
-          ticketHomeOrigin !== undefined &&
-          liveRelays.some((relayUrl) => canonicalRelayOrigin(relayUrl) === ticketHomeOrigin);
-        checks.push({
-          level: ticketHomeMember ? "pass" : "fail",
-          message: ticketHomeMember
-            ? "Iroh ticket home belongs to the live custom relay set"
-            : "Iroh ticket home is outside the live custom relay set",
-        });
-      } else if (irohState.relayMode === "custom") {
-        checks.push({ level: "warn", message: "Iroh ticket home is unavailable in live state" });
-      }
-    }
-  }
-
   const packageInfo = getPackageInfo();
   checks.push({
     level: "pass",
@@ -706,22 +572,32 @@ function cmdDoctor(storage: CliConnectionConfig): void {
   console.log("");
 }
 
-function cmdToken(storage: CliConfigStorage, action: string | undefined): void {
+async function cmdToken(
+  connection: CliConnectionConfig,
+  action: string | undefined,
+): Promise<void> {
   const mode = action || "help";
 
   if (mode === "rotate") {
-    if (!storage.isPaired()) {
+    if (!connection.isPaired()) {
       console.log(c.red("  Error: server is not paired yet."));
       console.log(c.dim("  Run 'oppi pair' first to generate owner credentials."));
       console.log("");
       process.exit(1);
     }
 
-    storage.rotateToken();
+    try {
+      await localApiRequest(connection, "/auth/rotate", { method: "POST" });
+    } catch (error) {
+      console.log(c.red(`  Error: could not rotate live credentials: ${safeErrorMessage(error)}`));
+      console.log(c.dim("  Is the Oppi server running? Rotation now applies immediately."));
+      console.log("");
+      process.exit(1);
+    }
 
-    console.log(c.green("  ✓ Bearer token rotated."));
+    console.log(c.green("  ✓ Bearer token rotated live."));
     console.log("");
-    console.log(c.yellow("  Existing clients will be unauthorized until re-paired."));
+    console.log(c.yellow("  Existing clients are now unauthorized until re-paired."));
     console.log(c.dim("  Next step: run 'oppi pair' to issue a fresh invite."));
     console.log("");
     return;
@@ -729,6 +605,117 @@ function cmdToken(storage: CliConfigStorage, action: string | undefined): void {
 
   console.log(c.red(`  Unknown token action: ${mode}`));
   console.log(c.dim("  Usage: oppi token rotate"));
+  console.log("");
+  process.exit(1);
+}
+
+async function cmdDevices(
+  connection: CliConnectionConfig,
+  action: string | undefined,
+  id: string | undefined,
+): Promise<void> {
+  const mode = action || "list";
+
+  if (mode === "list") {
+    try {
+      const data = await localApiRequest<{
+        devices: Array<{
+          id: string;
+          name: string;
+          scope: string;
+          createdAt: number;
+          lastUsedAt?: number;
+          revokedAt?: number;
+          keyEnrolled: boolean;
+        }>;
+      }>(connection, "/auth/devices");
+      const devices = data.devices ?? [];
+      console.log(c.bold(`  Devices (${devices.length})`));
+      for (const device of devices) {
+        const state = device.revokedAt !== undefined ? "revoked" : "active";
+        const proof = device.keyEnrolled ? "device-key" : "legacy";
+        const lastUsed = device.lastUsedAt ? new Date(device.lastUsedAt).toISOString() : "never";
+        console.log(`  - ${device.id}  ${device.name}  [${state}, ${proof}]  lastUsed=${lastUsed}`);
+      }
+      console.log("");
+      return;
+    } catch (error) {
+      console.log(c.red(`  Error: could not list devices: ${safeErrorMessage(error)}`));
+      console.log("");
+      process.exit(1);
+    }
+  }
+
+  if (mode === "revoke") {
+    if (!id) {
+      console.log(c.red("  Error: missing device id."));
+      console.log(c.dim("  Usage: oppi devices revoke <id>"));
+      console.log("");
+      process.exit(1);
+    }
+    try {
+      await localApiRequest(connection, `/auth/devices/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    } catch (error) {
+      console.log(c.red(`  Error: could not revoke device ${id}: ${safeErrorMessage(error)}`));
+      console.log("");
+      process.exit(1);
+    }
+    console.log(
+      c.green(`  ✓ Revoked device ${id}. Its access tokens are invalidated immediately.`),
+    );
+    console.log("");
+    return;
+  }
+
+  console.log(c.red(`  Unknown devices action: ${mode}`));
+  console.log(c.dim("  Usage: oppi devices list | oppi devices revoke <id>"));
+  console.log("");
+  process.exit(1);
+}
+
+async function cmdAuth(connection: CliConnectionConfig, action: string | undefined): Promise<void> {
+  const mode = action || "status";
+
+  if (mode === "status") {
+    const finalized = connection.getConfig().authMigrationMode === "finalized";
+    console.log(
+      c.bold(
+        `  Legacy device-token migration: ${finalized ? "finalized (dt_ rejected on network)" : "compat (dt_ still accepted)"}`,
+      ),
+    );
+    console.log("");
+    return;
+  }
+
+  if (mode === "finalize" || mode === "compat") {
+    const finalized = mode === "finalize";
+    try {
+      await localApiRequest(connection, finalized ? "/auth/finalize" : "/auth/compat", {
+        method: "POST",
+      });
+    } catch (error) {
+      console.log(c.red(`  Error: could not update migration mode: ${safeErrorMessage(error)}`));
+      console.log("");
+      process.exit(1);
+    }
+    console.log(
+      c.green(
+        finalized
+          ? "  ✓ Finalized device-key migration. Legacy dt_ tokens are now rejected immediately."
+          : "  ✓ Restored legacy dt_ compatibility window.",
+      ),
+    );
+    if (finalized) {
+      console.log(c.yellow("  Existing Apple clients must be on a device-key build or re-pair."));
+    }
+    console.log("");
+    return;
+  }
+
+  console.log(c.red(`  Unknown auth action: ${mode}`));
+  console.log(c.dim("  Usage: oppi auth status | oppi auth finalize | oppi auth compat"));
   console.log("");
   process.exit(1);
 }
@@ -1125,7 +1112,15 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
       break;
 
     case "token":
-      cmdToken(createCliConfigStorage(dataDir), positional[0]);
+      await cmdToken(connection, positional[0]);
+      break;
+
+    case "devices":
+      await cmdDevices(connection, positional[0], positional[1]);
+      break;
+
+    case "auth":
+      await cmdAuth(connection, positional[0]);
       break;
 
     case "config":

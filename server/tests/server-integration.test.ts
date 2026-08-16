@@ -7,6 +7,7 @@
  * Does NOT spawn pi or containers — just the HTTP/WS layer.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,9 +27,16 @@ let storage: Storage;
 let server: Server;
 let baseUrl: string;
 let token: string;
+let originalTlsRejectUnauthorized: string | undefined;
 
 const authDeviceToken = "dt_test_auth_device_token";
 const pushOnlyToken = "apns_test_push_only_token";
+
+function devicePublicKey(): { kty: string; crv: string; x: string; y: string } {
+  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = publicKey.export({ format: "jwk" }) as { x: string; y: string };
+  return { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y };
+}
 
 function get(path: string, auth = true): Promise<Response> {
   const headers: Record<string, string> = {};
@@ -86,25 +94,32 @@ async function waitForServerShutdown(targetBaseUrl: string, timeoutMs = 30_000):
 }
 
 beforeAll(async () => {
+  originalTlsRejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
   dataDir = mkdtempSync(join(tmpdir(), "oppi-server-integration-"));
   storage = new Storage(dataDir);
   storage.updateConfig({
     port: 0,
     host: "127.0.0.1",
-    tls: { mode: "disabled" },
+    tls: { mode: "self-signed" },
     authDeviceTokens: [authDeviceToken],
     pushDeviceTokens: [pushOnlyToken],
   });
-  token = storage.ensurePaired();
+  token = authDeviceToken;
   server = new Server(storage);
   await server.start();
-  baseUrl = `http://127.0.0.1:${server.port}`;
+  baseUrl = `https://127.0.0.1:${server.port}`;
 }, 30_000);
 
 afterAll(async () => {
   await server.stop().catch(() => {});
   await waitForServerShutdown(baseUrl);
   rmSync(dataDir, { recursive: true, force: true });
+  if (originalTlsRejectUnauthorized === undefined) {
+    delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  } else {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsRejectUnauthorized;
+  }
 }, 45_000);
 
 // ── Health ──
@@ -200,7 +215,8 @@ describe("auth", () => {
       const newRes = await fetch(`${rotationBaseUrl}/me`, {
         headers: { Authorization: `Bearer ${rotated}` },
       });
-      expect(newRes.status).toBe(200);
+      // Owner `sk_` is local-only: rejected on the network listener.
+      expect(newRes.status).toBe(401);
     } finally {
       await rotationServer.stop().catch(() => {});
       await waitForServerShutdown(rotationBaseUrl);
@@ -1470,13 +1486,13 @@ async function withIsolatedPairingServer(
   pairingStorage.updateConfig({
     port: 0,
     host: "127.0.0.1",
-    tls: { mode: "disabled" },
+    tls: { mode: "self-signed" },
   });
   pairingStorage.ensurePaired();
 
   const pairingServer = new Server(pairingStorage);
   await pairingServer.start();
-  const pairingBaseUrl = `http://127.0.0.1:${pairingServer.port}`;
+  const pairingBaseUrl = `https://127.0.0.1:${pairingServer.port}`;
 
   try {
     await run({
@@ -1491,7 +1507,7 @@ async function withIsolatedPairingServer(
 }
 
 describe("pairing token flow", () => {
-  it("issues dt token and rejects replay", async () => {
+  it("enrolls a device key and rejects replay", async () => {
     await withIsolatedPairingServer(
       async ({ storage: pairingStorage, baseUrl: pairingBaseUrl }) => {
         const pt = pairingStorage.issuePairingToken(90_000);
@@ -1499,23 +1515,37 @@ describe("pairing token flow", () => {
         const first = await fetch(`${pairingBaseUrl}/pair`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pairingToken: pt, deviceName: "test-iphone" }),
+          body: JSON.stringify({
+            pairingToken: pt,
+            deviceName: "test-iphone",
+            devicePublicKey: devicePublicKey(),
+          }),
         });
         expect(first.status).toBe(200);
-        const firstBody = (await first.json()) as { deviceToken: string };
-        expect(firstBody.deviceToken.startsWith("dt_")).toBe(true);
+        const firstBody = (await first.json()) as {
+          deviceId: string;
+          accessToken: string;
+          expiresAt: number;
+        };
+        expect(firstBody.deviceId.startsWith("dev_")).toBe(true);
+        expect(firstBody.accessToken.startsWith("at_")).toBe(true);
+        expect(firstBody.expiresAt).toBeGreaterThan(Date.now());
 
-        // Issued token works for auth
+        // Issued access token works for auth.
         const auth = await fetch(`${pairingBaseUrl}/me`, {
-          headers: { Authorization: `Bearer ${firstBody.deviceToken}` },
+          headers: { Authorization: `Bearer ${firstBody.accessToken}` },
         });
         expect(auth.status).toBe(200);
 
-        // Replay rejected (even if caller identity fields differ)
+        // Replay rejected (even if caller identity fields differ).
         const replay = await fetch(`${pairingBaseUrl}/pair`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pairingToken: pt, deviceName: "different-device" }),
+          body: JSON.stringify({
+            pairingToken: pt,
+            deviceName: "different-device",
+            devicePublicKey: devicePublicKey(),
+          }),
         });
         expect(replay.status).toBe(401);
       },
@@ -1531,7 +1561,7 @@ describe("pairing token flow", () => {
         const res = await fetch(`${pairingBaseUrl}/pair`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pairingToken: pt }),
+          body: JSON.stringify({ pairingToken: pt, devicePublicKey: devicePublicKey() }),
         });
         expect(res.status).toBe(401);
       },
@@ -1543,7 +1573,7 @@ describe("pairing token flow", () => {
       const res = await fetch(`${pairingBaseUrl}/pair`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ devicePublicKey: devicePublicKey() }),
       });
       expect(res.status).toBe(400);
     });
@@ -1556,7 +1586,10 @@ describe("pairing token flow", () => {
         const res = await fetch(`${pairingBaseUrl}/pair`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pairingToken: `pt_invalid_${i}` }),
+          body: JSON.stringify({
+            pairingToken: `pt_invalid_${i}`,
+            devicePublicKey: devicePublicKey(),
+          }),
         });
         if (res.status === 429) {
           sawRateLimit = true;

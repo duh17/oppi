@@ -15,13 +15,10 @@ import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { spawnSync } from "node:child_process";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { URL } from "node:url";
 import type { Storage } from "./storage.js";
-import type { RunningIrohPairingServer } from "./iroh-pairing-server.js";
-import { clearIrohInviteState } from "./iroh-invite-state.js";
-import { startIrohHttpLoopback, type RunningIrohHttpLoopback } from "./iroh-http-loopback.js";
 import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
 import { AppEventStreamMux } from "./app-event-stream.js";
@@ -83,6 +80,7 @@ import {
   localApiSocketPath,
   type LocalApiSocketBinding,
 } from "./local-api-socket.js";
+import { isLocalRequest, isSecureNetworkRequest, markLocalRequest } from "./request-trust.js";
 import { getPackageInfo } from "./version.js";
 import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
@@ -144,6 +142,10 @@ const WS_CLOSE_GOING_AWAY = 1001;
 const WS_SHUTDOWN_GRACE_MS = 500;
 const MIN_UPLOAD_GC_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_UPLOAD_GC_INTERVAL_MS = 60 * 60 * 1000;
+
+type SocketPrincipal =
+  | { kind: "owner" }
+  | { kind: "device"; deviceId: string; tokenClass: "at_" | "dt_" };
 
 const log = createLogger({ base: { component: "server" } });
 
@@ -362,10 +364,6 @@ function resolvePiExecutable(): string {
   return "pi";
 }
 
-export interface ServerOptions {
-  onIrohTransportFailure?: (error: Error) => void;
-}
-
 export class Server {
   static readonly VERSION = getPackageInfo().version;
 
@@ -425,11 +423,7 @@ export class Server {
   private transportCertPath?: string;
   private remoteTransportError?: string;
   private wss: WebSocketServer;
-  private irohPairingServer: RunningIrohPairingServer | null = null;
-  private irohHttpLoopback: RunningIrohHttpLoopback | null = null;
-  private irohTransportFailure: Error | null = null;
-  private irohInviteReadinessId: string | undefined;
-  private readonly publicHttpEnabled: boolean;
+  private localWss: WebSocketServer;
 
   private readonly piExecutable: string;
   private readonly identityFingerprint: string;
@@ -442,6 +436,7 @@ export class Server {
 
   // Track all WebSocket connections for lifecycle/resource accounting.
   private connections: Set<WebSocket> = new Set();
+  private socketPrincipals: Map<WebSocket, SocketPrincipal> = new Map();
 
   // Server resource utilization sampler (CPU, memory, sessions)
   private resourceSampler: ServerResourceSampler;
@@ -471,13 +466,8 @@ export class Server {
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
   private scheduleRunner!: AgentScheduleRunner;
 
-  constructor(
-    storage: Storage,
-    apnsConfig?: APNsConfig,
-    private readonly options: ServerOptions = {},
-  ) {
+  constructor(storage: Storage, apnsConfig?: APNsConfig) {
     this.storage = storage;
-    this.publicHttpEnabled = process.env.OPPI_IROH_INVITE_MODE !== "irohOnly";
     this.piExecutable = resolvePiExecutable();
 
     const dataDir = storage.getDataDir();
@@ -623,6 +613,7 @@ export class Server {
 
     this.localApiSocket = localApiSocketPath(dataDir);
     this.localApiServer = createServer((req, res) => {
+      markLocalRequest(req);
       void this.handleHttp(req, res, "http");
     });
 
@@ -634,6 +625,7 @@ export class Server {
         threshold: 1024, // only compress messages >= 1KB
       },
     });
+    this.localWss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD_BYTES });
 
     this.transportScheme = tlsSchemeForConfig(config);
   }
@@ -780,29 +772,22 @@ export class Server {
       serverStartedAt: Date.now(),
       serverVersion: Server.VERSION,
       piVersion: Server.detectPiVersion(this.piExecutable),
+      onDeviceRevoked: (deviceId) => this.closeConnectionsForDevice(deviceId),
+      onMigrationFinalized: (finalized) => {
+        if (finalized) this.closeLegacyTokenConnections();
+      },
+      onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
     });
   }
 
   async start(): Promise<void> {
     const config = this.storage.getConfig();
-    if (this.publicHttpEnabled) {
-      const startupSecurityError = validateStartupSecurityConfig(config);
-      if (startupSecurityError) {
-        throw new Error(startupSecurityError);
-      }
-      for (const warning of formatStartupSecurityWarnings(config)) {
-        log.warn("startup.security.warning", { warning });
-      }
+    const startupSecurityError = validateStartupSecurityConfig(config);
+    if (startupSecurityError) {
+      throw new Error(startupSecurityError);
     }
-
-    const inviteMode = this.effectiveIrohInviteMode();
-    this.irohInviteReadinessId = inviteMode === "httpOnly" ? undefined : randomUUID();
-    this.storage.updateConfig({
-      irohInviteMode: inviteMode,
-      irohInviteReadinessId: this.irohInviteReadinessId,
-    });
-    if (inviteMode === "httpOnly") {
-      clearIrohInviteState(this.storage.getDataDir());
+    for (const warning of formatStartupSecurityWarnings(config)) {
+      log.warn("startup.security.warning", { warning });
     }
 
     await this.initializeModelServices();
@@ -818,8 +803,6 @@ export class Server {
     this.healOrphanedSessions();
 
     const finishStartup = async (): Promise<void> => {
-      await this.startOptionalIrohPairingServer();
-
       if (this.httpServer?.listening) {
         try {
           this.startBonjourAdvertisement();
@@ -855,60 +838,70 @@ export class Server {
 
     this.localApiBinding = await listenOnLocalApiSocket(this.localApiServer, this.localApiSocket);
     log.info("server.local_api_listening", { socketPath: this.localApiSocket });
+    this.localApiServer.on("upgrade", (req, socket, head) => {
+      markLocalRequest(req);
+      const url = new URL(req.url || "/", "http://localhost");
+      if (url.pathname !== "/mirror/v1/bridge") {
+        writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
+          Connection: "close",
+          "Content-Length": "0",
+        });
+        return;
+      }
+      this.localWss.handleUpgrade(req, socket, head, (ws) => {
+        this.trackConnection(ws);
+        ws.on("close", () => this.untrackConnection(ws));
+        this.mirrorRuntime.handleBridgeWebSocket(ws);
+      });
+    });
 
     try {
-      if (this.publicHttpEnabled) {
-        try {
-          const tls = await prepareTlsForServerOffMainThread(
-            { tls: config.tls },
-            this.storage.getDataDir(),
-            { additionalHosts: [config.host] },
-          );
-          const transport = this.createTransportServer(tls);
-          this.httpServer = transport.server;
-          this.transportScheme = transport.scheme;
-          this.transportCertPath = transport.certPath;
-          this.httpServer.on("upgrade", (req, socket, head) => {
-            this.handleUpgrade(req, socket, head);
-          });
-        } catch (error: unknown) {
-          if (!(error instanceof TailscaleRemoteUnavailableError)) throw error;
-          this.remoteTransportError = safeErrorMessage(error);
-        }
+      try {
+        const tls = await prepareTlsForServerOffMainThread(
+          { tls: config.tls },
+          this.storage.getDataDir(),
+          { additionalHosts: [config.host] },
+        );
+        const transport = this.createTransportServer(tls);
+        this.httpServer = transport.server;
+        this.transportScheme = transport.scheme;
+        this.transportCertPath = transport.certPath;
+        this.httpServer.on("upgrade", (req, socket, head) => {
+          this.handleUpgrade(req, socket, head);
+        });
+      } catch (error: unknown) {
+        if (!(error instanceof TailscaleRemoteUnavailableError)) throw error;
+        this.remoteTransportError = safeErrorMessage(error);
+      }
 
-        if (this.httpServer) {
-          await new Promise<void>((resolve, reject) => {
-            const server = this.httpServer;
-            if (!server) {
-              resolve();
-              return;
-            }
-            const onError = (error: Error): void => reject(error);
-            server.once("error", onError);
-            server.listen(config.port, config.host, () => {
-              server.off("error", onError);
-              resolve();
-            });
+      if (this.httpServer) {
+        await new Promise<void>((resolve, reject) => {
+          const server = this.httpServer;
+          if (!server) {
+            resolve();
+            return;
+          }
+          const onError = (error: Error): void => reject(error);
+          server.once("error", onError);
+          server.listen(config.port, config.host, () => {
+            server.off("error", onError);
+            resolve();
           });
-          log.info("server.listening", {
-            scheme: this.transportScheme,
-            host: config.host,
-            port: this.port,
-          });
-        } else {
-          log.warn("server.remote_listener_unavailable", {
-            mode: config.tls?.mode ?? "disabled",
-            error: this.remoteTransportError ?? "remote transport unavailable",
-          });
-        }
+        });
+        log.info("server.listening", {
+          scheme: this.transportScheme,
+          host: config.host,
+          port: this.port,
+        });
+      } else {
+        log.warn("server.remote_listener_unavailable", {
+          mode: config.tls?.mode ?? "disabled",
+          error: this.remoteTransportError ?? "remote transport unavailable",
+        });
       }
 
       await finishStartup();
-      if (!this.publicHttpEnabled) {
-        log.info("server.iroh_only_ready", { publicHttpListener: false });
-      }
     } catch (error: unknown) {
-      await this.stopOptionalIrohPairingServer().catch(() => {});
       await closeListeningServer(this.httpServer).catch(() => {});
       await closeListeningServer(this.localApiServer).catch(() => {});
       this.releaseLocalApiBinding();
@@ -936,95 +929,10 @@ export class Server {
   }
 
   get hasPublicHttpListener(): boolean {
-    return this.publicHttpEnabled && this.httpServer?.listening === true;
-  }
-
-  get irohFailure(): Error | undefined {
-    return this.irohTransportFailure ?? undefined;
-  }
-
-  private effectiveIrohInviteMode(): "irohOnly" | "irohPreferred" | "httpOnly" {
-    if (process.env.OPPI_IROH_INVITE_MODE === "irohOnly") return "irohOnly";
-    return this.shouldStartIrohPairingServer() ? "irohPreferred" : "httpOnly";
-  }
-
-  private shouldStartIrohPairingServer(): boolean {
-    return (
-      this.storage.getConfig().iroh?.enabled === true ||
-      process.env.OPPI_IROH_PAIRING === "1" ||
-      process.env.OPPI_IROH_TRANSPORT === "1"
-    );
-  }
-
-  private requiresIrohReadiness(): boolean {
-    return process.env.OPPI_IROH_INVITE_MODE === "irohOnly";
-  }
-
-  private async startOptionalIrohPairingServer(): Promise<void> {
-    if (this.irohPairingServer) return;
-    if (!this.shouldStartIrohPairingServer()) {
-      if (this.requiresIrohReadiness()) {
-        throw new Error("Iroh-only mode requires iroh.enabled=true or OPPI_IROH_TRANSPORT=1");
-      }
-      return;
-    }
-
-    try {
-      clearIrohInviteState(this.storage.getDataDir());
-      this.irohHttpLoopback = await startIrohHttpLoopback({
-        handleRequest: (req, res) => {
-          void this.handleHttp(req, res, "http");
-        },
-        handleUpgrade: (req, socket, head) => this.handleUpgrade(req, socket, head),
-      });
-      const { startIrohPairingServer } = await import("./iroh-pairing-server.js");
-      this.irohPairingServer = await startIrohPairingServer(this.storage, {
-        tunnelTarget: this.irohHttpLoopback,
-        readinessId: this.irohInviteReadinessId,
-        onFailure: (error) => this.handleIrohTransportFailure(error),
-      });
-    } catch (error: unknown) {
-      await this.irohHttpLoopback?.close().catch(() => {});
-      this.irohHttpLoopback = null;
-      clearIrohInviteState(this.storage.getDataDir());
-      this.irohTransportFailure =
-        error instanceof Error ? error : new Error(safeErrorMessage(error));
-      if (this.requiresIrohReadiness()) {
-        log.error("iroh_transport.start_failed", { error: safeErrorMessage(error) });
-        throw error;
-      }
-      log.warn("iroh_transport.start_failed", { error: safeErrorMessage(error) });
-    }
-  }
-
-  private handleIrohTransportFailure(error: Error): void {
-    this.irohTransportFailure = error;
-    clearIrohInviteState(this.storage.getDataDir());
-    log.error("iroh_transport.terminal_failure", {
-      mode: this.effectiveIrohInviteMode(),
-      error: safeErrorMessage(error),
-    });
-    if (this.requiresIrohReadiness()) {
-      this.closeActiveConnections(WS_CLOSE_GOING_AWAY, "Iroh transport unavailable");
-      void this.irohHttpLoopback?.close().catch(() => {});
-      this.options.onIrohTransportFailure?.(error);
-    }
-  }
-
-  private async stopOptionalIrohPairingServer(): Promise<void> {
-    const pairingServer = this.irohPairingServer;
-    const loopback = this.irohHttpLoopback;
-    this.irohPairingServer = null;
-    this.irohHttpLoopback = null;
-    try {
-      await pairingServer?.close();
-    } finally {
-      await loopback?.close();
-    }
+    return this.httpServer?.listening === true;
   }
 
   async stop(): Promise<void> {
-    await this.stopOptionalIrohPairingServer();
     this.stopUploadGcLoop();
     this.scheduleRunner.stop();
     this.opsMetrics.stop();
@@ -1223,9 +1131,52 @@ export class Server {
     }
   }
 
+  private closeConnectionsForDevice(deviceId: string): void {
+    for (const [ws, principal] of this.socketPrincipals) {
+      if (principal.kind === "device" && principal.deviceId === deviceId) {
+        ws.close(1008, "Device revoked");
+      }
+    }
+  }
+
+  private closeLegacyTokenConnections(): void {
+    for (const [ws, principal] of this.socketPrincipals) {
+      if (principal.kind === "device" && principal.tokenClass === "dt_") {
+        ws.close(1008, "Device token rejected");
+      }
+    }
+  }
+
+  private closeLegacyTokenConnectionsForDevice(deviceId: string): void {
+    for (const [ws, principal] of this.socketPrincipals) {
+      if (
+        principal.kind === "device" &&
+        principal.deviceId === deviceId &&
+        principal.tokenClass === "dt_"
+      ) {
+        ws.close(1008, "Device credential migrated");
+      }
+    }
+  }
+
+  private closeAllDeviceConnections(): void {
+    for (const [ws, principal] of this.socketPrincipals) {
+      if (principal.kind === "device") ws.close(1008, "Owner credentials rotated");
+    }
+  }
+
   private closeWebSocketServer(): Promise<void> {
     this.closeActiveConnections(WS_CLOSE_GOING_AWAY, "Server shutting down");
-    return new Promise((resolve, reject) => {
+    const closeLocal = new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        for (const ws of this.localWss.clients) ws.terminate();
+      }, WS_SHUTDOWN_GRACE_MS);
+      this.localWss.close(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    const closeNetwork = new Promise<void>((resolve, reject) => {
       const forceCloseTimer = setTimeout(() => {
         for (const ws of this.wss.clients) ws.terminate();
       }, WS_SHUTDOWN_GRACE_MS);
@@ -1235,6 +1186,7 @@ export class Server {
         else resolve();
       });
     });
+    return Promise.all([closeLocal, closeNetwork]).then(() => undefined);
   }
 
   private async ensureSkillsInitialized(): Promise<void> {
@@ -1273,41 +1225,32 @@ export class Server {
 
   // ─── Auth ───
 
-  private authenticateIrohContext(req: IncomingMessage): boolean | undefined {
-    const irohContext = this.irohHttpLoopback?.contextFor(req);
-    if (!irohContext) return undefined;
-
-    const authorization = req.headers.authorization;
-    if (!authorization?.startsWith("Bearer ")) return false;
-    if (!secureTokenEquals(irohContext.bearerToken, authorization.slice(7))) return false;
-    return this.storage.validateIrohDeviceToken(irohContext.bearerToken, irohContext.clientNodeId)
-      .ok;
-  }
-
-  private authenticate(req: IncomingMessage): boolean {
-    const irohAuthenticated = this.authenticateIrohContext(req);
-    if (irohAuthenticated !== undefined) return irohAuthenticated;
-
-    // Bearer header (primary auth)
+  private authenticate(req: IncomingMessage): SocketPrincipal | null {
     const auth = req.headers.authorization;
-    if (auth?.startsWith("Bearer ")) {
-      if (this.matchToken(auth.slice(7))) return true;
+    if (!auth?.startsWith("Bearer ")) return null;
+    const candidate = auth.slice(7);
+    const owner = this.storage.getToken();
+    if (owner && secureTokenEquals(owner, candidate)) {
+      return isLocalRequest(req) ? { kind: "owner" } : null;
     }
 
-    return false;
-  }
+    if (!isSecureNetworkRequest(req)) return null;
 
-  private matchToken(candidate: string): boolean {
-    const configToken = this.storage.getToken();
-    if (configToken && secureTokenEquals(configToken, candidate)) return true;
-
+    const access = this.storage.validateAccessToken(candidate);
+    if (access.ok) {
+      if (this.storage.commitLegacyRevocation(access.deviceId)) {
+        this.closeLegacyTokenConnectionsForDevice(access.deviceId);
+      }
+      return { kind: "device", deviceId: access.deviceId, tokenClass: "at_" };
+    }
+    if (this.storage.isMigrationFinalized()) return null;
     for (const dt of this.storage.getAuthDeviceTokens()) {
-      if (secureTokenEquals(dt, candidate)) {
-        return this.storage.hasAuthTokenForTransport(dt, "http");
+      if (secureTokenEquals(dt, candidate) && this.storage.hasAuthToken(dt)) {
+        const deviceId = this.storage.deviceIdForLegacyToken(dt);
+        return deviceId ? { kind: "device", deviceId, tokenClass: "dt_" } : null;
       }
     }
-
-    return false;
+    return null;
   }
 
   // ─── HTTP Router ───
@@ -1326,21 +1269,6 @@ export class Server {
     res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
     res.setHeader("X-Oppi-Protocol", "2");
-
-    // The private loopback context proves which Iroh peer opened the tunnel, not
-    // which local request owns the credential. Require every tunneled request,
-    // including keep-alive requests and otherwise-public routes, to present the
-    // exact bearer injected by the authenticated tunnel preface.
-    if (this.authenticateIrohContext(req) === false) {
-      log.warn("auth.unauthorized", {
-        transport: "http",
-        method,
-        path,
-        authPresent: hasAuthHeader(req.headers.authorization),
-      });
-      this.error(res, 401, "Unauthorized");
-      return;
-    }
 
     // Record HTTP request duration when the response finishes. Routine health,
     // stats, capability, and telemetry upload routes are threshold-gated so
@@ -1368,8 +1296,19 @@ export class Server {
       return;
     }
 
-    // Pairing bootstrap endpoint is intentionally unauthenticated.
-    if (path === "/pair" && method === "POST") {
+    // Pairing and device-auth bootstrap are supported only on the remote TLS
+    // listener. Plain HTTP cannot enroll, migrate, challenge, or refresh
+    // HTTPS/WSS device credentials.
+    const isDeviceAuthBootstrap =
+      (path === "/pair" && method === "POST") ||
+      (path === "/auth/migrate" && method === "POST") ||
+      (path === "/auth/challenge" && method === "POST") ||
+      (path === "/auth/refresh" && method === "POST");
+    if (isDeviceAuthBootstrap && !isSecureNetworkRequest(req)) {
+      this.error(res, 403, "HTTPS required");
+      return;
+    }
+    if (isDeviceAuthBootstrap) {
       try {
         await this.routes.dispatch(method, path, url, req, res);
       } catch (err: unknown) {
@@ -1384,8 +1323,8 @@ export class Server {
       return;
     }
 
-    const authenticated = this.authenticate(req);
-    if (!authenticated) {
+    const principal = this.authenticate(req);
+    if (!principal) {
       log.warn("auth.unauthorized", {
         transport: "http",
         method,
@@ -1434,8 +1373,8 @@ export class Server {
 
     const url = new URL(req.url || "/", `${this.transportScheme}://${req.headers.host}`);
 
-    const authenticated = this.authenticate(req);
-    if (!authenticated) {
+    const principal = this.authenticate(req);
+    if (!principal) {
       log.warn("auth.unauthorized", {
         transport: "ws",
         path: url.pathname,
@@ -1479,8 +1418,18 @@ export class Server {
       return;
     }
 
+    if (mirrorBridgeMatch) {
+      writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
+        Connection: "close",
+        "Content-Length": "0",
+      });
+      return;
+    }
+
     const upgradeReceivedAt = Date.now();
     this.wss.handleUpgrade(req, socket, head, (ws) => {
+      this.socketPrincipals.set(ws, principal);
+      ws.on("close", () => this.socketPrincipals.delete(ws));
       if (sessionStreamMatch) {
         const sessionId = sessionStreamMatch.sessionId;
         const session = this.storage.getSession(sessionId);

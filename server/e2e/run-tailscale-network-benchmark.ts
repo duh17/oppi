@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { summarize, type NumericSummary } from "./iroh-network-benchmark-common.js";
+import { summarize, type NumericSummary } from "./network-benchmark-common.js";
 
 const sshTarget = process.env.TAILSCALE_BENCH_SSH_TARGET;
 const targetIp = process.env.TAILSCALE_BENCH_TARGET_IP;
@@ -303,11 +303,11 @@ A dedicated Oppi server ran on a separate macOS peer in ${region}. \`tailscale p
 | Download 10 MiB | ${metric(transfer("download", 10), "Mb/s")} |
 | Download 50 MiB | ${metric(transfer("download", 50), "Mb/s")} |
 
-Sample counts match the Iroh matrix: 30 cold connections, 200 warm REST requests, 200 WebSocket round trips, 20 reconnects, and five transfers per direction and size.
+The fixed sample plan is 30 cold connections, 200 warm REST requests, 200 WebSocket round trips, 20 reconnects, and five transfers per direction and size.
 
 ## Comparison boundary
 
-This is a real two-machine Tailscale-direct measurement, unlike the same-host container HTTP/Iroh-direct lanes and public-relay Iroh lane. Compare protocol behavior and user-visible latency, but do not attribute every difference to transport alone. The physical-device gate still requires a same-phone, same-location Tailscale-versus-Iroh A/B.
+This is a real two-machine Tailscale-direct measurement. Compare protocol behavior and user-visible latency, but do not attribute every difference to network path alone.
 `;
   writeFileSync(reportPath, serialized, { mode: 0o600 });
   writeFileSync(markdownPath, markdown, { mode: 0o600 });

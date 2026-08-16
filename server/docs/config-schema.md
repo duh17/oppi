@@ -22,30 +22,7 @@ Settings appear in config-file order. Auth state is documented separately: it li
 | `host`          | string | `"0.0.0.0"`        | Remote bind address. Use `"127.0.0.1"` to restrict network clients to localhost.                                |
 | `dataDir`       | string | `"~/.config/oppi"` | Root state directory. Contains sessions, workspaces, config, TLS material, and the local CLI runtime directory. |
 
-### Iroh transport
-
-| Setting        | Type     | Default | Description                                                                                                                    |
-| -------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `iroh.enabled` | boolean  | `false` | Starts the host-free Iroh HTTP/WebSocket tunnel. New signed invites can authorize Iroh when the running endpoint is available. |
-| `iroh.relays`  | object[] | unset   | Optional custom relay map. A non-empty list replaces Iroh's public relay defaults for the running server after restart.        |
-
-Each relay entry has this shape:
-
-```json
-{ "url": "https://relay.example", "quicPort": 7842 }
-```
-
-`url` must be an HTTPS root URL with a host. It cannot contain userinfo, a query, a fragment, a non-root path, or a loopback, private, link-local, or unspecified IP literal. At most eight normalized, unique entries are allowed. `quicPort` is optional; when omitted, Oppi stores `7842`. An explicit port must be an integer from 1 through 65535.
-
-```bash
-oppi config set iroh.enabled true
-oppi config set iroh.relays '[{"url":"https://relay-us.example"},{"url":"https://relay-eu.example","quicPort":7842}]'
-oppi config validate
-```
-
-Changes persist across CLI, Mac app, launchd, crash, and machine restarts, but Iroh settings take effect only after the server restarts. For a LaunchAgent installation, run `oppi server restart`; for a foreground `oppi serve` process, stop and start that process. Then run `oppi pair` and re-pair devices so the signed invite reflects the running endpoint's live relay map. `oppi doctor` reports public/default or custom relay mode and configuration/live drift without exposing relay URLs.
-
-`OPPI_IROH_TRANSPORT=1` and `OPPI_IROH_PAIRING=1` remain temporary compatibility overrides for development and isolated deployments. See [Networking and connection routing](../../docs/networking.md) for client route selection, relay-map compatibility, and fallback behavior.
+Remote clients use authenticated HTTPS/WSS, including HTTPS through Tailscale.
 
 ### Model
 
@@ -132,7 +109,7 @@ Modes:
 
 | Mode          | Behavior                                                                                                                                                                                                                                                                                                                                                                                  |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `disabled`    | Plain HTTP/WS. No encryption. Non-loopback binds require `tls.allowInsecureNetworkHttp=true`; loopback dev binds work.                                                                                                                                                                                                                                                                    |
+| `disabled`    | Plain network HTTP for health-only development. Pairing, device auth, authenticated remote APIs, and remote WebSockets reject it. Non-loopback binds require `tls.allowInsecureNetworkHttp=true`.                                                                                                                                                                                          |
 | `tailscale`   | Uses a Tailnet DNS certificate and requests/renews it via `tailscale cert` when Tailscale is connected. Existing locally valid material can restart the remote listener while disconnected. Missing or invalid material leaves remote HTTPS/WSS unavailable without affecting the Unix-socket CLI. Tailscale is required to obtain or renew material and for remote Tailnet connectivity. |
 | `self-signed` | Auto-generates cert material under `~/.config/oppi/tls/self-signed/`. Client must trust the CA.                                                                                                                                                                                                                                                                                           |
 | `manual`      | Uses `certPath` and `keyPath` you provide. Both are required.                                                                                                                                                                                                                                                                                                                             |
@@ -151,7 +128,7 @@ oppi config set tls '{"mode":"tailscale"}'
 # Self-signed (containers, dev)
 oppi config set tls '{"mode":"self-signed"}'
 
-# Plain network HTTP is an explicit escape hatch, not a default
+# Plain network HTTP is health-only; it cannot authenticate Apple clients
 oppi config set tls '{"mode":"disabled","allowInsecureNetworkHttp":true}'
 ```
 
@@ -214,13 +191,6 @@ Extensions own approval behavior. When a session needs approval before an action
   "runtimePathEntries": ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"],
   "runtimeEnv": {},
   "oppiDocsPrompt": { "enabled": true },
-  "iroh": {
-    "enabled": true,
-    "relays": [
-      { "url": "https://relay-us.example/", "quicPort": 7842 },
-      { "url": "https://relay-eu.example/", "quicPort": 7842 }
-    ]
-  },
   "tls": { "mode": "tailscale" },
   "autoTitle": { "enabled": true, "model": "omlx/Qwen3.5-122B-A10B-4bit" },
   "images": { "autoResize": false }
@@ -237,8 +207,6 @@ Examples:
 oppi config get asr.sttEndpoint
 oppi config set asr.sttEndpoint http://127.0.0.1:7936
 oppi config set images.autoResize false
-oppi config set iroh.enabled true
-oppi config set iroh.relays '[{"url":"https://relay-us.example"}]'
 oppi config set oppiDocsPrompt.enabled false
 oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
 oppi config set extensions.voice.defaultVoiceId warm-technical-teammate

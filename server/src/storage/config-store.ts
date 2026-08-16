@@ -1,9 +1,19 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { createLogger } from "../logger.js";
-import type { AuthTransport, IrohInviteMode, IrohRelayConfig, ServerConfig } from "../types.js";
+import type { DevicePublicKey, ServerConfig } from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
@@ -21,198 +31,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeAuthTransports(value: unknown): AuthTransport[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const transports = value.filter(
-    (transport): transport is AuthTransport => transport === "http" || transport === "iroh",
-  );
-  return transports.length > 0 ? [...new Set(transports)] : undefined;
-}
-
-function normalizeIrohInviteMode(value: unknown): IrohInviteMode | undefined {
-  return value === "irohOnly" || value === "irohPreferred" || value === "httpOnly"
-    ? value
-    : undefined;
-}
-
-const MAX_IROH_RELAYS = 8;
-const DEFAULT_IROH_RELAY_QUIC_PORT = 7842;
-
-type DisallowedIpKind =
-  | "loopback"
-  | "private"
-  | "link-local"
-  | "unspecified"
-  | "carrier-grade NAT"
-  | "benchmarking"
-  | "multicast"
-  | "broadcast";
-
-function disallowedIpv4Kind(value: string): DisallowedIpKind | undefined {
-  const octets = value.split(".").map(Number);
-  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet))) return undefined;
-  const [first, second] = octets;
-  if (first === 0) return "unspecified";
-  if (first === 127) return "loopback";
-  if (
-    first === 10 ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 168)
-  ) {
-    return "private";
-  }
-  if (first === 169 && second === 254) return "link-local";
-  if (first === 100 && second >= 64 && second <= 127) return "carrier-grade NAT";
-  if (first === 198 && (second === 18 || second === 19)) return "benchmarking";
-  if (first >= 224 && first <= 239) return "multicast";
-  if (value === "255.255.255.255") return "broadcast";
-  return undefined;
-}
-
-function ipv6Value(value: string): bigint | undefined {
-  const normalized = value.toLowerCase();
-  const ipv4Index = normalized.lastIndexOf(":");
-  let expanded = normalized;
-  if (normalized.includes(".")) {
-    const ipv4 = normalized.slice(ipv4Index + 1);
-    if (isIP(ipv4) !== 4) return undefined;
-    const octets = ipv4.split(".").map(Number);
-    const groups = [
-      ((octets[0] ?? 0) << 8) | (octets[1] ?? 0),
-      ((octets[2] ?? 0) << 8) | (octets[3] ?? 0),
-    ];
-    expanded = `${normalized.slice(0, ipv4Index)}:${groups.map((group) => group.toString(16)).join(":")}`;
-  }
-  const halves = expanded.split("::");
-  if (halves.length > 2) return undefined;
-  const left = halves[0] ? halves[0].split(":") : [];
-  const right = halves[1] ? halves[1].split(":") : [];
-  const missing = 8 - left.length - right.length;
-  if (missing < 0 || (halves.length === 1 && missing !== 0)) return undefined;
-  const groups = [...left, ...Array(missing).fill("0"), ...right];
-  if (groups.length !== 8 || groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) {
-    return undefined;
-  }
-  return BigInt(`0x${groups.map((group) => group.padStart(4, "0")).join("")}`);
-}
-
-function disallowedIpKind(host: string): DisallowedIpKind | undefined {
-  const value = host.replace(/^\[|\]$/g, "");
-  const family = isIP(value);
-  if (family === 4) return disallowedIpv4Kind(value);
-  if (family !== 6) return undefined;
-  const ipv6 = ipv6Value(value);
-  if (ipv6 === undefined) return undefined;
-  if (ipv6 === 0n) return "unspecified";
-  if (ipv6 === 1n) return "loopback";
-  if (ipv6 >> 121n === 0b1111110n) return "private";
-  if (ipv6 >> 118n === 0b1111111010n) return "link-local";
-  if (ipv6 >> 120n === 0xffn) return "multicast";
-  // IPv4-mapped IPv6 literals must obey the IPv4 address policy too.
-  if (ipv6 >> 32n === 0xffffn) {
-    const ipv4 = Number(ipv6 & 0xffff_ffffn);
-    return disallowedIpv4Kind(
-      [ipv4 >>> 24, (ipv4 >>> 16) & 0xff, (ipv4 >>> 8) & 0xff, ipv4 & 0xff].join("."),
-    );
-  }
-  return undefined;
-}
-
-function normalizeIrohRelays(
-  value: unknown,
-  errors: string[],
-  strictUnknown: boolean,
-): IrohRelayConfig[] | undefined {
-  const errorCountBeforeRelays = errors.length;
-  if (!Array.isArray(value)) {
-    errors.push("config.iroh.relays: expected array");
-    return undefined;
-  }
-  if (value.length > MAX_IROH_RELAYS) {
-    errors.push(`config.iroh.relays: expected at most ${MAX_IROH_RELAYS} entries`);
-    return undefined;
-  }
-
-  const relays: IrohRelayConfig[] = [];
-  const seen = new Set<string>();
-  for (const [index, entry] of value.entries()) {
-    const path = `config.iroh.relays[${index}]`;
-    if (!isRecord(entry)) {
-      errors.push(`${path}: expected object`);
-      continue;
-    }
-    const allowedKeys = new Set(["url", "quicPort"]);
-    if (strictUnknown) {
-      for (const key of Object.keys(entry)) {
-        if (!allowedKeys.has(key)) errors.push(`${path}.${key}: unknown key`);
-      }
-    }
-    if (typeof entry.url !== "string") {
-      errors.push(`${path}.url: expected HTTPS URL with host`);
-      continue;
-    }
-
-    let parsed: URL;
-    try {
-      parsed = new URL(entry.url);
-    } catch {
-      errors.push(`${path}.url: expected HTTPS URL with host`);
-      continue;
-    }
-    if (parsed.protocol !== "https:") {
-      errors.push(`${path}.url: expected HTTPS URL`);
-      continue;
-    }
-    if (!parsed.hostname) {
-      errors.push(`${path}.url: expected HTTPS URL with host`);
-      continue;
-    }
-    if (parsed.username || parsed.password) {
-      errors.push(`${path}.url: must not include userinfo`);
-      continue;
-    }
-    if (parsed.search) {
-      errors.push(`${path}.url: must not include a query`);
-      continue;
-    }
-    if (parsed.hash) {
-      errors.push(`${path}.url: must not include a fragment`);
-      continue;
-    }
-    if (parsed.pathname !== "/") {
-      errors.push(`${path}.url: must use the root path`);
-      continue;
-    }
-    const ipKind = disallowedIpKind(parsed.hostname);
-    if (ipKind) {
-      errors.push(
-        `${path}.url: must not use ${ipKind === "unspecified" ? "an" : "a"} ${ipKind} IP literal`,
-      );
-      continue;
-    }
-
-    let quicPort: number | undefined;
-    if ("quicPort" in entry) {
-      if (
-        typeof entry.quicPort !== "number" ||
-        !Number.isInteger(entry.quicPort) ||
-        entry.quicPort < 1 ||
-        entry.quicPort > 65_535
-      ) {
-        errors.push(`${path}.quicPort: expected integer 1-65535`);
-        continue;
-      }
-      quicPort = entry.quicPort;
-    }
-
-    const url = parsed.toString();
-    if (seen.has(url)) continue;
-    seen.add(url);
-    // RelayMap.fromUrls assigns 7842. Keep object entries equivalent so
-    // configured relays retain QUIC address discovery when the port is omitted.
-    relays.push({ url, quicPort: quicPort ?? DEFAULT_IROH_RELAY_QUIC_PORT });
-  }
-  return errors.length === errorCountBeforeRelays ? relays : undefined;
+function normalizeDevicePublicKey(value: unknown): DevicePublicKey | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.kty !== "EC" || value.crv !== "P-256") return undefined;
+  if (typeof value.x !== "string" || value.x.trim().length === 0) return undefined;
+  if (typeof value.y !== "string" || value.y.trim().length === 0) return undefined;
+  return { kty: "EC", crv: "P-256", x: value.x, y: value.y };
 }
 
 function defaultRuntimePathEntries(): string[] {
@@ -248,9 +72,6 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     },
     oppiCliPrompt: {
       enabled: true,
-    },
-    iroh: {
-      enabled: false,
     },
     tls: { mode: "self-signed" },
     images: {
@@ -300,17 +121,15 @@ function normalizeConfig(
     "runtimeEnv",
     "oppiDocsPrompt",
     "oppiCliPrompt",
-    "iroh",
     "tls",
-    "irohInviteMode",
-    "irohInviteReadinessId",
 
     "token",
     "pairingToken",
     "pairingTokenExpiresAt",
-    "pairingTokenAllowedTransports",
     "authDeviceTokens",
-    "irohDeviceTokenBindings",
+    "authMigrationMode",
+    "authDevices",
+    "authAccessTokens",
     "pushDeviceTokens",
     "liveActivityToken",
     "autoTitle",
@@ -511,43 +330,6 @@ function normalizeConfig(
     changed = true;
   }
 
-  if (!("iroh" in obj)) {
-    changed = true;
-  } else if (isRecord(obj.iroh)) {
-    const iroh = obj.iroh;
-    const allowedIrohKeys = new Set(["enabled", "relays"]);
-
-    if (strictUnknown) {
-      for (const key of Object.keys(iroh)) {
-        if (!allowedIrohKeys.has(key)) {
-          errors.push(`config.iroh.${key}: unknown key`);
-        }
-      }
-    }
-
-    const irohConfig: NonNullable<ServerConfig["iroh"]> = {
-      ...(config.iroh ?? { enabled: false }),
-    };
-    if ("enabled" in iroh) {
-      if (typeof iroh.enabled === "boolean") {
-        irohConfig.enabled = iroh.enabled;
-      } else {
-        errors.push("config.iroh.enabled: expected boolean");
-        changed = true;
-      }
-    } else {
-      changed = true;
-    }
-    if ("relays" in iroh) {
-      const relays = normalizeIrohRelays(iroh.relays, errors, strictUnknown);
-      if (relays) irohConfig.relays = relays;
-    }
-    config.iroh = irohConfig;
-  } else {
-    errors.push("config.iroh: expected object");
-    changed = true;
-  }
-
   const parseTlsConfig = (
     value: unknown,
     path: string,
@@ -635,18 +417,6 @@ function normalizeConfig(
     changed = true;
   }
 
-  const irohInviteMode = normalizeIrohInviteMode(obj.irohInviteMode);
-  if (irohInviteMode) {
-    config.irohInviteMode = irohInviteMode;
-  }
-  if (
-    "irohInviteReadinessId" in obj &&
-    typeof obj.irohInviteReadinessId === "string" &&
-    obj.irohInviteReadinessId.trim().length > 0
-  ) {
-    config.irohInviteReadinessId = obj.irohInviteReadinessId;
-  }
-
   // Pairing/auth/push runtime state — passthrough (no strict schema validation, optional)
   if ("token" in obj && typeof obj.token === "string") {
     config.token = obj.token;
@@ -664,42 +434,86 @@ function normalizeConfig(
     config.pairingTokenExpiresAt = obj.pairingTokenExpiresAt;
   }
 
-  const pairingTokenAllowedTransports = normalizeAuthTransports(obj.pairingTokenAllowedTransports);
-  if (pairingTokenAllowedTransports) {
-    config.pairingTokenAllowedTransports = pairingTokenAllowedTransports;
-  }
-
   if ("authDeviceTokens" in obj && Array.isArray(obj.authDeviceTokens)) {
     config.authDeviceTokens = (obj.authDeviceTokens as unknown[]).filter(
       (t): t is string => typeof t === "string",
     );
   }
 
-  if ("irohDeviceTokenBindings" in obj && Array.isArray(obj.irohDeviceTokenBindings)) {
-    config.irohDeviceTokenBindings = (obj.irohDeviceTokenBindings as unknown[]).flatMap((value) => {
+  const authMigrationMode =
+    obj.authMigrationMode === "compat" || obj.authMigrationMode === "finalized"
+      ? obj.authMigrationMode
+      : undefined;
+  if (authMigrationMode) {
+    config.authMigrationMode = authMigrationMode;
+  }
+
+  if ("authDevices" in obj && Array.isArray(obj.authDevices)) {
+    config.authDevices = (obj.authDevices as unknown[]).flatMap((value) => {
       if (!isRecord(value)) return [];
-      if (typeof value.token !== "string" || value.token.trim().length === 0) return [];
-      if (typeof value.clientNodeId !== "string" || value.clientNodeId.trim().length === 0) {
-        return [];
-      }
-      if (!Array.isArray(value.allowedTransports)) return [];
-      const allowedTransports = normalizeAuthTransports(value.allowedTransports) ?? [];
-      if (allowedTransports.length === 0) return [];
+      if (typeof value.id !== "string" || value.id.trim().length === 0) return [];
+      if (typeof value.name !== "string") return [];
+      const scope = value.scope === "admin" || value.scope === "mirror" ? value.scope : "device";
       const createdAt =
         typeof value.createdAt === "number" && Number.isFinite(value.createdAt)
           ? value.createdAt
           : Date.now();
-      const lastSeenAt =
-        typeof value.lastSeenAt === "number" && Number.isFinite(value.lastSeenAt)
-          ? value.lastSeenAt
+      const lastUsedAt =
+        typeof value.lastUsedAt === "number" && Number.isFinite(value.lastUsedAt)
+          ? value.lastUsedAt
+          : undefined;
+      const revokedAt =
+        typeof value.revokedAt === "number" && Number.isFinite(value.revokedAt)
+          ? value.revokedAt
+          : undefined;
+      const legacyTokenHash =
+        typeof value.legacyTokenHash === "string" && value.legacyTokenHash.trim().length > 0
+          ? value.legacyTokenHash
+          : undefined;
+      const publicKey = normalizeDevicePublicKey(value.publicKey);
+      return [
+        {
+          id: value.id,
+          name: value.name,
+          ...(publicKey ? { publicKey } : {}),
+          scope,
+          createdAt,
+          ...(lastUsedAt !== undefined ? { lastUsedAt } : {}),
+          ...(revokedAt !== undefined ? { revokedAt } : {}),
+          ...(legacyTokenHash ? { legacyTokenHash } : {}),
+        },
+      ];
+    });
+  }
+
+  if ("authAccessTokens" in obj && Array.isArray(obj.authAccessTokens)) {
+    config.authAccessTokens = (obj.authAccessTokens as unknown[]).flatMap((value) => {
+      if (!isRecord(value)) return [];
+      if (typeof value.id !== "string" || value.id.trim().length === 0) return [];
+      if (typeof value.tokenHash !== "string" || value.tokenHash.trim().length === 0) return [];
+      if (typeof value.deviceId !== "string" || value.deviceId.trim().length === 0) return [];
+      const scope = value.scope === "admin" || value.scope === "mirror" ? value.scope : "device";
+      const createdAt =
+        typeof value.createdAt === "number" && Number.isFinite(value.createdAt)
+          ? value.createdAt
+          : Date.now();
+      const expiresAt =
+        typeof value.expiresAt === "number" && Number.isFinite(value.expiresAt)
+          ? value.expiresAt
+          : createdAt;
+      const lastUsedAt =
+        typeof value.lastUsedAt === "number" && Number.isFinite(value.lastUsedAt)
+          ? value.lastUsedAt
           : undefined;
       return [
         {
-          token: value.token,
-          clientNodeId: value.clientNodeId,
-          allowedTransports,
+          id: value.id,
+          tokenHash: value.tokenHash,
+          deviceId: value.deviceId,
+          scope,
           createdAt,
-          ...(lastSeenAt !== undefined ? { lastSeenAt } : {}),
+          expiresAt,
+          ...(lastUsedAt !== undefined ? { lastUsedAt } : {}),
         },
       ];
     });
@@ -1041,7 +855,27 @@ export class ConfigStore {
   }
 
   private saveConfig(config: ServerConfig): void {
-    writeFileSync(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+    const temporaryPath = join(this.dataDir, `.config.${process.pid}.${randomUUID()}.tmp`);
+    let fileDescriptor: number | undefined;
+    let directoryDescriptor: number | undefined;
+    try {
+      fileDescriptor = openSync(temporaryPath, "wx", 0o600);
+      writeFileSync(fileDescriptor, JSON.stringify(config, null, 2));
+      fsyncSync(fileDescriptor);
+      closeSync(fileDescriptor);
+      fileDescriptor = undefined;
+
+      renameSync(temporaryPath, this.configPath);
+      directoryDescriptor = openSync(this.dataDir, "r");
+      fsyncSync(directoryDescriptor);
+      closeSync(directoryDescriptor);
+      directoryDescriptor = undefined;
+    } catch (error) {
+      if (fileDescriptor !== undefined) closeSync(fileDescriptor);
+      if (directoryDescriptor !== undefined) closeSync(directoryDescriptor);
+      rmSync(temporaryPath, { force: true });
+      throw error;
+    }
   }
 
   getConfig(): ServerConfig {
@@ -1064,16 +898,13 @@ export class ConfigStore {
     const merged: ServerConfig = {
       ...this.config,
       ...updates,
-      ...(updates.iroh === undefined
-        ? {}
-        : { iroh: { ...(this.config.iroh ?? { enabled: false }), ...updates.iroh } }),
     };
 
     const normalized = normalizeConfig(merged, this.dataDir, true);
     if (!normalized.valid) {
       throw new Error(`Invalid config update: ${normalized.errors.join("; ")}`);
     }
+    this.saveConfig(normalized.config);
     this.config = normalized.config;
-    this.saveConfig(this.config);
   }
 }

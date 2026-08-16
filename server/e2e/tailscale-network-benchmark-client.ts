@@ -16,7 +16,7 @@ import {
   type NumericSummary,
   type TimedSample,
   type TransferSample,
-} from "./iroh-network-benchmark-common.js";
+} from "./network-benchmark-common.js";
 
 type HttpResponse = {
   status: number;

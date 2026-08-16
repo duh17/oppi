@@ -30,6 +30,12 @@ export interface RouteContext {
   serverStartedAt: number;
   serverVersion: string;
   piVersion: string;
+  /** Close upgraded sockets owned by a newly revoked device. */
+  onDeviceRevoked?: (deviceId: string) => void;
+  /** Close legacy `dt_` sockets when the migration window finalizes. */
+  onMigrationFinalized?: (finalized: boolean) => void;
+  /** Close every network device/access/legacy socket when the owner token rotates. */
+  onOwnerTokenRotated?: () => void;
 }
 
 export interface RouteHelpers {
