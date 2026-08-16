@@ -36,7 +36,6 @@ export const PI_TUI_MIRROR_UNSUPPORTED_REMOTE_COMMAND_REASONS = {
   share_session: "sharing needs a server-owned AgentSession export path",
   new_session: "session replacement is terminal-owned; start it from the terminal",
   fork: "session-file replacement is terminal-owned; fork from the terminal",
-  switch_session: "session-file replacement is terminal-owned; switch from the terminal",
 } as const;
 
 const REMOTE_COMMAND_SET = new Set<string>(PI_TUI_MIRROR_REMOTE_COMMANDS);

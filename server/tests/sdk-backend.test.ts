@@ -448,17 +448,7 @@ describe("SdkBackend sandbox", () => {
       expect(sandboxInlineOppi).toBeUndefined();
       expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
 
-      const targetSession = PiSdk.SessionManager.create(
-        "/workspace/sandbox-secrets-test",
-        runtime.session.sessionManager.getSessionDir(),
-      );
-      const targetSessionFile = targetSession.getSessionFile();
-      const targetHeader = targetSession.getHeader();
-      expect(targetSessionFile).toBeDefined();
-      expect(targetHeader?.cwd).toBe("/workspace/sandbox-secrets-test");
-      writeFileSync(targetSessionFile!, `${JSON.stringify(targetHeader)}\n`);
-
-      await backend.switchSession(targetSessionFile!);
+      await backend.newSession();
 
       expect(runtime.services.cwd).toBe("/workspace/sandbox-secrets-test");
       expect(runtime.session.sessionManager.getCwd()).toBe("/workspace/sandbox-secrets-test");

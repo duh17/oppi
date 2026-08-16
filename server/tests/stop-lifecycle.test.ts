@@ -180,7 +180,7 @@ function makeNeverResolvingReloadBackend(): {
   };
 }
 
-function makeNeverResolvingReplacementBackend(method: "newSession" | "switchSession" | "fork"): {
+function makeNeverResolvingReplacementBackend(method: "newSession" | "fork"): {
   backend: SdkBackend;
   finishShutdown: () => void;
   oldSessionDispose: ReturnType<typeof vi.fn>;
@@ -209,12 +209,6 @@ function makeNeverResolvingReplacementBackend(method: "newSession" | "switchSess
     session: oldSession,
     dispose: vi.fn(async () => undefined),
     newSession: vi.fn(async () => {
-      await shutdown.promise;
-      runtime.session = replacementSession;
-      replacementFinished.resolve();
-      return { cancelled: false };
-    }),
-    switchSession: vi.fn(async () => {
       await shutdown.promise;
       runtime.session = replacementSession;
       replacementFinished.resolve();
@@ -1210,7 +1204,7 @@ describe("stop lifecycle", () => {
     }
   });
 
-  it.each(["newSession", "switchSession", "fork"] as const)(
+  it.each(["newSession", "fork"] as const)(
     "bounds stop queued behind %s teardown stuck in session_shutdown",
     async (method) => {
       vi.useFakeTimers();
@@ -1232,9 +1226,7 @@ describe("stop lifecycle", () => {
         const command =
           method === "newSession"
             ? { type: "new_session" }
-            : method === "switchSession"
-              ? { type: "switch_session", sessionPath: "/tmp/next.jsonl" }
-              : { type: "fork", entryId: "entry-1" };
+            : { type: "fork", entryId: "entry-1" };
         const replacement = manager.forwardClientCommand("s1", command, `request-${method}`);
         await flushMicrotasks(10);
         expect(backend.isRuntimeLifecycleTransactionExclusive).toBe(true);

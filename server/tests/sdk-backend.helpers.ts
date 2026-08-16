@@ -115,7 +115,6 @@ export function makeSdkBackendStub(): {
     setModel: vi.fn(async () => ({ success: true })),
     newSession: vi.fn(async () => ({ cancelled: false })),
     fork: vi.fn(async () => ({ cancelled: false })),
-    switchSession: vi.fn(async () => ({ cancelled: false })),
     getStateSnapshot: vi.fn(() => ({
       model: { provider: "anthropic", id: "claude-sonnet-4-0" },
       thinkingLevel: "medium",

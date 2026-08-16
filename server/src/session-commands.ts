@@ -450,7 +450,6 @@ export class SessionCommandCoordinator {
     ],
 
     ["fork", (backend, cmd) => backend.fork(cmd.entryId as string)],
-    ["switch_session", (backend, cmd) => backend.switchSession(cmd.sessionPath as string)],
   ]);
 
   private static readonly SESSION_PASSTHROUGH_HANDLERS = new Map<string, SessionCommandHandler>([
@@ -725,12 +724,7 @@ export class SessionCommandCoordinator {
 
     // Session-branching commands mutate pi session identity/file in-place.
     // Refresh state immediately so reconnect/resume uses the new branch.
-    if (
-      cmdType === "fork" ||
-      cmdType === "new_session" ||
-      cmdType === "switch_session" ||
-      cmdType === "navigate_tree"
-    ) {
+    if (cmdType === "fork" || cmdType === "new_session" || cmdType === "navigate_tree") {
       try {
         const refreshed = await executeCommand({ type: "get_state" });
         const snapshot = parsePiStateSnapshot(refreshed);

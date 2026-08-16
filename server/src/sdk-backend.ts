@@ -468,7 +468,7 @@ export const QUEUE_RECONCILIATION_REQUIRED_ERROR =
 
 export const SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS = 5_000;
 
-type SdkRuntimeLifecycleOperation = "reload" | "new_session" | "switch_session" | "fork" | "stop";
+type SdkRuntimeLifecycleOperation = "reload" | "new_session" | "fork" | "stop";
 
 type SdkBackendForcedDisposeResult = {
   disposal: "forced";
@@ -601,7 +601,6 @@ export class SdkBackend {
   private readonly uiBridge: SdkUiBridge;
   private shutdownCleanupPromise: Promise<SdkBackendDisposeResult> | null = null;
   private forcedDisposalResult: SdkBackendDisposeResult | undefined;
-  private readonly sessionCwdExistsOverride?: string;
   private readonly sessionManagerDisplayCwd?: string;
   private readonly oppiSessionId: string;
   private readonly dataDir?: string;
@@ -622,7 +621,7 @@ export class SdkBackend {
     emitEvent: (event: SessionBackendEvent) => void,
     oppiSessionId: string,
     dataDir?: string,
-    cwdOverrides?: { existsCwd: string; displayCwd?: string },
+    cwdOverrides?: { displayCwd?: string },
     oppiRuntimeSettings?: {
       holder: OppiExtensionSettingsHolder;
       get: () => OppiExtensionSettingsSnapshot;
@@ -639,7 +638,6 @@ export class SdkBackend {
     this.assertSelectedResourcesAvailableBeforeReload =
       assertSelectedResourcesAvailableBeforeReload;
     this.consumeSelectedResourceReloadError = consumeSelectedResourceReloadError;
-    this.sessionCwdExistsOverride = cwdOverrides?.existsCwd;
     this.sessionManagerDisplayCwd = cwdOverrides?.displayCwd;
     this.uiBridge = new SdkUiBridge(emitEvent, () => this.disposed);
     this.restoreSessionManagerDisplayCwd();
@@ -1224,11 +1222,7 @@ export class SdkBackend {
       onEvent,
       session.id,
       config.dataDir,
-      sandboxMode
-        ? { existsCwd: initialHostCwd, displayCwd }
-        : isDeclaredControlSession(session)
-          ? { existsCwd: initialHostCwd }
-          : undefined,
+      sandboxMode ? { displayCwd } : undefined,
       settingsManagedRuntime
         ? {
             holder: oppiSettingsHolder,
@@ -1452,30 +1446,6 @@ export class SdkBackend {
           this.restoreSessionManagerDisplayCwd();
           await this.refreshRuntimeSessionBindings();
           this.assertReplacementContinuationActive("new_session");
-        }
-        return result;
-      },
-      { allowDisposed: true },
-    );
-  }
-
-  async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
-    return this.withExclusiveRuntimeOperation(
-      "switch_session",
-      async () => {
-        if (this.disposed) return { cancelled: true };
-        this.assertRuntimeIdle("switch_session");
-        const result = await this.runtime.switchSession(
-          sessionPath,
-          this.sessionCwdExistsOverride
-            ? { cwdOverride: this.sessionCwdExistsOverride }
-            : undefined,
-        );
-        this.assertReplacementContinuationActive("switch_session");
-        if (!result.cancelled) {
-          this.restoreSessionManagerDisplayCwd();
-          await this.refreshRuntimeSessionBindings();
-          this.assertReplacementContinuationActive("switch_session");
         }
         return result;
       },

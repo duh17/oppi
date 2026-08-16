@@ -48,7 +48,6 @@ enum ClientMessage: Sendable {
         label: String? = nil,
         requestId: String? = nil
     )
-    case switchSession(sessionPath: String, requestId: String? = nil)
 
     // ── Queue modes ──
     case setSteeringMode(mode: QueueMode, requestId: String? = nil)
@@ -336,11 +335,6 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(label, forKey: .label)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
-        case .switchSession(let sessionPath, let reqId):
-            try c.encode("switch_session", forKey: .type)
-            try c.encode(sessionPath, forKey: .sessionPath)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
         // ── Queue modes ──
         case .setSteeringMode(let mode, let reqId):
             try c.encode("set_steering_mode", forKey: .type)
@@ -401,7 +395,7 @@ extension ClientMessage: Encodable {
         case type, message, attachments, streamingBehavior, requestId, clientTurnId
         case id, action, redactionPolicy, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
-        case customInstructions, entryId, sessionPath, filterMode
+        case customInstructions, entryId, filterMode
         case targetId, summarize, replaceInstructions, label
         case baseVersion, steering, followUp
     }
@@ -437,7 +431,6 @@ extension ClientMessage {
         case .getForkMessages: return "get_fork_messages"
         case .getSessionTree: return "get_session_tree"
         case .navigateTree: return "navigate_tree"
-        case .switchSession: return "switch_session"
         case .setSteeringMode: return "set_steering_mode"
         case .setFollowUpMode: return "set_follow_up_mode"
         case .setAutoRetry: return "set_auto_retry"

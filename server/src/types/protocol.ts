@@ -136,7 +136,6 @@ export type ClientMessage = // ── Prompting ──
         label?: string;
         requestId?: string;
       }
-    | { type: "switch_session"; sessionPath: string; requestId?: string }
     // ── Queue modes ──
     | { type: "set_steering_mode"; mode: "all" | "one-at-a-time"; requestId?: string }
     | { type: "set_follow_up_mode"; mode: "all" | "one-at-a-time"; requestId?: string }

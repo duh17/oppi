@@ -1052,7 +1052,7 @@ describe("SdkBackend lifecycle replacement transactions", () => {
     await reload;
   });
 
-  it.each(["newSession", "switchSession", "fork"] as const)(
+  it.each(["newSession", "fork"] as const)(
     "serializes %s behind reload",
     async (method) => {
       const reloadGate = deferred<void>();
@@ -1066,7 +1066,6 @@ describe("SdkBackend lifecycle replacement transactions", () => {
       const runtime = {
         session: piSession,
         newSession: runtimeCall,
-        switchSession: runtimeCall,
         fork: runtimeCall,
         dispose: vi.fn(async () => undefined),
       };
@@ -1080,12 +1079,7 @@ describe("SdkBackend lifecycle replacement transactions", () => {
       await flushMicrotasks();
       expect(piSession.reload).toHaveBeenCalledOnce();
 
-      const replacement =
-        method === "newSession"
-          ? backend.newSession()
-          : method === "switchSession"
-            ? backend.switchSession("/tmp/next.jsonl")
-            : backend.fork("entry-1");
+      const replacement = method === "newSession" ? backend.newSession() : backend.fork("entry-1");
       await flushMicrotasks();
       expect(runtimeCall).not.toHaveBeenCalled();
 

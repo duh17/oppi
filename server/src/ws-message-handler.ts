@@ -167,7 +167,6 @@ export class WsMessageHandler {
       case "compact":
       case "set_auto_compaction":
       case "fork":
-      case "switch_session":
       case "set_steering_mode":
       case "set_follow_up_mode":
       case "set_auto_retry":
