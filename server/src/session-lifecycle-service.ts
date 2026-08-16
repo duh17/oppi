@@ -32,12 +32,15 @@ import { createLogger } from "./logger.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { deleteSessionAttachments } from "./session-attachments.js";
+import {
+  DEFAULT_SESSION_JSONL_META_READ_BYTES,
+  readSessionJsonlMeta,
+} from "./session-jsonl-meta.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
 import type { ChatAttachmentRef, ControlSessionMetadata, Session, Workspace } from "./types.js";
 import { resolveWorkspaceWorktree, WorkspaceWorktreeError } from "./worktrees.js";
 
-const LOCAL_SESSION_META_READ_BYTES = 16_384;
 const CONTROL_LAUNCH_LEASE_OWNER = "control-session-create";
 const CONTROL_LAUNCH_LEASE_TTL_MS = 2 * 60_000;
 
@@ -903,46 +906,16 @@ export class SessionLifecycleService {
   private async readLocalSessionMeta(
     filePath: string,
   ): Promise<{ name?: string; firstMessage?: string } | null> {
-    try {
-      const content = (await readFile(filePath, "utf8")).slice(0, LOCAL_SESSION_META_READ_BYTES);
-      const lines = content.split("\n");
-      let name: string | undefined;
-      let firstMessage: string | undefined;
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let entry: Record<string, unknown>;
-        try {
-          entry = JSON.parse(line) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        if (entry.type === "session_info") {
-          const n = entry.name;
-          if (typeof n === "string" && n.trim()) name = n.trim();
-        }
-        if (!firstMessage && entry.type === "message") {
-          const msg = entry.message as Record<string, unknown> | undefined;
-          if (msg?.role === "user") {
-            const c = msg.content;
-            if (typeof c === "string") firstMessage = c;
-            else if (Array.isArray(c)) {
-              const t = c.find(
-                (x: unknown) =>
-                  typeof x === "object" &&
-                  x !== null &&
-                  (x as Record<string, unknown>).type === "text",
-              ) as { text?: string } | undefined;
-              if (t?.text) firstMessage = t.text;
-            }
-          }
-        }
-        if (name && firstMessage) break;
-      }
-      return { name, firstMessage };
-    } catch {
-      return null;
-    }
+    // Import keeps the raw firstMessage. Call sites slice to 200 for storage
+    // and 80 for the fallback session name; truncation is not a file-format rule.
+    // The shared reader uses a 16KB byte budget instead of reading the whole
+    // file and slicing the decoded string, which matches the documented cap.
+    const meta = readSessionJsonlMeta(filePath, {
+      maxBytes: DEFAULT_SESSION_JSONL_META_READ_BYTES,
+      stopWhen: ["name", "firstMessage"],
+    });
+    if (!meta.name && !meta.firstMessage) return null;
+    return { name: meta.name, firstMessage: meta.firstMessage };
   }
 
   private async collectExistingSessionJsonlPaths(session: Session): Promise<string[]> {

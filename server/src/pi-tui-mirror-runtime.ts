@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { closeSync, existsSync, openSync, readSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -53,6 +53,7 @@ import { composeModelId } from "./session-state.js";
 import { SessionBroadcaster, type SessionCatchUpResponse } from "./session-broadcast.js";
 import { SessionEventProcessor } from "./session-events.js";
 import { SessionInputCoordinator } from "./session-input.js";
+import { readSessionJsonlMeta } from "./session-jsonl-meta.js";
 import {
   assertQueueBaseVersion,
   cloneQueueState,
@@ -265,29 +266,13 @@ function firstUserMessageFromSessionFile(path: string | undefined): string | und
   const file = canonicalSessionFilePath(path);
   if (!file || !existsSync(file)) return undefined;
 
-  let fd: number | undefined;
-  try {
-    fd = openSync(file, "r");
-    const buffer = Buffer.alloc(1024 * 1024);
-    const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
-    const lines = buffer.toString("utf8", 0, bytesRead).split("\n");
-    for (const line of lines) {
-      const trimmedLine = line.trim();
-      if (!trimmedLine) continue;
-      const parsed = JSON.parse(trimmedLine) as unknown;
-      const record = asRecord(parsed);
-      const message = asRecord(record?.message) ?? record;
-      if (message?.role !== "user") continue;
-      const text = extractQueuedUserText(message).trim();
-      if (text) return text.slice(0, 200);
-    }
-  } catch {
-    return undefined;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-
-  return undefined;
+  // Mirror keeps path canonicalization and a 1MB budget so a late first
+  // user line still backfills titles. The 200-char cap matches Session.firstMessage.
+  return readSessionJsonlMeta(file, {
+    maxBytes: 1024 * 1024,
+    firstMessageMaxChars: 200,
+    stopWhen: ["firstMessage"],
+  }).firstMessage;
 }
 
 function bridgeProtocolVersionDiagnostic(value: unknown): {

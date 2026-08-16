@@ -21,6 +21,10 @@ import {
 import { stat, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
+import {
+  DEFAULT_SESSION_JSONL_META_READ_BYTES,
+  readSessionJsonlMeta,
+} from "./session-jsonl-meta.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import type { LocalSession, Session } from "./types.js";
 
@@ -176,100 +180,40 @@ function readSessionHeader(filePath: string): SessionHeaderData | null {
  * Extract session name, first user message, model, and approximate
  * message count from a JSONL file.
  *
- * Performance: reads only the first 16KB of the file (enough for
- * header + first few events) rather than the entire file. For message
- * count, uses file size as a heuristic (actual count requires full read).
+ * Shared reader owns JSONL parsing. This catalog path keeps the 16KB
+ * budget, the 200-char firstMessage preview, and the size heuristic
+ * because those are discovery extras, not file-format rules.
  */
 async function extractSessionMetadata(
   filePath: string,
   fileSize: number,
 ): Promise<{ name?: string; firstMessage?: string; model?: string; messageCount: number }> {
-  try {
-    // Read first 16KB — enough for session header, model_change, session_info, first message
-    const fd = openSync(filePath, "r");
-    const chunkSize = Math.min(fileSize, 16384);
-    const buffer = Buffer.alloc(chunkSize);
-    const bytesRead = readSync(fd, buffer, 0, chunkSize, 0);
-    closeSync(fd);
+  const maxBytes = Math.min(fileSize, DEFAULT_SESSION_JSONL_META_READ_BYTES);
+  const meta = readSessionJsonlMeta(filePath, {
+    maxBytes,
+    firstMessageMaxChars: 200,
+    stopWhen: ["firstMessage", "model"],
+  });
 
-    const chunk = buffer.toString("utf8", 0, bytesRead);
-    const lines = chunk.split("\n");
+  let messageCount = meta.messageCount;
 
-    let name: string | undefined;
-    let firstMessage: string | undefined;
-    let model: string | undefined;
-    let messageCount = 0;
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-
-      let entry: Record<string, unknown>;
-      try {
-        entry = JSON.parse(line) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-
-      // Session name
-      if (entry.type === "session_info") {
-        const n = entry.name;
-        if (typeof n === "string" && n.trim().length > 0) {
-          name = n.trim();
-        }
-      }
-
-      // Model (use first found in chunk)
-      if (entry.type === "model_change" && !model) {
-        const provider = entry.provider;
-        const modelId = entry.modelId;
-        if (typeof provider === "string" && typeof modelId === "string") {
-          model = modelId.startsWith(`${provider}/`) ? modelId : `${provider}/${modelId}`;
-        }
-      }
-
-      // Messages
-      if (entry.type === "message") {
-        const msg = entry.message as Record<string, unknown> | undefined;
-        if (msg && typeof msg.role === "string") {
-          if (msg.role === "user" || msg.role === "assistant") {
-            messageCount++;
-          }
-          if (!firstMessage && msg.role === "user") {
-            const content = msg.content;
-            if (typeof content === "string") {
-              firstMessage = content.slice(0, 200);
-            } else if (Array.isArray(content)) {
-              const text = content.find(
-                (c: unknown) =>
-                  typeof c === "object" &&
-                  c !== null &&
-                  (c as Record<string, unknown>).type === "text",
-              ) as { text?: string } | undefined;
-              if (text?.text) {
-                firstMessage = text.text.slice(0, 200);
-              }
-            }
-          }
-        }
-      }
-
-      // Early exit once we have everything we need from the head
-      if (firstMessage && model) break;
-    }
-
-    // Estimate message count from file size if we only read a chunk
-    // Average JSONL line for a message event is ~1-2KB
-    if (fileSize > chunkSize) {
-      const avgLineSize = chunkSize / Math.max(lines.length, 1);
-      const estimatedTotalLines = Math.round(fileSize / avgLineSize);
-      // Roughly 40% of lines are message events in a typical session
-      messageCount = Math.max(messageCount, Math.round(estimatedTotalLines * 0.4));
-    }
-
-    return { name, firstMessage, model, messageCount };
-  } catch {
-    return { messageCount: 0 };
+  // Estimate message count from file size if we only read a chunk.
+  // Average JSONL line for a message event is ~1-2KB.
+  // Skip the heuristic when the head read failed so an unreadable file
+  // stays at messageCount 0 instead of inventing a count from empty lines.
+  if (fileSize > maxBytes && meta.scannedBytes > 0) {
+    const avgLineSize = maxBytes / Math.max(meta.scannedLineCount, 1);
+    const estimatedTotalLines = Math.round(fileSize / avgLineSize);
+    // Roughly 40% of lines are message events in a typical session
+    messageCount = Math.max(messageCount, Math.round(estimatedTotalLines * 0.4));
   }
+
+  return {
+    name: meta.name,
+    firstMessage: meta.firstMessage,
+    model: meta.model,
+    messageCount,
+  };
 }
 
 // ── Per-file mtime cache ──
