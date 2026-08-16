@@ -74,7 +74,7 @@ final class ConnectionCoordinator {
     private let disconnectedSentinel = ServerConnection()
 
     /// Single-flight task for `refreshAllServers()` — prevents concurrent
-    /// refresh races between WorkspaceHomeView `.task` and `reconnectOnLaunch`.
+    /// refresh races between inbox/root `.task` and `reconnectOnLaunch`.
     private var refreshAllTask: Task<Void, Never>?
 
     #if DEBUG
@@ -875,7 +875,7 @@ final class ConnectionCoordinator {
     ///
     /// Uses single-flight coalescing: concurrent callers share one refresh
     /// cycle. Prevents the double-refresh race between `OppiApp.reconnectOnLaunch`
-    /// and `WorkspaceHomeView.task` from overwriting freshness state.
+    /// and inbox/root `.task` from overwriting freshness state.
     func refreshAllServers() async {
         if let inFlight = refreshAllTask {
             await inFlight.value

@@ -200,7 +200,7 @@ struct OnboardingView: View {
 
             switch mode {
             case .initial:
-                // Signal WorkspaceHomeView to auto-present create flow
+                // Signal the workspace root to auto-present create flow
                 // after workspaces load (if the server has none).
                 navigation.shouldGuideWorkspaceCreation = true
                 navigation.selectedTab = .workspaces

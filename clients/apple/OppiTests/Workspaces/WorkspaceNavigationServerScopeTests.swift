@@ -351,7 +351,10 @@ struct WorkspaceNavigationServerScopeTests {
                 get: { navigation.workspacePath },
                 set: { navigation.workspacePath = $0 }
             )) {
-                WorkspaceHomeView()
+                SessionInboxView()
+                    .navigationDestination(for: WorkspaceNavTarget.self) { target in
+                        WorkspaceScopedDestinationView(target: target)
+                    }
             }
             .environment(coordinator)
             .environment(connection)
