@@ -923,6 +923,7 @@
 		C3B0198EB8D40EC5B45D9C8B /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DD77BDE6A67F9FFC42DD099 /* QRScannerView.swift */; };
 		C3B2258662B5E6DFD53C3990 /* ReviewCommentStashUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD168A5E9B727B98E7C2575D /* ReviewCommentStashUITests.swift */; };
 		C3E030FFCD04C9CCA56B5339 /* ToolExpandScrollMatrixTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4516C9286DCEB62A516CDE8D /* ToolExpandScrollMatrixTests.swift */; };
+		C425992EBC7CF62F23459142 /* TimelineReducerRecoveredThinkingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 252E234C474F5A173CD9CFB9 /* TimelineReducerRecoveredThinkingTests.swift */; };
 		C42D72514578847F4E0F4FDF /* AgentIconValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5ABFDA3CD1FC51FB66CE0A5 /* AgentIconValue.swift */; };
 		C439108133DE02C954DCBDEF /* APIClient+ServerResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01D7674804F7497F458D0846 /* APIClient+ServerResources.swift */; };
 		C4ADA649A5EAE019912A4227 /* ServerViewSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F08483EB16EB870ECD9B8DC0 /* ServerViewSelectionTests.swift */; };
@@ -1442,6 +1443,7 @@
 		24F80637EB2D077A3410259D /* DeviceAuthSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthSession.swift; sourceTree = "<group>"; };
 		25244FDF00164BE12FDACE6E /* ImageAttachment+UIKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ImageAttachment+UIKit.swift"; sourceTree = "<group>"; };
 		252668A2818D83CF2622BA9B /* VoiceInputRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputRouting.swift; sourceTree = "<group>"; };
+		252E234C474F5A173CD9CFB9 /* TimelineReducerRecoveredThinkingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReducerRecoveredThinkingTests.swift; sourceTree = "<group>"; };
 		2538F87D78752BAA4B634D5A /* LocalServerTrustDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalServerTrustDelegate.swift; sourceTree = "<group>"; };
 		25711154EFC224B8FE7389BE /* MathNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathNode.swift; sourceTree = "<group>"; };
 		25832C3D5A1994403B773C4C /* AskRequestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskRequestTests.swift; sourceTree = "<group>"; };
@@ -3220,6 +3222,7 @@
 				6125E0158C3B9818B5FB97FF /* TimelineReducerImageOrphanTests.swift */,
 				51844A88F73A4E0B0B9BD90D /* TimelineReducerInvariantTests.swift */,
 				0AF15FEA62F07EC2775F47F0 /* TimelineReducerLoadTests.swift */,
+				252E234C474F5A173CD9CFB9 /* TimelineReducerRecoveredThinkingTests.swift */,
 				7BD0B82407A341F0CBA509C3 /* TimelineReducerStreamingTests.swift */,
 				83AAAD99A3A3E9CB40BC150A /* TimelineReducerTests.swift */,
 				4C7153BAC2F728C87542A18B /* TimelineReducerToolTests.swift */,
@@ -5420,6 +5423,7 @@
 				5973187F170F46427B342E5E /* TimelineReducerImageOrphanTests.swift in Sources */,
 				7B160589723C3628E0A8F730 /* TimelineReducerInvariantTests.swift in Sources */,
 				FD739F73C320D969CD3A47CA /* TimelineReducerLoadTests.swift in Sources */,
+				C425992EBC7CF62F23459142 /* TimelineReducerRecoveredThinkingTests.swift in Sources */,
 				DF326CECDEEFEB75EF6D8DAB /* TimelineReducerStreamingTests.swift in Sources */,
 				C9EA3355EF3619689F4EE0DF /* TimelineReducerTests.swift in Sources */,
 				4A9B75F6751FB350A09918A1 /* TimelineReducerToolTests.swift in Sources */,

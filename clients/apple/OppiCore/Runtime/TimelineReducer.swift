@@ -86,6 +86,15 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private var assistantIDsThisMessage: [String] = []
     private var thinkingIDsThisMessage: [String] = []
 
+    /// First item index that may hold live rows for the current assistant
+    /// message. Rows below this index are authoritative history (trace loads,
+    /// already-reconciled messages) and must never be adopted, removed, or
+    /// moved by message_end reconciliation. Advanced to the current item count
+    /// at each message_end boundary, full timeline rebuild, and reset — but
+    /// deliberately not at agentStart, so a late-flushed text delta processed
+    /// before its agentStart still belongs to the incoming message.
+    private var messageRegionStart = 0
+
     /// The item ID currently being rendered in streaming mode.
     /// Non-nil while deltas arrive AND during tool-call gaps within a turn.
     /// This prevents MarkdownText from switching to finalizedBody (cache miss
@@ -298,6 +307,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         items.removeAll()
         itemIndex.clear()
         clearTurnBuffers()
+        messageRegionStart = 0
         currentCompactionItemID = nil
         liveEventReplayBuffer = nil
         itemsMutationSeq = 0
@@ -402,6 +412,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
             loadedTraceEvents.append(contentsOf: events[appendStart...])
             loadedTraceEventIDs.append(contentsOf: events[appendStart...].map(\.id))
+            messageRegionStart = items.count
             bumpRenderVersion()
             timelineMatchesTrace = true
 
@@ -491,6 +502,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if !orphanedUserMessages.isEmpty {
             rebuildIndex()
         }
+        messageRegionStart = items.count
         bumpRenderVersion()
         // If we preserved orphans, the timeline no longer exactly matches the
         // trace — force a full rebuild on the next loadSession so the orphans
@@ -1420,6 +1432,16 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     /// Remove a specific item by ID (e.g., retract optimistic user message on send failure).
     func removeItem(id: String) {
+        // Removing a row below messageRegionStart shifts every later index
+        // (including the first live row) one position left. Keep the adoption
+        // region boundary aligned with the same rows so message_end
+        // reconciliation still sees the first live row.
+        let removedBelowRegion = items.indices.lazy
+            .filter { self.items[$0].id == id && $0 < self.messageRegionStart }
+            .count
+        if removedBelowRegion > 0 {
+            messageRegionStart -= removedBelowRegion
+        }
         items.removeAll { $0.id == id }
         itemIndex.remove(id: id)
         rebuildIndex()
@@ -1523,12 +1545,30 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let existingByID = Dictionary(uniqueKeysWithValues: items.compactMap { item in
             targetIDs.contains(item.id) ? (item.id, item) : nil
         })
-        let insertionIndex = items.indices
-            .filter { targetIDs.contains(items[$0].id) }
-            .min() ?? items.endIndex
 
         var reusableAssistantIDs = assistantIDsThisMessage
         var reusableThinkingIDs = thinkingIDsThisMessage
+
+        // Live rows for the current message that were never registered in the
+        // per-message ID arrays — busy re-entry and catch-up replay deliver
+        // deltas without agentStart, so the arrays stay empty. Adopt those
+        // rows by content so the authoritative projection reuses them instead
+        // of minting duplicates. `messageRegionStart` bounds the pool: rows
+        // before it are history and must never be adopted or moved.
+        var adoptedIDs: Set<String> = []
+        var adoptionCandidates: [ChatItem] = []
+        if messageRegionStart < items.count {
+            for item in items[messageRegionStart...] {
+                guard !targetIDs.contains(item.id) else { continue }
+                switch item {
+                case .assistantMessage, .thinking:
+                    adoptionCandidates.append(item)
+                default:
+                    break
+                }
+            }
+        }
+
         var authoritativeItems: [ChatItem] = []
         authoritativeItems.reserveCapacity(parts.count)
 
@@ -1537,13 +1577,29 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             case "text":
                 guard let text = part.content,
                       !StringFastChecks.isEffectivelyEmpty(text) else { continue }
-                let id = reusableAssistantIDs.isEmpty
-                    ? UUID().uuidString
-                    : reusableAssistantIDs.removeFirst()
+                let id: String
                 let timestamp: Date
-                if case .assistantMessage(_, _, let existingTimestamp)? = existingByID[id] {
-                    timestamp = existingTimestamp
+                if !reusableAssistantIDs.isEmpty {
+                    id = reusableAssistantIDs.removeFirst()
+                    if case .assistantMessage(_, _, let existingTimestamp)? = existingByID[id] {
+                        timestamp = existingTimestamp
+                    } else {
+                        timestamp = Date()
+                    }
+                } else if let adopted = adoptLiveRow(
+                    from: &adoptionCandidates,
+                    matchingText: text,
+                    assistantKind: true
+                ) {
+                    id = adopted.id
+                    adoptedIDs.insert(id)
+                    if case .assistantMessage(_, _, let existingTimestamp) = adopted {
+                        timestamp = existingTimestamp
+                    } else {
+                        timestamp = Date()
+                    }
                 } else {
+                    id = UUID().uuidString
                     timestamp = Date()
                 }
                 authoritativeItems.append(TimelineTurnAssembler.makeAssistantItem(
@@ -1557,9 +1613,19 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                       !thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     continue
                 }
-                let id = reusableThinkingIDs.isEmpty
-                    ? UUID().uuidString
-                    : reusableThinkingIDs.removeFirst()
+                let id: String
+                if !reusableThinkingIDs.isEmpty {
+                    id = reusableThinkingIDs.removeFirst()
+                } else if let adopted = adoptLiveRow(
+                    from: &adoptionCandidates,
+                    matchingText: thinking,
+                    assistantKind: false
+                ) {
+                    id = adopted.id
+                    adoptedIDs.insert(id)
+                } else {
+                    id = UUID().uuidString
+                }
                 authoritativeItems.append(TimelineTurnAssembler.makeThinkingItem(
                     id: id,
                     preview: thinking,
@@ -1581,7 +1647,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
 
         guard !targetIDs.isEmpty || !authoritativeItems.isEmpty else { return }
-        items.removeAll { targetIDs.contains($0.id) }
+        let removalIDs = targetIDs.union(adoptedIDs)
+        let insertionIndex = items.indices
+            .filter { removalIDs.contains(items[$0].id) }
+            .min() ?? items.endIndex
+        items.removeAll { removalIDs.contains($0.id) }
         items.insert(contentsOf: authoritativeItems, at: min(insertionIndex, items.endIndex))
         rebuildIndex()
         bumpItemsMutationSeq()
@@ -1591,10 +1661,40 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         })?.id
     }
 
+    /// Reuse an unregistered live row whose content matches an authoritative
+    /// part. Exact (trimmed) content match only: adopting a merely similar row
+    /// could rewrite real history, while leaving a partial-stream row for the
+    /// message_end aggregate path's own content semantics.
+    private func adoptLiveRow(
+        from candidates: inout [ChatItem],
+        matchingText text: String,
+        assistantKind: Bool
+    ) -> ChatItem? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        for (index, item) in candidates.enumerated() {
+            let candidateText: String
+            switch item {
+            case .assistantMessage(_, let rowText, _) where assistantKind:
+                candidateText = rowText
+            case .thinking(_, let preview, _, _) where !assistantKind:
+                candidateText = preview
+            default:
+                continue
+            }
+            if candidateText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed {
+                candidates.remove(at: index)
+                return item
+            }
+        }
+        return nil
+    }
+
     private func clearCurrentAssistantMessageTracking() {
         currentAssistantContentIndex = nil
         assistantIDsThisMessage.removeAll(keepingCapacity: true)
         thinkingIDsThisMessage.removeAll(keepingCapacity: true)
+        messageRegionStart = items.count
     }
 
     /// Returns true when an indexed delta starts a distinct assistant text run.
