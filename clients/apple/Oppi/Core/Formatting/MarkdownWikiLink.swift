@@ -464,6 +464,85 @@ enum ResourceFileCandidatePolicy {
     }
 }
 
+/// Deterministic outcome of one exact parent-directory listing for a wiki-link
+/// file candidate. `.absent` means the server answered and the file is not in
+/// that checkout; `.truncated` and `.unavailable` cannot prove either way.
+enum ExactFileListingOutcome: Equatable, Sendable {
+    case present
+    case absent
+    case truncated
+    case unavailable
+}
+
+enum WorkspaceWikiLinkFileLookupPolicy {
+    /// A 404 from the directory-listing endpoint is a deterministic "this
+    /// checkout has no such parent directory", not a transient failure. The
+    /// client treats it as absence instead of surfacing "right now".
+    static func isDeterministicAbsence(_ error: Error) -> Bool {
+        guard let apiError = error as? APIError else { return false }
+        switch apiError {
+        case .server(status: 404, message: _), .codedServer(status: 404, message: _, code: _):
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Checkout an exact wiki-link file lookup should list first.
+    ///
+    /// `sourceSessionResolved` is true only when the reference's source session
+    /// is present in the in-memory store AND belongs to the target workspace. A
+    /// missing or foreign source session means the checkout is unknown, so the
+    /// lookup lists the main checkout (`nil`) rather than failing closed: a
+    /// gitignored workspace file (for example `.pi/skills/...`) may exist only
+    /// on the main checkout.
+    static func firstCheckout(
+        sourceSessionResolved: Bool,
+        sourceSessionWorktreeID: String?
+    ) -> String? {
+        guard sourceSessionResolved else { return nil }
+        return sourceSessionWorktreeID
+    }
+
+    /// A git-ignored workspace file (for example `.pi/skills/...`) is not
+    /// checked out into a fresh worktree. When a non-main worktree lookup is a
+    /// deterministic absence, fall back to the main checkout for the same
+    /// workspace-relative path. Truncated listings and transient failures stay
+    /// "right now" because they cannot prove the file is absent.
+    static func shouldFallBackToMainCheckout(
+        worktreeID: String?,
+        outcome: ExactFileListingOutcome
+    ) -> Bool {
+        guard let worktreeID,
+              !worktreeID.isEmpty,
+              worktreeID != "main" else {
+            return false
+        }
+        return outcome == .absent
+    }
+
+    /// Combined checkout decision for one exact wiki-link file lookup.
+    ///
+    /// A missing or foreign source session lists the main checkout instead of
+    /// failing closed as "right now". A worktree listing that is deterministically
+    /// absent then retries the same workspace-relative path on main, so a
+    /// gitignored file such as `.pi/skills/...` can still open.
+    static func resolvedCheckout(
+        sourceSessionResolved: Bool,
+        sourceSessionWorktreeID: String?,
+        firstOutcome: ExactFileListingOutcome
+    ) -> String? {
+        let first = firstCheckout(
+            sourceSessionResolved: sourceSessionResolved,
+            sourceSessionWorktreeID: sourceSessionWorktreeID
+        )
+        if shouldFallBackToMainCheckout(worktreeID: first, outcome: firstOutcome) {
+            return nil
+        }
+        return first
+    }
+}
+
 /// Client-local URL for unresolved resource references.
 /// The URL is never sent to the server.
 enum ResourceReferenceURL {

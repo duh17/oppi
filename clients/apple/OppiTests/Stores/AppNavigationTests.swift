@@ -1464,3 +1464,107 @@ struct AppNavigationShellRoutingTests {
         return navigation
     }
 }
+
+@Suite("Workspace wiki-link file lookup policy")
+struct WorkspaceWikiLinkFileLookupPolicyTests {
+    @Test func deterministicAbsenceRecognizesOnly404DirectoryListings() {
+        #expect(WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(
+            APIError.server(status: 404, message: "Directory not found")
+        ))
+        #expect(WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(
+            APIError.codedServer(status: 404, message: "Directory not found", code: "not_found")
+        ))
+        #expect(!WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(
+            APIError.server(status: 500, message: "boom")
+        ))
+        #expect(!WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(
+            APIError.codedServer(status: 500, message: "boom", code: "internal")
+        ))
+        #expect(!WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(
+            APIError.invalidResponse
+        ))
+        #expect(!WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(
+            URLError(.timedOut)
+        ))
+    }
+
+    @Test func worktreeAbsenceFallsBackToMainCheckout() {
+        #expect(WorkspaceWikiLinkFileLookupPolicy.shouldFallBackToMainCheckout(
+            worktreeID: "wt_feature",
+            outcome: .absent
+        ))
+        #expect(!WorkspaceWikiLinkFileLookupPolicy.shouldFallBackToMainCheckout(
+            worktreeID: "wt_feature",
+            outcome: .present
+        ))
+        #expect(!WorkspaceWikiLinkFileLookupPolicy.shouldFallBackToMainCheckout(
+            worktreeID: "wt_feature",
+            outcome: .truncated
+        ))
+        #expect(!WorkspaceWikiLinkFileLookupPolicy.shouldFallBackToMainCheckout(
+            worktreeID: "wt_feature",
+            outcome: .unavailable
+        ))
+    }
+
+    @Test func mainCheckoutAndMissingWorktreeNeverFallBack() {
+        #expect(!WorkspaceWikiLinkFileLookupPolicy.shouldFallBackToMainCheckout(
+            worktreeID: nil,
+            outcome: .absent
+        ))
+        #expect(!WorkspaceWikiLinkFileLookupPolicy.shouldFallBackToMainCheckout(
+            worktreeID: "main",
+            outcome: .absent
+        ))
+        #expect(!WorkspaceWikiLinkFileLookupPolicy.shouldFallBackToMainCheckout(
+            worktreeID: "",
+            outcome: .absent
+        ))
+    }
+
+    @Test func missingOrForeignSourceSessionListsMainCheckout() {
+        // The reported hole: a wiki-link tap whose source session is absent
+        // from the in-memory store (or belongs to another workspace) must not
+        // fail closed as "right now". It must list the main checkout (nil).
+        #expect(WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
+            sourceSessionResolved: false,
+            sourceSessionWorktreeID: nil
+        ) == nil)
+        #expect(WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
+            sourceSessionResolved: false,
+            sourceSessionWorktreeID: "wt_feature"
+        ) == nil)
+    }
+
+    @Test func resolvedSourceSessionKeepsItsCheckout() {
+        #expect(WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
+            sourceSessionResolved: true,
+            sourceSessionWorktreeID: "wt_feature"
+        ) == "wt_feature")
+        #expect(WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
+            sourceSessionResolved: true,
+            sourceSessionWorktreeID: nil
+        ) == nil)
+    }
+
+    @Test func missingSourceSessionStillListsExistingMainCheckoutSkillFile() {
+        // The original toast: tap [[.pi/skills/...#L103-L123]] from a rendered
+        // chat whose source session is not in memory. Lookup must still list
+        // the main checkout instead of returning unavailable / "right now".
+        let checkout = WorkspaceWikiLinkFileLookupPolicy.resolvedCheckout(
+            sourceSessionResolved: false,
+            sourceSessionWorktreeID: "wt_feature",
+            firstOutcome: .unavailable
+        )
+        #expect(checkout == nil)
+    }
+
+    @Test func worktreeAbsenceResolvesToMainCheckoutForExistingSkillFile() {
+        let checkout = WorkspaceWikiLinkFileLookupPolicy.resolvedCheckout(
+            sourceSessionResolved: true,
+            sourceSessionWorktreeID: "wt_feature",
+            firstOutcome: .absent
+        )
+        #expect(checkout == nil)
+    }
+}

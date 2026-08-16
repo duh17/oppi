@@ -685,7 +685,17 @@ struct OppiApp: App {
         let sessionMatches = reference.lineAnchor == nil
             ? knownSessionMatches(for: reference.target)
             : []
-        let fileLookup = await currentFileMatches(for: reference)
+        let fileLookup: ResourceReferenceFileLookup
+        do {
+            fileLookup = try await currentFileMatches(for: reference)
+        } catch is CancellationError {
+            // A superseded tap is dropped rather than surfaced as "right now".
+            return
+        } catch {
+            // Host-file lookup never throws; unexpected workspace throws stay
+            // "right now" instead of looking like a true unresolved file.
+            fileLookup = .unavailable
+        }
         guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
 
         switch ResourceReferenceCandidateCollector.resolve(
@@ -733,12 +743,12 @@ struct OppiApp: App {
     @MainActor
     private func currentFileMatches(
         for reference: ResourceReference
-    ) async -> ResourceReferenceFileLookup {
+    ) async throws -> ResourceReferenceFileLookup {
         switch ResourceReferenceFileLookupPolicy.kind(for: reference) {
         case .hostFile:
             return await currentHostFileMatches(for: reference)
         case .workspaceFile:
-            return await currentWorkspaceFileMatches(for: reference)
+            return try await currentWorkspaceFileMatches(for: reference)
         }
     }
 
@@ -790,7 +800,7 @@ struct OppiApp: App {
     @MainActor
     private func currentWorkspaceFileMatches(
         for reference: ResourceReference
-    ) async -> ResourceReferenceFileLookup {
+    ) async throws -> ResourceReferenceFileLookup {
         guard reference.kind == .workspaceFile,
               let workspaceID = reference.workspaceID,
               let fileCandidatePath = reference.fileCandidatePath else {
@@ -817,39 +827,67 @@ struct OppiApp: App {
         var matches: [ResourceReferenceMatch] = []
         for scope in scopes {
             guard let apiClient = scope.connection.apiClient else { return .unavailable }
-            let worktreeID: String?
-            if let sourceSessionID = reference.sourceSessionID {
-                guard let sourceSession = scope.connection.sessionStore.session(id: sourceSessionID),
-                      sourceSession.workspaceId == workspaceID else {
-                    return .unavailable
-                }
-                worktreeID = sourceSession.worktreeId
-            } else {
-                worktreeID = nil
-            }
 
-            do {
-                guard let fileExists = try await exactFileListingResult(
+            // Resolve the source session's checkout. A missing or foreign
+            // source session means the checkout is unknown: list the main
+            // checkout (nil) instead of failing closed, because a gitignored
+            // workspace file (for example `.pi/skills/...`) may exist only on
+            // the main checkout.
+            let sourceSessionResolved: Bool
+            let sourceSessionWorktreeID: String?
+            if let sourceSessionID = reference.sourceSessionID,
+               let sourceSession = scope.connection.sessionStore.session(id: sourceSessionID),
+               sourceSession.workspaceId == workspaceID {
+                sourceSessionResolved = true
+                sourceSessionWorktreeID = sourceSession.worktreeId
+            } else {
+                sourceSessionResolved = false
+                sourceSessionWorktreeID = nil
+            }
+            let firstWorktreeID = WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
+                sourceSessionResolved: sourceSessionResolved,
+                sourceSessionWorktreeID: sourceSessionWorktreeID
+            )
+
+            var outcome = try await exactFileListingResult(
+                fileCandidatePath,
+                workspaceID: workspaceID,
+                worktreeID: firstWorktreeID,
+                apiClient: apiClient
+            )
+            let effectiveWorktreeID = WorkspaceWikiLinkFileLookupPolicy.resolvedCheckout(
+                sourceSessionResolved: sourceSessionResolved,
+                sourceSessionWorktreeID: sourceSessionWorktreeID,
+                firstOutcome: outcome
+            )
+
+            // A git-ignored workspace file (for example `.pi/skills/...`) is
+            // not checked out into a fresh worktree. If the worktree lookup is
+            // a deterministic absence, retry the same workspace-relative path
+            // against the main checkout before declaring the link unresolvable.
+            // The server's realpath sandbox still bounds both lookups.
+            if effectiveWorktreeID != firstWorktreeID {
+                outcome = try await exactFileListingResult(
                     fileCandidatePath,
                     workspaceID: workspaceID,
-                    worktreeID: worktreeID,
+                    worktreeID: effectiveWorktreeID,
                     apiClient: apiClient
-                ) else {
-                    return .unavailable
-                }
+                )
+            }
 
-                if fileExists {
-                    matches.append(.workspaceFile(WorkspaceFileResourceReference(
-                        serverID: scope.serverID,
-                        workspaceID: workspaceID,
-                        worktreeID: worktreeID,
-                        path: fileCandidatePath,
-                        workspaceName: scope.workspace.name,
-                        serverName: resourceReferenceServerName(scope.serverID)
-                    )))
-                }
-                try Task.checkCancellation()
-            } catch {
+            switch outcome {
+            case .present:
+                matches.append(.workspaceFile(WorkspaceFileResourceReference(
+                    serverID: scope.serverID,
+                    workspaceID: workspaceID,
+                    worktreeID: effectiveWorktreeID,
+                    path: fileCandidatePath,
+                    workspaceName: scope.workspace.name,
+                    serverName: resourceReferenceServerName(scope.serverID)
+                )))
+            case .absent:
+                break
+            case .truncated, .unavailable:
                 return .unavailable
             }
         }
@@ -863,21 +901,40 @@ struct OppiApp: App {
         workspaceID: String,
         worktreeID: String?,
         apiClient: APIClient
-    ) async throws -> Bool? {
+    ) async throws -> ExactFileListingOutcome {
         let fileName = (filePath as NSString).lastPathComponent
         let parent = (filePath as NSString).deletingLastPathComponent
         let directoryPath = parent.isEmpty || parent == "." ? "" : parent + "/"
-        let listing = try await apiClient.listWorkspaceDirectory(
-            workspaceId: workspaceID,
-            path: directoryPath,
-            worktreeId: worktreeID
-        )
+
+        let listing: DirectoryListingResponse
+        do {
+            listing = try await apiClient.listWorkspaceDirectory(
+                workspaceId: workspaceID,
+                path: directoryPath,
+                worktreeId: worktreeID
+            )
+        } catch {
+            // A superseded tap must stay silent: propagate cancellation instead
+            // of turning it into a transient "right now" failure.
+            try Task.checkCancellation()
+            return WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(error)
+                ? .absent
+                : .unavailable
+        }
+
         try Task.checkCancellation()
-        return ResourceFileCandidatePolicy.directoryResult(
+        switch ResourceFileCandidatePolicy.directoryResult(
             fileName: fileName,
             entries: listing.entries,
             truncated: listing.truncated
-        )
+        ) {
+        case .some(true):
+            return .present
+        case .some(false):
+            return .absent
+        case .none:
+            return .truncated
+        }
     }
 
     @MainActor
