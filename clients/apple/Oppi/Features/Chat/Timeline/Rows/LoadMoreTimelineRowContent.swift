@@ -51,11 +51,10 @@ final class LoadMoreTimelineRowContentView: UIView, UIContentView {
         addSubview(button)
 
         NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
-            button.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            button.centerXAnchor.constraint(equalTo: centerXAnchor),
-            button.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            button.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 

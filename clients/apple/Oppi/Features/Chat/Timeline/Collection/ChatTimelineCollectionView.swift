@@ -984,21 +984,43 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             gesture.view?.window?.endEditing(true)
         }
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            shouldReceiveTimelineGestureTouch(touch)
+            Self.shouldReceiveTimelineGestureTouch(from: touch.view)
         }
 
-        private func shouldReceiveTimelineGestureTouch(_ touch: UITouch) -> Bool {
-            var current = touch.view
+        // The timeline tap only dismisses the keyboard. It must yield to any
+        // interactive control so a control tap is owned by that control alone.
+        static func shouldReceiveTimelineGestureTouch(from view: UIView?) -> Bool {
+            var current = view
             while let candidate = current {
+                if candidate is UIControl { return false }
                 if let textView = candidate as? UITextView, textView.isSelectable { return false }
                 current = candidate.superview
             }
             return true
         }
+
+        private func shouldReceiveTimelineGestureTouch(_ touch: UITouch) -> Bool {
+            Self.shouldReceiveTimelineGestureTouch(from: touch.view)
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
+            shouldSelectItemAt indexPath: IndexPath
+        ) -> Bool {
+            guard indexPath.section == 0, indexPath.item < currentIDs.count else { return false }
+            // The load-more UIButton owns the reveal action. Collection
+            // selection must not become a second owner or a sticky highlight.
+            return currentIDs[indexPath.item] != ChatTimelineCollectionHost.loadMoreID
+        }
+
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
             guard indexPath.section == 0, indexPath.item < currentIDs.count else { return }
             let itemID = currentIDs[indexPath.item]
-            if itemID == ChatTimelineCollectionHost.loadMoreID || itemID == ChatTimelineCollectionHost.workingIndicatorID {
+            if itemID == ChatTimelineCollectionHost.loadMoreID {
+                collectionView.deselectItem(at: indexPath, animated: false)
+                return
+            }
+            if itemID == ChatTimelineCollectionHost.workingIndicatorID {
                 return
             }
 

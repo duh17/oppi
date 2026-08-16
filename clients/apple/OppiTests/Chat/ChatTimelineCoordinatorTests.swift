@@ -472,6 +472,93 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
+    @Test func loadMoreRowButtonCoversVisibleRowAndInvokesCallbackOnce() throws {
+        var callbackCount = 0
+        let harness = makeTimelineHarness(sessionId: "session-load-more")
+        let config = makeTimelineConfiguration(
+            items: [.systemEvent(id: "system-1", message: "Context compacted")],
+            hiddenCount: 196,
+            renderWindowStep: 60,
+            onShowEarlier: { callbackCount += 1 },
+            sessionId: "session-load-more",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+        harness.collectionView.layoutIfNeeded()
+
+        let cell = try configuredTimelineCell(in: harness.collectionView, item: 0)
+        let row = try #require(timelineFirstView(ofType: LoadMoreTimelineRowContentView.self, in: cell.contentView))
+        let button = try #require(timelineFirstView(ofType: UIButton.self, in: row))
+
+        #expect(button.title(for: .normal) == "Show 60 earlier messages (196 hidden)")
+        #expect(button.frame.minX == 0)
+        #expect(button.frame.minY == 0)
+        #expect(abs(button.frame.width - row.bounds.width) <= 1)
+        #expect(abs(button.frame.height - row.bounds.height) <= 1)
+
+        button.sendActions(for: .touchUpInside)
+        #expect(callbackCount == 1)
+    }
+
+    @MainActor
+    @Test func loadMoreRowSelectionIsNotASecondActionOwner() throws {
+        var callbackCount = 0
+        let harness = makeTimelineHarness(sessionId: "session-load-more-selection")
+        let config = makeTimelineConfiguration(
+            items: [.systemEvent(id: "system-1", message: "Context compacted")],
+            hiddenCount: 196,
+            renderWindowStep: 60,
+            onShowEarlier: { callbackCount += 1 },
+            sessionId: "session-load-more-selection",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+        harness.collectionView.layoutIfNeeded()
+        _ = try configuredTimelineCell(in: harness.collectionView, item: 0)
+
+        let indexPath = IndexPath(item: 0, section: 0)
+        #expect(
+            harness.coordinator.collectionView(
+                harness.collectionView,
+                shouldSelectItemAt: indexPath
+            ) == false
+        )
+
+        // Force a selected state the production shouldSelect path would refuse,
+        // then prove didSelect is a no-op that clears sticky selection.
+        harness.collectionView.selectItem(at: indexPath, animated: false, scrollPosition: [])
+        #expect(harness.collectionView.indexPathsForSelectedItems == [indexPath])
+
+        harness.coordinator.collectionView(
+            harness.collectionView,
+            didSelectItemAt: indexPath
+        )
+        #expect(callbackCount == 0)
+        #expect(harness.collectionView.indexPathsForSelectedItems?.isEmpty ?? true)
+    }
+
+    @MainActor
+    @Test func timelineKeyboardDismissGestureYieldsToControls() {
+        let button = UIButton(type: .system)
+        let textField = UITextField()
+        let label = UILabel()
+
+        #expect(!ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: button))
+        #expect(!ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: textField))
+        #expect(ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: label))
+    }
+
+    @MainActor
     @Test func tappingToolRowTogglesExpansionEvenWithoutMaterializedCell() {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let toolID = "tool-read-1"
