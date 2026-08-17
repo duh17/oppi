@@ -162,50 +162,6 @@ struct OrgToMarkdownConverterTests {
         #expect(tagStr.contains("tag2"))
     }
 
-    // MARK: - Folding
-
-    @Test func buildSectionTreeGroupsByHeadingLevel() {
-        let blocks = parser.parse("""
-        * Section 1
-        Body text
-        ** Subsection 1.1
-        Sub body
-        * Section 2
-        """)
-        let (sections, _) = buildOrgSectionTree(blocks)
-
-        #expect(sections.count == 2) // Two top-level sections
-        #expect(sections[0].children.count == 1) // Section 1 has one child
-        #expect(sections[1].children.count == 0)
-    }
-
-    @Test func startupOverviewSetsCorrectFoldState() {
-        let blocks = parser.parse("#+STARTUP: overview\n* Heading")
-        let (_, foldState) = buildOrgSectionTree(blocks)
-        #expect(foldState == .overview)
-    }
-
-    @Test func startupContentSetsCorrectFoldState() {
-        let blocks = parser.parse("#+STARTUP: content\n* Heading")
-        let (_, foldState) = buildOrgSectionTree(blocks)
-        #expect(foldState == .content)
-    }
-
-    @Test func startupNofoldSetsShowAll() {
-        let blocks = parser.parse("#+STARTUP: nofold\n* Heading")
-        let (_, foldState) = buildOrgSectionTree(blocks)
-        #expect(foldState == .showAll)
-    }
-
-    @Test func zerothSectionCapturedBeforeFirstHeading() {
-        let blocks = parser.parse("Some text before headings\n* First Heading")
-        let (sections, _) = buildOrgSectionTree(blocks)
-
-        #expect(sections.count == 2) // zeroth + heading
-        #expect(sections[0].heading == nil) // zeroth has no heading
-        #expect(!sections[0].bodyBlocks.isEmpty)
-    }
-
     // MARK: - Coverage: conversion branches
 
     @Test func convertCoversListAndKeywordFallbackBranches() {
@@ -263,64 +219,5 @@ struct OrgToMarkdownConverterTests {
             return
         }
         #expect(keywordText == "#+FOO: bar")
-    }
-
-    @Test func serializeDirectlySkipsEmptyOrUnsupportedBlocks() {
-        let markdown = OrgToMarkdownConverter.serializeDirectly([
-            .paragraph([.text("Visible")]),
-            .keyword(key: "OPTIONS", value: "toc:nil"), // skipped
-            .table(headers: [], rows: []), // skipped by guard
-            .drawer(name: "PROPERTIES", properties: [.init(key: "ID", value: "123")]), // skipped
-            .comment("hidden"), // skipped
-        ])
-
-        #expect(markdown == "Visible")
-    }
-
-    @Test func serializeDirectlyIncludesNonEmptyTable() {
-        let markdown = OrgToMarkdownConverter.serializeDirectly([
-            .table(
-                headers: [[.text("Name")], [.text("Score")]],
-                rows: [
-                    [[.text("Alice")], [.text("10")]],
-                ]
-            ),
-        ])
-
-        #expect(markdown.contains("| Name | Score |"))
-        #expect(markdown.contains("| --- | --- |"))
-        #expect(markdown.contains("| Alice | 10 |"))
-    }
-
-    @Test func serializeInlinesAndConvertSingleInlineHandleAllInlineKinds() {
-        let inlines: [OrgInline] = [
-            .text("plain"),
-            .bold([.text("bold")]),
-            .italic([.text("italic")]),
-            .underline([.text("under")]),
-            .verbatim("tick`value"),
-            .code("code"),
-            .strikethrough([.text("gone")]),
-            .link(url: "https://example.com", description: [.text("site")]),
-            .link(url: "https://oppi.dev", description: nil),
-        ]
-
-        let serialized = OrgToMarkdownConverter.serializeInlines(inlines)
-        #expect(serialized.contains("plain"))
-        #expect(serialized.contains("**bold**"))
-        #expect(serialized.contains("*italic*"))
-        #expect(serialized.contains("*under*"))
-        #expect(serialized.contains("`` tick`value ``"))
-        #expect(serialized.contains("`code`"))
-        #expect(serialized.contains("~~gone~~"))
-        #expect(serialized.contains("[site](https://example.com)"))
-
-        let underline = OrgToMarkdownConverter.convertSingleInline(.underline([.text("u")]))
-        #expect(underline == .emphasis([.text("u")]))
-
-        let bareLink = OrgToMarkdownConverter.convertSingleInline(
-            .link(url: "https://example.com", description: nil)
-        )
-        #expect(bareLink == .link(children: [.text("https://example.com")], destination: "https://example.com"))
     }
 }

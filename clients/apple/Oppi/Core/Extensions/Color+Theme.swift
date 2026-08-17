@@ -82,11 +82,6 @@ extension Color {
     static var themeSyntaxOperator: Color { palette.syntaxOperator }
     static var themeSyntaxPunctuation: Color { palette.syntaxPunctuation }
 
-    // MARK: - Semantic Markdown
-
-    // periphery:ignore - used by OrgFoldableView; Periphery misses this Color extension accessor
-    static var themeMdHeading: Color { palette.mdHeading }
-
     // MARK: - Semantic Diff
 
     static var themeDiffAdded: Color { palette.toolDiffAdded }

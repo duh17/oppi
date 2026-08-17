@@ -3,11 +3,11 @@ import Foundation
 @testable import Oppi
 
 /// Benchmarks for org mode rendering pipeline:
-/// OrgParser → buildOrgSectionTree → OrgToMarkdownConverter → MarkdownBlockSerializer → parseCommonMark.
+/// OrgParser → OrgToMarkdownConverter → MarkdownBlockSerializer → parseCommonMark.
 ///
 /// Measures the synchronous main-thread work that causes large-document app hangs.
 /// Each stage is timed independently; the total pipeline measures the combined cost
-/// of producing all MarkdownContentViewWrapper input strings for a document.
+/// of producing the markdown string used by OrgModeFileView.
 ///
 /// Test fixtures:
 /// - doom-getting-started.org: 1675 lines, 66KB, 95 headings (Doom Emacs docs)
@@ -90,48 +90,23 @@ struct OrgModePerfBench {
     private func runFullPipeline(doc: String, label: String) {
         let parser = OrgParser()
 
-        // Measure the complete synchronous work: parse + tree build (which now includes
-        // pre-computing body markdown groups). This matches the real code path in
-        // OrgModeFileView.task(id:) → buildOrgSectionTree → computeBodyGroups.
-        // Headings are rendered natively (no markdown roundtrip).
+        // Measure the complete synchronous work used by OrgModeFileView:
+        // parse → convert → serialize markdown.
         let totalNs = Self.medianNs {
             let blocks = parser.parse(doc)
-            let (sections, _) = buildOrgSectionTree(blocks)
-            Self.consume(sections)
+            let markdown = MarkdownBlockSerializer.serialize(OrgToMarkdownConverter.convert(blocks))
+            Self.consume(markdown)
         }
-        let totalUs = totalNs / 1000.0
-        print("METRIC org_full_pipeline_\(label)_us=\(String(format: "%.1f", totalUs))")
+        print("METRIC org_full_pipeline_\(label)_us=\(String(format: "%.1f", totalNs / 1000.0))")
 
-        // Secondary: parse only
         let parseNs = Self.medianNs {
             Self.consume(parser.parse(doc))
         }
         print("METRIC org_parse_\(label)_us=\(String(format: "%.1f", parseNs / 1000.0))")
 
-        // Secondary: tree build only
         let blocks = parser.parse(doc)
-        let treeNs = Self.medianNs {
-            Self.consume(buildOrgSectionTree(blocks))
-        }
-        print("METRIC org_tree_\(label)_us=\(String(format: "%.1f", treeNs / 1000.0))")
-
-        // Count MarkdownContentViewWrapper instances from pre-computed body groups
-        let (sections, _) = buildOrgSectionTree(blocks)
-        var wrapperCount = 0
-        func countWrappers(_ secs: [OrgSection]) {
-            for s in secs {
-                wrapperCount += s.precomputedBodyGroups.filter {
-                    if case .markdown = $0 { return true }; return false
-                }.count
-                countWrappers(s.children)
-            }
-        }
-        countWrappers(sections)
-
         let headingCount = blocks.filter { if case .heading = $0 { return true }; return false }.count
         let lineCount = doc.components(separatedBy: "\n").count
-
-        print("METRIC org_wrapper_count_\(label)=\(wrapperCount)")
         print("METRIC org_heading_count_\(label)=\(headingCount)")
         print("METRIC org_line_count_\(label)=\(lineCount)")
     }
@@ -156,126 +131,42 @@ struct OrgModePerfBench {
         )
     }
 
-    @Test("buildOrgSectionTree — Doom")
-    func treeBuildDoom() {
-        let blocks = OrgParser().parse(Self.doomDoc)
-        let ns = Self.medianNs {
-            Self.consume(buildOrgSectionTree(blocks))
-        }
-        print("METRIC org_tree_doom_us=\(String(format: "%.1f", ns / 1000.0))")
-    }
-
-    @Test("buildOrgSectionTree — org-manual")
-    func treeBuildOrgManual() {
-        let blocks = OrgParser().parse(Self.orgManualDoc)
-        let ns = Self.medianNs {
-            Self.consume(buildOrgSectionTree(blocks))
-        }
-        print("METRIC org_tree_org_manual_us=\(String(format: "%.1f", ns / 1000.0))")
-    }
-
-    @Test("Markdown conversion — Doom (all sections)")
+    @Test("Markdown conversion — Doom")
     func markdownConversionDoom() {
         runMarkdownConversion(doc: Self.doomDoc, label: "doom")
     }
 
-    @Test("Markdown conversion — org-manual (all sections)")
+    @Test("Markdown conversion — org-manual")
     func markdownConversionOrgManual() {
         runMarkdownConversion(doc: Self.orgManualDoc, label: "org_manual")
     }
 
     private func runMarkdownConversion(doc: String, label: String) {
         let blocks = OrgParser().parse(doc)
-        let (sections, _) = buildOrgSectionTree(blocks)
-
-        var allBodyGroups: [[OrgBlock]] = []
-        func collect(_ secs: [OrgSection]) {
-            for s in secs {
-                if !s.bodyBlocks.isEmpty { allBodyGroups.append(s.bodyBlocks) }
-                collect(s.children)
-            }
-        }
-        collect(sections)
-
         let ns = Self.medianNs {
-            for bodyBlocks in allBodyGroups {
-                let mdBlocks = OrgToMarkdownConverter.convert(bodyBlocks)
-                let md = MarkdownBlockSerializer.serialize(mdBlocks)
-                Self.consume(md)
-            }
+            let md = MarkdownBlockSerializer.serialize(OrgToMarkdownConverter.convert(blocks))
+            Self.consume(md)
         }
         print("METRIC org_md_conversion_\(label)_us=\(String(format: "%.1f", ns / 1000.0))")
-        print("METRIC org_body_group_count_\(label)=\(allBodyGroups.count)")
     }
 
-    @Test("CommonMark re-parse of all section markdown — Doom")
+    @Test("CommonMark re-parse of converted markdown — Doom")
     func commonmarkReParseDoom() {
         runCommonMarkReparse(doc: Self.doomDoc, label: "doom")
     }
 
-    @Test("CommonMark re-parse of all section markdown — org-manual")
+    @Test("CommonMark re-parse of converted markdown — org-manual")
     func commonmarkReparseOrgManual() {
         runCommonMarkReparse(doc: Self.orgManualDoc, label: "org_manual")
     }
 
     private func runCommonMarkReparse(doc: String, label: String) {
         let blocks = OrgParser().parse(doc)
-        let (sections, _) = buildOrgSectionTree(blocks)
-
-        var allMdStrings: [String] = []
-        func collect(_ secs: [OrgSection]) {
-            for s in secs {
-                if let heading = s.heading {
-                    allMdStrings.append(Self.serializeHeading(heading, section: s))
-                }
-                var pending: [OrgBlock] = []
-                for b in s.bodyBlocks {
-                    if case .drawer = b {
-                        if !pending.isEmpty {
-                            allMdStrings.append(MarkdownBlockSerializer.serialize(OrgToMarkdownConverter.convert(pending)))
-                            pending = []
-                        }
-                    } else { pending.append(b) }
-                }
-                if !pending.isEmpty {
-                    allMdStrings.append(MarkdownBlockSerializer.serialize(OrgToMarkdownConverter.convert(pending)))
-                }
-                collect(s.children)
-            }
-        }
-        collect(sections)
-
+        let markdown = MarkdownBlockSerializer.serialize(OrgToMarkdownConverter.convert(blocks))
         let ns = Self.medianNs {
-            for md in allMdStrings {
-                Self.consume(parseCommonMark(md))
-            }
+            Self.consume(parseCommonMark(markdown))
         }
         print("METRIC org_cmark_reparse_\(label)_us=\(String(format: "%.1f", ns / 1000.0))")
-        print("METRIC org_cmark_reparse_count_\(label)=\(allMdStrings.count)")
-    }
-
-    // MARK: - Helpers
-
-    private static func serializeHeading(_ heading: OrgBlock, section: OrgSection) -> String {
-        guard case .heading(let level, let keyword, _, let title, let tags) = heading else {
-            return ""
-        }
-        var inlines = [MarkdownInline]()
-        let expandedBullets = ["◈", "•", "‣", "◦", "·", "·"]
-        let idx = min(level - 1, expandedBullets.count - 1)
-        inlines.append(.text("\(expandedBullets[idx]) "))
-
-        if let kw = keyword {
-            inlines.append(.strong([.text(kw)]))
-            inlines.append(.text(" "))
-        }
-        inlines.append(contentsOf: title.map { OrgToMarkdownConverter.convertSingleInline($0) })
-        if !tags.isEmpty {
-            inlines.append(.text("  "))
-            inlines.append(.code(":" + tags.joined(separator: ":") + ":"))
-        }
-        let mdBlocks: [MarkdownBlock] = [.heading(level: min(level, 6), inlines: inlines)]
-        return MarkdownBlockSerializer.serialize(mdBlocks)
     }
 }
 
