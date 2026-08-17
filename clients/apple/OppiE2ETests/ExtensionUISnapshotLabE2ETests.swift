@@ -1741,9 +1741,8 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
 
     private func expandNativeSurface(title: String, timeout: TimeInterval = 10) {
         let collapsePredicate = NSPredicate(
-            format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@",
-            "Collapse \(title) surface",
-            "Collapse \(title) preview"
+            format: "label CONTAINS[c] %@",
+            "Collapse \(title) surface"
         )
         let collapseToggle = app.descendants(matching: .any).matching(collapsePredicate).firstMatch
         if collapseToggle.waitForExistence(timeout: 0.5) {
@@ -1751,9 +1750,8 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         }
 
         let expandPredicate = NSPredicate(
-            format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@",
-            "Expand \(title) surface",
-            "Expand \(title) preview"
+            format: "label CONTAINS[c] %@",
+            "Expand \(title) surface"
         )
         let expandToggle = app.descendants(matching: .any).matching(expandPredicate).firstMatch
         XCTAssertTrue(
