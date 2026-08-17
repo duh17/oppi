@@ -268,6 +268,7 @@ export class SearchIndex {
   private stmtDelete!: SqliteStatement;
   private stmtDeleteMeta!: SqliteStatement;
   private stmtGetMeta!: SqliteStatement;
+  private stmtGetIndexedIdentity!: SqliteStatement;
   private stmtGetIndexedRow!: SqliteStatement;
   private stmtGetIndexedIds!: SqliteStatement;
 
@@ -290,6 +291,41 @@ export class SearchIndex {
   // Schema
   // -------------------------------------------------------------------------
 
+  private ftsMetaColumnNames(): Set<string> {
+    const rows = this.db.prepare("PRAGMA table_info(fts_meta)").all() as Array<{ name: string }>;
+    return new Set(rows.map((row) => row.name));
+  }
+
+  /** v3 → v4: identity columns on fts_meta so skip checks never scan session_fts. */
+  private migrateFtsMetaIdentityColumns(): void {
+    const columns = this.ftsMetaColumnNames();
+    if (!columns.has("workspace_id")) {
+      this.db.exec("ALTER TABLE fts_meta ADD COLUMN workspace_id TEXT");
+    }
+    if (!columns.has("title")) {
+      this.db.exec("ALTER TABLE fts_meta ADD COLUMN title TEXT");
+    }
+
+    // One FTS scan, then PK updates. Do not look up session_fts per row.
+    const identities = this.db
+      .prepare("SELECT session_id, workspace_id, title FROM session_fts")
+      .all() as Array<{
+      session_id: string;
+      workspace_id: string;
+      title: string;
+    }>;
+    const update = this.db.prepare(
+      "UPDATE fts_meta SET workspace_id = ?, title = ? WHERE session_id = ?",
+    );
+    const txn = this.db.transaction(() => {
+      for (const row of identities) {
+        update.run(row.workspace_id, row.title, row.session_id);
+      }
+      this.db.prepare("INSERT OR REPLACE INTO fts_schema VALUES ('version', ?)").run("4");
+    });
+    txn();
+  }
+
   private ensureSchema(): void {
     // Check schema version
     const hasSchemaTable = this.db
@@ -300,9 +336,18 @@ export class SearchIndex {
       const row = this.db.prepare("SELECT value FROM fts_schema WHERE key = 'version'").get() as
         | { value: string }
         | undefined;
-      if (row?.value === "3") return; // Schema up to date
+      if (row?.value === "4") {
+        const columns = this.ftsMetaColumnNames();
+        if (columns.has("workspace_id") && columns.has("title")) return;
+        this.migrateFtsMetaIdentityColumns();
+        return;
+      }
+      if (row?.value === "3") {
+        this.migrateFtsMetaIdentityColumns();
+        return;
+      }
 
-      // Version mismatch — drop and recreate
+      // Unknown/older versions — drop and recreate at v4.
       this.db.exec("DROP TABLE IF EXISTS session_fts");
       this.db.exec("DROP TABLE IF EXISTS fts_meta");
       this.db.exec("DROP TABLE IF EXISTS fts_schema");
@@ -324,7 +369,9 @@ export class SearchIndex {
         jsonl_path TEXT,
         jsonl_mtime_ms INTEGER,
         jsonl_size INTEGER,
-        indexed_at INTEGER
+        indexed_at INTEGER,
+        workspace_id TEXT,
+        title TEXT
       );
 
       CREATE TABLE IF NOT EXISTS fts_schema (
@@ -332,7 +379,7 @@ export class SearchIndex {
         value TEXT
       );
 
-      INSERT OR REPLACE INTO fts_schema VALUES ('version', '3');
+      INSERT OR REPLACE INTO fts_schema VALUES ('version', '4');
     `);
   }
 
@@ -360,13 +407,21 @@ export class SearchIndex {
         jsonl_path,
         jsonl_mtime_ms,
         jsonl_size,
-        indexed_at
+        indexed_at,
+        workspace_id,
+        title
       )
-      VALUES (?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     this.stmtGetMeta = this.db.prepare(
-      "SELECT jsonl_path, jsonl_mtime_ms, jsonl_size FROM fts_meta WHERE session_id = ?",
+      "SELECT jsonl_path, jsonl_mtime_ms, jsonl_size, workspace_id, title FROM fts_meta WHERE session_id = ?",
+    );
+
+    // Skip checks only need identity fields. Avoid pulling transcript blobs on
+    // the unchanged-session path that dominates restart warming.
+    this.stmtGetIndexedIdentity = this.db.prepare(
+      "SELECT workspace_id, title FROM session_fts WHERE session_id = ?",
     );
 
     this.stmtGetIndexedRow = this.db.prepare(
@@ -510,14 +565,34 @@ export class SearchIndex {
         content.toolNames,
       );
 
-      this.stmtUpsertMeta.run(
+      this.upsertMeta(
         sessionId,
         fileStat ? (jsonlPath ?? null) : null,
         fileStat ? Math.floor(fileStat.mtimeMs) : 0,
         fileStat?.size ?? 0,
-        Date.now(),
+        session.workspaceId ?? "",
+        content.title,
       );
     })();
+  }
+
+  private upsertMeta(
+    sessionId: string,
+    jsonlPath: string | null,
+    jsonlMtimeMs: number,
+    jsonlSize: number,
+    workspaceId: string,
+    title: string,
+  ): void {
+    this.stmtUpsertMeta.run(
+      sessionId,
+      jsonlPath,
+      jsonlMtimeMs,
+      jsonlSize,
+      Date.now(),
+      workspaceId,
+      title,
+    );
   }
 
   private upsertRow(
@@ -575,25 +650,14 @@ export class SearchIndex {
   // Startup sync
   // -------------------------------------------------------------------------
 
-  private syncSession(session: Session): SearchIndexSyncResult {
-    const result = emptySyncResult();
-    // Resolve the startup snapshot ID against live storage immediately before
-    // reading indexed fields. Lifecycle can replace or delete this session while
-    // cooperative warming is between event-loop turns.
-    const liveSession = this.getSession(session.id);
-    if (!liveSession || liveSession.ephemeral) {
-      const wasIndexed =
-        this.stmtGetMeta.get(session.id) !== undefined ||
-        this.stmtGetIndexedRow.get(session.id) !== undefined;
-      this.stmtDelete.run(session.id);
-      this.stmtDeleteMeta.run(session.id);
-      if (wasIndexed) result.removed = 1;
-      return result;
-    }
-
-    const sessionId = liveSession.id;
+  private readTranscriptFingerprint(liveSession: Session): {
+    jsonlPath: string | undefined;
+    fileStat: { mtimeMs: number; size: number } | null;
+    jsonlMtimeMs: number;
+    jsonlSize: number;
+    expectedJsonlPath: string | null;
+  } {
     const jsonlPath = liveSession.piSessionFile;
-
     let fileStat: { mtimeMs: number; size: number } | null = null;
     if (jsonlPath) {
       try {
@@ -603,30 +667,92 @@ export class SearchIndex {
         fileStat = null;
       }
     }
+    return {
+      jsonlPath,
+      fileStat,
+      jsonlMtimeMs: fileStat ? Math.floor(fileStat.mtimeMs) : 0,
+      jsonlSize: fileStat?.size ?? 0,
+      expectedJsonlPath: fileStat ? (jsonlPath ?? null) : null,
+    };
+  }
 
-    // Check if already indexed with same transcript state.
+  private isUnchangedIndexedSession(liveSession: Session): boolean {
+    const fingerprint = this.readTranscriptFingerprint(liveSession);
+    const meta = this.stmtGetMeta.get(liveSession.id) as
+      | {
+          jsonl_path: string | null;
+          jsonl_mtime_ms: number;
+          jsonl_size: number;
+          workspace_id: string | null;
+          title: string | null;
+        }
+      | undefined;
+    if (
+      !meta ||
+      meta.jsonl_mtime_ms !== fingerprint.jsonlMtimeMs ||
+      meta.jsonl_size !== fingerprint.jsonlSize ||
+      meta.jsonl_path !== fingerprint.expectedJsonlPath
+    ) {
+      return false;
+    }
+
+    const title = extractSessionTitle(liveSession);
+    const workspaceId = liveSession.workspaceId ?? "";
+    return meta.workspace_id === workspaceId && meta.title === title;
+  }
+
+  private loadFtsSessionIds(): Set<string> {
+    const rows = this.db.prepare("SELECT session_id FROM session_fts").all() as Array<{
+      session_id: string;
+    }>;
+    return new Set(rows.map((row) => row.session_id));
+  }
+
+  /** Read-only skip for unchanged sessions. Null means the caller must write. */
+  private trySkipUnchangedSession(
+    session: Session,
+    ftsIds: ReadonlySet<string>,
+  ): SearchIndexSyncResult | null {
+    if (!ftsIds.has(session.id)) return null;
+    const liveSession = this.getSession(session.id);
+    if (!liveSession || liveSession.ephemeral) return null;
+    if (!this.isUnchangedIndexedSession(liveSession)) return null;
+    const result = emptySyncResult();
+    result.skipped = 1;
+    return result;
+  }
+
+  private syncSession(session: Session, ftsIds: ReadonlySet<string>): SearchIndexSyncResult {
+    const result = emptySyncResult();
+    // Resolve the startup snapshot ID against live storage immediately before
+    // reading indexed fields. Lifecycle can replace or delete this session while
+    // cooperative warming is between event-loop turns.
+    const liveSession = this.getSession(session.id);
+    if (!liveSession || liveSession.ephemeral) {
+      const wasIndexed =
+        this.stmtGetMeta.get(session.id) !== undefined ||
+        this.stmtGetIndexedIdentity.get(session.id) !== undefined;
+      this.stmtDelete.run(session.id);
+      this.stmtDeleteMeta.run(session.id);
+      if (wasIndexed) result.removed = 1;
+      return result;
+    }
+
+    const sessionId = liveSession.id;
+    const fingerprint = this.readTranscriptFingerprint(liveSession);
+    const { jsonlPath, fileStat, jsonlMtimeMs, jsonlSize, expectedJsonlPath } = fingerprint;
+    const workspaceId = liveSession.workspaceId ?? "";
+    const title = extractSessionTitle(liveSession);
+
     const meta = this.stmtGetMeta.get(sessionId) as
       | {
           jsonl_path: string | null;
           jsonl_mtime_ms: number;
           jsonl_size: number;
+          workspace_id: string | null;
+          title: string | null;
         }
       | undefined;
-
-    const indexedRow = this.stmtGetIndexedRow.get(sessionId) as
-      | {
-          workspace_id: string;
-          title: string;
-          user_messages: string;
-          assistant_messages: string;
-          tool_names: string;
-        }
-      | undefined;
-
-    const jsonlMtimeMs = fileStat ? Math.floor(fileStat.mtimeMs) : 0;
-    const jsonlSize = fileStat?.size ?? 0;
-    const expectedJsonlPath = fileStat ? (jsonlPath ?? null) : null;
-    const workspaceId = liveSession.workspaceId ?? "";
 
     const sameTranscriptState =
       !!meta &&
@@ -634,34 +760,46 @@ export class SearchIndex {
       meta.jsonl_size === jsonlSize &&
       meta.jsonl_path === expectedJsonlPath;
 
-    const title = extractSessionTitle(liveSession);
-    const sameIndexedMetadata =
-      !!indexedRow && indexedRow.workspace_id === workspaceId && indexedRow.title === title;
+    const sameIndexedMetadata = !!meta && meta.workspace_id === workspaceId && meta.title === title;
 
-    if (sameTranscriptState && sameIndexedMetadata) {
+    if (sameTranscriptState && sameIndexedMetadata && ftsIds.has(sessionId)) {
       result.skipped = 1;
       return result;
     }
 
-    if (sameTranscriptState && indexedRow) {
-      this.upsertRow(
-        sessionId,
-        workspaceId,
-        title,
-        indexedRow.user_messages,
-        indexedRow.assistant_messages,
-        indexedRow.tool_names,
-      );
-      this.stmtUpsertMeta.run(
-        sessionId,
-        fileStat ? (jsonlPath ?? null) : null,
-        jsonlMtimeMs,
-        jsonlSize,
-        Date.now(),
-      );
-      result.reindexed = 1;
-      result.reusedIndexedTranscript = 1;
-      return result;
+    if (sameTranscriptState) {
+      const indexedRow = this.stmtGetIndexedRow.get(sessionId) as
+        | {
+            workspace_id: string;
+            title: string;
+            user_messages: string;
+            assistant_messages: string;
+            tool_names: string;
+          }
+        | undefined;
+      if (!indexedRow) {
+        // Fall through to a full reindex when identity exists without content.
+      } else {
+        this.upsertRow(
+          sessionId,
+          workspaceId,
+          title,
+          indexedRow.user_messages,
+          indexedRow.assistant_messages,
+          indexedRow.tool_names,
+        );
+        this.upsertMeta(
+          sessionId,
+          fileStat ? (jsonlPath ?? null) : null,
+          jsonlMtimeMs,
+          jsonlSize,
+          workspaceId,
+          title,
+        );
+        result.reindexed = 1;
+        result.reusedIndexedTranscript = 1;
+        return result;
+      }
     }
 
     const content = extractIndexedContent(liveSession, fileStat ? jsonlPath : undefined);
@@ -679,12 +817,13 @@ export class SearchIndex {
       content.assistantMessages,
       content.toolNames,
     );
-    this.stmtUpsertMeta.run(
+    this.upsertMeta(
       sessionId,
       fileStat ? (jsonlPath ?? null) : null,
       jsonlMtimeMs,
       jsonlSize,
-      Date.now(),
+      workspaceId,
+      content.title,
     );
 
     if (meta) {
@@ -700,10 +839,11 @@ export class SearchIndex {
     indexableSessions: Session[],
     sessionIds: ReadonlySet<string>,
   ): SearchIndexSyncResult {
+    const ftsIds = this.loadFtsSessionIds();
     const txn = this.db.transaction(() => {
       const result = emptySyncResult();
       for (const session of indexableSessions) {
-        mergeSyncResults(result, this.syncSession(session));
+        mergeSyncResults(result, this.syncSession(session, ftsIds));
       }
 
       // Keep blocking sync's full rebuild atomic. Background sync deletes these
@@ -736,28 +876,78 @@ export class SearchIndex {
       .map((row) => row.session_id);
   }
 
+  private stillWithinBatchBudget(
+    nextIndex: number,
+    startIndex: number,
+    batchStart: number,
+    budgetMs: number,
+    batchSize: number,
+    length: number,
+  ): boolean {
+    return (
+      nextIndex < length &&
+      nextIndex - startIndex < batchSize &&
+      (nextIndex === startIndex || performance.now() - batchStart < budgetMs)
+    );
+  }
+
   private syncSessionBatchWithinBudget(
     sessions: Session[],
     startIndex: number,
     budgetMs: number,
     batchSize: number,
+    ftsIds: ReadonlySet<string>,
   ): { nextIndex: number; result: SearchIndexSyncResult; elapsedMs: number } {
     const batchStart = performance.now();
     let nextIndex = startIndex;
-    const txn = this.db.transaction(() => {
-      const result = emptySyncResult();
-      while (
-        nextIndex < sessions.length &&
-        nextIndex - startIndex < batchSize &&
-        (nextIndex === startIndex || performance.now() - batchStart < budgetMs)
-      ) {
-        mergeSyncResults(result, this.syncSession(sessions[nextIndex]));
-        nextIndex++;
-      }
-      return result;
-    });
+    const result = emptySyncResult();
 
-    const result = txn();
+    // Skip-only sessions are read-only. Do not open a write transaction or pull
+    // transcript blobs for the unchanged path that dominates restart warming.
+    while (
+      this.stillWithinBatchBudget(
+        nextIndex,
+        startIndex,
+        batchStart,
+        budgetMs,
+        batchSize,
+        sessions.length,
+      )
+    ) {
+      const skipped = this.trySkipUnchangedSession(sessions[nextIndex], ftsIds);
+      if (!skipped) break;
+      mergeSyncResults(result, skipped);
+      nextIndex++;
+    }
+
+    if (
+      this.stillWithinBatchBudget(
+        nextIndex,
+        startIndex,
+        batchStart,
+        budgetMs,
+        batchSize,
+        sessions.length,
+      )
+    ) {
+      const txn = this.db.transaction(() => {
+        while (
+          this.stillWithinBatchBudget(
+            nextIndex,
+            startIndex,
+            batchStart,
+            budgetMs,
+            batchSize,
+            sessions.length,
+          )
+        ) {
+          mergeSyncResults(result, this.syncSession(sessions[nextIndex], ftsIds));
+          nextIndex++;
+        }
+      });
+      txn();
+    }
+
     return { nextIndex, result, elapsedMs: performance.now() - batchStart };
   }
 
@@ -790,33 +980,6 @@ export class SearchIndex {
 
     const result = txn();
     return { nextIndex, result, elapsedMs: performance.now() - batchStart };
-  }
-
-  private logBackgroundBatch(
-    batch: number,
-    phase: "sessions" | "orphan_cleanup",
-    batchElapsedMs: number,
-    batchSessionsChecked: number,
-    sessionsChecked: number,
-    maxBatchMs: number,
-    result: SearchIndexSyncResult,
-  ): void {
-    log.info("search_index.sync_batch", {
-      mode: "background",
-      phase,
-      batch,
-      batchElapsedMs: Math.round(batchElapsedMs),
-      batchSessionsChecked,
-      sessionsChecked,
-      maxBatchMs: Math.round(maxBatchMs),
-      added: result.added,
-      reindexed: result.reindexed,
-      removed: result.removed,
-      skipped: result.skipped,
-      transcriptsRead: result.transcriptsRead,
-      transcriptsReindexed: result.transcriptsReindexed,
-      transcriptBytesRead: result.transcriptBytesRead,
-    });
   }
 
   private completeBackgroundSync(
@@ -866,11 +1029,11 @@ export class SearchIndex {
     const startedAt = performance.now();
     const indexableSessions = sessions.filter((s) => !s.ephemeral);
     const sessionIds = new Set(indexableSessions.map((s) => s.id));
+    const ftsIds = this.loadFtsSessionIds();
     const yieldBetweenBatches = options.yieldToEventLoop ?? yieldToEventLoop;
     const result = emptySyncResult();
     let sessionsChecked = 0;
     let maxBatchMs = 0;
-    let batch = 0;
 
     log.info("search_index.sync_started", {
       mode: "background",
@@ -891,22 +1054,13 @@ export class SearchIndex {
         sessionIndex,
         budgetMs,
         batchSize,
+        ftsIds,
       );
       sessionIndex = batchResult.nextIndex;
       const batchSessionsChecked = sessionIndex - batchStartIndex;
       sessionsChecked += batchSessionsChecked;
       maxBatchMs = Math.max(maxBatchMs, batchResult.elapsedMs);
       mergeSyncResults(result, batchResult.result);
-      batch++;
-      this.logBackgroundBatch(
-        batch,
-        "sessions",
-        batchResult.elapsedMs,
-        batchSessionsChecked,
-        sessionsChecked,
-        maxBatchMs,
-        batchResult.result,
-      );
 
       if (sessionIndex < indexableSessions.length) {
         await yieldBetweenBatches();
@@ -941,16 +1095,6 @@ export class SearchIndex {
       orphanIndex = batchResult.nextIndex;
       maxBatchMs = Math.max(maxBatchMs, batchResult.elapsedMs);
       mergeSyncResults(result, batchResult.result);
-      batch++;
-      this.logBackgroundBatch(
-        batch,
-        "orphan_cleanup",
-        batchResult.elapsedMs,
-        0,
-        sessionsChecked,
-        maxBatchMs,
-        batchResult.result,
-      );
 
       if (orphanIndex < orphanIds.length) {
         await yieldBetweenBatches();

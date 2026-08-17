@@ -594,6 +594,117 @@ describe("SearchIndex indexes transcript content only", () => {
     }
   });
 
+  it("migrates v3 fts_meta identity columns without rebuilding FTS", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-schema-v4-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeJsonl(jsonlPath, "v4 migrate token", "kept transcript content");
+    const session = makeSession({
+      id: "sess-v4-migrate",
+      name: "Original title token",
+      piSessionFile: jsonlPath,
+    });
+    const sessions = new Map([[session.id, session]]);
+
+    const firstIndex = new SearchIndex(dataDir, (id) => sessions.get(id));
+    firstIndex.sync([session]);
+    firstIndex.close();
+
+    const db = openDatabase(join(dataDir, "session-search.db"));
+    const ftsCountBefore = (
+      db.prepare("SELECT COUNT(*) AS n FROM session_fts").get() as {
+        n: number;
+      }
+    ).n;
+    try {
+      db.exec(`
+        CREATE TABLE fts_meta_v3 (
+          session_id TEXT PRIMARY KEY,
+          jsonl_path TEXT,
+          jsonl_mtime_ms INTEGER,
+          jsonl_size INTEGER,
+          indexed_at INTEGER
+        );
+        INSERT INTO fts_meta_v3
+          SELECT session_id, jsonl_path, jsonl_mtime_ms, jsonl_size, indexed_at
+          FROM fts_meta;
+        DROP TABLE fts_meta;
+        ALTER TABLE fts_meta_v3 RENAME TO fts_meta;
+        UPDATE fts_schema SET value = '3' WHERE key = 'version';
+      `);
+    } finally {
+      db.close();
+    }
+
+    const migrated = new SearchIndex(dataDir, (id) => sessions.get(id));
+    try {
+      expect(migrated.search("v4 migrate token", "ws-1", 10)).toHaveLength(1);
+      expect(migrated.sync([session])).toMatchObject({
+        added: 0,
+        reindexed: 0,
+        skipped: 1,
+        transcriptsRead: 0,
+      });
+    } finally {
+      migrated.close();
+    }
+
+    const after = openDatabase(join(dataDir, "session-search.db"));
+    try {
+      const version = after.prepare("SELECT value FROM fts_schema WHERE key = 'version'").get() as {
+        value: string;
+      };
+      const columns = (
+        after.prepare("PRAGMA table_info(fts_meta)").all() as Array<{ name: string }>
+      ).map((row) => row.name);
+      const ftsCountAfter = (
+        after.prepare("SELECT COUNT(*) AS n FROM session_fts").get() as { n: number }
+      ).n;
+      const meta = after
+        .prepare("SELECT workspace_id, title FROM fts_meta WHERE session_id = ?")
+        .get(session.id) as { workspace_id: string; title: string };
+      expect(version.value).toBe("4");
+      expect(columns).toEqual(
+        expect.arrayContaining(["workspace_id", "title", "jsonl_path", "jsonl_mtime_ms"]),
+      );
+      expect(ftsCountAfter).toBe(ftsCountBefore);
+      expect(meta.workspace_id).toBe("ws-1");
+      expect(meta.title).toContain("Original title token");
+    } finally {
+      after.close();
+    }
+  });
+
+  it("reindexes a title change from fts_meta without rereading the transcript", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-title-reuse-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeJsonl(jsonlPath, "stable transcript token", "unchanged assistant token");
+    const session = makeSession({
+      id: "sess-title-reuse",
+      name: "Old title token",
+      piSessionFile: jsonlPath,
+    });
+    const sessions = new Map([[session.id, session]]);
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+
+    try {
+      expect(index.sync([session])).toMatchObject({ added: 1, transcriptsRead: 1 });
+      sessions.set(session.id, { ...session, name: "New title token" });
+      expect(index.sync([session])).toMatchObject({
+        added: 0,
+        reindexed: 1,
+        skipped: 0,
+        reusedIndexedTranscript: 1,
+        transcriptsRead: 0,
+      });
+      expect(index.search("stable transcript token", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("New title token", "ws-1", 10)).toHaveLength(1);
+    } finally {
+      index.close();
+    }
+  });
+
   it("repairs interrupted FTS/meta pairs and removes orphan rows", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-index-pair-repair-"));
     cleanupPaths.add(dataDir);
@@ -1270,6 +1381,54 @@ describe("SearchIndex background sync", () => {
       expect(index.search("budgetzeroone", "ws-1", 10)).toHaveLength(1);
       expect(index.search("budgetzerotwo", "ws-1", 10)).toHaveLength(1);
     } finally {
+      index.close();
+    }
+  });
+
+  it("skips an already-indexed set in one turn and does not log each batch", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-background-skip-only-"));
+    cleanupPaths.add(dataDir);
+
+    const sessions = Array.from({ length: 24 }, (_, index) =>
+      makeFileSession(
+        dataDir,
+        `skip-only-${index}`,
+        `skiponlytoken${index}`,
+        `skiponlyanswer${index}`,
+      ),
+    );
+    const sessionMap = new Map(sessions.map((session) => [session.id, session]));
+    const index = new SearchIndex(dataDir, (id) => sessionMap.get(id));
+
+    const stderrChunks: string[] = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: unknown, ...args: unknown[]) => {
+      stderrChunks.push(String(chunk));
+      return (originalWrite as (chunk: unknown, ...args: unknown[]) => boolean)(chunk, ...args);
+    }) as typeof process.stderr.write;
+
+    try {
+      await index.startBackgroundSync(sessions);
+      stderrChunks.length = 0;
+
+      let yieldCount = 0;
+      const result = await index.startBackgroundSync(sessions, {
+        yieldToEventLoop: async () => {
+          yieldCount++;
+        },
+      });
+
+      expect(result).toMatchObject({
+        skipped: 24,
+        added: 0,
+        reindexed: 0,
+        sessionsChecked: 24,
+        cancelled: false,
+      });
+      expect(yieldCount).toBe(0);
+      expect(stderrChunks.some((chunk) => chunk.includes("search_index.sync_batch"))).toBe(false);
+    } finally {
+      process.stderr.write = originalWrite;
       index.close();
     }
   });
