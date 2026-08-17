@@ -111,10 +111,12 @@ interface EditableAgentSession {
   _emitQueueUpdate?: () => void;
   getSteeringMessages?: () => readonly string[];
   getFollowUpMessages?: () => readonly string[];
+  // `expandPromptTemplates` is intentionally absent: Pi's prompt() is the only
+  // slash dispatcher, and disabling it would make "/name" input from Oppi
+  // arrive as literal model text. See dispatchMirrorInputWithPreflight.
   prompt?: (
     text: string,
     options?: {
-      expandPromptTemplates?: boolean;
       images?: Array<QueueImageContent & { type: "image" }>;
       streamingBehavior?: "steer" | "followUp";
       source?: "extension";
@@ -4027,8 +4029,13 @@ async function createTuiMirrorRuntime(
 
         let promptPromise: Promise<void>;
         try {
+          // Pi's prompt() resolves "/name" against its own command registry —
+          // the same registry that answers get_commands — so extension
+          // commands, prompt templates, and skills behave here exactly as they
+          // do for server-owned sessions (server/src/sdk-backend.ts).
+          // Extension commands run immediately even mid-turn; Pi handles them
+          // before the streaming branch, so streamingBehavior never queues one.
           promptPromise = session.prompt!(message, {
-            expandPromptTemplates: false,
             ...(images.length
               ? {
                   images: images.map((image) => ({

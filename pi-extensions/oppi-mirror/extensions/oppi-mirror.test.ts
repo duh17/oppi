@@ -70,6 +70,9 @@ const piAgentMock = vi.hoisted(() => {
   interface PendingPrompt {
     text: string;
     options: {
+      // Pi accepts this flag; the mirror must never set it, or Pi stops
+      // resolving "/name" against its command registry.
+      expandPromptTemplates?: boolean;
       streamingBehavior?: "steer" | "followUp";
       preflightResult?: (success: boolean) => void;
     };
@@ -854,6 +857,98 @@ describe("oppi mirror input preflight", () => {
         expect.objectContaining({ id: "cmd-pending-1", success: true }),
         expect.objectContaining({ id: "cmd-pending-2", success: true }),
       ]);
+    });
+  });
+});
+
+describe("oppi mirror slash dispatch", () => {
+  it("lets Pi resolve slash input for prompt, steer, and follow-up", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const agentSession = new piAgentMock.FakeAgentSession();
+      agentSession.bindExtensions();
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      for (const type of ["prompt", "steer", "follow_up"] as const) {
+        socket.receive(
+          JSON.stringify({
+            type: "command",
+            id: `cmd-${type}-slash`,
+            command: {
+              type,
+              message: "/cursor-fast",
+              clientTurnId: `turn-${type}-slash`,
+            },
+          }),
+        );
+        agentSession.acceptNext();
+        await drainMicrotasks();
+
+        expect(sentCommandResults(socket, `cmd-${type}-slash`)).toEqual([
+          expect.objectContaining({ success: true }),
+        ]);
+      }
+
+      expect(agentSession.promptCalls).toHaveLength(3);
+      for (const call of agentSession.promptCalls) {
+        // Verbatim text and expansion left on are what let Pi run the command
+        // instead of sending "/cursor-fast" to the model as a user message.
+        expect(call.text).toBe("/cursor-fast");
+        expect(call.options.expandPromptTemplates).toBeUndefined();
+      }
+      expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not queue slash input that Pi consumed as a command", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const agentSession = new piAgentMock.FakeAgentSession();
+      agentSession.bindExtensions();
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "cmd-command-during-turn",
+          command: {
+            type: "follow_up",
+            message: "/cursor-fast",
+            clientTurnId: "turn-command-during-turn",
+          },
+        }),
+      );
+      // Pi executes extension commands immediately and returns without
+      // queueing, so the accepted dispatch must leave the queue untouched.
+      const pending = agentSession.promptCalls.at(-1);
+      if (!pending) throw new Error("Expected a pending Pi prompt");
+      pending.settled = true;
+      pending.options.preflightResult?.(true);
+      pending.resolve();
+      await drainMicrotasks();
+
+      const results = sentCommandResults(socket, "cmd-command-during-turn");
+      expect(results).toEqual([expect.objectContaining({ success: true })]);
+      expect(
+        (results[0]?.data as { queue?: MessageQueueState } | undefined)?.queue,
+      ).toEqual(
+        expect.objectContaining({ steering: [], followUp: [] }),
+      );
+      expect(agentSession.getFollowUpMessages()).toEqual([]);
     });
   });
 });
