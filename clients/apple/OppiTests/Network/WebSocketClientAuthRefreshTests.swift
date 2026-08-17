@@ -337,6 +337,42 @@ private final class LockedCallCount: @unchecked Sendable {
     func get() -> Int { lock.withLock { value } }
 }
 
+/// Holds `currentTokenProvider` until the 401-refresh socket is installed,
+/// then releases so `applyResolvedToken` can resolve a stale snapshot late.
+private actor LateTokenGate {
+    private var entered = false
+    private var released = false
+    private var enteredWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if !entered {
+            entered = true
+            let waiters = enteredWaiters
+            enteredWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+        if released { return }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilEntered() async {
+        if entered { return }
+        await withCheckedContinuation { continuation in
+            enteredWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+}
+
 @Suite("Dictation device auth", .serialized)
 @MainActor
 struct DictationDeviceAuthTests {
@@ -533,6 +569,61 @@ struct DictationDeviceAuthTests {
         #expect(factory.sockets.count == 1)
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_replacement")
         #expect(client.status == .connected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func lateResolvedStaleTokenDoesNotRegressAfter401Refresh() async throws {
+        let factory = ScriptedDictationFactory()
+        let refreshCalls = LockedCallCount()
+        let gate = LateTokenGate()
+        guard let client = DictationStreamClient(
+            baseURL: URL(string: "https://server.example.test")!,
+            token: "at_stale",
+            tlsCertFingerprint: nil,
+            currentTokenProvider: { @Sendable in
+                await gate.wait()
+                return "at_stale"
+            },
+            refreshTokenProvider: { @Sendable in
+                refreshCalls.increment()
+                return "at_refreshed"
+            },
+            webSocketFactory: { factory.make($0) }
+        ) else {
+            Issue.record("Expected a valid dictation stream URL")
+            return
+        }
+
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_stale")
+        await gate.waitUntilEntered()
+
+        let first = try #require(factory.sockets.first)
+        first.fail401()
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 2
+        })
+        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
+        #expect(refreshCalls.get() == 1)
+
+        await gate.release()
+        // Without the guard, applyResolvedToken regresses to at_stale and opens
+        // SOCKET C. Wait for that symptom, then assert the contract.
+        _ = await waitForMainActorCondition(timeout: .seconds(1)) {
+            factory.sockets.count == 3
+        }
+
+        #expect(factory.sockets.count == 2)
+        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
+        #expect(refreshCalls.get() == 1)
+        #expect(client.status != .disconnected)
 
         client.disconnect()
         await consumer.value

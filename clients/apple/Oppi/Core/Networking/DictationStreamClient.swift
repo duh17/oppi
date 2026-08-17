@@ -154,6 +154,11 @@ final class DictationStreamClient: DictationTransport {
                 return
             }
             guard resolved != token else { return }
+            // A 401-forced refresh has already installed a server-issued token on the
+            // current socket. The cached value just resolved is necessarily <= that token
+            // and may already be evicted server-side (unknown_token); do not regress
+            // self.token or cancel/reopen the socket the 401 handler owns.
+            guard !didForceRefreshForConnection else { return }
             token = resolved
             if status == .connecting {
                 task?.cancel(.goingAway, nil)
