@@ -1200,7 +1200,13 @@ final class ServerResourceStore {
     }
 
     private static func isRevisionConflict(_ error: Error) -> Bool {
-        guard case APIError.server(let status, _) = error else { return false }
-        return status == 409
+        // The server tags the CAS conflict body with code "revision_conflict",
+        // so APIClient.checkStatus surfaces it as codedServer, not server.
+        switch error {
+        case APIError.server(let status, _), APIError.codedServer(let status, _, _):
+            return status == 409
+        default:
+            return false
+        }
     }
 }

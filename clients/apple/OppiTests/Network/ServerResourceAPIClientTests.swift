@@ -204,9 +204,10 @@ struct ServerResourceAPIClientTests {
                 baseRevision: 7
             )
             Issue.record("Expected revision conflict")
-        } catch let APIError.server(status, message) {
+        } catch let APIError.codedServer(status, message, code) {
             #expect(status == 409)
             #expect(message == "Oppi extension configuration changed")
+            #expect(code == "revision_conflict")
         }
     }
 

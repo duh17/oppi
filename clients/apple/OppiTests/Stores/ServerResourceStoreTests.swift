@@ -786,7 +786,12 @@ struct ServerResourceStoreTests {
             true,
             serverId: "server-a",
             request: { _, _, _, _ in
-                throw APIError.server(status: 409, message: "Oppi extension configuration changed")
+                // APIClient surfaces the server's coded 409 body as codedServer.
+                throw APIError.codedServer(
+                    status: 409,
+                    message: "Oppi extension configuration changed",
+                    code: "revision_conflict"
+                )
             },
             fetchAuthoritative: { current }
         )

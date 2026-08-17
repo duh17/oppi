@@ -2377,7 +2377,14 @@ actor APIClient: ClientLogUploading {
                         message: parsed.error,
                         code: rawCode
                     )
-                    responseFailureObserverBox.notify(error)
+                    // The response-failure observer fail-closes the transport, so it
+                    // may only fire for terminal credential rejection (401 after
+                    // performAuthorized spent its single refresh retry). Coded
+                    // application errors such as 409 revision_conflict CAS failures
+                    // and agent launch rejections stay ordinary API errors.
+                    if http.statusCode == 401 {
+                        responseFailureObserverBox.notify(error)
+                    }
                     throw error
                 }
                 throw APIError.server(status: http.statusCode, message: parsed.error)
