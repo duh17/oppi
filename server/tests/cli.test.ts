@@ -783,6 +783,8 @@ describe("oppi config", () => {
     expect(listing.stdout).not.toContain(secret);
   });
 
+  // 10 sequential CLI spawns run ~6s locally but exceed the 10s default under
+  // loaded coverage CI runners; each run() already caps a single spawn at 15s.
   it("config set/get roundtrips values", () => {
     run(["config", "set", "port", "9999"]);
     expect(run(["config", "get", "port"]).stdout.trim()).toContain("9999");
@@ -794,7 +796,7 @@ describe("oppi config", () => {
     expect(run(["config", "get", "oppiDocsPrompt.enabled"]).stdout.trim()).toBe("false");
     run(["config", "set", "runtimeEnv.TTS_BASE_URL", "http://127.0.0.1:7937"]);
     expect(run(["config", "get", "runtimeEnv.TTS_BASE_URL"]).stdout.trim()).toBe("http://127.0.0.1:7937");
-  });
+  }, 45_000);
 
   it("config validate succeeds on valid config", () => {
     const { stdout, exitCode } = run(["config", "validate"]);
