@@ -393,34 +393,68 @@ describe("SessionEventProcessor", () => {
     );
   });
 
-  it("schedules git status refresh after mutating tool end", () => {
-    vi.useFakeTimers();
-    try {
-      const storage = { getWorkspace: vi.fn(() => undefined) };
-      const processor = new SessionEventProcessor({
-        storage: storage as never,
-        mobileRenderers: {} as never,
-        broadcast: vi.fn(),
-        persistSessionNow: vi.fn(),
-        markSessionDirty: vi.fn(),
-      });
-      const active = makeActiveSession({ ...makeSession("sess-1"), workspaceId: "ws-1" });
+  it.each(["edit", "write", "functions.edit", "functions.write", "bash"])(
+    "schedules git status refresh after %s tool end",
+    (toolName) => {
+      vi.useFakeTimers();
+      try {
+        const storage = { getWorkspace: vi.fn(() => undefined) };
+        const processor = new SessionEventProcessor({
+          storage: storage as never,
+          mobileRenderers: {} as never,
+          broadcast: vi.fn(),
+          persistSessionNow: vi.fn(),
+          markSessionDirty: vi.fn(),
+        });
+        const active = makeActiveSession({ ...makeSession("sess-1"), workspaceId: "ws-1" });
 
-      processor.updateSessionFromEvent("sess-1", active, {
-        type: "tool_execution_end",
-        toolName: "bash",
-        toolCallId: "tool-1",
-        result: { content: [] },
-        isError: false,
-      } as never);
+        processor.updateSessionFromEvent("sess-1", active, {
+          type: "tool_execution_end",
+          toolName,
+          toolCallId: "tool-1",
+          result: { content: [] },
+          isError: false,
+        } as never);
 
-      expect(storage.getWorkspace).not.toHaveBeenCalled();
-      vi.advanceTimersByTime(2_000);
-      expect(storage.getWorkspace).toHaveBeenCalledWith("ws-1");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+        expect(storage.getWorkspace).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(2_000);
+        expect(storage.getWorkspace).toHaveBeenCalledWith("ws-1");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["ext.edit", "my.write", "ask.edit", "something.write"])(
+    "does not schedule git status for namespaced tool %s",
+    (toolName) => {
+      vi.useFakeTimers();
+      try {
+        const storage = { getWorkspace: vi.fn(() => undefined) };
+        const processor = new SessionEventProcessor({
+          storage: storage as never,
+          mobileRenderers: {} as never,
+          broadcast: vi.fn(),
+          persistSessionNow: vi.fn(),
+          markSessionDirty: vi.fn(),
+        });
+        const active = makeActiveSession({ ...makeSession("sess-1"), workspaceId: "ws-1" });
+
+        processor.updateSessionFromEvent("sess-1", active, {
+          type: "tool_execution_end",
+          toolName,
+          toolCallId: "tool-1",
+          result: { content: [] },
+          isError: false,
+        } as never);
+
+        vi.advanceTimersByTime(2_000);
+        expect(storage.getWorkspace).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("mirrors Pi session_info_changed events into session name state", () => {
     const persistSessionNow = vi.fn();

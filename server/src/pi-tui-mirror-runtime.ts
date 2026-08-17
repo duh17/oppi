@@ -12,6 +12,7 @@ import {
   RuntimeDisconnectedError,
   applyForwardedCommandResultToSession,
   type AgentRuntimeTransport,
+  type RuntimeClientCommand,
 } from "./agent-runtime-transport.js";
 import {
   buildPendingExtensionUIRequestMessages,
@@ -1104,7 +1105,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
   async forwardClientCommand(
     sessionId: string,
-    message: Record<string, unknown>,
+    message: RuntimeClientCommand,
     requestId: string | undefined,
   ): Promise<void> {
     await this.runtimeCommandCoordinator.forwardClientCommand(
@@ -1130,7 +1131,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
 
   private normalizeCommandResult(
     commandType: string,
-    request: Record<string, unknown>,
+    request: RuntimeClientCommand,
     data: unknown,
   ): unknown {
     if (commandType !== "get_session_tree") {
@@ -1142,7 +1143,8 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       return data;
     }
 
-    return serializeRawSessionTreePayload(data, readSessionTreeFilterMode(request.filterMode));
+    const filterMode = request.type === "get_session_tree" ? request.filterMode : undefined;
+    return serializeRawSessionTreePayload(data, readSessionTreeFilterMode(filterMode));
   }
 
   private registerBridge(
@@ -2049,7 +2051,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private applyCommandResult(
     sessionId: string,
     commandType: string,
-    request: Record<string, unknown>,
+    request: RuntimeClientCommand,
     data: unknown,
   ): void {
     const active = this.active.get(sessionId);

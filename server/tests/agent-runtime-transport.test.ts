@@ -90,7 +90,7 @@ describe("runtime command result helpers", () => {
     const managedResult = applyForwardedCommandResultToSession({
       session: managed,
       commandType: "set_model",
-      request: { type: "set_model" },
+      request: { type: "set_model", provider: "openai", modelId: "gpt-5.5" },
       data: { provider: "openai", id: "gpt-5.5", thinkingLevel: "high" },
       contextWindowResolver: () => 272000,
     });

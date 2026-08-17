@@ -1796,16 +1796,18 @@ describe("SessionManager RPC passthrough", () => {
   it("rejects non-allowlisted commands", async () => {
     const { manager } = makeManagerHarness();
 
-    await expect(manager.forwardClientCommand("s1", { type: "evil_command" })).rejects.toThrow(
-      "oppi runtime does not support command: evil_command",
-    );
+    await expect(
+      manager.forwardClientCommand("s1", {
+        type: "evil_command",
+      } as unknown as Parameters<typeof manager.forwardClientCommand>[1]),
+    ).rejects.toThrow("oppi runtime does not support command: evil_command");
   });
 
   it("throws for nonexistent session", async () => {
     const { manager } = makeManagerHarness();
 
     await expect(
-      manager.forwardClientCommand("nonexistent", { type: "get_state" }),
+      manager.forwardClientCommand("nonexistent", { type: "get_messages" }),
     ).rejects.toThrow("not active");
   });
 });

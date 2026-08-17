@@ -46,9 +46,7 @@ const SERVER_PI_TUI_RUNTIME_CHECK_ALLOWED_FILES = new Set([
   "server/src/pi-tui-mirror-runtime.ts",
   "server/src/pi-tui-session-classification.ts",
   "server/src/mirror-session-resume.ts",
-  // Current leaks. Remove these as lifecycle/input policy moves behind services.
-  "server/src/session-input.ts",
-  "server/src/ws-message-handler.ts",
+  "server/src/session-runtime-capabilities.ts",
 ]);
 
 const APPLE_SHARED_CORE_ROOT = "clients/apple/OppiCore/";

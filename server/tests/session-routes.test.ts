@@ -157,6 +157,75 @@ describe("sessions module", () => {
     });
   });
 
+  it.each([
+    {
+      name: "non-object body",
+      body: ["steer"],
+      status: 400,
+      response: { error: "Command body must be an object" },
+    },
+    {
+      name: "missing type",
+      body: { requestId: "req-type" },
+      status: 400,
+      response: { error: "Command type required" },
+    },
+    {
+      name: "missing set_session_name.name",
+      body: { type: "set_session_name", requestId: "req-name" },
+      status: 400,
+      response: { error: "Invalid payload: expected name" },
+    },
+    {
+      name: "unknown type",
+      body: { type: "future_command_v99", requestId: "req-unknown" },
+      status: 200,
+      response: {
+        messages: [
+          {
+            type: "command_result",
+            command: "future_command_v99",
+            requestId: "req-unknown",
+            success: false,
+            error: "Unsupported command type: future_command_v99",
+          },
+        ],
+      },
+    },
+  ])("preserves HTTP command ingress surfaces: $name", async ({ body, status, response }) => {
+    const session = {
+      id: "s1",
+      workspaceId: "ws-1",
+      status: "ready",
+      createdAt: 0,
+      lastActivity: 10,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getSession: vi.fn(() => session),
+      },
+      sessionRuntimes: {},
+      ensureSessionContextWindow: vi.fn((s: unknown) => s),
+    } as unknown as RouteContext;
+
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+    await dispatch({
+      method: "POST",
+      path: "/workspaces/ws-1/sessions/s1/command",
+      url: new URL("http://localhost/workspaces/ws-1/sessions/s1/command"),
+      req: makeRequest(body) as never,
+      res: res as never,
+    });
+
+    expect(res.statusCode).toBe(status);
+    expect(JSON.parse(res.body)).toEqual(response);
+  });
+
   it("marks disconnected pi-tui mirror sessions stopped through the stop route", async () => {
     const session: Session = {
       id: "mirror-1",

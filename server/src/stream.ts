@@ -18,6 +18,7 @@ import type { DictationClientMessage, DictationServerMessage } from "./dictation
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { isDeclaredControlSession } from "./control-session.js";
+import { parseClientCommand, type ClientCommandParseErrorCode } from "./session-command-parse.js";
 
 /** Services needed by the stream mux — injected by Server. */
 export interface StreamContext {
@@ -91,11 +92,9 @@ function countBucketForTag(count: number): string {
   return "5+";
 }
 
-function parseIncomingClientMessage(
+function parseIncomingJsonRecord(
   data: RawData,
-):
-  | { ok: true; message: ClientMessage }
-  | { ok: false; error: string; requestId?: string; command?: string } {
+): { ok: true; record: Record<string, unknown> } | { ok: false; error: string } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawDataToText(data));
@@ -108,16 +107,41 @@ function parseIncomingClientMessage(
     return { ok: false, error: "Message payload must be a JSON object" };
   }
 
-  const requestId = typeof record.requestId === "string" ? record.requestId : undefined;
-  const type = record.type;
+  return { ok: true, record };
+}
 
-  if (typeof type !== "string" || type.trim().length === 0) {
-    return { ok: false, error: "Message type is required", requestId };
+function parseIncomingSessionCommand(data: RawData):
+  | { ok: true; message: ClientMessage }
+  | {
+      ok: false;
+      error: string;
+      requestId?: string;
+      command?: string;
+      code?: ClientCommandParseErrorCode;
+    } {
+  const decoded = parseIncomingJsonRecord(data);
+  if (!decoded.ok) {
+    return decoded;
+  }
+  return parseClientCommand(decoded.record);
+}
+
+function parseIncomingDictationMessage(
+  data: RawData,
+): { ok: true; message: ClientMessage } | { ok: false; error: string } {
+  const decoded = parseIncomingJsonRecord(data);
+  if (!decoded.ok) {
+    return decoded;
   }
 
-  // Cast to ClientMessage — the exhaustive switch in WsMessageHandler
-  // sends a command_result error for any unknown type at runtime.
-  return { ok: true, message: record as ClientMessage };
+  const type = decoded.record.type;
+  if (typeof type !== "string" || type.trim().length === 0) {
+    return { ok: false, error: "Message type is required" };
+  }
+
+  // Dictation frames stay on the light type-string check; command-field
+  // validation is only for session WS/HTTP command bodies.
+  return { ok: true, message: decoded.record as ClientMessage };
 }
 
 /**
@@ -503,9 +527,15 @@ export class BoundSessionStreamMux {
               });
             }
 
-            const parsed = parseIncomingClientMessage(data);
+            const parsed = parseIncomingSessionCommand(data);
             if (!parsed.ok) {
-              if (parsed.command) {
+              // Malformed required fields without requestId stay on the
+              // uncorrelated error frame. command_result is only for a known
+              // type with a requestId, or an unknown type.
+              if (
+                parsed.command &&
+                !(parsed.code === "invalid_field" && parsed.requestId === undefined)
+              ) {
                 send({
                   type: "command_result",
                   command: parsed.command,
@@ -735,7 +765,7 @@ export class DictationStreamMux {
         return;
       }
 
-      const parsed = parseIncomingClientMessage(data);
+      const parsed = parseIncomingDictationMessage(data);
       if (!parsed.ok) {
         send({ type: "dictation_error", error: parsed.error, fatal: false });
         return;

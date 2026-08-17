@@ -604,6 +604,108 @@ describe("SessionAgentEventCoordinator", () => {
     expect(summaryBroadcasts).toEqual([["child-1", { type: "session_summary", summary }]]);
   });
 
+  it.each([
+    {
+      toolName: "write",
+      args: { path: "src/a.ts", content: "hello" },
+    },
+    {
+      toolName: "functions.write",
+      args: { path: "src/a.ts", content: "hello" },
+    },
+  ])("broadcasts summaries for known mutation tool $toolName", ({ toolName, args }) => {
+    const active = makeActiveSession({ status: "busy" });
+    const broadcast = vi.fn();
+    const eventProcessor = new SessionEventProcessor({
+      storage: {} as never,
+      mobileRenderers: {
+        renderCall: vi.fn(),
+        renderResult: vi.fn(),
+      } as never,
+      broadcast: vi.fn(),
+      persistSessionNow: vi.fn(),
+      markSessionDirty: vi.fn(),
+    });
+    const coordinator = new SessionAgentEventCoordinator({
+      getActiveSession: vi.fn(() => active),
+      eventProcessor,
+      stopCoordinator: {
+        finishPendingStopOnAgentEnd: vi.fn(),
+      } as never,
+      turnCoordinator: {
+        markNextTurnStarted: vi.fn(),
+      } as never,
+      broadcast,
+      resetIdleTimer: vi.fn(),
+    });
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName,
+      args,
+    } as unknown as SessionBackendEvent);
+
+    expect(active.session.changeStats).toMatchObject({
+      mutatingToolCalls: 1,
+      filesChanged: 1,
+      changedFiles: ["src/a.ts"],
+    });
+    const summary = buildSessionSummary(active.session);
+    const summaryBroadcasts = broadcast.mock.calls.filter(
+      ([, message]) => message.type === "session_summary",
+    );
+    expect(summaryBroadcasts).toEqual([["child-1", { type: "session_summary", summary }]]);
+  });
+
+  it.each(["ext.edit", "my.write", "ask.edit", "something.write"])(
+    "does not broadcast change summaries for namespaced false positive %s",
+    (toolName) => {
+      const active = makeActiveSession({ status: "busy" });
+      const broadcast = vi.fn();
+      const eventProcessor = new SessionEventProcessor({
+        storage: {} as never,
+        mobileRenderers: {
+          renderCall: vi.fn(),
+          renderResult: vi.fn(),
+        } as never,
+        broadcast: vi.fn(),
+        persistSessionNow: vi.fn(),
+        markSessionDirty: vi.fn(),
+      });
+      const coordinator = new SessionAgentEventCoordinator({
+        getActiveSession: vi.fn(() => active),
+        eventProcessor,
+        stopCoordinator: {
+          finishPendingStopOnAgentEnd: vi.fn(),
+        } as never,
+        turnCoordinator: {
+          markNextTurnStarted: vi.fn(),
+        } as never,
+        broadcast,
+        resetIdleTimer: vi.fn(),
+      });
+
+      coordinator.handlePiEvent(active.session.id, {
+        type: "tool_execution_start",
+        toolCallId: "tool-1",
+        toolName,
+        args: {
+          path: "src/a.ts",
+          oldText: "a",
+          newText: "b",
+          content: "hello",
+        },
+      } as unknown as SessionBackendEvent);
+
+      expect(active.session.changeStats).toBeUndefined();
+      const summaryBroadcasts = broadcast.mock.calls.filter(
+        ([, message]) => message.type === "session_summary",
+      );
+      expect(summaryBroadcasts).toEqual([]);
+    },
+  );
+
   it("normalizes prompt_error before broadcasting it to clients", () => {
     const active = makeActiveSession();
     const { broadcast, coordinator, resetIdleTimer, updateSessionFromEvent } =

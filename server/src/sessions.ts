@@ -12,7 +12,7 @@
 
 import { EventEmitter } from "node:events";
 
-import type { AgentRuntimeTransport } from "./agent-runtime-transport.js";
+import type { AgentRuntimeTransport, RuntimeClientCommand } from "./agent-runtime-transport.js";
 import type {
   ChatAttachmentRef,
   MessageQueueDraftItem,
@@ -379,7 +379,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    */
   async forwardClientCommand(
     sessionId: string,
-    message: Record<string, unknown>,
+    message: RuntimeClientCommand,
     requestId?: string,
   ): Promise<void> {
     const key = this.sessionKey(sessionId);

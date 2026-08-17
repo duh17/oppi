@@ -3,6 +3,7 @@ import { formatSkillsForPrompt, type AgentSession } from "@earendil-works/pi-cod
 import {
   applyForwardedCommandResultToSession,
   runtimeCommandFailure,
+  type RuntimeClientCommand,
 } from "./agent-runtime-transport.js";
 import {
   computeCacheWaste,
@@ -16,12 +17,16 @@ import {
   RuntimeCommandCoordinator,
   type RuntimeCommandExecutionContext,
 } from "./runtime-command-coordinator.js";
-import { normalizeCommandError } from "./session-protocol.js";
 import {
-  shareSession,
-  type ShareSessionAction,
-  type ShareSessionRedactionPolicyInput,
-} from "./session-share.js";
+  readOptionalBoolean,
+  readOptionalString,
+  readRequiredString,
+  readShareSessionAction,
+  readShareSessionRedactionPolicy,
+  toRecord,
+} from "./session-command-parse.js";
+import { normalizeCommandError } from "./session-protocol.js";
+import { shareSession } from "./session-share.js";
 import { composeModelId, type SessionStateActiveSession } from "./session-state.js";
 import { readSessionTreeFilterMode, serializeSessionTree } from "./session-tree.js";
 import { extensionNameForAllowlist } from "./extension-loader.js";
@@ -31,19 +36,6 @@ import type { SessionRuntimeTransactionPermit } from "./session-runtime-transact
 import type { ThinkingLevel } from "./thinking-levels.js";
 
 const log = createLogger({ base: { component: "session_commands" } });
-
-function toRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-}
-
-function readCompactInstructions(command: Record<string, unknown>): string | undefined {
-  if (typeof command.customInstructions !== "string") {
-    return undefined;
-  }
-
-  const trimmed = command.customInstructions.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
 
 function toCommandLocation(value: string | undefined): "user" | "project" | "path" | undefined {
   if (value === "user" || value === "project" || value === "path") {
@@ -277,50 +269,6 @@ function collectSessionCommands(session: AgentSession): { commands: SessionComma
   return { commands };
 }
 
-function readOptionalString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function readRequiredString(value: unknown, fieldName: string): string {
-  const parsed = readOptionalString(value);
-  if (!parsed) {
-    throw new Error(`Invalid payload: expected ${fieldName}`);
-  }
-  return parsed;
-}
-
-function readOptionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function readShareSessionAction(command: Record<string, unknown>): ShareSessionAction {
-  return command.action === "prepare" ? "prepare" : "publish";
-}
-
-function readShareSessionRedactionPolicy(
-  command: Record<string, unknown>,
-): ShareSessionRedactionPolicyInput | undefined {
-  const raw = toRecord(command.redactionPolicy);
-  if (Object.keys(raw).length === 0) {
-    return undefined;
-  }
-
-  return {
-    secrets: readOptionalBoolean(raw.secrets),
-    emails: readOptionalBoolean(raw.emails),
-    phones: readOptionalBoolean(raw.phones),
-    userPaths: readOptionalBoolean(raw.userPaths),
-    ipAddresses: readOptionalBoolean(raw.ipAddresses),
-    jwtAndBearer: readOptionalBoolean(raw.jwtAndBearer),
-    namesHeuristic: readOptionalBoolean(raw.namesHeuristic),
-    skills: readOptionalBoolean(raw.skills),
-  };
-}
-
 export interface CommandSessionState extends SessionStateActiveSession {
   session: Session;
   sdkBackend: SdkBackend;
@@ -347,7 +295,7 @@ type SessionCommandHandler = (
 ) => unknown | Promise<unknown>;
 
 interface QueuedCompactCommand {
-  message: Record<string, unknown>;
+  message: RuntimeClientCommand;
   requestId?: string;
 }
 
@@ -389,17 +337,10 @@ export class SessionCommandCoordinator {
     [
       "set_model",
       async (backend, cmd) => {
-        const modelFromCommand =
-          typeof cmd.model === "string" && cmd.model.trim().length > 0
-            ? cmd.model.trim()
-            : undefined;
-        const modelFromParts =
-          typeof cmd.provider === "string" &&
-          cmd.provider.trim().length > 0 &&
-          typeof cmd.modelId === "string" &&
-          cmd.modelId.trim().length > 0
-            ? composeModelId(cmd.provider.trim(), cmd.modelId.trim())
-            : undefined;
+        const modelFromCommand = readOptionalString(cmd.model);
+        const provider = readOptionalString(cmd.provider);
+        const modelId = readOptionalString(cmd.modelId);
+        const modelFromParts = provider && modelId ? composeModelId(provider, modelId) : undefined;
         const model = modelFromCommand ?? modelFromParts;
         if (!model) {
           throw new Error("Invalid set_model payload: expected model or provider+modelId");
@@ -424,8 +365,9 @@ export class SessionCommandCoordinator {
     [
       "set_thinking_level",
       (backend, cmd) => {
-        backend.session.setThinkingLevel(cmd.level as ThinkingLevel);
-        return { level: cmd.level };
+        const level = readRequiredString(cmd.level, "level") as ThinkingLevel;
+        backend.session.setThinkingLevel(level);
+        return { level };
       },
     ],
 
@@ -444,12 +386,13 @@ export class SessionCommandCoordinator {
     [
       "set_session_name",
       (backend, cmd) => {
-        backend.session.setSessionName(cmd.name as string);
-        return { name: cmd.name };
+        const name = readRequiredString(cmd.name, "name");
+        backend.session.setSessionName(name);
+        return { name };
       },
     ],
 
-    ["fork", (backend, cmd) => backend.fork(cmd.entryId as string)],
+    ["fork", (backend, cmd) => backend.fork(readRequiredString(cmd.entryId, "entryId"))],
   ]);
 
   private static readonly SESSION_PASSTHROUGH_HANDLERS = new Map<string, SessionCommandHandler>([
@@ -484,7 +427,7 @@ export class SessionCommandCoordinator {
         ),
     ],
 
-    ["compact", (session, cmd) => session.compact(readCompactInstructions(cmd))],
+    ["compact", (session, cmd) => session.compact(readOptionalString(cmd.customInstructions))],
 
     [
       "set_auto_compaction",
@@ -604,11 +547,11 @@ export class SessionCommandCoordinator {
 
   private enqueueCompact(
     key: string,
-    message: Record<string, unknown>,
+    message: RuntimeClientCommand,
     requestId: string | undefined,
   ): void {
     const queued = this.queuedCompactCommands.get(key) ?? [];
-    queued.push({ message: { ...message }, requestId });
+    queued.push({ message, requestId });
     this.queuedCompactCommands.set(key, queued);
   }
 
@@ -671,7 +614,7 @@ export class SessionCommandCoordinator {
 
   async forwardClientCommand(
     key: string,
-    message: Record<string, unknown>,
+    message: RuntimeClientCommand,
     requestId: string | undefined,
     sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>,
   ): Promise<void> {
@@ -680,7 +623,7 @@ export class SessionCommandCoordinator {
       throw new Error(`Session not active: ${key}`);
     }
 
-    const commandType = typeof message.type === "string" ? message.type : "unknown";
+    const commandType = message.type;
     if (this.shouldQueueCompact(active, commandType)) {
       this.enqueueCompact(key, message, requestId);
       return;

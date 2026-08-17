@@ -1,13 +1,15 @@
 import {
   runtimeCommandFailure,
   runtimeCommandSuccess,
+  toSdkCommandBag,
   unsupportedRuntimeCommandError,
+  type RuntimeClientCommand,
 } from "./agent-runtime-transport.js";
 import type { ServerMessage } from "./types.js";
 
 export interface RuntimeCommandExecutionContext {
   commandType: string;
-  request: Record<string, unknown>;
+  request: RuntimeClientCommand;
   data: unknown;
   executeCommand: (command: Record<string, unknown>) => Promise<unknown>;
 }
@@ -35,11 +37,11 @@ export class RuntimeCommandCoordinator {
 
   async forwardClientCommand(
     sessionId: string,
-    message: Record<string, unknown>,
+    message: RuntimeClientCommand,
     requestId: string | undefined,
     executeCommand: (command: Record<string, unknown>) => Promise<unknown>,
   ): Promise<void> {
-    const commandType = typeof message.type === "string" ? message.type : "unknown";
+    const commandType = message.type;
 
     try {
       if (!this.deps.isCommandSupported(commandType)) {
@@ -58,7 +60,7 @@ export class RuntimeCommandCoordinator {
     }
 
     try {
-      const data = await executeCommand({ ...message });
+      const data = await executeCommand(toSdkCommandBag(message));
       const context: RuntimeCommandExecutionContext = {
         commandType,
         request: message,

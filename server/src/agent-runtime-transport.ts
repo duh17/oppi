@@ -3,11 +3,50 @@ import { composeModelId } from "./session-state.js";
 import type { ExtensionUIResponse } from "./extension-ui-state.js";
 import type {
   ChatAttachmentRef,
+  ClientMessage,
   MessageQueueDraftItem,
   MessageQueueState,
   ServerMessage,
   Session,
 } from "./types.js";
+
+/**
+ * RPC passthrough commands forwarded through AgentRuntimeTransport.
+ * Prompt/queue/stop/UI messages stay on dedicated transport methods.
+ */
+export type RuntimeClientCommand = Extract<
+  ClientMessage,
+  {
+    type:
+      | "get_messages"
+      | "get_fork_messages"
+      | "get_session_tree"
+      | "navigate_tree"
+      | "get_session_stats"
+      | "get_commands"
+      | "share_session"
+      | "set_model"
+      | "cycle_model"
+      | "set_thinking_level"
+      | "cycle_thinking_level"
+      | "reload"
+      | "new_session"
+      | "set_session_name"
+      | "compact"
+      | "set_auto_compaction"
+      | "fork"
+      | "set_steering_mode"
+      | "set_follow_up_mode"
+      | "set_auto_retry"
+      | "abort_retry"
+      | "abort_bash";
+  }
+>;
+
+/** Convert a typed runtime command to the bag Pi SDK execute still requires. */
+export function toSdkCommandBag(command: RuntimeClientCommand): Record<string, unknown> {
+  return { ...command };
+}
 
 export interface RuntimePromptOptions {
   attachments?: ChatAttachmentRef[];
@@ -102,7 +141,7 @@ const STATE_BROADCAST_COMMANDS = new Set([
 export function applyForwardedCommandResultToSession(options: {
   session: Session;
   commandType: string;
-  request: Record<string, unknown>;
+  request: RuntimeClientCommand;
   data: unknown;
   contextWindowResolver?: ((modelId: string) => number | undefined) | null;
 }): ForwardedCommandResultApplication {
@@ -117,7 +156,8 @@ export function applyForwardedCommandResultToSession(options: {
   };
 
   if (commandType === "set_session_name") {
-    const requestedName = asNonEmptyString(request.name);
+    const requestedName =
+      request.type === "set_session_name" ? asNonEmptyString(request.name) : undefined;
     const responseName = asNonEmptyString(response.name);
     const nextName = responseName ?? requestedName;
     if (nextName) setSessionField("name", nextName);
@@ -126,7 +166,7 @@ export function applyForwardedCommandResultToSession(options: {
   if (commandType === "set_thinking_level" || commandType === "cycle_thinking_level") {
     const responseLevel = asNonEmptyString(response.level);
     const requestedLevel =
-      commandType === "set_thinking_level" ? asNonEmptyString(request.level) : undefined;
+      request.type === "set_thinking_level" ? asNonEmptyString(request.level) : undefined;
     const nextLevel = responseLevel ?? requestedLevel;
     if (nextLevel) setSessionField("thinkingLevel", nextLevel);
   }
@@ -185,7 +225,7 @@ export interface AgentRuntimeCommandTransport {
   respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean;
   forwardClientCommand(
     sessionId: string,
-    message: Record<string, unknown>,
+    message: RuntimeClientCommand,
     requestId: string | undefined,
   ): Promise<void>;
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null;

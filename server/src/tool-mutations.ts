@@ -2,13 +2,21 @@ export type ParsedToolMutation =
   | { kind: "write"; path: string | null; content: string }
   | { kind: "edit"; path: string | null; oldText: string; newText: string; isNewFile?: boolean };
 
-/** Normalize tool names (`functions.edit` -> `edit`) for mutation tracking. */
+/** Known Pi mutation tool names. Last dotted segments are not authority. */
+const MUTATION_TOOL_ALIASES = new Map<string, string>([
+  ["edit", "edit"],
+  ["write", "write"],
+  ["bash", "bash"],
+  ["functions.edit", "edit"],
+  ["functions.write", "write"],
+]);
+
+/** Map known Pi mutation tool names to canonical names for tracking. */
 export function normalizeMutationToolName(rawToolName: unknown): string {
   if (typeof rawToolName !== "string") return "";
   const normalized = rawToolName.trim().toLowerCase();
   if (!normalized) return "";
-  const parts = normalized.split(".");
-  return parts[parts.length - 1] ?? normalized;
+  return MUTATION_TOOL_ALIASES.get(normalized) ?? "";
 }
 
 export function extractToolMutations(rawToolName: unknown, rawArgs: unknown): ParsedToolMutation[] {

@@ -6,6 +6,7 @@ import {
 import { consumeSyntheticE2EUIRequest, recordE2EUIResponse } from "./e2e-ui-harness-state.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
+import { runtimeLogTag } from "./session-runtime-capabilities.js";
 import type {
   ChatAttachmentRef,
   ClientMessage,
@@ -15,10 +16,6 @@ import type {
 } from "./types.js";
 
 const log = createLogger({ base: { component: "ws_message_handler" } });
-
-function runtimeLogTag(session: Session): "oppi" | "pi-tui" {
-  return session.runtime === "pi-tui" ? "pi-tui" : "oppi";
-}
 
 interface TurnCommandMessage {
   message: string;
@@ -173,7 +170,6 @@ export class WsMessageHandler {
       case "abort_retry":
       case "abort_bash": {
         const commandStart = Date.now();
-        const command: Record<string, unknown> = { ...msg };
 
         log.info("ws.command.received", {
           connId: meta.connId,
@@ -184,7 +180,7 @@ export class WsMessageHandler {
         });
 
         try {
-          await this.deps.sessions.forwardClientCommand(session.id, command, msg.requestId);
+          await this.deps.sessions.forwardClientCommand(session.id, msg, msg.requestId);
 
           log.info("ws.command.completed", {
             connId: meta.connId,

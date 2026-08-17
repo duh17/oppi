@@ -248,6 +248,44 @@ describe("updateSessionChangeStats", () => {
     expect(session.changeStats).toBeUndefined();
   });
 
+  it.each([
+    {
+      toolName: "edit",
+      args: { path: "/tmp/a.ts", oldText: "a", newText: "b" },
+    },
+    {
+      toolName: "write",
+      args: { path: "/tmp/a.ts", content: "x" },
+    },
+    {
+      toolName: "functions.edit",
+      args: { path: "/tmp/a.ts", oldText: "a", newText: "b" },
+    },
+    {
+      toolName: "functions.write",
+      args: { path: "/tmp/a.ts", content: "x" },
+    },
+  ])("tracks known mutation tool $toolName", ({ toolName, args }) => {
+    const session = makeSession();
+    updateSessionChangeStats(session, toolName, args);
+    expect(session.changeStats?.mutatingToolCalls).toBe(1);
+    expect(session.changeStats?.changedFiles).toEqual(["/tmp/a.ts"]);
+  });
+
+  it.each(["ext.edit", "my.write", "ask.edit", "something.write"])(
+    "does not treat namespaced tool %s as a mutation",
+    (toolName) => {
+      const session = makeSession();
+      updateSessionChangeStats(session, toolName, {
+        path: "/tmp/a.ts",
+        oldText: "a",
+        newText: "b",
+        content: "hello",
+      });
+      expect(session.changeStats).toBeUndefined();
+    },
+  );
+
   it("tracks write tool calls", () => {
     const session = makeSession();
     updateSessionChangeStats(session, "write", { path: "/tmp/a.ts", content: "line1\nline2" });

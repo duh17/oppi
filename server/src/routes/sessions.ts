@@ -1,12 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { requiredModelLaunchFailureMessage } from "../agent-launch-service.js";
 import { SessionLifecycleError, SessionLifecycleService } from "../session-lifecycle-service.js";
-import {
-  type ChatAttachmentRef,
-  type ClientMessage,
-  type ServerMessage,
-  type Session,
-} from "../types.js";
+import { type ChatAttachmentRef, type ServerMessage, type Session } from "../types.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
@@ -16,6 +11,7 @@ import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
 import { isDeclaredControlSession } from "../control-session.js";
+import { parseClientCommand } from "../session-command-parse.js";
 import { isThinkingLevel } from "../thinking-levels.js";
 
 const CONTROL_SESSION_DOMAINS = new Set(["agents", "schedules", "skills", "workspaces"] as const);
@@ -373,13 +369,31 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     res: ServerResponse,
   ): Promise<void> {
     const body = await helpers.parseBody<unknown>(req);
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      helpers.error(res, 400, "Command body must be an object");
-      return;
-    }
-    const command = body as ClientMessage;
-    if (typeof (command as { type?: unknown }).type !== "string") {
-      helpers.error(res, 400, "Command type required");
+    const parsed = parseClientCommand(body);
+    if (!parsed.ok) {
+      if (parsed.code === "not_object") {
+        helpers.error(res, 400, "Command body must be an object");
+        return;
+      }
+      if (parsed.code === "missing_type") {
+        helpers.error(res, 400, "Command type required");
+        return;
+      }
+      if (parsed.code === "unknown_type") {
+        helpers.json(res, {
+          messages: [
+            {
+              type: "command_result",
+              command: parsed.command,
+              requestId: parsed.requestId,
+              success: false,
+              error: parsed.error,
+            },
+          ],
+        });
+        return;
+      }
+      helpers.error(res, 400, parsed.error);
       return;
     }
 
@@ -387,7 +401,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     try {
       await commandHandler.handleClientMessage(
         session,
-        command,
+        parsed.message,
         (message) => messages.push(message),
         { connId: "http-session-command" },
       );

@@ -310,6 +310,65 @@ describe("BoundSessionStreamMux", () => {
     );
   });
 
+  it.each([
+    {
+      name: "malformed required field",
+      payload: { type: "fork", requestId: "req-fork" },
+      expected: {
+        type: "command_result",
+        command: "fork",
+        requestId: "req-fork",
+        success: false,
+        error: "Invalid payload: expected entryId",
+        sessionId: "sess-bound",
+      },
+    },
+    {
+      name: "malformed required field without requestId",
+      payload: { type: "fork" },
+      expected: {
+        type: "error",
+        error: "Invalid payload: expected entryId",
+        sessionId: "sess-bound",
+      },
+    },
+    {
+      name: "unknown type",
+      payload: { type: "future_command_v99", requestId: "req-unknown" },
+      expected: {
+        type: "command_result",
+        command: "future_command_v99",
+        requestId: "req-unknown",
+        success: false,
+        error: "Unsupported command type: future_command_v99",
+        sessionId: "sess-bound",
+      },
+    },
+    {
+      name: "missing type",
+      payload: { requestId: "req-type" },
+      expected: {
+        type: "error",
+        error: "Message type is required",
+        sessionId: "sess-bound",
+      },
+    },
+  ])("preserves session stream command ingress surfaces: $name", async ({ payload, expected }) => {
+    const session = makeSession("sess-bound", "w1");
+    const { ctx } = createMockContext([session]);
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
+    await drain();
+
+    ws.sent.length = 0;
+    ws.emit("message", Buffer.from(JSON.stringify(payload)), false);
+    await drain();
+
+    expect(ctx.handleClientMessage).not.toHaveBeenCalled();
+    expect(ws.sent).toEqual([expected]);
+  });
+
   it("serializes commands that arrive while an earlier stream command is in flight", async () => {
     const session = makeSession("sess-command-race", "w1");
     const { ctx } = createMockContext([session]);

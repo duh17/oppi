@@ -8,6 +8,14 @@ import {
   type UploadStoreConfigResolved,
 } from "./uploads/local-upload-store.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
+import {
+  attachmentWorkspaceErrorMessage,
+  promptBusyErrorMessage,
+  runtimeLogTag,
+  shouldRecordPromptLocally,
+  streamingInputBusyErrorMessage,
+  type StreamingInputKind,
+} from "./session-runtime-capabilities.js";
 
 export interface SessionInputSessionState extends TurnSessionState {
   session: Session;
@@ -24,40 +32,8 @@ export interface SessionInputSessionState extends TurnSessionState {
 
 const log = createLogger({ base: { component: "session_input" } });
 
-function runtimeLogTag(session: Session): "oppi" | "pi-tui" {
-  return session.runtime === "pi-tui" ? "pi-tui" : "oppi";
-}
-
-function isPiTuiSession(session: Session): boolean {
-  return session.runtime === "pi-tui";
-}
-
-function shouldRecordPromptLocally(session: Session): boolean {
-  // Terminal-owned turns are authoritative in pi-tui; Oppi only projects them.
-  return !isPiTuiSession(session);
-}
-
-function promptBusyErrorMessage(session: Session): string {
-  return isPiTuiSession(session)
-    ? "Prompt requires an idle terminal session; use steer or follow_up while a turn is streaming"
-    : "Prompt requires an idle session; use steer or follow_up while a turn is streaming";
-}
-
-function streamingInputBusyErrorMessage(session: Session, kind: StreamingInputKind): string {
-  const label = kind === "steer" ? "Steer" : "Follow-up";
-  return isPiTuiSession(session)
-    ? `${label} requires an active streaming terminal turn`
-    : `${label} requires an active streaming turn`;
-}
-
-function attachmentWorkspaceErrorMessage(session: Session): string {
-  return isPiTuiSession(session)
-    ? "Attachments require a workspace-backed pi-tui session"
-    : "Attachments require a workspace-backed session";
-}
-
 export type SdkImageInput = { type: "image"; data: string; mimeType: string };
-export type StreamingInputKind = "steer" | "follow_up";
+export type { StreamingInputKind };
 
 export interface SessionInputDispatchResult {
   duplicate: boolean;
