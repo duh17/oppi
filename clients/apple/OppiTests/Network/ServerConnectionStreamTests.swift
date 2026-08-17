@@ -360,6 +360,10 @@ struct ServerConnectionStreamTests {
         conn.workspaceStore.workspaces = [makeTestWorkspace(id: "w1")]
         conn.workspaceStore.isLoaded = true
         conn.workspaceStore.markSyncSucceeded(at: now)
+        // Mark capabilities loaded so foreground recovery does not issue a live
+        // GET /server/info; a real failure would trigger availability route
+        // recovery and tear down the transport this test observes.
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
         let streamFactory = ScriptedFrameStreamFactory()
         conn._connectStreamForTesting = { streamFactory.makeStream() }
@@ -387,6 +391,8 @@ struct ServerConnectionStreamTests {
         conn.workspaceStore.workspaces = [makeTestWorkspace(id: "w1")]
         conn.workspaceStore.isLoaded = true
         conn.workspaceStore.markSyncSucceeded(at: now)
+        // Keep capability discovery off the network (see restart test above).
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.wsClient?._setStatusForTesting(.disconnected)
         conn.streamConsumptionTask = nil
 
@@ -399,6 +405,15 @@ struct ServerConnectionStreamTests {
 
     @Test func reconnectIfNeededSkipsAliveStream() async {
         let (conn, _) = makeTestConnection()
+        // Fresh stores and loaded capabilities keep recovery HTTP-free; a live
+        // request failure would trigger route recovery and cancel the sentinel.
+        let now = Date()
+        conn.sessionStore.applyServerSnapshot([makeTestSession(id: "s1")])
+        conn.sessionStore.markSyncSucceeded(at: now)
+        conn.workspaceStore.workspaces = [makeTestWorkspace(id: "w1")]
+        conn.workspaceStore.isLoaded = true
+        conn.workspaceStore.markSyncSucceeded(at: now)
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
 
         conn.wsClient?._setStatusForTesting(.connected)
         let sentinel = Task<Void, Never> { }
