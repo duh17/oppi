@@ -90,9 +90,8 @@ function recoverContextTokensFromTrace(tracePath: string): number | undefined {
           continue;
         }
 
-        const contextTokens = totalTokenUsage(usage);
-        if (contextTokens > 0) {
-          return contextTokens;
+        if (usage.contextTokens > 0) {
+          return usage.contextTokens;
         }
       }
 

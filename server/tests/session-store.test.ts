@@ -84,6 +84,58 @@ describe("SessionStore trace context repair", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("recovers context from a reported totalTokens when usage fields are request deltas", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-store-"));
+
+    try {
+      const tracePath = join(dataDir, "session.jsonl");
+      writeFileSync(
+        tracePath,
+        [
+          JSON.stringify({
+            type: "message",
+            message: {
+              role: "assistant",
+              usage: { input: 538, output: 284, cacheRead: 0, cacheWrite: 0, totalTokens: 18098 },
+            },
+          }),
+          JSON.stringify({
+            type: "message",
+            message: {
+              role: "assistant",
+              content: [],
+              usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              stopReason: "aborted",
+              errorMessage: "Request was aborted",
+            },
+          }),
+        ].join("\n") + "\n",
+      );
+
+      const storage = new Storage(dataDir);
+      const session: Session = {
+        id: "sess-cursor",
+        status: "stopped",
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        model: "cursor/claude-opus-5@300k",
+        messageCount: 2,
+        tokens: { input: 16848, output: 5485, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        contextTokens: 0,
+        contextWindow: 300000,
+        piSessionFile: tracePath,
+      };
+
+      storage.saveSession(session);
+
+      const reloaded = new Storage(dataDir).listSessions()[0];
+      expect(reloaded?.contextTokens).toBe(18098);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("session sqlite store", () => {

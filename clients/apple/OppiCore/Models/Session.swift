@@ -165,7 +165,7 @@ struct Session: Identifiable, Sendable, Equatable {
     var changeStats: SessionChangeStats? = nil
 
     // Context usage (pi TUI-style status bar)
-    var contextTokens: Int?    // input+output+cacheRead+cacheWrite from last message
+    var contextTokens: Int?    // context size the server derived from the last message usage
     var contextWindow: Int?    // model's total context window
 
     var firstMessage: String?

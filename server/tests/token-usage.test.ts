@@ -23,8 +23,45 @@ describe("normalizePiUsage", () => {
       output: 45,
       cacheRead: 800,
       cacheWrite: 30,
+      contextTokens: 995,
       cost: 0.25,
     });
+  });
+
+  it("prefers a reported totalTokens for context size (Cursor reports input deltas)", () => {
+    const usage = normalizePiUsage({
+      input: 538,
+      output: 284,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 18_098,
+      cost: { total: 0 },
+    });
+
+    // Per-request deltas stay untouched so running totals are not inflated.
+    expect(usage).toEqual({
+      input: 538,
+      output: 284,
+      cacheRead: 0,
+      cacheWrite: 0,
+      contextTokens: 18_098,
+      cost: 0,
+    });
+  });
+
+  it("accepts a raw total_tokens counter", () => {
+    expect(normalizePiUsage({ input: 40, output: 10, total_tokens: 9_000 })?.contextTokens).toBe(
+      9_000,
+    );
+  });
+
+  it("falls back to the field sum when totalTokens is absent or zero", () => {
+    expect(normalizePiUsage({ input: 40, output: 10 })?.contextTokens).toBe(50);
+    expect(normalizePiUsage({ input: 40, output: 10, totalTokens: 0 })?.contextTokens).toBe(50);
+    expect(normalizePiUsage({ input: 40, output: 10, totalTokens: -5 })?.contextTokens).toBe(50);
+    expect(
+      normalizePiUsage({ input: 40, output: 10, totalTokens: Number.NaN })?.contextTokens,
+    ).toBe(50);
   });
 
   it("normalizes OpenAI Chat Completions usage fields", () => {
@@ -43,6 +80,7 @@ describe("normalizePiUsage", () => {
       output: 80,
       cacheRead: 1200,
       cacheWrite: 100,
+      contextTokens: 1580,
       cost: 0.41,
     });
   });
@@ -63,6 +101,7 @@ describe("normalizePiUsage", () => {
       output: 70,
       cacheRead: 1100,
       cacheWrite: 120,
+      contextTokens: 1470,
       cost: 0.33,
     });
   });
@@ -81,6 +120,7 @@ describe("normalizePiUsage", () => {
       output: 20,
       cacheRead: 700,
       cacheWrite: 55,
+      contextTokens: 865,
       cost: 0.11,
     });
   });
@@ -102,6 +142,7 @@ describe("normalizePiUsage", () => {
       output: 100,
       cacheRead: 10000,
       cacheWrite: 0,
+      contextTokens: 11100,
       cost: codexSparkExpectedCost,
     });
   });

@@ -175,7 +175,7 @@ export interface Session {
   changeStats?: SessionChangeStats;
 
   // Context usage (pi TUI-style)
-  contextTokens?: number; // input+output+cacheRead+cacheWrite from last message
+  contextTokens?: number; // context size from last message usage (see NormalizedUsage.contextTokens)
   contextWindow?: number; // model's total context window
 
   // Preview

@@ -9,6 +9,15 @@ export interface PiMessageUsage {
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
+  /**
+   * Whole prompt+completion size for the request, when the provider reports it.
+   *
+   * Providers disagree on what the four counters above cover. For Anthropic, xAI, and
+   * openai-codex they partition the whole prompt, so their sum equals context size.
+   * The Cursor provider reports only the new tokens for that request and carries
+   * context size here, so this field is the only way to recover it.
+   */
+  totalTokens?: number;
   cost?: {
     total?: number;
   };

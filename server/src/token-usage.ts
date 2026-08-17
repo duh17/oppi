@@ -7,6 +7,12 @@ export interface NormalizedUsage {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  /**
+   * Context size implied by this usage payload — not a per-request delta.
+   *
+   * Never add this to running token totals; only assign it to Session.contextTokens.
+   */
+  contextTokens: number;
   cost: number;
 }
 
@@ -206,6 +212,22 @@ function resolveNormalizedCost(
 }
 
 /**
+ * Resolve context size the way pi's `calculateContextTokens` does: a positive provider
+ * `totalTokens` wins, otherwise sum the per-request fields.
+ *
+ * Diverging from pi here makes Oppi's context percentage disagree with the pi TUI footer.
+ */
+function resolveContextTokens(usage: Record<string, unknown>, tokens: TokenCounts): number {
+  const reportedTotal =
+    readFiniteNumber(usage, "totalTokens") ?? readFiniteNumber(usage, "total_tokens");
+  if (reportedTotal !== undefined && reportedTotal > 0) {
+    return reportedTotal;
+  }
+
+  return tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
+}
+
+/**
  * Normalize heterogeneous provider usage payloads into server canonical fields.
  *
  * Provider notes (pi upstream):
@@ -268,6 +290,7 @@ export function normalizePiUsage(
 
   return {
     ...tokens,
+    contextTokens: resolveContextTokens(usage, tokens),
     cost:
       reportedCostTotal === undefined
         ? 0

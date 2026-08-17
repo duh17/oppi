@@ -2001,6 +2001,53 @@ describe("translatePiEvent", () => {
 
       expect(session.cost).toBeCloseTo(0.0049);
     });
+
+    it("uses the reported totalTokens for context size without inflating token totals", () => {
+      const session = makeSession({
+        model: "cursor/claude-opus-5@300k",
+        contextWindow: 300_000,
+        tokens: { input: 16_310, output: 5_201, cacheRead: 0, cacheWrite: 0 },
+      });
+
+      applyMessageEndToSession(session, {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        usage: {
+          input: 538,
+          output: 284,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 18_098,
+          cost: { total: 0 },
+        },
+      });
+
+      expect(session.contextTokens).toBe(18_098);
+      expect(session.tokens).toEqual({
+        input: 16_848,
+        output: 5_485,
+        cacheRead: 0,
+        cacheWrite: 0,
+      });
+    });
+
+    it("keeps summing usage fields for context when no totalTokens is reported", () => {
+      const session = makeSession({ model: "anthropic/claude-opus-4-6" });
+
+      applyMessageEndToSession(session, {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        usage: {
+          input: 42_000,
+          output: 900,
+          cacheRead: 12_000,
+          cacheWrite: 100,
+          cost: { total: 0 },
+        },
+      });
+
+      expect(session.contextTokens).toBe(55_000);
+    });
   });
 
   describe("message_end", () => {

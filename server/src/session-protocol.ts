@@ -22,7 +22,7 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { PiMessage } from "./pi-events.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
 import { stripAnsiEscapes } from "./ansi.js";
-import { normalizePiUsage } from "./token-usage.js";
+import { normalizePiUsage, type NormalizedUsage } from "./token-usage.js";
 import { createLogger } from "./logger.js";
 import { stripImageMediaFromDetails } from "./session-media-sanitization.js";
 import {
@@ -467,16 +467,7 @@ function fullModelIdFromMessage(message: PiMessage): string | undefined {
   return undefined;
 }
 
-function extractUsage(
-  message: PiMessage,
-  modelId?: string,
-): {
-  input: number;
-  output: number;
-  cost: number;
-  cacheRead: number;
-  cacheWrite: number;
-} | null {
+function extractUsage(message: PiMessage, modelId?: string): NormalizedUsage | null {
   return normalizePiUsage(message.usage, modelId ?? fullModelIdFromMessage(message));
 }
 
@@ -1527,10 +1518,7 @@ export function applyMessageEndToSession(session: Session, message: PiMessage): 
   // Track context usage for status display (matches pi TUI calculation).
   // Preserve the last non-zero snapshot when pi emits a synthetic aborted
   // assistant message with empty/zero usage at the end of a stopped session.
-  if (usage) {
-    const contextTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-    if (contextTokens > 0 || session.contextTokens === undefined) {
-      session.contextTokens = contextTokens;
-    }
+  if (usage && (usage.contextTokens > 0 || session.contextTokens === undefined)) {
+    session.contextTokens = usage.contextTokens;
   }
 }
