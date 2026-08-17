@@ -23,13 +23,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Oppi uses the camera to take photos for agent conversations."
+            "value": "Oppi uses the camera to scan pairing QR codes and take photos for agent conversations."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Oppi 使用相机为智能体对话拍摄照片。"
+            "value": "Oppi 使用相机扫描配对二维码，并为智能体对话拍摄照片。"
           }
         }
       }
@@ -39,13 +39,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Oppi uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes."
+            "value": "Oppi uses Face ID to confirm server trust and to approve high-risk agent actions like sudo, force push, and recursive deletes."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Oppi 使用面容 ID 确认批准高风险智能体操作，例如 sudo、强制推送和递归删除。"
+            "value": "Oppi 使用面容 ID 确认服务器信任，并批准高风险智能体操作，例如 sudo、强制推送和递归删除。"
           }
         }
       }
@@ -55,13 +55,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Oppi needs local network access to connect to your Mac server."
+            "value": "Oppi needs local network access to connect to your paired self-hosted server."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Oppi 需要本地网络访问权限以连接到你的 Mac 服务器。"
+            "value": "Oppi 需要本地网络访问权限以连接到你配对的自托管服务器。"
           }
         }
       }

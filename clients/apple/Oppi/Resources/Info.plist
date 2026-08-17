@@ -56,11 +56,11 @@
 		<string>_oppi-pair._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>Oppi uses the camera to take photos for agent conversations.</string>
+	<string>Oppi uses the camera to scan pairing QR codes and take photos for agent conversations.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Oppi uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes.</string>
+	<string>Oppi uses Face ID to confirm server trust and to approve high-risk agent actions like sudo, force push, and recursive deletes.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Oppi needs local network access to connect to your Mac server.</string>
+	<string>Oppi needs local network access to connect to your paired self-hosted server.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Oppi uses the microphone to transcribe your voice into text prompts.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

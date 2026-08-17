@@ -290,7 +290,7 @@ struct SettingsView: View {
                 Text(
                     "Voice replies can stay manual or follow each reply's playback behavior. "
                         + "Session-specific changes still happen in chat. "
-                        + "Server dictation uses your Mac's ASR model; on-device dictation uses Apple's local dictation."
+                        + "Server dictation sends audio to the speech-to-text service configured on your paired server; on-device dictation uses Apple's local dictation."
                 )
             }
 
