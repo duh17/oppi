@@ -335,4 +335,73 @@ struct TimelineReducerRecoveredThinkingTests {
         #expect(structuralProjection(live.items) == structuralProjection(cold.items))
         #expect(assistantTextCount(live.items) == 1)
     }
+
+    @Test func busyReEntryThinkingOnlyMessageDoesNotDuplicateOrStealThinking() {
+        // IGgpJC9K: no assistant text. Thinking streamed live, then a tool,
+        // then message_end reconciles [thinking, tool] without agentStart
+        // (busy re-entry). Exactly one live thinking row and one tool row
+        // remain. A previous turn's identical thinking must keep its ID.
+        let reducer = TimelineReducer()
+        let thinkingText = "Let me inspect the working directory."
+
+        reducer.loadSession([
+            TraceEvent(
+                id: "u1",
+                type: .user,
+                timestamp: "2026-01-01T00:00:00Z",
+                text: "previous"
+            ),
+            TraceEvent(
+                id: "think-hist",
+                type: .thinking,
+                timestamp: "2026-01-01T00:00:01Z",
+                thinking: thinkingText
+            ),
+            TraceEvent(
+                id: "u2",
+                type: .user,
+                timestamp: "2026-01-01T00:00:02Z",
+                text: "run pwd"
+            ),
+        ])
+
+        reducer.processBatch([.thinkingDelta(sessionId: "s1", delta: thinkingText, contentIndex: 0)])
+        reducer.processBatch([.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: ["command": "pwd"])])
+        reducer.processBatch([.toolEnd(sessionId: "s1", toolEventId: "t1")])
+        reducer.processBatch([
+            .messageEnd(
+                sessionId: "s1",
+                content: "",
+                assistantContent: [
+                    AssistantMessageContentPart(kind: "thinking", content: thinkingText, contentIndex: 0),
+                    AssistantMessageContentPart(kind: "tool", contentIndex: 1, toolCallId: "t1"),
+                ]
+            ),
+        ])
+        reducer.processBatch([.agentEnd(sessionId: "s1")])
+
+        #expect(assistantTextCount(reducer.items) == 0)
+        let thinkingItems = reducer.items.compactMap { item -> (id: String, preview: String)? in
+            if case .thinking(let id, let preview, _, _) = item {
+                return (id, preview)
+            }
+            return nil
+        }
+        #expect(thinkingItems.count == 2)
+        #expect(thinkingItems[0].id == "think-hist", "Historical thinking must not be adopted or moved")
+        #expect(thinkingItems[0].preview == thinkingText)
+        #expect(thinkingItems[1].id != "think-hist")
+        #expect(thinkingItems[1].preview == thinkingText)
+        let toolCount = reducer.items.reduce(into: 0) { count, item in
+            if case .toolCall = item { count += 1 }
+        }
+        #expect(toolCount == 1)
+        #expect(structuralProjection(reducer.items) == [
+            "other",
+            "thinking:\(thinkingText)",
+            "other",
+            "thinking:\(thinkingText)",
+            "tool:bash",
+        ])
+    }
 }
