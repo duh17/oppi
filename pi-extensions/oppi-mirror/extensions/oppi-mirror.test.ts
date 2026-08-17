@@ -473,7 +473,9 @@ describe("oppi mirror input preflight", () => {
       );
       await drainMicrotasks();
 
-      expect(pi.sendUserMessage).toHaveBeenCalledWith("first phone prompt", {});
+      expect(pi.sendUserMessage).toHaveBeenCalledWith("first phone prompt", {
+        expandPromptTemplates: true,
+      });
       expect(sentCommandResults(socket, "bootstrap-prompt")).toEqual([
         expect.objectContaining({
           success: true,

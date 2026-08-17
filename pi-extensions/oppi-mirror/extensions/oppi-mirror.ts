@@ -3953,7 +3953,11 @@ async function createTuiMirrorRuntime(
         // event is intercepted by patchedEmit and attaches authoritative control.
         pendingInputBootstrapSessionId = piSessionId;
         try {
+          // Bootstrap cannot use session.prompt() yet. Opt into 0.84.2
+          // expansion so slash commands, skills, and templates match the
+          // attached-session prompt() dispatcher.
           pi.sendUserMessage(contentForMessage(message, images), {
+            expandPromptTemplates: true,
             ...(streamingBehavior ? { deliverAs: streamingBehavior } : {}),
           });
         } catch (error) {

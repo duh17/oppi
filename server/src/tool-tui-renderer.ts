@@ -1,7 +1,6 @@
 import {
   Theme,
   type AgentToolResult,
-  type ThemeColor,
   type ToolDefinition,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
@@ -16,7 +15,7 @@ const TOOL_TUI_RENDER_NATIVE_TOOL_NAMES = new Set(["bash", "read", "write", "edi
 // eslint-disable-next-line no-control-regex
 const ANSI_ESCAPE_REGEX = /\x1b\[[\d;]*m/g;
 
-const SNAPSHOT_FG_COLORS: Record<ThemeColor, string> = {
+const SNAPSHOT_FG_COLORS = {
   accent: "#7aa2f7",
   border: "#565f89",
   borderAccent: "#7aa2f7",
@@ -63,7 +62,7 @@ const SNAPSHOT_FG_COLORS: Record<ThemeColor, string> = {
   thinkingXhigh: "#f7768e",
   thinkingMax: "#ff5fff",
   bashMode: "#7dcfff",
-};
+} satisfies ConstructorParameters<typeof Theme>[0];
 
 const SNAPSHOT_BG_COLORS = {
   selectedBg: "#26324a",
@@ -72,7 +71,7 @@ const SNAPSHOT_BG_COLORS = {
   toolPendingBg: "#1f2335",
   toolSuccessBg: "#1f2f24",
   toolErrorBg: "#3b2228",
-};
+} satisfies ConstructorParameters<typeof Theme>[1];
 
 let snapshotTheme: Theme | undefined;
 
