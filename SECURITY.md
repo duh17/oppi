@@ -22,12 +22,12 @@ A plain network HTTP listener can be used for health-only development, but pairi
 
 ## Privacy
 
-Oppi has no hosted account service or external analytics, and session data stays on your machine. Network metadata is visible to the network provider and any directly used infrastructure; tokens and private keys are not included in telemetry or logs.
+Oppi has no hosted account service or external analytics. Session data stays on the paired server and in its configured workspaces, except for content sent to model, speech, voice, or network services that the server operator configures. Network metadata is visible to the network provider and any directly used infrastructure; tokens and private keys are not included in telemetry or logs.
 
-Diagnostics upload only to the paired Oppi server. Public builds require **Settings → Diagnostics → Send Diagnostics to Server** before they upload MetricKit, resource, or client-log diagnostics. Internal/debug builds upload diagnostics to the configured server automatically.
+Diagnostics upload only to the paired Oppi server. Public builds require **Settings → Privacy & Security → Send Diagnostics to Server** before they upload MetricKit, resource, or client-log diagnostics. Internal/debug builds upload diagnostics to the configured server automatically.
 
 See [`docs/telemetry.md`](docs/telemetry.md) for the full telemetry policy.
 
 ## Reporting issues
 
-If you find a security issue, open an issue on GitHub.
+If you find a security issue, email [support@chaosdonkey.dev](mailto:support@chaosdonkey.dev). Do not include credentials, tokens, private prompts, workspace contents, or other secrets in a public GitHub issue.

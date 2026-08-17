@@ -306,6 +306,8 @@ struct SettingsView: View {
 
             privacySecuritySection
 
+            documentationSection
+
             Section("Storage") {
                 if let cacheSizeText {
                     LabeledContent("Local Cache", value: cacheSizeText)
@@ -436,6 +438,35 @@ struct SettingsView: View {
             Text("Privacy & Security")
         } footer: {
             Text(privacySecurityFooter)
+        }
+    }
+
+    @ViewBuilder
+    private var documentationSection: some View {
+        Section {
+            Link(destination: AppSupportLinks.privacyPolicyURL) {
+                Label("Privacy Policy", systemImage: "hand.raised")
+            }
+            .environment(\.openURL, OpenURLAction { _ in
+                AppSupportLinks.open(AppSupportLinks.privacyPolicyURL)
+                return .handled
+            })
+            .accessibilityIdentifier("settings.privacyPolicy")
+            .accessibilityHint("Opens Oppi's public Privacy Policy")
+
+            Link(destination: AppSupportLinks.supportURL) {
+                Label("Support & Contact", systemImage: "questionmark.circle")
+            }
+            .environment(\.openURL, OpenURLAction { _ in
+                AppSupportLinks.open(AppSupportLinks.supportURL)
+                return .handled
+            })
+            .accessibilityIdentifier("settings.supportContact")
+            .accessibilityHint("Opens Oppi's public support and contact page")
+        } header: {
+            Text("Help & Privacy")
+        } footer: {
+            Text("These pages explain where Oppi data goes and how to report a problem. Links open using your Open Links setting.")
         }
     }
 

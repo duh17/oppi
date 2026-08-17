@@ -51,7 +51,7 @@ npm run telemetry:grafana:up
 Oppi diagnostics are designed for self-hosted debugging.
 
 - Public iOS release builds set `OPPI_TELEMETRY_MODE=public`.
-- Public iOS release builds do not upload diagnostics unless the user enables **Settings → Diagnostics → Send Diagnostics to Server**.
+- Public iOS release builds do not upload diagnostics unless the user enables **Settings → Privacy & Security → Send Diagnostics to Server**.
 - iOS builds do not link an external crash-reporting SDK; diagnostics upload only to the configured Oppi server.
 - Internal/debug builds set `OPPI_TELEMETRY_MODE=internal` and upload diagnostics automatically to the configured Oppi server.
 - The server also enforces `OPPI_TELEMETRY_MODE`: `public`, `release`, `prod`, `off`, and equivalent values reject telemetry uploads with HTTP 403.
