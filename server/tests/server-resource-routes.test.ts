@@ -79,6 +79,7 @@ function makeRoutes() {
     })),
     setExtensionEnabled: vi.fn(async () => ({ ...extension, state: "off" as const })),
   };
+  const refreshModelCatalog = vi.fn(async () => undefined);
   const storage = {
     getOppiExtensionSettings: vi.fn(() => ({
       enabled: false,
@@ -97,9 +98,14 @@ function makeRoutes() {
     })),
   };
   return {
-    routes: new RouteHandler({ serverResources, storage } as unknown as RouteContext),
+    routes: new RouteHandler({
+      serverResources,
+      storage,
+      refreshModelCatalog,
+    } as unknown as RouteContext),
     serverResources,
     storage,
+    refreshModelCatalog,
   };
 }
 
@@ -357,7 +363,7 @@ describe("server resource routes", () => {
   });
 
   it("serves Oppi first, only mutates normal extensions, and uses direct details", async () => {
-    const { routes, serverResources } = makeRoutes();
+    const { routes, serverResources, refreshModelCatalog } = makeRoutes();
 
     const list = await dispatch(routes, "GET", "/server/resources/extensions");
     expect(list.statusCode).toBe(200);
@@ -387,6 +393,7 @@ describe("server resource routes", () => {
     expect(enabled.statusCode).toBe(200);
     expect(JSON.parse(enabled.body)).toEqual({ ...extension, state: "off" });
     expect(serverResources.setExtensionEnabled).toHaveBeenCalledWith(extension.id, false);
+    expect(refreshModelCatalog).toHaveBeenCalledWith({ force: true });
 
     const builtInMutation = await dispatch(
       routes,

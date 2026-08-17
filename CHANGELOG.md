@@ -48,6 +48,7 @@ Target: iOS `1.1.0` build `45`, `oppi-server@0.46.0` with bundled Pi runtime `0.
 
 ### Changed
 
+- **Server:** Custom provider extensions appear in the model picker and provider-auth list after install, a detected source edit, or enable/disable without an Oppi server restart. Active sessions still need `/reload`.
 - **Protocol/Client/Server:** Agent, schedule, Skill, workspace, model, and session APIs changed incompatibly; Build 44 requires `oppi-server@0.46.0`.
 - **Server:** Explicit model selection fails visibly when the requested model is unavailable instead of substituting another provider or model.
 - **Client/Server:** Session, tool, Markdown, and cached-content presentation survives navigation, replay, and reconnection more consistently.

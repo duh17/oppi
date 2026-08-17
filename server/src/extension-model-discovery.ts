@@ -15,9 +15,14 @@
  * extensions, matching the "global scope" decision in the issue #19 design.
  */
 
+import { existsSync, mkdtempSync, readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
-  DefaultResourceLoader,
+  DefaultPackageManager,
   SettingsManager,
+  discoverAndLoadExtensions,
   type LoadExtensionsResult,
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
@@ -105,56 +110,242 @@ export type ExtensionProviderDiscoveryResult = AppliedProviderRegistrations;
  * `allowNetwork: false`; this is advisory (pi forwards it to a provider's
  * `refreshModels` but does not enforce it), matching pi's own session startup.
  *
- * Registrations persist on the runtime across subsequent `refresh()` calls, so
- * this only needs to run once at startup; auth-gated availability then updates
- * dynamically on every catalog refresh (credential changes, `/models`).
+ * Compatibility wrapper around `ExtensionProviderCatalog.sync()` so one-shot
+ * callers and fixture tests use the same no-install reconcile path as the server.
  */
 export async function discoverExtensionProviders(
-  modelRuntime: ProviderRegistrationTarget & Pick<ModelRuntime, "refresh">,
+  modelRuntime: ExtensionProviderCatalogRuntime,
   options: ExtensionProviderDiscoveryOptions,
 ): Promise<ExtensionProviderDiscoveryResult> {
-  // Force project-untrusted so only user/global extensions load. This is pi's
-  // bootstrap behavior and keeps arbitrary project-local extensions out of a
-  // server-wide discovery pass.
-  const settingsManager = SettingsManager.create(options.cwd, options.agentDir, {
-    projectTrusted: false,
+  const result = await new ExtensionProviderCatalog(modelRuntime, options).sync({
+    force: true,
   });
-  const loader = new DefaultResourceLoader({
-    cwd: options.cwd,
-    agentDir: options.agentDir,
-    settingsManager,
-    noSkills: true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: true,
-  });
+  return {
+    registeredProviderIds: result.registeredProviderIds,
+    diagnostics: result.diagnostics,
+  };
+}
 
-  const extensionsResult = await loader.loadProjectTrustExtensions();
-  const diagnostics: ExtensionProviderDiagnostic[] = extensionsResult.errors.map((error) => ({
-    extensionPath: error.path,
-    message: error.error,
-  }));
-
-  const applied = applyPendingProviderRegistrations(modelRuntime, extensionsResult);
-  diagnostics.push(...applied.diagnostics);
-
-  // allowNetwork is advisory, not a hard block (pi passes it through to provider
-  // refreshModels). Static models registered at load time need no network either
-  // way; this mirrors pi's createAgentSessionServices refresh.
-  await modelRuntime.refresh({ allowNetwork: false });
-
-  for (const diagnostic of diagnostics) {
-    log.warn("extension_model_discovery.diagnostic", {
-      extensionPath: diagnostic.extensionPath,
-      message: diagnostic.message,
-    });
+function fileStamp(path: string): string {
+  try {
+    const stat = statSync(path);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return "missing";
   }
-  if (applied.registeredProviderIds.length > 0) {
-    log.info("extension_model_discovery.providers_registered", {
-      providerCount: applied.registeredProviderIds.length,
-      providers: applied.registeredProviderIds.join(","),
-    });
+}
+
+/** Stamp a directory listing. depth=1 covers `extensions/foo/index.ts`. */
+function directoryStamp(dir: string, depth: number): string {
+  try {
+    return readdirSync(dir)
+      .filter((name) => !name.startsWith("."))
+      .sort()
+      .map((name) => {
+        const path = join(dir, name);
+        if (depth > 0) {
+          try {
+            if (statSync(path).isDirectory()) {
+              return `${name}:{${directoryStamp(path, depth - 1)}}`;
+            }
+          } catch {
+            // Fall through to the file stamp.
+          }
+        }
+        return `${name}:${fileStamp(path)}`;
+      })
+      .join(",");
+  } catch {
+    return existsSync(dir) ? "unreadable" : "missing";
+  }
+}
+
+/**
+ * Cheap source stamp for global provider discovery. Covers settings enablement,
+ * top-level and one-nested-level files under `extensions/`, and npm/git package
+ * metadata. Deeper package trees are picked up when settings.json changes.
+ */
+export function extensionDiscoveryFingerprint(agentDir: string): string {
+  const settings = fileStamp(join(agentDir, "settings.json"));
+  const extensions = directoryStamp(join(agentDir, "extensions"), 1);
+  const npmPkg = fileStamp(join(agentDir, "npm", "package.json"));
+  const npmLock = fileStamp(join(agentDir, "npm", "package-lock.json"));
+  const git = directoryStamp(join(agentDir, "git"), 1);
+  return `settings=${settings};extensions=${extensions};npm=${npmPkg},${npmLock};git=${git}`;
+}
+
+export interface ExtensionProviderSyncOptions {
+  /** Reload even when the source fingerprint is unchanged. */
+  force?: boolean;
+}
+
+export interface ExtensionProviderSyncResult extends AppliedProviderRegistrations {
+  skipped: boolean;
+  unregisteredProviderIds: string[];
+}
+
+export type ExtensionProviderCatalogRuntime = ProviderRegistrationTarget &
+  Pick<ModelRuntime, "refresh" | "unregisterProvider">;
+
+/**
+ * Server-wide provider catalog. Reconciles global/user extension providers onto
+ * one ModelRuntime: register current ids, unregister ids this catalog applied
+ * that are no longer declared. Project-local extensions stay excluded.
+ */
+export class ExtensionProviderCatalog {
+  private lastFingerprint?: string;
+  private readonly registeredIds = new Set<string>();
+  private queue: Promise<void> = Promise.resolve();
+  private readonly discoveryRoot = mkdtempSync(join(tmpdir(), "oppi-provider-catalog-"));
+
+  constructor(
+    private readonly modelRuntime: ExtensionProviderCatalogRuntime,
+    private readonly options: ExtensionProviderDiscoveryOptions,
+  ) {}
+
+  async sync(options: ExtensionProviderSyncOptions = {}): Promise<ExtensionProviderSyncResult> {
+    const run = this.queue.then(() => this.syncExclusive(options));
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
-  return { registeredProviderIds: applied.registeredProviderIds, diagnostics };
+  private async syncExclusive(
+    options: ExtensionProviderSyncOptions,
+  ): Promise<ExtensionProviderSyncResult> {
+    let fingerprint: string;
+    try {
+      fingerprint = extensionDiscoveryFingerprint(this.options.agentDir);
+    } catch (error) {
+      const message = errorMessage(error);
+      log.warn("extension_model_discovery.fingerprint_failed", { error: message });
+      return {
+        registeredProviderIds: [...this.registeredIds],
+        diagnostics: [{ extensionPath: this.options.agentDir, message }],
+        skipped: false,
+        unregisteredProviderIds: [],
+      };
+    }
+    if (!options.force && this.lastFingerprint === fingerprint) {
+      return {
+        registeredProviderIds: [...this.registeredIds],
+        diagnostics: [],
+        skipped: true,
+        unregisteredProviderIds: [],
+      };
+    }
+
+    try {
+      const { applied, diagnostics, removedProviderIds } = await this.loadAndReplace();
+      this.lastFingerprint = fingerprint;
+
+      for (const diagnostic of diagnostics) {
+        log.warn("extension_model_discovery.diagnostic", {
+          extensionPath: diagnostic.extensionPath,
+          message: diagnostic.message,
+        });
+      }
+      if (applied.registeredProviderIds.length > 0 || removedProviderIds.length > 0) {
+        log.info("extension_model_discovery.providers_reconciled", {
+          providerCount: applied.registeredProviderIds.length,
+          providers: applied.registeredProviderIds.join(","),
+          unregisteredCount: removedProviderIds.length,
+          unregistered: removedProviderIds.join(","),
+        });
+      }
+
+      return {
+        registeredProviderIds: [...this.registeredIds],
+        diagnostics,
+        skipped: false,
+        unregisteredProviderIds: removedProviderIds,
+      };
+    } catch (error) {
+      // Remember the stamp so a broken source is not reloaded on every GET /models.
+      // force:true or a later fingerprint change still retries.
+      this.lastFingerprint = fingerprint;
+      const message = errorMessage(error);
+      log.warn("extension_model_discovery.sync_failed", { error: message });
+      return {
+        registeredProviderIds: [...this.registeredIds],
+        diagnostics: [{ extensionPath: this.options.agentDir, message }],
+        skipped: false,
+        unregisteredProviderIds: [],
+      };
+    }
+  }
+
+  private async loadAndReplace(): Promise<{
+    applied: AppliedProviderRegistrations;
+    diagnostics: ExtensionProviderDiagnostic[];
+    removedProviderIds: string[];
+  }> {
+    const settingsManager = SettingsManager.create(this.options.cwd, this.options.agentDir, {
+      projectTrusted: false,
+    });
+    await settingsManager.reload();
+    const packageManager = new DefaultPackageManager({
+      cwd: this.options.cwd,
+      agentDir: this.options.agentDir,
+      settingsManager,
+    });
+    // Never npm-install or git-clone on a request path. Missing packages stay
+    // out of the catalog until the user installs them outside this reload.
+    const skippedSources: string[] = [];
+    const resolved = await packageManager.resolve(async (source) => {
+      skippedSources.push(source);
+      return "skip";
+    });
+    const enabledPaths = resolved.extensions
+      .filter((resource) => resource.enabled)
+      .map((resource) => resource.path);
+    // Unique empty root so discoverAndLoadExtensions does not also scan the
+    // real cwd/.pi/extensions or agentDir/extensions. Paths already come from
+    // the skip-resolve. mkdtempSync (not a fixed $TMPDIR name) owns the dir.
+    const extensionsResult = await discoverAndLoadExtensions(
+      enabledPaths,
+      this.discoveryRoot,
+      this.discoveryRoot,
+    );
+    const diagnostics: ExtensionProviderDiagnostic[] = [
+      ...skippedSources.map((source) => ({
+        extensionPath: source,
+        message: "Package is not installed; the model catalog will not install it",
+      })),
+      ...extensionsResult.errors.map((error) => ({
+        extensionPath: error.path,
+        message: error.error,
+      })),
+    ];
+
+    // Unregister first so a re-registration replaces instead of merging leftover
+    // fields (apiKey/headers/baseUrl) from the previous factory.
+    const previousIds = [...this.registeredIds];
+    for (const providerId of previousIds) {
+      try {
+        this.modelRuntime.unregisterProvider(providerId);
+      } catch (error) {
+        diagnostics.push({
+          extensionPath: providerId,
+          message: errorMessage(error),
+        });
+      }
+    }
+    this.registeredIds.clear();
+
+    const applied = applyPendingProviderRegistrations(this.modelRuntime, extensionsResult);
+    diagnostics.push(...applied.diagnostics);
+    for (const providerId of applied.registeredProviderIds) {
+      this.registeredIds.add(providerId);
+    }
+    await this.modelRuntime.refresh({ allowNetwork: false });
+    const nextIds = new Set(applied.registeredProviderIds);
+    return {
+      applied,
+      diagnostics,
+      removedProviderIds: previousIds.filter((providerId) => !nextIds.has(providerId)),
+    };
+  }
 }

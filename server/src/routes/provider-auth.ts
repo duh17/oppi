@@ -37,6 +37,7 @@ export function createProviderAuthRoutes(
 
     try {
       if (path === "/provider-auth/status" && method === "GET") {
+        await ctx.refreshModelCatalog?.();
         helpers.json(res, { providers: await ctx.providerAuth.getStatus() });
         return true;
       }

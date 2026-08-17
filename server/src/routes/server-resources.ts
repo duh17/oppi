@@ -349,7 +349,16 @@ export function createServerResourceRoutes(
       return;
     }
     try {
-      helpers.json(res, await ctx.serverResources.setExtensionEnabled(id, body.enabled));
+      const summary = await ctx.serverResources.setExtensionEnabled(id, body.enabled);
+      try {
+        await ctx.refreshModelCatalog({ force: true });
+      } catch (refreshError: unknown) {
+        log.warn("server_resources.extension_catalog_refresh_failed", {
+          extensionId: id,
+          error: refreshError instanceof Error ? refreshError.message : String(refreshError),
+        });
+      }
+      helpers.json(res, summary);
     } catch (cause: unknown) {
       errorForResource(res, helpers, "Extension", "mutation", cause);
     }

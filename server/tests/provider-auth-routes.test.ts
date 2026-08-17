@@ -41,7 +41,11 @@ describe("provider auth routes", () => {
       ]),
     } as unknown as RouteContext["providerAuth"];
 
-    const routes = new RouteHandler({ providerAuth } as unknown as RouteContext);
+    const refreshModelCatalog = vi.fn(async () => undefined);
+    const routes = new RouteHandler({
+      providerAuth,
+      refreshModelCatalog,
+    } as unknown as RouteContext);
     const res = makeResponse();
 
     await routes.dispatch(
@@ -53,6 +57,7 @@ describe("provider auth routes", () => {
     );
 
     expect(res.statusCode).toBe(200);
+    expect(refreshModelCatalog).toHaveBeenCalledOnce();
     expect(providerAuth.getStatus).toHaveBeenCalledOnce();
 
     const body = JSON.parse(res.body) as { providers: Array<{ id: string }> };

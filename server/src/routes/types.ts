@@ -22,7 +22,7 @@ export interface RouteContext {
   providerAuth: ProviderAuthManager;
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
-  refreshModelCatalog: () => Promise<void>;
+  refreshModelCatalog: (options?: { force?: boolean }) => Promise<void>;
   getModelCatalog: () => ModelInfo[];
   getProviderQuotasStatus?: () => Promise<ProviderQuotasStatus>;
   searchIndex?: SearchIndex;

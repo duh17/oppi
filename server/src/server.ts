@@ -27,7 +27,7 @@ import { RouteHandler } from "./routes/index.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
 import { shouldRecordHttpRequestMetric } from "./http-request-metrics.js";
 import { ModelCatalog } from "./model-catalog.js";
-import { discoverExtensionProviders } from "./extension-model-discovery.js";
+import { ExtensionProviderCatalog } from "./extension-model-discovery.js";
 import { LiveActivityBridge } from "./live-activity.js";
 import { SessionPushNotifier } from "./session-push-notifier.js";
 import { AgentScheduleRunner } from "./agent-schedule-runner.js";
@@ -382,6 +382,7 @@ export class Server {
   private modelRuntime!: ModelRuntime;
   private modelRegistry!: ModelRegistry;
   private models!: ModelCatalog;
+  private extensionProviderCatalog!: ExtensionProviderCatalog;
   private providerAuth!: ProviderAuthManager;
   private titleGenerator!: SessionTitleGenerator;
 
@@ -617,6 +618,14 @@ export class Server {
 
   // ─── Start / Stop ───
 
+  private async refreshModelCatalog(options?: { force?: boolean }): Promise<void> {
+    // The common GET /models path fingerprints and skips. A source change awaits
+    // one reload so the picker does not return a stale extension catalog.
+    // models.refresh() stays stale-while-revalidate after that.
+    await this.extensionProviderCatalog.sync({ force: options?.force === true });
+    await this.models.refresh();
+  }
+
   private async initializeModelServices(): Promise<void> {
     const agentDir = getAgentDir();
     this.modelRuntime = await ModelRuntime.create({
@@ -630,15 +639,14 @@ export class Server {
 
     // Discover custom provider extensions (e.g. kiro/antigravity) and register
     // their providers on the server-wide model runtime so their models reach the
-    // /models picker. Uses pi's own extension-loading path against the user's
-    // global extensions; registrations persist across refresh(), so this runs
-    // once at startup and auth-gated availability updates dynamically afterwards.
-    // Failures are logged, never fatal to startup.
+    // /models picker. Later GET /models calls resync when global sources change;
+    // extension enable/disable force-resyncs. Failures are logged, never fatal.
+    this.extensionProviderCatalog = new ExtensionProviderCatalog(this.modelRuntime, {
+      cwd: process.cwd(),
+      agentDir,
+    });
     try {
-      await discoverExtensionProviders(this.modelRuntime, {
-        cwd: process.cwd(),
-        agentDir,
-      });
+      await this.extensionProviderCatalog.sync();
     } catch (error) {
       log.warn("models.extension_discovery_failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -715,7 +723,7 @@ export class Server {
       providerAuth: this.providerAuth,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
-      refreshModelCatalog: () => this.models.refresh(),
+      refreshModelCatalog: (options) => this.refreshModelCatalog(options),
       getModelCatalog: () => this.models.getAll(),
       getProviderQuotasStatus: () => fetchProviderQuotas({ modelRuntime: this.modelRuntime }),
       searchIndex: this.searchIndex ?? undefined,
