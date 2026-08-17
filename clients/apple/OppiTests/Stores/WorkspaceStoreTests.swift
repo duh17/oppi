@@ -373,7 +373,7 @@ struct ServerBadgeConnectionStateTests {
             connection: nil,
             state: .connecting,
             isPreparing: true
-        ) == "Connecting")
+        ) == "Connecting over HTTPS/WSS")
     }
 }
 

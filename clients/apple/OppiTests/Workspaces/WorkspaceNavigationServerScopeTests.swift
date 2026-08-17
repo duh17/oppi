@@ -388,9 +388,9 @@ struct WorkspaceNavigationServerScopeTests {
         let credentials = ServerCredentials(
             host: host,
             port: 7749,
-            token: "sk_test",
+            token: "dt_test",
             name: name,
-            scheme: .http,
+            scheme: .https,
             serverFingerprint: id
         )
         guard let server = PairedServer(from: credentials, sortOrder: 0) else {
