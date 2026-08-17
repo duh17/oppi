@@ -206,4 +206,53 @@ enum ServerMessageEffects {
 
         return effects
     }
+
+    /// App-event stop/end/delete/fatal-error clear ask, dialogs, surfaces, and the queue.
+    /// Focused `.stopConfirmed` stays narrower: ask + dialogs only.
+    /// Screen-awake and usage-metric maps stay in the app-event adapter.
+    static func cleanupEffects(for event: AppEventMessage) -> ServerMessageCleanupEffects {
+        switch event {
+        case .sessionEnded(let sessionId, _, _, _),
+             .stopConfirmed(let sessionId, _, _, _, _),
+             .sessionDeleted(let sessionId, _, _):
+            return sessionScopedCleanup(
+                sessionId: sessionId,
+                includeSurfaces: true,
+                includeQueue: true
+            )
+
+        case .sessionError(let sessionId, _, _, _, _, let fatal) where fatal:
+            return sessionScopedCleanup(
+                sessionId: sessionId,
+                includeSurfaces: true,
+                includeQueue: true
+            )
+
+        case .extensionUISettled(let id, _, _, _):
+            var effects = ServerMessageCleanupEffects()
+            effects.clearAskRequestIds.insert(id)
+            effects.clearExtensionDialogRequestIds.insert(id)
+            return effects
+
+        default:
+            return ServerMessageCleanupEffects()
+        }
+    }
+
+    private static func sessionScopedCleanup(
+        sessionId: String,
+        includeSurfaces: Bool,
+        includeQueue: Bool
+    ) -> ServerMessageCleanupEffects {
+        var effects = ServerMessageCleanupEffects()
+        effects.clearAskSessionIds.insert(sessionId)
+        effects.clearExtensionDialogSessionIds.insert(sessionId)
+        if includeSurfaces {
+            effects.clearExtensionSurfaceSessionIds.insert(sessionId)
+        }
+        if includeQueue {
+            effects.clearMessageQueueSessionIds.insert(sessionId)
+        }
+        return effects
+    }
 }

@@ -193,6 +193,122 @@ struct AppEventRoutingTests {
         #expect(connection.sessionStore.session(id: "s2")?.lastActivity == liveDate)
         #expect(connection.sessionStore.listProjectionSessions(workspaceId: "w1").first?.status == .busy)
     }
+
+    @Test(
+        "app-event stop/end/delete/fatal-error clear session-scoped UI and lane extras",
+        arguments: AppEventSessionCleanupCase.allCases
+    )
+    func appEventLifecycleClearsSessionScopedState(_ cleanupCase: AppEventSessionCleanupCase) {
+        let connection = makeAppEventCleanupConnection(status: cleanupCase.seedStatus)
+        seedAppEventSessionScopedState(connection)
+
+        connection.handleAppEvent(cleanupCase.event)
+
+        expectAppEventSessionScopedUICleared(connection)
+        #expect(connection.sessionUsageMetricSnapshots["s2"] == nil)
+        #expect(connection.sessionUsageMetricLastEmittedAt["s2"] == nil)
+        #expect(!connection.screenAwakeController.isPreventingSleep)
+        cleanupCase.assertStore(connection)
+    }
+
+    @Test func appEventNonFatalErrorKeepsSessionScopedUIAndUsageMetrics() {
+        let connection = makeAppEventCleanupConnection(status: .busy)
+        seedAppEventSessionScopedState(connection)
+
+        connection.handleAppEvent(
+            .sessionError(
+                sessionId: "s2",
+                workspaceId: "w1",
+                emittedAt: 1,
+                message: "retry",
+                code: nil,
+                fatal: false
+            )
+        )
+
+        expectAppEventSessionScopedUIPreserved(connection)
+        #expect(connection.sessionUsageMetricSnapshots["s2"] != nil)
+        #expect(connection.sessionUsageMetricLastEmittedAt["s2"] != nil)
+        #expect(connection.sessionStore.session(id: "s2")?.status == .error)
+    }
+
+    @Test func focusedStopConfirmedLeavesSurfacesAndQueue() {
+        let connection = ServerConnection()
+        connection._setActiveSessionIdForTesting("s1")
+        connection.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1", status: .stopping))
+        seedFocusedSessionScopedState(connection)
+
+        connection.handleActiveSessionUI(
+            .stopConfirmed(source: .user, reason: nil),
+            sessionId: "s1"
+        )
+
+        #expect(connection.askRequestStore.pending(for: "s1") == nil)
+        #expect(connection.pendingExtensionDialogQueues["s1"] == nil)
+        #expect(connection.extensionSurfaceBySession["s1"]?.widgets["goal"]?.lines == ["Keep going"])
+        #expect(connection.messageQueueStore.queue(for: "s1").steering.first?.id == "q1")
+    }
+}
+
+enum AppEventSessionCleanupCase: CaseIterable {
+    case stopConfirmed
+    case sessionEnded
+    case sessionDeleted
+    case fatalError
+
+    var seedStatus: SessionStatus {
+        switch self {
+        case .stopConfirmed:
+            return .stopping
+        case .sessionEnded, .sessionDeleted, .fatalError:
+            return .busy
+        }
+    }
+
+    var event: AppEventMessage {
+        switch self {
+        case .stopConfirmed:
+            return .stopConfirmed(
+                sessionId: "s2",
+                workspaceId: "w1",
+                emittedAt: 1,
+                source: "user",
+                reason: nil
+            )
+        case .sessionEnded:
+            return .sessionEnded(
+                sessionId: "s2",
+                workspaceId: "w1",
+                emittedAt: 1,
+                reason: "done"
+            )
+        case .sessionDeleted:
+            return .sessionDeleted(sessionId: "s2", workspaceId: "w1", emittedAt: 1)
+        case .fatalError:
+            return .sessionError(
+                sessionId: "s2",
+                workspaceId: "w1",
+                emittedAt: 1,
+                message: "boom",
+                code: nil,
+                fatal: true
+            )
+        }
+    }
+
+    @MainActor
+    func assertStore(_ connection: ServerConnection) {
+        switch self {
+        case .stopConfirmed:
+            #expect(connection.sessionStore.session(id: "s2")?.status == .ready)
+        case .sessionEnded:
+            #expect(connection.sessionStore.session(id: "s2")?.status == .stopped)
+        case .sessionDeleted:
+            #expect(connection.sessionStore.session(id: "s2") == nil)
+        case .fatalError:
+            #expect(connection.sessionStore.session(id: "s2")?.status == .error)
+        }
+    }
 }
 
 @MainActor
@@ -202,4 +318,78 @@ private func appEventBadgeCount(_ connection: ServerConnection, sessionId: Strin
         hasPendingAsk: connection.askRequestStore.hasPending(for: sessionId),
         hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
     )
+}
+
+@MainActor
+private func makeAppEventCleanupConnection(status: SessionStatus) -> ServerConnection {
+    let connection = ServerConnection()
+    connection._setActiveSessionIdForTesting("focused")
+    connection.sessionStore.upsert(makeTestSession(id: "s2", workspaceId: "w1", status: status))
+    connection.screenAwakeController = ScreenAwakeController(
+        timeoutProvider: { nil },
+        idleTimerSetter: { _ in },
+        sleepFunction: { _ in }
+    )
+    return connection
+}
+
+@MainActor
+private func seedAppEventSessionScopedState(_ connection: ServerConnection) {
+    seedSessionScopedState(connection, sessionId: "s2")
+    connection.screenAwakeController.setSessionActivity(true, sessionId: "s2")
+    #expect(connection.screenAwakeController.isPreventingSleep)
+}
+
+@MainActor
+private func seedFocusedSessionScopedState(_ connection: ServerConnection) {
+    seedSessionScopedState(connection, sessionId: "s1")
+}
+
+@MainActor
+private func seedSessionScopedState(_ connection: ServerConnection, sessionId: String) {
+    let ask = AskRequest(
+        id: "ask-\(sessionId)",
+        sessionId: sessionId,
+        questions: [AskQuestion(id: "q1", question: "Approve?", options: [], multiSelect: false)],
+        allowCustom: true,
+        timeout: nil,
+        workspaceId: "w1"
+    )
+    connection.askRequestStore.set(ask, for: sessionId)
+    connection.pendingExtensionDialogQueues[sessionId] = [
+        ExtensionUIRequest(id: "dlg-\(sessionId)", sessionId: sessionId, method: "editor", title: "Edit")
+    ]
+    connection.extensionSurfaceBySession[sessionId] = ExtensionSurfaceState(
+        widgets: [
+            "goal": ExtensionWidgetState(key: "goal", lines: ["Keep going"], placement: "aboveEditor")
+        ]
+    )
+    connection.messageQueueStore.apply(
+        MessageQueueState(
+            version: 1,
+            steering: [MessageQueueItem(id: "q1", message: "later", createdAt: 1)],
+            followUp: []
+        ),
+        for: sessionId
+    )
+    connection.sessionUsageMetricSnapshots[sessionId] = connection.sessionUsageMetricSnapshot(
+        from: makeTestSession(id: sessionId, workspaceId: "w1", messageCount: 3)
+    )
+    connection.sessionUsageMetricLastEmittedAt[sessionId] = Date(timeIntervalSince1970: 50)
+}
+
+@MainActor
+private func expectAppEventSessionScopedUICleared(_ connection: ServerConnection) {
+    #expect(connection.askRequestStore.pending(for: "s2") == nil)
+    #expect(connection.pendingExtensionDialogQueues["s2"] == nil)
+    #expect(connection.extensionSurfaceBySession["s2"] == nil)
+    #expect(connection.messageQueueStore.queue(for: "s2") == .empty)
+}
+
+@MainActor
+private func expectAppEventSessionScopedUIPreserved(_ connection: ServerConnection) {
+    #expect(connection.askRequestStore.pending(for: "s2")?.id == "ask-s2")
+    #expect(connection.pendingExtensionDialogQueues["s2"]?.first?.id == "dlg-s2")
+    #expect(connection.extensionSurfaceBySession["s2"]?.widgets["goal"]?.lines == ["Keep going"])
+    #expect(connection.messageQueueStore.queue(for: "s2").steering.first?.id == "q1")
 }

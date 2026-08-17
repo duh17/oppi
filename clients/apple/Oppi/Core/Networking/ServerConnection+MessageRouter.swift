@@ -149,11 +149,16 @@ extension ServerConnection {
         sessionId: String,
         isFocusedSession: Bool
     ) {
-        let effects = ServerMessageEffects.cleanupEffects(
-            for: message,
-            routedSessionId: sessionId,
-            isFocusedSession: isFocusedSession
+        applyCleanupEffects(
+            ServerMessageEffects.cleanupEffects(
+                for: message,
+                routedSessionId: sessionId,
+                isFocusedSession: isFocusedSession
+            )
         )
+    }
+
+    func applyCleanupEffects(_ effects: ServerMessageCleanupEffects) {
         if effects.stopSilenceWatchdog {
             silenceWatchdog.stop()
         }

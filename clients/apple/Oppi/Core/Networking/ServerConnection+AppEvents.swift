@@ -20,18 +20,18 @@ extension ServerConnection {
             applyAppEventSummary(summary, workspaceId: workspaceId)
 
         case .sessionDeleted(let sessionId, let workspaceId, _):
-            removeSessionFromAppEvent(sessionId: sessionId, workspaceId: workspaceId)
+            removeSessionFromAppEvent(event, sessionId: sessionId, workspaceId: workspaceId)
 
         case .sessionEnded(let sessionId, let workspaceId, _, _):
             updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId, status: .stopped)
-            clearSessionScopedAppEventState(sessionId: sessionId)
+            clearSessionScopedAppEventState(for: event, sessionId: sessionId)
 
         case .stopRequested(let sessionId, let workspaceId, _, _, _):
             updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId, status: .stopping)
 
         case .stopConfirmed(let sessionId, let workspaceId, _, _, _):
             updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId, status: .ready, onlyFrom: .stopping)
-            clearSessionScopedAppEventState(sessionId: sessionId)
+            clearSessionScopedAppEventState(for: event, sessionId: sessionId)
 
         case .stopFailed(let sessionId, let workspaceId, _, _, _):
             updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId, status: .busy, onlyFrom: .stopping)
@@ -39,7 +39,7 @@ extension ServerConnection {
         case .sessionError(let sessionId, let workspaceId, _, _, _, let fatal):
             updateSessionStatusFromAppEvent(sessionId: sessionId, workspaceId: workspaceId, status: .error)
             if fatal {
-                clearSessionScopedAppEventState(sessionId: sessionId)
+                clearSessionScopedAppEventState(for: event, sessionId: sessionId)
             }
 
         case .extensionUIRequest(let request, let workspaceId, _):
@@ -57,9 +57,8 @@ extension ServerConnection {
                 )
             }
 
-        case .extensionUISettled(let id, let sessionId, let workspaceId, _):
-            clearAskRequest(id: id)
-            clearExtensionDialog(id: id)
+        case .extensionUISettled(_, let sessionId, let workspaceId, _):
+            applyCleanupEffects(ServerMessageEffects.cleanupEffects(for: event))
             if let workspaceId {
                 syncWorkspaceSummary(workspaceId: workspaceId)
             } else if let resolvedWorkspaceId = sessionStore.workspaceId(for: sessionId) {
@@ -181,21 +180,22 @@ extension ServerConnection {
         syncLiveActivityState()
     }
 
-    private func removeSessionFromAppEvent(sessionId: String, workspaceId: String?) {
+    private func removeSessionFromAppEvent(
+        _ event: AppEventMessage,
+        sessionId: String,
+        workspaceId: String?
+    ) {
         let resolvedWorkspaceId = workspaceId ?? sessionStore.workspaceId(for: sessionId)
         sessionStore.remove(id: sessionId)
-        clearSessionScopedAppEventState(sessionId: sessionId)
+        clearSessionScopedAppEventState(for: event, sessionId: sessionId)
         if let resolvedWorkspaceId {
             syncWorkspaceSummary(workspaceId: resolvedWorkspaceId)
         }
         syncLiveActivityState()
     }
 
-    private func clearSessionScopedAppEventState(sessionId: String) {
-        clearAskState(for: sessionId)
-        clearExtensionDialog(for: sessionId)
-        clearExtensionSurface(for: sessionId)
-        messageQueueStore.clear(sessionId: sessionId)
+    private func clearSessionScopedAppEventState(for event: AppEventMessage, sessionId: String) {
+        applyCleanupEffects(ServerMessageEffects.cleanupEffects(for: event))
         screenAwakeController.clearSessionActivity(sessionId: sessionId)
         sessionUsageMetricSnapshots.removeValue(forKey: sessionId)
         sessionUsageMetricLastEmittedAt.removeValue(forKey: sessionId)

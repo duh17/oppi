@@ -142,6 +142,120 @@ struct ServerMessageEffectsTests {
         #expect(effects.stopSilenceWatchdog)
         #expect(effects.clearAskSessionIds == ["s1"])
         #expect(effects.clearExtensionDialogSessionIds == ["s1"])
+        #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
+        #expect(effects.clearMessageQueueSessionIds.isEmpty)
+    }
+
+    @Test func appEventStopConfirmedClearsSurfacesAndQueue() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .stopConfirmed(
+                sessionId: "s2",
+                workspaceId: "w1",
+                emittedAt: 1,
+                source: "user",
+                reason: nil
+            )
+        )
+
+        #expect(!effects.stopSilenceWatchdog)
+        #expect(effects.clearAskSessionIds == ["s2"])
+        #expect(effects.clearExtensionDialogSessionIds == ["s2"])
+        #expect(effects.clearExtensionSurfaceSessionIds == ["s2"])
+        #expect(effects.clearMessageQueueSessionIds == ["s2"])
+    }
+
+    @Test func appEventSessionEndedClearsSurfacesAndQueue() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .sessionEnded(
+                sessionId: "s2",
+                workspaceId: "w1",
+                emittedAt: 1,
+                reason: "done"
+            )
+        )
+
+        #expect(!effects.stopSilenceWatchdog)
+        #expect(effects.clearAskSessionIds == ["s2"])
+        #expect(effects.clearExtensionDialogSessionIds == ["s2"])
+        #expect(effects.clearExtensionSurfaceSessionIds == ["s2"])
+        #expect(effects.clearMessageQueueSessionIds == ["s2"])
+    }
+
+    @Test func appEventSessionDeletedClearsSurfacesAndQueue() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .sessionDeleted(sessionId: "deleted", workspaceId: "w1", emittedAt: 1)
+        )
+
+        #expect(effects.clearAskSessionIds == ["deleted"])
+        #expect(effects.clearExtensionDialogSessionIds == ["deleted"])
+        #expect(effects.clearExtensionSurfaceSessionIds == ["deleted"])
+        #expect(effects.clearMessageQueueSessionIds == ["deleted"])
+    }
+
+    @Test func appEventFatalErrorClearsSurfacesAndQueue() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .sessionError(
+                sessionId: "s2",
+                workspaceId: "w1",
+                emittedAt: 1,
+                message: "boom",
+                code: nil,
+                fatal: true
+            )
+        )
+
+        #expect(effects.clearAskSessionIds == ["s2"])
+        #expect(effects.clearExtensionDialogSessionIds == ["s2"])
+        #expect(effects.clearExtensionSurfaceSessionIds == ["s2"])
+        #expect(effects.clearMessageQueueSessionIds == ["s2"])
+    }
+
+    @Test func appEventNonFatalErrorKeepsSessionScopedUI() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .sessionError(
+                sessionId: "s2",
+                workspaceId: "w1",
+                emittedAt: 1,
+                message: "retry",
+                code: nil,
+                fatal: false
+            )
+        )
+
+        #expect(!effects.stopSilenceWatchdog)
+        #expect(effects.clearAskSessionIds.isEmpty)
+        #expect(effects.clearExtensionDialogSessionIds.isEmpty)
+        #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
+        #expect(effects.clearMessageQueueSessionIds.isEmpty)
+    }
+
+    @Test func appEventTerminalSummaryDoesNotClearSessionScopedUI() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .sessionSummary(
+                sessionId: "s2",
+                workspaceId: "w1",
+                emittedAt: 1,
+                summary: SessionSummary(from: makeTestSession(id: "s2", status: .stopped))
+            )
+        )
+
+        #expect(effects.clearAskSessionIds.isEmpty)
+        #expect(effects.clearExtensionDialogSessionIds.isEmpty)
+        #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
+        #expect(effects.clearMessageQueueSessionIds.isEmpty)
+    }
+
+    @Test func appEventExtensionUISettledClearsMatchingPendingInteraction() {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: .extensionUISettled(id: "ui-1", sessionId: "s2", workspaceId: "w1", emittedAt: 2)
+        )
+
+        #expect(effects.clearAskRequestIds == ["ui-1"])
+        #expect(effects.clearExtensionDialogRequestIds == ["ui-1"])
+        #expect(effects.clearAskSessionIds.isEmpty)
+        #expect(effects.clearExtensionDialogSessionIds.isEmpty)
+        #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
+        #expect(effects.clearMessageQueueSessionIds.isEmpty)
     }
 
     @Test func extensionUISettledClearsMatchingPendingInteraction() {
