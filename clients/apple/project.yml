@@ -50,7 +50,11 @@ targets:
         type: group
         excludes:
           - "Resources/AppIcon.icon"
+          - "Resources/PrivacyInfo.xcprivacy"
       - path: Oppi/Resources/AppIcon.icon
+        type: file
+        buildPhase: resources
+      - path: Oppi/Resources/PrivacyInfo.xcprivacy
         type: file
         buildPhase: resources
       - path: OppiCore
@@ -278,6 +282,11 @@ targets:
     sources:
       - path: OppiShareExtension
         type: group
+        excludes:
+          - "PrivacyInfo.xcprivacy"
+      - path: OppiShareExtension/PrivacyInfo.xcprivacy
+        type: file
+        buildPhase: resources
       - path: Shared
         type: group
         excludes:

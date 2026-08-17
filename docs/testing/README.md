@@ -81,6 +81,51 @@ From `clients/apple/`:
 xcodegen generate
 ```
 
+### Privacy manifests and archive report
+
+Validate the tracked manifest contents and parsed XcodeGen target resource membership before building. Run the regression fixtures when you change the checker:
+
+```bash
+cd clients/apple
+./scripts/check-privacy-manifests.sh
+./scripts/check-privacy-manifests.sh self-test
+```
+
+These checks validate declared manifest contents and exact `project.yml` membership. They do not inspect executable API use or replace archive validation.
+
+To inspect the final bundle layout without using distribution credentials, create an unsigned local archive and validate manifest placement and contents in the audited executable bundles:
+
+```bash
+cd clients/apple
+xcodebuild -project Oppi.xcodeproj -scheme Oppi \
+  -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -archivePath .build/privacy/Oppi.xcarchive \
+  CODE_SIGNING_ALLOWED=NO \
+  archive
+
+./scripts/check-privacy-manifests.sh \
+  --archive .build/privacy/Oppi.xcarchive
+```
+
+The unsigned archive proves manifest placement and contents for that build. It does not prove that every required-reason API has an accurate declaration. Xcode 26.6 does not expose a supported `xcrun` or `xcodebuild` operation for the merged privacy report. Before distribution, an authorized maintainer must create a normally signed archive without exporting or uploading it:
+
+```bash
+cd clients/apple
+xcodebuild -project Oppi.xcodeproj -scheme Oppi \
+  -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -derivedDataPath .build/privacy/SignedDerivedData \
+  -archivePath .build/privacy/Oppi-signed.xcarchive \
+  archive
+
+open -a Xcode .build/privacy/Oppi-signed.xcarchive
+```
+
+In Xcode Organizer, control-click the archive, choose **Generate Privacy Report**, and save the report under `.internal/reports/privacy/`. Review every app and SDK declaration, including findings from statically linked dependencies, before distribution. The signed Organizer report is a mandatory manual distribution gate. Do not mark it complete without reviewing the generated report, and do not use `-exportArchive` for this check.
+
+Apple’s source for the per-executable bundle rule and required-reason policy is [Describing use of required reason API](https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api). Apple documents target resource membership and bundle locations in [Adding a privacy manifest to your app or third-party SDK](https://developer.apple.com/documentation/bundleresources/adding-a-privacy-manifest-to-your-app-or-third-party-sdk).
+
 ### Simulator build
 
 For Oppi maintainer/agent work, use the simulator pool so parallel runs do not collide:

@@ -28,6 +28,7 @@ scripts/*
 !scripts/detect-ci-relevant-paths.test.ts
 clients/apple/scripts/*
 !clients/apple/scripts/check-coverage.sh
+!clients/apple/scripts/check-privacy-manifests.sh
 !clients/apple/scripts/ci-simulator.sh
 !clients/apple/scripts/sim-pool.sh
 !clients/apple/scripts/release-mac.sh

@@ -1051,6 +1051,7 @@
 		DDF63B2142138364F54CB0FF /* ServerMessageEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27EC22F73FBBAADDEA1F10A3 /* ServerMessageEffects.swift */; };
 		DE01DB7BC5F5D4A193BFC14B /* MermaidNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B1ED7BE6519C6D91B2FD15 /* MermaidNode.swift */; };
 		DE187C8891A93C22CF17F923 /* MacSessionShellViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB2EECA5030F8B2E2E2EE8D7 /* MacSessionShellViews.swift */; };
+		DE8C9F9E1D5318C6D1899978 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 11886E64F29A908EA90575A2 /* PrivacyInfo.xcprivacy */; };
 		DF052C267A979F03D7EF95BD /* MermaidFlowchartConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CEC611424DEB6963E065374 /* MermaidFlowchartConformanceTests.swift */; };
 		DF1E2968255A2737EC975525 /* DeviceAuthMigrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C224D9C483EB6A19819A613 /* DeviceAuthMigrationService.swift */; };
 		DF326CECDEEFEB75EF6D8DAB /* TimelineReducerStreamingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD0B82407A341F0CBA509C3 /* TimelineReducerStreamingTests.swift */; };
@@ -1372,6 +1373,7 @@
 		10ECB7266E12083547C5138A /* ServerMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerMessage.swift; sourceTree = "<group>"; };
 		110F3133CE5C203703E96D3A /* ContextInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextInspectorView.swift; sourceTree = "<group>"; };
 		115D138DE4C043DB31FF0736 /* CommitDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitDetailView.swift; sourceTree = "<group>"; };
+		11886E64F29A908EA90575A2 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		11AFBF72E219993C0610E630 /* DeviceAuthSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthSessionTests.swift; sourceTree = "<group>"; };
 		11D9892E24E4721341F62D77 /* ServerTransportPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerTransportPolicyTests.swift; sourceTree = "<group>"; };
 		11E1A57C5E72EF55DDEDD440 /* StartQuickSessionIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartQuickSessionIntent.swift; sourceTree = "<group>"; };
@@ -2720,6 +2722,7 @@
 			children = (
 				4D053D0A2E215AC361C6E098 /* Info.plist */,
 				312D7E21D52B471DEFE1AFA9 /* OppiShareExtension.entitlements */,
+				11886E64F29A908EA90575A2 /* PrivacyInfo.xcprivacy */,
 				C163A37C3B639CAE8420C462 /* ShareQuickSessionComposerViewController.swift */,
 				4544458630057030973322C1 /* ShareViewController.swift */,
 			);
@@ -4493,6 +4496,7 @@
 			buildConfigurationList = 7F1F468CB8A170BEBD3B62DB /* Build configuration list for PBXNativeTarget "OppiShareExtension" */;
 			buildPhases = (
 				AF669200A148F806F86AA134 /* Sources */,
+				F6168CB9418AB2353F7CF230 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -4726,6 +4730,14 @@
 			files = (
 				F572AA36961CEC5DBE91BF24 /* AUDIT-RESULTS.md in Resources */,
 				FD3FED6CD03AE53F9499AE61 /* synthetic-long-markdown.md in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F6168CB9418AB2353F7CF230 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DE8C9F9E1D5318C6D1899978 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
