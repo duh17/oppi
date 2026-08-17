@@ -25,6 +25,7 @@ import { AppEventStreamMux } from "./app-event-stream.js";
 import { BoundSessionStreamMux, DictationStreamMux } from "./stream.js";
 import { RouteHandler } from "./routes/index.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
+import { shouldRecordHttpRequestMetric } from "./http-request-metrics.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { discoverExtensionProviders } from "./extension-model-discovery.js";
 import { LiveActivityBridge } from "./live-activity.js";
@@ -220,32 +221,6 @@ function normalizePathPattern(path: string): string {
   return path
     .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "/:id")
     .replace(/\/[0-9a-f]{16,}/gi, "/:id");
-}
-
-const ROUTINE_HTTP_METRIC_PATTERNS = new Set([
-  "/health",
-  "/server/info",
-  "/server/stats",
-  "/workspaces",
-  "/skills",
-  "/sessions/recent",
-  "/workspaces/:workspaceId/attention",
-  "/workspaces/:workspaceId/paths",
-  "/models",
-  "/telemetry/chat-metrics",
-  "/telemetry/client-logs",
-  "/telemetry/metrickit",
-]);
-const ROUTINE_HTTP_METRIC_SLOW_MS = 50;
-
-function shouldRecordHttpRequestMetric(
-  pathPattern: string,
-  statusCode: number,
-  durationMs: number,
-): boolean {
-  if (statusCode >= 400) return true;
-  if (durationMs >= ROUTINE_HTTP_METRIC_SLOW_MS) return true;
-  return !ROUTINE_HTTP_METRIC_PATTERNS.has(pathPattern);
 }
 
 function normalizeBindHost(host: string): string {
@@ -1244,8 +1219,9 @@ export class Server {
     res.setHeader("X-Oppi-Protocol", "2");
 
     // Record HTTP request duration when the response finishes. Routine health,
-    // stats, capability, and telemetry upload routes are threshold-gated so
-    // they do not dominate diagnostics volume while still surfacing slow/error cases.
+    // stats, capability, session poll, and telemetry upload routes are
+    // threshold-gated so they do not dominate diagnostics volume while still
+    // surfacing slow/error cases.
     res.on("finish", () => {
       const durationMs = Date.now() - startTime;
       const pathPattern = normalizePathPattern(path);
