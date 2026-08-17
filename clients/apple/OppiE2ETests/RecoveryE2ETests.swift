@@ -68,9 +68,6 @@ final class RecoveryE2ETests: E2ETestCase {
     }
 
     @MainActor
-
-
-    @MainActor
     func testRelaunchRecoveryReplaysDurableEventsForFocusedSession() throws {
         createAndEnterSession()
         waitForRequiredSplitStreamCapabilities()
