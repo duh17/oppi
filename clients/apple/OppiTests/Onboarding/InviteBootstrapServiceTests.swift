@@ -146,6 +146,35 @@ struct WhatsNewManagerTests {
         #expect(WhatsNewManager.releaseIdentifier(marketingVersion: "1.1.0", buildNumber: "40") == "1.1.0 (40)")
         #expect(WhatsNewManager.releaseIdentifier(marketingVersion: "1.1.0", buildNumber: "") == "1.1.0")
     }
+
+    @Test func firstInstallDoesNotShowChangelog() {
+        #expect(WhatsNewManager.shouldShowChangelog(lastSeenVersion: nil, currentVersion: "1.1.0 (45)") == false)
+        #expect(WhatsNewManager.shouldShowChangelog(lastSeenVersion: "", currentVersion: "1.1.0 (45)") == false)
+    }
+
+    @Test func upgradeShowsChangelog() {
+        #expect(
+            WhatsNewManager.shouldShowChangelog(
+                lastSeenVersion: "1.1.0 (43)",
+                currentVersion: "1.1.0 (45)"
+            )
+        )
+    }
+
+    @Test func sameReleaseDoesNotShowChangelog() {
+        #expect(
+            WhatsNewManager.shouldShowChangelog(
+                lastSeenVersion: "1.1.0 (45)",
+                currentVersion: "1.1.0 (45)"
+            ) == false
+        )
+    }
+
+    @Test func captionUsesMarketingVersionNotBuildDelta() {
+        #expect(WhatsNewManager.caption(marketingVersion: "1.1.0") == "Version 1.1.0")
+        #expect(WhatsNewManager.caption(marketingVersion: "  ") == "What’s new in this version")
+        #expect(!WhatsNewManager.caption(marketingVersion: "1.1.0").contains("Build 45"))
+    }
 }
 
 private actor InviteBootstrapCallLog {

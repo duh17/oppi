@@ -404,7 +404,8 @@
         }
       }
     },
-    "Build 45 · Changes since Build 43": {},
+    "Version %@": {},
+    "What’s new in this version": {},
     "Cache": {
       "localizations": {
         "zh-Hans": {

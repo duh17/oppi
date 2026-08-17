@@ -1738,9 +1738,11 @@ struct OppiApp: App {
         // send an already-paired user back through onboarding.
         let launchConnection = coordinator.activatePairedServerShell(server)
 
-        // Show What's New once per marketing version after onboarding.
+        // Show What's New after an upgrade. First install is not a changelog.
         if WhatsNewManager.shouldShow {
             navigation.showWhatsNew = true
+        } else {
+            WhatsNewManager.recordFirstLaunchIfNeeded()
         }
 
         // 2. Restore UI state (tab, active session, draft)

@@ -1073,7 +1073,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 5), "What’s New title not visible")
         XCTAssertTrue(caption.waitForExistence(timeout: 5), "Build caption not visible")
         XCTAssertEqual(title.label, "What’s New in Oppi")
-        XCTAssertEqual(caption.label, "Build 45 · Changes since Build 43")
+        XCTAssertEqual(caption.label, "Version 1.1.0")
 
         let expectedFeatures = [
             (

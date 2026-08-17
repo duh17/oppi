@@ -25,16 +25,38 @@ enum WhatsNewManager {
         return "\(cleanVersion) (\(build))"
     }
 
-    /// Whether the What's New screen should be shown.
-    /// True when the user has never seen it for the current app build.
+    /// Whether the What's New changelog should be shown.
+    /// First install is not a changelog. Upgrades show it once per release.
     static var shouldShow: Bool {
-        let lastSeen = UserDefaults.standard.string(forKey: lastSeenVersionKey)
-        return lastSeen != currentVersion
+        shouldShowChangelog(
+            lastSeenVersion: UserDefaults.standard.string(forKey: lastSeenVersionKey),
+            currentVersion: currentVersion
+        )
+    }
+
+    static func shouldShowChangelog(lastSeenVersion: String?, currentVersion: String) -> Bool {
+        guard let lastSeenVersion, !lastSeenVersion.isEmpty else { return false }
+        return lastSeenVersion != currentVersion
+    }
+
+    /// Persist this release on first launch so a later upgrade can show What's New.
+    static func recordFirstLaunchIfNeeded() {
+        if UserDefaults.standard.string(forKey: lastSeenVersionKey) == nil {
+            markSeen()
+        }
     }
 
     /// Mark the current app build as seen.
     static func markSeen() {
         UserDefaults.standard.set(currentVersion, forKey: lastSeenVersionKey)
+    }
+
+    static func caption(marketingVersion: String?) -> String {
+        let version = marketingVersion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if version.isEmpty {
+            return String(localized: "What’s new in this version")
+        }
+        return String(localized: "Version \(version)")
     }
 }
 
@@ -138,7 +160,13 @@ struct WhatsNewView: View {
                 .foregroundStyle(.themeFg)
                 .accessibilityIdentifier("whatsNew.title")
 
-            Text(String(localized: "Build 45 · Changes since Build 43"))
+            Text(
+                WhatsNewManager.caption(
+                    marketingVersion: Bundle.main.object(
+                        forInfoDictionaryKey: "CFBundleShortVersionString"
+                    ) as? String
+                )
+            )
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.themeComment)
                 .accessibilityIdentifier("whatsNew.caption")
