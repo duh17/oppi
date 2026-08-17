@@ -80,7 +80,7 @@ The workspace file browser, fuzzy `/paths` index, and workspace `contents`/`raw`
 
 Owner host-file reads use a separate authenticated GET/HEAD `/files/raw?path=` helper. That route expands only bare `~` / `~/`, requires an absolute post-expansion path, realpaths a regular file, returns the canonical path as percent-encoded `X-Oppi-Resolved-Path`, and never lists directories. Wiki-link parsing accepts local `file://` URLs and rejects undocumented `file:/...`. It does not apply workspace-root confinement or `isSensitivePath` 403s. Pairing/auth is the remote gate. Host HTML and SVG still use the existing fetch → `loadHTMLString` + CSP viewer; WKWebView must not URL-load `/files/raw`.
 
-Directory listings can show sensitive names, and workspace raw serving still blocks `.env` files, private-key and certificate extensions, SSH private-key names, credential files such as `.netrc` and `.npmrc`, and paths under `.git`. An explicit owner tap of a host file may open those names. Agents must not ingest them.
+Directory listings can show sensitive names. Workspace `raw` serves owner-requested files that stay inside the workspace, including `.env`, keys, credential files, and `.git` paths. Fuzzy `/paths` still omits those names and symlink aliases. An explicit owner tap of a host file may also open those names. Agents must not ingest them.
 
 ### Recommended agent instruction
 

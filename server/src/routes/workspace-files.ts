@@ -363,23 +363,11 @@ export function createWorkspaceFileRoutes(
       return;
     }
 
-    if (isSensitivePath(requestedPath)) {
-      helpers.error(res, 403, "Access denied: sensitive file");
-      return;
-    }
-
     const workspaceRoot = resolveWorkspaceRootForFileRequest(workspace, url, res);
     if (!workspaceRoot) return;
     const realFile = await resolveWorkspaceFilePath(workspaceRoot, requestedPath);
     if (!realFile) {
       helpers.error(res, 404, "File not found");
-      return;
-    }
-
-    const realRoot = await resolveWorkspaceRootPath(workspaceRoot);
-    const canonicalPath = relative(realRoot, realFile).replaceAll("\\", "/");
-    if (isSensitivePath(canonicalPath)) {
-      helpers.error(res, 403, "Access denied: sensitive file");
       return;
     }
 

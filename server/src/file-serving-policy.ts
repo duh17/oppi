@@ -232,11 +232,11 @@ export function decodeWorkspaceRoutePath(encodedPath: string): string | null {
 }
 
 /**
- * Check whether a workspace-relative path points to a sensitive file
- * that should not be served in browse mode.
+ * Check whether a workspace-relative path points to a sensitive file.
  *
- * Sensitive files still appear in directory listings (users should know
- * they exist), but their content is not served.
+ * Used to omit credential-like names from the fuzzy `/paths` index.
+ * Directory listings may still show those names. Workspace `raw` serves
+ * owner-requested files that stay inside the workspace.
  */
 export function isSensitivePath(requestedPath: string): boolean {
   const normalizedPath = requestedPath.replaceAll("\\", "/");

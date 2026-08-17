@@ -124,6 +124,12 @@ afterAll(async () => {
 
 // ── Health ──
 
+function expectNoCorsHeaders(res: Response): void {
+  expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  expect(res.headers.get("access-control-allow-methods")).toBeNull();
+  expect(res.headers.get("access-control-allow-headers")).toBeNull();
+}
+
 describe("health", () => {
   it("GET /health returns ok (no auth required)", async () => {
     const res = await get("/health", false);
@@ -131,6 +137,28 @@ describe("health", () => {
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.protocol).toBeTypeOf("number");
+  });
+
+  it("does not set Access-Control-Allow-* headers", async () => {
+    const health = await get("/health", false);
+    expect(health.status).toBe(200);
+    expectNoCorsHeaders(health);
+    expect(health.headers.get("x-oppi-protocol")).toBe("2");
+
+    const unauthorized = await get("/me", false);
+    expect(unauthorized.status).toBe(401);
+    expectNoCorsHeaders(unauthorized);
+    expect(unauthorized.headers.get("x-oppi-protocol")).toBe("2");
+  });
+
+  it("treats unauthenticated OPTIONS like other methods", async () => {
+    const health = await fetch(`${baseUrl}/health`, { method: "OPTIONS" });
+    expect(health.status).toBe(200);
+    expectNoCorsHeaders(health);
+
+    const unauthorized = await fetch(`${baseUrl}/me`, { method: "OPTIONS" });
+    expect(unauthorized.status).toBe(401);
+    expectNoCorsHeaders(unauthorized);
   });
 });
 
@@ -670,21 +698,22 @@ describe("workspace file browser", () => {
     expect(res.headers.get("content-type")).toBe("image/png");
   });
 
-  it("raw route blocks .env files", async () => {
+  it("raw route serves .env files", async () => {
     const res = await get(`/workspaces/${wsId}/raw/.env`);
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.error).toContain("sensitive");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("SECRET=bad");
   });
 
-  it("raw route blocks private keys", async () => {
+  it("raw route serves private keys", async () => {
     const res = await get(`/workspaces/${wsId}/raw/id_rsa`);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("-----BEGIN RSA PRIVATE KEY-----");
   });
 
-  it("raw route blocks .git directory contents", async () => {
+  it("raw route serves .git directory contents", async () => {
     const res = await get(`/workspaces/${wsId}/raw/.git/HEAD`);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ref: refs/heads/main");
   });
 
   it("raw route returns 404 for nonexistent files", async () => {
@@ -704,9 +733,10 @@ describe("workspace file browser", () => {
     await expect(res.text()).resolves.toBe("# Hello world");
   });
 
-  it("raw route blocks sensitive files", async () => {
+  it("raw route serves .env with 200", async () => {
     const res = await get(`/workspaces/${wsId}/raw/.env`);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("SECRET=bad");
   });
 
   // ── Directory listing ──
@@ -722,7 +752,7 @@ describe("workspace file browser", () => {
     const names = body.entries.map((e: { name: string }) => e.name);
     expect(names).toContain("src");
     expect(names).toContain("README.md");
-    // Directory browsing shows real filesystem entries; raw reads enforce sensitive-content rules.
+    // Directory browsing shows real filesystem entries, including sensitive names.
     expect(names).toContain("node_modules");
     expect(names).toContain(".build");
     expect(names).toContain(".git");
@@ -775,6 +805,9 @@ describe("workspace file browser", () => {
     expect(body.paths).toBeInstanceOf(Array);
     expect(typeof body.truncated).toBe("boolean");
     expect(body.paths).toContain("src/components/Button.tsx");
+    expect(body.paths).not.toContain(".env");
+    expect(body.paths).not.toContain("id_rsa");
+    expect(body.paths).not.toContain(".git/HEAD");
   });
 
   it("paths route returns 404 for nonexistent workspace", async () => {

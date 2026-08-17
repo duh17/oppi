@@ -98,7 +98,7 @@ describe("file transport security parity", () => {
     }
   });
 
-  it("keeps workspace browsing guards separate from session-reported file previews", async () => {
+  it("serves workspace raw .env and session raw .env when the file stays inside the workspace", async () => {
     root = mkdtempSync(join(tmpdir(), "oppi-file-security-"));
     writeFileSync(join(root, ".env"), "SECRET=yes\n", "utf8");
 
@@ -111,13 +111,16 @@ describe("file transport security parity", () => {
     const ctx = makeContext(workspace, session);
 
     const workspaceRoutes = createWorkspaceFileRoutes(ctx, helpers);
+    const workspaceRes = new MockWritableResponse();
+    const workspaceFinished = once(workspaceRes, "finish");
     const handledRaw = await workspaceRoutes({
       method: "GET",
       path: "/workspaces/ws-1/raw/.env",
       url: new URL("https://localhost/workspaces/ws-1/raw/.env"),
       req: new PassThrough() as unknown as IncomingMessage,
-      res: new MockWritableResponse() as unknown as ServerResponse,
+      res: workspaceRes as unknown as ServerResponse,
     });
+    await workspaceFinished;
 
     const sessionHandlers = createSessionFileHandlers(ctx, helpers);
     const sessionRes = new MockWritableResponse();
@@ -131,7 +134,9 @@ describe("file transport security parity", () => {
     await sessionFinished;
 
     expect(handledRaw).toBe(true);
-    expect(errors).toEqual([{ status: 403, message: "Access denied: sensitive file" }]);
+    expect(errors).toEqual([]);
+    expect(workspaceRes.statusCode).toBe(200);
+    expect(workspaceRes.body.toString("utf8")).toBe("SECRET=yes\n");
     expect(sessionRes.statusCode).toBe(200);
     expect(sessionRes.body.toString("utf8")).toBe("SECRET=yes\n");
   });

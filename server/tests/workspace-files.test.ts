@@ -668,7 +668,7 @@ describe("workspace file routes", () => {
 });
 
 describe("workspace file symlink security", () => {
-  test("does not index or serve a symlink alias to a sensitive file", async () => {
+  test("omits sensitive names and symlink aliases from the index but serves an in-workspace .env symlink", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-ws-symlink-security-"));
     try {
       mkdirSync(join(root, "notes"), { recursive: true });
@@ -679,6 +679,7 @@ describe("workspace file symlink security", () => {
 
       const index = await getFileIndex(root);
       expect(index.paths).toContain("notes/safe.md");
+      expect(index.paths).not.toContain(".env");
       expect(index.paths).not.toContain("notes/report.md");
       expect(index.paths).not.toContain("notes/safe-alias.md");
 
@@ -708,7 +709,7 @@ describe("workspace file symlink security", () => {
         res: sensitiveResponse as never,
       });
       expect(sensitiveHandled).toBe(true);
-      expect(sensitiveResponse.statusCode).toBe(403);
+      expect(sensitiveResponse.statusCode).toBe(200);
 
       const safeResponse = makeResponse();
       const safeHandled = await dispatch({
@@ -940,7 +941,7 @@ describe("listDirectoryEntries — security edge cases", () => {
     }
   });
 
-  test("sensitive files appear in listings (visible but not servable)", async () => {
+  test("sensitive files appear in listings", async () => {
     writeFileSync(join(tmpRoot, ".env"), "SECRET=x");
     writeFileSync(join(tmpRoot, "id_rsa"), "-----BEGIN RSA PRIVATE KEY-----");
     writeFileSync(join(tmpRoot, "cert.pem"), "cert data");
@@ -948,11 +949,11 @@ describe("listDirectoryEntries — security edge cases", () => {
     const result = await listDirectoryEntries(tmpRoot, "");
     expect(result).not.toBeNull();
     const names = result!.entries.map((e) => e.name);
-    // Sensitive files ARE listed — users should know they exist
+    // Sensitive files ARE listed — users should know they exist.
+    // Fuzzy /paths still omits them; workspace raw may serve them.
     expect(names).toContain(".env");
     expect(names).toContain("id_rsa");
     expect(names).toContain("cert.pem");
-    // But isSensitivePath would block serving them (tested separately)
   });
 
   test("handles filenames with spaces and special characters", async () => {

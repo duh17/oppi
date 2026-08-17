@@ -46,7 +46,7 @@ export class RouteHandler {
 
   /**
    * Dispatch an authenticated HTTP request to the appropriate handler.
-   * Called by Server after CORS, OPTIONS, /health, and auth checks.
+   * Called by Server after /health and auth checks.
    */
   async dispatch(
     method: string,

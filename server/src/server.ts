@@ -1241,9 +1241,6 @@ export class Server {
     const path = url.pathname;
     const method = req.method || "GET";
 
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
     res.setHeader("X-Oppi-Protocol", "2");
 
     // Record HTTP request duration when the response finishes. Routine health,
@@ -1262,11 +1259,6 @@ export class Server {
       });
     });
 
-    if (method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
     if (path === "/health") {
       this.json(res, { ok: true, protocol: 2 });
       return;
