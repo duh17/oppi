@@ -26,6 +26,7 @@ describe("pre-push gate planning", () => {
     ["Mac scheme", ["clients/apple/Oppi.xcodeproj/xcshareddata/xcschemes/OppiMac.xcscheme"], ["none", "all", true, false]],
     ["architecture guard", ["server/scripts/check-architecture-boundaries.ts"], ["full", "unit", true, false]],
     ["gate policy", [".githooks/pre-push"], ["none", "none", false, true]],
+    ["CI path detector", ["scripts/detect-ci-relevant-paths.sh"], ["none", "none", false, true]],
     ["gate allowlist", [".gitignore"], ["none", "none", false, true]],
     ["server gate policy", ["server/testing-policy.json"], ["full", "none", false, true]],
     ["unknown fails closed", ["tools/release.ts"], ["full", "unit", true, false]],

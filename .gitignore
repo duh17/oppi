@@ -24,6 +24,8 @@ scripts/*
 !scripts/theme-surface-guard.ts
 !scripts/pre-push-plan.ts
 !scripts/pre-push-plan.test.ts
+!scripts/detect-ci-relevant-paths.sh
+!scripts/detect-ci-relevant-paths.test.ts
 clients/apple/scripts/*
 !clients/apple/scripts/check-coverage.sh
 !clients/apple/scripts/ci-simulator.sh

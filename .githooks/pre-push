@@ -43,6 +43,7 @@ report_ios_coverage_result() {
 run_self_test() {
   bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL"
   bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts"
+  bun test "$REPO_ROOT/scripts/detect-ci-relevant-paths.test.ts"
   (cd "$REPO_ROOT/server" && npm exec --offline -- vitest run tests/testing-policy-gate.test.ts \
     --reporter=dot --silent=passed-only)
   "$SIM_POOL" self-test
